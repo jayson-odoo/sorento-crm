@@ -950,7 +950,22 @@ export function SalesOrderDetail({
             distinctName(row.original.sku, row.original.product_name) !== null;
           return (
             <div className="flex min-w-0 flex-col">
-              <span className="font-medium">{row.original.sku}</span>
+              <div className="flex items-center gap-1.5">
+                <span className="truncate font-medium" title={row.original.sku}>
+                  {row.original.sku}
+                </span>
+                {row.original.mockup_label ? (
+                  <Badge
+                    variant="warning"
+                    appearance="light"
+                    size="sm"
+                    className="shrink-0"
+                    data-testid="so-line-mockup-badge"
+                  >
+                    Mockup
+                  </Badge>
+                ) : null}
+              </div>
               {showProductName && (
                 <span
                   className="truncate text-xs text-muted-foreground"
@@ -2035,6 +2050,18 @@ export function SalesOrderDetail({
               <Field label="PO ref">
                 {so.po_ref ? <span title={so.po_ref}>{so.po_ref}</span> : '-'}
               </Field>
+              {/* FULFIL-SO-REMARK (AC-17): what the purchasing email prints beside this SO, and
+                  AutoCount's Shipping Info. Read-only in both views. */}
+              <div data-testid="so-remark-field">
+                <Field label="Remark">
+                  {so.remark ? <span title={so.remark}>{so.remark}</span> : '-'}
+                </Field>
+              </div>
+              <div data-testid="so-ship-info-field">
+                <Field label="Shipping Info">
+                  {so.ship_info ? <span title={so.ship_info}>{so.ship_info}</span> : '-'}
+                </Field>
+              </div>
               {/* What purchasing has been told to do about this order. Read-only in both
                   views, so nothing moves between them: it is a record of what happened,
                   not a field anybody sets here. Empty states as "-", never hidden. */}

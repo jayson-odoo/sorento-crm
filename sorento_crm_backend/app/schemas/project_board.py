@@ -621,6 +621,8 @@ class BoardContribution(BaseModel):
     #: #1362 item 5: AutoCount's own sales-order line number (`sales_order_lines.line_no`),
     #: `None` when AutoCount gave the line none. `line_no` above is the planning ADDRESS.
     so_line_no: Optional[int] = None
+    #: FULFIL-SO-REMARK: the line reads as a mockup line (note, line remark or heading says MOCK).
+    is_mockup: bool = False
     item_code: str
     qty: str
     #: What the customer ordered on this line, what has gone out, and what is still owed.
@@ -1246,6 +1248,8 @@ class BoardOrderStanding(BaseModel):
     #: OI-SPLIT-CONFIRM-POLISH: the core sales order's document date (`sales_orders.order_date`).
     so_date: Optional[date] = None
     customer_name: Optional[str] = None
+    #: FULFIL-SO-REMARK: `Sponsorship` / `Purchase Request` from the order's Shipping Info.
+    remark_type: Optional[str] = None
     line_count: int
     #: Always 0 from the server: the verdicts live in the board's client draft (13.4).
     decided_count: int = 0

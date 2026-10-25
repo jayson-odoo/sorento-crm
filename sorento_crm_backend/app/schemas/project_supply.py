@@ -615,6 +615,9 @@ class ConfirmManyOrderBody(BaseModel):
     #: neither confirmed, held back nor echoed, and a staged rejection outside it is left
     #: alone. What a Preview showed is what Confirm sends.
     only_line_ids: Optional[List[str]] = None
+    #: FULFIL-SO-REMARK (AC-10): the REMARK printed beside this SO in the purchasing email.
+    #: `None` = compute the default from the lines in the email, `""` = staff cleared it.
+    so_remark: Optional[str] = Field(None, max_length=100)
 
 
 class ConfirmManyBody(BaseModel):

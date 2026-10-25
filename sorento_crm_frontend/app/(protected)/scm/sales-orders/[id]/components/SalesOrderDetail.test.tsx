@@ -2691,3 +2691,51 @@ describe('SalesOrderDetail - AutoCount Cancel SO on the lines', () => {
     expect(cell).not.toHaveAttribute('title');
   });
 });
+
+describe('FULFIL-SO-REMARK (AC-17, AC-18): Remark, Shipping Info and the Mockup badge', () => {
+  const line = (id: string, sku: string, mockup_label: boolean) => ({
+    id, sku, product_name: `${sku} name`, qty_ordered: 1, qty_delivered: 0, uom: 'PCS',
+    warehouse_code: 'BRW-BB', line_status: 'open', required_date: '2026-08-30',
+    is_mockup: mockup_label, mockup_label,
+  });
+  const withData = (over: Record<string, unknown>) => {
+    useSalesOrder.mockReturnValue({
+      data: so(over as Partial<SalesOrder>), isLoading: false, isError: false,
+    });
+    return renderDetail();
+  };
+
+  it('AC-17: the Order card shows read-only Remark and Shipping Info', () => {
+    withData({ remark: 'Sponsorship', ship_info: 'SPONSORSHIP' });
+    const remark = screen.getByTestId('so-remark-field');
+    const ship = screen.getByTestId('so-ship-info-field');
+    expect(within(remark).getByText('Remark')).toBeInTheDocument();
+    expect(within(remark).getByText('Sponsorship')).toBeInTheDocument();
+    expect(within(ship).getByText('Shipping Info')).toBeInTheDocument();
+    expect(within(ship).getByText('SPONSORSHIP')).toBeInTheDocument();
+    expect(within(remark).queryByRole('textbox')).toBeNull();
+    expect(within(ship).queryByRole('textbox')).toBeNull();
+  });
+
+  it('AC-17: blank values show the page\'s dash marker', () => {
+    withData({ remark: '', ship_info: null });
+    expect(within(screen.getByTestId('so-remark-field')).getByText('-')).toBeInTheDocument();
+    expect(within(screen.getByTestId('so-ship-info-field')).getByText('-')).toBeInTheDocument();
+  });
+
+  it('AC-18: only lines with mockup_label true show the Mockup badge, after the sku', () => {
+    withData({ lines: [line('l-1', 'SRTWB1515', true), line('l-2', 'MSK11A', false)] });
+    openTab('Lines');
+    const badges = screen.getAllByTestId('so-line-mockup-badge');
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent('Mockup');
+    const cell = badges[0].closest('div') as HTMLElement;
+    expect(within(cell.parentElement as HTMLElement).getByText('SRTWB1515')).toBeInTheDocument();
+  });
+
+  it('AC-18: no badge when no line is labelled (is_mockup alone does not badge)', () => {
+    withData({ lines: [{ ...line('l-1', 'SRTWB1515', false), is_mockup: true }] });
+    openTab('Lines');
+    expect(screen.queryByTestId('so-line-mockup-badge')).toBeNull();
+  });
+});
