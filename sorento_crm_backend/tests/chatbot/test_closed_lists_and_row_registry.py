@@ -27,6 +27,12 @@ def test_r9_1_unit_a_registry_word_inside_an_and_row_drops_it_though_the_other_s
     assert _gate(["basin", "bidet"], ["ZZBASIN-BIDET"], {"basin"}) == []
 
 
+@pytest.mark.parametrize("tokens", [["bidet", "basin"], ["bidet", "basins"]], ids=["as typed", "plural"])
+def test_r9_1_unit_the_registry_word_need_not_be_the_first_token(tokens):
+    """ANY token of the row counts, not the first one (INDEX-HYBRID-R2 port review)."""
+    assert _gate(tokens, ["ZZBIDET-BASIN"], {"basin"}) == []
+
+
 def test_r9_2_unit_guards():
     # neither word in the registry: a code family, kept
     assert _gate(["qams", "bidet"], ["QAMS-BIDET"], {"basin"}) == ["QAMS-BIDET"]
