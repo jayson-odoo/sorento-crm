@@ -735,6 +735,62 @@ class TestFailedAndPendingArms:
         row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
         assert row.status == "failed"
 
+    def test_completed_image_read_with_nothing_on_it_replies_nothing_read(
+        self, session_factory, stub_parser, stub_access, media_pipeline
+    ):
+        """24 Oct incident: a photo turn 'completed' with 0 items and no caption, and
+        the parser then ran on empty text (check_stock, 0 entities). An empty read
+        now closes on the existing nothing-read wording; the parser is never called."""
+        from app.services.media_extract import wording
+
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(
+            {
+                "rendered_text": None,
+                "entities": [],
+                "attributes": [],
+                "notes": "The image file appears corrupted or unreadable.",
+                "truncated": False,
+                "needs_clarification": False,
+            }
+        )
+        parser_calls: list[str] = []
+        stub_parser(on_call=parser_calls.append)
+        stub_access()
+
+        result = engine_mod.run_turn(
+            _image_envelope(caption=None, contact_id=contact_id), session_factory=session_factory
+        )
+
+        assert (result.reply or {}).get("text") == wording.nothing_read()
+        assert parser_calls == [], "the parser must not run on an empty photo read"
+        stage = _media_intake_stage(_trace_of(session_factory, result.turn_id))
+        assert (stage.get("facts") or {}).get("status") == "completed"
+
+    def test_completed_image_read_with_only_a_caption_still_parses_the_caption(
+        self, session_factory, stub_parser, stub_access, media_pipeline
+    ):
+        contact_id = _fresh_contact_id()
+        _seed_media_contact(session_factory, contact_id)
+        _seed_media_limit(session_factory, contact_id=contact_id, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(
+            {"rendered_text": "check stock please", "entities": [], "attributes": []}
+        )
+        parser_calls: list[str] = []
+        stub_parser(on_call=parser_calls.append)
+        stub_access()
+
+        engine_mod.run_turn(
+            _image_envelope(caption="check stock please", contact_id=contact_id),
+            session_factory=session_factory,
+        )
+
+        assert len(parser_calls) == 1
+
     def test_pending_after_the_wait_replies_the_timeout_sentence(
         self, session_factory, stub_access, media_pipeline
     ):

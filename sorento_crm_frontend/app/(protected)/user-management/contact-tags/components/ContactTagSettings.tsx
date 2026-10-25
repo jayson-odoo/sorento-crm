@@ -11,10 +11,17 @@ import {
   CardTitle,
 } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
+import { Skeleton } from '@/components/ui/skeleton';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
 import { Switch } from '@/components/ui/switch';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { providerModelLabel } from '@/lib/ai/modelOptions';
+import type { ProviderModel } from '@/components/common/ProviderModelSelect';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { ProviderModelSelect } from '@/components/common/ProviderModelSelect';
 import {
   useSaveTagSettings,
   useSettingsCatalog,
@@ -207,9 +214,17 @@ function BoolRow({
   );
 }
 
-function Labelled({ label, children }: { label: string; children: ReactNode }) {
+function Labelled({
+  label,
+  children,
+  testId,
+}: {
+  label: string;
+  children: ReactNode;
+  testId?: string;
+}) {
   return (
-    <div className="flex flex-col gap-1 py-1">
+    <div data-testid={testId} className="flex flex-col gap-1 py-1">
       <span className="text-sm">{label}</span>
       {children}
     </div>
@@ -219,9 +234,10 @@ function Labelled({ label, children }: { label: string; children: ReactNode }) {
 function Pills({ labels }: { labels: string[] }) {
   return labels.length ? (
     <div className="flex flex-wrap gap-1">
-      {labels.map((l) => (
+      {/* By position: two ids can share a label (Removed), and a shared key leaves stale badges. */}
+      {labels.map((l, i) => (
         <Badge
-          key={l}
+          key={i}
           variant="secondary"
           appearance="light"
           className="font-normal"
@@ -310,6 +326,9 @@ interface BodyProps {
   set: (section: string, v: unknown) => void;
   editing: boolean;
   catalog: SettingsCatalog;
+  /** Set once a Save found a wrong number; the sentences then follow the typing. */
+  showNumberErrors?: boolean;
+  canEditAiModel?: boolean;
 }
 
 function GroupBody({
@@ -318,6 +337,8 @@ function GroupBody({
   set,
   editing,
   catalog,
+  showNumberErrors,
+  canEditAiModel,
 }: BodyProps & { id: string }) {
   switch (id) {
     case 'access_types':
@@ -376,6 +397,7 @@ function GroupBody({
     case 'chatbot': {
       const c = (s.chatbot ?? {}) as Record<string, unknown>;
       const upd = (k: string, v: unknown) => set('chatbot', put(c, k, v));
+      const llm = c.llm as ProviderModel | undefined;
       return (
         <div>
           {CHATBOT_BOOLS.map(([k, label]) => (
@@ -397,6 +419,21 @@ function GroupBody({
                 editing={editing}
                 placeholder="Not set"
               />
+            </Labelled>
+          ) : null}
+          {editing || c.llm !== undefined ? (
+            <Labelled label="AI model">
+              {editing ? (
+                <ProviderModelSelect
+                  value={llm ?? null}
+                  onChange={(next) => upd('llm', next ?? undefined)}
+                  disabled={canEditAiModel === false}
+                />
+              ) : (
+                <span className="text-sm">
+                  {llm ? providerModelLabel(llm.provider, llm.model) : null}
+                </span>
+              )}
             </Labelled>
           ) : null}
           {editing || c.tier !== undefined ? (
@@ -464,7 +501,15 @@ function GroupBody({
         <AgentFields s={s} set={set} editing={editing} catalog={catalog} />
       );
     case 'media':
-      return <MediaBody s={s} set={set} editing={editing} catalog={catalog} />;
+      return (
+        <MediaBody
+          s={s}
+          set={set}
+          editing={editing}
+          catalog={catalog}
+          showNumberErrors={showNumberErrors}
+        />
+      );
     case 'stock_visibility':
     case 'spec_visibility': {
       const v = (s[id] ?? {}) as Record<string, unknown>;
@@ -551,70 +596,91 @@ type Entry = {
   is_allowed: boolean;
 };
 
+const fieldId = (e: Omit<Entry, 'is_allowed'>) =>
+  `${e.agent_code}|${e.resource}|${e.field_key}`;
+
+/** One entry per field: a tag saved before the server refused repeats can still hold a field
+ * twice. Deny wins, as the server applies them (one tag's entries for a field are ANDed). */
+function uniqueAgentFields(entries: Entry[]): Entry[] {
+  const out = new Map<string, Entry>();
+  for (const e of entries) {
+    const seen = out.get(fieldId(e));
+    out.set(fieldId(e), {
+      ...e,
+      is_allowed: (seen?.is_allowed ?? true) && e.is_allowed,
+    });
+  }
+  return [...out.values()];
+}
+
+/** Allow and Deny lists: a tag entry overrides the agent's default either way. */
 function AgentFields({ s, set, editing, catalog }: BodyProps) {
-  const entries = (s.agent_fields ?? []) as Entry[];
-  const [pick, setPick] = useState('');
+  const entries = uniqueAgentFields((s.agent_fields ?? []) as Entry[]);
   const agents = catalog.agents ?? [];
   const agentName = (code: string) =>
     agents.find((a) => a.code === code)?.label ?? 'Removed agent';
   // The gated fields the server knows, each with the agent that owns it: no free text.
-  const gated = (catalog.agent_fields ?? []).map((f) => ({
-    value: `${f.agent_code}|${f.resource}|${f.field_key}`,
-    label: `${agentName(f.agent_code)}: ${f.field_key}`,
+  const known = (catalog.agent_fields ?? []).map((f) => ({
+    value: fieldId(f),
+    label: `${agentName(f.agent_code)}: ${f.label}`,
   }));
+  // A stored field no longer gated still needs a chip to remove it by.
+  const gated = [
+    ...known,
+    ...entries
+      .filter((e) => !known.some((o) => o.value === fieldId(e)))
+      .map((e) => ({
+        value: fieldId(e),
+        label: `${agentName(e.agent_code)}: Removed field`,
+      })),
+  ];
+  // Until the catalog arrives every stored field would read as removed.
+  if (!catalog.agent_fields) return null;
+  const ids = (allowed: boolean) =>
+    entries.filter((e) => e.is_allowed === allowed).map(fieldId);
+  const lists = { allow: ids(true), deny: ids(false) };
+  const write = (allow: string[], deny: string[]) => {
+    const entry = (id: string, is_allowed: boolean) => {
+      const [agent_code, resource, field_key] = id.split('|');
+      return { agent_code, resource, field_key, is_allowed };
+    };
+    set('agent_fields', [
+      ...allow.map((id) => entry(id, true)),
+      ...deny.map((id) => entry(id, false)),
+    ]);
+  };
+  if (!editing && !entries.length) return <Pills labels={[]} />;
   return (
     <div>
-      {entries.map((e, i) => (
-        <BoolRow
-          key={`${e.agent_code}.${e.resource}.${e.field_key}`}
-          id={`${e.agent_code}.${e.resource}.${e.field_key}`}
-          label={`${agentName(e.agent_code)}: ${e.field_key}`}
-          value={e.is_allowed}
-          onChange={(v) =>
-            set(
-              'agent_fields',
-              v === undefined
-                ? entries.filter((_, j) => j !== i)
-                : entries.map((x, j) =>
-                    j === i ? { ...x, is_allowed: v } : x,
-                  ),
-            )
-          }
-          editing={editing}
-          words={['Allow', 'Deny']}
-        />
-      ))}
-      {editing ? (
-        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <SearchableSelect
-            value={pick}
-            onChange={setPick}
-            options={gated}
-            placeholder="Gated field"
-            clearable
-          />
-          <Button
-            type="button"
-            variant="outline"
-            disabled={!pick}
-            onClick={() => {
-              const [agent_code, resource, field_key] = pick.split('|');
-              set('agent_fields', [
-                ...entries,
-                { agent_code, resource, field_key, is_allowed: true },
-              ]);
-              setPick('');
-            }}
+      {(['allow', 'deny'] as const).map((which) => {
+        const other = which === 'allow' ? lists.deny : lists.allow;
+        if (!editing && !lists[which].length) return null;
+        return (
+          <Labelled
+            key={which}
+            label={which === 'allow' ? 'Allow' : 'Deny'}
+            testId={`agent-fields-${which}`}
           >
-            Add field
-          </Button>
-        </div>
-      ) : null}
+            <PickList
+              value={lists[which]}
+              onChange={(v) =>
+                which === 'allow'
+                  ? write(v ?? [], lists.deny)
+                  : write(lists.allow, v ?? [])
+              }
+              // A field sits in one list: the other list's picks are not offered.
+              options={gated.filter((o) => !other.includes(o.value))}
+              editing={editing}
+              placeholder="None"
+            />
+          </Labelled>
+        );
+      })}
     </div>
   );
 }
 
-function MediaBody({ s, set, editing }: BodyProps) {
+function MediaBody({ s, set, editing, showNumberErrors }: BodyProps) {
   const media = (s.media ?? {}) as Record<string, Record<string, unknown>>;
   const updMod = (m: string, k: string, v: unknown) => {
     const body = put(media[m], k, v);
@@ -626,17 +692,11 @@ function MediaBody({ s, set, editing }: BodyProps) {
     return (
       <Labelled label={label}>
         {editing ? (
-          <Input
-            type="number"
+          <NumberInput
             min={0}
-            value={v ?? ''}
-            onChange={(e) =>
-              updMod(
-                m,
-                k,
-                e.target.value === '' ? undefined : Number(e.target.value),
-              )
-            }
+            value={v ?? null}
+            onValueChange={(n) => updMod(m, k, n ?? undefined)}
+            error={showNumberErrors ? mediaNumberError(v) : undefined}
           />
         ) : (
           <span className="text-sm">{v}</span>
@@ -695,13 +755,28 @@ function MediaBody({ s, set, editing }: BodyProps) {
 
 // ------------------------------------------------------------------ section
 
+/** A media override left empty inherits; a typed one must be 0 or more. */
+function mediaNumberError(v: number | undefined) {
+  return numberFieldError(v, { min: 0, optional: true });
+}
+
+/** True when any typed media number is wrong (the mapped value is a number or absent). */
+function mediaHasNumberError(settings: S): boolean {
+  const media = (settings.media ?? {}) as Record<string, Record<string, unknown>>;
+  return Object.values(media).some((body) =>
+    Object.values(body ?? {}).some(
+      (v) => typeof v === 'number' && mediaNumberError(v) !== undefined,
+    ),
+  );
+}
+
 /** Drop a group's empty maps; arrays stay (an empty list is a real "none"). */
 function cleaned(settings: S): S {
   const out: S = {};
   for (const [k, v] of Object.entries(settings)) {
     if (v === undefined || (isEmptyObject(v) && k !== 'media')) continue;
     if (k === 'media' && isEmptyObject(v)) continue;
-    out[k] = v;
+    out[k] = k === 'agent_fields' ? uniqueAgentFields(v as Entry[]) : v;
   }
   return out;
 }
@@ -725,6 +800,20 @@ const NEEDS_CATALOG: Record<string, keyof SettingsCatalog> = {
   stock_visibility: 'warehouses',
 };
 
+/** Groups the view names from the catalog: before it arrives an id has no name, not a removed one. */
+const NAMED_FROM_CATALOG = new Set([
+  'access_types',
+  'brands',
+  'companies',
+  'market_segments',
+  'field_reveals',
+  'agents',
+  'agent_fields',
+  'attachment_types',
+  'stock_visibility',
+  'spec_visibility',
+]);
+
 export default function ContactTagSettings({
   tag,
   editing,
@@ -739,13 +828,21 @@ export default function ContactTagSettings({
 }) {
   const [draft, setDraft] = useState<S>(() => ({ ...(tag.settings ?? {}) }));
   const [error, setError] = useState<string | null>(null);
-  const { catalog, data: loadedCatalog } = useSettingsCatalog();
+  const [showNumberErrors, setShowNumberErrors] = useState(false);
+  const {
+    catalog,
+    data: loadedCatalog,
+    error: catalogError,
+  } = useSettingsCatalog();
   const s: S = editing ? draft : (tag.settings ?? {});
   const save = useSaveTagSettings(tag.id, onDone);
+  const canEditAiModel = useHasPermission('system.ai_assistant_settings.edit');
   const notVisible = (id: string) =>
     !!loadedCatalog &&
     NEEDS_CATALOG[id] !== undefined &&
     catalog[NEEDS_CATALOG[id]] === undefined;
+  const namesPending = (id: string) =>
+    !editing && !loadedCatalog && NAMED_FROM_CATALOG.has(id);
 
   const setSection = (section: string, v: unknown) =>
     setDraft((d) => {
@@ -813,13 +910,25 @@ export default function ContactTagSettings({
                 </p>
               ) : on ? (
                 <div className="mt-2">
-                  <GroupBody
-                    id={g.id}
-                    s={s}
-                    set={setSection}
-                    editing={editing}
-                    catalog={catalog}
-                  />
+                  {namesPending(g.id) ? (
+                    catalogError ? (
+                      <p className="text-sm text-destructive">
+                        {(catalogError as Error).message}
+                      </p>
+                    ) : (
+                      <Skeleton className="h-5 w-40" />
+                    )
+                  ) : (
+                    <GroupBody
+                      id={g.id}
+                      s={s}
+                      set={setSection}
+                      editing={editing}
+                      catalog={catalog}
+                      showNumberErrors={showNumberErrors}
+                      canEditAiModel={canEditAiModel}
+                    />
+                  )}
                 </div>
               ) : !editing ? (
                 <p className="mt-1 text-sm text-muted-foreground">Not set</p>
@@ -852,6 +961,10 @@ export default function ContactTagSettings({
             <Button
               onClick={() => {
                 setError(null);
+                if (mediaHasNumberError(draft)) {
+                  setShowNumberErrors(true);
+                  return;
+                }
                 save.mutate(cleaned(draft), {
                   onError: (e: Error) => setError(e.message),
                 });

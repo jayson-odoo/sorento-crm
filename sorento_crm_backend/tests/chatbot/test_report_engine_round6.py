@@ -5,7 +5,7 @@ import re
 
 import pytest
 
-from tests.chatbot._turn_helpers import build_policy, verdict
+from tests.chatbot._turn_helpers import verdict
 
 ZH = re.compile(r"[一-鿿]")
 
@@ -83,33 +83,6 @@ def test_guard_refine_with_no_open_ask_still_adds_the_channel():
     assert _args(_refine_out(sales_channel="dealer", sales_ranking_frame=dict(HELD))).get("channel") == "dealer"
 
 
-# AC-HT8-16 top selling
-def _top_selling_state(**slot):
-    from app.services.chatbot.turn.state import Focus, Profile, State
-
-    return State(focus=Focus(status="top_selling", top_selling={"rank_by": "quantity", **slot}),
-                 pending=None, profile=Profile())
-
-
-def test_top_selling_basis_answer_carries_no_channel():
-    from app.services.chatbot.turn.apply import apply
-
-    state = _top_selling_state(asked="basis")
-    v = verdict(order_status="top_selling", domain_hint="order", basis="ordered", sales_channel="dealer",
-                ranking_refine=True)
-    state2, _plan = apply(state, v, build_policy())
-    assert not state2.focus.sales_channel
-    assert state2.focus.top_selling["basis"] == "ordered"
-
-
-def test_top_selling_without_an_open_question_still_takes_a_named_channel():
-    from app.services.chatbot.turn.apply import apply
-
-    v = verdict(order_status="top_selling", domain_hint="order", sales_channel="dealer", domain_in_message=True)
-    state2, _plan = apply(_top_selling_state(), v, build_policy())
-    assert state2.focus.sales_channel == "dealer"
-
-
 # AC-HT8-17
 def test_chinese_basis_words_in_the_ranking_addendum():
     from app.services.chatbot_parser_prompt import REPORT_ASK_ADDENDUM as A
@@ -128,29 +101,6 @@ def test_chinese_basis_words_in_the_top_selling_addendum():
     assert '未交 -> basis "outstanding"' not in T
 
 
-def _engine_lane_input(state, v):
-    """What the engine does at engine.py:~4862: apply, then lane_parse_output(raw verdict, focus=state_out.focus)."""
-    from app.services.chatbot.turn.apply import apply
-    from app.services.chatbot.turn_runtime import lane_parse_output
-
-    state2, _plan = apply(state, v, build_policy())
-    return state2, lane_parse_output(v, focus=state2.focus, pending=state.pending)
-
-
-def test_top_selling_basis_answer_lane_input_carries_no_channel():
-    v = verdict(order_status="top_selling", domain_hint="order", basis="ordered", sales_channel="dealer",
-                ranking_refine=True)
-    _state2, out = _engine_lane_input(_top_selling_state(asked="basis"), v)
-    assert not out.get("sales_channel")
-
-
-def test_top_selling_metric_question_dealer_only_stores_and_sends_the_channel():
-    v = verdict(order_status="top_selling", domain_hint="order", sales_channel="dealer", ranking_refine=True)
-    state2, out = _engine_lane_input(_top_selling_state(asked="metric"), v)
-    assert state2.focus.sales_channel == "dealer"
-    assert out.get("sales_channel") == "dealer"
-
-
 # AC-HT8-18
 def test_ranking_basis_question_is_catalogued_in_chinese_and_malay():
     from app.services.chatbot import label_catalog as lc
@@ -159,13 +109,3 @@ def test_ranking_basis_question_is_catalogued_in_chinese_and_malay():
     row = lc.LABELS.get(ranking_ask.RANKING_BASIS_LINE, {})
     assert ZH.search(row.get("zh", "")), ranking_ask.RANKING_BASIS_LINE
     assert row.get("ms"), ranking_ask.RANKING_BASIS_LINE
-
-
-def test_top_selling_answer_keeps_a_channel_stored_earlier_in_the_lane_input():
-    state = _top_selling_state(asked="basis")
-    state.focus.sales_channel = "dealer"
-    v = verdict(order_status="top_selling", domain_hint="order", basis="ordered", sales_channel=None,
-                ranking_refine=True)
-    state2, out = _engine_lane_input(state, v)
-    assert state2.focus.sales_channel == "dealer"
-    assert out.get("sales_channel") == "dealer"

@@ -1,5 +1,6 @@
 'use client';
 
+import { useRef } from 'react';
 import type React from 'react';
 import { ChevronDown, Copy, CornerUpLeft } from 'lucide-react';
 
@@ -15,6 +16,7 @@ import {
   DropdownMenuItem,
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
+import { copyTextToClipboard } from '@/lib/clipboard';
 import { useReducedMotion } from '@/lib/motion';
 import { toast } from '@/lib/toast';
 import { cn } from '@/lib/utils';
@@ -34,10 +36,11 @@ interface MessageBubbleActionsProps {
 }
 
 async function copyToClipboard(text: string) {
-  try {
-    await navigator.clipboard.writeText(text);
+  // Over plain http (a phone on the tailnet) the Clipboard API is missing; the shared
+  // helper falls back to execCommand.
+  if (await copyTextToClipboard(text)) {
     toast.success('Copied');
-  } catch {
+  } else {
     toast.error('Could not copy this message');
   }
 }
@@ -61,6 +64,14 @@ export default function MessageBubbleActions({
 }: MessageBubbleActionsProps) {
   const prefersReducedMotion = useReducedMotion();
   const swipe = useSwipeToReply({ enabled: enabled && !!onReply, onReply: () => onReply?.() });
+  // Reply moves the caret to the composer; the menu closing must not pull focus back to
+  // the bubble (Radix restores focus to the trigger after the select handler ran).
+  const replyChosen = useRef(false);
+  const keepComposerFocus = (event: Event) => {
+    if (!replyChosen.current) return;
+    replyChosen.current = false;
+    event.preventDefault();
+  };
 
   if (!enabled) {
     return (
@@ -78,7 +89,12 @@ export default function MessageBubbleActions({
   const items = (Item: typeof ContextMenuItem | typeof DropdownMenuItem) => (
     <>
       {onReply && (
-        <Item onSelect={() => onReply()}>
+        <Item
+          onSelect={() => {
+            replyChosen.current = true;
+            onReply();
+          }}
+        >
           <CornerUpLeft />
           Reply
         </Item>
@@ -142,13 +158,17 @@ export default function MessageBubbleActions({
                     <ChevronDown className="size-4" />
                   </button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">{items(DropdownMenuItem)}</DropdownMenuContent>
+                <DropdownMenuContent align="end" onCloseAutoFocus={keepComposerFocus}>
+                  {items(DropdownMenuItem)}
+                </DropdownMenuContent>
               </DropdownMenu>
             )}
             {children}
           </div>
         </ContextMenuTrigger>
-        {(onReply || hasCopy) && <ContextMenuContent>{items(ContextMenuItem)}</ContextMenuContent>}
+        {(onReply || hasCopy) && (
+          <ContextMenuContent onCloseAutoFocus={keepComposerFocus}>{items(ContextMenuItem)}</ContextMenuContent>
+        )}
       </ContextMenu>
     </>
   );

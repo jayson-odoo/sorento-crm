@@ -168,6 +168,16 @@ def _borrow_envelope(db: Session, contact_respond_id: str) -> dict[str, Any]:
     return envelope
 
 
+def _reply_to_block(reply_to: dict[str, Any]) -> dict[str, Any]:
+    """The console's `{id, text, source}` quote as the webhook's own `replyTo` block, for a
+    text turn and a media turn alike (a quoted voice note sets the bot's context too)."""
+    return {
+        "id": str(reply_to["id"]),
+        "sender": {"source": reply_to.get("source") or "n8n"},
+        "message": {"text": reply_to["text"]},
+    }
+
+
 def _build_envelope(
     base: dict[str, Any],
     *,
@@ -199,11 +209,7 @@ def _build_envelope(
     inner["messageId"] = f"console-{uuid.uuid4().hex[:12]}"
     inner["message"] = {"type": "text", "text": message_text}
     if reply_to is not None:
-        inner["replyTo"] = {
-            "id": str(reply_to["id"]),
-            "sender": {"source": reply_to.get("source") or "n8n"},
-            "message": {"text": reply_to["text"]},
-        }
+        inner["replyTo"] = _reply_to_block(reply_to)
     else:
         inner.pop("replyTo", None)
     envelope["message"]["event_type"] = "message.received"
@@ -290,9 +296,9 @@ def _customer_texts(body: dict[str, Any]) -> tuple[str, list[str]]:
 
     `actions` carries every `send_message` the turn composed, and on most lanes the first
     one is the SAME text as `reply.text` (the tail builds one from the other) - rendering
-    both would show a customer's answer twice. The escalation lane is the exception
-    (`includeResponse: false`): `reply.text` is empty and the two sentences live only in
-    `actions`, so nothing is dropped there.
+    both would show a customer's answer twice. The escalation lane builds its own message
+    (`includeResponse: false`) and the tail copies it into `reply.text` (CHAT-SPARSE,
+    never a blank reply), so it is the same case.
     """
     reply = body.get("reply") or {}
     reply_text = reply.get("text") or ""
@@ -474,6 +480,7 @@ def run_console_turn(
             prompt_version_id=prompt_version_id,
             run_id=run_id,
             media=media,
+            reply_to=reply_to,
         )
 
     base = _borrow_envelope(db, contact_respond_id)
@@ -629,6 +636,7 @@ def _run_console_media_turn(
     prompt_version_id: str | None,
     run_id: str,
     media: dict[str, Any],
+    reply_to: dict[str, Any] | None = None,
 ) -> ConsoleTurnResult:
     """Upload the console's bytes, build the SAME attachment envelope shape a real
     WhatsApp media message carries, and hand it to `run_turn` - the engine now runs the
@@ -678,6 +686,8 @@ def _run_console_media_turn(
         "ingress": "console",
         "console_origin": True,
     }
+    if reply_to is not None:
+        envelope_dict["message"]["message"]["replyTo"] = _reply_to_block(reply_to)
     if session_vars is not None:
         envelope_dict["previous_conversation_state"] = session_vars
     if prompt_version_id:

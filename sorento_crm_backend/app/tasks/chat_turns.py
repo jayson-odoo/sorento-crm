@@ -15,6 +15,8 @@ currently draining - forever, at whatever rate redis can accept.
 from __future__ import annotations
 
 import logging
+import threading
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 from typing import Any, Callable
 
@@ -61,6 +63,181 @@ def run_turn_job(
         result.stage,
     )
     return payload
+
+
+# CHAT-SPEED: queued turns run on a small pool of threads INSIDE the API process, not on RQ.
+# Measured on a dev stack (18 Oct): an RQ work-horse is forked per job and paid ~0.85 s of
+# cold start before the turn row existed, out of a 2.30 s saving; a warm thread pays ~0.01 s.
+# It is also how `/chat/turn` already runs (an API thread per n8n call), and it keeps the
+# turn off the single `worker_fast` process that `media` and `respond_io` share. Bounded:
+# past `DIRECT_TURN_THREADS` drains in flight a kick runs nothing and the row stays queued
+# until the inbox sweeper re-arms it (CHAT-INBOX-QUEUE).
+DIRECT_TURN_THREADS = 8
+_pool: ThreadPoolExecutor | None = None
+_pool_lock = threading.Lock()
+_in_flight = 0
+
+
+def _submit(func: Callable[..., Any], *args: Any) -> bool:
+    """Run `func(*args)` on the direct-turn pool. False, running nothing, when it is full."""
+    global _pool, _in_flight
+    with _pool_lock:
+        if _in_flight >= DIRECT_TURN_THREADS:
+            return False
+        if _pool is None:
+            _pool = ThreadPoolExecutor(
+                max_workers=DIRECT_TURN_THREADS, thread_name_prefix="direct-turn"
+            )
+        _in_flight += 1
+        pool = _pool
+
+    def _run() -> None:
+        global _in_flight
+        try:
+            func(*args)
+        except Exception:  # noqa: BLE001 - a thread has nobody to raise to
+            logger.exception("direct ingress: the turn failed")
+        finally:
+            with _pool_lock:
+                _in_flight -= 1
+
+    try:
+        pool.submit(_run)
+    except Exception:
+        with _pool_lock:
+            _in_flight -= 1
+        raise
+    return True
+
+
+def enqueue_direct_turn(
+    db: Any,
+    payload: dict[str, Any],
+    *,
+    contact_id: str,
+    traffic: str,
+    channel: str,
+    already_existed: bool,
+    hmac_signed: bool,
+) -> bool:
+    """CHAT-SPEED: start a webhook message's turn on the direct-turn pool, when the gate
+    allows it.
+
+    CHAT-INBOX-QUEUE: with the switch covering the contact, the message is put in the
+    contact's inbox queue (`inbox_queue.enqueue`) and a drain is kicked; the drain answers
+    it on the pool. Photos and voice notes are queued too.
+
+    Called by the respond.io webhook AFTER the message is stored. A doorway, like the rest of
+    this file: the gate lives in `app.services.chatbot.direct_ingress`. **Never raises**: the
+    webhook's answer to respond.io must not depend on this, and anything not queued here is
+    answered through another injector's copy. True when the message was queued.
+    """
+    try:
+        from app.services.chatbot import direct_ingress, inbox_queue
+
+        reason = direct_ingress.skip_reason(
+            db,
+            payload,
+            contact_id=contact_id,
+            traffic=traffic,
+            channel=channel,
+            already_existed=already_existed,
+            hmac_signed=hmac_signed,
+            queue_mode=True,
+        )
+        if reason is None and not direct_ingress._on_default_workspace(db, contact_id):
+            reason = "non_default_workspace"
+        if reason is None:
+            inbox_queue.enqueue(db, direct_ingress.envelope_for(payload, dict(payload.get("contact") or {})))
+            inbox_queue.kick(contact_id)
+        if reason is not None:
+            if reason not in ("off", "contact_not_listed"):
+                logger.info("direct ingress: not started for %s (%s)", contact_id, reason)
+            return False
+        return True
+    except Exception:  # noqa: BLE001 - see the docstring: the n8n copy is the fallback
+        logger.warning("direct ingress: could not start the turn for %s", contact_id, exc_info=True)
+        return False
+
+
+# CHAT-INBOX-QUEUE shutdown budget, inside gunicorn's `graceful_timeout` (150 s,
+# gunicorn.conf.py), counted FROM THE SIGNAL (IQ-43): SIGTERM at t = 0 stops the drains
+# taking rows at once (signal hook below); open requests and staff event streams get the
+# worker's `timeout_graceful_shutdown` (100 s, app/uvicorn_worker.py: a sync mode-off
+# `/chat/turn` has n8n's 90 s budget); the lifespan shutdown then waits for the drains until
+# t = INBOX_SHUTDOWN_BUDGET_SECONDS (140 s = 100 + 40), at least INBOX_SHUTDOWN_GRACE_SECONDS
+# when the lifespan starts late, never past 150 s; Docker's stop timeout (-t 160,
+# scripts/blue_green_deploy.sh) is above both.
+INBOX_SHUTDOWN_BUDGET_SECONDS = 140.0
+INBOX_SHUTDOWN_GRACE_SECONDS = 40.0
+INBOX_SHUTDOWN_CEILING_SECONDS = 148.0
+INBOX_SWEEPER_SWITCH = "CHATBOT_INBOX_SWEEPER_ENABLED"
+_SHUTDOWN_SIGNALS = ("SIGTERM", "SIGINT")
+
+
+def _install_shutdown_signal_hook() -> None:
+    """IQ-28: the inbox stops taking rows AT the signal, not once every open connection
+    has closed and the lifespan shutdown runs. Chained in front of the server's own
+    handler (uvicorn installs it before start-up), which still runs."""
+    import signal
+
+    if threading.current_thread() is not threading.main_thread():
+        return
+    for name in _SHUTDOWN_SIGNALS:
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        previous = signal.getsignal(sig)
+
+        def _on_signal(signum, frame, _previous=previous):
+            from app.services.chatbot import inbox_queue
+
+            try:
+                inbox_queue.begin_shutdown()
+            except Exception:  # noqa: BLE001 - the server's own handler must still run
+                logger.exception("chatbot inbox: begin_shutdown failed at the signal")
+            if callable(_previous):
+                _previous(signum, frame)
+            elif _previous == signal.SIG_DFL:
+                signal.signal(signum, signal.SIG_DFL)
+                signal.raise_signal(signum)
+
+        signal.signal(sig, _on_signal)
+
+
+def start_inbox_queue() -> None:
+    """App start-up: the shutdown signal hook, and this process's inbox sweeper (a pass at
+    once, then every 1.5 s) unless `CHATBOT_INBOX_SWEEPER_ENABLED` is off. The test suite
+    turns it off (`tests/conftest.py`): the sweep is global by contract, so a test process
+    would take other test workers' queued rows."""
+    import os
+
+    from app.services.chatbot import inbox_queue
+
+    _install_shutdown_signal_hook()
+    if os.getenv(INBOX_SWEEPER_SWITCH, "1").strip().lower() in ("0", "false", "off", "no"):
+        return
+    inbox_queue.start_sweeper()
+
+
+def stop_inbox_queue(grace_seconds: float = INBOX_SHUTDOWN_GRACE_SECONDS) -> bool:
+    """App shutdown: drains stop taking rows and finish the one they are in (its sender
+    POST and done mark included). True when they did within the grace. A process that
+    never ran the queue has nothing to stop."""
+    import time
+
+    from app.services.chatbot import inbox_queue
+
+    if not inbox_queue.in_use():
+        return True
+    inbox_queue.begin_shutdown()
+    now = time.monotonic()
+    began = inbox_queue.shutdown_began_at() or now
+    deadline = min(max(began + INBOX_SHUTDOWN_BUDGET_SECONDS, now + grace_seconds), began + INBOX_SHUTDOWN_CEILING_SECONDS)
+    idle = inbox_queue.wait_idle(max(0.0, deadline - now))
+    if not idle:
+        logger.error("chatbot inbox: drains still running %.0fs after shutdown began", time.monotonic() - began)
+    return idle
 
 
 def sweep_chat_facts(

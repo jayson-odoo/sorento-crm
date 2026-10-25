@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -139,7 +140,7 @@ class _FastPathResult:
 
 
 def _decide_meter_record_and_enqueue(
-    db: Session, payload: MediaProcessRequest
+    db: Session, payload: MediaProcessRequest, *, reread_abandoned: bool = False
 ) -> _FastPathResult:
     """PLAN 3.3 steps 1-9 plus the enqueue, as ONE synchronous unit.
 
@@ -200,7 +201,7 @@ def _decide_meter_record_and_enqueue(
     # failed enqueue) is the one place it can be recovered: the retry n8n
     # already sends is the sweep.
     if decision.usage is not None and reclaim_stranded_job(
-        db, decision.job, decision.usage, settings
+        db, decision.job, decision.usage, settings, reread_abandoned=reread_abandoned
     ):
         db.commit()
         fast.job_status, fast.job_error = _enqueue(db, decision.job, fast.job_id)
@@ -303,6 +304,89 @@ def _enqueue(
     job.rq_job_id = getattr(rq_job, "id", None)
     db.commit()
     return str(job.status), job.error
+
+
+def job_abandoned(job_id: str) -> bool:
+    """Did the worker abandon this job? (CHAT-INBOX-QUEUE, IQ-24 / IQ-35)
+
+    A work-horse killed mid-job (a worker recreate on deploy) leaves the row `running` (or
+    `queued`) with no result. Read off the row itself: `running` for longer than the
+    extraction ceiling plus `STRANDED_GRACE_SECONDS` is a read no worker will finish, with
+    no wait for RQ's registry cleanup. A row under an RQ job already marked `failed` is
+    proof too (a job that failed on its own writes its row first).
+    """
+    from rq.job import Job, JobStatus
+
+    from app.database import SessionLocal
+    from app.services.media_access_service import STRANDED_GRACE_SECONDS
+    from app.services.queue_service import redis_conn
+
+    db = SessionLocal()
+    try:
+        row = db.execute(
+            text(
+                "SELECT status, EXTRACT(EPOCH FROM (LOCALTIMESTAMP - started_at)) "
+                "FROM media_extraction_job WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": job_id},
+        ).first()
+        if row is None or row[0] in TERMINAL_STATUSES:
+            return False
+        ceiling = resolve_media_settings(db).extraction_timeout_seconds + STRANDED_GRACE_SECONDS
+    finally:
+        db.close()
+    if row[0] == "running" and row[1] is not None and float(row[1]) > ceiling:
+        return True
+    try:
+        return Job.fetch(job_id, connection=redis_conn).get_status(refresh=True) == JobStatus.FAILED
+    except Exception:  # noqa: BLE001 - an unreadable RQ job is not proof of anything
+        return False
+
+
+def read_age_seconds(job_id: str) -> float:
+    """Seconds since this read was first asked for (its ledger row), however many times
+    the job was enqueued since: the inbox drain's 10-minute cap counts from here."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        age = db.execute(
+            text(
+                "SELECT EXTRACT(EPOCH FROM (LOCALTIMESTAMP - u.created_at)) FROM media_extraction_job j "
+                "JOIN contact_media_usage u ON u.id = j.usage_id WHERE j.id = CAST(:i AS uuid)"
+            ),
+            {"i": job_id},
+        ).scalar()
+    finally:
+        db.close()
+    return float(age) if age is not None else 0.0
+
+
+def read_abandoned_job_again(job_id: str) -> bool:
+    """Put an abandoned job back on the queue, once per caller (IQ-24). True when it was
+    enqueued again. The task claims the row with a compare-and-set (`queued` ->
+    `running`), so the row goes back to `queued` first. Not metered again: the ledger row
+    of the first read stands (accepted, security review L3)."""
+    from app.database import SessionLocal
+
+    from app.services.media_access_service import claim_one_reread
+
+    db = SessionLocal()
+    try:
+        job = db.query(MediaExtractionJob).filter(MediaExtractionJob.id == job_id).first()
+        if job is None or job.status in TERMINAL_STATUSES or not claim_one_reread(job_id):
+            return False
+        job.status = "queued"
+        job.started_at = None
+        job.error = None
+        job.result = None
+        job.rq_job_id = None
+        db.commit()
+        logger.warning("media job %s was abandoned by its worker; reading it again", job_id)
+        status_now, _ = _enqueue(db, job, job_id)
+        return status_now != "failed"
+    finally:
+        db.close()
 
 
 async def _wait_for_worker(

@@ -74,10 +74,6 @@ TABLE4: dict[str, tuple[str, str]] = {
     "Which list would you like?": ("Senarai mana yang anda mahu?", "您要哪个列表？"),
     "Which one do you mean?": ("Yang mana satu anda maksudkan?", "您指的是哪一个？"),
     "Which kind of file do you need?": ("Jenis fail apa yang anda perlukan?", "您需要哪种文件？"),
-    "Which item do you mean? Reply with a rank number from 1 to {count}.": (
-        "Item mana yang anda maksudkan? Balas dengan nombor kedudukan dari 1 hingga {count}.",
-        "您指的是哪个项目？请回复 1 到 {count} 之间的排名数字。",
-    ),
     "Please reply with a number from {min} to {max}.": (
         "Sila balas dengan nombor dari {min} hingga {max}.",
         "请回复 {min} 到 {max} 之间的数字。",
@@ -114,10 +110,6 @@ TABLE4: dict[str, tuple[str, str]] = {
         "Maaf, saya menghadapi masalah memahami mesej itu. Sila cuba lagi sebentar lagi.",
         "抱歉，我暂时无法理解您的信息，请稍后再试。",
     ),
-    "Sorry, I didn't get that. What would you like to change in the ranking?": (
-        "Maaf, saya tidak faham. Apa yang anda mahu ubah dalam senarai kedudukan?",
-        "抱歉，我没听明白。您想如何调整排名？",
-    ),
     "Low stock report is not enabled for your account.": (
         "Laporan stok rendah tidak diaktifkan untuk akaun anda.",
         "您的账户未开通低库存报告。",
@@ -130,10 +122,6 @@ TABLE4: dict[str, tuple[str, str]] = {
     "Which customer is this outstanding report for?": (
         "Laporan tertunggak ini untuk pelanggan mana?",
         "这份未完成报告是哪个客户的？",
-    ),
-    "Which category do you mean? Reply with one code: {codes}": (
-        "Kategori mana yang anda maksudkan? Balas dengan satu kod: {codes}",
-        "您指的是哪个类别？请回复一个代码：{codes}",
     ),
     "I could not match any product code in that photo.": (
         "Saya tidak dapat memadankan sebarang kod produk dalam gambar itu.",

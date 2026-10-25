@@ -1493,7 +1493,7 @@ def _seed_route_shipment(db, *, status="in_transit"):
         id=_u(), category_code=f"{MARKER}R-C-{uuid.uuid4().hex[:6]}", category_name=f"{MARKER} cat"
     )
     uom = UnitOfMeasure(
-        id=_u(), uom_code=f"{MARKER[:4]}R{uuid.uuid4().hex[:5]}", uom_name=f"{MARKER} unit"
+        id=_u(), uom_code=f"{MARKER[:4]}R{uuid.uuid4().hex}", uom_name=f"{MARKER} unit"
     )
     db.add_all([cat, uom])
     db.flush()

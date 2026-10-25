@@ -26,10 +26,10 @@ export function ListBoardViewToggle({
       className={cn('rounded-lg border border-input bg-muted/30 p-0.5 shadow-none', className)}
       aria-label="View mode"
     >
-      <ToggleGroupItem value="list" aria-label="List view" className="size-9 rounded-md px-0 data-[state=on]:bg-background">
+      <ToggleGroupItem value="list" aria-label="List view" className="size-9 rounded-md px-0">
         <LayoutList className="size-4" />
       </ToggleGroupItem>
-      <ToggleGroupItem value="board" aria-label="Board view" className="size-9 rounded-md px-0 data-[state=on]:bg-background">
+      <ToggleGroupItem value="board" aria-label="Board view" className="size-9 rounded-md px-0">
         <LayoutGrid className="size-4" />
       </ToggleGroupItem>
     </ToggleGroup>

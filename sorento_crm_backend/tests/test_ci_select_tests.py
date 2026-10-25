@@ -11,6 +11,7 @@ one case runs against this checkout with #1411's real file list.
 """
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -21,6 +22,13 @@ BACKEND = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(BACKEND / "scripts"))
 
 import ci_select_tests as sel  # noqa: E402
+
+
+# setup-python on the self-hosted Mac runner links python3 to libpython through
+# LD_LIBRARY_PATH, so a subprocess env built from PATH alone drops it and python3
+# exits 127 ("libpython3.12.so.1.0: cannot open shared object file", PR gate run
+# 39138107134). Every such env carries it through.
+PY_ENV = {k: os.environ[k] for k in ("LD_LIBRARY_PATH",) if k in os.environ}
 
 P = "sorento_crm_backend/"
 
@@ -225,7 +233,7 @@ def test_cli_above_the_budget_writes_the_named_test_files_and_full_true(tmp_path
     proc = subprocess.run(
         [sys.executable, str(BACKEND / "scripts" / "ci_select_tests.py"), "--root", str(root), "--budget", "2"],
         input=f"{P}app/services/foo.py\n{P}tests/test_unrelated.py\n{P}tests/test_direct.py\n{P}tests/test_bad name.py\n",
-        env={"GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin"},
+        env={"GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin", **PY_ENV},
         capture_output=True,
         text=True,
     )
@@ -249,7 +257,7 @@ def test_cli_above_the_budget_with_scm_shards_running_leaves_tests_scm_out(tmp_p
         [sys.executable, str(BACKEND / "scripts" / "ci_select_tests.py"), "--root", str(root),
          "--budget", "2", "--scm", "true"],
         input=f"{P}app/services/foo.py\n{P}tests/scm/test_scm_direct.py\n{P}tests/test_direct.py\n",
-        env={"GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin"},
+        env={"GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin", **PY_ENV},
         capture_output=True,
         text=True,
     )
@@ -265,7 +273,7 @@ def test_cli_writes_the_outputs_and_logs_the_list(tmp_path):
     proc = subprocess.run(
         [sys.executable, str(BACKEND / "scripts" / "ci_select_tests.py"), "--root", str(root), "--scm", "false"],
         input=f"{P}app/services/qux.py\n{P}tests/test_direct.py\n",
-        env={"GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin"},
+        env={"GITHUB_OUTPUT": str(out), "PATH": "/usr/bin:/bin", **PY_ENV},
         capture_output=True,
         text=True,
     )

@@ -102,7 +102,7 @@ class TestTheWindowIsKept:
 
     def test_a_ranking_drilled_into_its_report_keeps_the_period(self):
         focus, trace = _run(
-            _carried(["sales"], status=apply_mod.TOP_SELLING_STATUS),
+            _carried(["sales"], status="sales_ranking"),
             verdict(domain_hint="order", intent_hint="check_order", domain_in_message=True, entities=[],
                     entity_op="reuse", order_status="outstanding"),
         )

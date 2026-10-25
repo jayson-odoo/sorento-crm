@@ -70,6 +70,66 @@ vi.mock('../../../../_shared/services/poIntakeService', async (importOriginal) =
   return { ...actual, listPOVersions: vi.fn(async () => []) };
 });
 
+// PM-SIMPLIFY: the next-step button reads the PO's versions, its schedule versions and its
+// sales orders; the Lines tab reads the PO's progress.
+const listPoVersions = vi.fn();
+const listScheduleVersions = vi.fn();
+const listProjectSalesOrders = vi.fn();
+const buildSalesOrders = vi.fn();
+vi.mock('../../../../_shared/services/projectSalesOrderService', async (importOriginal) => {
+  const actual = await importOriginal<
+    typeof import('../../../../_shared/services/projectSalesOrderService')
+  >();
+  return {
+    ...actual,
+    listPoVersions: (...args: unknown[]) => listPoVersions(...args),
+    listScheduleVersions: (...args: unknown[]) => listScheduleVersions(...args),
+    listProjectSalesOrders: (...args: unknown[]) => listProjectSalesOrders(...args),
+    buildSalesOrders: (...args: unknown[]) => buildSalesOrders(...args),
+  };
+});
+
+const getPurchaseOrderProgress = vi.fn();
+vi.mock('../../../../_shared/services/poProgressService', () => ({
+  getPurchaseOrderProgress: (...args: unknown[]) => getPurchaseOrderProgress(...args),
+  changeAreaDate: vi.fn(),
+}));
+
+function progressWith(description = 'Wall-hung WC') {
+  return {
+    purchase_order_id: 'po1',
+    schedule_version_id: null,
+    lines: [
+      {
+        key: 'pl1',
+        po_line_id: null,
+        line_no: 1,
+        product_id: null,
+        product_code: 'SRT-WC-01',
+        description,
+        uom: 'PCS',
+        ordered: '10',
+        scheduled: '0',
+        schedule_gap: '-10',
+        delivered: '0',
+        outstanding: '10',
+        next_delivery_date: null,
+        deliveries: [],
+      },
+    ],
+    areas: [],
+    totals: {
+      ordered: '10',
+      scheduled: '0',
+      delivered: '0',
+      outstanding: '10',
+      next_delivery_date: null,
+      schedule_short_lines: 1,
+      schedule_over_lines: 0,
+    },
+  };
+}
+
 vi.mock('@/app/(protected)/master-data-management/products/services/productService', () => ({
   getProductsForVariantSelect: vi.fn(async () => []),
 }));
@@ -160,7 +220,12 @@ async function openEditor() {
   // The lines have to be on screen first: the session seeds itself from them, and a Save
   // pressed before that seeding would carry a set the user never saw.
   await screen.findByText('Wall-hung WC');
-  fireEvent.click(await screen.findByRole('button', { name: /Edit the PO/i }));
+  // Edit lives behind the gear now: the header button is the next step (PM-SIMPLIFY AC-P2).
+  fireEvent.pointerDown(
+    await screen.findByRole('button', { name: 'Purchase order actions' }),
+    { button: 0, ctrlKey: false },
+  );
+  fireEvent.click(await screen.findByRole('menuitem', { name: /Edit the PO/i }));
   const save = await screen.findByRole('button', { name: 'Save purchase order' });
   await screen.findByRole('textbox', { name: 'Code on the PO on SRT-WC-01' });
   return save;
@@ -178,6 +243,10 @@ async function openGear() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  listPoVersions.mockResolvedValue([]);
+  listScheduleVersions.mockResolvedValue([]);
+  listProjectSalesOrders.mockResolvedValue({ data: [], total: 0, page: 1, limit: 1000 });
+  getPurchaseOrderProgress.mockResolvedValue(progressWith());
   searchParams = new URLSearchParams();
   getProject.mockResolvedValue(project());
   listPurchaseOrders.mockResolvedValue([po()]);
@@ -203,9 +272,9 @@ describe('PurchaseOrderDetailClient states', () => {
     expect(
       await screen.findByText(/This purchase order could not be loaded/i),
     ).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: /Back to POs/i })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: /Back to orders/i })).toHaveAttribute(
       'href',
-      '/project-sales/p1?tab=pos',
+      '/project-sales/p1?tab=orders',
     );
   });
 
@@ -239,8 +308,13 @@ describe('PurchaseOrderDetailClient states', () => {
     renderPage();
 
     expect(await screen.findByRole('heading', { name: 'PO-9001' })).toBeInTheDocument();
-    expect(screen.getByText('Documents')).toBeInTheDocument();
-    expect(screen.getByText('Lines')).toBeInTheDocument();
+    // Four line tabs, same order for every reader (AC-P1).
+    expect(screen.getAllByRole('tab').map((tab) => tab.textContent?.replace(/ \(\d+\)$/, ''))).toEqual([
+      'Lines',
+      'Deliveries',
+      'Sales orders',
+      'Documents',
+    ]);
     expect(
       screen.getByText(/You can read this purchase order but not change it/i),
     ).toBeInTheDocument();
@@ -408,7 +482,9 @@ describe('PurchaseOrderDetailClient edit view', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Cancel' }));
 
     expect(await screen.findByRole('heading', { name: 'PO-9001' })).toBeInTheDocument();
-    expect(screen.getByText('RM 900.00')).toBeInTheDocument();
+    // Back on the read: the Lines tab shows the progress grid again, not the editor.
+    expect(await screen.findByText('Wall-hung WC')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Ordered at on SRT-WC-01' })).toBeNull();
     expect(screen.queryByLabelText('PO number')).toBeNull();
     expect(updatePurchaseOrder).not.toHaveBeenCalled();
   });
@@ -447,15 +523,18 @@ describe('PurchaseOrderDetailClient edit view', () => {
  * same complaint about the row of buttons that competed with each other.
  */
 describe('PurchaseOrderDetailClient header', () => {
-  it('offers Edit the PO, and puts the upload behind the gear', async () => {
+  it('makes the next step the one button, and puts Edit and the uploads behind the gear', async () => {
     renderPage();
 
-    expect(await screen.findByRole('button', { name: /Edit the PO/i })).toBeInTheDocument();
-    // The upload used to be the header's solid button, competing with nothing to do.
-    expect(screen.queryByRole('button', { name: /Upload a document/i })).toBeNull();
+    // A hand-keyed PO with lines and no schedule: the schedule is next.
+    const next = await screen.findByTestId('po-next-step');
+    expect(next).toHaveTextContent('Upload delivery schedule');
+    expect(screen.queryByRole('button', { name: /^Edit the PO$/i })).toBeNull();
 
     const gear = await openGear();
-    expect(gear.getByRole('menuitem', { name: /Upload a document/i })).toBeInTheDocument();
+    expect(gear.getByRole('menuitem', { name: /Edit the PO/i })).toBeInTheDocument();
+    expect(gear.getByRole('menuitem', { name: /Upload a new PO version/i })).toBeInTheDocument();
+    expect(gear.getByRole('menuitem', { name: /Upload delivery schedule/i })).toBeInTheDocument();
     // Destructive last.
     const items = gear.getAllByRole('menuitem');
     expect(items[items.length - 1]).toHaveTextContent('Delete this PO');
@@ -523,6 +602,81 @@ describe('PurchaseOrderDetailClient header', () => {
 
     expect(
       await screen.findByRole('button', { name: 'Next purchase order' }),
+    ).toBeInTheDocument();
+  });
+});
+
+describe('PurchaseOrderDetailClient next step (PM-SIMPLIFY AC-P2)', () => {
+  it('sends an unconfirmed scanned PO to its review, carrying the way back', async () => {
+    listPoVersions.mockResolvedValue([
+      { id: 'pov1', version_no: 1, confirmed_at: null, created_at: '2026-07-24T00:00:00' },
+    ]);
+
+    renderPage();
+
+    const next = await screen.findByTestId('po-next-step');
+    await waitFor(() => expect(next).toHaveTextContent('Confirm PO'));
+    fireEvent.click(next);
+
+    expect(push).toHaveBeenCalledWith(
+      `/project-sales/p1/purchase-orders/pov1?from=${encodeURIComponent('/project-sales/p1/pos/po1')}`,
+    );
+  });
+
+  it('opens the build with split by as its only field once PO and schedule are confirmed', async () => {
+    listPoVersions.mockResolvedValue([
+      { id: 'pov1', version_no: 1, confirmed_at: '2026-07-25T00:00:00' },
+    ]);
+    listScheduleVersions.mockResolvedValue([
+      { id: 'sv1', version_no: 1, confirmed_at: '2026-07-26T00:00:00' },
+    ]);
+
+    renderPage();
+
+    const next = await screen.findByTestId('po-next-step');
+    await waitFor(() => expect(next).toHaveTextContent('Build sales orders'));
+    fireEvent.click(next);
+
+    const dialog = within(await screen.findByRole('dialog'));
+    expect(dialog.queryByText('Purchase order')).toBeNull();
+    expect(dialog.queryByText('Delivery schedule version')).toBeNull();
+    expect(dialog.getByText('Split by')).toBeInTheDocument();
+  });
+
+  it('counts the drafts still to publish', async () => {
+    listPoVersions.mockResolvedValue([
+      { id: 'pov1', version_no: 1, confirmed_at: '2026-07-25T00:00:00' },
+    ]);
+    listScheduleVersions.mockResolvedValue([
+      { id: 'sv1', version_no: 1, confirmed_at: '2026-07-26T00:00:00' },
+    ]);
+    listProjectSalesOrders.mockResolvedValue({
+      data: [{ status: 'draft' }, { status: 'blocked' }, { status: 'published' }],
+      total: 3,
+      page: 1,
+      limit: 1000,
+    });
+
+    renderPage();
+
+    const next = await screen.findByTestId('po-next-step');
+    await waitFor(() => expect(next).toHaveTextContent('Publish 2 sales orders'));
+  });
+
+  it('keeps a scanned PO to one line set: Edit covers the header, the lines stay read-only', async () => {
+    listPoVersions.mockResolvedValue([
+      { id: 'pov1', version_no: 1, confirmed_at: '2026-07-25T00:00:00' },
+    ]);
+
+    renderPage();
+    await screen.findByText('Wall-hung WC');
+    const gear = await openGear();
+    fireEvent.click(gear.getByRole('menuitem', { name: /Edit the PO/i }));
+
+    expect(await screen.findByLabelText('PO number')).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Code on the PO on SRT-WC-01' })).toBeNull();
+    expect(
+      screen.getByText(/The lines come from the uploaded document/i),
     ).toBeInTheDocument();
   });
 });

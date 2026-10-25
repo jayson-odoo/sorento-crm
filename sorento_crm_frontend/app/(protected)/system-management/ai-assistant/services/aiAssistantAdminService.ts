@@ -10,6 +10,7 @@ export interface AIAssistantConfig {
   api_key_masked: string | null;
   anthropic_api_key_masked: string | null;
   gemini_api_key_masked: string | null;
+  openai_api_key_masked: string | null;
   enabled_tools: string[];
   rag_enabled: boolean;
   is_enabled: boolean;
@@ -25,6 +26,7 @@ export interface AIAssistantConfigUpdatePayload {
   api_key?: string | null;
   anthropic_api_key?: string | null;
   gemini_api_key?: string | null;
+  openai_api_key?: string | null;
   enabled_tools: string[];
   rag_enabled: boolean;
   is_enabled: boolean;

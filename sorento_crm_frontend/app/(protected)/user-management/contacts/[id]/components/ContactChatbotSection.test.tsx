@@ -27,6 +27,7 @@ const memoryMutate = vi.fn();
 // dead. The empty memory fixture below keeps every test in this file - none of which
 // assert on facts/conversations/open orders - rendering the same empty states those
 // new cards fall back to, rather than an undefined crash.
+vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('../hooks/useContactChatbot', () => ({
   useContactChatbotProfile: (...a: unknown[]) => useContactChatbotProfile(...a),
   useSaveContactChatbotProfile: () => ({ mutate, isPending: false }),

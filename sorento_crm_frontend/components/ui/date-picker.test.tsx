@@ -41,6 +41,7 @@ describe('DatePicker typed input', () => {
     const input = screen.getByLabelText('Day') as HTMLInputElement;
 
     typeKeys(input, '2026-07-01');
+    fireEvent.blur(input);
 
     const days = onChange.mock.calls.map(([d]) => ymd(d));
     expect(days).not.toContainEqual([2026, 6, 30]);
@@ -54,6 +55,7 @@ describe('DatePicker typed input', () => {
     fireEvent.change(screen.getByLabelText('Day'), {
       target: { value: '31/02/2026' },
     });
+    fireEvent.blur(screen.getByLabelText('Day'));
     expect(onChange).not.toHaveBeenCalled();
   });
 
@@ -63,6 +65,7 @@ describe('DatePicker typed input', () => {
     fireEvent.change(screen.getByLabelText('Day'), {
       target: { value: '01/07/2026' },
     });
+    fireEvent.blur(screen.getByLabelText('Day'));
     expect(ymd(onChange.mock.calls[0][0])).toEqual([2026, 7, 1]);
   });
 });

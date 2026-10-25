@@ -64,6 +64,13 @@ function fileInput(): HTMLInputElement {
   return document.querySelector('input[type="file"]') as HTMLInputElement;
 }
 
+/** Pick a file, then Send: the picker stages first since CHAT-CONSOLE-UX. */
+async function attachAndSend(file: File) {
+  fireEvent.change(fileInput(), { target: { files: [file] } });
+  await screen.findByTestId('chatbot-console-staged');
+  fireEvent.click(screen.getByRole('button', { name: 'Send message' }));
+}
+
 function pngFile(name = 'photo.png'): File {
   return new File(['fake-bytes'], name, { type: 'image/png' });
 }
@@ -112,7 +119,7 @@ describe('ChatbotConsole media - image, pending then done', () => {
     });
 
     renderConsole();
-    fireEvent.change(fileInput(), { target: { files: [pngFile()] } });
+    await attachAndSend(pngFile());
 
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
     expect(await screen.findByText('Reading image...')).toBeInTheDocument();
@@ -128,11 +135,13 @@ describe('ChatbotConsole media - image, pending then done', () => {
 });
 
 describe('ChatbotConsole media - voice fallback', () => {
-  it('offers no record button in an environment with no MediaRecorder, and the attach input still takes audio', async () => {
+  it('keeps the record button in an environment with no MediaRecorder, says why on press, and the attach input still takes audio', async () => {
     renderConsole();
-    // jsdom has no MediaRecorder / getUserMedia, so useVoiceRecorder reports unavailable
-    // and the composer must not render a button that cannot work.
-    expect(screen.queryByLabelText(/record a voice message/i)).not.toBeInTheDocument();
+    // jsdom has no MediaRecorder / getUserMedia. CHAT-CONSOLE-UX: the mic stays visible
+    // (an absent button on the http Tailnet URL read as "voice is not a feature") and a
+    // press names the reason instead.
+    fireEvent.pointerDown(screen.getByRole('button', { name: /record voice message/i }), { pointerId: 1 });
+    await waitFor(() => expect(toastError).toHaveBeenCalled());
     expect(fileInput().accept).toContain('audio/*');
   });
 });
@@ -154,7 +163,7 @@ describe('ChatbotConsole media - retry chip', () => {
     });
 
     renderConsole();
-    fireEvent.change(fileInput(), { target: { files: [pngFile()] } });
+    await attachAndSend(pngFile());
 
     await waitFor(() => expect(postConsoleTurn).toHaveBeenCalledTimes(1));
     const retryChip = await screen.findByRole('button', { name: 'Retry' });

@@ -68,6 +68,9 @@ from app.models.project_so import (
     ACK_REJECTED,
     DECISION_ACTIVE,
     INQUIRY_CANCELLED,
+    INQUIRY_PARTLY_LINKED,
+    INQUIRY_PLACED,
+    INQUIRY_RAISED,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -91,6 +94,7 @@ from app.services.project_supply_service import (
 from app.services.scm import ladder_steps
 from app.services.scm import priority
 from app.services.scm import sales_agent_service
+from app.services.scm import spo_supply
 from app.services.scm import supply_assignment
 from app.services.scm.supply_origin import buy_origin_by_product
 from app.services.scm.planning_predicate import (
@@ -322,8 +326,26 @@ def _parse_iso_date(value: Optional[str]) -> Optional[date]:
         return None
 
 
+def _shown(value: Any) -> Any:
+    """The response as its viewer may read it: a masked delay becomes the published ETA.
+
+    `spo_supply.MaskedEta` already PRINTS as the published date, but a response model
+    serialises a date by its value, which is the delay.
+    """
+    if isinstance(value, spo_supply.MaskedEta):
+        return value.published
+    if isinstance(value, dict):
+        return {key: _shown(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_shown(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_shown(item) for item in value)
+    return value
+
+
 def _date_words(when: Optional[date]) -> str:
     """A date as it is said out loud: `3 Sep 2026`. Never ISO inside a sentence."""
+    when = spo_supply.shown_date(when)
     if when is None:
         return "an unstated date"
     return f"{when.day} {_MONTHS[when.month - 1]} {when.year}"
@@ -430,6 +452,9 @@ class _Row:
         #: `_LineFacts` (`ProjectSupplyService.demand_facts`) so the own-arrival credit's
         #: prefetch never pays a second query for a row this one already carries.
         "source_ref", "company_id",
+        #: OI-SPLIT-GUIDE (UAC F3, F10): the purchasing email's words for what the next
+        #: Confirm sends for this line (`_attach_saved_remarks`). `None` when it sends nothing.
+        "saved_remark",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -464,7 +489,7 @@ class _Row:
         self.borrow_candidates = []
         # The ATP reserve window verdict for this line (`ProjectSupplyService
         # .outside_reserve_window`), read once and then answered the same way by the sentence
-        # on the row, by its donor list and by its trail.
+        # on the row and by its trail. Not by its donor list (owner ruling (b), 22 Oct 2026).
         self.outside_reserve_window = False
         # Warehouse CODE -> id, for the locations this line's Reserve may name. A confirm
         # component addresses a warehouse by id and the screen reads a code, so the pair has
@@ -564,9 +589,11 @@ class _Row:
 class FulfilmentBoardService:
     """`GET /project-sales/fulfilment-planning/board`. A pure read."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, *, reveal_eta_delay: bool = True):
         self.db = db
-        self.supply = ProjectSupplyService(db)
+        # A viewer without `view_clearance` is shown the published ETA, never the delay
+        # (owner ruling 17 Oct 2026); the route says which this request's viewer is.
+        self.supply = ProjectSupplyService(db, reveal_eta_delay=reveal_eta_delay)
         # Per-request stock facts, filled by `_allocate` and read by `_cell`. Cached rather
         # than re-read because the cell states the same figures the allocation was computed
         # from - a second read could disagree with the proposal sitting next to it.
@@ -616,7 +643,15 @@ class FulfilmentBoardService:
 
     # ----------------------------------------------------------------- public
 
-    def build(
+    def build(self, so_numbers: Sequence[str], **kwargs: Any) -> Dict[str, Any]:
+        """`_build`, with every masked delay printed as its published ETA."""
+        return _shown(self._build(so_numbers, **kwargs))
+
+    def stock_detail(self, product_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """`_stock_detail`, with every masked delay printed as its published ETA."""
+        return _shown(self._stock_detail(product_id, *args, **kwargs))
+
+    def _build(
         self,
         so_numbers: Sequence[str],
         *,
@@ -651,6 +686,7 @@ class FulfilmentBoardService:
         }
         self._locations_by_row = {}
         self._buy_origin: Dict[str, Optional[str]] = {}
+        self._split_edited: set = set()
         if granularity not in GRANULARITIES:
             raise AppException(
                 status_code=422,
@@ -763,6 +799,13 @@ class FulfilmentBoardService:
         self._buy_origin = buy_origin_by_product(
             self.db, {row.product_id for row in rows if row.product_id}
         )
+        # OI-SPLIT-VIEW (UAC A2): the lines whose saved split edit the next Confirm applies,
+        # one read for the whole board. A never-adopted board has no mirror line to ask about.
+        mirror_ids = {row.project_line_id for row in rows if row.project_line_id}
+        if mirror_ids:
+            from app.services.project_line_split_service import LineSplitService
+
+            self._split_edited = LineSplitService(self.db).split_edited_line_ids(mirror_ids)
         if self._exclude_covered_line_ids:
             for row in rows:
                 if row.project_line_id and row.project_line_id in self._exclude_covered_line_ids:
@@ -849,6 +892,7 @@ class FulfilmentBoardService:
         self._attach_drafts(
             [*rows, *(row for row in cancelled_rows if row.cancel_open_oi_rows)]
         )
+        self._attach_saved_remarks([*rows, *cancelled_rows])
 
         cells: List[Dict[str, Any]] = []
         for bucket in buckets:
@@ -916,7 +960,7 @@ class FulfilmentBoardService:
 
     # ----------------------------------------------------- the stock drill-down
 
-    def stock_detail(
+    def _stock_detail(
         self,
         product_id: str,
         warehouse_id: Optional[str] = None,
@@ -1409,6 +1453,7 @@ class FulfilmentBoardService:
                     "sales_order_id": row.get("sales_order_id"),
                     "so_number": row["so_number"],
                     "line_no": row.get("line_no"),
+                    "so_line_no": row.get("so_line_no"),
                     "customer_name": names.get(row.get("customer_id") or ""),
                     "qty": qty_text(_dec(row["open_qty"])),
                     "required_date": row["required_date"],
@@ -2483,6 +2528,8 @@ class FulfilmentBoardService:
             # the pill still warns after a reload. Absent on a revision frozen before the
             # checkbox existed, which reads as false: nobody flagged it.
             "suspected_system_issue": bool(frozen.get("suspected_system_issue")),
+            # OI-SPLIT-GUIDE (UAC F32): read by the contribution's `confirmed_remark`.
+            "remark": frozen.get("remark"),
         }
 
     def _demand_pressure(
@@ -2935,13 +2982,10 @@ class FulfilmentBoardService:
             # captain's flow is "borrow instead of taking the reserved stock", and a line met
             # from its own Reserve had no donors on it, so Amend said nobody held any and
             # offered no Borrow. A need of 0 ranks the donors by availability alone.
-            # EXCEPT beyond the reserve window, where the two borrow rungs are not walked at
-            # all: offering the donors anyway is offering the one move the rule forbids.
-            row.borrow_candidates = (
-                []
-                if row.outside_reserve_window
-                else self._donors_for(borrow_cache, row, fact, bought)
-            )
+            # Beyond the reserve window too (owner ruling (b), 22 Oct 2026, BORROW-ZERO-FREE):
+            # the two borrow rungs are still not walked and the trail still names nobody
+            # (`_trail` reads the window itself), but a planner may pick a donor by hand.
+            row.borrow_candidates = self._donors_for(borrow_cache, row, fact, bought)
 
             # THE TRAIL FIRST, and the sources from what it offered. The Buy's own
             # sentence names where a person could still borrow from, and the only honest
@@ -2983,12 +3027,8 @@ class FulfilmentBoardService:
             row.outside_reserve_window = self.supply.outside_reserve_window(
                 fact, as_of=as_of
             )
-            row.borrow_candidates = (
-                []
-                if row.outside_reserve_window
-                else self._donors_for(
-                    borrow_cache, row, fact, row.proposed.get(BUY, _ZERO)
-                )
+            row.borrow_candidates = self._donors_for(
+                borrow_cache, row, fact, row.proposed.get(BUY, _ZERO)
             )
             # Amend on a covered line reads the same flags a proposal states: a discontinued
             # product needs a Buy reason whether or not the line was decided before.
@@ -3097,7 +3137,9 @@ class FulfilmentBoardService:
             )
             if order is None:
                 continue
-            supply = ProjectSupplyService(self.db)
+            supply = ProjectSupplyService(
+                self.db, reveal_eta_delay=self.supply.reveal_eta_delay
+            )
             lines = supply.lines_of(pso_id)
             wanted = {str(row.project_line_id) for row in rows}
             replacing = {str(line.id) for line in lines if str(line.id) in wanted}
@@ -4468,8 +4510,9 @@ class FulfilmentBoardService:
                 f"Nothing free{where} by the delivery date, so the quantity is bought."
             )
         elif taker.sales_order_id == row.sales_order_id:
+            taker_no = taker.so_line_no if taker.so_line_no is not None else taker.line_no
             reason = (
-                f"An earlier line of this sales order (line {taker.line_no}) took the free "
+                f"An earlier line of this sales order (line {taker_no}) took the free "
                 f"stock{where}, so the residual is bought."
             )
         elif taker.rank_score > row.rank_score:
@@ -5270,6 +5313,105 @@ class FulfilmentBoardService:
                 "proposed": entry.get("proposed"),
             }
 
+    def _attach_saved_remarks(self, rows: Sequence[_Row]) -> None:
+        """OI-SPLIT-GUIDE (UAC F3, F10, F11): what the purchasing email will say for each line
+        the next Confirm sends, read by the guided Confirm's review: a saved draft's words
+        (`saved_draft_remark`, the email's own `saved_line_remark`), and the email's cancel
+        word (`handover_remark("cancelled", ...)`) for a line the book cancelled with no
+        draft. Incoming stock names the SPOs arriving in time at the line's own location
+        (`_facts_for`'s rule). No extra statement on a board with no saved draft."""
+        from app.services.project_order_inquiry_service import (
+            ProjectOrderInquiryService,
+            handover_remark,
+            saved_draft_remark,
+        )
+
+        decisions = {
+            id(row): (row.draft or {}).get("decision") for row in rows if row.draft
+        }
+        missing = {
+            str(item.get("warehouse_id"))
+            for decision in decisions.values()
+            for item in [
+                *((decision or {}).get("reserve") or []),
+                *((decision or {}).get("borrow") or []),
+            ]
+            if item.get("warehouse_id")
+            and not (item.get("location") or item.get("warehouse_code"))
+        }
+        codes = (
+            {
+                str(w_id): code
+                for w_id, code in self.db.query(Warehouse.id, Warehouse.warehouse_code).filter(
+                    Warehouse.id.in_(list(missing))
+                )
+            }
+            if missing
+            else {}
+        )
+        incoming = [
+            row
+            for row in rows
+            if _dec((decisions.get(id(row)) or {}).get("timely_spo_qty")) > _ZERO
+        ]
+        spo = (
+            self.supply._spo_rows(
+                {str(row.product_id) for row in incoming if row.product_id},
+                {str(row.warehouse_id) for row in incoming if row.warehouse_id},
+            )
+            if incoming
+            else {}
+        )
+        # UAC F15, F17, F20: a saved Reject withdraws a confirmed line, and the email tells it
+        # only for the rows the press then cancels (the retire loop's own rule): a raised row,
+        # or a placed / partly linked one whose links are all the cascade's (`_cascade_only`).
+        # Links are read once, and only for such a Reject on a placed or partly linked row.
+        def _rejecting(row: _Row) -> bool:
+            return (decisions.get(id(row)) or {}).get("verdict") == "rejected" and bool(
+                row.decision
+            )
+
+        held = {
+            str((row.order_inquiry or {}).get("row_id"))
+            for row in rows
+            if _rejecting(row)
+            and (row.order_inquiry or {}).get("state") in (INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
+            and (row.order_inquiry or {}).get("row_id")
+        }
+        inquiries = ProjectOrderInquiryService(self.db)
+        links = inquiries._links_by_row(sorted(held)) if held else {}
+
+        def _withdraws(row: _Row) -> bool:
+            if not _rejecting(row):
+                return False
+            inquiry = row.order_inquiry or {}
+            if inquiry.get("state") == INQUIRY_RAISED:
+                return True
+            return inquiry.get("state") in (
+                INQUIRY_PLACED,
+                INQUIRY_PARTLY_LINKED,
+            ) and inquiries._cascade_only(links.get(str(inquiry.get("row_id")), []))
+
+        for row in rows:
+            decision = decisions.get(id(row))
+            if decision:
+                key = (str(row.product_id or ""), str(row.warehouse_id or ""))
+                row.saved_remark = saved_draft_remark(
+                    decision,
+                    location=row.location,
+                    codes=codes,
+                    spo_numbers=[
+                        ref.spo_number
+                        for ref in spo.get(key, [])
+                        if row.required_date is None
+                        or (ref.arrival_date is not None and ref.arrival_date <= row.required_date)
+                    ],
+                    buy_origin=self._buy_origin.get(str(row.product_id)) if row.product_id else None,
+                    withdraws_raised=_withdraws(row),
+                )
+            elif row.cancelled and not row.cancelled_at:
+                row.saved_remark = handover_remark("cancelled", row, None)
+
     def _contribution(self, row: _Row) -> Dict[str, Any]:
         return {
             #: THIS LINE's own location table (R1/B1): the same rows the cell's drawer shows,
@@ -5425,6 +5567,11 @@ class FulfilmentBoardService:
             #: An active decision already covers this line, and what it froze. A covered line
             #: is not proposed for again: everything above states what was DECIDED.
             "covered": row.covered,
+            #: OI-SPLIT-VIEW (UAC A2): a saved split edit the next Confirm applies.
+            "split_edited": bool(
+                row.project_line_id
+                and str(row.project_line_id) in getattr(self, "_split_edited", set())
+            ),
             "decision": row.decision,
             #: AC-DT-2 (`PLAN-oi-decision-trail-ui.md`): the same three facts flattened
             #: onto the line itself - the Confirmed chip's tooltip reads these rather
@@ -5438,6 +5585,11 @@ class FulfilmentBoardService:
             #: this is what somebody has settled but not committed, and a line can carry
             #: either, both or neither. Null when nobody has saved one.
             "draft": row.draft,
+            #: OI-SPLIT-GUIDE (UAC F3, F10): the email's words for what Confirm sends.
+            "saved_remark": row.saved_remark,
+            #: OI-SPLIT-GUIDE (UAC F32): the planner's own remark the active revision froze
+            #: for this line; the draft is gone after Confirm and this is where it lives.
+            "confirmed_remark": (row.decision or {}).get("remark") or None,
             #: The same saver facts flattened, for the tooltip (AC-DT-2) - `row.draft`
             #: already carries `saved_by`/`saved_at`, in the shape the draft PUT/GET
             #: round-trips; these are the same values under the trail's own names.
@@ -5622,6 +5774,10 @@ class FulfilmentBoardService:
                     #: order at all, never merely because no single line carried a mirror.
                     "project_sales_order_id": adopted_by_so.get(row.sales_order_id),
                     "so_number": row.so_number,
+                    #: OI-SPLIT-CONFIRM-POLISH: the core order's document date, the same value
+                    #: the split read's `so_date` carries, so the guided Confirm can print SO
+                    #: DATE before (or without) a split read.
+                    "so_date": row.order_date,
                     "customer_name": row.customer_name,
                     "line_count": 0,
                     "decided_count": 0,

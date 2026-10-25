@@ -10,7 +10,7 @@ from datetime import date, datetime
 from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, ConfigDict, Field, computed_field
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 from app.services.uuid_path_param import UUID_PATTERN
 
@@ -1291,6 +1291,14 @@ class ProjectQuotationLineUpdate(BaseModel):
     band_label: Optional[str] = Field(None, max_length=150)
     is_rate_only: Optional[bool] = None
 
+    @field_validator("quantity")
+    @classmethod
+    def _quantity_not_null(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        # Runs only when the key is sent: an explicit null would be read as 1 downstream.
+        if v is None:
+            raise ValueError("Quantity cannot be blank.")
+        return v
+
 
 class ProjectQuotationLineBulkItem(ProjectQuotationLineBase):
     """One line in a whole-set save (S10).
@@ -1563,6 +1571,8 @@ class ProjectPurchaseOrderResponse(BaseModel):
     # What still stands between this PO and its sales orders (see the serializer).
     status: Optional[str] = None
     po_confirmed: bool = False
+    # PM-SIMPLIFY: the PO came from an uploaded document (its lines are the document's).
+    has_document: bool = False
     schedule_confirmed: bool = False
     # Sales orders already OUT of this PO. Editing it stays allowed - corrections are the
     # normal case - but the screen has to be able to say so before somebody saves over it,
@@ -1582,6 +1592,11 @@ class ProjectPurchaseOrderResponse(BaseModel):
 
     # True only on the response to the create that actually moved the funnel (AC-F10).
     status_moved_to_po_received: bool = False
+
+    # PM-SIMPLIFY AC-O3: units ordered and delivered (AutoCount), next delivery.
+    ordered_units: Decimal = Decimal("0")
+    delivered_units: Decimal = Decimal("0")
+    next_delivery_date: Optional[date] = None
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None
@@ -1613,6 +1628,14 @@ class ProjectPurchaseOrderLineUpdate(BaseModel):
     uom: Optional[str] = None
     sort_order: Optional[int] = None
     notes: Optional[str] = None
+
+    @field_validator("quantity")
+    @classmethod
+    def _quantity_not_null(cls, v: Optional[Decimal]) -> Optional[Decimal]:
+        # Runs only when the key is sent: an explicit null would be read as 1 downstream.
+        if v is None:
+            raise ValueError("Quantity cannot be blank.")
+        return v
 
 
 class ProjectPurchaseOrderLineWrite(ProjectPurchaseOrderLineBase):

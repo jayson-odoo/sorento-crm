@@ -57,10 +57,12 @@ describe('PullScopeDialog', () => {
     render(<PullScopeDialog open onOpenChange={vi.fn()} onPull={onPull} />);
 
     fireEvent.change(screen.getByLabelText('From day'), { target: { value: '' } });
+    fireEvent.blur(screen.getByLabelText('From day'));
     expect(screen.getByRole('button', { name: 'Pull' })).toBeDisabled();
     expect(screen.getByText('Set both days, or clear both.')).toBeInTheDocument();
 
     fireEvent.change(screen.getByLabelText('To day'), { target: { value: '' } });
+    fireEvent.blur(screen.getByLabelText('To day'));
     fireEvent.click(screen.getByRole('button', { name: 'Pull' }));
 
     expect(onPull).toHaveBeenCalledWith(null);
@@ -81,7 +83,9 @@ describe('PullScopeDialog', () => {
     expect(screen.getByRole('heading', { name: 'Pull goods receipt notes from AutoCount' })).toBeInTheDocument();
     expect(screen.queryByText(/Leave both empty/)).not.toBeInTheDocument();
     fireEvent.change(screen.getByLabelText('From day'), { target: { value: '' } });
+    fireEvent.blur(screen.getByLabelText('From day'));
     fireEvent.change(screen.getByLabelText('To day'), { target: { value: '' } });
+    fireEvent.blur(screen.getByLabelText('To day'));
     expect(screen.getByRole('button', { name: 'Pull' })).toBeDisabled();
     expect(screen.getByText('Set both days.')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Pull' }));

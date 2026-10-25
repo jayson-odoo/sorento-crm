@@ -622,13 +622,13 @@ def test_export_carries_row_level_taken_and_remaining_matching_the_grid(api):
             break
 
     assert target_row is not None, "row_po_match not found in any export sheet"
-    # Review round (22 Sep): APPENDED after ACKNOWLEDGED, never inserted before it - the
-    # columns purchasing's own filters already point at keep the positions they have had.
-    assert headers[10] == "ACKNOWLEDGED", headers
-    assert headers[11] == "TAKEN", headers
-    assert headers[12] == "REMAINING", headers
-    assert target_row[11] == "10", target_row
-    assert target_row[12] == "0", target_row
+    # Review round (22 Sep): APPENDED after ACKNOWLEDGED. OI-RESERVE-PILL-QTY round 2 (owner,
+    # 21 Oct 2026) put REQUESTED RESERVE / RESERVED beside QTY, so the three are read by
+    # heading; their order relative to each other is unchanged.
+    at = headers.index("ACKNOWLEDGED")
+    assert list(headers[at : at + 3]) == ["ACKNOWLEDGED", "TAKEN", "REMAINING"], headers
+    assert target_row[headers.index("TAKEN")] == "10", target_row
+    assert target_row[headers.index("REMAINING")] == "0", target_row
 
 
 def test_export_taken_and_remaining_include_reserved_qty(api):
@@ -655,6 +655,7 @@ def test_export_taken_and_remaining_include_reserved_qty(api):
 
     target_row = None
     for sheet in book.worksheets:
+        headers = [cell.value for cell in sheet[2]]
         for values in sheet.iter_rows(min_row=3, values_only=True):
             if values[2] == row_reserved.item_code:
                 target_row = values
@@ -663,8 +664,8 @@ def test_export_taken_and_remaining_include_reserved_qty(api):
             break
 
     assert target_row is not None, "row_reserved not found in any export sheet"
-    assert target_row[11] == "90", target_row
-    assert target_row[12] == "49", target_row
+    assert target_row[headers.index("TAKEN")] == "90", target_row
+    assert target_row[headers.index("REMAINING")] == "49", target_row
 
 
 # --------------------------------------------------------------- delivery range

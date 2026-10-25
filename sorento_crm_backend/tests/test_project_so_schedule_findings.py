@@ -45,7 +45,7 @@ def _sorento(db) -> str:
 
 
 def _product(db, code_hint: str) -> Product:
-    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{_uid()[:4]}", uom_name="Piece")
+    uom = UnitOfMeasure(id=_uid(), uom_code=f"ZZT{uuid.uuid4().hex}", uom_name="Piece")
     category = ProductCategory(
         id=_uid(), category_code=f"ZZT-{_uid()[:8]}", category_name=f"{MARKER} cat"
     )
@@ -192,6 +192,8 @@ def _po_and_schedule_with_batch_finding(db, project):
         po_version_id=po_version.id,
         extraction_state="done",
         schedule_date=date(2026, 1, 19),
+        # D3: sales orders build only from a confirmed schedule.
+        confirmed_at=date.today(),
     )
     db.add(version)
     db.flush()

@@ -21,6 +21,7 @@ import logging
 import uuid
 from datetime import date
 from dataclasses import dataclass, field
+from decimal import Decimal
 from typing import Any, Dict, Literal, Optional, Tuple
 
 from fastapi import APIRouter, Depends, Query
@@ -58,9 +59,11 @@ from app.services import project_service as projects
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_classification_evidence import classification_evidence
+from app.services.field_access import staff_may_see_clearance
 from app.services import confirm_simulation  # noqa: F401 - registers the engine commit guard
 from app.services import project_line_draft_service
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
+from app.services.project_line_split_service import display_line_nos
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
 from app.services.project_so_draft_service import ProjectSODraftService
 from app.services.project_so_reconciliation_service import (
@@ -346,7 +349,9 @@ def get_planning_board(
     """
     try:
         numbers = [part.strip() for part in (orders or "").split(",") if part.strip()]
-        body = FulfilmentBoardService(db).build(
+        body = FulfilmentBoardService(
+            db, reveal_eta_delay=staff_may_see_clearance(db, _user)
+        ).build(
             numbers,
             granularity=granularity,
             as_of=as_of,
@@ -501,8 +506,17 @@ def _run_confirm_many(
     supply = ProjectSupplyService(db)
     any_per_order = any(entry.batch_id for entry in payload.orders)
 
+    def batch_of_entry(entry):
+        return entry.batch_id or (None if any_per_order else payload.batch_id)
+
+    def prepare_one(order, entry):
+        # OI-SPLIT-VIEW (UAC A4, A11, A12): every saved split edit of the order rides along,
+        # added once before the hold-back so a refused one is held back like any named line;
+        # beside a pending AutoCount batch too, as a line the batch does not carry.
+        return _with_split_edits(db, supply, order, entry)
+
     def write_one(order, entry):
-        resolved_batch_id = entry.batch_id or (None if any_per_order else payload.batch_id)
+        resolved_batch_id = batch_of_entry(entry)
         # `_confirm_with_possible_rejects` opens its OWN `UndoJournal` per branch (S1,
         # #978: `confirm_many` commits or rolls back each entry on its own, so a journal
         # opened HERE - inside that per-order try - never survives past this order's own
@@ -533,10 +547,9 @@ def _run_confirm_many(
         actor_user_id=actor_id,
         assert_can_act=lambda session, order: _assert_can_act_on(session, order, current_user),
         write=write_one,
+        prepare=prepare_one,
         # #1362 hold-back: an order answering a planning-change batch is applied whole.
-        can_hold_back=lambda entry: not (
-            entry.batch_id or (None if any_per_order else payload.batch_id)
-        ),
+        can_hold_back=lambda entry: not batch_of_entry(entry),
         preview=preview,
         raw_errors=raw_errors,
         describe_writes=describe_writes,
@@ -854,6 +867,7 @@ def _simulate_on(sim: Session, payload: SimulateConfirmBody, current_user: dict)
         )
         return {
             "line_no": mirror.line_no if mirror is not None else None,
+            "so_line_no": display_line_nos(sim, [line_id]).get(line_id),
             "item_code": code,
             "project_line_id": line_id,
             "error": error,
@@ -963,7 +977,9 @@ def get_stock_detail(
         # repeated params, deduplicates, and refuses a value that is not an id by naming the
         # parameter - rather than handing the typo to the query.
         wanted = parse_uuid_list([line_ids], param_name="line_ids") or []
-        return FulfilmentBoardService(db).stock_detail(
+        return FulfilmentBoardService(
+            db, reveal_eta_delay=staff_may_see_clearance(db, _user)
+        ).stock_detail(
             product_id, warehouse_id, line_ids=wanted, group=group
         )
     except Exception as exc:
@@ -1171,7 +1187,10 @@ def _reasons_for_rejected_lines(
                 code="board_line_reject_reason_required",
             )
         reasons[str(project_line_id)] = reason
-        sentences.append(f"Line {mirror.line_no} rejected: {reason}")
+        sentences.append(
+            f"Line {display_line_nos(db, [str(project_line_id)]).get(str(project_line_id))} "
+            f"rejected: {reason}"
+        )
     return reasons, "; ".join(sentences)
 
 
@@ -1194,6 +1213,24 @@ def _restamp_superseded_reason(db: Session, before_id, reason: str) -> None:
     if decision is not None:
         decision.superseded_reason = reason
         db.flush()
+
+
+def _applied_rows(db: Session, batch_id: str, order) -> list:
+    """This order's rows of `batch_id` an apply has carried out (PLAN-BATCH-HELD-CANCEL)."""
+    from app.models.planning_change import PlanningChangeRow
+    from app.services.planning_change_service import PLANNING_CHANGE_STATE_APPLIED
+
+    # The app session runs `autoflush=False`: what the apply just wrote is pending ORM state.
+    db.flush()
+    return (
+        db.query(PlanningChangeRow)
+        .filter(
+            PlanningChangeRow.batch_id == batch_id,
+            PlanningChangeRow.project_sales_order_id == str(order.id),
+            PlanningChangeRow.applied_state == PLANNING_CHANGE_STATE_APPLIED,
+        )
+        .all()
+    )
 
 
 def _withdrawal_only_result(
@@ -1267,16 +1304,83 @@ def _withdrawn_entries(db: Session, service: ProjectSupplyService, order, line_i
         if product_ids
         else {}
     )
+    so_nos = display_line_nos(db, list(by_id))
     return [
         {
             "project_line_id": str(line_id),
             "line_no": by_id[str(line_id)].line_no if str(line_id) in by_id else None,
+            "so_line_no": so_nos.get(str(line_id)),
             "item_code": codes.get(str(by_id[str(line_id)].product_id or ""))
             if str(line_id) in by_id
             else None,
         }
         for line_id in line_ids
     ]
+
+
+def _with_split_edits(db: Session, service: ProjectSupplyService, order, payload: Any) -> Any:
+    """OI-SPLIT-VIEW (UAC A4, A5): the payload plus every line of the order whose saved split
+    edit a Confirm applies (`LineSplitService.split_edited_line_ids`, the set the board's
+    `split_edited` flag reads) and that the body does not already name, withdraw, cancel or
+    scope out (`only_line_ids`). Each is re-posted with its active decision's composition (a
+    whole Buy: only such a line's plan becomes purchasing's rows), so the engine acts on the
+    edited plan exactly as for a named line (#1749 AC-G15).
+
+    A11: run ONCE per order, BEFORE the hold-back (`_write_holding_back`), never inside its
+    retry: an added line is then an ordinary named line the hold-back can drop when the
+    recheck refuses it, and a held-back line is never added back. Confirm calls it before
+    its hold-back; Confirm all and Simulate through `confirm_many`'s `prepare`.
+
+    A12: a press answering a pending AutoCount batch adds them too. A line the batch names
+    pending is never split-edited (A9), so what is added is a line the batch does not carry:
+    `_confirm_a_planning_change` posts it beside the batch (`extra`), the batch's undecided
+    rows stay pending and the batch stays open."""
+    from app.schemas.project_supply import ConfirmLine
+    from app.services.project_line_split_service import LineSplitService
+
+    lines = list(getattr(payload, "lines", None) or [])
+    taken = {str(line.project_line_id) for line in lines}
+    taken |= {str(x) for x in (getattr(payload, "rejected_line_ids", None) or [])}
+    taken |= {
+        str(x.project_line_id) for x in (getattr(payload, "cancelled_lines", None) or [])
+    }
+    edited = LineSplitService(db).split_edited_line_ids(
+        str(line.id) for line in service.lines_of(str(order.id))
+    ) - taken
+    only = getattr(payload, "only_line_ids", None)
+    if only is not None:
+        edited &= {str(x) for x in only}
+    if not edited:
+        return payload
+    active = service.active_decision(str(order.id))
+    snapshots = {
+        str(snapshot.get("project_line_id") or ""): snapshot
+        for snapshot in ((active.line_snapshots if active is not None else None) or [])
+    }
+    added = []
+    for line_id in sorted(edited):
+        snapshot = snapshots.get(line_id)
+        if snapshot is None:
+            continue
+        added.append(
+            ConfirmLine(
+                project_line_id=line_id,
+                buy_qty=sum(
+                    (
+                        Decimal(str(component.get("qty") or 0))
+                        for component in snapshot.get("components") or []
+                        if component.get("kind") == "buy"
+                    ),
+                    Decimal("0"),
+                ),
+                buy_reason=snapshot.get("buy_reason"),
+                amend_reason=snapshot.get("amend_reason"),
+                suspected_system_issue=bool(snapshot.get("suspected_system_issue")),
+            )
+        )
+    if not added:
+        return payload
+    return payload.model_copy(update={"lines": lines + added})
 
 
 def _confirm_with_possible_rejects(
@@ -1331,35 +1435,12 @@ def _confirm_with_possible_rejects(
             ),
             code="board_reject_not_supported_in_batch",
         )
-    # SO-CANCEL-LINE: whole lines transferred to Cancel SO. Refused beside a batch BEFORE
-    # anything is looked up, for the same reason as the withdrawal above.
+    # SO-CANCEL-LINE: whole lines transferred to Cancel SO. PLAN-BATCH-HELD-CANCEL (owner
+    # ruling (a), 21 Oct 2026): a cancel rides along with a pending change even when the
+    # batch names its line - the press transfers it BEFORE the apply below, so the apply
+    # closes that line's row ("the sales-order line is cancelled") instead of composing it.
+    # Holding it waited for an apply nothing ever ran (SO394881).
     cancelled_lines = list(getattr(payload, "cancelled_lines", None) or [])
-    if batch_id and cancelled_lines:
-        # A cancel rides along with a pending change unless the batch NAMES that line.
-        from app.models.planning_change import PlanningChangeRow
-
-        named_by_batch = (
-            db.query(PlanningChangeRow.project_line_id)
-            .filter(
-                PlanningChangeRow.batch_id == batch_id,
-                # A superseded row is retired (the board's `isRetiredChangeRow`): it names nothing.
-                PlanningChangeRow.applied_state != "superseded",
-                PlanningChangeRow.project_line_id.in_(
-                    [str(x.project_line_id) for x in cancelled_lines]
-                ),
-            )
-            .first()
-        )
-        if named_by_batch is not None:
-            raise AppException(
-                status_code=422,
-                message=(
-                    "A pending planning change names this line, so it cannot also be "
-                    "transferred to Cancel SO. Apply the change first, then transfer the "
-                    "line and confirm again."
-                ),
-                code="board_cancel_not_supported_in_batch",
-            )
     both = named & {str(x.project_line_id) for x in cancelled_lines}
     if both:
         raise AppException(
@@ -1377,12 +1458,24 @@ def _confirm_with_possible_rejects(
         else []
     )
     if batch_id:
+        applied_before = {row.id for row in _applied_rows(db, batch_id, order)}
         with UndoJournal(db) as journal:
             body = confirm_batch()
         if body is None:
             body = _withdrawal_only_result(db, service, order, [])
         else:
             _attach_undo_journal(db, order, journal, before_id)
+        # PLAN-BATCH-HELD-CANCEL: what this press did to the AutoCount change, said by the
+        # rows it applied, so the board never claims an apply that did not happen.
+        applied_now = [
+            row for row in _applied_rows(db, batch_id, order) if row.id not in applied_before
+        ]
+        body["planning_change_applied"] = bool(applied_now)
+        body["lines_retired"] = [
+            {"line_no": row.line_no, "item_code": row.item_code}
+            for row in sorted(applied_now, key=lambda r: r.line_no or 0)
+            if row.kind == "cancelled"
+        ]
     elif getattr(payload, "lines", None):
         with UndoJournal(db) as journal:
             body = service.confirm(
@@ -1481,9 +1574,13 @@ def confirm_supply(
         # refuses the whole order. The lines the recheck refuses are held back and named, and
         # the rest confirm - the same seam Confirm all uses (#1362). A planning-change press
         # names its lines on purpose, so it is never applied in part.
+        # OI-SPLIT-VIEW (UAC A4, A11, A12): every saved split edit of the order rides along,
+        # named or not, added once before the hold-back so a refused one is held back like
+        # any line; beside a pending AutoCount batch too, as a line the batch does not carry.
+        posted = _with_split_edits(db, service, order, payload)
         body, _entry, held = service._write_holding_back(
             order,
-            payload,
+            posted,
             lambda target, entry: _confirm_with_possible_rejects(
                 db,
                 service,
@@ -1562,7 +1659,10 @@ def _confirm_a_planning_change(
     """
     from app.models.planning_change import PlanningChangeRow
     from app.services import planning_change_service
-    from app.services.planning_change_service import PLANNING_CHANGE_STATE_APPLIED
+    from app.services.planning_change_service import (
+        PLANNING_CHANGE_STATE_APPLIED,
+        PLANNING_CHANGE_STATE_PENDING,
+    )
     from app.services.project_supply_service import SupplyLinesRefused
 
     batch_id = payload.batch_id
@@ -1591,6 +1691,12 @@ def _confirm_a_planning_change(
     # planning change could be confirmed", or confirmed the rest of the order WITHOUT the
     # line. Those lines are ordinary decisions now: they ride in `extra`, the same as a
     # line the batch never named.
+    pending_before = {
+        row.id for row in rows if row.applied_state == PLANNING_CHANGE_STATE_PENDING
+    }
+    # PLAN-BATCH-HELD-CANCEL: an `added` row names its line once the order carries it, so a
+    # press deciding that line routes through the row (and applies it) instead of `extra`.
+    planning_change_service.link_rows_to_mirror_lines(db, rows)
     current_revision = planning_change_service.current_revision_no(db, str(order.id))
     by_line = {
         str(row.project_line_id): row
@@ -1635,9 +1741,18 @@ def _confirm_a_planning_change(
     ]
     outcome = (result.get("outcomes") or {}).get(str(order.id))
     confirmed = (outcome or {}).get("confirm_result")
-    if confirmed is None and not failed and getattr(payload, "cancelled_lines", None):
-        # The batch press simply had nothing to confirm and the press carried Cancel SO
-        # lines: the caller answers with the cancel-only result (no revision).
+    applied_now = any(
+        row.applied_state == PLANNING_CHANGE_STATE_APPLIED
+        for row in rows
+        if row.id in pending_before
+    )
+    if confirmed is None and not failed and (
+        getattr(payload, "cancelled_lines", None) or applied_now
+    ):
+        # The batch press had nothing to confirm, but it carried Cancel SO lines or applied
+        # this order's rows (PLAN-BATCH-HELD-CANCEL, reviewer round 1: a book-cancelled line
+        # no revision covers is retired with no revision written): the caller answers with
+        # the cancel-only result (no revision) instead of refusing work that was done.
         return None
     if confirmed is None:
         message = (

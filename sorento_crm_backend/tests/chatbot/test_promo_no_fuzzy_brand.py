@@ -88,6 +88,6 @@ def test_a_brand_the_resolver_resolved_is_named_by_its_real_name_and_filters_by_
     send its id."""
     ids, captured = _world(session_factory, monkeypatch)
     reply = _ask(session_factory, monkeypatch, ids, "sorento", "zzt-nf-resolved")
-    assert reply.startswith("Which access level do you need for Sorento?"), reply
+    assert reply.startswith("Which access level do you need for A3 Flyer, Sorento?"), reply
     got = _brand_ids(captured)
     assert got and all(g == [ids["srt"]] for g in got), captured

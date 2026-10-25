@@ -729,9 +729,19 @@ export async function getOrderInquiryWorklistSummary(
  * history") once it is ready. Returns the created download row (`status: 'pending'`).
  */
 export async function exportOrderInquiryXlsx(inquiryId: string): Promise<MyDownload> {
-  const response = await apiFetch(`${BASE}/order-inquiries/${inquiryId}/export`, {
-    method: 'POST',
-  });
+  return startOrderInquiryExport(`${BASE}/order-inquiries/${inquiryId}/export`);
+}
+
+/**
+ * OI-DOWNLOAD (`PLAN-oi-download-21oct.md`): the OI detail page's Print / Download PDF -
+ * the OI email's layout, through My Downloads like the Excel above.
+ */
+export async function exportOrderInquiryPdf(inquiryId: string): Promise<MyDownload> {
+  return startOrderInquiryExport(`${BASE}/order-inquiries/${inquiryId}/export/pdf`);
+}
+
+async function startOrderInquiryExport(url: string, init?: RequestInit): Promise<MyDownload> {
+  const response = await apiFetch(url, { method: 'POST', ...init });
   if (!response.ok) {
     throw new Error(
       await extractApiError(response, 'Failed to start the order inquiry export'),
@@ -751,6 +761,13 @@ export async function exportOrderInquiryXlsx(inquiryId: string): Promise<MyDownl
 export async function exportOrderInquiryWorklistXlsx(
   params: OrderInquiryWorklistParams = {},
 ): Promise<MyDownload> {
+  return startWorklistExport(params, '');
+}
+
+async function startWorklistExport(
+  params: OrderInquiryWorklistParams,
+  suffix: '' | '/pdf',
+): Promise<MyDownload> {
   const search = worklistParams(params, 25);
   search.delete('page');
   search.delete('limit');
@@ -760,17 +777,20 @@ export async function exportOrderInquiryWorklistXlsx(
   search.forEach((value, key) => {
     body[key] = value;
   });
-  const response = await apiFetch(`${BASE}/order-inquiries/export`, {
-    method: 'POST',
+  return startOrderInquiryExport(`${BASE}/order-inquiries/export${suffix}`, {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!response.ok) {
-    throw new Error(
-      await extractApiError(response, 'Failed to start the order inquiry export'),
-    );
-  }
-  return (await response.json()) as MyDownload;
+}
+
+/**
+ * OI-DOWNLOAD: the lines list's Print / Download PDF - the same filtered rows as the
+ * Export Excel above, in the OI email's layout.
+ */
+export async function exportOrderInquiryWorklistPdf(
+  params: OrderInquiryWorklistParams = {},
+): Promise<MyDownload> {
+  return startWorklistExport(params, '/pdf');
 }
 
 /**

@@ -115,7 +115,16 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// OI-SPLIT-GUIDE (UAC F2): every guide page reads its order's split view; these specs only care
+// about what the press posts, so the read answers an order with no lines.
+vi.mock('../../_shared/services/lineSplitService', () => ({
+  getLineSplits: (psoId: string) =>
+    Promise.resolve({ pso_id: psoId, so_number: psoId, customer: null, project: null, lines: [] }),
+  saveLineSplits: vi.fn(),
+}));
+
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
+import { walkConfirmGuide } from '@/test-mocks/confirmGuide';
 import {
   buildBoard,
   type BoardDemandLine,
@@ -255,7 +264,7 @@ function defaultPreview(body: {
 
 async function pressPreviewThenConfirm() {
   await waitFor(() => expect(screen.getByTestId('board-confirm')).toBeEnabled());
-  fireEvent.click(screen.getByTestId('board-confirm'));
+  await walkConfirmGuide();
 }
 
 beforeEach(() => {
@@ -713,7 +722,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     } as BoardDemandLine;
   }
 
-  function boardWithBatchBlockedReject() {
+  function boardWithBatchBlockedReject(a9: Partial<BoardDemandLine> = {}) {
     return withRejectedContribution(
       withSavedContribution(
         withPendingBatch(
@@ -727,6 +736,7 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
                   borrow: [],
                   buy_qty: '10',
                 },
+                ...a9,
               }),
               demandB(),
             ],
@@ -785,6 +795,29 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     ).toBeInTheDocument();
   });
 
+  it('names the held-back withdrawal by its SO line number (SO-LINE-NUMBERS review round 1, must-fix 2)', async () => {
+    getPlanningBoard.mockResolvedValue(boardWithBatchBlockedReject({ so_line_no: 304 }));
+    getPlanningChangeBatch.mockResolvedValue(BATCH_A);
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-381896', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(null, ['SO381895', 'SO381896']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
+    await waitFor(() =>
+      expect(screen.getByTestId('board-confirm')).toHaveTextContent('Confirm (1)'),
+    );
+
+    await pressPreviewThenConfirm();
+
+    expect(
+      await screen.findByText(
+        'Line 304: rejection is staged; it commits after the pending change is applied.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   /**
    * N2 (fix round, `PLAN-board-reject-on-confirmed-line.md`): the held-back entry above is
    * NOT a refusal - A posted nothing else this press (its only line's withdrawal was the
@@ -819,5 +852,84 @@ describe("S4: a covered line's staged reject on a batched order does not ride al
     const results = screen.getByTestId('board-confirm-results');
     // Only B counts: A's held-back entry is excluded from BOTH sides of the ratio.
     expect(results).toHaveTextContent('1 of 1 orders confirmed');
+  });
+
+  /**
+   * BORROW-CONFIRM-MATCH (owner, 22 Oct 2026, SO401624): A ALSO posts line 10 this press, so
+   * the held-back note was worded "was confirmed, but ..." before the server answered - and
+   * then printed beside the server's own "Nothing was written" when the dry run refused A.
+   */
+  it('never says "was confirmed" for an order the server refused', async () => {
+    const board = withRejectedContribution(
+      withSavedContribution(
+        withSavedContribution(
+          withPendingBatch(
+            buildBoard(
+              [
+                demandA9({
+                  decision: {
+                    revision_no: 1,
+                    timely_spo_qty: '0',
+                    reserve: [],
+                    borrow: [],
+                    buy_qty: '10',
+                  },
+                }),
+                demandA9({
+                  project_line_id: 'pl-381895-10',
+                  line_no: 10,
+                  item_code: 'SRTWCX-LINE-10',
+                }),
+                demandB(),
+              ],
+              { today: TODAY, freeStock: {}, granularity: 'week' },
+            ),
+            { 'so-381895': BATCH_A.id },
+          ),
+          'so-381895',
+        ),
+        'so-381896',
+      ),
+      'pl-381895-9',
+    );
+    getPlanningBoard.mockResolvedValue(board);
+    getPlanningChangeBatch.mockResolvedValue(BATCH_A);
+    previewConfirmMany.mockImplementation(async (body: Parameters<typeof defaultPreview>[0]) => {
+      const answered = await defaultPreview(body);
+      return {
+        results: answered.results.map((entry) =>
+          entry.pso_id === 'pso-381895'
+            ? {
+                pso_id: entry.pso_id,
+                ok: false,
+                error: '1 line cannot be confirmed. Nothing was written.',
+                failing_lines: [
+                  {
+                    line_no: 10,
+                    item_code: 'SRTWCX-LINE-10',
+                    reason: 'Later-order stock at BRW-IB is held for an order ranked ahead.',
+                  },
+                ],
+              }
+            : entry,
+        ),
+      };
+    });
+    confirmMany.mockResolvedValue({
+      results: [{ pso_id: 'pso-so-381896', ok: true, decision_revision: 1 }],
+    });
+
+    renderPanel(null, ['SO381895', 'SO381896']);
+    await screen.findByTestId('fulfilment-board-matrix');
+    await waitFor(() => expect(getPlanningChangeBatch).toHaveBeenCalledWith(BATCH_A.id));
+    await pressPreviewThenConfirm();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+
+    expect(
+      await screen.findByText(
+        'SO381895: has a staged rejection that commits after the pending change is applied.',
+      ),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/was confirmed, but its staged rejection/)).toBeNull();
   });
 });

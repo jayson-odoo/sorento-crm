@@ -12,8 +12,11 @@ import {
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
+import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { drawAcross } from '../../_shared/lib/boardAmend';
 import { CellStockTable, type DonorLocationRow } from './CellStockTable';
 import type { BorrowCandidate } from '../../_shared/types/fulfilmentPlanning.types';
@@ -51,8 +54,14 @@ import type { BorrowCandidate } from '../../_shared/types/fulfilmentPlanning.typ
  * dialog asks who did. Free text, required only on that donor, and folded into the reason
  * stored beside the quantity - one field to read later, not two.
  */
+/** A quantity to add must be a number above zero. */
+function qtyError(raw: string) {
+  return numberFieldError(raw, { min: 0, minExclusive: true });
+}
+
 export function BorrowAddDialog({
   lineNo,
+  soLineNo,
   itemCode,
   lineId,
   candidates,
@@ -60,7 +69,9 @@ export function BorrowAddDialog({
   onAdd,
   onAddMany,
 }: {
+  /** The planning address, for element ids. What a person reads is `soLineNo`. */
   lineNo: number;
+  soLineNo?: number | null;
   itemCode?: string | null;
   /** The mirror line this borrow is FOR, so its own rows are marked `This line` in the
    * ledger a source row expands into. Absent on a caller with no mirror line yet. */
@@ -128,8 +139,9 @@ export function BorrowAddDialog({
   );
   const authorised = authorisation.trim();
   const needsAuthorisation = Boolean(selected?.same_agent);
-  const amount = Number.parseFloat(qty);
-  const typed = Number.isFinite(amount) && amount > 0 ? amount : null;
+  const quantityMessage = qtyError(qty);
+  const [showErrors, setShowErrors] = React.useState(false);
+  const typed = quantityMessage ? null : Number.parseFloat(qty);
 
   // S4/review S3: `rowKey`/`label` are CellStockTable's own opt-in fields for a donor
   // picker - every OTHER caller (the Grid Location table) sets neither and keys/labels
@@ -155,7 +167,6 @@ export function BorrowAddDialog({
   const valid =
     hasDonors &&
     Boolean(selected) &&
-    typed !== null &&
     (!needsAuthorisation || Boolean(authorised));
 
   const badges = React.useMemo(() => {
@@ -173,7 +184,7 @@ export function BorrowAddDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-5xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Borrow for line {lineNo}</DialogTitle>
+          <DialogTitle>Borrow for line {soLineNoText({ so_line_no: soLineNo, line_no: lineNo })}</DialogTitle>
           <DialogDescription>{itemCode ?? 'This item'}</DialogDescription>
         </DialogHeader>
 
@@ -181,6 +192,10 @@ export function BorrowAddDialog({
           onSubmit={(event) => {
             event.preventDefault();
             if (!valid || !selected) return;
+            if (quantityMessage) {
+              setShowErrors(true);
+              return;
+            }
             const reason = storedReason(selected, authorised);
             const members = binStock(bins.get(candidateKey(selected)) ?? []);
             if (members.length < 2) {
@@ -265,12 +280,12 @@ export function BorrowAddDialog({
 
             <div className="space-y-1.5">
               <Label htmlFor={`borrow-qty-${lineNo}`}>Quantity</Label>
-              <Input
+              <NumberInput
                 id={`borrow-qty-${lineNo}`}
-                type="number"
                 min="0"
                 step="any"
                 value={qty}
+                error={showErrors ? quantityMessage : undefined}
                 onChange={(event) => setQty(event.target.value)}
                 className="h-9 w-40 tabular-nums"
               />

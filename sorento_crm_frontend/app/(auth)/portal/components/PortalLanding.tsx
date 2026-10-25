@@ -60,6 +60,8 @@ import {
   statusLabel,
 } from '../lib/portal-client';
 import { listRequestsAsSummaries } from '../lib/price-tag-request-service';
+import { listSampleRequestsAsSummaries } from '../lib/sample-request-service';
+import { listNewProductApplicationsAsSummaries } from '../lib/new-product-application-service';
 import { listOpportunitiesAsSummaries } from '../lib/sales-opportunity-landing';
 import { MyTargetPanel } from './MyTargetPanel';
 import {
@@ -127,6 +129,8 @@ const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
   purchase_request: [],
   sponsorship_form: [],
   price_tag_request: [],
+  sample_request: [],
+  new_product_application: [],
   sales_opportunity: [],
   customer_asks: [],
   conversation: [],
@@ -207,13 +211,25 @@ function pickCardMeta(row: PortalSubmissionSummary): {
       customer: row.project_customer ?? undefined,
     };
   }
-  if (row.kind === 'price_tag_request' || row.kind === 'sales_opportunity') {
+  if (
+    row.kind === 'price_tag_request' ||
+    row.kind === 'sales_opportunity' ||
+    row.kind === 'sample_request' ||
+    row.kind === 'new_product_application'
+  ) {
     return { customer: row.customer_name ?? undefined };
   }
   return {
     project: row.project_title ?? row.sponsor_subject ?? undefined,
     customer: row.customer_name ?? undefined,
   };
+}
+
+
+/** "New <label>", except a label that already starts with "New" (New Product Application). */
+function newKindLabel(kind: PortalLandingKind): string {
+  const label = LANDING_LABELS[kind];
+  return /^New\b/.test(label) ? label : `New ${label}`;
 }
 
 export function PortalLanding({ slug }: { slug?: string }) {
@@ -383,7 +399,11 @@ export function PortalLanding({ slug }: { slug?: string }) {
           kinds.map((k) =>
             k === 'price_tag_request'
               ? listRequestsAsSummaries(q)
-              : k === 'sales_opportunity'
+              : k === 'sample_request'
+                ? listSampleRequestsAsSummaries(q)
+                : k === 'new_product_application'
+                  ? listNewProductApplicationsAsSummaries(q)
+                  : k === 'sales_opportunity'
                 ? listOpportunitiesAsSummaries(q)
                 : k === 'customer_asks'
                   ? listCustomerAsks({ page: 1, limit: 1, state: 'open', q }).then((page) => {
@@ -476,6 +496,8 @@ export function PortalLanding({ slug }: { slug?: string }) {
       purchase_request: 0,
       sponsorship_form: 0,
       price_tag_request: 0,
+      sample_request: 0,
+      new_product_application: 0,
       sales_opportunity: 0,
       customer_asks: 0,
       conversation: 0,
@@ -769,8 +791,8 @@ function SubmissionList({
           asChild
           size="sm"
           className="shrink-0"
-          title={`New ${LANDING_LABELS[kind]}`}
-          aria-label={`New ${LANDING_LABELS[kind]}`}
+          title={newKindLabel(kind)}
+          aria-label={newKindLabel(kind)}
         >
           <Link href={portalNewPath(kind, slug)}>
             <Plus className="shrink-0" />
@@ -783,7 +805,7 @@ function SubmissionList({
                 to a submission card's own status badge of the same word
                 (`PortalLanding.priceTag.test.tsx`). */}
             <span className="block max-w-[31px] overflow-hidden whitespace-nowrap sm:max-w-none sm:inline">
-              New {LANDING_LABELS[kind]}
+              {newKindLabel(kind)}
             </span>
           </Link>
         </Button>

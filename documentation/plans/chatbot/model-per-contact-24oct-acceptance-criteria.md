@@ -1,0 +1,93 @@
+# UAC: chatbot model per contact (MODEL-PER-CONTACT)
+
+Plan: `PLAN-model-per-contact-24oct.md`. Sections marked PENDING wait on the owner's Q1/Q2 answers.
+
+## R4: each provider's key from its own slot (crew-approved 24 Oct 2026)
+
+- AC-R4-1: `ai_assistant_configs` gains a nullable `openai_api_key_ciphertext` (EncryptedText, Fernet at rest like
+  the Gemini and Anthropic slots). Additive migration, idempotent, single alembic head.
+- AC-R4-2: `resolve_api_key(cfg, "openai")` returns, in order: the OpenAI column; else the generic
+  `api_key_ciphertext` while `cfg.provider == "openai"`; else env `OPENAI_API_KEY`; else "".
+- AC-R4-3: with `cfg.provider` = `gemini` (or `anthropic`) and the OpenAI column set, OpenAI gets the OpenAI column
+  and Gemini (Anthropic) still gets its own column. Mixed providers resolve both keys from the DB.
+- AC-R4-4: with `cfg.provider` = `gemini` and the OpenAI column empty, OpenAI never receives the generic column
+  (it holds another provider's key): it gets env `OPENAI_API_KEY` or "".
+- AC-R4-5: today's rows (OpenAI column empty, `cfg.provider == "openai"`, generic key set) resolve exactly as before
+  for every provider.
+- AC-R4-6: the settings API accepts `openai_api_key` write-only: present and non-blank sets the column, absent or
+  blank leaves it alone; responses carry only `openai_api_key_masked` (same masking as the other keys), never the
+  plaintext or the ciphertext.
+- AC-R4-7: the stored value is ciphertext in the DB (a raw SQL read is not the plaintext), and
+  `scripts/reencrypt_field_secrets.py` re-encrypts the new column with the other three.
+- AC-R4-8: any log/redaction path that hides the other provider keys hides the OpenAI one too
+  (`app/services/api_call_log_service.py`).
+- AC-R4-9 (UI, after Q1/Q2): System > AI Assistant shows an "OpenAI API key" field beside the Gemini and Anthropic
+  ones, masked, empty = today.
+
+## Model per contact (owner rulings 24 Oct 2026: tags decide; crew Q3 a, Q4 a, Q5 a)
+
+Ladder for every chatbot LLM call of a turn (parser, clarifier, code reader): contact override > tag model >
+that call's own `production` label row > global AI assistant config. Image lane unchanged.
+
+Tag setting
+- AC-M-1: a tag's `chatbot` section accepts `llm: {"provider": <openai|gemini|anthropic>, "model": <non-empty
+  string, max 100>}`; anything else is a 422 naming the field. Absent = the tag sets no model.
+- AC-M-2: the tag form's Chatbot section has an "AI model" provider select + model select (models from the
+  provider list, typed-in name accepted, like the Prompts screen's agent model card); clearing it removes `llm`.
+
+Contact override
+- AC-M-3: `respond_contacts` gains nullable `chatbot_llm_provider` + `chatbot_llm_model` (additive migration).
+  `PUT /contacts/{id}/chatbot` with `llm: {"provider", "model"}` sets both, `llm: null` clears both, `llm` absent
+  leaves them alone; provider outside the three or a blank model is a 422. Gate: see AC-S-1.
+- AC-M-4: the contact read returns `chatbot_llm` = `{provider, model, source, tags}`: source `contact` (override),
+  `tag` (tags names that set it), `tag_conflict` (provider/model null, `tags` = the disagreeing tag names; their
+  values show in the tag panel's `conflict_tags`), `none` (provider/model null, today).
+
+Resolution (one resolver, `contact_llm_choice`)
+- AC-M-5: override set -> override, source `contact`, whatever the tags say.
+- AC-M-6: no override, one or more tags all setting the SAME model -> that model, source `tag`, `tags` = their names.
+- AC-M-7: no override, tags setting DIFFERENT models -> no choice, source `tag_conflict` (the `eq` merge rule).
+- AC-M-8: no override, no tag sets a model (or untagged) -> no choice, source `none`; every config reader returns
+  exactly what it returns on main (same provider, model, key, effort).
+- AC-M-9: a tag edit, a tag added or removed, or an override change applies from the contact's next turn (no cache,
+  no Apply needed).
+
+Runtime
+- AC-M-10: the parser config (`parser.resolve_config`) uses the choice: provider, model and that provider's key
+  (`resolve_api_key`, R4); the label's reasoning effort still applies with the existing per-provider caps.
+- AC-M-11: the clarifier (`casual.resolve_clarifier_config`) and the code reader (`resolver_code_reader`) use the
+  same choice for the same turn.
+- AC-M-12: chosen provider has no key -> that call runs on its label/global config, a warning is logged naming the
+  provider (never a key), and the turn completes; trace `model_source = fallback_no_key`.
+- AC-M-13: the parser `understood` trace records `provider`, `model` (already, #1624) plus `model_source`
+  (`contact | tag | label | global | fallback_no_key`) and, for `tag`, the tag names.
+
+Tag panel and Apply
+- AC-M-14: `evaluate` returns an "AI model" item with `decided_by` = the tags and, on a conflict, `conflict_tags`
+  naming both (the Apply preview shows the conflict); the item never counts as differing, so the contact's tag
+  panel (which lists differences only, `ContactTagSettingsSection.tsx:79`) stays quiet, and Apply (contact, tag
+  holders, bulk, on tagging) never writes the contact override. Which tag decides is shown by the AC-M-15 line.
+
+Contact page
+- AC-M-15: the contact Chatbot section shows "AI model" with the override select (clearable) and a source line:
+  "From tag <names>: <Provider> <model>" / "Tags disagree: <tag>, <tag>" / "Set on this contact" / "Default".
+  The override select holds only the contact's own override (empty unless source is `contact`) and its
+  placeholder reads "No override" (reviewer nit 6, lead 24 Oct 2026: the page must not say "Default" beside a
+  tag model, and it names the model it runs on).
+- AC-M-16: 375px and 1280px usable, no clipping; no UUIDs shown.
+
+## Security fix round (security review 24 Oct 2026; crew ruling (a) on finding 1)
+
+- AC-S-1: a `PUT /contacts/{id}/chatbot` body that carries `llm` (set or null) also needs
+  `system.ai_assistant_settings.edit` (the gate on label and global model choices, `system/ai_assistant.py:165`);
+  without it the request is a 403 and nothing in it is written. A body without `llm` keeps today's gate.
+- AC-S-2: creating or updating a tag whose `chatbot.llm` is added, changed or removed also needs
+  `system.ai_assistant_settings.edit` (403, nothing written); an unchanged `llm` passes with today's gate.
+- AC-S-3: a model name must fully match `^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$` on the contact PUT and the tag
+  validator (no `/`, `?`, `#`, whitespace or newline); anything else is a 422 naming the field.
+- AC-S-4: without `system.ai_assistant_settings.edit` the AI model picker on the contact page and the tag form is
+  read-only (value and source line still shown). Cosmetic only: the backend enforces AC-S-1/2.
+- AC-S-5 (crew ruling (b), 24 Oct 2026): adding or removing a contact's tag keeps today's gate
+  (`user_management.contacts.edit`), even when the tag carries an AI model: putting a model on a tag is the
+  AI-settings holder's delegation to everyone who may tag contacts. The resulting model and the tag it comes from
+  are visible on the contact page (AC-M-15 source line), so a membership change shows there.

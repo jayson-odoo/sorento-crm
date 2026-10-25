@@ -23,6 +23,7 @@ from pydantic import (
     model_validator,
 )
 
+from app.schemas.project_line_split import LineSplitViewOut
 from app.services.uuid_path_param import UUID_PATTERN
 
 #: The longest free-text search string the worklist routes accept
@@ -194,6 +195,21 @@ class OrderInquirySuggestedLinkOut(BaseModel):
     trigger: Optional[str] = None
 
 
+class OrderInquiryLineSplitOut(BaseModel):
+    """OI-LINE-SPLIT (UAC D3): one split of the row's SO line, for the Lines tab's
+    read-only expand. `sits_on_line_no` is what the screen prints; the id is addressing."""
+
+    id: str
+    qty: str
+    delivery_date: Optional[date] = None
+    is_cancel: bool = False
+    #: REMAIN / DELAY / ADVANCE / CANCEL BALANCE against the line's base date.
+    change: str = ""
+    sits_on_line_id: Optional[str] = None
+    sits_on_line_no: Optional[int] = None
+    remark: str = ""
+
+
 class OrderInquiryRowOut(BaseModel):
     id: str
     order_inquiry_id: str
@@ -287,6 +303,12 @@ class OrderInquiryRowOut(BaseModel):
     previous_delivery_date: Optional[date] = None
     #: OI-PRODUCT-FOLLOW: the item code before a product change moved the row ("was X").
     previous_item_code: Optional[str] = None
+    #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line; empty when not split.
+    #: Declared because `response_model` drops a field it has not been told about.
+    splits: List[OrderInquiryLineSplitOut] = []
+    #: OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup (`LineSplitService.split_views`),
+    #: null when the line has no splits.
+    split_view: Optional[LineSplitViewOut] = None
 
 
 class UploadJobScope(BaseModel):
@@ -528,6 +550,13 @@ class OrderInquiryWorklistRow(BaseModel):
     #: Purchased/Incoming still count it when it holds a link. Declared here because
     #: `response_model` silently drops a field it has not been told about.
     line_cancelled: bool = False
+    #: OI-LINE-SPLIT (UAC D3): the splits of this row's SO line, for the OI Lines tab's
+    #: read-only expand; empty when not split. Declared because `response_model` drops a
+    #: field it has not been told about.
+    splits: List[OrderInquiryLineSplitOut] = []
+    #: OI-SPLIT-VIEW (UAC B1 to B5): the line's split popup, the same value
+    #: `OrderInquiryRowOut.split_view` carries; null when the line has no splits.
+    split_view: Optional[LineSplitViewOut] = None
     #: PLAN-oi-request-cs-reserve.md 3.5 (AC-RS-20): `requested` while an open reserve
     #: request row exists, `reserved` once something has actually been reserved (and no
     #: open request), `declined` when the latest answer was 0 (6e.4, AC-RS-78c), else
@@ -544,6 +573,10 @@ class OrderInquiryWorklistRow(BaseModel):
     #: read N off this, not off a second lookup. Declared here because `response_model`
     #: silently drops a field it has not been told about.
     requested_qty: str = "0"
+    #: OI-RESERVE-PILL-QTY (owner, 21 Oct 2026): what purchasing last asked CS to reserve
+    #: off this row, kept after CS answers (a partial answer shows both numbers); "0" when
+    #: nothing was asked. Declared here because `response_model` drops undeclared fields.
+    asked_reserve_qty: str = "0"
     #: OI-BULK-RESERVE v4 (B2): the open request row's warehouse id and code, null when no
     #: request is open. Declared here because `response_model` drops undeclared fields.
     reserve_warehouse_id: Optional[str] = None
@@ -1248,6 +1281,9 @@ class OrderInquiryPoDetailLine(BaseModel):
     #: `order_link_service.BOOK_SO_NOT_RESOLVED` - the fourth, "not computed" state that
     #: `Optional[bool]` exists to carry on the PO route never arises on this one.
     book_so_unresolved: bool = False
+    #: SUPPLY-SPO-LINK: every SPO this line was transferred onto (OI-SPO-EXACT), sorted,
+    #: each once. Empty when the line never moved onto a shipping order.
+    spo_numbers: List[str] = []
 
 
 class OrderInquiryDocumentAllocation(BaseModel):

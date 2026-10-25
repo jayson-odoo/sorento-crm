@@ -272,22 +272,6 @@ class POVersionHeaderUpdate(BaseModel):
     remark: Optional[str] = None
 
 
-# -------------------------------------------------------------- approval handshake
-
-
-class POApprovalResponse(BaseModel):
-    model_config = ConfigDict(from_attributes=True)
-
-    id: str
-    po_number: str
-    project_id: str
-    status: str
-    approved_by_name: Optional[str] = None
-    approved_at: Optional[datetime] = None
-    countersigned_by_name: Optional[str] = None
-    countersigned_at: Optional[datetime] = None
-
-
 # ------------------------------------------------------------- annotation actions
 
 

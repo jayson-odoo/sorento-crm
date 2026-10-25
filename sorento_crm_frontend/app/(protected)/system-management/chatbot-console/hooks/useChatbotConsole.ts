@@ -15,6 +15,7 @@ import {
   CONSOLE_GREETING_MESSAGES,
   type ChatbotConsoleMessage,
   type ConsoleMediaInput,
+  type ConsoleQuote,
   type ConsolePromptVersion,
   type ConsoleTurnResponse,
 } from '../types/chatbotConsole.types';
@@ -206,7 +207,7 @@ export function useChatbotConsole() {
   );
 
   const sendText = useCallback(
-    async (text: string, quote?: { id: string; text: string; source: 'n8n' | 'contact' } | null) => {
+    async (text: string, quote?: ConsoleQuote | null) => {
       const trimmed = text.trim();
       if (!trimmed || sending) return;
       if (!contactId) {
@@ -260,7 +261,7 @@ export function useChatbotConsole() {
    * extracted text as an ordinary turn and append its reply bubbles. Caller already
    * pushed/updated the "Read from image: ..." / "Heard: ..." bubble. */
   const runMediaFollowUpTurn = useCallback(
-    async (extractedText: string, caption: string) => {
+    async (extractedText: string, caption: string, quote: ConsoleQuote | null) => {
       const text = (extractedText || caption).trim();
       if (!text || !contactId) return;
       try {
@@ -270,6 +271,7 @@ export function useChatbotConsole() {
           session_vars: sessionVars,
           prompt_version_id: promptVersionId,
           run_id: runId,
+          ...(quote ? { reply_to: quote } : {}),
         });
         setMessages((prev) => [...prev, ...turnBubbles(result, runId)]);
         if (result.session_vars !== null) setSessionVars(result.session_vars);
@@ -281,7 +283,14 @@ export function useChatbotConsole() {
   );
 
   const pollMediaStatus = useCallback(
-    (mediaId: string, statusBubbleId: string, media: ConsoleMediaInput, caption: string, generation: number) => {
+    (
+      mediaId: string,
+      statusBubbleId: string,
+      media: ConsoleMediaInput,
+      caption: string,
+      quote: ConsoleQuote | null,
+      generation: number,
+    ) => {
       const tick = async () => {
         if (generationRef.current !== generation) return; // superseded by Reset/contact switch
         try {
@@ -295,7 +304,13 @@ export function useChatbotConsole() {
             setMessages((prev) =>
               prev.map((m) =>
                 m.id === statusBubbleId
-                  ? { ...m, text: status.error || 'Could not read the attachment.', mediaStatus: 'failed', mediaRetry: media }
+                  ? {
+                      ...m,
+                      text: status.error || 'Could not read the attachment.',
+                      mediaStatus: 'failed',
+                      mediaRetry: media,
+                      mediaRetryQuote: quote,
+                    }
                   : m,
               ),
             );
@@ -308,7 +323,7 @@ export function useChatbotConsole() {
               m.id === statusBubbleId ? { ...m, text: mediaReadLine(media.kind, text), mediaStatus: 'done' } : m,
             ),
           );
-          await runMediaFollowUpTurn(text, caption);
+          await runMediaFollowUpTurn(text, caption, quote);
         } catch (err) {
           toast.error(err instanceof Error ? err.message : 'Failed to check the attachment status');
         } finally {
@@ -321,7 +336,7 @@ export function useChatbotConsole() {
   );
 
   const sendMediaPayload = useCallback(
-    async (media: ConsoleMediaInput, caption: string) => {
+    async (media: ConsoleMediaInput, caption: string, quote: ConsoleQuote | null = null) => {
       if (!contactId) {
         toast.error('Pick a contact before sending a message.');
         return;
@@ -336,6 +351,8 @@ export function useChatbotConsole() {
           prompt_version_id: promptVersionId,
           run_id: runId,
           media,
+          // A quoted voice note or image carries the quote like a text does.
+          ...(quote ? { reply_to: quote } : {}),
         });
         if (generationRef.current !== generation) return;
 
@@ -345,7 +362,7 @@ export function useChatbotConsole() {
             ...prev,
             { id: statusId, role: 'bot', text: mediaStatusLine(media.kind), mediaStatus: 'pending', mediaId: result.media_id },
           ]);
-          pollMediaStatus(result.media_id, statusId, media, caption, generation);
+          pollMediaStatus(result.media_id, statusId, media, caption, quote, generation);
           return; // pollMediaStatus clears `sending` once it settles
         }
 
@@ -358,6 +375,7 @@ export function useChatbotConsole() {
               text: result.media_error || 'Could not read the attachment.',
               mediaStatus: 'failed',
               mediaRetry: media,
+              mediaRetryQuote: quote,
             },
           ]);
           // A caption fallback may still have produced a real turn (turn_id present).
@@ -406,7 +424,7 @@ export function useChatbotConsole() {
     });
 
   const sendMedia = useCallback(
-    async (kind: 'image' | 'audio', file: File, caption: string) => {
+    async (kind: 'image' | 'audio', file: File, caption: string, quote: ConsoleQuote | null = null) => {
       if (sending) return;
       if (!contactId) {
         toast.error('Pick a contact before sending a message.');
@@ -421,6 +439,7 @@ export function useChatbotConsole() {
           text: caption.trim(),
           mediaKind: kind,
           mediaUrl: objectUrl,
+          ...(quote ? { quotedText: quote.text } : {}),
         },
       ]);
       try {
@@ -431,7 +450,7 @@ export function useChatbotConsole() {
           mime: file.type || (kind === 'image' ? 'image/jpeg' : 'audio/webm'),
           content_base64,
         };
-        await sendMediaPayload(media, caption.trim());
+        await sendMediaPayload(media, caption.trim(), quote);
       } catch (err) {
         toast.error(err instanceof Error ? err.message : 'Failed to send the attachment');
       }
@@ -440,9 +459,9 @@ export function useChatbotConsole() {
   );
 
   const retryMedia = useCallback(
-    (media: ConsoleMediaInput) => {
+    (media: ConsoleMediaInput, quote: ConsoleQuote | null = null) => {
       if (sending) return;
-      void sendMediaPayload(media, '');
+      void sendMediaPayload(media, '', quote);
     },
     [sending, sendMediaPayload],
   );

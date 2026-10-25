@@ -272,19 +272,23 @@ def apply_crossdomain_hit(
 
         # ESCALATION-CONTROL: staff and a barred contact alike get no offer.
         is_staff = not offers_escalation(profile)
-        text = _apply_crossdomain_render(answer.text, result, answered=True, include_offer=not is_staff)
+        # CHAT-PICK-QTY-STATE (owner, crew-relayed): a reply that already carries a question of
+        # its own (a numbered did-you-mean) keeps it and the rung prints WITHOUT the offer
+        # sentence, so the next number still answers that question and not a bare Yes.
+        own_question = answer.question
+        text = _apply_crossdomain_render(
+            answer.text, result, answered=True, include_offer=not is_staff and own_question is None
+        )
         if text == answer.text:
             return answer
         # #1262 slice 11 (F8): staff get the rung's own rendered block (the text
         # change above still fires) but no escalation offer ARMED either - a
         # `team_pick` with no visible sentence pointing at it is the same "offer
         # nobody was shown" gap the composer's own arm closes.
-        #
-        # Reviewer N-d: no `else answer.question` arm otherwise, because it was
-        # unreachable - `_apply_crossdomain_render` changed the text, and that is the
-        # SAME `_xdBlock` `any`/`block` gate `_crossdomain_offer_pending` reads, so
-        # the pending is never `None` past the equality check above.
-        question = None if is_staff else _crossdomain_offer_pending(result, asked_at_turn=asked_at_turn)
+        if own_question is not None:
+            question = own_question
+        else:
+            question = None if is_staff else _crossdomain_offer_pending(result, asked_at_turn=asked_at_turn)
         return replace(answer, text=text, question=question)
     except Exception:  # noqa: BLE001 - a disclosure bug must never block the answer
         logger.warning(
@@ -796,6 +800,18 @@ def _offer_ask_payload(parser: dict[str, Any] | None) -> dict[str, Any]:
     order_status = (parser or {}).get("order_status")
     if order_status:
         ask_payload["status"] = order_status
+    if order_status in ("sales_ranking", "top_selling"):
+        # REPORT-SMART-L R1 review: the ranking ask this pick interrupts (axis, count, measure, basis,
+        # direction, period), parser fields only, so the answered pick resumes it for the picked entity
+        # (`turn/apply._answer_pending` fills what the answering verdict leaves empty).
+        held = {
+            k: parser[k]
+            for k in ("group_by", "top_n", "measure", "basis", "rank_direction", "rank_by", "rank_group",
+                      "date_filter_start", "date_filter_end")
+            if parser.get(k) not in (None, "", [])
+        }
+        if held:
+            ask_payload["ranking_ask"] = held
     return ask_payload
 
 
@@ -1647,7 +1663,8 @@ def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
     if not isinstance(xd, Mapping) or not isinstance(block, Mapping):
         return result
     nothing_codes = {c for c in (block.get("nothing_codes") or []) if isinstance(c, str)}
-    rendered_codes = _block_product_codes(block.get("block"))
+    # CHAT-COMPOSER: the numbered block stamps its codes as data; else read the English rows.
+    rendered_codes = set(block.get("rendered_codes") or ()) or _block_product_codes(block.get("block"))
     codes: list[str] = []
     for m in xd.get("missing") or []:
         if not (isinstance(m, Mapping) and m.get("zero") is True):
@@ -1665,7 +1682,9 @@ def _prefix_zero_note(result: Mapping[str, Any]) -> Mapping[str, Any]:
     # `dh == "inventory"` arm (`lanes/business/answer.py:683-692`), so `origin_domain`
     # (== `dh`) is always "inventory" here; the incoming half of the old ternary was
     # unreachable dead code.
-    note = f"No stock for {', '.join(codes)}."
+    from app.services.chatbot.composers import stock as composers_stock
+
+    note = composers_stock.none_for("stock", codes)
     old_block_text = block.get("block") or ""
     new_block = dict(block)
     new_block["block"] = f"{note}\n\n{old_block_text}" if old_block_text else note
@@ -1701,6 +1720,21 @@ def _apply_crossdomain_render(
     block = render.get("_xdBlock")
     if not isinstance(block, Mapping) or block.get("any") is not True or not block.get("block"):
         return text
+    from app.services.chatbot import composers
+    from app.services.chatbot.composers import misses as composers_misses
+
+    note = block.get("only_other_note")
+    if (
+        not answered
+        and composers.enabled()
+        and isinstance(note, str)
+        and block["block"].startswith(note + "\n\n")
+        and composers_misses.states_absence(text, block.get("only_other_codes") or ())
+    ):
+        # CHAT-COMPOSER: the miss text already says these codes have nothing, so the block's
+        # own "No incoming for X." line would say it twice. A text that only names the codes
+        # (a picker, a found list, an entitlement miss) keeps the line.
+        block = {**block, "block": block["block"][len(note) + 2 :]}
     variables: dict[str, Any] = {"last_result_set": [True]} if answered else {}
     sealed = {"reply": {"text": text, "session_patch": {"user_response": text, "variables": variables}}}
     merged = tail_compose.crossdomain_compose(
@@ -1795,6 +1829,7 @@ def answer_for(
     dealer_stock_ask: bool = False,
     dealer_incoming_ask: bool = False,
     product_token_missed: bool = False,
+    localizer: Any = None,
 ) -> turn_compose.Answer | None:
     """The MISS seam (R4): `None` outside its own two triggers (see module docstring),
     so a hit, an `access_denied` refusal, an infrastructure error and a multi-domain plan
@@ -1823,6 +1858,7 @@ def answer_for(
     gate = payload.get("gate") if isinstance(payload.get("gate"), dict) else {}
     # #1262 fix lane round 3, B1-r2: the brand the fetch sent, for the miss header.
     gate = dict(scope_block.with_brand_names(gate, envelope) or {})
+    held_none = _held_member_no_file(parser, gate, via_fetched_empty, localizer)
     # #1262 fix lane round 3, S5: the words the turn could not place
     # (`envelope["unresolved"]`, `turn_runtime.resolve_kinds`'s `unplaced`) are the
     # resolver's own `unresolved_tokens` plus one thing only the chatbot knows - a
@@ -1968,7 +2004,11 @@ def answer_for(
         product_token_missed=product_token_missed,
         granted_keys=((ctx.get("access") or {}).get("attributes") if isinstance(ctx, Mapping) else None),
     )
-    offer = miss_mod.run_miss_lane(
+    if held_none is not None:
+        # R2-2: the held member's own "has no <type>" line, then the same unplaced-word line and
+        # escalate offer the normal miss ends with; no did-you-mean (the member is on file).
+        not_found = {**not_found, "escalate_message": _held_miss_text(held_none, resolved, parser, not_found, localizer)}
+    offer = {} if held_none is not None else miss_mod.run_miss_lane(
         not_found,
         parser=parser,
         resolved=resolved,
@@ -2140,7 +2180,7 @@ def answer_for(
         question = _replace(
             carried_pending,
             team=carried_pending.team or question.team,
-            payload={**carried_pending.payload, "escalate_offered": True},
+            payload={**carried_pending.payload, "escalate_offered": True, "offered_at_turn": asked_at_turn},
         )
     # #1262 slice 11 (F8): same audience gate as the HIT-side ladder rung above.
     text = _apply_crossdomain_render(
@@ -2158,7 +2198,59 @@ def answer_for(
     alternative_lines = fetch_item.get("alternative_lines") if isinstance(fetch_item, Mapping) else None
     if alternative_lines:
         text = with_alternative_lines(text, alternative_lines)
-    return turn_compose.Answer(text=text, question=question)
+    rows = offer.get("suggest_last_result_set") if isinstance(offer, Mapping) else None
+    options = [_roster_option(row, kind="product_pick", position=i + 1) for i, row in enumerate(rows or []) if isinstance(row, Mapping)]
+    listed = [str(o["code"]) for o in options if o and o.get("entity_type") in ("product", "product_set") and o.get("code")]
+    return turn_compose.Answer(text=text, question=question, shown_codes=listed or None)
+
+
+def _held_member_no_file(
+    parser: Any, gate: Mapping[str, Any], fetched_empty: bool, localizer: Any = None
+) -> str | None:
+    """CHAT-CODE-LOOKUP R2-2: a file ask the gate settled on the held family member, whose fetch
+    came back empty, is an honest none for that member, not a product miss plus a did-you-mean.
+    None unless the version carries CODE LOOKUP and the only product in scope is the held one.
+    The line is the catalogue's "{code} has no {types}." in the contact's language."""
+    if not (fetched_empty and isinstance(parser, Mapping) and parser.get("code_lookup") is True):
+        return None
+    if parser.get("domain_hint") != "product_attachment":
+        return None
+    products = [
+        e for e in gate.get("compatible_entities") or [] if isinstance(e, Mapping) and e.get("entity_type") == "product"
+    ]
+    if len(products) != 1 or products[0].get("held_member") is not True or not products[0].get("code"):
+        return None
+    asked = next(
+        (
+            str(e.get("canonical_code") or e.get("raw") or "").strip()
+            for e in parser.get("entities") or []
+            if isinstance(e, Mapping) and e.get("hint") == "attachment_type"
+        ),
+        "",
+    )
+    if localizer is None:
+        from app.services.chatbot.label_catalog import IDENTITY as localizer
+    return localizer.fill("{code} has no {types}.", code=str(products[0]["code"]), types=asked or "attachment")
+
+
+def _held_miss_text(
+    line: str, resolved: Mapping[str, Any], parser: Any, not_found: Mapping[str, Any], localizer: Any = None
+) -> str:
+    """The held member's line, the words the turn could not place (labelled as the normal miss
+    labels them), and the escalate sentence the normal miss message closes with (absent for staff)."""
+    parts = [line]
+    unplaced = [t for t in resolved.get("unresolved_tokens") or [] if t]
+    if unplaced:
+        if localizer is None:
+            from app.services.chatbot.label_catalog import IDENTITY as localizer
+        entities = parser.get("entities") if isinstance(parser, Mapping) else None
+        label_token = answer_mod.token_labeller(resolved, entities if isinstance(entities, list) else [])[2]
+        parts.append(localizer.fill("Couldn't find: {names}.", names=", ".join(label_token(t) for t in unplaced)))
+    message = str(not_found.get("escalate_message") or "")
+    _head, found, offer = message.rpartition("Would you like me to escalate")
+    if found:
+        parts.append(found + offer)
+    return "\n\n".join(parts)
 
 
 def with_alternative_lines(text: str, lines: Any) -> str:

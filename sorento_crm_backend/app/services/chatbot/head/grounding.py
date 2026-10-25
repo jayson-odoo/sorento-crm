@@ -33,6 +33,7 @@ or code change.
 """
 from __future__ import annotations
 
+import logging
 import re
 import unicodedata
 from dataclasses import dataclass, field
@@ -48,6 +49,8 @@ _SPEC_HINTS = frozenset({SPECIFICATION_HINT, "spec"})
 #: The kinds whose raw can hold a descriptor glued to what the thing is.
 _CLASS_HINTS = frozenset({"category", "product_type"})
 _ATTACHMENT_HINT = "attachment_type"
+#: CLOSED-LISTS-INDEX-MODE: checked only in index mode (a finish short form is not a warehouse).
+_WAREHOUSE_HINT = "warehouse"
 
 #: Registry keys that are not descriptors: the class and the type are what the thing IS
 #: (they stay in the category token), and the brand is its own entity kind.
@@ -260,6 +263,8 @@ class Grounded:
     known: list[str] = field(default_factory=list)
     #: the registry's own words for the value ("gunmetal" for a typed "gunmetl")
     words: str | None = None
+    #: a bare size's OR (R6-1): the keys the number may be under (`head/bare_size.py`)
+    any_keys: list[str] | None = None
 
     def entity(self, template: dict[str, Any]) -> dict[str, Any]:
         return {
@@ -273,6 +278,7 @@ class Grounded:
             "spec_label": self.label,
             "spec_words": self.words,
             "spec_known": list(self.known) if self.value is None else [],
+            **({"spec_any_keys": list(self.any_keys)} if self.any_keys else {}),
         }
 
 
@@ -461,6 +467,99 @@ def _corrected_class(db: "Session", text: str, vocab: Vocabulary) -> str:
 
 #: The entity kind of a product the customer named (a code, or a product's own name).
 _PRODUCT_HINT = "product"
+
+logger = logging.getLogger(__name__)
+
+#: Q1 (owner ruling (a), 23 Oct 2026): the parser's corrected pick, as the resolver's own row, on a
+#: product entity whose canonical_code was dropped; `resolve_gate.pick_near_code_first` offers it
+#: first in the did-you-mean the raw then asks.
+NEAR_PICK_KEY = "near_pick"
+
+
+def _product_resolution(db: "Session", raw: str) -> dict[str, Any]:
+    """`raw`'s own resolution through the resolve route the business lane calls, product only,
+    with no model read (semantic, spec and phrase fallbacks off). Raises what the route raises."""
+    from app.services.chatbot.lanes.business import services as business_services
+    from app.services.chatbot.lanes.business.resolve_gate import _LOOKUP_LIMIT, _token_of
+
+    body = {
+        "query": raw, "tokens": [_token_of({"raw": raw, "hint": _PRODUCT_HINT})], "raw_tokens": [raw],
+        "match_mode": "or", "allowed_entity_types": [_PRODUCT_HINT], "fallback_to_all_types": False,
+        "limit": _LOOKUP_LIMIT, "exact_match": True,
+        "semantic_fallback": False, "spec_fallback": False, "understand_phrase": False,
+    }
+    result = business_services.production_services(db).resolve_entity(body)
+    resolutions = result.get("resolutions") if isinstance(result, dict) else None
+    first = resolutions[0] if isinstance(resolutions, list) and resolutions else None
+    return first if isinstance(first, dict) else {}
+
+
+def _pick_as_trgm_neighbour(db: "Session", raw: str, pick: str) -> dict[str, Any] | None:
+    """The resolver's own row for the parser's `pick` when it is a trigram neighbour of the typed
+    `raw`, else None: the raw is resolved once (`_product_resolution`).
+
+    Q1 widening (crew ruling (a), 23 Oct 2026): a raw that resolved nothing whose alternatives
+    cut the pick (same-family rows skip the resolver's floor and fill its alternatives cap) still
+    has the pick as a near code when the pick scores at least `ENTITY_MISS_SUGGEST_FLOOR` against
+    the raw, scored as `entity_resolver._trgm_lookup` scores. Its row then comes from the
+    resolver too (the pick's own resolution), offered as that trigram neighbour. A raw that
+    resolved (a narrowing to one prefix match included) answers as today."""
+    # Measured (23 Oct, lane catalogue): code typos show the pick as a trgm neighbour of the raw (11/11); name asks never do.
+    from sqlalchemy import text
+
+    from app.services.chatbot.lanes.business.resolve_gate import _token_of
+    from app.services.chatbot.turn.state import token_key
+    from app.services.entity_resolver import ENTITY_MISS_SUGGEST_FLOOR, _norm_sql, _strip_all_ws
+
+    try:
+        resolution = _product_resolution(db, raw)
+    except Exception:  # noqa: BLE001 - a failed lookup answers as today
+        logger.warning("chatbot: the near-code check did not resolve %r", raw, exc_info=True)
+        return None
+    wanted = token_key(pick)
+    for row in resolution.get("alternatives") or []:
+        if (
+            isinstance(row, dict)
+            and str(row.get("match_tier") or "").lower() == "trgm"
+            and token_key(str(row.get("canonical_code") or "")) == wanted
+        ):
+            return dict(row)
+    if resolution.get("resolved") is True or resolution.get("matches"):
+        return None
+    token = str(_token_of({"raw": raw, "hint": _PRODUCT_HINT}) or "")
+    pn = _strip_all_ws(token).lower() or token.lower()
+    try:
+        with db.begin_nested():
+            score = db.execute(
+                text(f"SELECT similarity({_norm_sql('CAST(:code AS text)')}, :pn)"), {"code": pick, "pn": pn}
+            ).scalar()
+        if score is None or float(score) < ENTITY_MISS_SUGGEST_FLOOR:
+            return None
+        own = _product_resolution(db, pick)
+    except Exception:  # noqa: BLE001 - a failed lookup answers as today
+        logger.warning("chatbot: the near-code check did not score %r against %r", pick, raw, exc_info=True)
+        return None
+    for row in own.get("matches") or []:
+        if isinstance(row, dict) and token_key(str(row.get("canonical_code") or "")) == wanted:
+            # The resolver's row for the pick, offered as the raw's trigram neighbour with its score
+            # (D1 and the probe planner never offer an `exact` row: it would have resolved).
+            return {**row, "match_tier": "trgm", "similarity": float(score)}
+    return None
+
+
+def _types_the_code_whole(raw: str, canonical: str) -> bool:
+    """True when `canonical` is one of `raw`'s words, or a run of adjacent words, after
+    `token_key` folding: the parser stripped the type / colour / brand words beside a code typed
+    exactly (AC-RSF-01 / AC-RSF-03, RESOLVE-SEMANTIC-FALLBACK: "TAP SRTWT5608" -> "SRTWT5608"), so
+    Q1 never reads it as a corrected typo (RELEASE-FIX-1024)."""
+    from app.services.chatbot.turn.state import token_key
+
+    wanted, words = token_key(canonical), raw.split()
+    return any(
+        token_key("".join(words[start:end])) == wanted
+        for start in range(len(words))
+        for end in range(start + 1, len(words) + 1)
+    )
 
 
 def _names_a_class_not_a_code(raw: str, vocab: Vocabulary) -> bool:
@@ -711,27 +810,93 @@ def _as_typed(grounded: list[Grounded], entity: dict[str, Any], message: str | N
     return out
 
 
+def _on_closed_lists(entity: dict[str, Any], items: dict[str, dict[str, str]]) -> dict[str, Any] | None:
+    """CHAT-CLOSED-LISTS card R5: the entity tagged with the list its pick is on (file type,
+    certificate kind, certificate scheme) and the item as listed, or None when the pick is
+    on no list or the parser was not confident. Only the parser's `canonical_code` is read,
+    compared whole with case aside; the customer's words never are."""
+    from app.services.chatbot.head.closed_lists_prompt import NOT_LISTED
+
+    if entity.get("confident") is False or entity.get("listed_item") == NOT_LISTED:
+        # The parser said no listed item is the kind asked: no code reading overrides it.
+        return None
+    # The parser's `listed_item` first (the gated schema holds it to the rendered items),
+    # then its `canonical_code`: an item's code or name, or an explicit alias link.
+    for pick in (str(entity.get("listed_item") or "").strip(), str(entity.get("canonical_code") or "").strip()):
+        if not pick:
+            continue
+        for listed in ("file_type", "cert_kind", "cert_scheme"):
+            item = items.get(listed, {}).get(pick.casefold())
+            if item is not None:
+                return {**entity, "canonical_code": item, "listed": listed}
+    return None
+
+
 def ground(
-    db: "Session", verdict: dict[str, Any], *, vocab: Vocabulary | None = None, message: str | None = None
+    db: "Session",
+    verdict: dict[str, Any],
+    *,
+    vocab: Vocabulary | None = None,
+    message: str | None = None,
+    closed_lists: bool = False,
+    closed_lists_index: bool = False,
+    listed_codes: frozenset[str] | None = None,
+    pick_info: dict[str, dict[str, Any]] | None = None,
+    held_ids: list[str] | None = None,
+    hidden_keys: frozenset[str] = frozenset(),
+    roster_codes: frozenset[str] | None = None,
+    answers_question: bool = False,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """The verdict with every descriptor grounded, and a note per change for the trace.
 
     Entities the registry says nothing about are returned untouched, in place: a turn
     with no descriptor is byte-identical to the parse. `message` is the customer's own
-    text: a descriptor the parser put right is read as typed (`_as_typed`)."""
+    text: a descriptor the parser put right is read as typed (`_as_typed`).
+
+    `closed_lists` (CHAT-CLOSED-LISTS, the parser version carries the CLOSED LISTS
+    section): a document type is kept only when its pick is an item of the lists the
+    prompt rendered, and is tagged with that list (`_on_closed_lists`).
+
+    `closed_lists_index` (CLOSED-LISTS-INDEX-MODE, `ParserConfig.closed_lists_index`): a warehouse
+    this message names that `resolve_warehouse_token` does not resolve, and whose word is a registry
+    code-suffix short form (`closed_lists_index.code_suffix_forms`: "frg" for `-FRG`), is dropped with
+    a note: the customer named a finish, not a warehouse, so the held warehouse stays (no
+    `dropped_kinds`). A resolved hint, and any other unknown word (said back, AC-38), is kept.
+
+    `listed_codes` (CHAT-CODE-LOOKUP, the version also carries the CODE LOOKUP section): a
+    product pick that is not the typed word, an extension or a family of it, and not a code
+    the candidate block listed, is dropped and the raw kept. None is today.
+
+    `pick_info` (CHAT-CODE-LOOKUP R2-4, `candidates.pick_info`): a kept pick is still refused
+    (canonical dropped, raw kept, noted) on a TRUE TIE (another near code on the word's line
+    has the pick's exact score) or SEVERAL HOLDERS (two or more listed codes hold the word and
+    none equals it). The scores are the shortlist's own; nothing here compares spellings.
+
+    `roster_codes` (Q1, owner ruling (a), 23 Oct 2026; None skips the step): the stored question's
+    option codes, folded. A product the parser corrected from a typed code (raw and canonical_code
+    differ after `token_key` folding) whose pick is a trigram neighbour of the raw
+    (`_pick_as_trgm_neighbour`) keeps its raw and loses its canonical, so the did-you-mean asks, the
+    pick first (`NEAR_PICK_KEY`). A raw that is one of the options, a raw that types the canonical
+    whole beside other words (`_types_the_code_whole`), a turn answering the stored question by
+    position or pick (`answers_question`) and a carried entity are never corrections."""
     entities = verdict.get("entities")
     if not isinstance(entities, list) or not entities:
         return verdict, []
+    kinds = _CLASS_HINTS | _SPEC_HINTS | {_ATTACHMENT_HINT, _PRODUCT_HINT}
+    if closed_lists_index:
+        kinds = kinds | {_WAREHOUSE_HINT}
     touched = [
         e
         for e in entities
         if isinstance(e, dict)
-        and str(e.get("hint") or "").strip().lower() in (_CLASS_HINTS | _SPEC_HINTS | {_ATTACHMENT_HINT, _PRODUCT_HINT})
+        and str(e.get("hint") or "").strip().lower() in kinds
     ]
     if not touched:
         return verdict, []
     vocab = vocab or load_vocabulary(db)
-    moved = _category_word_under_documents(db, verdict, vocab)
+    # CHAT-CLOSED-LISTS: under the gate the parser's domain stands; the word lists below
+    # never move it.
+    moved = not closed_lists and _category_word_under_documents(db, verdict, vocab)
     if moved:
         # Fix round 9 on PR #833 (owner, 28 Sep 2026): a category word never opens the
         # "Which kind of file do you need?" menu. With no document word anywhere in the
@@ -741,6 +906,10 @@ def ground(
     out: list[Any] = []
     notes: list[dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
+    dropped_types = False
+    closed_items: dict[str, dict[str, str]] | None = None
+    listed_types: dict[str, str] | None = None
+    short_forms: dict[str, Any] | None = None
 
     def add(grounded: list[Grounded], template: dict[str, Any]) -> None:
         for g in grounded:
@@ -757,6 +926,18 @@ def ground(
         hint = str(entity.get("hint") or "").strip().lower()
         raw = str(entity.get("raw") or "").strip()
         canonical = str(entity.get("canonical_code") or "").strip()
+        if closed_lists and hint in _CLASS_HINTS and canonical and entity.get("confident") is not False:
+            if listed_types is None:
+                from app.services.chatbot.head.candidates import type_values
+
+                listed_types = type_values(db)
+            shown = listed_types.get(canonical.casefold())
+            if shown is not None:
+                # CHAT-CLOSED-LISTS card R2 (c27, "kitchan tap" -> kitchen_tap): a product type
+                # the parser picked off the lists IS the type; its raw words are not split.
+                notes.append({"from": hint, "raw": raw, "to": f"listed product type: {shown}"})
+                out.append({**entity, "raw": shown, "canonical_code": None})
+                continue
         if (
             hint in _CLASS_HINTS
             and canonical
@@ -770,6 +951,47 @@ def ground(
             notes.append({"from": hint, "raw": raw, "to": canonical})
             entity = {**entity, "raw": canonical, "canonical_code": None}
             raw = canonical
+        if listed_codes is not None and hint == _PRODUCT_HINT and canonical and entity.get("current_message") is not False:
+            from app.services.chatbot.turn.state import token_key
+
+            picked, typed = token_key(canonical), token_key(raw)
+            if picked != typed and picked not in typed and typed not in picked and picked not in {token_key(c) for c in listed_codes}:
+                notes.append({"from": hint, "raw": raw, "to": "canonical dropped: not on the candidate block"})
+                entity = {**entity, "canonical_code": None}
+                canonical = ""
+            elif pick_info and picked != typed and (info := pick_info.get(typed)):
+                scores, holds = info.get("scores") or {}, info.get("holds") or []
+                # The typed word is itself a listed code (an exact code with a spec word variant
+                # picked): it is on file, so nothing is refused.
+                on_file = typed in holds or typed in scores
+                tie = not on_file and picked in scores and picked not in holds and any(
+                    other != picked and other not in holds and score == scores[picked] for other, score in scores.items()
+                )
+                several = len(holds) >= 2 and typed not in holds and picked in holds
+                if tie or several:
+                    notes.append({
+                        "from": hint, "raw": raw,
+                        "to": "canonical refused: " + ("tied near codes" if tie else "several codes hold the word"),
+                    })
+                    entity = {**entity, "canonical_code": None}
+                    canonical = ""
+        if (
+            roster_codes is not None
+            and not answers_question
+            and hint == _PRODUCT_HINT
+            and canonical
+            and raw
+            and entity.get("current_message") is not False
+        ):
+            from app.services.chatbot.turn.state import token_key
+
+            typed = token_key(raw)
+            if typed != token_key(canonical) and typed not in roster_codes and not _types_the_code_whole(raw, canonical):
+                near = _pick_as_trgm_neighbour(db, raw, canonical)
+                if near is not None:
+                    notes.append({"from": hint, "raw": raw, "to": f"did you mean: {canonical} (a typed code corrected)"})
+                    entity = {**entity, "canonical_code": None, NEAR_PICK_KEY: near}
+                    canonical = ""
         if hint == _PRODUCT_HINT and _names_a_class_not_a_code(raw, vocab):
             # Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
             # basin, there is no such thing and it gives me flexible trap"): words with no
@@ -778,6 +1000,14 @@ def ground(
             entity = {**entity, "hint": "category"}
             hint = "category"
             notes.append({"from": _PRODUCT_HINT, "raw": raw, "to": "category"})
+        if hint in _SPEC_HINTS and closed_lists:
+            from app.services.chatbot.head.bare_size import ground_bare
+
+            bare = ground_bare(db, entity, [e for e in entities if isinstance(e, dict)], vocab, held_ids, hidden_keys)
+            if bare is not None:
+                add([bare], entity)
+                notes.append({"from": hint, "raw": raw, "to": [bare.__dict__]})
+                continue
         if hint in _SPEC_HINTS:
             others = [
                 str(e.get("raw") or "")
@@ -799,7 +1029,11 @@ def ground(
                 # PROMO-SUBJECT-FILTER AC-24: the words name two types, but the whole phrase
                 # is one value of a registry key, said word for word ("basin cabinet",
                 # furniture_type basin_cabinet): that value is what was asked for.
+                size = len(out)
                 add([whole], entity)
+                if closed_lists and len(out) > size:
+                    # The parser named a class; the spec this makes still says so (`names_own_class`).
+                    out[-1] = {**out[-1], "class_hint": hint}
                 notes.append({"from": hint, "raw": raw, "to": [whole.__dict__]})
                 continue
             # Fix round 10 on PR #833: "water tap basin" holds two product types word for
@@ -863,6 +1097,29 @@ def ground(
             add(grounded, entity)
             notes.append({"from": hint, "raw": raw, "to": [rest, *[g.__dict__ for g in grounded]]})
             continue
+        if hint == _WAREHOUSE_HINT and closed_lists_index and entity.get("current_message") is not False:
+            from app.services.chatbot.head.candidates import _phrase
+            from app.services.chatbot.head.closed_lists_index import code_suffix_forms
+            from app.services.chatbot.lanes.business.services import resolve_warehouse_token
+
+            if not any(resolve_warehouse_token(db, token) for token in dict.fromkeys((canonical, raw)) if token):
+                short_forms = code_suffix_forms(db, hidden_keys) if short_forms is None else short_forms
+                if _phrase(raw) in short_forms:
+                    notes.append({"from": hint, "raw": raw, "to": "dropped: a finish short form, no warehouse on file"})
+                    continue
+        if hint == _ATTACHMENT_HINT and closed_lists:
+            if closed_items is None:
+                from app.services.chatbot_prompt_vars import closed_list_items
+
+                closed_items = closed_list_items(db)
+            tagged = _on_closed_lists(entity, closed_items)
+            if tagged is None:
+                notes.append({"from": hint, "raw": raw, "to": "dropped: not on the closed lists"})
+                dropped_types = True
+                continue
+            notes.append({"from": hint, "raw": raw, "to": f"on the {tagged['listed']} list: {tagged['canonical_code']}"})
+            out.append(tagged)
+            continue
         if hint == _ATTACHMENT_HINT:
             # ATTACH-GROUNDING-TYPO, option (c) (owner, 6 Oct 2026): only the parser
             # understands words. A confident document type whose code is listed stays that
@@ -877,6 +1134,13 @@ def ground(
     if not notes:
         return verdict, []
     grounded_verdict = {**verdict, "entities": out}
+    if dropped_types and not any(
+        isinstance(e, dict) and str(e.get("hint") or "").strip().lower() == _ATTACHMENT_HINT and e.get("current_message") is not False
+        for e in out
+    ):
+        # R4-3: a file type this message named and the lists dropped still replaces the type
+        # axis (with nothing), so a type from an earlier turn never answers it.
+        grounded_verdict["dropped_kinds"] = [_ATTACHMENT_HINT]
     return grounded_verdict, notes
 
 

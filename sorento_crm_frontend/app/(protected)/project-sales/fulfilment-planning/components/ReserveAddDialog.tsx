@@ -11,10 +11,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
+import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { cn } from '@/lib/utils';
+import { numberFieldError } from '@/lib/number-field';
 import { fromMinor, toMinor } from '../../_shared/lib/supplyComposition';
+import { soLineNoText } from '../../_shared/lib/fulfilmentBoard';
 import { availableForProjectOf } from '../../_shared/lib/poolShare';
 import type {
   BoardCellLocation,
@@ -37,15 +39,23 @@ const NUMBER_COL = 'w-[130px] min-w-[130px] max-w-[130px]';
  * NOT a DataGrid, the same carve-out `BorrowAddDialog` documents: a small fixed table inside
  * a dialog, with no column config, sort, resize or pagination to earn.
  */
+/** A quantity to add must be a number above zero. */
+function qtyError(raw: string) {
+  return numberFieldError(raw, { min: 0, minExclusive: true });
+}
+
 export function ReserveAddDialog({
   lineNo,
+  soLineNo,
   itemCode,
   locations,
   openRemainder,
   onDone,
   onAdd,
 }: {
+  /** The planning address, for element ids. What a person reads is `soLineNo`. */
   lineNo: number;
+  soLineNo?: number | null;
   itemCode?: string | null;
   /** Already filtered to what is left to add (free stock, not already on the Reserve list). */
   locations: BoardCellLocation[];
@@ -70,21 +80,28 @@ export function ReserveAddDialog({
 
   const selected =
     candidates.find((location) => locationKey(location) === selectedKey) ?? first;
-  const amount = Number.parseFloat(qty);
-  const valid = Boolean(selected) && Number.isFinite(amount) && amount > 0;
+  const quantityMessage = qtyError(qty);
+  const [showErrors, setShowErrors] = React.useState(false);
 
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-3xl overflow-hidden">
         <DialogHeader>
-          <DialogTitle>Add a reserve location for line {lineNo}</DialogTitle>
+          <DialogTitle>
+            Add a reserve location for line{' '}
+            {soLineNoText({ so_line_no: soLineNo, line_no: lineNo })}
+          </DialogTitle>
           <DialogDescription>{itemCode ?? 'This item'}</DialogDescription>
         </DialogHeader>
 
         <form
           onSubmit={(event) => {
             event.preventDefault();
-            if (!valid || !selected) return;
+            if (!selected) return;
+            if (quantityMessage) {
+              setShowErrors(true);
+              return;
+            }
             onAdd(selected, qty.trim());
             onDone();
           }}
@@ -199,12 +216,12 @@ export function ReserveAddDialog({
 
             <div className="space-y-1.5">
               <Label htmlFor={`reserve-qty-${lineNo}`}>Quantity</Label>
-              <Input
+              <NumberInput
                 id={`reserve-qty-${lineNo}`}
-                type="number"
                 min="0"
                 step="any"
                 value={qty}
+                error={showErrors ? quantityMessage : undefined}
                 onChange={(event) => setQty(event.target.value)}
                 className="h-9 w-40 tabular-nums"
               />
@@ -215,7 +232,7 @@ export function ReserveAddDialog({
             <Button type="button" variant="outline" onClick={onDone}>
               Cancel
             </Button>
-            <Button type="submit" disabled={!valid}>
+            <Button type="submit" disabled={!selected}>
               Add the location
             </Button>
           </DialogFooter>

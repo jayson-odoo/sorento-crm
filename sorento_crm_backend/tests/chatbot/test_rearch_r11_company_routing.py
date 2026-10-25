@@ -483,10 +483,16 @@ class TestThirdTurnClarifyAnswerRoutesByCompanyId:
         options = pending.get("options") or []
         assert len(options) == 2, options
         first = next((o for o in options if o.get("position") == 1), None)
-        assert first is not None and first.get("label") == MOCHA, (
-            f"positions follow the printed order (Mocha first) - the offer's own "
-            f"printed pool: {options!r}"
+        # Position 1 is whichever company the printed pool lists first, and that pool
+        # follows the unordered product rows (the resolver's exact probe has no ORDER BY,
+        # so a shared xdist worker can lay Sorento's row out first). The test pins that
+        # "1" routes to the company printed at position 1, whichever one that is.
+        by_name = {MOCHA: ids["a"], SORENTO: ids["b"]}
+        assert first is not None and first.get("label") in by_name, (
+            f"position 1 must be one of the two searched companies: {options!r}"
         )
+        first_name = first["label"]
+        first_id = by_name[first_name]
         focus_before = _focus_for(session_factory, MULTICO_CONTACT_ID)
 
         # T3 - "1" answers the persisted company_pick by POSITION.
@@ -507,18 +513,18 @@ class TestThirdTurnClarifyAnswerRoutesByCompanyId:
         assert len(calls) == 1, calls
         ctx3, item3 = calls[0]
         ec = escalation_context(item3, ctx=ctx3)
-        assert ec.get("company_id") == ids["a"], (
+        assert ec.get("company_id") == first_id, (
             f"a bare position over the company clarify must resolve to the FIRST "
-            f"printed company's (Mocha's) real id, not just its name riding along: {ec!r}"
+            f"printed company's ({first_name}'s) real id, not just its name riding along: {ec!r}"
         )
-        assert ec.get("company_name") == MOCHA, ec
+        assert ec.get("company_name") == first_name, ec
 
         next_body = _next_assignee_body(ctx3, ec)
-        assert next_body.get("company_id") == ids["a"], (
-            f"the round robin must be handed Mocha's real company id: {next_body!r}"
+        assert next_body.get("company_id") == first_id, (
+            f"the round robin must be handed {first_name}'s real company id: {next_body!r}"
         )
 
-        # Security N-2 (hand pass 11 final): Mocha's `company_id` is a COMPANY id, not a
+        # Security N-2 (hand pass 11 final): the picked company's `company_id` is a COMPANY id, not a
         # product/customer entity - it must never reach `focus.uuids`.
         # `ESCALATION_OFFER_KINDS` routes `company_pick` to `_answer_offer` before the
         # generic roster path, so a casual "1" over this pending leaves focus exactly
@@ -538,7 +544,7 @@ class TestThirdTurnClarifyAnswerRoutesByCompanyId:
     # None`) - the ONE line that reads the id off the routing-roster-plan pool a
     # resolved `company_pick` matched against - makes
     # `test_a_bare_position_over_the_clarify_resolves_to_the_first_companys_real_id`
-    # fail at `assert ec.get("company_id") == ids["a"]` (`None == '<uuid>'`), and
+    # fail at `assert ec.get("company_id") == first_id` (`None == '<uuid>'`), and
     # leaves every other test in this file green (the mutation is scoped to the
     # `company_pick` arm alone, which only this test and BLOCKER 2a exercise -
     # BLOCKER 2a fails too, correctly, for the same reason: both reach id resolution
