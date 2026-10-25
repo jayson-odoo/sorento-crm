@@ -867,6 +867,55 @@ CATALOG: tuple[ToolSpec, ...] = (
         restricted_fields=(("sales.sales_target", "Sales target"),),
     ),
     ToolSpec(
+        "crm_sales_opportunity_customer_options",
+        (
+            "The asking SALESPERSON's own customers matching `q`, for logging a sales opportunity "
+            "in chat: each item has the customer's `code`, `name` and account `label` (A/C I, "
+            "A/C III ...). `blocked` is true when the exact name belongs only to another agent's "
+            "customer; `prospect` is true when no customer has that name (log it as a prospect).\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` (422 "
+            "`contact_identity_required` otherwise). A contact who is not a salesperson answers 403 "
+            "`not_a_salesperson`; one who may not log opportunities answers 403 "
+            "`opportunity_not_enabled`."
+        ),
+        "/api/v1/external/sales-opportunities/customer-options",
+        (),
+        ("contact_id", "space_id", "q"),
+        domain="orders",
+        related_tools=("crm_sales_opportunity_log",),
+        escalation_team="sales",
+    ),
+    ToolSpec(
+        "crm_sales_opportunity_log",
+        (
+            "LOG a sales opportunity for the asking SALESPERSON (WRITE action: it creates a real "
+            "opportunity in stage New under the agent who owns the customer). Pass `contact_id` and "
+            "`space_id`, then `customer_id` (from `crm_sales_opportunity_customer_options`) OR "
+            "`prospect_name`, plus `title`, `expected_amount` (RM, more than zero) and "
+            "`expected_close_date` (YYYY-MM-DD). `dry_run` true runs every check and saves nothing. "
+            "RETURNS `{opportunity_no, stage, customer, prospect_name, title, expected_amount, "
+            "expected_close_date, pipeline, dry_run}`; `pipeline` is the owning agent's current "
+            "target end date and the open pipeline closing within it, null with no current target."
+        ),
+        "/api/v1/external/sales-opportunities",
+        (),
+        (),
+        method="POST",
+        body_params=(
+            "contact_id",
+            "space_id",
+            "customer_id",
+            "prospect_name",
+            "title",
+            "expected_amount",
+            "expected_close_date",
+            "dry_run",
+        ),
+        domain="orders",
+        related_tools=("crm_sales_opportunity_customer_options",),
+        escalation_team="sales",
+    ),
+    ToolSpec(
         "crm_report_ask",
         (
             "ONE flexible sales report: rank or total sales by any one dimension, for a REQUIRED "
