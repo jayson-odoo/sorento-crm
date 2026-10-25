@@ -319,3 +319,48 @@ def test_o3_the_group_s_ungrouped_ledgers_ride_option_1_and_the_roster_has_two_l
     result, captured = chat(_t2(group_by=None, order_status=None), "1", "ZZT-cpr-o3-2")
     calls = _report_calls(captured)
     assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == group_ids, captured
+
+
+
+def _seed_group_with_strays(session_factory) -> dict[str, str]:
+    from app.models.order import CustomerGroup
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._mc_lookup_seed import customer
+
+    db = session_factory()
+    group = CustomerGroup(name=ONE_NAME, company_id=DEFAULT_COMPANY_ID)
+    db.add(group)
+    db.flush()
+    names = {"ac1": f"{ONE_NAME} [A/C I]", "project": f"{ONE_NAME} (PROJECT)", "iborn": f"{ONE_NAME} - [IBORN]",
+             "showcase": f"*{ONE_NAME} (SHOWCASE)", "other": OTHER_NAME}
+    rows = {key: customer(db, company_id=DEFAULT_COMPANY_ID, name=name) for key, name in names.items()}
+    for key in ("ac1", "project"):
+        rows[key].customer_group_id = group.id
+    ids = {key: row.id for key, row in rows.items()}
+    db.commit()
+    db.close()
+    return ids
+
+
+def test_o4_only_the_group_s_ledgers_match_one_customer_no_question(chat, session_factory):
+    """Crew live check @1ae7b94d (b), "Dealer fullshun sanitary oct total sales": the same group and its ungrouped
+    "- [IBORN]" / inactive "(SHOWCASE)" ledgers, and NO other customer. One group is one customer (owner ruling
+    25 Oct 17:35): no question, one report over all four ledgers."""
+    from dataclasses import replace
+
+    ids = _seed_group_with_strays(session_factory)
+    services = _group_with_strays(ids)
+    inner = services.resolve_entity
+
+    def without_other(body: dict[str, Any]) -> dict[str, Any]:
+        out = inner(body)
+        for resolution in out["resolutions"]:
+            resolution["matches"] = [m for m in resolution["matches"] if m["uuid"] != ids["other"]]
+        return out
+
+    result, captured = chat(_t1(), "Dealer zz demo sanitary oct total sales", "ZZT-cpr-o4-1",
+                            resolve_services=replace(services, resolve_entity=without_other))
+    assert "Which one do you mean" not in _reply(result), _reply(result)
+    calls = _report_calls(captured)
+    group_ids = {ids[k] for k in ("ac1", "project", "iborn", "showcase")}
+    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == group_ids, captured
