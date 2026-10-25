@@ -1,6 +1,6 @@
 # Behaviour card v4: Project registration from the portal (PROJECT-REG-PORTAL)
 
-Status: card v4 + mock v4 filed (25 Oct 2026), after the owner's Lavish notes on mock v3 (12:45). Nothing built.
+Status: SETTLED (owner final 25 Oct 13:03, see PLAN). Building.
 Size **L** (one additive migration). v1-v3 in git history (73412ba6, e551fb3f, a9356640).
 Mock: `mockups/project-registration-portal-v4.html`. Paths: BE = `sorento_crm_backend/app/`, FE = `sorento_crm_frontend/`.
 The WhatsApp chat summary is not in this repo (crew rule); every example is a fake analogue.
