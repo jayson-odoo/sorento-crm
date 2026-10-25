@@ -650,7 +650,9 @@ DIVERGENCES: list[Divergence] = [
     # `code`, and the gate gains `picker_lines`, in every copy of the gate downstream. `strip`
     # cannot reach one field of one candidate, so `specific_options` comes off whole there;
     # tests/chatbot/test_picker_duplicate_code_company.py grades the lines, their order and the
-    # pick by position against real rows.
+    # pick by position against real rows. The re-asked roster fix (c6e038a66f) also stamps the
+    # printed label on each `compatible_entities` row, so that list comes off at the same
+    # prefixes (INDEX-HYBRID-R2 port, lead sign-off); the r3 test there grades it.
     Divergence(
         node="sub-resolve-and-gate",
         fixture="rg-15123789",
@@ -667,7 +669,7 @@ DIVERGENCES: list[Divergence] = [
             *(
                 (*prefix, key)
                 for prefix in ((), ("gate",), ("ctx_resolved",), ("ctx_resolved", "ctx", "gate"), ("annotate_incoming",))
-                for key in ("specific_options", "picker_lines")
+                for key in ("specific_options", "picker_lines", "compatible_entities")
             ),
             ("ctx_resolved", "ctx", "parse", "output", "entities"),
             ("ctx_resolved", "ctx", "parse", "output", "shipment_hint_retyped"),
