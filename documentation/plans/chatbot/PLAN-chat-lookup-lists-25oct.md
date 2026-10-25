@@ -148,3 +148,8 @@ or a 5+ char letter-digit word) never feed the meaning / spelling lists (AC-12).
   It applies to S1's category rows too (the measured config was "+ v63 translations as data").
 - Block order: category, spec, file_type, sales_channel (later: brand, salesperson, location, promotion_kind,
   customer).
+- Meaning floors per list for text-embedding-3-small (crew-only phase1/small/floors.small.md, 26 Oct, free re-score:
+  lowest floor keeping the 3-large block size at its recall): `FLOOR_MEANING_BY_LIST = {"category": 0.55,
+  "sales_channel": 0.55, "brand": 0.58, "spec": 0.55, "file_type": 0.59, "customer": 0.53}`, any other list 0.55;
+  `FLOOR_MEANING = 0.5` stays as the documented base only if a test needs it. Spelling floor 0.5 everywhere. Cost:
+  spec words 49 of 51 and file types 136 of 137 mentions at top 10 (one each lost vs 0.5); customers 63 of 75.
