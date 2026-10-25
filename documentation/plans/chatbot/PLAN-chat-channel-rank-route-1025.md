@@ -16,16 +16,20 @@ AC-CF2 (`report-channel-filter-1024-acceptance-criteria.md:6`, owner ruling 24 O
 the agent ranking keeps the agent axis with Channel: Project; the message's own product and count win. No new ask needed.
 
 ## Rule (parser fields only, report ask lane)
-In `as_held_refine` (the engine seam where a held report and the verdict meet): a `sales_analysis` verdict with a count (`top_n`),
+In `as_held_refine` (the engine seam where a held report and the verdict meet): a `sales_analysis` or `sales_report` verdict (a
+sales analysis naming a product or customer is already `sales_report` here, `turn_runtime.py:1963-1970`) with a count (`top_n`),
 one channel (`sales_channel` dealer | project) and no axis (`group_by` null), with a ranking frame held and not stale, is a refine
 of THAT ranking: it goes to the report ask with `ranking_refine` true, and `settle` -> `_refine` applies the channel, product and
-count (the same path #1844 uses). A sales analysis has no count of its own (it totals by channel, month or year), so a count with no
+count (the same path #1844 uses). Neither report has a count of its own (`CAN_DRAW`: a total, or by month / year), so a count with no
 axis can only rank the rows already ranked.
 
 Unchanged: no frame or a stale frame (today's analysis); a sales analysis with no count ("Project sales 2026"); with an axis
 (`group_by` month / year / channel); `top_n` with no channel (out of scope, not this lane); a dealer contact keeps the lane's refusal.
 
 ## Tests (red first, real engine seam, v63 shapes)
-CR1 row 6 t3 after the agent ranking: one `crm_report_ask` call, axis sales_agent, top 10, channel project, product SRT102-RG,
-2026 kept, "Top 10 of N sales agents", "Channel: Project team"; no `crm_sales_analysis`.
-Guards: CR2 nothing held -> today's analysis; CR3 no count -> today's analysis; CR4 a plain held-ranking refine ("top 3") unchanged.
+`tests/chatbot/test_chat_channel_rank_route.py`. CR1 row 6 t3 after the agent ranking and "Dealer sales only" (CR1b straight after the
+ranking): one `crm_report_ask` call, axis sales_agent, top 10, channel project, the message's product, 2026, qty, delivered kept;
+no `crm_sales_report` (today's total). Guards (today's `crm_sales_report`): CR2 nothing held, CR3 no count, CR4 an axis (month),
+CR6 no channel, CR7 a stale frame, CR8 a held total (no ranking); CR5 a plain refine ("top 3") unchanged.
+Kill notes: dropping each of the six conditions fails exactly one named test (channel CR6, count CR3, axis CR4, frame axis CR8,
+stale CR7, the whole rule CR1+CR1b).

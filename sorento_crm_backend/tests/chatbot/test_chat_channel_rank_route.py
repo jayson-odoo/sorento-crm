@@ -100,3 +100,31 @@ def test_cr5_guard_a_plain_refine_of_the_ranking_is_unchanged(console, monkeypat
     ran = _ran(log)
     assert len(ran) == 1 and ran[0]["group_by"] == "sales_agent" and ran[0]["top_n"] == 3 and "channel" not in ran[0], (text, log)
     assert ran[0]["product_code"] == PRODUCT_CODE and "Top 3 of 12 sales agents" in text, text
+
+
+def test_cr6_guard_a_count_with_no_channel_is_not_this_rule(console, monkeypatch, other_product) -> None:
+    """Out of this lane's scope (no channel named): the reply stays today's."""
+    _agent_ranking(console, monkeypatch)
+    text, log = _say_all(console, monkeypatch, _project_top_10(sales_channel=None), f"sales top 10 {OTHER_CODE.lower()}")
+    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+
+
+def test_cr7_guard_a_stale_frame_stays_today_s_sales_report(console, monkeypatch, other_product) -> None:
+    _agent_ranking(console, monkeypatch)
+    failed = _v63(group_by="weather", top_n=5, ranking_refine=False, measure="qty", basis="delivered",
+                  entity_op="replace_combine", domain_in_message=True, date_filter_start="2026-01-01",
+                  date_filter_end="2026-12-31")
+    text, log = _say_all(console, monkeypatch, failed, "top 5 by weather")
+    assert _ran(log) == [], ("setup: the failing ask ran", text, log)
+    text, log = _say_all(console, monkeypatch, _project_top_10(), f"Project sales top 10 {OTHER_CODE.lower()}")
+    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+
+
+def test_cr8_guard_a_held_total_has_no_ranking_to_rerun(console, monkeypatch, other_product) -> None:
+    total = _v63(group_by=None, ranking_refine=False, measure="qty", rank_by="quantity", basis="delivered",
+                 entities=[_e(PRODUCT_CODE, "product")], entity_op="replace_combine", domain_in_message=True,
+                 date_filter_start="2026-01-01", date_filter_end="2026-12-31")
+    text, log = _say_all(console, monkeypatch, total, f"total qty of {PRODUCT_CODE} in 2026 delivered")
+    assert len(_ran(log)) == 1 and not _ran(log)[0].get("group_by"), ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _project_top_10(), f"Project sales top 10 {OTHER_CODE.lower()}")
+    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
