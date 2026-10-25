@@ -634,11 +634,12 @@ def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
         and verdict.get("top_n") is not None
         and verdict.get("sales_channel") in ("dealer", "project")
         and not jsc.js_string(verdict.get("group_by") or "").strip()
-        and isinstance(frame, dict) and frame.get("group_by") and not frame.get("stale")
+        and isinstance(frame, dict) and _drill_source(frame) and not frame.get("stale")
     ):
         # CHAT-CHANNEL-RANK-ROUTE (PLAN-chat-channel-rank-route-1025.md, ruling AC-CF2): neither report has a count of
         # its own, so a count and one channel with no axis, over a held ranking, is that ranking filtered to the channel
-        # ("Project sales top 10 <code>"): a refine, which applies the channel, product and count (`_refine`).
+        # ("Project sales top 10 <code>"): a refine, which applies the channel, product and count (`_refine`). Only a
+        # population on screen (agents, customers, ...): a month list or a channel ranking keeps today's report.
         verdict = {**verdict, "ranking_refine": True}
     if verdict.get("ranking_refine") is not True or not isinstance(frame, dict) or not frame or status == ASK_NAME:
         return verdict

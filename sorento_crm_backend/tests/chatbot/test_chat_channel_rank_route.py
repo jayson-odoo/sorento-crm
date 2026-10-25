@@ -10,7 +10,7 @@ import pytest
 
 from tests.chatbot import test_report_ask_lane as lane_tests
 from tests.chatbot.test_engine import stub_access  # noqa: F401
-from tests.chatbot.test_report_ask_lane import PRODUCT_CODE, TOOL, _e, _say_all, console  # noqa: F401
+from tests.chatbot.test_report_ask_lane import DIMENSION_REFUSAL, PRODUCT_CODE, TOOL, _e, _say_all, console, dealer  # noqa: F401
 from tests.chatbot.test_report_channel_filter import OTHER_CODE, _agent_ranking, _body, _dealer_only, _ran, _v63
 
 #: Today's answer to that parse (a sales analysis naming one product is that product's sales report,
@@ -128,3 +128,32 @@ def test_cr8_guard_a_held_total_has_no_ranking_to_rerun(console, monkeypatch, ot
     assert len(_ran(log)) == 1 and not _ran(log)[0].get("group_by"), ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _project_top_10(), f"Project sales top 10 {OTHER_CODE.lower()}")
     assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+
+
+def test_cr9_guard_a_held_month_list_is_not_a_population_to_rank(console, monkeypatch, other_product) -> None:
+    """Review: a month trend on screen has no rows a count could rank, so the reply stays today's."""
+    months = _v63(group_by="month", ranking_refine=False, measure="qty", basis="delivered",
+                  entities=[_e(PRODUCT_CODE, "product")], entity_op="replace_combine", domain_in_message=True,
+                  date_filter_start="2026-01-01", date_filter_end="2026-12-31")
+    text, log = _say_all(console, monkeypatch, months, f"{PRODUCT_CODE} sales by month 2026 delivered qty")
+    assert len(_ran(log)) == 1 and _ran(log)[0]["group_by"] == "month", ("setup", text, log)
+    text, log = _say_all(console, monkeypatch, _project_top_10(), f"Project sales top 10 {OTHER_CODE.lower()}")
+    assert _ran(log) == [] and len(_today(log)) == 1, (text, log)
+
+
+def test_cr10_guard_a_non_report_status_is_not_this_rule(console, monkeypatch, other_product) -> None:
+    """Review: only the two count-less sales reports are read as the held ranking; an order list keeps its own route."""
+    _agent_ranking(console, monkeypatch)
+    text, log = _say_all(console, monkeypatch, _project_top_10(order_status="outstanding"), f"Project outstanding top 10 {OTHER_CODE.lower()}")
+    assert _ran(log) == [], (text, log)
+
+
+def test_cr11_a_dealer_contact_gets_the_refusal_never_a_wider_ranking(dealer, monkeypatch, other_product) -> None:
+    """A dealer naming a channel over a held ranking gets the lane's refusal (`_refine`), as #1844's "Dealer sales only"."""
+    products = _v63(group_by="product", top_n=5, ranking_refine=False, measure="qty", basis="delivered",
+                    entity_op="replace_combine", domain_in_message=True, date_filter_start="2026-01-01",
+                    date_filter_end="2026-12-31")
+    text, log = _say_all(dealer, monkeypatch, products, "Top 5 products in 2026 by delivered qty")
+    assert len(_ran(log)) == 1 and _ran(log)[0]["group_by"] == "product", ("setup", text, log)
+    text, log = _say_all(dealer, monkeypatch, _project_top_10(sales_channel="dealer"), f"Dealer sales top 10 {OTHER_CODE.lower()}")
+    assert _ran(log) == [] and text.strip() == DIMENSION_REFUSAL, (text, log)
