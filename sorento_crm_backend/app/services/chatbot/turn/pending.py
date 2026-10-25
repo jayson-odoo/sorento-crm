@@ -29,6 +29,11 @@ PENDING_KINDS: tuple[str, ...] = (
 #: seam (`lanes.business.sales_analysis_company_reply`); any other pick re-asks it (`apply`).
 SALES_ANALYSIS_COMPANY_KIND = "sales_analysis_company"
 
+#: SALES-TARGET-CHAT slice 2: the read-back of an opportunity a salesperson is logging ("Reply YES
+#: to save."), a yes/no question armed and answered by `lanes/opportunity.py` alone; the payload
+#: carries the values to save. Any other ask drops it (the engine's opportunity seam).
+OPPORTUNITY_CONFIRM_KIND = "opportunity_confirm"
+
 # Stay alive, tracked by `answered_positions`, after their own pick.
 #
 # `tier_pick` (hand pass 9, D3, owner ruling 20 Sep 2026): main's fresh-typed picker

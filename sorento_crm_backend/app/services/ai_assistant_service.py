@@ -134,7 +134,9 @@ _WRITE_TOOL_SUFFIXES = (
 #
 # Add a name here only when it genuinely mutates state; a tool that ends in a
 # verb is already covered and does not need a second declaration.
-_WRITE_TOOL_NAMES = frozenset({"crm_ideation_turn"})
+# SALES-TARGET-CHAT slice 2: `crm_sales_opportunity_log` creates an opportunity, and its name
+# ends in no write verb, so it is named here.
+_WRITE_TOOL_NAMES = frozenset({"crm_ideation_turn", "crm_sales_opportunity_log"})
 
 
 def _is_write_tool(tool_name: str) -> bool:

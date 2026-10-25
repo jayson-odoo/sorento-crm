@@ -78,6 +78,9 @@ UNDOMAINED_CHATBOT_TOOLS: tuple[str, ...] = (
     "crm_sla_conversation_tracking_dashboard",
     "crm_sla_conversation_tracking_list",
     "crm_sales_target_progress",
+    # SALES-TARGET-CHAT slice 2: the salesperson's own customers, read by the opportunity lane
+    # at its own seam (`lanes/opportunity.py`); its write twin is on no read path.
+    "crm_sales_opportunity_customer_options",
     "crm_system_tool_capabilities_summary",
     "user_guides_read",
 )
@@ -155,6 +158,9 @@ BRAND_SCOPE_TREATMENT: dict[str, BrandScopeTreatment] = {
     "crm_sales_analysis": "filtered",
     "crm_sales_report": "filtered",
     "crm_sales_target_progress": "no_products",
+    # SALES-TARGET-CHAT slice 2: customers and one opportunity, never a product row.
+    "crm_sales_opportunity_customer_options": "no_products",
+    "crm_sales_opportunity_log": "no_products",
     "crm_sla_conversation_event_logs_list": "no_products",
     "crm_sla_conversation_tracking_dashboard": "no_products",
     "crm_sla_conversation_tracking_list": "no_products",
@@ -362,6 +368,8 @@ BRANCH_KINDS = (
     "media_denied",
     # AI-ALLOWED-GATE: the CRM declined to answer this contact (blocked, or not in the CRM).
     "ai_not_allowed",
+    # SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity (`lanes/opportunity.py`).
+    "log_opportunity",
 )
 BranchKind = Literal[BRANCH_KINDS]  # type: ignore[valid-type]
 
@@ -519,6 +527,9 @@ SALES_REPORT_GROUP_BYS: tuple[str, ...] = ("customer", "product", "delivery_orde
 # SALES-TARGET-CHAT: a target ask is the `sales` domain too, but it is NOT a sales figure
 # status: its gates take the `sales.sales_target` grant, not the sales report's.
 SALES_TARGET_STATUS = "sales_target"
+#: SALES-TARGET-CHAT slice 2: logging an opportunity is the `sales` domain (turn_runtime maps it)
+#: and its own branch kind (`log_opportunity`, `lanes/opportunity.py`). Not a sales figure status.
+LOG_OPPORTUNITY_STATUS = "log_opportunity"
 
 SALES_FIGURE_STATUSES: tuple[str, ...] = ("sales_report", "top_selling", "sales_analysis", "sales_ranking")
 
