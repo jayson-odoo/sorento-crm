@@ -46,9 +46,25 @@ path = Path("alembic/versions/prreg_0001_project_registrations.py")
 spec = importlib.util.spec_from_file_location("prreg", path)
 mod = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(mod)
+APPROVER_ROLES = tuple(mod.APPROVER_ROLE_NAMES)  # the non-admin roles the migration grants the approve slug
 with engine.begin() as conn:
+    # The roles exist BEFORE the migration runs, so their grant is the migration's own doing.
+    for n in APPROVER_ROLES:
+        conn.execute(text(
+            "INSERT INTO user_roles (id, slug, name, is_trashed, is_protected, is_default) "
+            "SELECT :i, :s, :n, false, false, false "
+            "WHERE NOT EXISTS (SELECT 1 FROM user_roles WHERE name = :n)"
+        ), {"i": str(uuid.uuid4()), "s": n.lower().replace(" ", "_"), "n": n})
     with Operations.context(MigrationContext.configure(conn)):
         mod.upgrade()
+    # What a manager or coordinator also holds in real life (the approve slug itself came from the migration).
+    conn.execute(text(
+        "INSERT INTO user_role_permissions (id, role_id, permission_id) "
+        "SELECT gen_random_uuid()::text, r.id, p.id FROM user_roles r, user_permissions p "
+        "WHERE r.name = ANY(:n) AND p.slug IN ('projects.projects.view','projects.projects.edit',"
+        "'projects.projects.manage','projects.parties.view') AND NOT EXISTS (SELECT 1 FROM user_role_permissions x "
+        "WHERE x.role_id = r.id AND x.permission_id = p.id)"
+    ), {"n": list(APPROVER_ROLES)})
 
 db = sessionmaker(bind=engine)()
 
@@ -77,6 +93,21 @@ if admin is None:
     db.add(UserRoleAssignment(user_id=admin.id, role_id=role))
     db.flush()
     db.add(UserCompany(id=u(), user_id=admin.id, company_id=COMPANY))
+
+approver = db.query(User).filter(User.email == "browse.approver@example.com").one_or_none()
+if approver is None:
+    approver = User(id=u(), email="browse.approver@example.com", name="Approver Manager", status="ACTIVE",
+                    password=bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode())
+    db.add(approver)
+    db.flush()
+    db.add(UserCompany(id=u(), user_id=approver.id, company_id=COMPANY))
+    db.flush()
+# the approver is a Coordinator, not a manager and not an admin: proves the second named role
+role_id = db.execute(text("SELECT id FROM user_roles WHERE name = :n"), {"n": APPROVER_ROLES[-1]}).scalar()
+if not db.execute(text("SELECT 1 FROM user_role_assignments WHERE user_id = :u AND role_id = :r"),
+                  {"u": approver.id, "r": role_id}).scalar():
+    db.add(UserRoleAssignment(user_id=approver.id, role_id=role_id))
+    db.flush()
 
 linked = db.query(User).filter(User.email == "salesperson.a@example.com").one_or_none()
 if linked is None:
@@ -119,6 +150,9 @@ if contact is None:
                      title="KILANG ALPHA LOT 9001 MUKIM TEBRAU")
     register_project(db, company_id=COMPANY, actor_user_id=admin.id, developer_party_id=alpha.id,
                      title="TAMAN DELTA FASA 4")
+    # an approved project whose meaning is near the registration pasted in the pass (live embeddings)
+    register_project(db, company_id=COMPANY, actor_user_id=admin.id, developer_party_id=alpha.id,
+                     title="CADANGAN KILANG 2 TINGKAT DI ATAS LOT 9001 MUKIM TEBRAU JOHOR BAHRU")
 
 # --- every module installed for the default tenant, so the sidebar renders its groups ------
 from app.modules.runtime.installer import (  # noqa: E402

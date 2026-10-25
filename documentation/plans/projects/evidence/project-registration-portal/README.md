@@ -46,3 +46,35 @@ by hand with the script's values (title, Developer, Mukim, Type of building "Fac
   (not exercised here).
 - Harness note: the people picker lists only users holding a role, so the seeded linked CRM user needed the
   `salesperson` role for Salesperson to prefill. A real linked staff user has one.
+
+## Round 3 final pass (head 65e36bb7, LIVE AI Extract and live embeddings)
+
+Fresh `sorento_browse` DB, `harness/seed_browse.py` updated: it seeds both approver roles named by the
+migration's `APPROVER_ROLE_NAMES` before running the migration's own `upgrade()`, so the grant is the
+migration's doing, and gives the approver user (`browse.approver@example.com`) the Project Sales
+Coordinator role only (not admin, not manager). The role also holds `projects.projects.view/edit/manage`
+and `projects.parties.view`, as a real manager or coordinator would (without `projects.parties.view` the
+Developer, Architect and Main contractor selects read "No access" for that user: noted, not a defect).
+The key was passed as a process env var (`OPENAI_API_KEY=dummy`, proxy-injected); `.env.browse` is not
+changed. Embeddings: `scripts/seed_project_embeddings.py` queued 3 projects, processed with
+`process_embedding_queue_item`, `embedding_chunks` holds 3 current `project` rows. An approved project
+`CADANGAN KILANG 2 TINGKAT DI ATAS LOT 9001 MUKIM TEBRAU JOHOR BAHRU` was seeded near the pasted title.
+Console and page-error checks clean in both browser sessions (portal, CRM).
+
+| Step | Screenshot | Result | Observed |
+|---|---|---|---|
+| Live AI Extract, pasted CADANGAN text | r3-01-ai-extract-pasted-text-1280.png | PASS | Dialog proposes Project title (the pasted text), Type of building `Factory / industrial`, State `Johor`, Mukim `TEBRAU`, Developer `ALPHA PACKAGING SDN BHD` (upper case as pasted; the script writes it mixed case). After Confirm and prefill every field is filled and editable. |
+| Live AI Extract, Pillow-rendered PNG of the same text | r3-04-ai-extract-png-1280.png | PASS | Same proposal from the image: title (three lines joined), Factory / industrial, Johor, TEBRAU, developer. |
+| Customer picker: pick only, agent's debtors only | r3-02-customer-picker-agent-debtors-1280.png | PASS | Typing `WALK-IN BUYER` + Enter + Tab leaves the field empty. The list offers `Debtor One Sdn Bhd` and `Debtor Two Sdn Bhd` only; typing `Foreign` (a seeded debtor of no agent) offers nothing. A pick fills the field and is saved (`Debtor Two Sdn Bhd` shown on the registration). |
+| Submit, portal detail: Date and semantic duplicate | r3-03-portal-pending-date-duplicate-1280.png | PASS | Status `Pending`, read-only `Date` = `25/10/2026` (disabled), and `Possible duplicate: PPF2610003 CADANGAN KILANG 2 TINGKAT DI ATAS LOT 9001 MUKIM TEBRAU JOHOR BAHRU` named by the live embedding match (title differs in spelling and wording). |
+| CRM list as Coordinator (non-admin) | r3-05-crm-list-coordinator-1280.png | PASS | Sidebar Project Sales > Registrations opens for a user holding only the Coordinator role: the migration's grant works. Sales agent `Salesperson A`; the live duplicate shows in the Possible duplicate column. |
+| Duplicate link in the CRM | r3-06-crm-duplicate-link-opens-project-1280.png | PASS | The link opens `/project-sales/<id>` of `PPF2610003` (heading is that project's title). |
+| Review form: legacy fields only | r3-09-review-legacy-fields-type-readonly-1280.png, r3-18-crm-review-375.png, r3-19-crm-review-foot-375.png | PASS | Shown: Developer, Type of building as read-only text `Factory / industrial`, Project title, State, Mukim, Architect, Main contractor, Salesperson; no project type, template, company, location, address, reference, value, dates, brands or lead. Metadata line and `Possible duplicate:` line above. Approve and Reject at the foot. |
+| Exact duplicate refused with the link | r3-08-approve-exact-duplicate-existing-link-1280.png | PASS | Registration `TAMAN DELTA FASA 4` under Alpha Packaging, Approve: 409; the review page shows `Already registered as PPF2610002 TAMAN DELTA FASA 4`, the code and title is a link, and it opens that project's page. Nothing created. |
+| Approve after a title change | (list returns) | PASS | `TAMAN DELTA FASA 4 PHASE 2` approved as `PPF2610004` (the refused attempt used no number; the possible duplicate never blocks). |
+| Approve the pasted-text registration | r3-10-new-project-ppf-state-mukim-1280.png | PASS | `PPF2610005` (PPF + 26 + 10 + 005) although a semantic duplicate was named (never blocks). Project page shows State `Johor`, Mukim `TEBRAU`, Owner `Salesperson A`. |
+| Reject with a reason | r3-11-portal-list-statuses-1280.png, r3-12-portal-rejected-editable-1280.png | PASS | Reason `Already registered`. Portal list card badge `Rejected` with the reason; the detail shows `Rejection reason: Already registered`, badge `Rejected`, form editable. Resubmitting returned it to Pending (used for the 375 review). |
+| PPF on the portal list | r3-13-portal-list-view-ppf-1280.png | PASS with note | List view has a `PPF` column (`PPF2610004`). Board cards still show no PPF number (the detail does); unchanged from round 2. |
+| 375px: portal new form, list, pending detail with Date | r3-14-portal-new-form-375.png, r3-15-portal-list-375.png, r3-16-portal-pending-detail-375.png | PASS | scrollWidth equals clientWidth on all three (375/375); single column, AI Extract button reachable, Date visible. |
+| 375px: CRM list and review | r3-17-crm-list-375.png, r3-18-crm-review-375.png, r3-19-crm-review-foot-375.png | PASS | No page overflow (list 375/375, review 360/360 with the scrollbar); the list scrolls inside its card; review stacked with full-width Approve and Reject. |
+| Downgrade | (not exercised in the browser) | n/a | Covered by the migration tests only. |

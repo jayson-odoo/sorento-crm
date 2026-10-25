@@ -67,5 +67,9 @@ meta line is a link to the project.
 
 ## Kill proof
 
-The reviewer's kill-test tables (mutation, test that must fail, observed) are not in this repository; they
-were reported in the review thread. This section is a placeholder until the coordinator supplies them.
+_Placeholder: the reviewer's kill-test tables (mutation, the test that must fail, observed) are forwarded by the
+coordinator when they arrive and are pasted here. Not yet supplied._
+
+| Mutation | Test expected red | Observed |
+|---|---|---|
+| (to be filled) | | |
