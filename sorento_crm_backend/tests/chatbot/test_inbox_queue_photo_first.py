@@ -5,8 +5,9 @@ Plan `documentation/plans/chatbot/PLAN-photo-first-lookahead.md`, UAC
 "check stock" sent at t0, photo at t0 + 201 ms (WhatsApp sends a photo once it has
 uploaded, so a text tapped right after overtakes it). The photo row was queued while the
 text turn ran, and the look-ahead only gave way to an EARLIER-sent row, so the text was
-answered first. The rule now: a media row already queued goes first, whatever the send
-times say; nothing waits for a photo that is not queued yet.
+answered first. The rule now: a photo row already queued goes first, whatever the send
+times say (a voice note does not, owner: "Photo only"); nothing waits for a photo that is
+not queued yet.
 
 The harness is `test_inbox_queue_order.py`'s (real engine, real drain, recorded POSTs).
 """
