@@ -178,3 +178,45 @@ The 422 and 409 above are the intended refusals.
   approved one, so the Approve 409 is reachable from the UI only for a pending-vs-pending pair. Matches the UAC's wording
   only if the 409 was meant as a backstop.
 - Harness note: `harness/hash_embed.py` is the process-local embedding substitute used because the OpenAI credit ran out.
+
+## Round 6 final smoke (bba1e66f11)
+
+Head `bba1e66f11`. Fresh `sorento_browse` (`scripts.bootstrap_env`, `alembic upgrade head`, `harness/seed_browse.py`, then
+`scripts.seed_project_embeddings` drained with the hash embedding substitute). Backend through a process-local launcher that
+installs `harness/hash_embed.py` (`OPENAI_API_KEY=dummy` as a process env var; `.env.browse` unchanged, `git diff --quiet`
+holds); frontend `npm run dev` with an uncommitted `.env.local`. Harness unchanged. CRM as the Coordinator
+(`browse.approver@example.com`), reached by sidebar clicks (Project Sales > Projects); portal by the contact's slug link.
+**AI Extract was skipped**: the sandbox provider quota was exhausted in round 5 and the hash launcher does not cover chat; fields were typed by hand.
+Both sessions (`r6c`, `r6p`) closed by name; servers stopped.
+
+| # | Check | Screenshot | Result | Observed |
+|---|---|---|---|---|
+| 1 | Portal required refusal | r6-01-state-required-refused-1280.png | PASS | Submit and confirm with State empty: toast `Missing 1 required field: State`, no create or submit POST. |
+| 1 | Portal submit, Pending | (flow) | PASS | After State, Johor and a picked debtor: POST create 200 + submit 200, card `Pending`. |
+| 1 | Date in Malaysia time | r6-02-portal-pending-date-1280.png | PASS | `submitted_at` set to `2026-10-24 17:30:00` UTC; portal read-only `Date` reads `25/10/2026`. CRM detail (below) also reads `25/10/2026` (round 5 D1 is fixed). |
+| 2 | Board lane and count | r6-03-board-awaiting-lane-1280.png | PASS | `Awaiting approval` count 1 with the card (`Awaiting approval` in the code slot, title, `Salesperson A`); `Rejected` lane 0. |
+| 2 | Grid pill | r6-04-grid-pills-1280.png | PASS | Row `Awaiting approval` / stage pill `Awaiting Approval`; Developer cell now reads `Typed: Gamma Builders Sdn Bhd`; approved rows `Registered`. |
+| 2 | Approval filter | r6-05-approval-filter-1280.png | PASS | Filters > Approval offers `Awaiting approval` and `Rejected`; choosing Awaiting approval narrows 4 rows to 1. |
+| 3 | Coordinator header | r6-06-detail-header-coordinator-1280.png | PASS | `Reject`, `Edit`, gear, `Approve`. |
+| 3 | Delete not offered | r6-07-project-actions-no-delete-1280.png | PASS with note | The gear menu has zero items (no Delete, no Edit project, no Reassign). Note N1. |
+| 3 | Tabs offer no Add buttons | r6-08-documents-tab-1280.png | FAIL (one tab) | Stakeholders, Tasks, Quotations, Samples, Sponsorships, Orders, Activity: no add control (empty states only; Sample requests reads `You don't have access`). Documents shows `Upload documents`. Defect F1. |
+| 3 | Edit to an exact-duplicate developer, Save not blocked | r6-09-edit-duplicate-save-not-blocked-1280.png | PASS | Developer `Alpha Packaging Sdn Bhd` on `TAMAN DELTA FASA 4`: no `Blocked by an existing project` text, PUT 200, back on the detail, still pending. |
+| 3 | Approve gives 409 with link | r6-10-approve-409-existing-link-1280.png | PASS | `POST .../approve` 409; alert `Already registered as PPF2610002 TAMAN DELTA FASA 4`, a link to `/project-sales/<id of PPF2610002>`. |
+| 3 | Title change, Approve, PPF | r6-11-detail-after-title-edit-alert-1280.png, r6-12-approved-ppf-code-1280.png | PASS | After the title edit (`... PHASE 2`) the 409 alert is already gone (r6-11). Approve 200: code `PPF2610004`, `Registered`, no Approve / Reject / Edit; `Already registered as` count 0. |
+| 3 | Alert clears on Reject | r6-13-rejected-detail-alert-cleared-1280.png | PASS | A second pending project (same title) edited to Alpha, Approve 409, then Reject: the alert is gone from the Rejected detail (round 5 D2 is fixed). |
+| 4 | Reject with reason, Rejected lane, code slot | r6-13, r6-14-board-rejected-lane-1280.png | PASS | `POST reject` 200 after typing a reason (button disabled while blank); header code slot reads `Rejected`, badge `Rejected`; board `Rejected` 1, `Awaiting approval` 0, card code slot `Rejected`. |
+| 4 | Portal shows Rejected, resubmit | r6-15-portal-board-statuses-1280.png, r6-16-board-resubmitted-back-in-lane-1280.png | PASS | Portal card `Rejected ... Already registered`; detail shows `Rejection reason`, fields editable. Title changed to `... PHASE 3`, submit 200, DB `pending`, board `Awaiting approval` 1, `Rejected` 0 (the board needs a reload to show it). |
+| 5 | 375 px board | r6-17-board-375.png | PASS | 360/360 (scrollbar), lanes scroll inside the page. |
+| 5 | 375 px project header | r6-18-detail-header-375.png | PASS | 360/360; Reject (180-244), Edit (252-302), Approve (267-344, second row) all inside the viewport. |
+
+Console and page errors: `errors` empty in both sessions, no `[error]` console lines. Console noise only: Fast Refresh, i18next debug
+and `[tiptap warn] Duplicate extension names found: ['link']` on project pages (not from this change). The 409 and the 422-style refusals are the intended ones.
+Not checked this round: the portal / CRM `Possible duplicate:` line (the new pending rows were not embedded because the API process does not run the embedding worker here).
+
+### Findings (implementation, not fixed here)
+
+- F1 `sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectDocumentsPanel.tsx:213`: the `Upload documents` toolbar
+  button is gated on `project.can_edit` only, so a Coordinator sees it on a pending or rejected project, unlike the other tabs' add buttons
+  (gated in `bba1e66f11`). Gate it on the same approved-or-manager rule.
+- N1 `sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx:294`: for an approver on an unapproved project
+  with no manage grant, every `DetailActionsMenu` item is excluded, so the gear opens an empty menu (r6-07). Render the menu only when it has an item.
