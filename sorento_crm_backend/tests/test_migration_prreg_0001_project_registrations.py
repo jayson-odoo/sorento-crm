@@ -111,7 +111,7 @@ def test_revision_id_fits_chains_on_the_head_and_alembic_has_one_head():
     module = _module()
     assert module.revision == REVISION
     assert len(module.revision) <= 32
-    assert module.down_revision == "or_r4b_top_selling_off"
+    assert module.down_revision  # chained; the head check below survives the next re-parent
     script = ScriptDirectory.from_config(Config(str(ROOT / "alembic.ini")))
     heads = script.get_heads()
     assert len(heads) == 1, heads

@@ -177,7 +177,7 @@ def test_a5_unknown_keys_are_ignored_and_the_stored_fields_are_exactly_the_eleve
     assert values["customer_id"] == world.debtor_a.id
     row = registration(world, d["id"])
     assert row.status == "draft"
-    assert row.company_id == world.company_id
+    assert str(row.company_id) == str(world.company_id)
     assert row.project_id is None
     assert row.reject_reason is None
 
@@ -309,7 +309,7 @@ def test_a11_list_is_mine_only_newest_first_with_status_and_ppf_no(world):
     theirs = create_draft(world, world.b, title="GAMMA SENTINEL TOWER")
     for rid, age in ((first["id"], 3), (second["id"], 1)):
         registration(world, rid).created_at = datetime.utcnow() - timedelta(days=age)
-    world.db.flush()
+        world.db.flush()
 
     res = as_contact(world, world.a).get(f"{PORTAL}/submissions", params={"type": KIND})
     assert res.status_code == 200, res.text

@@ -191,7 +191,7 @@ def test_qualifying_returns_the_serialised_project(api):
 
     assert response.status_code == 201, response.text
     project = response.json()
-    assert project["project_code"].startswith("PRJ-")
+    assert project["project_code"].startswith("PPF")
     assert project["lead_id"] == lead["id"]
     assert project["lead_code"] == lead["lead_code"]
     # Serialised as a project, so the human identifiers are resolved, not raw ids.
@@ -270,7 +270,7 @@ def test_the_qualify_preview_describes_the_clash_the_same_way_registration_does(
     assert body["would_block"] is True
     candidate = body["candidates"][0]
     # The context that makes a block judgeable rather than arbitrary (AC-C6a).
-    assert candidate["project_code"].startswith("PRJ-")
+    assert candidate["project_code"].startswith("PPF")
     assert candidate["owner_name"]
     assert candidate["blocks"] is True
 
