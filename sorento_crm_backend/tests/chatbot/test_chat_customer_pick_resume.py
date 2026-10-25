@@ -209,3 +209,50 @@ def test_u5_only_an_unnamed_customer_match_takes_the_crm_name() -> None:
     assert asked == [["b", "e"]], asked
     assert [m["display"].get("customer_name") for m in matches] == ["KEPT", "CRM b", None, None], matches
     assert resolved["intersection"][0]["display"] == {"customer_name": "CRM e"}, resolved
+
+
+def _grouped_pair(uuid_a: str, uuid_b: str) -> ResolveGateServices:
+    """The prod console shapes (crew, 25 Oct): a debtor-name hit on the "[A/C I]" ledger and a customer hit on the
+    "(PROJECT)" ledger, both ledgers in ONE customer group."""
+
+    def _resolve(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tokens": ["zz demo"],
+            "resolutions": [{"token": "zz demo", "matches": [
+                {"entity_type": "customer", "canonical_code": ONE_NAME, "uuid": uuid_a, "company_code": "SRT",
+                 "display": {"debtor_name": ONE_NAME, "debtor_code": "300-ZZ004", "source": "orders",
+                             "customer_name": f"{ONE_NAME} [A/C I]"}},
+                {"entity_type": "customer", "canonical_code": f"{ONE_NAME} (PROJECT)", "uuid": uuid_b,
+                 "company_code": "SRT", "display": {"customer_name": f"{ONE_NAME} (PROJECT)"}},
+            ]}],
+            "unresolved_tokens": [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve),
+        probe=lambda **_: {"items": [], "has_result": False},
+    )
+
+
+def test_o2_two_ledgers_of_one_customer_group_are_one_customer_not_a_picker(chat, session_factory):
+    from app.models.order import CustomerGroup
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._mc_lookup_seed import customer
+
+    db = session_factory()
+    group = CustomerGroup(name=ONE_NAME, company_id=DEFAULT_COMPANY_ID)
+    db.add(group)
+    db.flush()
+    rows = [customer(db, company_id=DEFAULT_COMPANY_ID, name=f"{ONE_NAME} {marker}") for marker in ("[A/C I]", "(PROJECT)")]
+    for row in rows:
+        row.customer_group_id = group.id
+    ids = [row.id for row in rows]
+    db.commit()
+    db.close()
+    result, captured = chat(_t1(), "Dealer zz demo oct total sales", "ZZT-cpr-o2-1",
+                            resolve_services=_grouped_pair(*ids))
+    assert "Which one do you mean" not in _reply(result), _reply(result)
+    calls = _report_calls(captured)
+    assert len(calls) == 1 and sorted(calls[0].get("customer_ids") or []) == sorted(ids), captured
+    assert calls[0].get("channel") == "dealer", calls[0]
