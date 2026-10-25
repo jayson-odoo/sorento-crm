@@ -130,6 +130,7 @@ def _do_lines(ctx: Any, name: str, window: tuple) -> Any:
             OrderLine.warehouse_id.label("warehouse_id"),
             sa.func.coalesce(OrderLine.quantity, 0).label("qty"),
             sa.func.round(sa.func.coalesce(OrderLine.total, 0), 2).label("total"),
+            OrderLine.sales_order_line_id.label("own_sol_id"),
             sa.func.coalesce(OrderLine.sales_order_line_id, first.c.id).label("sol_id"),
             NAMED_SO.label("named_so_id"),
         )
@@ -147,6 +148,63 @@ def _do_lines(ctx: Any, name: str, window: tuple) -> Any:
         .where(*_fixed_filters(), *_grant_filter(Order.company_id, ctx), *window)
         .subquery(name)
     )
+
+
+def _linked_amount(do_lines: Any) -> Any:
+    """Q6: an AutoCount DO line's own total. An old-system line repeats its DOC total on every
+    line (review S1), so once linked it is the SO line pro-rated."""
+    prorated = _prorated(do_lines.c.qty)
+    if not LINKED_AMOUNT_FROM_DO:
+        return prorated
+    return sa.case((do_lines.c.source_book.is_(None), prorated), else_=do_lines.c.total)
+
+
+def _explained(ctx: Any, every_line: Any) -> tuple:
+    """What DO lines already explain of each SO line, as two subqueries keyed by `sol_id`:
+
+    * by the line's own link, summed per SO line;
+    * by a DO line that names only its SO (header or doc number): summed per (SO, product) and
+      shared over that SO's lines of the product in `line_no` order, each up to what it has
+      left (review B1: an SO carrying a product twice is explained once per line, never the
+      first line twice). What no line has room for is a DO over-delivery: it still counts on the
+      DO, it explains nothing more."""
+    own = (
+        sa.select(every_line.c.own_sol_id.label("sol_id"), sa.func.sum(every_line.c.qty).label("qty"))
+        .where(every_line.c.own_sol_id.isnot(None))
+        .group_by(every_line.c.own_sol_id)
+        .subquery("delivered_explained")
+    )
+    pool = (
+        sa.select(
+            every_line.c.named_so_id.label("so_id"),
+            every_line.c.product_id.label("product_id"),
+            sa.func.sum(every_line.c.qty).label("qty"),
+        )
+        .where(every_line.c.own_sol_id.is_(None), every_line.c.sol_id.isnot(None))
+        .group_by(every_line.c.named_so_id, every_line.c.product_id)
+        .subquery("delivered_named_pool")
+    )
+    sol = sa.orm.aliased(SalesOrderLine)
+    room = sa.func.greatest(
+        sa.func.least(sol.qty_delivered, sol.qty_ordered) - sa.func.coalesce(own.c.qty, 0), 0
+    )
+    before = sa.func.sum(room).over(
+        partition_by=(sol.sales_order_id, sol.product_id),
+        order_by=(sol.line_no.asc().nullslast(), sol.id),
+        rows=(None, -1),
+    )
+    allocated = (
+        sa.select(
+            sol.id.label("sol_id"),
+            sa.func.least(room, sa.func.greatest(pool.c.qty - sa.func.coalesce(before, 0), 0)).label("qty"),
+        )
+        .select_from(sol)
+        .join(pool, sa.and_(pool.c.so_id == sol.sales_order_id, pool.c.product_id == sol.product_id))
+        .outerjoin(own, own.c.sol_id == sol.id)
+        .where(sol.line_status != "cancelled", *_grant_filter(sol.company_id, ctx))
+        .subquery("delivered_allocated")
+    )
+    return own, allocated
 
 
 def _events(ctx: Any) -> Any:
@@ -169,7 +227,7 @@ def _events(ctx: Any) -> Any:
         sa.select(
             do_lines.c.do_date.label("event_date"),
             do_lines.c.qty.label("qty"),
-            (do_lines.c.total if LINKED_AMOUNT_FROM_DO else _prorated(do_lines.c.qty)).label("amount"),
+            _linked_amount(do_lines).label("amount"),
             SalesOrderLine.id.label("sol_id"),
             SalesOrder.id.label("so_id"),
             do_lines.c.do_id.label("do_id"),
@@ -186,15 +244,12 @@ def _events(ctx: Any) -> Any:
                                   SalesOrder.company_id == do_lines.c.company_id))
         .where(live_so)
     )
-    explained = (
-        sa.select(every_line.c.sol_id, sa.func.sum(every_line.c.qty).label("qty"))
-        .where(every_line.c.sol_id.isnot(None))
-        .group_by(every_line.c.sol_id)
-        .subquery("delivered_explained")
-    )
+    explained, allocated = _explained(ctx, every_line)
     line_date = sa.func.coalesce(SalesOrderLine.required_date, SalesOrder.order_date)
     left = sa.func.greatest(
-        sa.func.least(SalesOrderLine.qty_delivered, SalesOrderLine.qty_ordered) - sa.func.coalesce(explained.c.qty, 0),
+        sa.func.least(SalesOrderLine.qty_delivered, SalesOrderLine.qty_ordered)
+        - sa.func.coalesce(explained.c.qty, 0)
+        - sa.func.coalesce(allocated.c.qty, 0),
         0,
     )
     residual = (
@@ -214,6 +269,7 @@ def _events(ctx: Any) -> Any:
         .select_from(SalesOrderLine)
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
         .outerjoin(explained, explained.c.sol_id == SalesOrderLine.id)
+        .outerjoin(allocated, allocated.c.sol_id == SalesOrderLine.id)
         .where(
             live_so,
             SalesOrder.status != "cancelled",

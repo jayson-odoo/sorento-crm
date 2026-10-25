@@ -337,3 +337,63 @@ def test_another_companys_delivered_events_never_count(db):
     assert ask.delivered_fill_rate(db, date_from=date(2026, 9, 1), date_to=date(2026, 9, 30), filters={},
                                    warehouse_codes=[], policy=None, company_grants=set(),
                                    capped_by_policy=False) is None
+
+
+# ------------------------------------------------------------------ review round 1
+
+
+def _two_line_so(db, w):
+    """One retail SO dated 2 Sep with two lines of the same product, 5 each, all delivered."""
+    so, l1 = _so_line(db, cust=w.cust, prod=w.prod, wh=w.wh, qty=5, total="50.00", demand_class="retail",
+                      order_date=date(2026, 9, 2))
+    l2 = seed_so_line_row(db, so=so, product_id=w.prod.id, qty=5, total="50.00", warehouse_id=w.wh.id)
+    return so, l1, l2
+
+
+def test_b1_a_do_naming_only_its_so_explains_every_line_of_that_product(client, db):
+    """Review B1: a DO linked by the header (or doc number) with two lines of a product the SO
+    carries twice explains both SO lines, not the first one twice: 10 pcs, never 15."""
+    w = _world(db)
+    so, _l1, _l2 = _two_line_so(db, w)
+    seed_do(db, customer_id=w.cust.id, order_date=date(2026, 9, 10), source_book="db1", sales_order_id=so.id,
+            lines=[line(w.prod.id, w.wh.id, 5, price=D("10"), total=D("50.00")),
+                   line(w.prod.id, w.wh.id, 5, price=D("10"), total=D("50.00"))])
+    db.commit()
+    body = _ok(client, _full(db), product_code=w.prod.product_code, channel="dealer", **SEP)
+    assert _total(body) == (13, D("190.00")), body["total"]  # C's 3 pcs / RM 90 + the 10 pcs / RM 100
+
+
+def test_b1_a_partial_do_by_doc_number_leaves_the_rest_on_the_last_line(client, db):
+    w = _world(db)
+    so, _l1, _l2 = _two_line_so(db, w)
+    _do(db, cust=w.cust, prod=w.prod, wh=w.wh, qty=7, total="70.00", day=date(2026, 10, 3), doc_so=so)
+    db.commit()
+    sep = _ok(client, _full(db), product_code=w.prod.product_code, channel="dealer", **SEP)
+    oct_ = _ok(client, _full(db), product_code=w.prod.product_code, channel="dealer", **OCT)
+    assert _total(sep) == (6, D("120.00")), sep["total"]  # C 3 / RM 90 + the 3 pcs no DO explains / RM 30
+    assert _total(oct_) == (7, D("70.00")), oct_["total"]
+
+
+def test_s1_a_linked_old_system_line_is_prorated_not_its_repeated_doc_total(client, db):
+    """Review S1: an old-system DO line repeats the DOC total; once linked, its amount is the SO
+    line pro-rated."""
+    w = _world(db)
+    _so, l1, l2 = _two_line_so(db, w)
+    seed_do(db, customer_id=w.cust.id, order_date=date(2026, 9, 10), source_book=None,
+            lines=[line(w.prod.id, w.wh.id, 5, price=D("10"), total=D("100.00"), sales_order_line_id=l1.id),
+                   line(w.prod.id, w.wh.id, 5, price=D("10"), total=D("100.00"), sales_order_line_id=l2.id)])
+    db.commit()
+    body = _ok(client, _full(db), product_code=w.prod.product_code, channel="dealer", **SEP)
+    assert _total(body) == (13, D("190.00")), body["total"]
+
+
+def test_s2_two_dos_of_one_so_are_two_orders(client, db):
+    """Review S2: Q2 (a) counts DOs: two DOs delivering one SO in the window are two orders."""
+    w = _world(db)
+    kw = dict(cust=w.cust, prod=w.prod, wh=w.wh)
+    _so, sol = _so_line(db, qty=4, total="40.00", order_date=date(2026, 8, 1), **kw)
+    _do(db, qty=2, total="20.00", day=date(2026, 10, 5), sol=sol, **kw)
+    _do(db, qty=2, total="20.00", day=date(2026, 10, 6), sol=sol, **kw)
+    db.commit()
+    body = _ok(client, _full(db), product_code=w.prod.product_code, measure="orders", **OCT)
+    assert body["total"]["count"] == 3, body["total"]  # A's DO and SO 1's two DOs

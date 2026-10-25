@@ -13,8 +13,8 @@ One row per delivery event, built per run (`_events`):
 
 | Event | Rows | Date | Qty | Amount | Channel / agent |
 |---|---|---|---|---|---|
-| linked | live DO line that resolves to an SO line (line link, else the first line of its product on the SO the header or the doc number names) | DO date | DO line qty, no cap | DO line total (Q6, `LINKED_AMOUNT_FROM_DO`) | the SO's |
-| residual | live SO line, `least(qty_delivered, qty_ordered)` minus every linked DO qty, when > 0 | SO line date (`required_date`, else SO `order_date`) | that rest | SO line pro-rata | the SO's |
+| linked | live DO line that resolves to an SO line (line link, else the first line of its product on the SO the header or the doc number names) | DO date | DO line qty, no cap | DO line total (Q6, `LINKED_AMOUNT_FROM_DO`); an old-system line pro-rated (review S1) | the SO's |
+| residual | live SO line, `least(qty_delivered, qty_ordered)` minus what DOs explain of it (its own linked lines, plus its share, in `line_no` order, of DO lines that name only its SO and product: review B1), when > 0 | SO line date (`required_date`, else SO `order_date`) | that rest | SO line pro-rata | the SO's |
 | unlinked | live AutoCount DO line (`source_book` set) with no SO line | DO date | DO line qty | DO line total | the SO the header / doc number names, else none (Q1) |
 
 Left out: old-system DO lines (`source_book` NULL) with no SO line (their SO's delivered qty is the residual; their
@@ -57,6 +57,9 @@ longer count).
 ## Performance (measured 25 Oct 2026, 300k synthetic DO lines, 100k SO lines)
 
 Delivered ask: 7.5 s first cut -> 1.4 s for a year of 174k delivered lines, 0.6 s with a product filter; ordered 0.07 s.
+After review B1 (a DO naming only its SO is shared over that SO's lines of the product): 1.75 s and 1.1 s, on data
+where EVERY DO line links by doc number only (prod Sep: 28% by line link). The more lines carry their own link, the
+smaller the shared pool.
 The floor is summing every DO line once per run to find what each SO line already has delivered. Trigger for more:
 a prod delivered ask over ~1 s. Then (in order) the link lane DO-SO-LINK-SURFACE (#1855) filling
 `order_lines.sales_order_line_id` takes the header / doc-number resolution off the hot path, and a per-SO-line
