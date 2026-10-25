@@ -206,3 +206,14 @@ or a 5+ char letter-digit word) never feed the meaning / spelling lists (AC-12).
   its own access tests. security-reviewer joins Phase 3 (contact data scoping).
 - S2 limits recorded: "600x400" sizes normalise but are not matched (no stored size shape found); cold cache with many
   spec texts -> first turns spelling only; S3 moves the warm-up to a background thread for every list.
+
+## Review outcome (26 Oct)
+- Reviewer NOT READY (4 blockers) -> fix round red 2e7aaf4bc3 / fix db761229f9 -> READY; security-reviewer no blocker ->
+  should-fixes 1-3 + nits closed -> CLEAN. Measured after the round: 600-word message 0.59 s (dealer) / 1.81 s (staff)
+  vs 9.6 / 30.3 s; cache ~125-250 MB per process vs ~1 GB.
+- S5 deviation (recorded, reviewer S3): EDITS rename only "Known brands" because prod v63 contains no "Promotion kinds",
+  "Sales channels", "Product types:" or "Product details:" reference (grep count 0). A label-time text that does carry
+  such a reference keeps it; the anchors still apply only if found exactly once, otherwise nothing is published.
+- Polish round (non-blocking reviewer nits): spec yes/no and said-in-words data come from the registry synonyms
+  (staff suppression honoured) instead of code constants; a capped label keeps its "(key: value)" bracket; folded texts
+  and trigrams built once per row set (staff turn latency); a lock around the shared piece / matrix stores.
