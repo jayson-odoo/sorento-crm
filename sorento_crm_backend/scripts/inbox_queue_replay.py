@@ -16,17 +16,26 @@ One run at a time per copy (a Postgres advisory lock held for the whole run).
 what that many real turns cost on the copy's keys; the provider and model are printed first.
 
 **Refuses anything but a local, neutralised copy**: `check_target` judges the env file's
-DATABASE_URL as dotenv resolves it (the last assignment wins; a relative path is read against
-the backend directory, as Settings reads it): the host must be loopback with no `host` /
-`hostaddr` / `dbname` / `service` override in its query, `DATABASE_URL` / `DIRECT_URL` (any
-case) must not be exported in the shell, and `--api` must be http(s) on localhost;
-`check_connected` then asks the server it actually reached (`inet_server_addr()`) and refuses
-the shared dev DB by its exact name (SHARED_DEV_DATABASE); no other rule on the database name
-(crew copies are prod clones). `check_neutralised` reads the ORIGINAL values
-before setup and refuses unless respond.io, every n8n URL and SMTP are empty or on `.invalid`,
-the workspace sender URL is empty, every proxy variable in the env file is a dead loopback
-proxy (the lowercase `https_proxy` required), and the lowercase `no_proxy` is set to the local
-hosts (plus the copy's LLM host), with no `*` in any NO_PROXY / no_proxy. A checked value the
+DATABASE_URL as Settings reads it (case-insensitive, the last assignment across case variants
+wins, no `${VAR}` interpolation: the env file is read literally and a reference is refused; a
+relative path is read against the backend directory): the host must be loopback with no `host`
+/ `hostaddr` / `dbname` / `service` override in its query; `database_url` / `direct_url` (any
+case) and the libpq locators `PGHOST`, `PGHOSTADDR`, `PGPORT`, `PGDATABASE`, `PGSERVICE`,
+`PGSERVICEFILE` must not be exported in the shell; and `--api` must be http(s) on localhost.
+`check_connected` then asks the server it actually reached (`inet_server_addr()`), requires
+`current_database()` to equal the database the URL names, and refuses the shared dev DB by
+its exact name (SHARED_DEV_DATABASE); no other rule on the database name (crew copies are
+prod clones). `check_neutralised` reads the ORIGINAL values before setup and refuses unless
+respond.io, every n8n URL (N8N_WEBHOOK_URL and the N8N_CLOSE_CONVO_WEBHOOK_URL fallback; a set
+N8N_LIVENESS_PING_URL too) and SMTP are empty or on `.invalid` (every case variant of the key
+in the env file is judged, as Settings is case-insensitive; a scheme-less URL is judged as the
+app sends it, `//x` or `x/...` -> https://x, by its host; SMTP_HOST is a bare host), the
+workspace sender URL is empty, every proxy variable in the env file (`ALL_PROXY` too, never
+required) is a dead loopback proxy (the lowercase `https_proxy` required; proxy keys are not
+case-folded), and the lowercase `no_proxy` is set to the local hosts (plus the copy's LLM
+host), with no `*` in any NO_PROXY / no_proxy. The RQ worker reads only `<backend>/.env`
+(`WORKER_ENV_FILE`), never `--env-file`: when that is another existing file it gets the same
+env checks and its refusals are prefixed `worker env <file>`. A checked value the
 env file leaves out, or sets empty, is judged by its Settings default (RESPOND_BASE_URL falls
 back to https://api.respond.io, so it must be set to a `.invalid` host). It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
@@ -67,7 +76,8 @@ burst, then a backend restart: `--restart-cmd "<shell command>"` runs it once it
 tool asks a person to restart and waits); `--no-restart` skips it. The restart command must
 RETURN (exit 0 once the restart is under way or done): a non-zero exit fails s4 at once with
 its code in the report, and one still running after RESTART_CMD_SECONDS is killed with its
-whole process group. Stdlib plus the repo's own
+whole process group, as is one still running when the wait is interrupted
+(an exception, Ctrl-C, SIGTERM). Stdlib plus the repo's own
 modules; never imports `app.services.chatbot`.
 """
 from __future__ import annotations
@@ -109,6 +119,10 @@ BACKEND = Path(__file__).resolve().parent.parent
 # The crash-safety file lives in the user's own space (not /tmp: world-readable, cleaned on reboot).
 DEFAULT_STATE_FILE = str(Path.home() / "inbox-replay-state.json")
 CONNECTION_OVERRIDE_KEYS = frozenset({"host", "hostaddr", "dbname", "service"})
+# libpq fills a part the URL leaves out from these, so an exported one can redirect the connection.
+LIBPQ_LOCATORS = frozenset({"PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE"})
+# The RQ worker reads only this file (`worker.py`), never SORENTO_ENV_FILE.
+WORKER_ENV_FILE = BACKEND / ".env"
 
 
 def last4(value: str | None) -> str:
@@ -148,8 +162,8 @@ def check_target(*, database_url: str, api: str, environ: Any) -> list[str]:
         parts, query = urlsplit(""), set()
     if query & CONNECTION_OVERRIDE_KEYS:
         reasons.append("the database URL overrides its host or database in the query string")
-    for var in ("DATABASE_URL", "DIRECT_URL", "database_url", "direct_url"):
-        if environ.get(var):
+    for var, value in list(environ.items()):
+        if value and (var.lower() in ("database_url", "direct_url") or var in LIBPQ_LOCATORS):
             reasons.append(f"{var} is exported in this shell; unset it, the env file is the one source")
     try:
         scheme = urlsplit(api or "").scheme.lower()
@@ -169,11 +183,24 @@ def resolve_env_file(path: str) -> str:
     return str(candidate)
 
 
-def env_file_database_url(path: str) -> str:
-    """DATABASE_URL as dotenv resolves it (the last assignment wins, `export` included)."""
+def read_env_file(path: str) -> dict[str, Any]:
+    """The env file's assignments WITHOUT `${VAR}` interpolation (this shell is not the
+    app's, so a reference is judged literally); the last assignment of a key wins."""
     from dotenv import dotenv_values
 
-    return str(dotenv_values(resolve_env_file(path)).get("DATABASE_URL") or "")
+    return dict(dotenv_values(resolve_env_file(path), interpolate=False))
+
+
+def env_file_database_url(path: str) -> str:
+    """DATABASE_URL as Settings resolves it: case-insensitive, the LAST assignment across
+    case variants wins (`export` included), no `${VAR}` interpolation."""
+    from dotenv.main import DotEnv
+
+    last = ""
+    for key, value in DotEnv(resolve_env_file(path), interpolate=False).parse():
+        if key.lower() == "database_url":
+            last = value or ""
+    return last
 
 
 def check_connected(engine: Any) -> list[str]:
@@ -190,6 +217,12 @@ def check_connected(engine: Any) -> list[str]:
     with engine.connect() as conn:
         row = conn.execute(text("SELECT current_database(), inet_server_addr()")).first()
     name, addr = (row[0], row[1]) if row is not None else ("", "unknown")
+    expected = getattr(engine.url, "database", None)
+    if str(name or "") != str(expected or ""):
+        reasons.append(
+            f"the connected database is {name!r} but the env file's URL names {expected!r}: "
+            "something outside the URL (the shell, a service file) redirected the connection"
+        )
     if str(name or "") == SHARED_DEV_DATABASE:
         reasons.append(f"the connected database is {SHARED_DEV_DATABASE}, the shared dev DB other lanes' stacks run on")
     if addr is not None:
@@ -215,11 +248,15 @@ def _neutral(value: Any) -> bool:
     text_value = str(value or "").strip()
     if not text_value:
         return True
-    host = _host(text_value) if "://" in text_value else text_value.split(":", 1)[0].lower()
+    if "://" not in text_value:
+        # The app sends a scheme-less value to https://<value> (`//x` -> https:x): judge that
+        # URL's host, so `n8n.foundryx.my/h.invalid` is the real host, not `.invalid`.
+        text_value = "https:" + text_value if text_value.startswith("//") else "https://" + text_value
+    host = _host(text_value)
     return host.rstrip(".").endswith(".invalid") or host == "invalid"
 
 
-PROXY_VARS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy")
+PROXY_VARS = ("HTTPS_PROXY", "https_proxy", "HTTP_PROXY", "http_proxy", "ALL_PROXY", "all_proxy")
 
 
 def _settings_default(key: str) -> str:
@@ -249,12 +286,13 @@ def _dead_loopback_proxy(proxy: str) -> bool:
         return True
 
 
-def check_neutralised(db: Any, env: Any) -> list[str]:
-    """The reasons this copy is NOT neutralised (empty means safe to rewire), read on the
-    ORIGINAL values before setup; `env` is the copy's env file. Each reason names its value."""
-    from app.models.respond_workspace import RespondWorkspace
-    from app.models.user import SystemSetting
+def _settings_keys(env: Any, key: str) -> list[str]:
+    """Every spelling of a Settings-read key in the env file (Settings is case-insensitive)."""
+    return [k for k in env if str(k).lower() == key.lower()]
 
+
+def check_env(env: Any) -> list[str]:
+    """The env-file half of the neutralisation check (also run on the worker's `.env`)."""
     env = env or {}
     reasons: list[str] = []
 
@@ -262,29 +300,21 @@ def check_neutralised(db: Any, env: Any) -> list[str]:
         if not _neutral(value):
             reasons.append(f"{label} = {value!r} {rule}")
 
-    for key in ("RESPOND_BASE_URL", "N8N_WEBHOOK_URL", "SMTP_HOST"):
-        # Judged as the app RESOLVES it: absent, bare or empty falls back to the Settings
-        # default (RESPOND_BASE_URL's is the real https://api.respond.io).
-        resolved = env.get(key) or _settings_default(key)
-        if env.get(key):
-            need(f"env {key}", resolved)
-        else:
-            need(f"env {key} (unset, resolves to)", resolved, "so set it to a .invalid host")
-    row = db.query(SystemSetting).first()
-    if row is not None:
-        for column in N8N_SETTING_COLUMNS:
-            need(f"system_settings.{column}", getattr(row, column, None))
-        need("system_settings.smtp_host", getattr(row, "smtp_host", None))
-    for workspace in db.query(RespondWorkspace).all():
-        space = workspace.space_id
-        need(f"respond_workspaces[{space}].base_url", workspace.base_url)
-        need(f"respond_workspaces[{space}].chatbot_retry_ingress_url", workspace.chatbot_retry_ingress_url)
-        sender = (workspace.chatbot_sender_url or "").strip()
-        if sender and _host(sender) not in LOOPBACK_HOSTS:
-            reasons.append(f"respond_workspaces[{space}].chatbot_sender_url = {sender!r} must be empty")
+    for key in ("RESPOND_BASE_URL", "N8N_WEBHOOK_URL", "N8N_CLOSE_CONVO_WEBHOOK_URL", "SMTP_HOST"):
+        # Judged as the app RESOLVES it: every case variant present is judged; absent, bare or
+        # empty falls back to the Settings default (RESPOND_BASE_URL's is the real
+        # https://api.respond.io).
+        present = [k for k in _settings_keys(env, key) if env.get(k)]
+        for spelling in present:
+            need(f"env {spelling}", env[spelling])
+        if not present:
+            need(f"env {key} (unset, resolves to)", _settings_default(key), "so set it to a .invalid host")
+    if env.get("N8N_LIVENESS_PING_URL"):
+        # Read through os.getenv by the scheduler's ping (so exact case only); judged when set.
+        need("env N8N_LIVENESS_PING_URL", env["N8N_LIVENESS_PING_URL"])
     # Egress: the LOWERCASE keys are required (httpx and urllib prefer them, and only a
     # lowercase `no_proxy` in the file overrides the worker's launched `no_proxy='*'`);
-    # EVERY proxy variable present is probed.
+    # EVERY proxy variable present is probed. Proxy keys are NOT case-folded.
     if not env.get("https_proxy"):
         reasons.append("env https_proxy (lowercase) is not set: egress must go through a dead loopback proxy")
     for var in [v for v in PROXY_VARS if env.get(v)]:
@@ -300,6 +330,45 @@ def check_neutralised(db: Any, env: Any) -> list[str]:
                 f"env {var} = {env.get(var)!r} lets every host past the proxy; list the local hosts "
                 "(plus the copy's LLM host) only"
             )
+    return reasons
+
+
+def check_worker_env(env_file: str) -> list[str]:
+    """The RQ worker loads <backend>/.env (never SORENTO_ENV_FILE): when that is another
+    file and it exists, the same env checks apply to it, each reason prefixed with the file."""
+    worker = Path(WORKER_ENV_FILE)
+    if not worker.exists() or os.path.realpath(worker) == os.path.realpath(env_file):
+        return []
+    from dotenv import dotenv_values
+
+    values = dict(dotenv_values(worker, interpolate=False))
+    return [f"worker env {worker}: {reason}" for reason in check_env(values)]
+
+
+def check_neutralised(db: Any, env: Any) -> list[str]:
+    """The reasons this copy is NOT neutralised (empty means safe to rewire), read on the
+    ORIGINAL values before setup; `env` is the copy's env file. Each reason names its value."""
+    from app.models.respond_workspace import RespondWorkspace
+    from app.models.user import SystemSetting
+
+    reasons: list[str] = check_env(env)
+
+    def need(label: str, value: Any, rule: str = "must be empty or a .invalid host") -> None:
+        if not _neutral(value):
+            reasons.append(f"{label} = {value!r} {rule}")
+
+    row = db.query(SystemSetting).first()
+    if row is not None:
+        for column in N8N_SETTING_COLUMNS:
+            need(f"system_settings.{column}", getattr(row, column, None))
+        need("system_settings.smtp_host", getattr(row, "smtp_host", None))
+    for workspace in db.query(RespondWorkspace).all():
+        space = workspace.space_id
+        need(f"respond_workspaces[{space}].base_url", workspace.base_url)
+        need(f"respond_workspaces[{space}].chatbot_retry_ingress_url", workspace.chatbot_retry_ingress_url)
+        sender = (workspace.chatbot_sender_url or "").strip()
+        if sender and _host(sender) not in LOOPBACK_HOSTS:
+            reasons.append(f"respond_workspaces[{space}].chatbot_sender_url = {sender!r} must be empty")
     return reasons
 
 
@@ -668,12 +737,11 @@ class Replay:
         from app.database import SessionLocal
         from app.models.user import SystemSetting
 
-        from dotenv import dotenv_values
-
         db = SessionLocal()
         try:
             reasons = detect_leftover(db, state_file=self.args.state_file)
-            reasons += check_neutralised(db, dotenv_values(resolve_env_file(self.args.env_file)))
+            reasons += check_neutralised(db, read_env_file(self.args.env_file))
+            reasons += check_worker_env(resolve_env_file(self.args.env_file))
             row = db.query(SystemSetting).first()
             if row is not None and len(self._existing_keys(row)) >= MAX_WEBHOOK_KEYS:
                 reasons.append(
@@ -1090,27 +1158,32 @@ class Replay:
                 return f"the restart command did not return within {RESTART_CMD_SECONDS:.0f}s (killed)"
             return None
 
-        went_down = came_back = False
-        end = started + 180
-        while time.monotonic() < end and not went_down:
-            failure = failed()
-            if failure:
-                return False, failure
-            went_down = self._wait_health(False, 0.5)
-        end = time.monotonic() + 240
-        while went_down and time.monotonic() < end and not came_back:
-            failure = failed()
-            if failure:
-                return False, failure
-            came_back = self._wait_health(True, 0.5)
         try:
-            process.wait(timeout=max(0.0, RESTART_CMD_SECONDS - (time.monotonic() - started)))
-        except subprocess.TimeoutExpired:
-            stop()
-            return False, f"the restart command did not return within {RESTART_CMD_SECONDS:.0f}s (killed)"
-        if process.returncode not in (0, None):
-            return False, f"the restart command exited {process.returncode}"
-        return bool(went_down and came_back), None
+            went_down = came_back = False
+            end = started + 180
+            while time.monotonic() < end and not went_down:
+                failure = failed()
+                if failure:
+                    return False, failure
+                went_down = self._wait_health(False, 0.5)
+            end = time.monotonic() + 240
+            while went_down and time.monotonic() < end and not came_back:
+                failure = failed()
+                if failure:
+                    return False, failure
+                came_back = self._wait_health(True, 0.5)
+            try:
+                process.wait(timeout=max(0.0, RESTART_CMD_SECONDS - (time.monotonic() - started)))
+            except subprocess.TimeoutExpired:
+                stop()
+                return False, f"the restart command did not return within {RESTART_CMD_SECONDS:.0f}s (killed)"
+            if process.returncode not in (0, None):
+                return False, f"the restart command exited {process.returncode}"
+            return bool(went_down and came_back), None
+        finally:
+            # An interrupt (exception, Ctrl-C, SIGTERM's SystemExit) must not leave the command running.
+            if process.poll() is None:
+                stop()
 
     def _wait_health(self, up: bool, timeout: float) -> bool:
         end = time.monotonic() + timeout
