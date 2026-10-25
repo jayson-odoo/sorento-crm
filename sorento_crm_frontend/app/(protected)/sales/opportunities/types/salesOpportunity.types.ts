@@ -43,7 +43,7 @@ export interface SalesOpportunityListItem {
   lost_reason_label?: string | null;
   sales_order_id?: string | null;
   sales_order_no?: string | null;
-  source: 'portal' | 'crm';
+  source: 'portal' | 'crm' | 'chat';
   created_by_label?: string | null;
   created_by_contact_id?: string | null;
   created_at?: string | null;
