@@ -1537,3 +1537,215 @@ def test_an_unset_respond_base_url_is_told_to_set_a_dot_invalid_host(tool, blank
     assert len(reasons) == 1, reasons
     assert "must be empty" not in reasons[0], f"an empty value is not fixed by emptying it: {reasons[0]}"
     assert "set" in reasons[0] and ".invalid" in reasons[0], reasons[0]
+
+
+# --------------------------------------------------------------------------- #
+# Round 10 (security re-check, ff6001546f). A replay against a crew copy must not send
+# traffic off the machine or write outside the copy DB:
+#
+# * a scheme-less URL is judged the way the app normalises it (`//x` -> https:x, else
+#   https://x), then by its host; bare hosts (SMTP_HOST) stay neutral;
+# * N8N_CLOSE_CONVO_WEBHOOK_URL (the app's env fallback) is checked; N8N_LIVENESS_PING_URL
+#   is judged when it is set;
+# * ALL_PROXY / all_proxy are probed when present (not required);
+# * the shell may export no database_url / direct_url in ANY case, and no libpq PG* locator;
+# * the connected database must be the one the env file's URL names;
+# * the env file is read without `${VAR}` interpolation, every case variant of a
+#   Settings-read key is judged, DATABASE_URL takes the last assignment across cases;
+# * the RQ worker reads <backend>/.env, never SORENTO_ENV_FILE: that file is judged too;
+# * an interrupted `--restart-cmd` wait stops the command's process group.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture(autouse=True)
+def _no_real_worker_env(tool, monkeypatch, tmp_path_factory):
+    """The worker's .env is a module constant; point it at a file that does not exist so no
+    test depends on whether the worktree has a real `.env` (CI has none)."""
+    monkeypatch.setattr(tool, "WORKER_ENV_FILE", tmp_path_factory.mktemp("zzt-worker") / ".env", raising=False)
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["n8n.foundryx.my/webhook/attach.invalid", "//n8n.foundryx.my/h.invalid", "n8n.foundryx.my:443/x.invalid"],
+    ids=["scheme-less-path", "protocol-relative", "scheme-less-port"],
+)
+def test_a_scheme_less_url_is_judged_by_the_host_the_app_sends_it_to(tool, blank_db, value):
+    _neutral_db(blank_db)
+    reasons = tool.check_neutralised(blank_db, _crew_env(N8N_WEBHOOK_URL=value))
+    assert any("N8N_WEBHOOK_URL" in r for r in reasons), f"{value!r} goes to n8n.foundryx.my and must be refused: {reasons}"
+    _neutral_db_row = tool.check_neutralised(blank_db, _crew_env(RESPOND_BASE_URL=value))
+    assert any("RESPOND_BASE_URL" in r for r in _neutral_db_row), _neutral_db_row
+
+
+@pytest.mark.parametrize(
+    "key,value",
+    [
+        ("SMTP_HOST", "smtp.invalid"), ("SMTP_HOST", "smtp.invalid:587"),
+        ("N8N_WEBHOOK_URL", "n8n.invalid/webhook"), ("N8N_WEBHOOK_URL", "//n8n.invalid/h"),
+    ],
+)
+def test_scheme_less_neutral_values_and_bare_hosts_stay_neutral(tool, blank_db, key, value):
+    _neutral_db(blank_db)
+    assert tool.check_neutralised(blank_db, _crew_env(**{key: value})) == []
+
+
+def test_a_scheme_less_database_column_is_judged_by_its_host_too(tool, blank_db):
+    _neutral_db(blank_db, **{"settings.n8n_attachment_webhook_url": "n8n.foundryx.my/webhook/attach.invalid"})
+    reasons = tool.check_neutralised(blank_db, _crew_env())
+    assert any("n8n_attachment_webhook_url" in r for r in reasons), reasons
+
+
+def test_the_close_convo_env_fallback_is_checked(tool, blank_db):
+    _neutral_db(blank_db)
+    reasons = tool.check_neutralised(blank_db, _crew_env(N8N_CLOSE_CONVO_WEBHOOK_URL=REAL_LOOKING))
+    assert any("N8N_CLOSE_CONVO_WEBHOOK_URL" in r for r in reasons), reasons
+    assert tool.check_neutralised(blank_db, _crew_env(N8N_CLOSE_CONVO_WEBHOOK_URL="https://n8n.invalid/c")) == []
+    assert tool.check_neutralised(blank_db, _crew_env(N8N_CLOSE_CONVO_WEBHOOK_URL="")) == []
+
+
+def test_a_set_liveness_ping_url_is_checked(tool, blank_db):
+    _neutral_db(blank_db)
+    reasons = tool.check_neutralised(blank_db, _crew_env(N8N_LIVENESS_PING_URL=REAL_LOOKING))
+    assert any("N8N_LIVENESS_PING_URL" in r for r in reasons), reasons
+
+
+@pytest.mark.parametrize("var", ["ALL_PROXY", "all_proxy"])
+def test_a_present_all_proxy_is_probed_but_not_required(tool, blank_db, var):
+    _neutral_db(blank_db)
+    assert tool.check_neutralised(blank_db, _crew_env()) == []
+    assert tool.check_neutralised(blank_db, _crew_env(**{var: _dead_proxy()})) == []
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(5)
+    try:
+        reasons = tool.check_neutralised(blank_db, _crew_env(**{var: f"http://127.0.0.1:{listener.getsockname()[1]}"}))
+    finally:
+        listener.close()
+    assert any(var in r for r in reasons), f"a live {var} was not probed: {reasons}"
+
+
+@pytest.mark.parametrize("var", ["Database_Url", "DATABASE_url", "Direct_Url", "dIRECT_URL"])
+def test_check_target_refuses_any_case_of_the_url_variables_in_the_shell(tool, var):
+    assert tool.check_target(database_url=VALID_DB, api=VALID_API, environ={var: VALID_DB}), var
+
+
+@pytest.mark.parametrize("var", ["PGHOST", "PGHOSTADDR", "PGPORT", "PGDATABASE", "PGSERVICE", "PGSERVICEFILE"])
+def test_check_target_refuses_an_exported_libpq_locator(tool, var):
+    reasons = tool.check_target(database_url=VALID_DB, api=VALID_API, environ={var: "x"})
+    assert any(var in r for r in reasons), f"{var} in the shell must be refused: {reasons}"
+
+
+def test_check_target_does_not_refuse_unrelated_pg_variables(tool):
+    assert tool.check_target(database_url=VALID_DB, api=VALID_API, environ={"PGPASSWORD": "x", "PGUSER": "u"}) == []
+
+
+def test_check_connected_refuses_a_database_other_than_the_env_urls(tool):
+    reasons = tool.check_connected(
+        _FakeEngine("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_other_db", "127.0.0.1"))
+    )
+    assert any("sorento_iqr_copy" in r and "sorento_other_db" in r for r in reasons), reasons
+
+
+def test_the_env_file_is_read_without_interpolation(tool, tmp_path, monkeypatch):
+    monkeypatch.setenv("ZZT_HOSTVAR", "localhost")
+    env = tmp_path / "zzt-interp.env"
+    env.write_text("DATABASE_URL=postgresql://u:p@${ZZT_HOSTVAR}/db\n")
+    assert tool.env_file_database_url(str(env)) == "postgresql://u:p@${ZZT_HOSTVAR}/db"
+    assert tool.check_target(database_url=tool.env_file_database_url(str(env)), api=VALID_API, environ={})
+
+
+def test_database_url_takes_the_last_assignment_across_case_variants(tool, tmp_path):
+    env = tmp_path / "zzt-case.env"
+    env.write_text(f"DATABASE_URL={VALID_DB}\ndatabase_url=postgresql://u:p@db.remote.example.com/x\n")
+    assert tool.env_file_database_url(str(env)) == "postgresql://u:p@db.remote.example.com/x"
+    env.write_text(f"database_url=postgresql://u:p@db.remote.example.com/x\nDATABASE_URL={VALID_DB}\n")
+    assert tool.env_file_database_url(str(env)) == VALID_DB
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        "N8N_WEBHOOK_URL=${ZZT_NEUTRAL_N8N}\n",
+        "respond_base_url=https://api.respond.io\n",
+        "Smtp_Host=smtp.real.example.com\n",
+        "n8n_webhook_url=https://n8n.foundryx.my/w\n",
+        "N8n_Close_Convo_Webhook_Url=https://n8n.foundryx.my/c\n",
+    ],
+    ids=["interpolated", "lower-respond", "mixed-smtp", "lower-n8n", "mixed-close-convo"],
+)
+def test_main_refuses_what_an_env_file_hides_in_interpolation_or_case(real_main, copy_world, monkeypatch, extra):
+    monkeypatch.setenv("ZZT_NEUTRAL_N8N", NEUTRAL_N8N)
+    copy_world(base_url=NEUTRAL_RESPOND, sender_url=None)
+    run = real_main(env_text=neutral_env_text(THROWAWAY_URL) + extra)
+    assert run["rc"] == 2, f"{extra!r}: main must refuse with 2, got {run['rc']!r}"
+
+
+def test_the_proxy_keys_are_not_case_folded(tool, blank_db):
+    """`https_proxy` and `HTTPS_PROXY` are distinct for httpx: dropping the lowercase one
+    is still refused even though the uppercase one is fine."""
+    _neutral_db(blank_db)
+    reasons = tool.check_neutralised(blank_db, _crew_env(https_proxy=None))
+    assert any("https_proxy" in r for r in reasons), reasons
+
+
+def test_main_judges_the_workers_dot_env_too(tool, real_main, copy_world, monkeypatch, tmp_path, capsys):
+    worker_env = tmp_path / "worker-dot-env"
+    worker_env.write_text(neutral_env_text(THROWAWAY_URL) + "RESPOND_BASE_URL=https://api.respond.io\n")
+    monkeypatch.setattr(tool, "WORKER_ENV_FILE", worker_env)
+    copy_world(base_url=NEUTRAL_RESPOND, sender_url=None)
+    run = real_main()
+    assert run["rc"] == 2, f"a worker .env that reaches respond.io must be refused: {run['rc']!r}"
+    assert str(worker_env) in capsys.readouterr().out, "the refusal must name the worker env file"
+
+
+def test_main_accepts_a_neutral_worker_dot_env_and_a_missing_one(tool, real_main, copy_world, monkeypatch, tmp_path):
+    worker_env = tmp_path / "worker-dot-env"
+    worker_env.write_text(neutral_env_text(THROWAWAY_URL))
+    monkeypatch.setattr(tool, "WORKER_ENV_FILE", worker_env)
+    copy_world(base_url=NEUTRAL_RESPOND, sender_url=None)
+    assert real_main()["rc"] == "reached"
+    monkeypatch.setattr(tool, "WORKER_ENV_FILE", tmp_path / "does-not-exist")
+    assert real_main()["rc"] == "reached"
+
+
+def test_the_workers_dot_env_is_not_judged_twice_when_it_is_the_env_file(tool, real_main, copy_world, monkeypatch, tmp_path):
+    monkeypatch.setattr(tool, "WORKER_ENV_FILE", tmp_path / "zzt-crew-copy.env")
+    copy_world(base_url=NEUTRAL_RESPOND, sender_url=None)
+    assert real_main()["rc"] == "reached"
+
+
+def test_an_interrupted_restart_wait_stops_the_commands_process_group(tool, copy_world, monkeypatch):
+    import subprocess
+
+    created: list[Any] = []
+    real_popen = subprocess.Popen
+
+    class _Recording(real_popen):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(subprocess, "Popen", _Recording)
+    world = copy_world()
+    world.args.restart_cmd = "exec sleep 600"
+    world.args.no_restart = False
+    monkeypatch.setattr(world.replay, "burst", lambda bodies: [200] * len(bodies))
+
+    def _interrupted(up, timeout):
+        raise KeyboardInterrupt
+
+    monkeypatch.setattr(world.replay, "_wait_health", _interrupted)
+    monkeypatch.setattr(world.replay, "wait_for", lambda mids, deadline, settle=3.0: [])
+    try:
+        run = _s4_on_a_thread(world, bound=30)
+        assert run["finished"], "the scenario hung after the interrupt"
+        assert isinstance(run.get("error"), KeyboardInterrupt), run
+        assert len(created) == 1, created
+        assert wait_until(lambda: created[0].poll() is not None, timeout=5), (
+            "the interrupted restart command is still running (its group was not killed)"
+        )
+    finally:
+        for proc in created:
+            with contextlib.suppress(Exception):
+                os.killpg(proc.pid, signal.SIGKILL)
+                proc.wait(5)
