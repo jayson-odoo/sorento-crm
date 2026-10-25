@@ -232,7 +232,7 @@ def _with_synonyms(list_name: str, label: str, texts: tuple[str, ...]) -> tuple[
     return tuple(dict.fromkeys([*texts, *extra]))
 
 
-def _spec_rows(db: "Session") -> list[LookupRow]:
+def _spec_rows(db: "Session", hidden: frozenset[str] = frozenset()) -> list[LookupRow]:
     """One row per registry value of an enum key that says something other than the product's type
     or brand (those are category rows and the brand list): label `<spec label> <value>`."""
     from app.services.product_spec_registry import (
@@ -244,7 +244,7 @@ def _spec_rows(db: "Session") -> list[LookupRow]:
 
     out: list[LookupRow] = []
     for row in active_registry(db):
-        if (row.data_type or "").lower() != "enum" or row.spec_key in candidates.TYPE_KEYS | candidates.SKIP_KEYS:
+        if (row.data_type or "").lower() != "enum" or row.spec_key in candidates.TYPE_KEYS | candidates.SKIP_KEYS or row.spec_key in hidden:
             continue
         synonyms = merged_synonyms(row)
         labels = dict(getattr(row, "value_labels", None) or {})
@@ -278,7 +278,7 @@ def _file_type_rows(db: "Session") -> list[LookupRow]:
     return out
 
 
-def load_rows(db: "Session") -> list[LookupRow]:
+def load_rows(db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset()) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels."""
     from app.models.product import ProductCategory
@@ -303,7 +303,7 @@ def load_rows(db: "Session") -> list[LookupRow]:
         if key and key not in seen_labels:
             seen_labels.add(key)
             out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,))))
-    out.extend(_spec_rows(db))
+    out.extend(_spec_rows(db, hidden_spec_keys))
     out.extend(_file_type_rows(db))
     out.extend(LookupRow("sales_channel", ch, ch, (ch,)) for ch in SALES_CHANNELS)
     return out
@@ -332,7 +332,7 @@ def normalise_number(text: str) -> str | None:
     return f"{_mm(one.group(1), one.group(2))}mm" if one else None
 
 
-def number_hits(message: str, db: "Session") -> list[Hit]:
+def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset()) -> list[Hit]:
     """Every numeric spec key whose stored values hold a length the message says, as exact
     millimetres in the key's own unit ("trap length 200mm"). No meaning score; nothing is offered
     for a number no key holds. A code that merely contains digits is never a length."""
@@ -349,7 +349,7 @@ def number_hits(message: str, db: "Session") -> list[Hit]:
     from app.services.product_spec_registry import active_registry
     from app.services.product_spec_search import membership_clause
 
-    keys = [r for r in active_registry(db) if (r.data_type or "").lower() == "numeric" and (r.unit or "").lower() in _TO_MM]
+    keys = [r for r in active_registry(db) if (r.data_type or "").lower() == "numeric" and (r.unit or "").lower() in _TO_MM and r.spec_key not in hidden_spec_keys]
     if not keys:
         return []
     asks: list[tuple[Any, str, str, float]] = []  # (registry row, piece, shown, value in the key's unit)

@@ -1182,17 +1182,19 @@ def _candidate_lines(
     return (indexed or lines), codes, picks
 
 
-def _lookup_lines(db: Session, message: str, config: Any) -> tuple[list[str], dict[str, Any]]:
+def _lookup_lines(
+    db: Session, message: str, config: Any, hidden: frozenset[str] = frozenset()
+) -> tuple[list[str], dict[str, Any]]:
     """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line, plus the trace event
     (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on."""
     try:
         with db.begin_nested():
-            rows = lookup_lists.load_rows(db)
+            rows = lookup_lists.load_rows(db, hidden_spec_keys=hidden)
             brand_words = lookup_lists.brand_words(db)
             hits = lookup_lists.shortlist(message, rows, lookup_lists.embedder(db), brand_words=brand_words)
             # Spec NUMBERS: every key holding the length the message says joins the spec block.
-            numbers = lookup_lists.number_hits(message, db)
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
             if numbers:
                 hits["spec"] = [*numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
         event = {
@@ -4563,17 +4565,17 @@ def _run_stages_body(  # noqa: PLR0915
         lists_free = parser_config.closed_lists_index or parser_config.lookup_lists
         product_types = None if lists_free else turn_runtime.product_type_names(db)
         product_details = None if lists_free else turn_runtime.product_detail_values(db)
-        lookup_lines, lookup_event = (
-            _lookup_lines(db, user_turn.own_text, parser_config) if parser_config.lookup_lists else (None, None)
-        )
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
         # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
         # applied at the parser's two entries (the block it is shown, the spec entities it emits).
         hidden_spec = (
             frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
-            if parser_config.closed_lists
+            if parser_config.closed_lists or parser_config.lookup_lists
             else frozenset()
+        )
+        lookup_lines, lookup_event = (
+            _lookup_lines(db, user_turn.own_text, parser_config, hidden_spec) if parser_config.lookup_lists else (None, None)
         )
         index_matches: list[dict] = []
         index_failed: list[bool] = []
