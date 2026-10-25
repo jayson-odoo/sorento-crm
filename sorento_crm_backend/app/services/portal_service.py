@@ -981,12 +981,16 @@ class PortalService:
             )
         raise handle_not_found(entity_name, submission_id)
 
-    def get_submission(self, token: PortalToken, kind: str, submission_id: str) -> dict:
+    def get_submission(
+        self, token: PortalToken, kind: str, submission_id: str, *, full: bool = False
+    ) -> dict:
+        """The contact's own submission. Most callers use this only to prove ownership; the
+        project registration builds its possible duplicates only for `full` (the detail page)."""
         kind = kind.strip().lower()
         if kind == PROJECT_REGISTRATION_KIND:
             from app.services import project_registration_service as registrations
 
-            return registrations.portal_get(self.db, token, submission_id)
+            return registrations.portal_get(self.db, token, submission_id, full=full)
         if kind == "complaint":
             row = (
                 self.db.query(Complaint)

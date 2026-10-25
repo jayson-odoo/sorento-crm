@@ -789,6 +789,14 @@ def _flatten_payload(payload: SubmissionPayload) -> dict:
     return body
 
 
+def _check_comment_kind(kind: str, db: Session, token: PortalToken) -> str:
+    """The comment routes serve the legacy kinds only: a project registration has no comments."""
+    k = _check_kind(kind, db, token)
+    if k not in SUPPORTED_TYPES:
+        raise handle_validation_error("Comments are not available for this form.")
+    return k
+
+
 def _check_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
     if k not in GENERIC_SUBMISSION_TYPES:
@@ -851,7 +859,8 @@ def _revision_submission_detail(
 
 def _check_attachment_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
-    if k not in GENERIC_SUBMISSION_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
+    # The project registration is exactly its legacy fields: it takes no attachments.
+    if k not in SUPPORTED_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
     require_form_visible(db, token.contact_id, k)
     return k
@@ -1031,7 +1040,7 @@ def portal_get_submission(
     db: Session = Depends(get_db),
 ):
     k = _check_kind(kind, db, token)
-    detail = PortalService(db).get_submission(token, k, submission_id)
+    detail = PortalService(db).get_submission(token, k, submission_id, full=True)
     detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
     # One call, no extra round trip (UAC B1).
     detail["revision"] = _revision_policy_block(db, k, submission_id)
@@ -1255,7 +1264,7 @@ def _kinds_for_entity_type(entity_type: str) -> tuple[str, ...]:
         return ("purchase_request", "sponsorship_form")
     if et in _ATTACHMENT_ONLY_KINDS:
         return (et,)
-    return (et,) if et in GENERIC_SUBMISSION_TYPES else ()
+    return (et,) if et in SUPPORTED_TYPES else ()
 
 
 def _ext(filename: Optional[str], content_type: Optional[str]) -> str:
@@ -1626,7 +1635,7 @@ def portal_list_comments(
 ):
     from app.services.form_comment_service import FormCommentService
 
-    k = _check_kind(kind, db, token)
+    k = _check_comment_kind(kind, db, token)
     sid = validate_uuid_path(submission_id, resource="Submission")
     svc = FormCommentService(db)
     # 404 unless the contact owns the row (list_comments below has no contact filter)
@@ -1653,7 +1662,7 @@ async def portal_add_comment(
     acting_user_id = (
         resolve_impersonating_admin(db, token) if getattr(token, "is_impersonation", False) else None
     )
-    k = _check_kind(kind, db, token)
+    k = _check_comment_kind(kind, db, token)
     sid = validate_uuid_path(submission_id, resource="Submission")
     # Per token plus one ceiling across tokens: checked first, charged only on a saved comment.
     buckets = (
@@ -1694,7 +1703,7 @@ def portal_edit_comment(
 
     if getattr(token, "is_impersonation", False):
         resolve_impersonating_admin(db, token)
-    k = _check_kind(kind, db, token)
+    k = _check_comment_kind(kind, db, token)
     sid = validate_uuid_path(submission_id, resource="Submission")
     svc = FormCommentService(db)
     row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
@@ -1713,7 +1722,7 @@ def portal_delete_comment(
 
     if getattr(token, "is_impersonation", False):
         resolve_impersonating_admin(db, token)
-    k = _check_kind(kind, db, token)
+    k = _check_comment_kind(kind, db, token)
     sid = validate_uuid_path(submission_id, resource="Submission")
     svc = FormCommentService(db)
     row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)

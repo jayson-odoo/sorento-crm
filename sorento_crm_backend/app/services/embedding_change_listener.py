@@ -184,22 +184,48 @@ def _attach_listeners(model, source_type: str) -> None:
 
 
 def _attach_project_listeners() -> None:
-    """Projects (PROJECT-REG-PORTAL D9). The sales profile carries state and mukim, which are
-    part of the embedded text, so a profile change queues its parent project."""
+    """Projects (PROJECT-REG-PORTAL D9).
+
+    Only what is embedded queues an event: the title and the developer on the project, and
+    the state and mukim on its sales profile. Every other write (a staleness stamp, an
+    activity touch) rebuilt an embedding that could not have changed.
+    """
+    from sqlalchemy import inspect as sa_inspect, select
+
     from app.models.projects import Project, ProjectSalesProfile
 
-    _attach_listeners(Project, "project")
+    def _changed(target, *names: str) -> bool:
+        state = sa_inspect(target)
+        return any(state.attrs[name].history.has_changes() for name in names)
 
-    def _queue_parent(_mapper, connection, target):
+    @event.listens_for(Project, "after_insert")
+    def _project_inserted(_mapper, connection, target):
+        _queue_from_mapper(connection, "project", target.id, "project.created", target.company_id)
+
+    @event.listens_for(Project, "after_update")
+    def _project_updated(_mapper, connection, target):
+        if _changed(target, "title", "developer_party_id"):
+            _queue_from_mapper(connection, "project", target.id, "project.updated", target.company_id)
+
+    @event.listens_for(Project, "after_delete")
+    def _project_deleted(_mapper, connection, target):
+        _queue_from_mapper(connection, "project", target.id, "project.deleted", target.company_id)
+
+    def _queue_parent(connection, target) -> None:
         company_id = connection.execute(
-            Project.__table__.select()
-            .with_only_columns(Project.__table__.c.company_id)
-            .where(Project.__table__.c.id == target.project_id)
+            select(Project.__table__.c.company_id).where(Project.__table__.c.id == target.project_id)
         ).scalar()
         _queue_from_mapper(connection, "project", target.project_id, "project.updated", company_id)
 
-    event.listen(ProjectSalesProfile, "after_insert", _queue_parent)
-    event.listen(ProjectSalesProfile, "after_update", _queue_parent)
+    @event.listens_for(ProjectSalesProfile, "after_insert")
+    def _profile_inserted(_mapper, connection, target):
+        if target.state or target.mukim:
+            _queue_parent(connection, target)
+
+    @event.listens_for(ProjectSalesProfile, "after_update")
+    def _profile_updated(_mapper, connection, target):
+        if _changed(target, "state", "mukim"):
+            _queue_parent(connection, target)
 
 
 def register_embedding_change_listeners() -> None:

@@ -637,7 +637,7 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
     raise ValueError(f"Unsupported source type: {source_type}")
 
 
-def _embed_text_chunks(chunks: list[str]) -> list[list[float]]:
+def _embed_text_chunks(chunks: list[str], timeout: float = 30) -> list[list[float]]:
     from app.services import llm_cassette
 
     if llm_cassette.mode() != "replay" and not settings.openai_api_key:
@@ -650,16 +650,16 @@ def _embed_text_chunks(chunks: list[str]) -> list[list[float]]:
         key=llm_cassette.embed_key(settings.embedding_model_name, json.dumps(chunks, ensure_ascii=False)),
         model=settings.embedding_model_name,
         secret=settings.openai_api_key or "",
-        live=lambda: _post_embeddings(chunks),
+        live=lambda: _post_embeddings(chunks, timeout),
         dump=lambda vectors: vectors,
         load=lambda vectors: [list(v) for v in vectors],
     )
 
 
-def _post_embeddings(chunks: list[str]) -> list[list[float]]:
+def _post_embeddings(chunks: list[str], timeout: float = 30) -> list[list[float]]:
     headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
     payload = {"model": settings.embedding_model_name, "input": chunks}
-    with httpx.Client(timeout=30) as client:
+    with httpx.Client(timeout=timeout) as client:
         response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
         response.raise_for_status()
         data = response.json()

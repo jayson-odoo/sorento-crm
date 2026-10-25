@@ -363,6 +363,9 @@ def world(monkeypatch):
         approver = active_user(db, f"{MARKER} approver")
         applicant_user = active_user(db, f"{MARKER} applicant")
         staff = active_user(db, f"{MARKER} staff")
+        # The approver is a sales manager and the owner a salesperson of the company: the
+        # approve route's owner rule (fix round 1, S9) needs both to hand a project to someone.
+        grant(db, owner, "projects.projects.view", company_id)
         grant(db, approver, APPROVE, company_id)
         grant(db, applicant_user, APPROVE, company_id)
 
@@ -379,7 +382,7 @@ def world(monkeypatch):
 
         state = {"contact": a, "user": approver}
         perms = {
-            approver: {APPROVE, *STAFF_PERMS},
+            approver: {APPROVE, "projects.projects.manage", *STAFF_PERMS},
             applicant_user: {APPROVE},
             staff: set(STAFF_PERMS),
             owner: set(STAFF_PERMS),

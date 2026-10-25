@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.api.v1.projects._common import acting_company_id  # noqa: F401  (company is on the row)
+from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
 from app.dependencies import require_permission
 from app.schemas.common import MAX_PAGE_LIMIT
@@ -30,8 +30,10 @@ class RejectBody(BaseModel):
     reason: str
 
 
-def _load(db: Session, registration_id: str):
-    return svc.get_or_404(db, validate_uuid_path(registration_id, resource="Project registration"))
+def _load(db: Session, registration_id: str, *, lock: bool = False):
+    return svc.get_or_404(
+        db, validate_uuid_path(registration_id, resource="Project registration"), lock=lock
+    )
 
 
 @router.get("/")
@@ -69,9 +71,10 @@ async def approve_registration(
     try:
         row = svc.approve(
             db,
-            _load(db, registration_id),
+            _load(db, registration_id, lock=True),
             payload.model_dump(exclude_unset=True),
             actor_user_id=user["id"],
+            actor_slugs=permission_slugs(db, user["id"]),
         )
         db.commit()
         db.refresh(row)
@@ -90,7 +93,7 @@ async def reject_registration(
     db: Session = Depends(get_db),
 ):
     try:
-        row = svc.reject(db, _load(db, registration_id), payload.reason, actor_user_id=user["id"])
+        row = svc.reject(db, _load(db, registration_id, lock=True), payload.reason, actor_user_id=user["id"])
         db.commit()
         db.refresh(row)
         svc.notify(db, row, "rejected")

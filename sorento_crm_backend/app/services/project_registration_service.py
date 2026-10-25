@@ -15,6 +15,8 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
+from collections import OrderedDict
 from datetime import datetime
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
@@ -46,7 +48,16 @@ DUPLICATE_LIMIT = 5
 #: Required on submit (UAC A8), in form order.
 REQUIRED_ON_SUBMIT = ("title", "state", "developer_name")
 
+#: The title is the one free-text field that feeds a regex and an embedding, so it is bounded
+#: like the rest (finding B1); 2000 characters is far past any real project description.
+TITLE_MAX_LEN = 2000
+MAX_LOT_NUMBERS = 20
+#: The embedding call from a registration read must never hold the queue for long.
+REGISTRATION_EMBED_TIMEOUT = 3
+EMBED_CACHE_SIZE = 512
+
 _MAX_LEN = {
+    "title": TITLE_MAX_LEN,
     "distributor_name": 255,
     "customer_name": 255,
     "type_of_building": 255,
@@ -75,12 +86,17 @@ def _norm(value: Optional[str]) -> str:
 # ------------------------------------------------------------------ possible duplicates (D8)
 
 _LOT = re.compile(r"(?<![A-Za-z])(?:LOT|PT)\s*(?:NO\.?\s*)?(\d+)", re.IGNORECASE)
-_MUKIM = re.compile(r"\bMUKIM\s+([^,]+)", re.IGNORECASE)
+# The name after MUKIM ends at a comma, a full stop, one of the words that open the next clause
+# of a Malaysian title, or the end.
+_MUKIM = re.compile(
+    r"\bMUKIM\s+(.+?)(?=\s*[,.]|\s+(?:DAERAH|DISTRICT|NEGERI|UNTUK|FOR|DI)\b|$)", re.IGNORECASE
+)
 
 
 def parse_lot_numbers(title: Optional[str]) -> set:
-    """Lot numbers in a title: `LOT 9001`, `Lot No. 9001`, `PT 9001`, `PT9001` all read 9001."""
-    return set(_LOT.findall(title or ""))
+    """Lot numbers in a title: `LOT 9001`, `Lot No. 9001`, `PT 9001`, `PT9001` all read 9001,
+    and `LOT 09001` reads the same (leading zeros are not part of the number)."""
+    return {n.lstrip("0") or "0" for n in _LOT.findall(title or "")}
 
 
 def parse_mukim(title: Optional[str]) -> Optional[str]:
@@ -95,10 +111,44 @@ def canonical_text(title: str, developer_name: Optional[str], state: Optional[st
     return " | ".join([_clean(title) or "", _clean(developer_name) or "", place])
 
 
-def embed_text(text: str) -> List[float]:
-    from app.services.embedding_worker import _embed_text_chunks
+_EMBED_CACHE: "OrderedDict[str, List[float]]" = OrderedDict()
+_EMBED_LOCK = threading.Lock()
 
-    return _embed_text_chunks([text])[0]
+
+def clear_embedding_cache() -> None:
+    with _EMBED_LOCK:
+        _EMBED_CACHE.clear()
+
+
+def embed_texts(texts: List[str], *, timeout: int = REGISTRATION_EMBED_TIMEOUT) -> List[Optional[List[float]]]:
+    """Vectors for `texts`, one network call for everything not seen before.
+
+    Cached by the text itself (LRU, `EMBED_CACHE_SIZE`): a registration is read again and
+    again while it waits in the queue, and its text does not change between reads.
+    """
+    with _EMBED_LOCK:
+        missing = list(dict.fromkeys(t for t in texts if t not in _EMBED_CACHE))
+    if missing:
+        from app.services import embedding_worker
+
+        vectors = embedding_worker._embed_text_chunks(missing, timeout=timeout)
+        with _EMBED_LOCK:
+            for text, vector in zip(missing, vectors):
+                _EMBED_CACHE[text] = vector
+            while len(_EMBED_CACHE) > EMBED_CACHE_SIZE:
+                _EMBED_CACHE.popitem(last=False)
+    with _EMBED_LOCK:
+        out = []
+        for text in texts:
+            vector = _EMBED_CACHE.get(text)
+            if vector is not None:
+                _EMBED_CACHE.move_to_end(text)
+            out.append(vector)
+        return out
+
+
+def embed_text(text: str) -> List[float]:
+    return embed_texts([text])[0]
 
 
 def semantic_matches(db: Session, *, company_id: str, text: str, top_k: int = 10) -> List[Tuple[str, float]]:
@@ -125,6 +175,25 @@ def semantic_matches(db: Session, *, company_id: str, text: str, top_k: int = 10
         return []
 
 
+def prime_meaning(rows: List["ProjectRegistration"]) -> bool:
+    """Embed the pending rows of a page in ONE call, so the per-row reads that follow are
+    cache hits. False when the call failed: the caller then skips the meaning signal for the
+    whole page instead of retrying it row by row."""
+    texts = [
+        canonical_text(r.title, r.developer_name, r.state, r.mukim)
+        for r in rows
+        if r.status == STATUS_PENDING and r.title
+    ]
+    if not texts:
+        return True
+    try:
+        embed_texts(texts)
+        return True
+    except Exception as exc:  # noqa: BLE001
+        logger.info("registration page embedding skipped: %s", exc)
+        return False
+
+
 def _profile_mukims(db: Session, project_ids: Iterable[str]) -> Dict[str, Optional[str]]:
     ids = list(project_ids)
     if not ids:
@@ -137,27 +206,50 @@ def _profile_mukims(db: Session, project_ids: Iterable[str]) -> Dict[str, Option
     return {str(pid): _norm(m) or None for pid, m in rows}
 
 
-def _lot_matches(db: Session, *, company_id: str, title: str, mukim: Optional[str]) -> List[Project]:
-    lots = parse_lot_numbers(title)
-    wanted_mukim = _norm(mukim) or parse_mukim(title)
-    if not lots or not wanted_mukim:
-        return []
-    pattern = r"(^|[^a-z])(lot|pt)\s*(no\.?\s*)?(" + "|".join(sorted(re.escape(n) for n in lots)) + r")([^0-9]|$)"
-    candidates = (
-        db.query(Project)
-        .filter(Project.company_id == company_id, Project.title.op("~*")(pattern))
-        .order_by(Project.created_at, Project.id)
-        .all()
+def _unpadded(normalised_title: str) -> str:
+    """`lot 09001` and `lot 9001` are one lot, so they must be one phase designator too."""
+    return re.sub(r"(?<![a-z0-9])0+(?=\d)", "", normalised_title)
+
+
+def lot_pattern(lots) -> str:
+    """The case-insensitive regex that finds any of `lots` (at most MAX_LOT_NUMBERS) in a title.
+    Leading zeros are optional on the stored side, as they are ignored on the typed side."""
+    wanted = sorted(lots)[:MAX_LOT_NUMBERS]
+    return (
+        r"(^|[^a-z])(lot|pt)\s*(no\.?\s*)?0*("
+        + "|".join(re.escape(n) for n in wanted)
+        + r")([^0-9]|$)"
     )
-    profile_mukims = _profile_mukims(db, [p.id for p in candidates])
-    out = []
-    for project in candidates:
-        if not (parse_lot_numbers(project.title) & lots):
-            continue
-        project_mukim = profile_mukims.get(str(project.id)) or parse_mukim(project.title)
-        if project_mukim and project_mukim == wanted_mukim:
-            out.append(project)
-    return out
+
+
+def _lot_matches(db: Session, *, company_id: str, title: str, mukim: Optional[str]) -> List[Project]:
+    """Projects on the same lot AND mukim. Any failure reads as "no lot match": this is one
+    signal among three and must never turn a registration read into a 500."""
+    try:
+        lots = set(sorted(parse_lot_numbers(title))[:MAX_LOT_NUMBERS])
+        wanted_mukim = _norm(mukim) or parse_mukim(title)
+        if not lots or not wanted_mukim:
+            return []
+        with db.begin_nested():
+            candidates = (
+                db.query(Project)
+                .filter(Project.company_id == company_id, Project.title.op("~*")(lot_pattern(lots)))
+                .order_by(Project.created_at, Project.id)
+                .limit(200)
+                .all()
+            )
+            profile_mukims = _profile_mukims(db, [p.id for p in candidates])
+        out = []
+        for project in candidates:
+            if not (parse_lot_numbers(project.title) & lots):
+                continue
+            project_mukim = profile_mukims.get(str(project.id)) or parse_mukim(project.title)
+            if project_mukim and project_mukim == wanted_mukim:
+                out.append(project)
+        return out
+    except Exception as exc:  # noqa: BLE001
+        logger.info("registration lot match skipped: %s", exc)
+        return []
 
 
 def find_possible_duplicates(
@@ -169,6 +261,7 @@ def find_possible_duplicates(
     state: Optional[str] = None,
     mukim: Optional[str] = None,
     limit: int = DUPLICATE_LIMIT,
+    use_meaning: bool = True,
 ) -> List[Dict[str, str]]:
     """Existing projects of this company that may be the registration, strongest first:
     same lot and mukim, then meaning, then spelling. A phase sibling is never named."""
@@ -181,14 +274,14 @@ def find_possible_duplicates(
     clean_title = _clean(title)
     if not clean_title:
         return []
-    key = normalise_project_title(clean_title)
+    key = _unpadded(normalise_project_title(clean_title))
     ordered: List[Project] = []
     seen: set = set()
 
     def take(project: Optional[Project]) -> None:
         if project is None or project.id in seen or str(project.company_id) != str(company_id):
             return
-        if are_sibling_developments(project.normalised_title or normalise_project_title(project.title), key):
+        if are_sibling_developments(_unpadded(project.normalised_title or normalise_project_title(project.title)), key):
             return
         seen.add(project.id)
         ordered.append(project)
@@ -198,10 +291,14 @@ def find_possible_duplicates(
 
     meaning = [
         (pid, cosine)
-        for pid, cosine in semantic_matches(
-            db,
-            company_id=company_id,
-            text=canonical_text(clean_title, developer_name, state, mukim),
+        for pid, cosine in (
+            semantic_matches(
+                db,
+                company_id=company_id,
+                text=canonical_text(clean_title, developer_name, state, mukim),
+            )
+            if use_meaning
+            else []
         )
         if cosine >= REGISTRATION_SEMANTIC_THRESHOLD
     ]
@@ -231,7 +328,7 @@ def find_possible_duplicates(
     ]
 
 
-def _duplicates_for(db: Session, row: ProjectRegistration) -> List[Dict[str, str]]:
+def _duplicates_for(db: Session, row: ProjectRegistration, *, use_meaning: bool = True) -> List[Dict[str, str]]:
     """Only a registration still waiting for a decision is checked: that is when it matters."""
     if row.status != STATUS_PENDING or not row.title:
         return []
@@ -242,6 +339,7 @@ def _duplicates_for(db: Session, row: ProjectRegistration) -> List[Dict[str, str
         developer_name=row.developer_name,
         state=row.state,
         mukim=row.mukim,
+        use_meaning=use_meaning,
     )
 
 
@@ -334,8 +432,9 @@ def _is_uuid(value: Any) -> bool:
         return False
 
 
-def _check_customer(db: Session, contact_id: str, raw: Any) -> Optional[str]:
-    """The pick must be one of the contact's own agents' debtors, else the same 422."""
+def _check_customer(db: Session, company_id: str, contact_id: str, raw: Any) -> Optional[str]:
+    """The pick must be one of the contact's own agents' debtors, in THIS registration's
+    company (not the contact's whole company set), else the same 422."""
     if raw is None or str(raw).strip() == "":
         return None
     from app.models.order import Customer
@@ -344,26 +443,38 @@ def _check_customer(db: Session, contact_id: str, raw: Any) -> Optional[str]:
     if not _is_uuid(raw):
         raise refuse
     agent_ids = [str(a.id) for a in _active_agents(db, contact_id)]
-    row = db.query(Customer).filter(Customer.id == str(raw).strip()).first()
+    with company_scope(db, frozenset({str(company_id)})):
+        row = db.query(Customer).filter(Customer.id == str(raw).strip()).first()
     if row is None or not agent_ids or str(row.sales_agent_id) not in agent_ids:
         raise refuse
     return str(row.id)
 
 
+def _check_lengths(payload: Dict[str, Any]) -> None:
+    """Refuse an over-long value before anything is written, naming the field."""
+    for key, limit in _MAX_LEN.items():
+        value = payload.get(key)
+        if isinstance(value, str) and len(value.strip()) > limit:
+            raise AppException(
+                status_code=422,
+                message=f"{key.replace('_', ' ').capitalize()} is too long (at most {limit} characters).",
+                detail=key,
+                code="VALIDATION_ERROR",
+            )
+
+
 def _apply(db: Session, row: ProjectRegistration, contact_id: str, payload: Dict[str, Any]) -> None:
+    _check_lengths(payload)
     for key in FIELD_KEYS:
         if key not in payload:
             continue
         if key == "customer_id":
-            row.customer_id = _check_customer(db, contact_id, payload[key])
+            row.customer_id = _check_customer(db, row.company_id, contact_id, payload[key])
             continue
         value = payload[key]
         value = (str(value).strip() or None) if value is not None else None
         if key != "title":
             value = " ".join(value.split()) if value else None
-        limit = _MAX_LEN.get(key)
-        if value and limit and len(value) > limit:
-            raise AppException(status_code=422, message=f"{key.replace('_', ' ').capitalize()} is too long.")
         setattr(row, key, value)
     # A pick with no typed name shows the debtor's own name.
     if row.customer_id and not row.customer_name:
@@ -404,7 +515,7 @@ def _portal_summary(db: Session, row: ProjectRegistration) -> Dict[str, Any]:
     }
 
 
-def _portal_detail(db: Session, row: ProjectRegistration) -> Dict[str, Any]:
+def _portal_detail(db: Session, row: ProjectRegistration, *, with_duplicates: bool = True) -> Dict[str, Any]:
     base = _portal_summary(db, row)
     base.update({key: getattr(row, key) for key in FIELD_KEYS})
     base.update(
@@ -415,7 +526,9 @@ def _portal_detail(db: Session, row: ProjectRegistration) -> Dict[str, Any]:
             "reject_reason": row.reject_reason,
             "possible_duplicates": [
                 {"project_code": d["project_code"], "title": d["title"]} for d in _duplicates_for(db, row)
-            ],
+            ]
+            if with_duplicates
+            else [],
         }
     )
     return base
@@ -440,9 +553,11 @@ def portal_list(db: Session, token, q: Optional[str] = None) -> List[Dict[str, A
         return [_portal_summary(db, r) for r in rows]
 
 
-def portal_get(db: Session, token, registration_id: str) -> Dict[str, Any]:
+def portal_get(db: Session, token, registration_id: str, *, full: bool = False) -> Dict[str, Any]:
+    """`full` builds the possible duplicates (the detail page). Every other caller only needs
+    to know the contact owns the row, which must not cost a lot query and an embedding."""
     with _scope(db, token):
-        return _portal_detail(db, _own(db, token, registration_id))
+        return _portal_detail(db, _own(db, token, registration_id), with_duplicates=full)
 
 
 def portal_neighbours(db: Session, token, registration_id: str) -> Dict[str, Any]:
@@ -483,14 +598,14 @@ def portal_save(
             db.add(row)
             db.commit()
             db.refresh(row)
-            return _portal_detail(db, row)
+            return _portal_detail(db, row, with_duplicates=False)
     with _scope(db, token):
         row = _own(db, token, registration_id)
         _require_editable(row)
         _apply(db, row, token.contact_id, payload)
         db.commit()
         db.refresh(row)
-        return _portal_detail(db, row)
+        return _portal_detail(db, row, with_duplicates=False)
 
 
 def _missing(values: Dict[str, Any]) -> List[str]:
@@ -510,6 +625,7 @@ def portal_submit(
         row = _own(db, token, registration_id)
         _require_editable(row)
         _require_agent(db, token.contact_id)
+        _check_lengths(payload or {})
         merged = {key: getattr(row, key) for key in FIELD_KEYS}
         merged.update({k: v for k, v in (payload or {}).items() if k in FIELD_KEYS})
         missing = _missing(merged)
@@ -531,7 +647,7 @@ def portal_submit(
         db.commit()
         db.refresh(row)
         notify(db, row, "submitted")
-        return _portal_detail(db, row)
+        return _portal_detail(db, row, with_duplicates=False)
 
 
 def portal_delete(db: Session, token, registration_id: str) -> None:
@@ -608,8 +724,21 @@ def notify(db: Session, row: ProjectRegistration, event: str) -> int:
 # ------------------------------------------------------------------ CRM half
 
 
-def get_or_404(db: Session, registration_id: str) -> ProjectRegistration:
-    row = db.get(ProjectRegistration, registration_id) if _is_uuid(registration_id) else None
+def get_or_404(db: Session, registration_id: str, *, lock: bool = False) -> ProjectRegistration:
+    """`lock` takes the row lock a decision needs, so two approvers cannot both read it as
+    pending and each create a project."""
+    if not _is_uuid(registration_id):
+        row = None
+    elif lock:
+        row = (
+            db.query(ProjectRegistration)
+            .filter(ProjectRegistration.id == str(registration_id))
+            .with_for_update()
+            .populate_existing()
+            .first()
+        )
+    else:
+        row = db.get(ProjectRegistration, registration_id)
     if row is None:
         raise handle_not_found("Project registration", registration_id)
     return row
@@ -654,7 +783,7 @@ def _prefill(db: Session, row: ProjectRegistration) -> Dict[str, Optional[str]]:
     }
 
 
-def _crm_row(db: Session, row: ProjectRegistration) -> Dict[str, Any]:
+def _crm_row(db: Session, row: ProjectRegistration, *, use_meaning: bool = True) -> Dict[str, Any]:
     return {
         "id": str(row.id),
         "submitted_at": _iso(row.submitted_at),
@@ -663,7 +792,7 @@ def _crm_row(db: Session, row: ProjectRegistration) -> Dict[str, Any]:
         "state": row.state,
         "sales_agent_name": _agent_name_for(db, row),
         "status": row.status,
-        "possible_duplicates": _duplicates_for(db, row),
+        "possible_duplicates": _duplicates_for(db, row, use_meaning=use_meaning),
         "project_id": str(row.project_id) if row.project_id else None,
         "project_code": _project_code(db, row.project_id),
     }
@@ -711,7 +840,8 @@ def list_rows(
     sort: Optional[str],
     direction: str,
 ) -> Dict[str, Any]:
-    q = db.query(ProjectRegistration)
+    # A contact's unsent draft is not the admin's business, whatever the filter says.
+    q = db.query(ProjectRegistration).filter(ProjectRegistration.status != STATUS_DRAFT)
     wanted = (status or STATUS_PENDING).strip().lower()
     if wanted != "all":
         q = q.filter(ProjectRegistration.status.in_([s.strip() for s in wanted.split(",") if s.strip()]))
@@ -733,8 +863,9 @@ def list_rows(
         .limit(limit)
         .all()
     )
+    use_meaning = prime_meaning(rows)
     return {
-        "data": [_crm_row(db, r) for r in rows],
+        "data": [_crm_row(db, r, use_meaning=use_meaning) for r in rows],
         "pagination": {"total": total, "page": page, "limit": limit},
         "empty": total == 0,
     }
@@ -764,7 +895,96 @@ _APPROVE_DETAIL_KEYS = (
 )
 
 
-def approve(db: Session, row: ProjectRegistration, payload: Dict[str, Any], *, actor_user_id: str) -> ProjectRegistration:
+MANAGE_PERMISSION = "projects.projects.manage"
+
+
+def _unprocessable(message: str, code: str) -> AppException:
+    return AppException(status_code=422, message=message, code=code)
+
+
+def _owner_can_own(db: Session, user_id: Optional[str], company_id: str) -> bool:
+    """An active, untrashed user with access to the registration's company."""
+    if not user_id:
+        return False
+    from app.models.company import UserCompany
+    from app.models.user import User, UserStatus
+
+    return (
+        db.query(User.id)
+        .join(UserCompany, UserCompany.user_id == User.id)
+        .filter(
+            User.id == str(user_id),
+            User.status == UserStatus.ACTIVE.value,
+            User.is_trashed.is_(False),
+            UserCompany.company_id == str(company_id),
+        )
+        .first()
+        is not None
+    )
+
+
+def _resolve_owner(
+    db: Session, row: ProjectRegistration, requested: Optional[str], actor_user_id: str, actor_slugs
+) -> str:
+    """Who owns the project (finding S9). The applicant or the approver need no extra grant;
+    anyone else is the staff rule: only a sales manager registers a project for someone else."""
+    applicant = row.applicant_user_id
+    if requested:
+        if requested not in (applicant, actor_user_id) and MANAGE_PERMISSION not in actor_slugs:
+            raise AppException(
+                status_code=403,
+                message="Only a sales manager can register a project for someone else.",
+                code="project_owner_assign_forbidden",
+            )
+        if requested != actor_user_id and not _owner_can_own(db, requested, row.company_id):
+            raise _unprocessable(
+                "That salesperson cannot own a project of this company.",
+                "project_registration_owner_invalid",
+            )
+        return requested
+    return applicant if _owner_can_own(db, applicant, row.company_id) else actor_user_id
+
+
+def _check_company_refs(db: Session, company_id: str, payload: Dict[str, Any]) -> None:
+    """Every id the approver sends must belong to the registration's company (finding S10):
+    the pickers are company scoped, the API must not trust that."""
+    from app.models.product import Brand
+    from app.models.projects import ProjectTemplate
+
+    refuse = _unprocessable("Pick the parties, type and template from this company.", "project_registration_ref_invalid")
+    for key in ("developer_party_id", "architect_party_id", "main_contractor_party_id"):
+        value = payload.get(key)
+        if value and not (
+            _is_uuid(value)
+            and db.query(ProjectParty.id)
+            .filter(ProjectParty.id == str(value), ProjectParty.company_id == company_id)
+            .first()
+        ):
+            raise refuse
+    for key, model in (("type_id", ProjectType), ("template_id", ProjectTemplate)):
+        value = payload.get(key)
+        if value and not (
+            _is_uuid(value)
+            and db.query(model.id).filter(model.id == str(value), model.company_id == company_id).first()
+        ):
+            raise refuse
+    brand_ids = {str(b) for b in (payload.get("brand_ids") or [])}
+    if brand_ids:
+        if not all(_is_uuid(b) for b in brand_ids) or (
+            db.query(func.count(Brand.id)).filter(Brand.id.in_(brand_ids), Brand.company_id == company_id).scalar()
+            != len(brand_ids)
+        ):
+            raise refuse
+
+
+def approve(
+    db: Session,
+    row: ProjectRegistration,
+    payload: Dict[str, Any],
+    *,
+    actor_user_id: str,
+    actor_slugs=frozenset(),
+) -> ProjectRegistration:
     """Create the project (PPF code drawn here) and mark the registration approved.
 
     A possible duplicate never blocks (D7); only the exact developer + title repeat does, and
@@ -789,7 +1009,8 @@ def approve(db: Session, row: ProjectRegistration, payload: Dict[str, Any], *, a
     details.setdefault("mukim", row.mukim)
     registration_id = str(row.id)
     company_id = str(row.company_id)
-    owner = payload.get("owner_user_id") or row.applicant_user_id or actor_user_id
+    _check_company_refs(db, company_id, payload)
+    owner = _resolve_owner(db, row, payload.get("owner_user_id"), actor_user_id, actor_slugs)
     try:
         with db.begin_nested():
             project = project_service.register_project(
