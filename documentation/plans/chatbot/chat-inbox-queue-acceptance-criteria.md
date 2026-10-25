@@ -126,6 +126,10 @@ re-inject all arrive here). **Sender** = the workspace's thin n8n chatbot sender
 - **IQ-36** The sweeper's query is served by an index (partial on queued / processing rows),
   built without blocking writes; with mode off it costs nothing measurable.
 
+- **IQ-37** Queue mode applies only when the workspace has a chatbot sender configured (URL and
+  key). Without one, a covered contact keeps the synchronous path, so switching Direct ingress
+  on before the sender exists can never strand messages in the queue.
+
 ## Retry and rollback
 
 - **IQ-22** Retry on a failed queued turn answers it once, even if the Retry copy arrives twice.
