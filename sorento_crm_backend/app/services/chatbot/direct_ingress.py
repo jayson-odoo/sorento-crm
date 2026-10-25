@@ -194,9 +194,9 @@ def skip_reason(
         # Media stays on the n8n path for now: its intake waits up to the media budget on
         # an extraction job, which would hold one of the few direct-turn threads that long.
         return "not_text"
-    if not _sender_url(db):
-        # Review S2: the direct turn would win and send nothing, and the n8n copy would
-        # come back a duplicate. Without a sender, the n8n path keeps the message.
+    if not sender_configured(db):
+        # Review S2 / IQ-37: a queued row could only be answered through the sender, and the
+        # n8n copy comes back a duplicate. Without a sender, the sync path keeps the message.
         return "no_sender"
     # Last, so only a message this path would otherwise take counts against the limit.
     if _over_rate_limit(contact_id):
@@ -213,9 +213,15 @@ _RATE_SCRIPT = (
 )
 
 
-def _sender_url(db: Any) -> str:
+def sender_configured(db: Any) -> bool:
+    """IQ-37: the default workspace has a chatbot sender, URL AND key. The one check both
+    injectors ask before queueing (the webhook here, `/chat/turn` via `inbox_queue.accepts`):
+    without it a covered contact keeps the synchronous path, so nothing queued is stranded."""
     workspace = _default_workspace(db)
-    return (getattr(workspace, "chatbot_sender_url", None) or "").strip() if workspace else ""
+    if workspace is None:
+        return False
+    url = (getattr(workspace, "chatbot_sender_url", None) or "").strip()
+    return bool(url and getattr(workspace, "chatbot_sender_key_ciphertext", None))
 
 
 def rate_key(contact_id: str) -> str:

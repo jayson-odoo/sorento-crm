@@ -208,7 +208,7 @@ def accepts(db: Any, envelope: Any) -> bool:
         return False
     if not queue_mode_for(db, contact):
         return False
-    if not direct_ingress._sender_url(db):
+    if not direct_ingress.sender_configured(db):
         return False
     return direct_ingress._on_default_workspace(db, contact)
 
