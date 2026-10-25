@@ -24,9 +24,10 @@ case) must not be exported in the shell, and `--api` must be http(s) on localhos
 the database name (crew copies are prod clones): `check_neutralised` reads the ORIGINAL values
 before setup and refuses unless respond.io, every n8n URL and SMTP are empty or on `.invalid`,
 the workspace sender URL is empty, every proxy variable in the env file is a dead loopback
-proxy (at least HTTPS_PROXY or https_proxy), and NO_PROXY / no_proxy is set without `*`. A
-checked value the env file leaves out is judged by its Settings default (RESPOND_BASE_URL
-falls back to https://api.respond.io, so it must be set). It also refuses when an earlier run was not cleaned up
+proxy (the lowercase `https_proxy` required), and the lowercase `no_proxy` is set, with no `*`
+in any NO_PROXY / no_proxy. A checked value the env file leaves out, or sets empty, is judged
+by its Settings default (RESPOND_BASE_URL falls back to https://api.respond.io, so it must be
+set to a `.invalid` host). It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
 tool could not add one that verifies without dropping one of respond.io's).
 
@@ -64,7 +65,8 @@ message delivered twice through the webhook and once through `/chat/turn`; s4 a 
 burst, then a backend restart: `--restart-cmd "<shell command>"` runs it once itself (else the
 tool asks a person to restart and waits); `--no-restart` skips it. The restart command must
 RETURN (exit 0 once the restart is under way or done): a non-zero exit fails s4 at once with
-its code in the report, and one still running after RESTART_CMD_SECONDS is killed. Stdlib plus the repo's own
+its code in the report, and one still running after RESTART_CMD_SECONDS is killed with its
+whole process group. Stdlib plus the repo's own
 modules; never imports `app.services.chatbot`.
 """
 from __future__ import annotations
@@ -260,11 +262,10 @@ def check_neutralised(db: Any, env: Any) -> list[str]:
             reasons.append(f"{label} = {value!r} {rule}")
 
     for key in ("RESPOND_BASE_URL", "N8N_WEBHOOK_URL", "SMTP_HOST"):
-        if key in env:
-            need(f"env {key}", env.get(key))
-        else:
-            # Left out of the env file, the value falls back to its Settings default.
-            need(f"env {key} (absent, Settings default)", _settings_default(key))
+        # Judged as the app RESOLVES it: absent, bare or empty falls back to the Settings
+        # default (RESPOND_BASE_URL's is the real https://api.respond.io).
+        resolved = env.get(key) or _settings_default(key)
+        need(f"env {key} (resolves to)", resolved)
     row = db.query(SystemSetting).first()
     if row is not None:
         for column in N8N_SETTING_COLUMNS:
@@ -277,17 +278,17 @@ def check_neutralised(db: Any, env: Any) -> list[str]:
         sender = (workspace.chatbot_sender_url or "").strip()
         if sender and _host(sender) not in LOOPBACK_HOSTS:
             reasons.append(f"respond_workspaces[{space}].chatbot_sender_url = {sender!r} must be empty")
-    # Egress: EVERY proxy variable present is probed (httpx and urllib prefer the lowercase).
-    present = [var for var in PROXY_VARS if env.get(var)]
-    if not any(var.lower() == "https_proxy" for var in present):
-        reasons.append("env HTTPS_PROXY / https_proxy is not set: egress must go through a dead loopback proxy")
-    for var in present:
+    # Egress: the LOWERCASE keys are required (httpx and urllib prefer them, and only a
+    # lowercase `no_proxy` in the file overrides the worker's launched `no_proxy='*'`);
+    # EVERY proxy variable present is probed.
+    if not env.get("https_proxy"):
+        reasons.append("env https_proxy (lowercase) is not set: egress must go through a dead loopback proxy")
+    for var in [v for v in PROXY_VARS if env.get(v)]:
         if not _dead_loopback_proxy(env[var]):
             reasons.append(f"env {var} = {env[var]!r} must be a loopback proxy whose port refuses connections")
-    no_proxy = [var for var in ("NO_PROXY", "no_proxy") if var in env]
-    if not no_proxy:
-        reasons.append("env NO_PROXY / no_proxy is not set: it must list the local hosts only (never '*')")
-    for var in no_proxy:
+    if not env.get("no_proxy"):
+        reasons.append("env no_proxy (lowercase) is not set: it must list the local hosts only (never '*')")
+    for var in [v for v in ("NO_PROXY", "no_proxy") if v in env]:
         if "*" in str(env.get(var) or ""):
             reasons.append(f"env {var} = {env.get(var)!r} lets every host past the proxy; list the local hosts only")
     return reasons
@@ -1060,12 +1061,15 @@ class Replay:
         import subprocess
 
         print(f"\n>>> restarting the copy backend: {command}")
-        process = subprocess.Popen(command, shell=True)
+        # Its own process group, so a compound command's children are stopped with it.
+        process = subprocess.Popen(command, shell=True, start_new_session=True)
         started = time.monotonic()
 
         def stop() -> None:
-            if process.poll() is None:
-                process.kill()
+            try:
+                os.killpg(process.pid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError):
+                pass
             process.wait()
 
         def failed() -> str | None:
