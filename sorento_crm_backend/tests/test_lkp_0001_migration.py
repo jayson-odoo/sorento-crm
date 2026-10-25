@@ -12,10 +12,18 @@ from pathlib import Path
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
 from app.services import chatbot_lookup_edits as ple
 from tests._pg_fixture import blank_session
-from tests.chatbot.test_prompt_lookup_edits import fixture
+import pytest
+
+from tests.chatbot.test_prompt_lookup_edits import TEXT_EDITS, fixture
 
 NAME = "chatbot_semantic_parser"
 VERSIONS = Path(__file__).resolve().parents[1] / "alembic" / "versions"
+
+
+@pytest.fixture(autouse=True)
+def _text_edits_only(monkeypatch):
+    """`replace_line` edits carry sha256 anchors no text fixture can hold; these tests run over the text edits."""
+    monkeypatch.setattr(ple, "EDITS", TEXT_EDITS)
 
 
 def _migration():
