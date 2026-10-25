@@ -141,7 +141,7 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 
 <h2>Phase 1: one list at a time (only lists that passed)</h2>
 <div class="card small">
-<b>Base:</b> today's prompt v63, never the old lean rewrite. The first list adds one short "candidates" section; each list then takes its own text out of v63 and its candidates come in on the turn.<br>
+<b>Base:</b> today's prompt v63, never the old lean rewrite. No "candidates" section is added to the prompt (see "Where the edits go" below); each list's text is replaced in place by a one-line pointer and its candidates come in on the turn.<br>
 <b>Order:</b> specs + product types, categories + classes, file types + certificates, brands, locations, sales agents, customers, channels + promotion kinds.<br>
 <b>Test per list, x3 runs each side:</b> TRAIN 118 no more than 1 worse and zero new product-code swaps; ranking set 62 no more than 1 worse; that list's real messages + your console cases better than today, console cases right 3 of 3; Chinese / Malay no worse; run-to-run wobble no bigger than today's. Held-out 113 once at the end, no more than 2 worse.<br>
 <b>Stop:</b> a missed bar keeps the list in the prompt; two misses in a row end phase 1; each list's spend capped at its estimate + 20%.
@@ -161,7 +161,7 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 <h2>Phase 1 order</h2>
 <div class="tablewrap"><table>
 <tr><th>#</th><th>list</th><th>retrieval test</th><th>pass bar</th><th class="n">USD</th><th>status</th></tr>
-<tr><td>1</td><td>categories / classes</td><td><span class="tag free">GO</span> 96.1%, 180 mentions</td><td>better than today on category messages, no worse elsewhere</td><td class="n">~13.5 (x3 everywhere)</td><td><b>APPROVED</b>, running</td></tr>
+<tr><td>1</td><td>categories / classes</td><td><span class="tag free">GO</span> 96.1%, 180 mentions</td><td>better than today on category messages, no worse elsewhere</td><td class="n">~13.5 (x3 everywhere)</td><td>category messages <b>PASSED</b> (your call, class labels); ranking set <span class="tag stop">EARLY STOP</span> 16/15 vs 18-20; re-run (~2.2) after RANK-REFINE-ROUTE</td></tr>
 <tr><td>2</td><td>spec words (colour, finish, material ...)</td><td><span class="tag free">GO</span> 98.0%, 51</td><td>same</td><td class="n">~6</td><td><b>APPROVED</b>, after 1</td></tr>
 <tr><td>3</td><td>file types (attachment types)</td><td><span class="tag free">GO</span> 100%, 137</td><td>no worse than today (prompt diet: list text out, retrieval in)</td><td class="n">~5</td><td><b>APPROVED</b>, after 2</td></tr>
 <tr><td>4</td><td>brands</td><td><span class="tag free">GO</span> 98.6%, 72</td><td>no worse than today (prompt diet)</td><td class="n">~5</td><td><b>APPROVED</b>, after 3</td></tr>
@@ -171,6 +171,24 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 <tr><td>-</td><td>spec sizes (200mm, 1200mm)</td><td><span class="tag stop">NO-GO</span> 51.7%</td><td>-</td><td class="n">-</td><td>stay in the prompt (read by code later)</td></tr>
 </table></div>
 <p class="small mut">Each step: 3 runs on each side against today's prompt (v63), OpenAI eval key only, every run logged, early stop on a missed bar. Costs for steps 2-5 reuse step 1's baseline runs when the code has not moved; otherwise add about USD 3.5.</p>
+
+<h2>Where the edits go (learned on categories, 25 Oct)</h2>
+<p class="small">Categories beat today on category messages but lost on ranking follow-ups ("yang 3 tu sahaja", "only project"): 16 of 62 vs 18-20. We re-ran the 12 follow-ups that matter 3 times per way of editing the prompt:</p>
+<div class="tablewrap"><table>
+<tr><th>how the prompt was edited</th><th class="n">right, of 36</th></tr>
+<tr><td>today (v63), nothing removed</td><td class="n">35</td></tr>
+<tr><td>prompt unchanged, only the per-message product types line dropped</td><td class="n">31</td></tr>
+<tr><td>list line <b>replaced</b> by a one-line pointer, no new section</td><td class="n">30</td></tr>
+<tr><td>list line and one sentence removed, no new section</td><td class="n">28</td></tr>
+<tr><td>list line <b>deleted</b></td><td class="n">27</td></tr>
+<tr><td>removals + a "candidates" section beside the category rules</td><td class="n">24</td></tr>
+<tr><td>removals + a "candidates" section at the end (the run that stopped)</td><td class="n">16 of 24</td></tr>
+</table></div>
+<div class="card small"><b>Rules every next step follows:</b><br>
+1. Replace a list line with a one-line pointer; never delete it.<br>
+2. Add no "candidates" section to the prompt; the candidate list on the message explains itself ("Category candidates (pick one only if the message means it):").<br>
+3. Leave the per-message list lines (such as the product types line) in place until their own step; dropping that one line alone cost 4 of 36.<br>
+<b>Still true:</b> any edit of today's prompt loses some follow-ups ("yang 3 tu sahaja" under every edit tried). Crew's call: make those follow-ups solid in code (lane RANK-REFINE-ROUTE, no prompt change), then re-run categories with these rules (~USD 2.2).</div>
 </main>
 <script>
 function queueQ(ev, key, label){

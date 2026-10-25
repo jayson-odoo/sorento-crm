@@ -5,6 +5,8 @@ spec WORD values, file types, brands, customers; NO-GO spec NUMBER values (sizes
 promotion kinds, locations, channels. Phase 1 (a) APPROVED by the owner (crew a25272575): categories (~USD 9) then spec word values (~USD 6), OpenAI eval
 key ..bG4A only, x3, early stop, spend.log. Owner later approved file types, brands (no-regression bar), customers (shape 2, ~USD 6) and categories at x3
 everywhere (~USD 13.5). Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL (after #1856).
+Step 1 (25 Oct 21:40): category set passed (owner, class-closed labels), R5 early stop; placement rule recorded below
+("Placement rule"); re-gate waits on lane RANK-REFINE-ROUTE (crew a35332697 option (a)). Track: L, plan + eval only.
 v1 (code-first + subtractive slim) is replaced by this after the owner's note of 25 Oct 17:26 (verbatim in
 crew/state/inbox/slim-index-owner-1726.md): past slimming was long, costly and never better; the index should never
 have been spelling-only; index matching must cover ALL list data; a retrieval step BEFORE the parser passes
@@ -36,7 +38,7 @@ step is re-checked on it before the label moves (cost asked then).
 
 | step | list | data status (phase 0) | bar | gate USD | status |
 |---|---|---|---|---|---|
-| 1 | categories / classes | GO: 0.961, n=180 | B beats v63 on category rows, no regression elsewhere | ~13.5 (x3 everywhere; owner OK) | APPROVED, running |
+| 1 | categories / classes | GO: 0.961, n=180 | B beats v63 on category rows, no regression elsewhere | ~13.5 (x3 everywhere; owner OK) | category set PASSED by the owner on class-closed labels; R5 EARLY STOP (B 16/15 vs A 18/19/20); re-gate (~2.2) after RANK-REFINE-ROUTE, placement-rule variant |
 | 2 | spec word values | GO: 0.980, n=51 | same | ~6 | APPROVED, after 1 |
 | 3 | file types (attachment types) | GO: 1.000, n=137 | NO REGRESSION vs v63 (goal: prompt diet, list text out, retrieval in) | ~5 | APPROVED, after 2 |
 | 4 | brands | GO: 0.986, n=72 | NO REGRESSION vs v63 (prompt diet) | ~5 | APPROVED, after 3 |
@@ -46,6 +48,41 @@ step is re-checked on it before the label moves (cost asked then).
 | - | spec number values (sizes) | NO-GO: 0.517 | - | - | stays in the prompt; a size is read by code (separate idea) |
 
 Later-step costs assume arm A's v63 baseline runs are reused on the same main; a new main adds ~USD 3.5.
+
+### Placement rule (crew decision a35332697 option (a), 25 Oct; from the categories diagnosis)
+Categories step 1 passed TRAIN (B 91/91 vs A 90/89/90) but early-stopped on R5 (B 16/15 vs A 18/19/20, bar 18). The
+diagnosis re-ran 12 R5 follow-ups x3 (4 lost + 8 A-passing) per variant (crew-only REPORT.md "CATEGORIES NO-REGRESSION +
+DIAGNOSIS", phase1/diag/make_variants.py); all variants drop the engine's per-turn Product types line unless noted:
+
+| variant | hits / 36 |
+|---|---|
+| A = v63, per-turn line kept | 35 |
+| v3 = v63 text unchanged | 31 |
+| v6 = v63 Product types policy line REPLACED by a one-line pointer, no section | 30 |
+| v1 = both removals, no section | 28 |
+| v5 = translation sentence deleted | 28 |
+| v4 = Product types policy line deleted | 27 |
+| v2 = removals + CANDIDATES section moved up beside the category rules | 24 |
+| B = removals + CANDIDATES section at the prompt end | 16 / 24 |
+
+Every later step builds its B text by these rules (and the categories re-gate uses them):
+1. **Replace, never delete.** A list line leaving the system prompt is replaced IN PLACE by a one-line pointer
+   (v6 30 vs v4 27). The pointer names the entity rule it carries and says the user turn may list candidates.
+2. **No system-prompt candidates section.** No instruction section is added anywhere in the system text (v1 28 vs v2 24;
+   B at the end 16 of 24). The rules about how to read candidates live in the block header, not in the prompt.
+3. **Self-describing user-turn block.** The block header carries its own rule, e.g. `Category candidates (pick one only
+   if the message means it):`; each list's step uses the same form with its own noun.
+4. **Per-turn list lines stay until their own step.** The engine's per-turn list lines (e.g. the user-turn
+   `Product types: ...` line, `turn_runtime.product_type_names`, the category list again) are left in place by every
+   other list's step. Dropping that one line alone cost ~4 of 36 (v63 35 vs v3 31) and flips or5-4-01 ("a3 flyer").
+   The categories re-gate therefore KEEPS it (harness `keep_types_line=True`); removing it is its own measured edit
+   later, never folded into another step (UNVERIFIED that removal can pass at all).
+
+Known limit: every edit of v63 flips some follow-ups ("yang 3 tu sahaja" is lost under every text edit tried). Crew's
+decision (a) moves that class to CODE: lane RANK-REFINE-ROUTE makes held-ranking refine follow-ups (position, channel
+word, "only X") robust on the #1853 seam with no prompt change. The categories re-gate (R5 x3 + TRAIN x2, ~USD 2.2,
+inside crew's USD 17 hard stop) runs only once that lane's branch is available to the harness. The rule rests on 12 rows
+x3; it is untested on a full gate until that re-gate.
 
 ## Phase 0 result after pull 2 (25 Oct ~18:55, retrieval only, USD 0.021 total, no parser call)
 
