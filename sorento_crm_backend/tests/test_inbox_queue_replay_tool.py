@@ -1058,7 +1058,7 @@ def _neutral_db(db, **columns: Any) -> None:
     row = SystemSetting(id=str(uuid.uuid4()), name="ZZT crew copy")
     db.add(row)
     workspace = RespondWorkspaceService(db).create(
-        RespondWorkspaceCreate(space_id="ZZT-crew-copy", api_key="k", is_default=True)
+        RespondWorkspaceCreate(space_id="ZZT-crew-copy", api_key="k", is_default=True)  # gitleaks:allow
     )
     workspace.base_url = NEUTRAL_RESPOND
     workspace.chatbot_sender_url = None
