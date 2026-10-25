@@ -44,7 +44,7 @@ def test_marked_turn_offers_brand_and_promotion_kind_blocks(session_factory, see
     engine_mod.run_turn(_envelope(message=message), session_factory=session_factory)
     lines = seen[-1].splitlines()
     assert HDR["brand"] in lines and f"- {want}" in lines, lines
-    assert HDR["promotion_kind"] in lines and "- A3 Flyer (a3_flyer)" in lines, lines
+    assert HDR["promotion_kind"] in lines and "- a3_flyer (A3 Flyer)" in lines, lines
     assert not any(ln.startswith(("Known brands:", "Promotion kinds:")) for ln in lines), lines
     cat_at = [i for i, ln in enumerate(lines) if ln.startswith("Category candidates")]
     assert not cat_at or BRAND_CODE not in "\n".join(lines[cat_at[0] :]).split(HDR["brand"])[0], lines

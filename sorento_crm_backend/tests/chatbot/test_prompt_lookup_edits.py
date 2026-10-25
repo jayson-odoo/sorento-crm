@@ -9,7 +9,7 @@ idempotence is a separate test). No database.
 """
 from __future__ import annotations
 
-from app.services.chatbot import prompt_lookup_edits as ple
+from app.services import chatbot_lookup_edits as ple
 
 MARKER = "== LOOKUP LISTS =="
 SALES_REPORT_ANCHOR = '== SALES REPORT: order_status "sales_report", domain_hint "order" =='

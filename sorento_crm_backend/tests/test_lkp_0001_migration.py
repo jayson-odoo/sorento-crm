@@ -10,7 +10,7 @@ import uuid
 from pathlib import Path
 
 from app.models.ai_prompt import AIPromptLabel, AIPromptVersion
-from app.services.chatbot import prompt_lookup_edits as ple
+from app.services import chatbot_lookup_edits as ple
 from tests._pg_fixture import blank_session
 from tests.chatbot.test_prompt_lookup_edits import fixture
 
@@ -109,3 +109,38 @@ def test_the_downgrade_drops_only_its_own_unlabelled_marked_version():
         db.expire_all()
         assert [r.version for r in _versions(db)] == [63, 65]
         assert _versions(db)[0].id == prod.id
+
+
+def test_importing_the_migration_does_not_import_the_chatbot_package():
+    """B2: a migration module must import without `app.services.chatbot` (tests/chatbot/test_import_boundary.py)."""
+    import subprocess
+    import sys
+
+    code = (
+        "import importlib.util, sys, glob\n"
+        f"p = glob.glob({str(VERSIONS)!r} + '/lkp_0001*.py')[0]\n"
+        "s = importlib.util.spec_from_file_location('m', p); m = importlib.util.module_from_spec(s); s.loader.exec_module(m)\n"
+        "bad = sorted(k for k in sys.modules if k == 'app.services.chatbot' or k.startswith('app.services.chatbot.'))\n"
+        "print('BAD', bad)\n"
+        "sys.exit(1 if bad else 0)\n"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, cwd=str(VERSIONS.parents[1]))
+    assert done.returncode == 0, done.stdout + done.stderr
+
+
+def test_the_downgrade_deletes_only_versions_with_its_own_commit_message():
+    """C6: an unlabelled version that carries the marker but another message survives."""
+    from unittest import mock
+
+    m = _migration()
+    with blank_session() as db:
+        _production(db, fixture())
+        assert m.publish_on_production(db) == 64
+        marked = "Rules\n== LOOKUP LISTS ==\nmore\n"
+        db.add(AIPromptVersion(id=str(uuid.uuid4()), name=NAME, version=65, type="text", template=marked,
+                               variables=[], commit_message="someone else's marked version"))
+        db.flush()
+        with mock.patch.object(m.op, "get_bind", return_value=db.connection()):
+            m.downgrade()
+        db.expire_all()
+        assert [r.version for r in _versions(db)] == [63, 65]

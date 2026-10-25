@@ -134,10 +134,10 @@ def test_brand_and_location_rows_follow_the_session_company_scope(session_factor
 def test_promotion_kind_label_carries_the_type_code(session_factory):
     seed_world3(session_factory)
     rows = ll.load_rows(scoped(session_factory))
-    assert labels(ll.shortlist("a3 flyer", rows, None), "promotion_kind") == ["A3 Flyer (a3_flyer)"]
-    assert labels(ll.shortlist("focus item", rows, None), "promotion_kind") == ["Focus Item (focus_item)"]
+    assert labels(ll.shortlist("a3 flyer", rows, None), "promotion_kind") == ["a3_flyer (A3 Flyer)"]
+    assert labels(ll.shortlist("focus item", rows, None), "promotion_kind") == ["focus_item (Focus Item)"]
     kinds = {r.label for r in rows if r.list_name == "promotion_kind"}
-    assert kinds == {"A3 Flyer (a3_flyer)", "Focus Item (focus_item)"}
+    assert kinds == {"a3_flyer (A3 Flyer)", "focus_item (Focus Item)"}
 
 
 # ------------------------------------------------------------------ locations
