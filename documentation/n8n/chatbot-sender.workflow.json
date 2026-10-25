@@ -27,7 +27,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// CHAT-SPEED sender: one item per action, IN ORDER (the CRM's contract: execute in order).\n// The body mirrors POST /api/v1/external/chat/turn's response plus `contact_id`.\nconst body = $json.body || {};\nconst contactId = String(body.contact_id || '').trim();\nconst actions = Array.isArray(body.actions) ? body.actions : [];\nif (!contactId || !body.turn_id) {\n  throw new Error('chatbot-sender: body has no contact_id or turn_id');\n}\n// A webhook-started turn is never a test turn; refuse one anyway (D14 containment).\nif (body.is_test === true || actions.some((a) => a && a.dry_run === true)) {\n  return [];\n}\nreturn actions\n  .filter((a) => a && typeof a.kind === 'string')\n  .map((action, index) => ({ json: { turn_id: body.turn_id, contact_id: contactId, index, action } }));"
+        "jsCode": "// CHAT-SPEED sender: one item per action, IN ORDER (the CRM's contract: execute in order).\n// The body mirrors POST /api/v1/external/chat/turn's response plus `contact_id`.\nconst body = $json.body || {};\nconst contactId = String(body.contact_id || '').trim();\nconst actions = Array.isArray(body.actions) ? body.actions : [];\n// The turn's ctx (sub-send-attachments addresses the customer by ctx.contact.id); a CRM\n// build that sends none still gives the sub the contact.\nconst ctx = body.ctx && typeof body.ctx === 'object' && !Array.isArray(body.ctx) ? body.ctx : { contact: { id: contactId } };\nif (!contactId || !body.turn_id) {\n  throw new Error('chatbot-sender: body has no contact_id or turn_id');\n}\n// A webhook-started turn is never a test turn; refuse one anyway (D14 containment).\nif (body.is_test === true || actions.some((a) => a && a.dry_run === true)) {\n  return [];\n}\nreturn actions\n  .filter((a) => a && typeof a.kind === 'string')\n  .map((action, index) => ({ json: { turn_id: body.turn_id, contact_id: contactId, index, action, ctx } }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -190,9 +190,12 @@
         "workflowInputs": {
           "mappingMode": "defineBelow",
           "value": {
-            "contact_id": "={{ $json.contact_id }}",
-            "text": "={{ $json.action.text }}",
-            "quick_replies": "={{ $json.action.quick_replies }}"
+            "contact_identifer": "={{ $json.contact_id }}",
+            "message": "={{ $json.action.text ?? null }}",
+            "quick_reply": "={{ (q => { \n  const val = Array.isArray(q) ? q.join(',') : (q ?? '');\n  return val.split(',').map(s => s.trim()).slice(0, 10).join(', ');\n})($json.action.quick_replies) }}",
+            "result_set": "={{ $json.action.result_set }}",
+            "turn_id": "={{ $json.turn_id }}",
+            "contact": "={{ $json.ctx?.contact ?? { id: $json.contact_id } }}"
           },
           "matchingColumns": [],
           "schema": [],
@@ -222,7 +225,8 @@
           "value": {
             "contact_id": "={{ $json.contact_id }}",
             "attachments_src": "={{ $json.action.attachments_src }}",
-            "reply": "={{ $json.action.reply }}"
+            "reply": "={{ $json.action.reply }}",
+            "ctx": "={{ { ...($json.ctx ?? {} ), text: { ...($json.ctx?.text ?? {} ), message: { ...($json.ctx?.text?.message ?? {} ), message: { ...($json.ctx?.text?.message?.message ?? {} ), attachment: $json.ctx?.text?.message?.message?.attachment ?? {} } } }, contact: $json.ctx?.contact ?? { id: $json.contact_id } } }}"
           },
           "matchingColumns": [],
           "schema": [],
