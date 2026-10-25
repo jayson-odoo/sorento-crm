@@ -1,6 +1,8 @@
 # PLAN v2: retrieval (RAG) before the parser, every list (CHAT-SLIM-INDEX-PLAN, 25 Oct 2026)
 
-Status: PLAN v2, waiting for the owner's go on phase 0 (crew report --ask). No code yet.
+Status: PLAN v2 APPROVED (owner Lavish 25 Oct 17:34: phase 0 go incl. crew's read-only masked prod pull; slice WC go
+after #1856, proposed to crew as lane CHAT-WC-CATEGORY-TOTAL). Phase 0 IN PROGRESS: pull spec filed with crew,
+retrieval harness being built (crew/state/eval/slim-index/, crew-only). Phase 1 not started.
 v1 (code-first + subtractive slim) is replaced by this after the owner's note of 25 Oct 17:26 (verbatim in
 crew/state/inbox/slim-index-owner-1726.md): past slimming was long, costly and never better; the index should never
 have been spelling-only; index matching must cover ALL list data; a retrieval step BEFORE the parser passes
