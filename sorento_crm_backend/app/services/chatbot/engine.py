@@ -7833,6 +7833,10 @@ def _run_stages_body(  # noqa: PLR0915
                 f"system_settings.chatbot_completed_lanes on a build that can complete "
                 f"it, or turn S7 mode off."
                 if s7_mode
+                else f"This turn ran on the inbox queue, which has no n8n spine to finish "
+                f"the {delegate!r} lane. Leave this lane's messages to n8n by turning "
+                f"direct ingress off until the CRM completes {branch_kind!r}."
+                if inbox_queue.draining()
                 else f"This turn came through direct ingress (the respond.io webhook), "
                 f"which has no n8n spine to finish the {delegate!r} lane. Leave this "
                 f"lane's messages to n8n by turning direct ingress off until the CRM "

@@ -231,11 +231,13 @@ def rate_key(contact_id: str) -> str:
     return f"chatbot:direct:rate:{contact_id}"
 
 
-def _over_rate_limit(contact_id: str) -> bool:
+def _over_rate_limit(contact_id: str, *, fail_open: bool = False) -> bool:
     """The producer's own gate (`sorento-main`, crew 18 Oct): more than
     `RATE_LIMIT_PER_SECOND` messages from one contact inside a second. The n8n copy still
     gets the producer's fixed rate-limit reply; this path just stays out of the burst.
-    A redis error reads as over the limit: the job could not be enqueued on it anyway."""
+    A redis error reads as over the limit at the webhook's gate (another injector's copy
+    still queues the message); `fail_open` (the inbox enqueue, IQ-47) reads it as under:
+    a Redis blip must never refuse a message, and the 200-row cap still bounds a loop."""
     from app.services.queue_service import redis_conn
 
     key = rate_key(contact_id)
@@ -245,7 +247,7 @@ def _over_rate_limit(contact_id: str) -> bool:
         count = int(redis_conn.eval(_RATE_SCRIPT, 1, key))
     except Exception:  # noqa: BLE001
         logger.warning("direct ingress: rate limit unreadable for %s", contact_id, exc_info=True)
-        return True
+        return not fail_open
     return count > RATE_LIMIT_PER_SECOND
 
 

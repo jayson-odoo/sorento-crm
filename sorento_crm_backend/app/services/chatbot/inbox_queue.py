@@ -291,7 +291,7 @@ def enqueue(db: Any, envelope: Any, *, rate_limit: bool = False) -> tuple[str, b
     if existing is not None and retrying is None:
         return str(existing.id), False
     refused: str | None = None
-    if rate_limit and direct_ingress._over_rate_limit(contact):
+    if rate_limit and direct_ingress._over_rate_limit(contact, fail_open=True):
         refused = REFUSED_RATE_LIMIT_STAGE
     # Counted, not locked: concurrent copies can overshoot the cap by a few (accepted).
     elif _queued_count(db, contact) >= MAX_QUEUED_PER_CONTACT:
@@ -865,7 +865,9 @@ def _recover_dead_rows(contact: str, factory: Callable[[], Any]) -> None:
             _finish(factory, turn_id, "failed" if error else "done", "sent")
         elif should_resend(outcome):
             logger.warning("chatbot inbox: turn %s of %s is sent again", turn_id, contact)
-            _requeue(factory, turn_id)
+            # The same compare-and-set (IQ-41): an old drain that re-stamped and resent
+            # meanwhile (finished_at moves on each attempt) keeps its row.
+            _requeue(factory, turn_id, read=(stage, started_at, finished_at))
         else:
             logger.warning("chatbot inbox: turn %s of %s may have been sent; flagged", turn_id, contact)
             _flag_for_staff(factory, turn_id, outcome)
