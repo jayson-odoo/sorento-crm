@@ -48,19 +48,21 @@ ask on its own family count (`gate._cust_base`), and the printed roster is rebui
 -> `ledger_family_key` over the full name it prints). Two ways they disagreed, both fixed so the ask count is the printed count:
 
 1. **Both matches named, one customer group (the prod case, crew trace afd7779e on the prod clone):** a debtor-name hit on
-   the "[A/C I]" ledger (display customer_name "... SDN BHD [A/C I]") and a customer hit on the "(PROJECT)" ledger, both
-   in one customer group. `_cust_base` looked the group up on the SUFFIX-STRIPPED name ("... SDN BHD"), which no ledger
-   carries, so `customer_group_of` (exact full name, `ledger_family.py`) missed and the row got "<key> (NO GROUP)", while
-   the "(PROJECT)" row got the group key: two gate families, one printed line. Fix: `_cust_base` IS the roster's key,
-   `ledger_family_key(_display_name(match) or canonical_code)` (`gate.py`); the gate's own regex copy of the name rule and
-   its stripped group lookup are gone.
+   the "[A/C I]" ledger and a customer hit on the "(PROJECT)" ledger, both in one customer group. `_cust_base` looks the
+   group up on the suffix-stripped name, so the two land in two gate families, while the printed roster (full name) joins
+   them into one line. Fix: the gate asks only when the roster PRINTS two or more lines (`printed_lines`, one
+   `ledger_family_key` per representative's name, beside `len(bases) > 1` in `gate.py`). The gate's families are left as
+   they are, because they decide which ledgers each printed line carries: a first cut that keyed `_cust_base` by the
+   roster key (c05682bf) split the group's ungrouped "- [IBORN]" and inactive "(SHOWCASE)" ledgers into a line of their
+   own (crew live check, 3 lines), against the owner's ruling below; reverted.
 2. **A match with no name:** `_cust_base` fell back to the account code, the roster to the CRM name. Fix:
    `resolve_gate.name_unnamed_customers` fills `customers.customer_name` by uuid onto an unnamed customer match before the
    gate (after `_without_customer_rows`, so a hidden customer is never named), through the `customer_names` reader
    (`services.customer_names_reader`, passed by `turn_runtime.py` like `account_levels`; a failed read adds nothing).
 
-Tests: O2 (case 1, the two prod shapes, red commit first), O1 (case 2), U5 (the name fill, unit). Kill: `_cust_base` back to
-the stripped lookup fails O2; dropping the `customer_names` argument fails O1.
+Tests: O2 (case 1, the two prod shapes, red commit first), O3 (the group with its "- [IBORN]" and "(SHOWCASE)" ledgers:
+two lines, option 1 carries all four ledgers, the pick reports them; red commit first, against c05682bf), O1 (case 2), U5
+(the name fill, unit). Kill: dropping `len(printed_lines) > 1` fails O2; dropping the `customer_names` argument fails O1.
 
 Owner ruling 25 Oct 17:35 (no change, keep today's grouping): option 1 of the prod case is the whole customer group of 300-F004 across SRT and MCH (9 accounts), and
 that includes the ungrouped 300-F033 ledger (joined by the name rule) and the inactive 305-F001; both SHOULD count in that group.
