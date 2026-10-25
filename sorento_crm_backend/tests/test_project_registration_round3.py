@@ -247,3 +247,28 @@ def test_16_a_project_with_no_code_sorts_last_either_way(world):
     for direction in ("asc", "desc"):
         order = _order(world, sort="project_code", dir=direction)
         assert order.index(coded.id) < order.index(rid), direction
+
+
+# ------------------------------------------------------------------ security re-check: drafts on every staff route
+
+
+def test_10b_a_draft_is_404_on_every_staff_route_even_for_a_manager(world):
+    from ._project_registration_support import registration
+
+    draft = create_draft(world)["id"]
+    world.perms[world.approver].add("projects.projects.delete")
+    c = as_user(world, world.approver)  # holds projects.projects.manage
+    assert c.put(f"{STAFF}/{draft}", json={"mukim": "x"}).status_code == 404
+    assert c.delete(f"{STAFF}/{draft}").status_code == 404
+    assert c.get(f"{STAFF}/{draft}/collaborators").status_code == 404
+    assert c.get(f"{STAFF}/{draft}/takeover-requests").status_code == 404
+    assert registration(world, draft).approval_state == "draft"
+
+
+def test_10b_the_portal_still_reads_and_deletes_its_own_draft(world):
+    from ._project_registration_support import SUB, as_contact
+
+    draft = create_draft(world)["id"]
+    c = as_contact(world, world.a)
+    assert c.get(f"{SUB}/{draft}").status_code == 200
+    assert c.delete(f"{SUB}/{draft}").status_code == 204

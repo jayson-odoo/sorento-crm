@@ -897,7 +897,17 @@ def serialize_project(
 
 
 def get_project_or_404(db: Session, project_id: str) -> Project:
-    project = db.query(Project).filter(Project.id == project_id).first()
+    """The project for a STAFF route. A contact's unsent portal draft is nobody else's
+    business (security N2), so every staff route reads it as not found; the portal reaches
+    its own drafts through `project_registration_service._own`, never through here."""
+    project = (
+        db.query(Project)
+        .filter(
+            Project.id == project_id,
+            or_(Project.approval_state.is_(None), Project.approval_state != APPROVAL_DRAFT),
+        )
+        .first()
+    )
     if project is None:
         raise AppException(
             status_code=404,

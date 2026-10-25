@@ -302,9 +302,9 @@ async def get_project(
     try:
         validate_uuid_path(project_id, resource="Project")
         project = svc.get_project_or_404(db, project_id)
-        # A contact's unsent draft is nobody's read (N2), and the AI read tools answer about
-        # approved projects only (S1): both read as "not found", the same as the list.
-        if project.approval_state == "draft" or (
+        # The AI read tools answer about approved projects only (S1): "not found", the same
+        # as the list. (A draft is already not found for everyone: get_project_or_404.)
+        if (
             current_user.get("auth_method") in _MACHINE_AUTH_METHODS
             and not svc.is_approved(project)
         ):
