@@ -207,9 +207,16 @@ def _day(value: date, *, year: bool = True) -> str:
 
 
 def _customer_label(item: Mapping[str, Any]) -> str:
+    """"NAME [A/C I]": the account label once. A ledger name already ends in its marker
+    ("... SDN BHD [A/C I]"), so that trailing marker goes first (`ledger_family`'s own rule, which
+    keeps a bracket inside the name such as "(1990)"); a label that IS the name prints once."""
+    from app.services.ledger_family import _without_trailing_marker
+
     name = jsc.js_string(item.get("name") or "").strip()
     label = jsc.js_string(item.get("label") or "").strip()
-    return f"{name} [{label}]" if label and label != name else name
+    if not label or label == name:
+        return name
+    return f"{_without_trailing_marker(name)} [{label}]"
 
 
 def _customer_words(verdict: Mapping[str, Any]) -> str | None:
