@@ -34,6 +34,7 @@ import type {
   Project,
   ProjectStakeholder,
 } from '../../_shared/types/project.types';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
 
 const INFLUENCE_OPTIONS = [
   { value: 'high', label: 'High' },
@@ -362,7 +363,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
         title="Confirm remove"
         description={
           deleting
-            ? `Remove ${deleting.person_name} from ${project.project_code}? This action cannot be undone.`
+            ? `Remove ${deleting.person_name} from ${projectCodeLabel(project)}? This action cannot be undone.`
             : ''
         }
         onDelete={async () => {

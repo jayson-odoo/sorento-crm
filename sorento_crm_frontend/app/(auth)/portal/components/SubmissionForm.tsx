@@ -118,6 +118,7 @@ import {
   InquiryFormTableRow,
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
+import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
 
 type ProductLine = {
   item_code?: string;
@@ -1672,12 +1673,12 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // Project registration only: the server names existing projects that look the same (no links
   // in the portal, and no ids).
   const possibleDuplicates = Array.isArray(detail?.possible_duplicates)
-    ? (detail.possible_duplicates as { project_code: string; title: string }[])
+    ? (detail.possible_duplicates as { project_code: string | null; title: string }[])
     : [];
   const duplicateLine =
     possibleDuplicates.length > 0
       ? `Possible duplicate: ${possibleDuplicates
-          .map((d) => `${d.project_code} ${d.title}`)
+          .map((d) => `${projectCodeLabel(d)} ${d.title}`)
           .join(', ')}`
       : null;
 
@@ -3235,7 +3236,7 @@ function FieldControl({
           onChange={(v) => onChange(v)}
           fetchOptions={(q) => lookupProjects(q)}
           optionValue={(o) => o.id}
-          optionLabel={(o) => `${o.project_code} - ${o.title}`}
+          optionLabel={(o) => `${projectCodeLabel(o)} - ${o.title}`}
           // A registered project is picked, never typed: the column is a UUID FK, so
           // free text would reach the server as an id and fail there instead of here.
           allowFreeText={false}

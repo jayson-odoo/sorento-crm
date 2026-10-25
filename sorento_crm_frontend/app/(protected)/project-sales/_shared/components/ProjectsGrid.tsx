@@ -26,6 +26,8 @@ import {
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import type { Project } from '../types/project.types';
+import { projectCodeLabel } from '../lib/projectCode';
+import { ApprovalStatePill, isAwaitingDecision } from './ApprovalStatePill';
 
 /**
  * Every registered project as a row. ONE grid, two screens.
@@ -102,7 +104,7 @@ export function ProjectsGrid({
             href={`/project-sales/${row.original.id}`}
             className="hover:underline"
           >
-            {row.original.project_code}
+            {projectCodeLabel(row.original)}
           </Link>
         ),
       },
@@ -142,7 +144,9 @@ export function ProjectsGrid({
         enableSorting: false,
         meta: { headerTitle: 'Stage' },
         cell: ({ row }) =>
-          row.original.status_label ? (
+          isAwaitingDecision(row.original.approval_state) ? (
+            <ApprovalStatePill state={row.original.approval_state} />
+          ) : row.original.status_label ? (
             <Badge variant="secondary" className="truncate">
               {row.original.status_label}
             </Badge>
@@ -186,7 +190,7 @@ export function ProjectsGrid({
         cell: ({ row }) =>
           row.original.brands.length ? (
             <PillOverflow
-              ariaLabel={`Brands on ${row.original.project_code}`}
+              ariaLabel={`Brands on ${projectCodeLabel(row.original)}`}
               items={row.original.brands.map((brand) => ({ key: brand, label: brand }))}
               renderPopover={(items) => <PillOverflowList items={items} />}
               testId={`project-brands-${row.original.id}`}
