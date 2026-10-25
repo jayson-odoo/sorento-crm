@@ -10,6 +10,7 @@ purpose: a migration imports it, and the chatbot package pulls the engine (and a
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 from dataclasses import dataclass
 
@@ -20,9 +21,9 @@ logger = logging.getLogger("alembic.runtime.migration")
 
 @dataclass(frozen=True)
 class Edit:
-    op: str  # "replace" | "delete"
+    op: str  # "replace" | "delete" (anchor = exact text) | "replace_line" (anchor = sha256 of one whole line)
     anchor: str
-    payload: str  # one line; "" for a delete
+    payload: str  # one line; "" for a delete (or a replace_line that removes the line)
 
 
 EDITS: tuple[Edit, ...] = (
@@ -100,7 +101,7 @@ EDITS: tuple[Edit, ...] = (
     Edit(
         'replace',
         'a name from the Known brands: line (see KNOWN BRANDS below); never a fixed list',
-        'a name from the Brand candidates block (see KNOWN BRANDS below); never a fixed list',
+        'a name from the Brand candidates block (see the BRAND CANDIDATES rule below); never a fixed list',
     ),
     # The KNOWN BRANDS rule: the per-turn Known brands line is now the Brand candidates block; the Sorento / Mocha example pair is dropped.
     Edit(
@@ -170,20 +171,86 @@ EDITS: tuple[Edit, ...] = (
         'ONLY a key\n      that has a "Specification <key>" line in the policy block below; the choices and\n      the words listed on that line are the whole vocabulary, in any language.',
         'ONLY a key that a Spec candidates line of the user message names in its "(key: value)" bracket (spec_key and spec_value come from that bracket); the lines of that block are the whole vocabulary, in any language.',
     ),
+    # The warehouse code list under the short-token rule: locations are the Location candidates block now.
+    Edit(
+        "replace",
+        '== IN AN ORDER OR OUTSTANDING ASK, A SHORT TOKEN IS A LOCATION ==\nUnder domain_hint "order" (a DO / SO / outstanding question), a SHORT token that is not a\nproduct code and that follows "for", "at", "in", or stands alone beside the product, is a\nWAREHOUSE word. Emit it as an entity with hint "warehouse" - NEVER "customer".\nSHORT means one of exactly two shapes, and nothing else counts:\n  (a) at most 4 characters, letters or letters with one digit: "IB", "BB", "IR", "ACTS",\n      "SMC", "NTC", "RSV", "DFCT", "BILL", "BRW", "MWH", "RSW", "DC1", "WH3"\n  (b) a hyphenated site code of at most 10 characters: "BRW-IB", "MWH-IB", "BRW-ACTS"',
+        '== IN AN ORDER OR OUTSTANDING ASK, A SHORT TOKEN IS A LOCATION == Under domain_hint "order" (a DO / SO / outstanding question), a SHORT token that is not a product code and that follows "for", "at", "in", or stands alone beside the product, is a WAREHOUSE word. Emit it as an entity with hint "warehouse" - NEVER "customer". SHORT means one of exactly two shapes, and nothing else counts: (a) at most 4 characters, letters or letters with one digit, as the Location candidates block spells a location; (b) a hyphenated site code of at most 10 characters, as that block spells it.',
+    ),
+    # The company code mapping line and the company list in SALES_COMPANY.
+    Edit("delete", 'Company codes: Sorento = SRT, Mocha = MCH, Cabana = CBN (case-insensitive; "srt team" = Sorento).\n', ""),
+    Edit(
+        "replace",
+        '== SALES_COMPANY: the company named, or null ==\n"Sorento" / "Mocha" (or the company\'s own name as typed) when the message names the\ncompany whose sales are asked about; null when none is named. Never a customer.',
+        '== SALES_COMPANY: the company named, or null == The company whose sales are asked about, as the message names it (the company\'s own name as typed); null when none is named. Never a customer.',
+    ),
+    # The empty KNOWN BRANDS banner: its rule is the BRAND CANDIDATES rule below.
+    Edit("delete", '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\nKNOWN BRANDS\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n', ""),
+    # The file type list on the attachment_type entity line.
+    Edit("replace", 'the KIND of document wanted: photo, image, technical drawing/spec, 3D model, certificate, installation guide.', 'the KIND of document wanted (the File type candidates block names the kinds).'),
+    Edit("replace", '(photo | technical drawing | 3D model | certificate | installation guide)', '(the kind the File type candidates block names)'),
+    # Lines that quoted a real customer or supplier name, anchored by the hash of the whole line and
+    # replaced by the same line with a placeholder (a real name never enters the repository).
+    Edit("replace_line", "9f2bc4a0db54f2b15a091e0d6141b0446bb085c1400ee38b5bf6fb35b6557dd8", '  - "for <customer name> only"               -> false (a customer)'),
+    Edit("replace_line", "197740b14f87dfdaf43dfaab61dd0bd44d0761f8fbc921fdbcc49fac352f8fed", '                    question — "any delivery to <customer name> for srtwc286", "delivery status", "got'),
+    Edit("replace_line", "f34581a224b8301912d8b89bf47098ed515b6ac35451cd08edd58e12e24374bf", '"request_for_help": the USER explicitly asks for a human, agent, or staff member to help. This fires on the user\'s own request. It takes priority over business_query, clarification, and casual — if the user asks for human help, classify as request_for_help even if they also mention a product or order. Merely asking you to share/send/provide DATA (a list, report, order status) is NOT a human-help request — that is business_query. request_for_help is ONLY a request for a HUMAN. A message that names a customer or product next to a delivery / order / DO word ("delivery to <customer name>", "hantar ke <customer name>", "any DO for X") is business_query, intent_hint check_order, domain_hint order, entity = that name with current_message true, is_escalation_confirmation false, even when an escalate offer is open.'),
+    Edit("replace_line", "fb11a9da45644fb997c0047b59de5089124fd6cffa7b3ef820202cb2238a784e", '    phrase that names ONE thing ("water closet", "<customer name>"), or a part'),
+    Edit("replace_line", "a2dabcfb7ebef30b9a8ef08d5c3cb9970e7ddb2a9e2bc40bfa261b28c758d4d6", '    without guessing. Example: "one <customer name> srtkt72ss" = quantity + a customer-ish name +'),
+    Edit("replace_line", "20f9aee5f2d1abb6d7fdbcfcf9f9e1c83df23ff142cde723d10d2e20c79c0517", '    "customer one <customer name>, product srtkt72ss"'),
+    Edit("replace_line", "0b196ff87efb918aef7cb106dedb684f82c6311aac0d85f1301858964b2e2125", '      → { "raw":"one <customer name>",  "hint":"customer", "confident":true }'),
+    Edit("replace_line", "2ba13c26007da67ac27cacee72555159b819b3fa9b53911890a15771a4805404", 'WORKED EXAMPLES, over a question already scoped to SRTWC286-SH for <customer name>:'),
+    Edit("replace_line", "7bb00c5588e1f887043c8b240cbbb3f5c801ec9cdaedb01bc5e2a930b55e9d03", '    <customer name>" gets'),
+    Edit("replace_line", "e62f772e9b5eb35314602c0ff7a86b268981128c6c6afad7431cff95ab541335", '  - options "1. <customer name>, 2. <customer name>, 3. <customer name>, 4. <customer name>"'),
+    Edit("replace_line", "9a6fdee87d94f2ab057aadd7e3f9a0be94fcb67e5a87fb0fe0fc524bee20cd7e", '  - options "1. Sales order list, 2. Delivery order list" + "delivery to <customer name>" ->'),
+    Edit("replace_line", "4d7e57a00bb66a72667b62c62e3d7cd52d23bb38d859fb56d9f216806f047fbe", '    entities [<customer name> as customer], reference_positions []'),
+    Edit("replace_line", "45f4c5b881759a7d262f904e887a0fd89a98b0055e4a9bd1c1d42a1b711106ff", 'request_for_help is ONLY a request for a HUMAN. A message that names a customer or product next to a delivery / order / DO word ("delivery to <customer name>", "hantar ke <customer name>", "any DO for X") is business_query, intent_hint check_order, domain_hint order, entity = that name with current_message true, is_escalation_confirmation false, even when an escalate offer is open.'),
+    Edit("replace_line", "dabaa5c485590457a6e2105dae3d744a90464278d14bcaf5807e55dc2ed47bab", '  - suppliers: a supplier, vendor or factory NAME to filter by ("from <supplier name>",'),
+    Edit("replace_line", "4c77fb0133916eee4489c419eacb6093fd4a5e170c2050525609c733998d23ea", '    "<supplier name> only", "pembekal X", "供应商 X"), as written. The word "supplier" or "vendor"'),
+    Edit("replace_line", "79bf888615056f9e77c7309272b039c1da4e21869ba7c48915a8c1a391af7c13", '  - "low stock report water closet <supplier name>" -> categories ["water closet"], suppliers'),
+    Edit("replace_line", "00869cda747163abfdabe4e8212102f4351c3ea7c178b9e0b5c71c26ef64eb72", '    ["<supplier name>"]'),
+    Edit("replace_line", "dfa291df92829a771a444f45c651b3340678d8f6eb850865b6c63272bef13cf9", 'message that only names a filter or a grouping ("<supplier name> only", "by supplier", "sorento'),
+    Edit("replace_line", "56052b9fc81fe5b8725b2a372d30b63fe8ed6496b6cd3b556ef327fe513dec25", 'field at all there. "outstanding dealer quantity for <customer name>" keeps order_status'),
+    Edit("replace_line", "ab415facc673a56df333468f014a10b93fe166306222e67c36ee14ea98755f52", '  - "dealer sales report for <customer name>" -> sales_channel "dealer", entity {raw: "<customer name>", hint:'),
+    Edit("replace_line", "3a8870ea44734c2f4a38d8268914d480f737d042499e03c02614dfff6953fbe0", 'was: top_n on that list ("last 3 DO for <customer name>" is an order list with top_n 3, never'),
+    Edit("replace_line", "98d0540a354f47d5c627cda15ea7e1fb1670206f16fa13734d71550ad58cdb32", '  - CUSTOMER, a company that bought: "for <customer name>", "for <customer name> only" -> entity {raw:'),
+    Edit("replace_line", "ecf5acb82626138af6256abaa753ab93417922ac5cc36d8e1f5520fcb3fb5eb7", '    "<customer name>", hint: "customer"}, exactly as anywhere else.'),
+    Edit("replace_line", "e4da542d5e7b7b0764b42abaa205bb4fa949ebc298fa148b623d4f613a5dc2a2", 'false when the message names another party ("outstanding for <customer name>") or no one ("list'),
+    Edit("replace_line", "b2205ea7092741e89652ffb61a14ce834da344b377bc7f5a80dfafc6cf44a541", 'the person to answer later. "PO for SRTWC8517", "delivery to <customer name>", "price of'),
+    Edit("replace_line", "bc6fb7bc1622d6a81de4978e6ce80e6664a68c91e80c2efc05c7e232dc390909", 'orders records found for customer <customer name>. Would you like me'),
 )
+
+
+def _sha(line: str) -> str:
+    return hashlib.sha256(line.encode("utf-8")).hexdigest()
 
 
 def apply(text: str) -> str | None:
     """`text` with every edit applied and the marker line appended as the last line, or None (with the
-    reason logged) when any anchor is missing or found more than once, or the marker is already there."""
+    reason logged) when any anchor is missing or found more than once, or the marker is already there.
+    A `replace_line` anchor is the sha256 of one whole line, so a line that quotes a real name is never
+    quoted here."""
     if any(ln.strip() == MARKER for ln in text.splitlines()):
         logger.info("lookup lists: the text already carries %s", MARKER)
         return None
+    hashes: dict[str, int] = {}
+    for ln in text.split("\n"):
+        hashes[_sha(ln)] = hashes.get(_sha(ln), 0) + 1
     for edit in EDITS:
-        found = text.count(edit.anchor)
+        found = hashes.get(edit.anchor, 0) if edit.op == "replace_line" else text.count(edit.anchor)
         if found != 1:
             logger.warning("lookup lists: anchor %r found %d times, nothing published", edit.anchor[:70], found)
             return None
     for edit in EDITS:
-        text = text.replace(edit.anchor, edit.payload, 1)
+        if edit.op != "replace_line":
+            text = text.replace(edit.anchor, edit.payload, 1)
+    line_edits = {e.anchor: e.payload for e in EDITS if e.op == "replace_line"}
+    if line_edits:
+        kept: list[str] = []
+        for ln in text.split("\n"):
+            payload = line_edits.get(_sha(ln))
+            if payload is None:
+                kept.append(ln)
+            elif payload:
+                kept.append(payload)
+        text = "\n".join(kept)
     return text.rstrip("\n") + "\n" + MARKER + "\n"
