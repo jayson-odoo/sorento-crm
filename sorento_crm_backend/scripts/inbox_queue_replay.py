@@ -20,14 +20,15 @@ DATABASE_URL as dotenv resolves it (the last assignment wins; a relative path is
 the backend directory, as Settings reads it): the host must be loopback with no `host` /
 `hostaddr` / `dbname` / `service` override in its query, `DATABASE_URL` / `DIRECT_URL` (any
 case) must not be exported in the shell, and `--api` must be http(s) on localhost;
-`check_connected` then asks the server it actually reached (`inet_server_addr()`). No rule on
-the database name (crew copies are prod clones): `check_neutralised` reads the ORIGINAL values
+`check_connected` then asks the server it actually reached (`inet_server_addr()`) and refuses
+the shared dev DB by its exact name (SHARED_DEV_DATABASE); no other rule on the database name
+(crew copies are prod clones). `check_neutralised` reads the ORIGINAL values
 before setup and refuses unless respond.io, every n8n URL and SMTP are empty or on `.invalid`,
 the workspace sender URL is empty, every proxy variable in the env file is a dead loopback
-proxy (the lowercase `https_proxy` required), and the lowercase `no_proxy` is set, with no `*`
-in any NO_PROXY / no_proxy. A checked value the env file leaves out, or sets empty, is judged
-by its Settings default (RESPOND_BASE_URL falls back to https://api.respond.io, so it must be
-set to a `.invalid` host). It also refuses when an earlier run was not cleaned up
+proxy (the lowercase `https_proxy` required), and the lowercase `no_proxy` is set to the local
+hosts (plus the copy's LLM host), with no `*` in any NO_PROXY / no_proxy. A checked value the
+env file leaves out, or sets empty, is judged by its Settings default (RESPOND_BASE_URL falls
+back to https://api.respond.io, so it must be set to a `.invalid` host). It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
 tool could not add one that verifies without dropping one of respond.io's).
 
@@ -265,7 +266,10 @@ def check_neutralised(db: Any, env: Any) -> list[str]:
         # Judged as the app RESOLVES it: absent, bare or empty falls back to the Settings
         # default (RESPOND_BASE_URL's is the real https://api.respond.io).
         resolved = env.get(key) or _settings_default(key)
-        need(f"env {key} (resolves to)", resolved)
+        if env.get(key):
+            need(f"env {key}", resolved)
+        else:
+            need(f"env {key} (unset, resolves to)", resolved, "so set it to a .invalid host")
     row = db.query(SystemSetting).first()
     if row is not None:
         for column in N8N_SETTING_COLUMNS:
@@ -287,10 +291,15 @@ def check_neutralised(db: Any, env: Any) -> list[str]:
         if not _dead_loopback_proxy(env[var]):
             reasons.append(f"env {var} = {env[var]!r} must be a loopback proxy whose port refuses connections")
     if not env.get("no_proxy"):
-        reasons.append("env no_proxy (lowercase) is not set: it must list the local hosts only (never '*')")
+        reasons.append(
+            "env no_proxy (lowercase) is not set: it must list the local hosts (plus the copy's LLM host) only, never '*'"
+        )
     for var in [v for v in ("NO_PROXY", "no_proxy") if v in env]:
         if "*" in str(env.get(var) or ""):
-            reasons.append(f"env {var} = {env.get(var)!r} lets every host past the proxy; list the local hosts only")
+            reasons.append(
+                f"env {var} = {env.get(var)!r} lets every host past the proxy; list the local hosts "
+                "(plus the copy's LLM host) only"
+            )
     return reasons
 
 
