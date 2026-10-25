@@ -3,11 +3,17 @@
 Run from sorento_crm_backend:
   SORENTO_ENV_FILE=.env.browse BROWSE_ADMIN_PASSWORD=... venv/bin/python <this file>
 
+Rework storage (owner ruling 25 Oct 17:50): a portal registration is a projects.projects row in
+approval_state pending, so there is no registration table to seed and none is touched here.
+
 Writes (all names invented): an admin login, the lookup sets / permission / numbering rule the
-prreg_0001 migration seeds (its upgrade() is run, it is idempotent), a portal contact linked to
-an active sales agent (person_label 'Salesperson A', code 'SA-007') and to a CRM user, a verified
-portal token, the project_registration grant, two debtors of that agent, two developers, and two
-open projects. Prints the portal slug and token.
+prreg_0001 migration seeds (its upgrade() is run, it is idempotent), a Coordinator approver (the
+role from APPROVER_ROLE_NAMES only, plus projects view/edit and parties.view), a viewer user with
+projects view only (no approve), a portal contact linked to an active sales agent (person_label
+'Salesperson A', code 'SA-007') and to a CRM user, a verified portal token, the project_registration
+grant, two debtors of that agent, developer parties, and three APPROVED projects. Embeddings are
+seeded afterwards with: venv/bin/python -m scripts.seed_project_embeddings, then the queue is
+processed (see the README). Prints the portal slug and token.
 """
 from __future__ import annotations
 
@@ -62,7 +68,7 @@ with engine.begin() as conn:
         "INSERT INTO user_role_permissions (id, role_id, permission_id) "
         "SELECT gen_random_uuid()::text, r.id, p.id FROM user_roles r, user_permissions p "
         "WHERE r.name = ANY(:n) AND p.slug IN ('projects.projects.view','projects.projects.edit',"
-        "'projects.projects.manage','projects.parties.view') AND NOT EXISTS (SELECT 1 FROM user_role_permissions x "
+        "'projects.parties.view') AND NOT EXISTS (SELECT 1 FROM user_role_permissions x "
         "WHERE x.role_id = r.id AND x.permission_id = p.id)"
     ), {"n": list(APPROVER_ROLES)})
 
@@ -107,6 +113,26 @@ role_id = db.execute(text("SELECT id FROM user_roles WHERE name = :n"), {"n": AP
 if not db.execute(text("SELECT 1 FROM user_role_assignments WHERE user_id = :u AND role_id = :r"),
                   {"u": approver.id, "r": role_id}).scalar():
     db.add(UserRoleAssignment(user_id=approver.id, role_id=role_id))
+    db.flush()
+
+# a user WITHOUT the approve slug: project view + parties view only (check 5)
+viewer = db.query(User).filter(User.email == "browse.viewer@example.com").one_or_none()
+if viewer is None:
+    viewer = User(id=u(), email="browse.viewer@example.com", name="Viewer Only", status="ACTIVE",
+                  password=bcrypt.hashpw(ADMIN_PASSWORD.encode(), bcrypt.gensalt()).decode())
+    db.add(viewer)
+    db.flush()
+    db.add(UserCompany(id=u(), user_id=viewer.id, company_id=COMPANY))
+    vrole = u()
+    db.execute(text("INSERT INTO user_roles (id, slug, name, is_trashed, is_protected, is_default) "
+                    "VALUES (:i, 'browse_project_viewer', 'Browse Project Viewer', false, false, false)"),
+               {"i": vrole})
+    db.execute(text(
+        "INSERT INTO user_role_permissions (id, role_id, permission_id) "
+        "SELECT gen_random_uuid()::text, :r, p.id FROM user_permissions p "
+        "WHERE p.slug IN ('projects.projects.view','projects.parties.view')"), {"r": vrole})
+    db.flush()
+    db.add(UserRoleAssignment(user_id=viewer.id, role_id=vrole))
     db.flush()
 
 linked = db.query(User).filter(User.email == "salesperson.a@example.com").one_or_none()

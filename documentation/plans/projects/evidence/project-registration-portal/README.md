@@ -104,3 +104,77 @@ under 100 KB. The registration table lives in the `projects` schema (`projects.p
 Notes (not defects): the portal's `Possible duplicate:` line is plain text (no link); only the CRM shows a link. The board card's
 date is the created date (`Oct 25, 2026`), not `submitted_at`; the 17:30 UTC test row did not shift it because it is a different field.
 Harness run note: the list-view `New Project Registration` control is a button there and a link on the board.
+
+## Round 5 rework pass (4f41b208)
+
+Registrations are now projects (owner ruling 25 Oct 17:50): a portal registration is a `projects.projects` row with
+`approval_state = pending` and no code. Fresh `sorento_browse` (`scripts.bootstrap_env`, `alembic upgrade head` at
+`prreg_0001_project_registrations`, then `harness/seed_browse.py`). The harness was updated for the new storage: no
+registration table; the Coordinator approver holds the role from `APPROVER_ROLE_NAMES` plus project view / edit and
+`projects.parties.view` only (the old `manage` grant is dropped); a viewer user (`browse.viewer@example.com`, project
+view and parties view, no approve slug) is added for check 5. Backend and frontend run as in the brief
+(`OPENAI_API_KEY=dummy` as a process env var; `.env.browse` unchanged, `git diff --quiet` holds). CRM reached by sidebar
+clicks (Project Sales > Projects, which is the Pipeline at `/project-sales/pipeline`); portal by the contact's slug link.
+Two CRM sessions (Coordinator, viewer) and one portal session; all closed by name.
+
+**Environment limit, read first.** The proxy-injected OpenAI account returned `429 insufficient_quota`
+(`credit_balance_exhausted`) for both `chat/completions` and `embeddings` from about 12:34 UTC. The seed's embeddings
+were made live a few minutes earlier, then the credit ran out. So:
+- Live AI Extract could NOT be run. The pasted text (paste event, saved as a .txt) went to `POST /public/portal/ai-extract`
+  and came back 502 `AI provider call failed: Error code: 429 ... credit_balance_exhausted`; the dialog shows that message
+  (r5-02). Form fields were typed by hand. AI Extract: BLOCKED (not a product failure).
+- For the possible-duplicate display, the backend was started through a process-local launcher that swaps the embedding
+  POST for a deterministic hashed bag-of-words vector (`harness/hash_embed.py`, 1536 dims, nothing in the repo changed) and
+  the three approved projects were re-embedded the same way. So the duplicate lines below prove the wiring, the threshold
+  and the links, not live semantic quality (calibrated earlier, rounds 3 and 4).
+
+| # | Check | Screenshot | Result | Observed |
+|---|---|---|---|---|
+| 1 | Portal new form: legacy fields, Sales agent name | r5-01-portal-new-form-1280.png | PASS | Fields: Project title, Distributor name, Sales agent (disabled, `Salesperson A`), Customer name, Type of building, State, Mukim, Your ref, Developer, Main contractor, Architect. No attachments, no extra fields. |
+| 1 | AI Extract live on a pasted title | r5-02-ai-extract-provider-quota-1280.png | BLOCKED | Provider 429 insufficient_quota, 502 to the browser, message shown in the dialog. See above. |
+| 1 | Customer pick-only, agent's debtors | (r5-01 flow) | PASS | Typing `WALK-IN BUYER`, Enter, Tab leaves the field empty; typing `Debtor` offers `Debtor One Sdn Bhd DEB-A1` and `Debtor Two Sdn Bhd DEB-A2` only; a pick fills it. |
+| 1 | State required refusal | r5-03-state-required-refused-1280.png | PASS | Submit, confirm: toast `Missing 1 required field: State`; no create / submit POST. |
+| 1 | Developer required refusal, then submit | r5-06-developer-required-refused-1280.png | PASS | Toast `Missing 1 required field: Developer`; no POST. After typing the developer, create 200 + submit 200, status Pending. |
+| 1 | Date in Malaysia time | r5-04-portal-pending-date-duplicate-1280.png | PASS | Read-only `Date` `25/10/2026`. With `submitted_at` set to `2026-10-24 17:30:00` (UTC) the portal still reads `25/10/2026` (Malaysia 01:30 on the 25th). |
+| 1 | Possible duplicate named | r5-04 | PASS with note | `Possible duplicate: PPF2610003 CADANGAN KILANG 2 TINGKAT DI ATAS LOT 9001 MUKIM TEBRAU JOHOR BAHRU` (code + title, plain text). Substitute embedding, see above. |
+| 6 | No Registrations in the sidebar | r5-07-sidebar-no-registrations-1280.png | PASS | Project Sales group (Coordinator and viewer): Projects, Leads, Awaiting Acceptance, My Tasks, Stock Claims, AutoCount Differences, Parties. No FE reference to a registrations route remains (grep). |
+| 2 | Board: pending in "Awaiting approval" lane | r5-08-board-awaiting-lane-1280.png | PASS | Lanes before the stages: `Awaiting approval` (count 2 with two pending) and `Rejected` (0, `Nothing rejected`). The pending card reads `Awaiting approval` where the PPF code would be, then the title and `Salesperson A`. |
+| 2 | Drag a pending card into a stage | r5-08 | PASS | Card `<li draggable="false">`, no grab cursor (approved cards `draggable="true"`). `drag` onto the Identified lane: no non-GET request, DB row unchanged (`pending`, no status). |
+| 2 | Grid view pill + code label | r5-09-grid-pills-1280.png | PASS | Code cell `Awaiting approval` (a link), Stage cell pill `Awaiting Approval`; approved rows show `PPF2610001` and `Registered`. Note: Developer is `-` for a pending row (the typed developer is not shown). |
+| 3 | Header as Coordinator | r5-10-detail-header-approver-1280.png | PASS | `Reject`, `Edit`, `Approve` in the header; code label `Awaiting approval`, badge `Awaiting Approval`. |
+| 3 | Read-only line + duplicate link | r5-10 | PASS with note | `Date 24 Oct 2026, Sales agent Salesperson A, Distributor Distributor Delta Trading, Customer Debtor One Sdn Bhd, Your ref REF-R5-01`; `Possible duplicate: PPF2610003 ...` is a link to that project. Note D1 below (Date). |
+| 3 | Approve with no developer | (toast read from the page text) | PASS | `POST .../approve` 422, toast `Pick the developer before approving.`; stays pending. |
+| 3 | Edit: "Typed:" hint, pick developer, save | r5-12-edit-typed-developer-hint-1280.png, r5-13-detail-after-edit-developer-1280.png | PASS | Edit page shows `Typed: Gamma Builders Sdn Bhd` under Developer (empty select); picking `Gamma Builders Sdn Bhd` and Save: PUT 200, back on the detail, still pending with the three buttons. |
+| 3 | Approve | r5-14-approved-ppf-code-1280.png, r5-15-board-after-approve-1280.png | PASS | `POST approve` 200; header code `PPF2610004` (PPF + 26 + 10 + 004), stage `Registered`; Approve / Reject / Edit gone. Board: `Awaiting approval` 2 to 1, `Registered` 3 to 4. |
+| 3 | Edit blocks an exact duplicate before Approve | r5-16-edit-clash-blocks-save-1280.png | OBSERVATION | Picking `Alpha Packaging Sdn Bhd` on a pending `TAMAN DELTA FASA 4` opens the edit form's clash panel `Already registered to someone else` (PPF2610002) and disables Save (`Blocked by an existing project`). So the 409 below cannot be reached from the UI by saving the party; it was reached by setting `developer_party_id` in the DB (allowed by the partial index). |
+| 3 | Exact duplicate on Approve | r5-17-approve-exact-duplicate-409-1280.png | PASS | `POST approve` 409; alert `Already registered as PPF2610002 TAMAN DELTA FASA 4`, the code and title is a link to `/project-sales/<id of PPF2610002>`; project stays pending, no number drawn (next approval was not needed). |
+| 4 | Reject dialog, blank reason | r5-18-reject-dialog-blank-disabled-1280.png | PASS | `Reject this registration`, Reason textbox, `Reject` disabled until text is typed. |
+| 4 | Reject, "Rejected" lane | r5-19-rejected-detail-reason-1280.png, r5-20-board-rejected-lane-1280.png | PASS | `POST reject` 200; detail shows `Reason for rejecting: Already registered`, no Approve / Reject; board `Rejected` 1, `Awaiting approval` 0. Note D2 below. |
+| 4 | Portal shows Rejected + reason, editable | r5-21-portal-board-statuses-1280.png, r5-22-portal-rejected-editable-1280.png | PASS | Board card `Rejected TAMAN DELTA FASA 4 ... Already registered`; detail badge `Rejected`, `Rejection reason: Already registered`, every field editable, Date shown. |
+| 4 | Resubmit, back in the lane | r5-23-board-resubmitted-back-in-lane-1280.png | PASS | Title changed to `... PHASE 2`, submit 200; DB `pending`, `reject_reason` cleared; board `Awaiting approval` 1, `Rejected` 0. |
+| 5 | User without the permission | r5-24-detail-no-approve-viewer-1280.png | PASS | `browse.viewer@example.com` (project view + parties view): the pending card shows on the board; the detail has a `Read only` tag and no Approve, Reject or Edit (page text contains neither word). |
+| 7 | 375 px portal form + list | r5-25-portal-new-form-375.png, r5-26-portal-list-375.png | PASS | scrollWidth equals clientWidth (375/375) on both. |
+| 7 | 375 px board | r5-27-board-375.png | PASS | 360/360 (scrollbar), lanes scroll inside the page; pending card reachable. |
+| 7 | 375 px project detail header | r5-28-detail-header-375.png | PASS | 360/360; Reject (180-244), Edit (252-302) and Approve (267-344, second row) all inside the viewport; the read-only Date / Sales agent / Distributor / Customer / Your ref card and the duplicate link stack in one column. |
+
+Console and page errors: no uncaught page errors in any session. Console noise only: Fast Refresh logs, `JWT token extracted`
+debug lines and one `[tiptap warn] Duplicate extension names found: ['link']` on the project pages (not from this change).
+The 422 and 409 above are the intended refusals.
+
+### Findings (implementation, not fixed here)
+
+- D1 `sorento_crm_frontend/app/(protected)/project-sales/[projectId]/components/ProjectDetailClient.tsx:519`:
+  `Fact label="Date" value={formatDate(project.submitted_at)}` uses the browser's zone; the portal uses Malaysia time. For
+  the same `submitted_at` (`2026-10-24 17:30` UTC) the portal reads `25/10/2026` and the CRM `24 Oct 2026` in a UTC browser.
+  `formatDateInMalaysia` (`lib/helpers.ts:330`) is what the sample-request screens use. Not visible to a browser already in
+  Malaysia.
+- D2 Same file, the approve error alert: after a refused Approve (409) the alert `Already registered as PPF... ` stays on
+  the page after the project is then rejected (r5-19 shows it under the reason). It should clear on a successful decision.
+- D3 Rejected projects show the code label `Awaiting approval` in the header and on board / grid cells where a rejected
+  project is no longer awaiting; the badge says `Rejected`. Wording, low priority.
+- Observation: the grid's Developer column is `-` for a pending row (typed developer name is not shown); the Coordinator's
+  `Project type` select reads `No access` on the edit form (the role has no project-type view).
+- Observation (r5-16): the edit form refuses to save a developer that makes a pending project an exact duplicate of an
+  approved one, so the Approve 409 is reachable from the UI only for a pending-vs-pending pair. Matches the UAC's wording
+  only if the 409 was meant as a backstop.
+- Harness note: `harness/hash_embed.py` is the process-local embedding substitute used because the OpenAI credit ran out.
