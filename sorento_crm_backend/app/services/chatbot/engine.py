@@ -1191,6 +1191,10 @@ def _lookup_lines(db: Session, message: str, config: Any) -> tuple[list[str], di
             rows = lookup_lists.load_rows(db)
             brand_words = lookup_lists.brand_words(db)
             hits = lookup_lists.shortlist(message, rows, lookup_lists.embedder(db), brand_words=brand_words)
+            # Spec NUMBERS: every key holding the length the message says joins the spec block.
+            numbers = lookup_lists.number_hits(message, db)
+            if numbers:
+                hits["spec"] = [*numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
         event = {
             "pieces": lookup_lists.pieces(message),
             "hits": [

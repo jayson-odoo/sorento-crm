@@ -25,10 +25,37 @@ if TYPE_CHECKING:
     from sqlalchemy.orm import Session
 
 MARKER = "== LOOKUP LISTS =="
-HEADER_NOUN = {"category": "Category", "sales_channel": "Sales channel"}
+HEADER_NOUN = {"category": "Category", "spec": "Spec", "file_type": "File type", "sales_channel": "Sales channel"}
 FLOOR_SPELLING = 0.5
+#: The base meaning floor (the measured 3-large config); `shortlist` reads `FLOOR_MEANING_BY_LIST`.
 FLOOR_MEANING = 0.5
-TOP_K = {"category": 10, "sales_channel": 2}
+#: Per list for text-embedding-3-small (free re-score of 26 Oct); any other list uses `_FLOOR_MEANING_OTHER`.
+FLOOR_MEANING_BY_LIST = {
+    "category": 0.55, "sales_channel": 0.55, "brand": 0.58, "spec": 0.55, "file_type": 0.59, "customer": 0.53,
+}
+_FLOOR_MEANING_OTHER = 0.55
+TOP_K = {"category": 10, "spec": 10, "file_type": 5, "sales_channel": 2}
+DEFAULT_ORDER = ("category", "spec", "file_type", "sales_channel")
+
+#: The word lists the v63 prompt carried (category translations, file type words), as row texts:
+#: list -> row label (case aside) -> extra texts matched beside the row's own.
+PROMPT_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
+    "category": {
+        "water tap": ("paip air", "kepala paip", "水龙头"),
+        "water closet": ("tandas", "mangkuk tandas", "马桶"),
+        "kitchen sink": ("sinki dapur", "厨房水槽"),
+    },
+    "file_type": {
+        "photo": ("gambar", "foto", "image", "picture", "imej"),
+        "image": ("imej", "gambar", "foto", "picture"),
+        "video": ("videos",),
+        "drawing": ("lukisan",),
+        "technical drawing": ("lukisan teknikal", "lukisan", "cad", "blueprint"),
+        "3d model": ("model 3d",),
+        "installation guide": ("installation manual",),
+        "certificate": ("sijil", "cert", "ikram"),
+    },
+}
 
 EMBED_MODEL = "text-embedding-3-small"
 #: One request's timeout, and the whole embed step's budget, in seconds.
@@ -163,6 +190,7 @@ def shortlist(
     best: dict[str, dict[str, Hit]] = {}
     for row in rows:
         row_pieces = by_list.get(row.list_name) or []
+        floor_meaning = FLOOR_MEANING_BY_LIST.get(row.list_name, _FLOOR_MEANING_OTHER)
         spell_best, mean_best, piece_best, score_best = 0.0, 0.0, "", -1.0
         for piece in row_pieces:
             pv = vec.get(piece)
@@ -173,10 +201,10 @@ def shortlist(
                 if pv is not None and tv is not None:
                     m = max(0.0, float(pv @ tv))
                 spell_best, mean_best = max(spell_best, s), max(mean_best, m)
-                score = max(s if s >= FLOOR_SPELLING else 0.0, m if m >= FLOOR_MEANING else 0.0)
+                score = max(s if s >= FLOOR_SPELLING else 0.0, m if m >= floor_meaning else 0.0)
                 if score > score_best:
                     piece_best, score_best = piece, score
-        if spell_best >= FLOOR_SPELLING or mean_best >= FLOOR_MEANING:
+        if spell_best >= FLOOR_SPELLING or mean_best >= floor_meaning:
             best.setdefault(row.list_name, {})[row.key] = Hit(row, piece_best, spell_best, mean_best)
     out: dict[str, list[Hit]] = {}
     for name, hits in best.items():
@@ -185,7 +213,7 @@ def shortlist(
     return out
 
 
-def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = ("category", "sales_channel")) -> list[str]:
+def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER) -> list[str]:
     """One block per list with hits: the header, then `- <label>` once per label."""
     lines: list[str] = []
     for name in order:
@@ -199,9 +227,60 @@ def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = ("category", "sa
     return lines
 
 
+def _with_synonyms(list_name: str, label: str, texts: tuple[str, ...]) -> tuple[str, ...]:
+    extra = {k.casefold(): v for k, v in PROMPT_SYNONYMS.get(list_name, {}).items()}.get(label.casefold(), ())
+    return tuple(dict.fromkeys([*texts, *extra]))
+
+
+def _spec_rows(db: "Session") -> list[LookupRow]:
+    """One row per registry value of an enum key that says something other than the product's type
+    or brand (those are category rows and the brand list): label `<spec label> <value>`."""
+    from app.services.product_spec_registry import (
+        active_registry,
+        display_spec_value,
+        merged_allowed_values,
+        merged_synonyms,
+    )
+
+    out: list[LookupRow] = []
+    for row in active_registry(db):
+        if (row.data_type or "").lower() != "enum" or row.spec_key in candidates.TYPE_KEYS | candidates.SKIP_KEYS:
+            continue
+        synonyms = merged_synonyms(row)
+        labels = dict(getattr(row, "value_labels", None) or {})
+        for value in merged_allowed_values(row):
+            display = display_spec_value(value, labels)
+            texts = [str(value), display, *(synonyms.get(value) or [])]
+            out.append(
+                LookupRow(
+                    "spec", f"{row.spec_key}={value}", f"{row.label} {display}",
+                    tuple(dict.fromkeys(str(t) for t in texts if t and _fold(str(t)))),
+                )
+            )
+    return out
+
+
+def _file_type_rows(db: "Session") -> list[LookupRow]:
+    """Attachment types and certificate kinds (the sources `closed_lists_index._file_matches` reads)."""
+    from app.services import chatbot_prompt_vars as pv
+
+    aliases = pv._alias_words(db)
+    out: list[LookupRow] = []
+    for row in [*pv._file_type_rows(db), *pv._cert_kind_rows(db)]:
+        name = str(row.get("type_name") or pv._item(row))
+        texts = (name, pv._item(row), *pv._type_words(row, aliases))
+        out.append(
+            LookupRow(
+                "file_type", pv._item(row) or name, name,
+                _with_synonyms("file_type", name, tuple(dict.fromkeys(t for t in texts if t and _fold(t)))),
+            )
+        )
+    return out
+
+
 def load_rows(db: "Session") -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
-    and the sales channels."""
+    spec word values, file types and the sales channels."""
     from app.models.product import ProductCategory
     from app.services.chatbot import turn_runtime
     from app.services.reports.ask import SALES_CHANNELS
@@ -215,19 +294,87 @@ def load_rows(db: "Session") -> list[LookupRow]:
         .all()
     )
     for c in cats:
-        texts = [c.category_name, c.category_code, c.class_label, *(c.search_synonyms or [])]
-        out.append(
-            LookupRow("category", str(c.id), c.category_name, tuple(dict.fromkeys(str(t) for t in texts if t and str(t).strip())))
-        )
+        texts = tuple(dict.fromkeys(str(t) for t in [c.category_name, c.category_code, c.class_label, *(c.search_synonyms or [])] if t and str(t).strip()))
+        out.append(LookupRow("category", str(c.id), c.category_name, _with_synonyms("category", c.category_name, texts)))
         seen_labels.add(_fold(c.category_name))
     # Class labels and product types, as the parser's old `Product types:` line named them.
     for name in turn_runtime.product_type_names(db):
         key = _fold(name)
         if key and key not in seen_labels:
             seen_labels.add(key)
-            out.append(LookupRow("category", "type:" + key, name, (name,)))
+            out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,))))
+    out.extend(_spec_rows(db))
+    out.extend(_file_type_rows(db))
     out.extend(LookupRow("sales_channel", ch, ch, (ch,)) for ch in SALES_CHANNELS)
     return out
+
+
+# ---------------------------------------------------------------------------- spec numbers
+
+#: A length in the message: not glued to a letter or digit before it (a code), a unit after it.
+_LENGTH_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
+_SIZE_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
+_TO_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0}
+
+
+def _mm(number: str, unit: str) -> str:
+    return f"{round(float(number) * _TO_MM[unit], 3):g}"
+
+
+def normalise_number(text: str) -> str | None:
+    """A length as exact millimetres: "200 mm" = "200mm" = "20 cm" = "0.2 m" -> "200mm"; a size
+    "60 x 40 cm" -> "600x400mm"; None when the text holds no length."""
+    folded = str(text or "").casefold().strip()
+    size = _SIZE_RE.search(folded)
+    if size:
+        return f"{_mm(size.group(1), size.group(3))}x{_mm(size.group(2), size.group(3))}mm"
+    one = _LENGTH_RE.search(folded)
+    return f"{_mm(one.group(1), one.group(2))}mm" if one else None
+
+
+def number_hits(message: str, db: "Session") -> list[Hit]:
+    """Every numeric spec key whose stored values hold a length the message says, as exact
+    millimetres in the key's own unit ("trap length 200mm"). No meaning score; nothing is offered
+    for a number no key holds. A code that merely contains digits is never a length."""
+    folded = str(message or "").casefold()
+    found: list[tuple[str, str]] = []  # (piece, millimetres)
+    for m in _LENGTH_RE.finditer(folded):
+        found.append((m.group(0), _mm(m.group(1), m.group(2))))
+    if not found:
+        return []
+    from sqlalchemy import case, func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_spec import ProductSpecifications
+    from app.services.product_spec_registry import active_registry
+    from app.services.product_spec_search import membership_clause
+
+    keys = [r for r in active_registry(db) if (r.data_type or "").lower() == "numeric" and (r.unit or "").lower() in _TO_MM]
+    if not keys:
+        return []
+    asks: list[tuple[Any, str, str, float]] = []  # (registry row, piece, shown, value in the key's unit)
+    for row in keys:
+        unit = row.unit.lower()
+        for piece, mm in dict.fromkeys(found):
+            value = round(float(mm) / _TO_MM[unit], 6)
+            asks.append((row, piece, f"{value:g}{unit}", value))
+    columns = [
+        func.coalesce(func.sum(case((membership_clause({row.spec_key: [value]}), 1), else_=0)), 0)
+        for row, _p, _s, value in asks
+    ]
+    counts = (
+        db.query(*columns)
+        .select_from(ProductSpecifications)
+        .join(Product, Product.id == ProductSpecifications.product_id)
+        .filter(chat_searchable_products())
+        .one()
+    )
+    out: list[Hit] = []
+    for (row, piece, shown, _v), held in zip(asks, counts):
+        if int(held) > 0:
+            label = f"{row.label} {shown}"
+            out.append(Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0))
+    return sorted(out, key=lambda h: h.row.label)
 
 
 def brand_words(db: "Session") -> frozenset[str]:
