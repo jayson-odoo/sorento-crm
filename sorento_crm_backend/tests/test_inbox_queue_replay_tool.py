@@ -69,6 +69,8 @@ VALID_API = "http://localhost:8106"
 THROWAWAY_URL = str(settings.database_url)
 NEUTRAL_RESPOND = "https://api.respond.invalid"
 NEUTRAL_N8N = "https://n8n.invalid/webhook"
+# The crew copy's NO_PROXY: named local hosts only, never `*` (round 7).
+CREW_NO_PROXY = "localhost,127.0.0.1,::1"
 
 
 def neutral_env_text(database_url: str) -> str:
@@ -77,7 +79,7 @@ def neutral_env_text(database_url: str) -> str:
     return (
         f"DATABASE_URL={database_url}\nDIRECT_URL={database_url}\n"
         f"RESPOND_BASE_URL={NEUTRAL_RESPOND}\nN8N_WEBHOOK_URL={NEUTRAL_N8N}\nSMTP_HOST=\n"
-        f"HTTPS_PROXY=http://127.0.0.1:{_free_port()}\n"
+        f"HTTPS_PROXY=http://127.0.0.1:{_free_port()}\nNO_PROXY={CREW_NO_PROXY}\n"
     )
 
 
@@ -117,7 +119,7 @@ def _key(n: int) -> str:
         ("postgresql://u:p@[::1]:5432/sorento_iqr_copy", "http://[::1]:8106", {}),
         (VALID_DB, "https://localhost:8443", {}),
         ("postgresql://u:p@localhost:5432/sorento_prod_1020", VALID_API, {}),
-        ("postgresql://u:p@localhost:5432/sorento_cagent_stack", VALID_API, {}),
+        ("postgresql://u:p@localhost:5432/sorento_lane_copy", VALID_API, {}),
     ],
     ids=["localhost", "127.0.0.1", "ipv6-loopback", "https-localhost", "crew-prod-clone-name", "any-local-name"],
 )
@@ -798,7 +800,7 @@ class _FakeEngine:
         ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", None)),
         ("postgresql://u:p@localhost/sorento_iqr_copy", ("sorento_iqr_copy", "::1")),
         ("postgresql://u:p@localhost/sorento_prod_1020", ("sorento_prod_1020", "127.0.0.1")),
-        ("postgresql://u:p@localhost/sorento_cagent_stack", ("sorento_cagent_stack", None)),
+        ("postgresql://u:p@localhost/sorento_lane_copy", ("sorento_lane_copy", None)),
     ],
     ids=["tcp-loopback", "unix-socket", "ipv6-loopback", "crew-prod-clone", "any-local-name"],
 )
@@ -1058,7 +1060,10 @@ def _dead_proxy() -> str:
 
 
 def _crew_env(**overrides: str | None) -> dict[str, str]:
-    env = {"RESPOND_BASE_URL": NEUTRAL_RESPOND, "N8N_WEBHOOK_URL": NEUTRAL_N8N, "SMTP_HOST": "", "HTTPS_PROXY": _dead_proxy()}
+    env = {
+        "RESPOND_BASE_URL": NEUTRAL_RESPOND, "N8N_WEBHOOK_URL": NEUTRAL_N8N, "SMTP_HOST": "",
+        "HTTPS_PROXY": _dead_proxy(), "NO_PROXY": CREW_NO_PROXY,
+    }
     for key, value in overrides.items():
         if value is None:
             env.pop(key, None)
@@ -1245,3 +1250,160 @@ def test_scenario_4_with_no_restart_runs_no_command(copy_world, monkeypatch):
 
     assert commands.calls == [], f"--no-restart must not run the restart command: {commands.calls}"
     assert not any(name == "the backend restarted mid-burst" for name, _ in result["checks"])
+
+
+# --------------------------------------------------------------------------- #
+# Round 7 (reviewer should-fix):
+#
+# * An env value the file leaves OUT falls back to its Settings default; a real default is
+#   not neutral (`RESPOND_BASE_URL` defaults to https://api.respond.io, `app/config.py`).
+#   `N8N_WEBHOOK_URL` and `SMTP_HOST` default to empty, so leaving them out is fine.
+# * The shared dev DB keeps ONE exact-name refusal: `current_database()` ==
+#   `sorento_cagent_stack` (other lanes' stacks run on it). Every other name is judged by
+#   neutralisation only.
+# * `NO_PROXY` / `no_proxy`: absent, or containing `*`, is refused (the worker launch exports
+#   `no_proxy='*'`, and a dotenv only replaces keys the file sets); a list of named hosts
+#   passes. EVERY present proxy variable is probed, lowercase included.
+# * `--restart-cmd`: a command that exits non-zero at once fails the scenario fast, its
+#   return code in the report notes; one that never returns is killed after
+#   `RESTART_CMD_SECONDS` and reaped (waited for after the kill).
+# --------------------------------------------------------------------------- #
+
+
+def test_an_env_file_without_respond_base_url_is_not_neutral(tool, blank_db):
+    _neutral_db(blank_db)
+    reasons = tool.check_neutralised(blank_db, _crew_env(RESPOND_BASE_URL=None))
+    assert any("respond_base_url" in r.lower() for r in reasons), (
+        f"RESPOND_BASE_URL left out of the env file falls back to https://api.respond.io: {reasons}"
+    )
+
+
+@pytest.mark.parametrize("left_out", ["N8N_WEBHOOK_URL", "SMTP_HOST"])
+def test_leaving_out_a_value_whose_default_is_empty_is_neutral(tool, blank_db, left_out):
+    _neutral_db(blank_db)
+    assert tool.check_neutralised(blank_db, _crew_env(**{left_out: None})) == []
+
+
+def test_check_connected_refuses_the_shared_dev_database_by_its_exact_name(tool):
+    reasons = tool.check_connected(
+        _FakeEngine("postgresql://u:p@localhost/sorento_cagent_stack", ("sorento_cagent_stack", "127.0.0.1"))
+    )
+    assert any("sorento_cagent_stack" in r for r in reasons), (
+        f"the shared dev DB (other lanes' stacks run on it) must be refused by name: {reasons}"
+    )
+
+
+@pytest.mark.parametrize("name", ["sorento_prod_1020", "sorento_cagent_stack_copy", "sorento_lane_copy"])
+def test_check_connected_judges_every_other_name_by_neutralisation_only(tool, name):
+    assert tool.check_connected(_FakeEngine(f"postgresql://u:p@localhost/{name}", (name, "127.0.0.1"))) == []
+
+
+@pytest.mark.parametrize(
+    ("overrides", "names"),
+    [
+        ({"NO_PROXY": None}, "no_proxy"),
+        ({"NO_PROXY": "*"}, "no_proxy"),
+        ({"NO_PROXY": None, "no_proxy": "localhost,*"}, "no_proxy"),
+        ({"no_proxy": "*"}, "no_proxy"),
+    ],
+    ids=["absent", "star", "lowercase-with-star", "lowercase-star-beside-a-clean-upper"],
+)
+def test_a_no_proxy_that_is_absent_or_lets_everything_through_is_refused(tool, blank_db, overrides, names):
+    _neutral_db(blank_db)
+    reasons = tool.check_neutralised(blank_db, _crew_env(**overrides))
+    assert any(names in r.lower() for r in reasons), f"NO_PROXY {overrides} must be refused: {reasons}"
+
+
+def test_a_no_proxy_of_named_hosts_passes(tool, blank_db):
+    _neutral_db(blank_db)
+    assert tool.check_neutralised(blank_db, _crew_env(NO_PROXY="localhost,127.0.0.1,::1,.local")) == []
+
+
+def test_every_present_proxy_variable_is_probed(tool, blank_db):
+    """`HTTPS_PROXY` is a dead loopback proxy but `https_proxy` points at one that answers:
+    a client reading the lowercase one would get out, so the copy is refused."""
+    _neutral_db(blank_db)
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(5)
+    try:
+        live = f"http://127.0.0.1:{listener.getsockname()[1]}"
+        reasons = tool.check_neutralised(blank_db, _crew_env(https_proxy=live))
+    finally:
+        listener.close()
+    assert any("https_proxy" in r for r in reasons), f"the live lowercase https_proxy was not probed: {reasons}"
+
+
+def test_two_dead_proxy_variables_pass(tool, blank_db):
+    _neutral_db(blank_db)
+    assert tool.check_neutralised(blank_db, _crew_env(https_proxy=_dead_proxy())) == []
+
+
+def _s4_on_a_thread(world: CopyWorld, bound: float) -> dict[str, Any]:
+    box: dict[str, Any] = {}
+
+    def _run() -> None:
+        try:
+            box["result"] = world.replay.s4(time.monotonic() + 5)
+        except BaseException as exc:  # noqa: BLE001
+            box["error"] = exc
+
+    started = time.monotonic()
+    thread = threading.Thread(target=_run, daemon=True)
+    thread.start()
+    thread.join(bound)
+    box["elapsed"] = time.monotonic() - started
+    box["finished"] = not thread.is_alive()
+    return box
+
+
+def test_a_restart_command_that_fails_at_once_fails_the_scenario_fast(tool, copy_world, monkeypatch):
+    """The command exits 37 at once. The tool does not wait out its 180 s for /health to
+    go down (the backend never does here); the scenario fails, and the notes carry 37."""
+    world = copy_world()
+    world.args.restart_cmd = "exit 37"
+    world.args.no_restart = False
+    monkeypatch.setattr(tool, "healthy", lambda api: True)  # the backend never goes down
+    monkeypatch.setattr(world.replay, "burst", lambda bodies: [200] * len(bodies))
+    monkeypatch.setattr(world.replay, "wait_for", lambda mids, deadline, settle=3.0: [])
+
+    run = _s4_on_a_thread(world, bound=25)
+
+    assert run["finished"], f"a restart command that failed at once still waited {run['elapsed']:.0f}+ s"
+    assert "error" not in run, run.get("error")
+    assert any(not ok for _, ok in run["result"]["checks"]), run["result"]["checks"]
+    assert any("37" in note for note in world.replay.notes), f"the return code is not in the notes: {world.replay.notes}"
+
+
+def test_a_restart_command_that_never_returns_is_killed_and_reaped(tool, copy_world, monkeypatch):
+    """The command hangs. After `RESTART_CMD_SECONDS` it is killed AND waited for, so no
+    zombie is left behind."""
+    import subprocess
+
+    created: list[Any] = []
+    real_popen = subprocess.Popen
+
+    class _Recording(real_popen):  # type: ignore[misc, valid-type]
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            created.append(self)
+
+    monkeypatch.setattr(subprocess, "Popen", _Recording)
+    monkeypatch.setattr(tool, "RESTART_CMD_SECONDS", 1.0)
+    world = copy_world()
+    world.args.restart_cmd = "exec sleep 600"
+    world.args.no_restart = False
+    monkeypatch.setattr(world.replay, "burst", lambda bodies: [200] * len(bodies))
+    monkeypatch.setattr(world.replay, "_wait_health", lambda up, timeout: True)
+    monkeypatch.setattr(world.replay, "wait_for", lambda mids, deadline, settle=3.0: [])
+
+    try:
+        run = _s4_on_a_thread(world, bound=30)
+        assert run["finished"], "the scenario waited on a restart command that never returns"
+        assert len(created) == 1, created
+        assert created[0].returncode is not None, "the killed restart command was never reaped (no wait after kill)"
+    finally:
+        for proc in created:
+            with contextlib.suppress(Exception):
+                proc.kill()
+                proc.wait(5)
