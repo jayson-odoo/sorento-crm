@@ -1763,9 +1763,14 @@ def _close_turn(
             logger.debug("chatbot turn %s: refused a second close on the inbox drain", turn_id)
             return
         drain_run.close = (status, stage)
+        if status not in _TERMINAL_STATUSES:
+            # `delegated`: the in-process tail (`complete_turn`) runs from this state.
+            row.status = status
+            row.stage = stage
         row.branch_kind = branch_kind
         row.error = error
-        row.trace = [*inbox_queue.inbox_records(row.trace), *records]
+        marker = [] if inbox_queue.inbox_records(records) else inbox_queue.inbox_records(row.trace)
+        row.trace = [*marker, *records]
         row.response = trace_mod.cap_document(response)
         row.finished_at = _now()
         db.commit()
@@ -9604,6 +9609,9 @@ def _run_escalation_arm(
     # or a newer product already replaced it). The lane reads its brand off the product
     # row. On the lane's item only: the row keeps the route-turn item it always had.
     lane_item = {**item, "focus_products": _focus_products(state)}
+    # CHAT-INBOX-QUEUE (IQ-27): the lane commits an SLA row and a round-robin draw it cannot
+    # undo, so on the inbox drain the turn gives way to an earlier-sent message HERE.
+    inbox_queue.checkpoint(turn_id)
     try:
         # The lane opens its OWN session (its writes are a unit of work of their own), and
         # it opens it off THIS factory rather than `SessionLocal`, so the contact's company

@@ -12,10 +12,9 @@ Three parts, one module:
 * `skip_reason` - the gate the webhook asks, AFTER it has stored the message. None means
   enqueue. Everything else is left to the n8n copy, which keeps running untouched, so a skip
   here costs nothing but the saving.
-* `run` - the turn body, on the API process's bounded direct-turn pool
-  (`app/tasks/chat_turns.py::_submit`). It looks the contact up, runs the turn with
-  `ingress = "respond_webhook"`, then hands the actions to the n8n sender.
-* `send` - one POST of the finished actions to the thin n8n sender. **The CRM still does not
+* the contact lookup and envelope the inbox drain uses (CHAT-INBOX-QUEUE: the webhook
+  now queues the message, `inbox_queue`, and the drain runs the turn on the pool).
+* `send` / `send_outcome` - one POST of the finished actions to the thin n8n sender. **The CRM still does not
   send** (D9): the sender runs the same `action.kind` Switch the spine runs after `/chat/turn`.
 
 **The n8n copy is the fallback, and D15 is what makes it safe.** Every message reaches the CRM
@@ -59,8 +58,10 @@ STAFF_SENDER_SOURCES = frozenset({"user", "api", "workflow", "ai_agent", "echo",
 
 SENDER_KEY_HEADER = "X-Chatbot-Sender-Key"
 # CHAT-INBOX-QUEUE: the sender answers after its last node (respond.io included), so the
-# POST waits up to a minute for it.
+# POST waits up to a minute for it; a dead sender is given up on after 5 s of connecting,
+# so it never holds a pool thread for the minute (IQ-30).
 SENDER_TIMEOUT_SECONDS = 60.0
+SENDER_CONNECT_TIMEOUT_SECONDS = 5.0
 INTEGRATION_CHANNEL = "chatbot_sender"
 MAX_LOGGED_BODY_CHARS = 20000
 
@@ -292,60 +293,6 @@ def envelope_for(payload: dict[str, Any], contact: dict[str, Any]):
     return Envelope(message=payload, contact=block, ingress=DIRECT_INGRESS)
 
 
-def run(payload: dict[str, Any], session_factory: Callable[[], Any] | None = None) -> dict[str, Any]:
-    """Run the turn, then hand its actions to the sender. Returns what happened, for the log.
-
-    `{turn_id, status, duplicate, sent, skipped}`. The contact is looked up first; a
-    failed lookup or a human takeover runs no turn at all (`skipped` names which). A
-    duplicate (the n8n copy ran first) or a turn with no actions sends nothing.
-    """
-    from app.database import SessionLocal
-    from app.services.chatbot import run_turn
-
-    factory = session_factory or SessionLocal
-    contact_id = _contact_id(payload)
-    skipped = {"turn_id": None, "status": None, "duplicate": False, "sent": False}
-    message = payload.get("message") if isinstance(payload.get("message"), dict) else {}
-    age = message_age_seconds(message)
-    if age is None or age > STALE_AFTER_SECONDS:
-        # Re-checked here, not only at the webhook (review S5): a turn that waited behind
-        # a backlog must not answer what the n8n copy has long since handled.
-        return {**skipped, "skipped": "stale"}
-    db = factory()
-    try:
-        if not _on_default_workspace(db, contact_id):
-            return {**skipped, "skipped": "non_default_workspace"}
-        record = _lookup_contact(db, contact_id)
-    finally:
-        db.close()
-    if record is None:
-        return {**skipped, "skipped": "lookup_failed"}
-    if _human_intervened(record) is True:
-        # The producer drops this message too (its If1), so nobody answers it: as today.
-        return {**skipped, "skipped": "human_intervened"}
-
-    envelope = envelope_for(payload, record)
-    result = run_turn(envelope, session_factory=factory, offload=False)
-    outcome = {
-        "turn_id": result.turn_id,
-        "status": result.status,
-        "duplicate": bool(result.duplicate),
-        "sent": False,
-        "skipped": None,
-    }
-    if result.duplicate or not result.actions:
-        return outcome
-    outcome["sent"] = send(
-        factory,
-        turn_id=result.turn_id,
-        contact_id=str(envelope.contact.get("id") or ""),
-        actions=list(result.actions),
-        reply=result.reply,
-        branch_kind=result.branch_kind,
-    )
-    return outcome
-
-
 # --------------------------------------------------------------------------- #
 # The send
 # --------------------------------------------------------------------------- #
@@ -448,7 +395,7 @@ def send_outcome(
                 url,
                 json=body,
                 headers=headers,
-                timeout=SENDER_TIMEOUT_SECONDS,
+                timeout=httpx.Timeout(SENDER_TIMEOUT_SECONDS, connect=SENDER_CONNECT_TIMEOUT_SECONDS),
                 # Explicit: a 30x to a loopback or metadata address would walk past the guard.
                 follow_redirects=False,
             )

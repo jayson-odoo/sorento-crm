@@ -219,7 +219,14 @@ def chat_turn(
             # CHAT-INBOX-QUEUE (IQ-5): a covered contact's message is only queued; the
             # contact's drain answers it through the sender. The answer is the shape the
             # spine already treats as nothing to send.
-            turn_id, _created = inbox_queue.enqueue(db, payload.envelope)
+            try:
+                turn_id, _created = inbox_queue.enqueue(db, payload.envelope)
+            except inbox_queue.InboxFull:
+                # IQ-33: the loop guard (logged as an error where it fired).
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="This contact has too many messages waiting to be answered.",
+                )
             inbox_queue.kick(inbox_queue.contact_of(payload.envelope))
             response_payload = TurnResponse(turn_id=turn_id, duplicate=True, actions=[])
         else:

@@ -40,6 +40,7 @@ from dataclasses import dataclass, field
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, status
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -306,31 +307,66 @@ def _enqueue(
 
 
 def job_abandoned(job_id: str) -> bool:
-    """Did the worker abandon this job? (CHAT-INBOX-QUEUE, IQ-24)
+    """Did the worker abandon this job? (CHAT-INBOX-QUEUE, IQ-24 / IQ-35)
 
-    A work-horse killed mid-job (a worker recreate on deploy) leaves the row `running`
-    or `queued` while RQ records the job itself as `failed` with no result. A job that
-    failed on its own writes its row first, so a non-terminal row under a failed RQ job
-    is one nobody will ever finish.
+    A work-horse killed mid-job (a worker recreate on deploy) leaves the row `running` (or
+    `queued`) with no result. Read off the row itself: `running` for longer than the
+    extraction ceiling plus `STRANDED_GRACE_SECONDS` is a read no worker will finish, with
+    no wait for RQ's registry cleanup. A row under an RQ job already marked `failed` is
+    proof too (a job that failed on its own writes its row first).
     """
     from rq.job import Job, JobStatus
 
+    from app.database import SessionLocal
+    from app.services.media_access_service import STRANDED_GRACE_SECONDS
     from app.services.queue_service import redis_conn
 
+    db = SessionLocal()
     try:
-        rq_status = Job.fetch(job_id, connection=redis_conn).get_status(refresh=True)
+        row = db.execute(
+            text(
+                "SELECT status, EXTRACT(EPOCH FROM (LOCALTIMESTAMP - started_at)) "
+                "FROM media_extraction_job WHERE id = CAST(:i AS uuid)"
+            ),
+            {"i": job_id},
+        ).first()
+        if row is None or row[0] in TERMINAL_STATUSES:
+            return False
+        ceiling = resolve_media_settings(db).extraction_timeout_seconds + STRANDED_GRACE_SECONDS
+    finally:
+        db.close()
+    if row[0] == "running" and row[1] is not None and float(row[1]) > ceiling:
+        return True
+    try:
+        return Job.fetch(job_id, connection=redis_conn).get_status(refresh=True) == JobStatus.FAILED
     except Exception:  # noqa: BLE001 - an unreadable RQ job is not proof of anything
         return False
-    if rq_status != JobStatus.FAILED:
-        return False
-    snapshot = _read_job_snapshot(job_id)
-    return snapshot is not None and snapshot["status"] not in TERMINAL_STATUSES
+
+
+def read_age_seconds(job_id: str) -> float:
+    """Seconds since this read was first asked for (its ledger row), however many times
+    the job was enqueued since: the inbox drain's 10-minute cap counts from here."""
+    from app.database import SessionLocal
+
+    db = SessionLocal()
+    try:
+        age = db.execute(
+            text(
+                "SELECT EXTRACT(EPOCH FROM (LOCALTIMESTAMP - u.created_at)) FROM media_extraction_job j "
+                "JOIN contact_media_usage u ON u.id = j.usage_id WHERE j.id = CAST(:i AS uuid)"
+            ),
+            {"i": job_id},
+        ).scalar()
+    finally:
+        db.close()
+    return float(age) if age is not None else 0.0
 
 
 def read_abandoned_job_again(job_id: str) -> bool:
     """Put an abandoned job back on the queue, once per caller (IQ-24). True when it was
     enqueued again. The task claims the row with a compare-and-set (`queued` ->
-    `running`), so the row goes back to `queued` first."""
+    `running`), so the row goes back to `queued` first. Not metered again: the ledger row
+    of the first read stands (accepted, security review L3)."""
     from app.database import SessionLocal
 
     db = SessionLocal()

@@ -42,18 +42,19 @@ import os
 preload_app = os.environ.get("GUNICORN_PRELOAD", "1") != "0"
 
 workers = int(os.environ.get("WORKERS", "4"))
-worker_class = "uvicorn.workers.UvicornWorker"
+# uvicorn's worker with a bounded graceful shutdown (CHAT-INBOX-QUEUE, see that module).
+worker_class = "app.uvicorn_worker.InboxUvicornWorker"
 
 _api_host = os.environ.get("API_HOST", "0.0.0.0")
 _api_port = os.environ.get("API_PORT", "8000")
 bind = f"{_api_host}:{_api_port}"
 
 timeout = 120
-# CHAT-INBOX-QUEUE: on SIGTERM a worker's inbox drains finish the turn they are in, its
-# sender POST and its done mark included, before the app's shutdown handler returns. The
-# longest queued turn (photo read + parser + lane + sender POST) is well under 120 s, so
-# 150 s of grace covers it. The deploy script stops the old colour with a longer Docker
-# timeout (`docker compose stop -t 160`) so Docker never SIGKILLs inside this grace.
+# CHAT-INBOX-QUEUE: on SIGTERM a worker's inbox drains stop taking rows at once and finish
+# the turn they are in (sender POST and done mark included); open requests get 100 s and the
+# drains 40 s more (budget in app/tasks/chat_turns.py), 140 s in all, inside this grace. The
+# deploy script stops the old colour with a longer Docker timeout (`docker compose stop -t
+# 160`) so Docker never SIGKILLs inside it.
 graceful_timeout = 150
 # Must be LONGER than the host nginx's upstream keepalive (its
 # keepalive_timeout, default 60s / 75s). With 5s gunicorn closed idle

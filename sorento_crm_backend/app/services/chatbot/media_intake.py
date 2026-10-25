@@ -54,9 +54,9 @@ POLL_INTERVAL_SECONDS = 0.5
 _CONCURRENT_WAIT_LIMIT = 8
 _wait_slots = threading.BoundedSemaphore(_CONCURRENT_WAIT_LIMIT)
 
-# CHAT-INBOX-QUEUE (IQ-24): a turn on the inbox drain waits for its read with no
-# `media_sync_wait_seconds` cap (nobody holds a request open on it, and a worker restart
-# only delays the reply), up to this hard cap.
+# CHAT-INBOX-QUEUE (IQ-24, IQ-30): on the inbox drain a read not finished within
+# `media_sync_wait_seconds` parks its row instead of answering "could not read it in
+# time" (a worker restart only delays the reply), until the read is this old.
 DRAIN_WAIT_CAP_SECONDS = 600.0
 
 # AC-1814: the sentence when the job outlives the sync wait. Two words differ by
@@ -252,12 +252,16 @@ def _poll(job_id: str, timeout_seconds: float, session_factory) -> dict[str, Any
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
-def _poll_on_drain(job_id: str, session_factory) -> dict[str, Any] | None:
-    """The inbox drain's wait (IQ-24): until the job is terminal or the hard cap, with
-    a job the worker abandoned read again once. `None` only past the cap."""
-    from app.api.v1.external.media import job_abandoned, read_abandoned_job_again
+def _poll_on_drain(job_id: str, session_factory, wait_seconds: float) -> dict[str, Any] | None:
+    """The inbox drain's wait (IQ-24, IQ-30): up to the sync wait, a job the worker
+    abandoned read again once. Not finished by then, the turn is PARKED (`TurnYielded`: the
+    row goes back to `queued` with nothing written, the thread is freed, and the next run
+    resumes this same read); shutdown parks it at once. `None` (today's "could not read it
+    in time") only once the read is older than `DRAIN_WAIT_CAP_SECONDS`."""
+    from app.api.v1.external.media import job_abandoned, read_abandoned_job_again, read_age_seconds
+    from app.services.chatbot import inbox_queue
 
-    deadline = time.monotonic() + DRAIN_WAIT_CAP_SECONDS
+    deadline = time.monotonic() + wait_seconds
     read_again = False
     while True:
         snapshot = _poll(job_id, 0, session_factory)
@@ -266,8 +270,12 @@ def _poll_on_drain(job_id: str, session_factory) -> dict[str, Any] | None:
         if not read_again and job_abandoned(job_id):
             read_again = True
             read_abandoned_job_again(job_id)
+        if inbox_queue.shutting_down():
+            raise inbox_queue.TurnYielded("shutdown during a photo read")
         if time.monotonic() >= deadline:
-            return None
+            if read_age_seconds(job_id) >= DRAIN_WAIT_CAP_SECONDS:
+                return None
+            raise inbox_queue.TurnYielded("photo read still pending")
         time.sleep(POLL_INTERVAL_SECONDS)
 
 
@@ -366,7 +374,7 @@ def run(
 
     if inbox_queue.draining():
         # The drain thread is already one of the bounded pool, so it takes no wait slot.
-        snapshot = _poll_on_drain(fast.job_id, session_factory)
+        snapshot = _poll_on_drain(fast.job_id, session_factory, fast.sync_wait_seconds)
     elif _wait_slots.acquire(blocking=False):
         try:
             snapshot = _poll(fast.job_id, fast.sync_wait_seconds, session_factory)

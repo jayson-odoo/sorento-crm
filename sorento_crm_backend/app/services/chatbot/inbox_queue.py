@@ -39,7 +39,7 @@ import time
 import uuid
 from typing import Any, Callable
 
-from sqlalchemy import and_, or_, text, update
+from sqlalchemy import func, or_, text, update
 from sqlalchemy.exc import IntegrityError
 
 from app.models.chatbot_turn import ChatbotTurn
@@ -48,23 +48,30 @@ from app.services.chatbot import trace as trace_mod
 
 logger = logging.getLogger(__name__)
 
+
 QUEUED = "queued"
 CLAIMED_STAGE = "received"
 SENDING_STAGE = "sending"
 SEND_UNCONFIRMED_STAGE = "send_unconfirmed"
 INBOX_MARKER = [{"facts": {"inbox": True}}]
+# The states a row this module owns is in while it is not finished.
+OPEN_STATUSES = ("processing", "delegated")
 
 # The mutex lives as long as `dispatch`'s alive stamp (clears the redis socket timeout)
 # and is refreshed on the same beat.
 MUTEX_TTL_SECONDS = 15.0
 HEARTBEAT_INTERVAL_SECONDS = 4.0
-# A single row held longer than this is hung (the photo wait alone caps at 10 minutes):
-# the heartbeat stops so another process can recover the contact.
+# A single row held longer than this is hung: the heartbeat stops so another process can
+# recover the contact (the claim fence keeps that to one answer).
 MAX_ROW_HOLD_SECONDS = 900.0
 SWEEP_INTERVAL_SECONDS = 1.5
 # A refused connection proves nothing left, so it is sent again, a bounded number of times.
 MAX_SEND_ATTEMPTS = 3
 RESEND_BACKOFF_SECONDS = 0.5
+# IQ-33: a loop guard far above any human rate.
+MAX_QUEUED_PER_CONTACT = 200
+# IQ-31: a failed takeover lookup backs the contact off 1, 2, 4 ... seconds, up to this.
+LOOKUP_BACKOFF_MAX_SECONDS = 60.0
 
 _REFRESH_LUA = (
     "if redis.call('GET', KEYS[1]) == ARGV[1] then "
@@ -77,11 +84,20 @@ _RELEASE_LUA = (
 
 
 class TurnYielded(BaseException):
-    """The running turn gives way to an earlier-sent queued message (look-ahead).
+    """The running turn gives way, with nothing written: to an earlier-sent queued message
+    (look-ahead), or because its photo read is still pending or shutdown began (parked).
 
     A BaseException on purpose: every `except Exception` in the engine and its lanes turns
-    a failure into an error reply and a closed row, and a yield must pass all of them with
-    nothing written."""
+    a failure into an error reply and a closed row, and a yield must pass all of them."""
+
+
+class ClaimLost(BaseException):
+    """This drain no longer owns the row (its claim was recovered and re-claimed after the
+    mutex was lost): it stops with nothing written and posts nothing (IQ-29)."""
+
+
+class InboxFull(Exception):
+    """The contact already has `MAX_QUEUED_PER_CONTACT` queued rows (IQ-33)."""
 
 
 # --------------------------------------------------------------------------- #
@@ -94,15 +110,21 @@ _active = 0
 _local = threading.local()
 _sweeper: threading.Thread | None = None
 _sweeper_stop = threading.Event()
+# When this process last ran a row of a contact: the sweep re-arms the least recently
+# served contact first, so a long backlog cannot keep the pool from another (IQ-30).
+_last_served: dict[str, float] = {}
 
 
 class _RowRun:
     """The row the current drain thread is running, read by the engine's seams."""
 
-    def __init__(self, turn_id: str, contact: str, send_key: float | None, factory: Callable[[], Any]):
+    def __init__(
+        self, turn_id: str, contact: str, send_key: float | None, claimed_at: Any, factory: Callable[[], Any]
+    ):
         self.turn_id = turn_id
         self.contact = contact
         self.send_key = send_key
+        self.claimed_at = claimed_at
         self.factory = factory
         # Set once a checkpoint found nothing earlier: from then on the turn writes and
         # posts, so it may not yield any more.
@@ -121,6 +143,10 @@ def current_run(turn_id: str | None = None) -> _RowRun | None:
 def draining() -> bool:
     """Is this thread running a turn for the inbox drain?"""
     return getattr(_local, "run", None) is not None
+
+
+def shutting_down() -> bool:
+    return _shutting_down.is_set()
 
 
 def inbox_records(trace: Any) -> list[dict[str, Any]]:
@@ -151,16 +177,34 @@ def contact_of(envelope: Any) -> str:
     return engine._contact_respond_id(envelope)
 
 
+def _from_the_customer_on_whatsapp(body: Any) -> bool:
+    """IQ-32: the webhook's structural gates, for `/chat/turn`'s copy: an incoming message,
+    not from a staff or bot sender, on WhatsApp. No stale cut: a failover copy still queues."""
+    from app.services.chat_history_ingest_service import normalise_channel
+
+    body = body if isinstance(body, dict) else {}
+    message = body.get("message") if isinstance(body.get("message"), dict) else {}
+    if str(message.get("traffic") or "").strip().lower() != "incoming":
+        return False
+    sender = message.get("sender") if isinstance(message.get("sender"), dict) else {}
+    if str(sender.get("source") or "").strip().lower() in direct_ingress.STAFF_SENDER_SOURCES:
+        return False
+    channel = body.get("channel") if isinstance(body.get("channel"), dict) else {}
+    return normalise_channel(channel.get("source") or channel.get("type")) == "whatsapp"
+
+
 def accepts(db: Any, envelope: Any) -> bool:
-    """Does this `/chat/turn` envelope go to the queue? A live message of a covered
-    contact, with a sender to answer through and on the default workspace (the sender
-    speaks for that one only). Test and console turns never do."""
+    """Does this `/chat/turn` envelope go to the queue? A live customer WhatsApp message of
+    a covered contact, with a sender to answer through and on the default workspace (the
+    sender speaks for that one only). Test and console turns never do."""
     from app.services.chatbot import engine
 
     if envelope.dry_run or envelope.ingress == "console":
         return False
     contact = engine._contact_respond_id(envelope)
     if not contact or engine._message_id(envelope) is None:
+        return False
+    if not _from_the_customer_on_whatsapp(envelope.message):
         return False
     if not queue_mode_for(db, contact):
         return False
@@ -182,11 +226,25 @@ def _queued_trace() -> list[dict[str, Any]]:
     return record.persisted()
 
 
+def _queued_count(db: Any, contact: str) -> int:
+    return int(
+        db.query(func.count(ChatbotTurn.id))
+        .filter(
+            ChatbotTurn.contact_respond_id == contact,
+            ChatbotTurn.status == QUEUED,
+            ChatbotTurn.is_test.is_(False),
+        )
+        .scalar()
+        or 0
+    )
+
+
 def enqueue(db: Any, envelope: Any) -> tuple[str, bool]:
     """Insert this message's `queued` row, or find the one already there. Never runs it.
 
     Returns `(turn_id, created)`. A failed row an operator asked to retry gets its next
-    attempt queued (the Retry copy), once however many copies arrive."""
+    attempt queued (the Retry copy), once however many copies arrive. Raises `InboxFull`
+    past `MAX_QUEUED_PER_CONTACT` queued rows (logged as an error)."""
     from app.services.chatbot import engine
 
     contact = engine._contact_respond_id(envelope)
@@ -195,6 +253,14 @@ def enqueue(db: Any, envelope: Any) -> tuple[str, bool]:
     retrying = existing if engine._awaiting_retry(existing) else None
     if existing is not None and retrying is None:
         return str(existing.id), False
+    if _queued_count(db, contact) >= MAX_QUEUED_PER_CONTACT:
+        logger.error(
+            "chatbot inbox: %s already has %s queued rows; message %s is not queued",
+            contact,
+            MAX_QUEUED_PER_CONTACT,
+            message_id,
+        )
+        raise InboxFull(contact)
     row = ChatbotTurn(
         contact_respond_id=contact,
         message_id=message_id,
@@ -224,12 +290,12 @@ def enqueue(db: Any, envelope: Any) -> tuple[str, bool]:
 
 def kick(contact_respond_id: str) -> None:
     """Make sure a drain for this contact is scheduled on the pool. A no-op when one is
-    live (it re-reads the queue after letting go, so the new row is not missed); a full
-    pool leaves the rows queued for the sweeper to re-arm."""
+    live (it re-reads the queue after letting go, so the new row is not missed) or the
+    contact is backing off; a full pool leaves the rows queued for the sweeper."""
     from app.tasks import chat_turns
 
     contact = str(contact_respond_id or "")
-    if not contact or _shutting_down.is_set() or _mutex_alive(contact):
+    if not contact or _shutting_down.is_set() or _mutex_alive(contact) or _backing_off(contact):
         return
     try:
         chat_turns._submit(_drain_job, contact)
@@ -238,11 +304,21 @@ def kick(contact_respond_id: str) -> None:
 
 
 def _drain_job(contact: str) -> None:
-    drain(contact)
+    """One step on the pool: ONE row, then the contact goes to the back of the pool, so a
+    long backlog never holds a thread (IQ-30)."""
+    from app.database import SessionLocal
+
+    held = _step(contact, SessionLocal)
+    if held is None or _shutting_down.is_set():
+        return
+    # Read again AFTER letting go: a row enqueued while this step held the mutex was
+    # kicked into a no-op, so it is this contact's next step.
+    if _has_queued(contact, SessionLocal):
+        kick(contact)
 
 
 # --------------------------------------------------------------------------- #
-# The mutex
+# The mutex and the backoff
 # --------------------------------------------------------------------------- #
 
 
@@ -256,12 +332,45 @@ def _mutex_key(contact: str) -> str:
     return f"chatbot:drain:{contact}"
 
 
+def _backoff_key(contact: str) -> str:
+    return f"chatbot:inbox:backoff:{contact}"
+
+
+def _lookup_fails_key(contact: str) -> str:
+    return f"chatbot:inbox:lookup-fails:{contact}"
+
+
 def _mutex_alive(contact: str) -> bool:
     try:
         return bool(_redis().exists(_mutex_key(contact)))
     except Exception:  # noqa: BLE001 - unreadable reads as held: nothing is started on it
         logger.warning("chatbot inbox: drain mutex unreadable for %s", contact, exc_info=True)
         return True
+
+
+def _backing_off(contact: str) -> bool:
+    try:
+        return bool(_redis().exists(_backoff_key(contact)))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+def _back_off(contact: str) -> None:
+    """IQ-31: the contact's next run waits 1, 2, 4 ... seconds after each failed lookup."""
+    try:
+        fails = int(_redis().incr(_lookup_fails_key(contact)))
+        _redis().expire(_lookup_fails_key(contact), 900)
+        delay = min(LOOKUP_BACKOFF_MAX_SECONDS, 2.0 ** (fails - 1))
+        _redis().set(_backoff_key(contact), 1, px=int(delay * 1000))
+    except Exception:  # noqa: BLE001
+        logger.warning("chatbot inbox: could not back off %s", contact, exc_info=True)
+
+
+def _clear_backoff(contact: str) -> None:
+    try:
+        _redis().delete(_lookup_fails_key(contact), _backoff_key(contact))
+    except Exception:  # noqa: BLE001
+        pass
 
 
 class _Mutex:
@@ -301,7 +410,7 @@ class _Mutex:
 
 
 # --------------------------------------------------------------------------- #
-# The drain
+# Rows: claim, fence, marks
 # --------------------------------------------------------------------------- #
 
 
@@ -319,8 +428,11 @@ def _send_key(envelope: Any, created_at: Any) -> float:
 
 
 def _queued_keys(db: Any, contact: str) -> list[tuple[float, Any, str]]:
+    """The contact's queued rows by send time, oldest first: (send key, created_at, id).
+    Reads only the two clock fields, never the envelopes (IQ-33)."""
+    stamp = ChatbotTurn.envelope["message"]["message"]["timestamp"].astext
     rows = (
-        db.query(ChatbotTurn.id, ChatbotTurn.envelope, ChatbotTurn.created_at)
+        db.query(ChatbotTurn.id, ChatbotTurn.message_id, stamp, ChatbotTurn.created_at)
         .filter(
             ChatbotTurn.contact_respond_id == contact,
             ChatbotTurn.status == QUEUED,
@@ -328,11 +440,17 @@ def _queued_keys(db: Any, contact: str) -> list[tuple[float, Any, str]]:
         )
         .all()
     )
-    return sorted(((_send_key(env, created), created, str(rid)) for rid, env, created in rows), key=lambda k: (k[0], k[1]))
+    keys = [
+        (_send_key({"message": {"message": {"messageId": mid, "timestamp": ts}}}, created), created, str(rid))
+        for rid, mid, ts, created in rows
+    ]
+    return sorted(keys, key=lambda k: (k[0], k[1]))
 
 
-def _claim_next(contact: str, factory: Callable[[], Any]) -> str | None:
-    """Take the contact's oldest-sent queued row (`queued` -> `processing`)."""
+def _claim_next(contact: str, factory: Callable[[], Any]) -> tuple[str, Any] | None:
+    """Take the contact's oldest-sent queued row (`queued` -> `processing`). The claim
+    stamps `started_at` with the database clock: the fence every later write of this run
+    matches on (IQ-29)."""
     db = factory()
     try:
         for _ in range(5):
@@ -340,69 +458,77 @@ def _claim_next(contact: str, factory: Callable[[], Any]) -> str | None:
             if not keys:
                 return None
             turn_id = keys[0][2]
-            result = db.execute(
-                update(ChatbotTurn)
-                .where(ChatbotTurn.id == turn_id, ChatbotTurn.status == QUEUED)
-                .values(status="processing", stage=CLAIMED_STAGE)
-            )
+            claimed_at = db.execute(
+                text(
+                    "UPDATE chatbot.turns SET status = 'processing', stage = :stage, "
+                    "started_at = clock_timestamp() WHERE id = CAST(:id AS uuid) AND status = 'queued' "
+                    "RETURNING started_at"
+                ),
+                {"id": turn_id, "stage": CLAIMED_STAGE},
+            ).scalar()
             db.commit()
-            if result.rowcount:
-                return turn_id
+            if claimed_at is not None:
+                return turn_id, claimed_at
         return None
     finally:
         db.close()
 
 
+def _still_mine(db: Any, run: _RowRun) -> bool:
+    started_at = db.query(ChatbotTurn.started_at).filter(ChatbotTurn.id == run.turn_id).scalar()
+    return started_at == run.claimed_at
+
+
 def checkpoint(turn_id: str | None = None) -> None:
     """The look-ahead (rule 4), called by the engine right before the turn writes
-    conversation state or closes. On the inbox drain, an earlier-sent queued row of the
-    same contact makes this turn yield; once a checkpoint passes, the turn is committed."""
+    conversation state, runs a lane side effect it cannot undo, or closes. On the inbox
+    drain: a lost claim stops the turn (`ClaimLost`), and an earlier-sent queued row of the
+    same contact makes it yield; once a look-ahead passes, the turn is committed."""
     run = current_run(turn_id)
-    if run is None or run.committed:
+    if run is None:
         return
-    if run.send_key is not None:
-        db = run.factory()
-        try:
-            earlier = [k for k in _queued_keys(db, run.contact) if k[0] < run.send_key]
-        finally:
-            db.close()
-        if earlier:
-            raise TurnYielded(earlier[0][2])
+    db = run.factory()
+    try:
+        if not _still_mine(db, run):
+            raise ClaimLost(run.turn_id)
+        if run.committed:
+            return
+        earlier = [k for k in _queued_keys(db, run.contact) if k[0] < run.send_key] if run.send_key is not None else []
+    finally:
+        db.close()
+    if earlier:
+        raise TurnYielded(earlier[0][2])
     run.committed = True
 
 
-def _set_row(factory: Callable[[], Any], turn_id: str, *, only_status: str = "processing", **values: Any) -> bool:
+def _set_row(factory: Callable[[], Any], turn_id: str, claimed_at: Any = None, **values: Any) -> bool:
+    """Update an open row; with `claimed_at`, only while this claim still owns it."""
+    conditions = [ChatbotTurn.id == turn_id, ChatbotTurn.status.in_(OPEN_STATUSES)]
+    if claimed_at is not None:
+        conditions.append(ChatbotTurn.started_at == claimed_at)
     db = factory()
     try:
-        result = db.execute(
-            update(ChatbotTurn)
-            .where(ChatbotTurn.id == turn_id, ChatbotTurn.status == only_status)
-            .values(**values)
-        )
+        result = db.execute(update(ChatbotTurn).where(*conditions).values(**values))
         db.commit()
         return bool(result.rowcount)
     finally:
         db.close()
 
 
-def _requeue(factory: Callable[[], Any], turn_id: str) -> None:
-    _set_row(factory, turn_id, status=QUEUED, stage=QUEUED, finished_at=None)
+def _requeue(factory: Callable[[], Any], turn_id: str, claimed_at: Any = None) -> None:
+    _set_row(factory, turn_id, claimed_at, status=QUEUED, stage=QUEUED, finished_at=None)
 
 
-def _stamp_sending(factory: Callable[[], Any], turn_id: str) -> None:
+def _stamp_sending(factory: Callable[[], Any], turn_id: str, claimed_at: Any) -> bool:
     # `finished_at` doubles as the stamp's time, so recovery reads only this attempt's log.
-    from sqlalchemy import func
-
-    _set_row(factory, turn_id, stage=SENDING_STAGE, finished_at=func.now())
+    return _set_row(factory, turn_id, claimed_at, stage=SENDING_STAGE, finished_at=func.now())
 
 
-def _finish(factory: Callable[[], Any], turn_id: str, status: str, stage: str | None) -> None:
+def _finish(factory: Callable[[], Any], turn_id: str, status: str, stage: str | None, claimed_at: Any = None) -> None:
     """The done mark: the engine's own close, applied once the POST has returned."""
-    from sqlalchemy import func
-
     from app.services.chatbot import engine
 
-    if not _set_row(factory, turn_id, status=status, stage=stage, finished_at=func.now()):
+    if not _set_row(factory, turn_id, claimed_at, status=status, stage=stage, finished_at=func.now()):
         return
     if status in ("done", "failed"):
         db = factory()
@@ -430,7 +556,7 @@ def _append_record(factory: Callable[[], Any], turn_id: str, *, status: str, sum
         db.close()
 
 
-def _flag_for_staff(factory: Callable[[], Any], turn_id: str, outcome: str | None) -> None:
+def _flag_for_staff(factory: Callable[[], Any], turn_id: str, outcome: str | None, claimed_at: Any = None) -> None:
     """A POST that may have reached the sender is not sent again: `failed` at
     `send_unconfirmed`, with a failed record on the trace for staff."""
     from app.services.chatbot import engine
@@ -438,7 +564,9 @@ def _flag_for_staff(factory: Callable[[], Any], turn_id: str, outcome: str | Non
     db = factory()
     try:
         row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
-        if row is None:
+        if row is None or row.status not in OPEN_STATUSES:
+            return
+        if claimed_at is not None and row.started_at != claimed_at:
             return
         record = trace_mod.TurnTrace()
         record.start()
@@ -469,30 +597,33 @@ def should_resend(outcome: str | None) -> bool:
     return outcome == direct_ingress.SEND_REFUSED
 
 
-def _post(factory: Callable[[], Any], turn_id: str, contact: str, result: Any, status: str, stage: str | None) -> str:
-    """POST the turn's actions to the sender, then mark the row (IQ-16)."""
+def _post(factory: Callable[[], Any], run: _RowRun, result: Any, status: str, stage: str | None) -> str:
+    """POST the turn's actions to the sender, then mark the row (IQ-16). A stamp that
+    matches no row means the claim was lost: nothing is posted (IQ-29)."""
     outcome: str | None = None
     for attempt in range(1, MAX_SEND_ATTEMPTS + 1):
-        _stamp_sending(factory, turn_id)
+        if not _stamp_sending(factory, run.turn_id, run.claimed_at):
+            logger.warning("chatbot inbox: turn %s is no longer this drain's; not posted", run.turn_id)
+            return "lost"
         outcome = direct_ingress.send_outcome(
             factory,
-            turn_id=turn_id,
-            contact_id=contact,
+            turn_id=run.turn_id,
+            contact_id=run.contact,
             actions=list(result.actions or []),
             reply=result.reply,
             branch_kind=result.branch_kind,
         )
         if outcome == direct_ingress.SEND_OK:
-            _finish(factory, turn_id, status, stage)
+            _finish(factory, run.turn_id, status, stage, run.claimed_at)
             return "done"
         if attempt >= MAX_SEND_ATTEMPTS or not should_resend(outcome):
             break
         time.sleep(RESEND_BACKOFF_SECONDS * attempt)
-    _flag_for_staff(factory, turn_id, outcome)
+    _flag_for_staff(factory, run.turn_id, outcome, run.claimed_at)
     return "flagged"
 
 
-def _close_skipped(factory: Callable[[], Any], turn_id: str, reason: str) -> None:
+def _close_skipped(factory: Callable[[], Any], turn_id: str, reason: str, claimed_at: Any) -> None:
     """A row nobody answers (human takeover): closed `done`, no turn, no POST."""
     _append_record(
         factory,
@@ -502,10 +633,10 @@ def _close_skipped(factory: Callable[[], Any], turn_id: str, reason: str) -> Non
         why="The chatbot stays silent while staff handle the conversation.",
         facts={"skipped": reason},
     )
-    _finish(factory, turn_id, "done", CLAIMED_STAGE)
+    _finish(factory, turn_id, "done", CLAIMED_STAGE, claimed_at)
 
 
-def _run_row(turn_id: str, contact: str, factory: Callable[[], Any]) -> str:
+def _run_row(turn_id: str, claimed_at: Any, contact: str, factory: Callable[[], Any]) -> str:
     """Run one claimed row: takeover check, turn, POST, done mark. Returns what happened."""
     from app.services.chatbot import engine
     from app.services.chatbot.contracts import Envelope
@@ -517,35 +648,46 @@ def _run_row(turn_id: str, contact: str, factory: Callable[[], Any]) -> str:
             return "missing"
         stored = dict(row.envelope or {})
         send_key = _send_key(stored, row.created_at)
-        # The takeover flag is read when the row comes up, as the direct-ingress job does.
+        # The takeover flag is read when the row comes up, as the direct-ingress job did.
         record = direct_ingress._lookup_contact(db, contact)
     finally:
         db.close()
-    block = dict(record) if isinstance(record, dict) else dict(stored.get("contact") or {})
+    if not isinstance(record, dict):
+        # IQ-31 (security M1): an unread takeover flag never answers. Back to `queued`,
+        # and the contact backs off before its next try.
+        logger.warning("chatbot inbox: contact lookup failed for %s; turn %s waits", contact, turn_id)
+        _requeue(factory, turn_id, claimed_at)
+        _back_off(contact)
+        return "lookup_failed"
+    _clear_backoff(contact)
+    block = dict(record)
     block["id"] = str(block.get("id") or contact)
     if direct_ingress._human_intervened(block) is True:
-        _close_skipped(factory, turn_id, "human_intervened")
+        _close_skipped(factory, turn_id, "human_intervened", claimed_at)
         return "skipped"
 
-    run = _RowRun(turn_id, contact, send_key, factory)
+    run = _RowRun(turn_id, contact, send_key, claimed_at, factory)
     _local.run = run
     try:
         envelope = Envelope(**{**stored, "contact": block})
         result = engine.run_turn(envelope, session_factory=factory, offload=False, queued_turn_id=turn_id)
     except TurnYielded:
-        _requeue(factory, turn_id)
+        _requeue(factory, turn_id, claimed_at)
         return "yielded"
+    except ClaimLost:
+        logger.warning("chatbot inbox: turn %s was re-claimed elsewhere; this run stops", turn_id)
+        return "lost"
     except Exception as exc:  # noqa: BLE001 - the engine records its own failures; this is past it
         logger.exception("chatbot inbox: turn %s raised", turn_id)
-        _set_row(factory, turn_id, status="failed", error=f"{type(exc).__name__}: {exc}")
+        _set_row(factory, turn_id, claimed_at, status="failed", error=f"{type(exc).__name__}: {exc}")
         return "failed"
     finally:
         _local.run = None
     status, stage = run.close or (str(result.status or "done"), result.stage)
     if result.duplicate or not result.actions:
-        _finish(factory, turn_id, status, stage)
+        _finish(factory, turn_id, status, stage, claimed_at)
         return "done"
-    return _post(factory, turn_id, contact, result, status, stage)
+    return _post(factory, run, result, status, stage)
 
 
 def _last_send_outcome(db: Any, turn_id: str, stamped_at: Any) -> str | None:
@@ -570,37 +712,41 @@ def _last_send_outcome(db: Any, turn_id: str, stamped_at: Any) -> str | None:
 
 
 def _recover_dead_rows(contact: str, factory: Callable[[], Any]) -> None:
-    """Under the contact's mutex, every `processing` row this module owns is dead (its
-    drain let go of the mutex, or its process died). Nothing posted: back to `queued`.
-    Stamped `sending`: `should_resend` decides (rule 6)."""
+    """Under the contact's mutex, every open row this module owns is dead (its drain let go
+    of the mutex, or its process died). Nothing posted: back to `queued`. Stamped
+    `sending`: a logged `ok` is done (IQ-34), otherwise `should_resend` decides (rule 6)."""
     db = factory()
     try:
         dead = (
-            db.query(ChatbotTurn.id, ChatbotTurn.stage, ChatbotTurn.finished_at)
+            db.query(ChatbotTurn.id, ChatbotTurn.stage, ChatbotTurn.finished_at, ChatbotTurn.error)
             .filter(
                 ChatbotTurn.contact_respond_id == contact,
-                ChatbotTurn.status == "processing",
+                ChatbotTurn.status.in_(OPEN_STATUSES),
                 ChatbotTurn.is_test.is_(False),
                 ChatbotTurn.trace.contains(INBOX_MARKER),
             )
             .all()
         )
         outcomes = {
-            str(rid): _last_send_outcome(db, str(rid), at) for rid, stage, at in dead if stage == SENDING_STAGE
+            str(rid): _last_send_outcome(db, str(rid), at) for rid, stage, at, _e in dead if stage == SENDING_STAGE
         }
     finally:
         db.close()
-    for rid, stage, _at in dead:
+    for rid, stage, _at, error in dead:
         turn_id = str(rid)
+        outcome = outcomes.get(turn_id)
         if stage != SENDING_STAGE:
             logger.warning("chatbot inbox: recovering turn %s of %s (nothing was sent)", turn_id, contact)
             _requeue(factory, turn_id)
-        elif should_resend(outcomes.get(turn_id)):
+        elif outcome == direct_ingress.SEND_OK:
+            logger.warning("chatbot inbox: turn %s of %s was sent before its process died", turn_id, contact)
+            _finish(factory, turn_id, "failed" if error else "done", "sent")
+        elif should_resend(outcome):
             logger.warning("chatbot inbox: turn %s of %s is sent again", turn_id, contact)
             _requeue(factory, turn_id)
         else:
             logger.warning("chatbot inbox: turn %s of %s may have been sent; flagged", turn_id, contact)
-            _flag_for_staff(factory, turn_id, outcomes.get(turn_id))
+            _flag_for_staff(factory, turn_id, outcome)
 
 
 def _has_queued(contact: str, factory: Callable[[], Any]) -> bool:
@@ -620,10 +766,13 @@ def _has_queued(contact: str, factory: Callable[[], Any]) -> bool:
         db.close()
 
 
-def _drain_held(contact: str, factory: Callable[[], Any]) -> tuple[int, int] | None:
-    """One hold of the contact's mutex: recover its dead rows, then run its queued rows.
-    Returns (rows claimed, rows finished), or None when another drain holds it."""
+def _step(contact: str, factory: Callable[[], Any]) -> tuple[str, int] | None:
+    """One hold of the contact's mutex: recover its dead rows, then run its oldest-sent
+    queued row. Returns (what happened, rows finished), or None when another drain holds
+    the contact."""
     global _active
+    if _shutting_down.is_set() or _backing_off(contact):
+        return None
     mutex = _Mutex(contact)
     try:
         if not mutex.acquire():
@@ -633,42 +782,38 @@ def _drain_held(contact: str, factory: Callable[[], Any]) -> tuple[int, int] | N
         return None
     with _cv:
         _active += 1
-    claimed = finished = 0
+        _last_served[contact] = time.monotonic()
     try:
         mutex.start_heartbeat()
         _recover_dead_rows(contact, factory)
-        while not _shutting_down.is_set():
-            turn_id = _claim_next(contact, factory)
-            if turn_id is None:
-                break
-            claimed += 1
-            mutex.row_started = time.monotonic()
-            if _run_row(turn_id, contact, factory) != "yielded":
-                finished += 1
+        if _shutting_down.is_set():
+            return "shutdown", 0
+        claimed = _claim_next(contact, factory)
+        if claimed is None:
+            return "empty", 0
+        outcome = _run_row(claimed[0], claimed[1], contact, factory)
+        return outcome, 0 if outcome in ("yielded", "lost", "lookup_failed") else 1
     finally:
         mutex.release()
         with _cv:
             _active -= 1
             _cv.notify_all()
-    return claimed, finished
 
 
 def drain(contact_respond_id: str, *, session_factory: Callable[[], Any] | None = None) -> int:
     """Run this contact's queued rows in send order until none is left or shutdown began.
-    Returns the rows finished; 0 at once when another drain holds the contact."""
+    Returns the rows finished; 0 at once when another drain holds the contact. (The pool
+    runs `_drain_job`, one row per step; this is the same steps back to back.)"""
     contact = str(contact_respond_id or "")
     factory = _factory(session_factory)
-    finished = 0
-    idle_holds = 0
-    while contact and not _shutting_down.is_set() and idle_holds < 3:
-        held = _drain_held(contact, factory)
-        if held is None:
+    finished = idle = 0
+    while contact and not _shutting_down.is_set() and idle < 3:
+        held = _step(contact, factory)
+        if held is None or held[0] == "lookup_failed":
             break
         finished += held[1]
-        idle_holds = 0 if held[0] else idle_holds + 1
-        # Read again AFTER letting go: a row enqueued while this drain held the mutex was
-        # kicked into a no-op, so it is this drain's to take.
-        if _shutting_down.is_set() or not _has_queued(contact, factory):
+        idle = 0 if held[1] or held[0] == "yielded" else idle + 1
+        if not _has_queued(contact, factory):
             break
     return finished
 
@@ -680,30 +825,31 @@ def drain(contact_respond_id: str, *, session_factory: Callable[[], Any] | None 
 
 def sweep(*, session_factory: Callable[[], Any] | None = None) -> int:
     """One sweeper pass: kick a drain for every contact with queued rows, or rows a dead
-    process left `processing`, and no live drain (the drain recovers those first).
-    Returns the contacts kicked."""
+    process left open, and no live drain (the drain recovers those first). The least
+    recently served contact goes first. Returns the contacts kicked."""
     if _shutting_down.is_set():
         return 0
     db = _factory(session_factory)()
     try:
+        # Both arms sit inside the partial index `ix_chatbot_turns_inbox_open` (IQ-36).
         contacts = [
             str(c)
             for (c,) in db.query(ChatbotTurn.contact_respond_id)
             .filter(
                 ChatbotTurn.is_test.is_(False),
-                or_(
-                    ChatbotTurn.status == QUEUED,
-                    and_(ChatbotTurn.status == "processing", ChatbotTurn.trace.contains(INBOX_MARKER)),
-                ),
+                ChatbotTurn.status.in_((QUEUED, *OPEN_STATUSES)),
+                or_(ChatbotTurn.status == QUEUED, ChatbotTurn.trace.contains(INBOX_MARKER)),
             )
             .distinct()
             .all()
         ]
     finally:
         db.close()
+    with _cv:
+        contacts.sort(key=lambda c: _last_served.get(c, 0.0))
     kicked = 0
     for contact in contacts:
-        if _mutex_alive(contact):
+        if _mutex_alive(contact) or _backing_off(contact):
             continue
         kick(contact)
         kicked += 1
@@ -730,7 +876,7 @@ def start_sweeper(interval: float = SWEEP_INTERVAL_SECONDS) -> None:
 
 
 def in_use() -> bool:
-    """Did this process run the queue (a sweeper, or a drain scheduled or running)?"""
+    """Did this process run the queue (a sweeper, or a drain on the pool)?"""
     from app.tasks import chat_turns
 
     with _cv:
@@ -759,3 +905,5 @@ def _reset_for_tests() -> None:
     """Clear this process's shutdown flag and local drain state (a test's next process)."""
     _shutting_down.clear()
     _sweeper_stop.clear()
+    with _cv:
+        _last_served.clear()

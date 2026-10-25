@@ -65,13 +65,13 @@ def run_turn_job(
     return payload
 
 
-# CHAT-SPEED: direct turns run on a small pool of threads INSIDE the API process, not on RQ.
+# CHAT-SPEED: queued turns run on a small pool of threads INSIDE the API process, not on RQ.
 # Measured on a dev stack (18 Oct): an RQ work-horse is forked per job and paid ~0.85 s of
 # cold start before the turn row existed, out of a 2.30 s saving; a warm thread pays ~0.01 s.
 # It is also how `/chat/turn` already runs (an API thread per n8n call), and it keeps the
 # turn off the single `worker_fast` process that `media` and `respond_io` share. Bounded:
-# past `DIRECT_TURN_THREADS` turns in flight the message is left to the n8n copy, so a
-# burst degrades to today's path instead of queueing here.
+# past `DIRECT_TURN_THREADS` drains in flight a kick runs nothing and the row stays queued
+# until the inbox sweeper re-arms it (CHAT-INBOX-QUEUE).
 DIRECT_TURN_THREADS = 8
 _pool: ThreadPoolExecutor | None = None
 _pool_lock = threading.Lock()
@@ -160,21 +160,60 @@ def enqueue_direct_turn(
         return False
 
 
-# CHAT-INBOX-QUEUE grace on shutdown: under gunicorn's `graceful_timeout` (150 s).
-INBOX_SHUTDOWN_GRACE_SECONDS = 140.0
+# CHAT-INBOX-QUEUE shutdown budget, inside gunicorn's `graceful_timeout` (150 s,
+# gunicorn.conf.py): SIGTERM at t = 0 stops the drains taking rows at once (signal hook
+# below); open requests and staff event streams get the worker's
+# `timeout_graceful_shutdown` (100 s, app/uvicorn_worker.py: a sync mode-off `/chat/turn`
+# has n8n's 90 s budget); then the lifespan shutdown waits up to this grace for the drains
+# to finish their current row: 100 + 40 = 140 s, 10 s under 150, and Docker's stop
+# timeout (-t 160, scripts/blue_green_deploy.sh) is above both.
+INBOX_SHUTDOWN_GRACE_SECONDS = 40.0
+INBOX_SWEEPER_SWITCH = "CHATBOT_INBOX_SWEEPER_ENABLED"
+_SHUTDOWN_SIGNALS = ("SIGTERM", "SIGINT")
+
+
+def _install_shutdown_signal_hook() -> None:
+    """IQ-28: the inbox stops taking rows AT the signal, not once every open connection
+    has closed and the lifespan shutdown runs. Chained in front of the server's own
+    handler (uvicorn installs it before start-up), which still runs."""
+    import signal
+
+    if threading.current_thread() is not threading.main_thread():
+        return
+    for name in _SHUTDOWN_SIGNALS:
+        sig = getattr(signal, name, None)
+        if sig is None:
+            continue
+        previous = signal.getsignal(sig)
+
+        def _on_signal(signum, frame, _previous=previous):
+            from app.services.chatbot import inbox_queue
+
+            try:
+                inbox_queue.begin_shutdown()
+            except Exception:  # noqa: BLE001 - the server's own handler must still run
+                logger.exception("chatbot inbox: begin_shutdown failed at the signal")
+            if callable(_previous):
+                _previous(signum, frame)
+            elif _previous == signal.SIG_DFL:
+                signal.signal(signum, signal.SIG_DFL)
+                signal.raise_signal(signum)
+
+        signal.signal(sig, _on_signal)
 
 
 def start_inbox_queue() -> None:
-    """App start-up: this process's inbox sweeper (a pass at once, then every 1.5 s).
+    """App start-up: the shutdown signal hook, and this process's inbox sweeper (a pass at
+    once, then every 1.5 s) unless `CHATBOT_INBOX_SWEEPER_ENABLED` is off. The test suite
+    turns it off (`tests/conftest.py`): the sweep is global by contract, so a test process
+    would take other test workers' queued rows."""
+    import os
 
-    Not under pytest: the sweep is global by contract, so a test process would take
-    other test workers' queued rows. Tests drive `inbox_queue.sweep()` themselves."""
-    import sys
-
-    if "pytest" in sys.modules:
-        return
     from app.services.chatbot import inbox_queue
 
+    _install_shutdown_signal_hook()
+    if os.getenv(INBOX_SWEEPER_SWITCH, "1").strip().lower() in ("0", "false", "off", "no"):
+        return
     inbox_queue.start_sweeper()
 
 
@@ -191,24 +230,6 @@ def stop_inbox_queue(grace_seconds: float = INBOX_SHUTDOWN_GRACE_SECONDS) -> boo
     if not idle:
         logger.error("chatbot inbox: drains still running after %.0fs of shutdown grace", grace_seconds)
     return idle
-
-
-def run_direct_turn_job(payload: dict[str, Any]) -> dict[str, Any]:
-    """Run the webhook-started turn and hand its actions to the n8n sender (on a pool
-    thread). The argument is the respond.io webhook body as JSON. Returns
-    `{turn_id, status, duplicate, sent, skipped}` for the log.
-    """
-    from app.services.chatbot import direct_ingress
-
-    outcome = direct_ingress.run(payload)
-    logger.info(
-        "direct ingress turn %s: status=%s duplicate=%s sent=%s",
-        outcome.get("turn_id"),
-        outcome.get("status"),
-        outcome.get("duplicate"),
-        outcome.get("sent"),
-    )
-    return outcome
 
 
 def sweep_chat_facts(

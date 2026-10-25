@@ -451,19 +451,3 @@ def test_rate_limit_counter_expires(client, db, enqueued):
         assert queue_service.redis_conn.get(key) is None
     finally:
         queue_service.redis_conn.delete(key)
-
-
-def test_a_full_pool_leaves_the_message_to_n8n(client, db, monkeypatch):
-    """The API process runs at most `DIRECT_TURN_THREADS` direct turns at once; past that the
-    n8n copy answers, so a burst degrades to today's path rather than queueing here."""
-    from app.tasks import chat_turns
-
-    _mode(db, "all")
-    ran: list[str] = []
-    monkeypatch.setattr(chat_turns, "run_direct_turn_job", lambda payload: ran.append("ran"))
-    monkeypatch.setattr(chat_turns, "_in_flight", chat_turns.DIRECT_TURN_THREADS)
-    try:
-        assert _post(client, _event()).status_code == 200
-        assert ran == []
-    finally:
-        monkeypatch.setattr(chat_turns, "_in_flight", 0)
