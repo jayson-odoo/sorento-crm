@@ -4,9 +4,10 @@
 opportunity lane calls these two routes through the MCP tools
 `crm_sales_opportunity_customer_options` (read) and `crm_sales_opportunity_log` (write).
 
-Auth is the integration API key (`get_external_api_user`) with no permission slug: the per-contact
-gate in `opportunity_chat.gate` is the authorization, as it is on the portal (a salesperson, not
-revoked, with an active agent, who may see the portal "sales_opportunity" form).
+Auth is the integration API key holding `integration.sales_opportunity.log`
+(`require_external_permission`, here and at the mount), then the per-contact gate in
+`opportunity_chat.gate`, as on the portal (a salesperson, not revoked, with an active agent, who
+may see the portal "sales_opportunity" form).
 """
 from __future__ import annotations
 
@@ -18,11 +19,14 @@ from fastapi import APIRouter, Depends, Query, status
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
+from app.api.v1.external.permissions import EXTERNAL_ENDPOINT_PERMISSIONS, require_external_permission
 from app.database import get_db
-from app.dependencies import get_external_api_user
 from app.services.sales import opportunity_chat
 
 router = APIRouter()
+
+#: One guard object for the mount and the handlers, so FastAPI checks the slug once per request.
+SLUG_GUARD = require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["sales-opportunities"])
 
 
 class ChatOpportunityCreate(BaseModel):
@@ -41,7 +45,7 @@ def chat_opportunity_customer_options(
     contact_id: Optional[str] = Query(None),
     space_id: Optional[str] = Query(None),
     q: Optional[str] = Query(None),
-    current_user: dict = Depends(get_external_api_user),
+    current_user: dict = Depends(SLUG_GUARD),
     db: Session = Depends(get_db),
 ):
     _ = current_user
@@ -52,7 +56,7 @@ def chat_opportunity_customer_options(
 @router.post("", status_code=status.HTTP_201_CREATED)
 def chat_opportunity_create(
     payload: ChatOpportunityCreate,
-    current_user: dict = Depends(get_external_api_user),
+    current_user: dict = Depends(SLUG_GUARD),
     db: Session = Depends(get_db),
 ):
     _ = current_user

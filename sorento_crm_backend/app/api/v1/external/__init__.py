@@ -270,11 +270,11 @@ router.include_router(
     dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["contract"]))],
 )
 # SALES-TARGET-CHAT slice 2 (PLAN-sales-opportunity-chat-25oct, UAC O1-4): the chatbot logs a
-# salesperson's opportunity. Any integration key, NO permission slug: the per-contact gate in
-# `opportunity_chat.gate` is the authorization, as on the portal (no integration role holds
-# `sales.opportunities.add`, measured on the dev copy).
+# salesperson's opportunity. The integration slug says which key may call it; the per-contact
+# gate in `opportunity_chat.gate` says for whom, as on the portal.
 router.include_router(
     sales_opportunities.router,
     prefix="/sales-opportunities",
     tags=["external"],
+    dependencies=[Depends(sales_opportunities.SLUG_GUARD)],
 )
