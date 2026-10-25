@@ -161,7 +161,8 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 <h2>Phase 1 order</h2>
 <div class="tablewrap"><table>
 <tr><th>#</th><th>list</th><th>retrieval test</th><th>pass bar</th><th class="n">USD</th><th>status</th></tr>
-<tr><td>1</td><td>categories / classes</td><td><span class="tag free">GO</span> 96.1%, 180 mentions</td><td>better than today on category messages, no worse elsewhere</td><td class="n">~13.5 (x3 everywhere)</td><td>category messages <b>PASSED</b> (your call, class labels); ranking set <span class="tag stop">EARLY STOP</span> 16/15 vs 18-20; re-run (~2.2) after RANK-REFINE-ROUTE</td></tr>
+<tr><td>1</td><td>categories / classes</td><td><span class="tag free">GO</span> 96.1%, 180 mentions</td><td>better than today on category messages, no worse elsewhere</td><td class="n">~13.5 (x3 everywhere)</td><td>category messages <b>PASSED</b> (your call, class labels); ranking set re-run: "a3 flyer" fixed, "dealer only" still lost the channel <span class="tag stop">EARLY STOP</span></td></tr>
+<tr><td>1b</td><td>sales channels (dealer / project), tested together with categories</td><td>96% on 25 rows (not enough data; your call: "sales channels should be in one of the look up list also")</td><td>"dealer only" gives the dealer channel 2 of 3; "srt a3 flyer" gives the a3 flyer; ranking set and TRAIN no worse than today</td><td class="n">up to USD 21 lane total (your OK)</td><td><b>APPROVED</b>, preparing</td></tr>
 <tr><td>2</td><td>spec words (colour, finish, material ...)</td><td><span class="tag free">GO</span> 98.0%, 51</td><td>same</td><td class="n">~6</td><td><b>APPROVED</b>, after 1</td></tr>
 <tr><td>3</td><td>file types (attachment types)</td><td><span class="tag free">GO</span> 100%, 137</td><td>no worse than today (prompt diet: list text out, retrieval in)</td><td class="n">~5</td><td><b>APPROVED</b>, after 2</td></tr>
 <tr><td>4</td><td>brands</td><td><span class="tag free">GO</span> 98.6%, 72</td><td>no worse than today (prompt diet)</td><td class="n">~5</td><td><b>APPROVED</b>, after 3</td></tr>
@@ -189,6 +190,7 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 2. Add no "candidates" section to the prompt; the candidate list on the message explains itself ("Category candidates (pick one only if the message means it):").<br>
 3. Leave the per-message list lines (such as the product types line) in place until their own step; dropping that one line alone cost 4 of 36.<br>
 <b>Still true:</b> any edit of today's prompt loses some follow-ups ("yang 3 tu sahaja" under every edit tried). Crew's call: make those follow-ups solid in code (lane RANK-REFINE-ROUTE, no prompt change), then re-run categories with these rules (~USD 2.2).</div>
+<div class="card small"><b>Re-run result (25 Oct 22:32) and next step.</b> "srt a3 flyer" now right 2 of 2; ranking set 18 and 19 (today 18-20). "dealer only" still lost the dealer channel 2 of 2: that message gets no category candidates, so the one-line pointer in the prompt was the only change it saw. Your call: sales channels become one more lookup list. Next test: today's prompt text left exactly as it is (the category edit only saved 471 characters), with category and sales channel candidates added to the message. Messages with no candidates then reach the parser exactly as today, so only messages with candidates are paid for.</div>
 </main>
 <script>
 function queueQ(ev, key, label){

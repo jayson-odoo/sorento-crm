@@ -8,7 +8,10 @@ everywhere (~USD 13.5). Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL
 Step 1 (25 Oct 21:40): category set passed (owner, class-closed labels), R5 early stop; placement rule recorded below
 ("Placement rule"). Re-gate on the placement-rule variant (22:32): "srt a3 flyer" fixed, "dealer only" still drops the
 channel (0/2; owner requires majority) -> early stop; the row gets no category block, so the one pointer line is the
-only input change on it. Track: L, plan + eval only.
+only input change on it. Owner (ask a38728091): sales channels become one more list (step 1b). Gate arm B = categories
+with the system text left byte-identical to v63 (the categories edit removed only 471 chars; every v63 edit moved
+follow-ups) + category and sales-channel candidate blocks in the user turn; rows with no block get v63's exact input
+(dry identity proof), so only block rows are paid. Track: L, plan + eval only.
 v1 (code-first + subtractive slim) is replaced by this after the owner's note of 25 Oct 17:26 (verbatim in
 crew/state/inbox/slim-index-owner-1726.md): past slimming was long, costly and never better; the index should never
 have been spelling-only; index matching must cover ALL list data; a retrieval step BEFORE the parser passes
@@ -18,7 +21,7 @@ Customer names are masked (public repo).
 
 ## One general design for all entities (owner 25 Oct: "why cant we use the same design as list ah, can keep it for DO";
 ## "please just move them into the same architecture so we have one unified general design for all the entities")
-1. Every list (categories, spec words, file types, brands, salespeople, locations, customers): code looks the message's word
+1. Every list (categories, sales channels, spec words, file types, brands, salespeople, locations, customers): code looks the message's word
    pieces up BEFORE the parser (meaning + spelling, any language) and shows short candidate lists; customers use a
    stricter cut-off and their lines are for use only when the message names a customer. The parser picks one or none.
 2. Product codes and document numbers (DO / SO / PO): exact look-up AFTER the parser (exact, then did-you-mean), never
@@ -41,6 +44,7 @@ step is re-checked on it before the label moves (cost asked then).
 | step | list | data status (phase 0) | bar | gate USD | status |
 |---|---|---|---|---|---|
 | 1 | categories / classes | GO: 0.961, n=180 | B beats v63 on category rows, no regression elsewhere | ~13.5 (x3 everywhere; owner OK) | category set PASSED by the owner on class-closed labels; R5 EARLY STOP (B 16/15 vs A 18/19/20); placement-rule re-gate (25 Oct 22:32, USD 0.70) R5 raw 18/19, end-to-end 19/19 (A 18/19/20) but owner hard row "dealer only" 0/2 (channel dropped) -> EARLY STOP; decision filed |
+| 1b | sales channels (dealer / project), gated together with categories | phase 0: 96% on 25 unbiased rows (not enough data); owner 25 Oct on ask a38728091: "sales channels should be in one of the look up list also" | "dealer only" -> dealer majority-right; "srt a3 flyer" -> a3_flyer; R5 end-to-end >= v63; TRAIN >= v63 | categories + channels hard stop USD 21 (owner) | APPROVED, dry prep |
 | 2 | spec word values | GO: 0.980, n=51 | same | ~6 | APPROVED, after 1 |
 | 3 | file types (attachment types) | GO: 1.000, n=137 | NO REGRESSION vs v63 (goal: prompt diet, list text out, retrieval in) | ~5 | APPROVED, after 2 |
 | 4 | brands | GO: 0.986, n=72 | NO REGRESSION vs v63 (prompt diet) | ~5 | APPROVED, after 3 |
