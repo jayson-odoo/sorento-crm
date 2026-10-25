@@ -2932,6 +2932,7 @@ def resolve_kinds(
             # and (granted report turns included) never the picker's DO probe.
             hide_customers=hide_customers,
             skip_customer_probe=skip_customer_probe,
+            customer_names=business_services.customer_names_reader(db),
         )
     except Exception:  # noqa: BLE001 - see the docstring: nothing to reconcile, not a failure
         logger.warning("chatbot: the resolver did not answer", exc_info=True)

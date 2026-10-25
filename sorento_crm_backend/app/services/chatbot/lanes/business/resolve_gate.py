@@ -1486,8 +1486,12 @@ def run(
     account_exact_names: bool = True,
     hide_customers: bool = False,
     skip_customer_probe: bool = False,
+    customer_names: Callable[[list[str]], dict[str, str]] | None = None,
 ) -> dict[str, Any]:
     """One pass through `sub-resolve-and-gate`. Returns the exit arm's item.
+
+    `customer_names` (CHAT-CUSTOMER-PICK-RESUME): `customers.customer_name` by uuid, for the
+    customer matches the resolver named nothing (`name_unnamed_customers`).
 
     `hide_customers` (V1-DOC-SCOPE slice 3): the asker is an unlinked contact that is not
     document staff, so every customer row the resolver answers is another customer's. They
@@ -1587,6 +1591,8 @@ def run(
         listed_scheme_resolutions(parser, resolved)
     if hide_customers and isinstance(resolved, dict):
         _without_customer_rows(resolved)
+    if customer_names is not None and isinstance(resolved, dict):
+        name_unnamed_customers(resolved, customer_names)
 
     if account_levels is not None and isinstance(resolved, dict):
         account_refusal = narrow_by_account(
@@ -1724,6 +1730,41 @@ def run(
         return exit_item(_snapshot(annotated), exit_kind="offer", fields=base_fields)
 
     return exit_item(_snapshot(ctx_resolved_item), exit_kind="not_found", fields=base_fields)
+
+
+def name_unnamed_customers(resolved: dict[str, Any], names_of: Callable[[list[str]], dict[str, str]]) -> None:
+    """CHAT-CUSTOMER-PICK-RESUME (owner, 25 Oct): a customer match the resolver returned with no name
+    (`display.customer_name` / `debtor_name` empty) gets the CRM's own name, in place, before the gate.
+    The gate groups the ambiguous customers by that name (`gate._cust_base`, the account code when there
+    is none) and the printed roster groups them by the CRM name (`narrow.customer_options` after
+    `fill_customer_names`), so one named ledger plus one unnamed ledger of the same customer asked
+    "Which one do you mean? 1. <one line>". One name source, one grouping. Read by uuid, one query."""
+    rows: list[dict[str, Any]] = []
+    for resolution in jsc.array(resolved.get("resolutions")):
+        if isinstance(resolution, dict):
+            rows += jsc.array(resolution.get("matches")) + jsc.array(resolution.get("alternatives"))
+    rows += jsc.array(resolved.get("intersection"))
+    by_type = resolved.get("by_entity_type")
+    if isinstance(by_type, dict):
+        for value in by_type.values():
+            rows += jsc.array(value)
+
+    def unnamed(m: Any) -> bool:
+        if not isinstance(m, dict) or jsc.nullish_str(m.get("entity_type")).strip().lower() != "customer":
+            return False
+        display = m.get("display") if isinstance(m.get("display"), dict) else {}
+        named = jsc.nullish_str(display.get("customer_name")).strip() or jsc.nullish_str(display.get("debtor_name")).strip()
+        return not named and bool(jsc.nullish_str(m.get("uuid")).strip())
+
+    wanted = [m for m in rows if unnamed(m)]
+    if not wanted:
+        return
+    names = names_of(sorted({str(m["uuid"]) for m in wanted}))
+    for m in wanted:
+        name = jsc.nullish_str(names.get(str(m["uuid"]))).strip()
+        if name:
+            display = m.get("display") if isinstance(m.get("display"), dict) else {}
+            m["display"] = {**display, "customer_name": name}
 
 
 def _without_customer_rows(resolved: dict[str, Any]) -> None:
