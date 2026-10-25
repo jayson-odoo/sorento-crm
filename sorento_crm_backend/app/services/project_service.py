@@ -141,6 +141,50 @@ def check_company_refs(
             raise refuse
 
 
+def assert_linkable_project(
+    db: Session, project_id: Optional[str], current: Optional[str] = None, *, code: str
+) -> None:
+    """A record (complaint, purchase request) links to a PROJECT, never a portal
+    registration still waiting for approval (R4). Re-saving the link a record already has
+    is not a change, so an older link keeps saving."""
+    if not project_id or str(project_id) == str(current or ""):
+        return
+    if approved_projects(db.query(Project.id).filter(Project.id == str(project_id))).first() is None:
+        raise AppException(
+            status_code=422,
+            message="That project is not approved yet. Pick a project from the list.",
+            code=code,
+        )
+
+
+def _changed_refs(db: Session, project: Project, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The ids in an edit that differ from what the project already links. The edit form
+    sends every field back, so checking unchanged ones would lock a legacy project that
+    already links a record of another company out of every save."""
+    stored = {
+        "developer_party_id": project.developer_party_id,
+        "type_id": project.type_id,
+        "template_id": project.template_id,
+    }
+    profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
+    stored["architect_party_id"] = getattr(profile, "architect_party_id", None)
+    stored["main_contractor_party_id"] = getattr(profile, "main_contractor_party_id", None)
+    out: Dict[str, Any] = {
+        key: payload[key]
+        for key in stored
+        if key in payload and str(payload[key] or "") != str(stored[key] or "")
+    }
+    if payload.get("brand_ids"):
+        current = {
+            str(row[0])
+            for row in db.query(ProjectBrand.brand_id).filter(ProjectBrand.project_id == project.id).all()
+        }
+        added = [b for b in payload["brand_ids"] if str(b) not in current]
+        if added:
+            out["brand_ids"] = added
+    return out
+
+
 def assert_project_approved(project) -> None:
     """409 `project_not_approved` for a portal registration that is not a project yet: no
     quotation, sample, PO, schedule, sales order, task, stakeholder or stage move (R4, R8)."""
@@ -1152,7 +1196,7 @@ def update_project(
     the exact-key case, but only the matcher catches the near-duplicate.
     """
     assert_can_edit_project(db, project, actor_user_id, permissions)
-    check_company_refs(db, str(project.company_id), payload)
+    check_company_refs(db, str(project.company_id), _changed_refs(db, project, payload))
 
     new_title = payload.get("title")
     new_developer = (

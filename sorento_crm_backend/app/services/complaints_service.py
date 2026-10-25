@@ -1693,21 +1693,9 @@ class ComplaintService:
     def _assert_linkable_project(self, project_id, current=None) -> None:
         """A complaint links to a PROJECT, never a portal registration still waiting for
         approval (PROJECT-REG-PORTAL R4). Re-saving the link it already has is not a change."""
-        if not project_id or str(project_id) == str(current or ""):
-            return
-        from app.models.projects import Project
-        from app.services.error_handler import AppException
-        from app.services.project_service import approved_projects
+        from app.services.project_service import assert_linkable_project
 
-        if (
-            approved_projects(self.db.query(Project.id).filter(Project.id == str(project_id))).first()
-            is None
-        ):
-            raise AppException(
-                status_code=422,
-                message="That project is not approved yet. Pick a project from the list.",
-                code="complaint_project_not_approved",
-            )
+        assert_linkable_project(self.db, project_id, current, code="complaint_project_not_approved")
 
     def create_complaint(self, complaint_data: ComplaintCreate):
         """Create a new complaint with attachments (generic entity_attachment_links)."""

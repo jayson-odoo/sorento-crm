@@ -9347,6 +9347,12 @@ class PurchaseRequestService:
         if respond_inbox_url is not None:
             dump["respond_inbox_url"] = respond_inbox_url
         requestor_value = dump.pop("requested_by_contact_id", None)
+        from app.services.project_service import assert_linkable_project
+
+        # Never a portal registration waiting for approval (PROJECT-REG-PORTAL R4).
+        assert_linkable_project(
+            self.db, dump.get("project_id"), code="purchase_request_project_not_approved"
+        )
         if "customer_id" in dump:
             from app.services.debtor_type import link_customer
 
@@ -9424,6 +9430,16 @@ class PurchaseRequestService:
         elif contact_id is None and space_id is None:
             payload["respond_inbox_url"] = None
         self._apply_sponsor_subject_to_payload(payload, header)
+        if "project_id" in payload:
+            from app.services.project_service import assert_linkable_project
+
+            # Only a CHANGED link is checked, so an older one keeps saving (R4).
+            assert_linkable_project(
+                self.db,
+                payload["project_id"],
+                header.project_id,
+                code="purchase_request_project_not_approved",
+            )
         requestor_value = payload.pop("requested_by_contact_id", _UNSET_REQUESTOR)
         self._apply_customer_link(header, payload)
         for key, value in payload.items():

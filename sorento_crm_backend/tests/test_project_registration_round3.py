@@ -26,6 +26,7 @@ from ._project_registration_support import (
     project,
     project_type,
     reject,
+    uid,
     world,  # noqa: F401  (fixture)
 )
 
@@ -272,3 +273,90 @@ def test_10b_the_portal_still_reads_and_deletes_its_own_draft(world):
     c = as_contact(world, world.a)
     assert c.get(f"{SUB}/{draft}").status_code == 200
     assert c.delete(f"{SUB}/{draft}").status_code == 204
+
+
+# ------------------------------------------------------------------ final round 1: staff purchase request
+
+
+def test_f1_a_staff_purchase_request_cannot_link_an_unapproved_project(world):
+    from app.schemas.procurement import PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate
+    from app.services.error_handler import AppException
+    from app.services.procurement_service import PurchaseRequestService
+
+    hidden = project(world.db, world.company_id, "Staff PR pending", approval_state="pending")
+    ok = project(world.db, world.company_id, "Staff PR approved", approval_state="approved", code="PPF2601071")
+    service = PurchaseRequestService(world.db)
+    with pytest.raises(AppException) as exc:
+        service.create_request(PurchaseRequestHeaderCreate(request_type="purchase_request", project_id=hidden.id))
+    assert exc.value.detail["code"] == "purchase_request_project_not_approved"
+
+    made = service.create_request(PurchaseRequestHeaderCreate(request_type="purchase_request", project_id=ok.id))
+    with pytest.raises(AppException) as exc:
+        service.update_request(str(made.id), PurchaseRequestHeaderUpdate(project_id=hidden.id))
+    assert exc.value.detail["code"] == "purchase_request_project_not_approved"
+
+
+def test_f1_re_saving_an_unchanged_link_stays_allowed(world):
+    """A request already linked (before the rule) to what is now an unapproved project keeps
+    saving its other fields: only a CHANGED link is checked, as for complaints."""
+    from app.schemas.procurement import PurchaseRequestHeaderCreate, PurchaseRequestHeaderUpdate
+    from app.services.procurement_service import PurchaseRequestService
+
+    later = project(world.db, world.company_id, "Staff PR later rejected", approval_state="approved", code="PPF2601072")
+    service = PurchaseRequestService(world.db)
+    made = service.create_request(PurchaseRequestHeaderCreate(request_type="purchase_request", project_id=later.id))
+    later.approval_state = "rejected"
+    world.db.flush()
+    service.update_request(str(made.id), PurchaseRequestHeaderUpdate(project_id=later.id, customer_name="zzt again"))
+
+
+# ------------------------------------------------------------------ final round 3: only CHANGED refs are checked
+
+
+def _foreign_brand(world, company_id):
+    from app.models.product import Brand
+
+    row = Brand(id=uid(), company_id=company_id, brand_code=f"ZZT{uid()[:6]}", brand_name=f"zzt brand {uid()[:6]}")
+    world.db.add(row)
+    world.db.flush()
+    return row
+
+
+def test_f3_a_legacy_cross_company_link_left_untouched_still_saves(world):
+    from app.models.projects import ProjectBrand, ProjectSalesProfile
+
+    legacy = project(world.db, world.company_id, "LEGACY TOWER", code="PRJ-ZZT-LG1", owner=world.root)
+    foreign_dev = developer(world.db, world.other_company, "Foreign Developer")
+    foreign_arch = developer(world.db, world.other_company, "Foreign Architect", "architect")
+    foreign_type = project_type(world.db, world.other_company, "Foreign Type")
+    foreign_brand = _foreign_brand(world, world.other_company)
+    own_brand = _foreign_brand(world, world.company_id)
+    legacy.developer_party_id = foreign_dev.id
+    legacy.type_id = foreign_type.id
+    world.db.add(ProjectSalesProfile(project_id=legacy.id, architect_party_id=foreign_arch.id))
+    world.db.add(ProjectBrand(project_id=legacy.id, brand_id=foreign_brand.id))
+    world.db.commit()
+
+    # The edit form sends every field back, the legacy ids included, plus one real change.
+    res = as_user(world, world.root).put(
+        f"{STAFF}/{legacy.id}",
+        json={
+            "developer_party_id": foreign_dev.id,
+            "type_id": foreign_type.id,
+            "architect_party_id": foreign_arch.id,
+            "brand_ids": [foreign_brand.id, own_brand.id],
+            "mukim": "Tebrau",
+        },
+    )
+    assert res.status_code == 200, res.text
+
+
+def test_f3_a_newly_picked_cross_company_record_is_still_refused(world):
+    staff_project = project(world.db, world.company_id, "NEW REFS TOWER", code="PRJ-ZZT-NR1", owner=world.root)
+    foreign_contractor = developer(world.db, world.other_company, "Foreign Builder", "main_contractor")
+    foreign_brand = _foreign_brand(world, world.other_company)
+    world.db.commit()
+    c = as_user(world, world.root)
+    for body in ({"main_contractor_party_id": foreign_contractor.id}, {"brand_ids": [foreign_brand.id]}):
+        res = c.put(f"{STAFF}/{staff_project.id}", json=body)
+        assert res.status_code == 422, (body, res.status_code, res.text)
