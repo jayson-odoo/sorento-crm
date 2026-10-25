@@ -3516,6 +3516,17 @@ def _apply(
             )
         ),
     )
+    asked_status = verdict.get("order_status")
+    if (
+        plan.ask is not None
+        and plan.ask.kind in ("customer_pick", "product_pick")
+        and asked_status in ("sales_report", "sales_analysis")
+        and not plan.ask.payload.get("status")
+    ):
+        # CHAT-CUSTOMER-PICK-RESUME (crew chat pass, 25 Oct): the narrower's roster over a sales figure ask carries
+        # the asking turn's status, as the gate's own picker does (`answer_bridge._offer_ask_payload`), so the pick
+        # resumes THAT report. Without it a pick parsed `sales_analysis` ran the company analysis ("Sorento or Mocha?").
+        plan = replace(plan, ask=replace(plan.ask, payload={**plan.ask.payload, "status": asked_status}))
     _exact_code_when_a_quantity_is_named(plan, verdict, trace)
 
     # ESCALATION-CONTROL: a barred contact's named-team escalation is still the escalation
