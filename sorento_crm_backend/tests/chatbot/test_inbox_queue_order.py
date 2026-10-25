@@ -260,6 +260,8 @@ class World:
             chatbot_sender_url=SENDER_URL,
             chatbot_sender_key_ciphertext=encrypt_secret(SENDER_KEY),
         )
+        # A test edits it (no sender, a URL the guard refuses) to change the sender seen next.
+        self.workspace = workspace
         mp.setattr(direct_ingress, "_default_workspace", lambda db: workspace)
         mp.setattr(direct_ingress, "assert_safe_outbound_url", lambda url, label: None)
         mp.setattr(direct_ingress, "_lookup_contact", self._fake_lookup)
@@ -501,6 +503,8 @@ class World:
             "turn_id": str(body.get("turn_id")),
             "contact_id": str(body.get("contact_id")),
             "actions": list(body.get("actions") or []),
+            "headers": dict(kwargs.get("headers") or {}),
+            "follow_redirects": kwargs.get("follow_redirects"),
             "t_start": time.monotonic(),
         }
         if url != SENDER_URL:
@@ -762,7 +766,7 @@ class MediaWorker:
             self.calls.append(job_id)
             nth = len(self.calls)
         job = self._rq_job(job_id)
-        if self.mode == "complete" or (self.mode == "abandon_first" and nth > 1):
+        if self.mode == "complete" or (self.mode in ("abandon_first", "stall_first") and nth > 1):
             self._later(self.delay, self.complete, job_id)
         elif self.mode == "abandon_first":
             self._later(self.delay, self.abandon, job_id)

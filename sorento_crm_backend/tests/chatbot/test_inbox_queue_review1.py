@@ -630,3 +630,161 @@ def test_the_sweeper_query_is_served_by_a_partial_index():
         db.close()
     partial = [d for d in defs if " WHERE " in d.upper() and "queued" in d and "processing" in d]
     assert partial, f"no partial index on chatbot.turns over queued/processing rows: {defs}"
+
+
+# --------------------------------------------------------------------------- #
+# Round 1b. IQ-37: queue mode needs a configured sender
+# --------------------------------------------------------------------------- #
+
+
+def _sender_logs(turn_id: str) -> list[tuple[str, int | None]]:
+    db = SessionLocal()
+    try:
+        return [
+            (row[0], row[1])
+            for row in db.execute(
+                text(
+                    "SELECT status, status_code FROM integration_log WHERE integration_channel = :ch "
+                    "AND business_table = 'chatbot.turns' AND business_id = :b ORDER BY created_at"
+                ),
+                {"ch": direct_ingress.INTEGRATION_CHANNEL, "b": turn_id},
+            )
+        ]
+    finally:
+        db.close()
+
+
+@pytest.mark.parametrize("missing", ["url_and_key", "key"])
+def test_queue_mode_applies_only_with_a_configured_sender(world, missing):
+    """IQ-37: the switch covers the contact but the workspace has no chatbot sender (no URL
+    and key, or a URL with no key). `/chat/turn` keeps the sync path and returns the turn's
+    actions; nothing is queued, so nothing can be stranded; the webhook copy queues nothing.
+
+    Mode `contacts` listing this contact rather than `all`: the settings row is shared with
+    other test files running beside this one, and `all` would cover their contacts too.
+    """
+    contact = world.contact(covered=True)
+    world.workspace.chatbot_sender_key_ciphertext = None
+    if missing == "url_and_key":
+        world.workspace.chatbot_sender_url = None
+    base = time.time() - 10
+    m1 = world.message(contact, base, f"no-sender-{missing}-1")
+    m2 = world.message(contact, base + 1, f"no-sender-{missing}-2")
+
+    response, _ = world.chat_turn(world.body(contact, m1), bound=20.0)
+    assert response.status_code == 200, response.text
+    body = response.json()
+    assert body["duplicate"] is False and body["actions"], (
+        f"with no sender configured a covered /chat/turn must answer synchronously: {body}"
+    )
+    row = world.row_for(contact, m1)
+    assert row["status"] == "done" and not iq().inbox_records(row["trace"]), (row["status"], row["stage"])
+
+    world.webhook(world.body(contact, m2))
+    time.sleep(1.5)
+    assert world.row_for(contact, m2) is None, "with no sender configured the webhook queues nothing"
+    assert world.posts_for(contact) == [] and world.stray_posts == []
+
+
+# --------------------------------------------------------------------------- #
+# Round 1b. Sender behaviour the deleted direct-ingress job tests covered, on the drain
+# --------------------------------------------------------------------------- #
+
+
+def test_sender_url_refused_by_the_guard_posts_nothing_flags_the_row_and_the_next_continues(world, monkeypatch):
+    """Ported from `test_direct_ingress.py::test_sender_url_guarded`: the sender URL fails the
+    outbound guard at use time (a loopback host). No POST leaves, the row ends flagged
+    (`failed` / `send_unconfirmed`) with failed log rows; the contact's next row is still
+    answered once the URL is fixed."""
+    from app.services import outbound_url_guard
+
+    real_guard = outbound_url_guard.assert_safe_outbound_url
+
+    def guard(url: str, label: str) -> None:
+        # The real guard for the refused URL; the test's own sender host does not resolve,
+        # so the real guard would refuse it too once the URL is fixed.
+        if url == SENDER_URL:
+            return None
+        real_guard(url, label=label)
+
+    monkeypatch.setattr(direct_ingress, "assert_safe_outbound_url", guard)
+    world.workspace.chatbot_sender_url = "https://127.0.0.1/webhook/zzt-iq"
+    contact = world.contact(covered=True)
+    base = time.time() - 10
+    m1 = world.message(contact, base, "guard-1")
+    m2 = world.message(contact, base + 1, "guard-2")
+
+    def fix_the_url(mid: str, block: str) -> None:
+        world.workspace.chatbot_sender_url = SENDER_URL
+
+    world.parse_hooks[str(m2)] = fix_the_url
+    world.gate.clear()
+    for mid in (m1, m2):
+        response, _ = world.chat_turn(world.body(contact, mid), bound=3.0)
+        assert_nothing_to_send(response)
+    world.gate.set()
+
+    world.wait_posts(1, contact, timeout=30, settle=1.5)
+    assert world.stray_posts == [], f"a POST left for a refused URL: {world.stray_posts}"
+    assert world.posted_messages(contact) == [str(m2)], "only the second row, after the URL was fixed"
+    flagged = world.row_for(contact, m1)
+    assert (flagged["status"], flagged["stage"]) == ("failed", "send_unconfirmed"), flagged
+    logs = _sender_logs(flagged["id"])
+    assert logs and all(status == "failed" for status, _ in logs), logs
+    assert world.row_for(contact, m2)["status"] == "done"
+
+
+@pytest.mark.parametrize("failure", [502, "timeout"], ids=["http-502", "timeout"])
+def test_a_failed_sender_post_writes_the_failed_log_row_and_the_sent_trace_record(world, failure):
+    """Ported from `test_direct_ingress.py::test_sender_failure_is_recorded`: a failed POST
+    writes ONE failed outbound integration log row (a final status, so nothing re-sends it)
+    and a failed `sent` record on the turn's trace."""
+    contact = world.contact(covered=True)
+    mid = world.message(contact, time.time() - 5, f"recorded-{failure}")
+    world.sender_script[contact].append(failure)
+
+    response, _ = world.chat_turn(world.body(contact, mid))
+    assert_nothing_to_send(response)
+    world.wait_posts(1, contact, settle=1.5)
+    row = world.row_for(contact, mid)
+    logs = _sender_logs(row["id"])
+    expected_code = failure if isinstance(failure, int) else None
+    assert logs == [("failed", expected_code)], logs
+    sent = [r for r in row["trace"] if isinstance(r, dict) and r.get("stage") == "sent" and r.get("status") == "failed"]
+    assert sent, f"no failed `sent` record on the trace: {[r.get('stage') for r in row['trace']]}"
+
+
+def test_the_sender_post_carries_the_key_no_redirects_and_names_turn_and_contact(world):
+    """Ported from `test_direct_ingress.py::test_job_posts_actions_then_n8n_copy_is_duplicate`:
+    the drain's POST carries the sender key header, follows no redirect, names the turn and
+    the contact, carries the actions stored on the row, and logs one success row."""
+    from tests.chatbot.test_inbox_queue_order import SENDER_KEY
+
+    contact = world.contact(covered=True)
+    mid = world.message(contact, time.time() - 5, "post-shape")
+    response, _ = world.chat_turn(world.body(contact, mid))
+    assert_nothing_to_send(response)
+    posts = world.wait_posts(1, contact, settle=1.0)
+    row = world.row_for(contact, mid)
+    post = posts[0]
+    assert post["headers"].get(direct_ingress.SENDER_KEY_HEADER) == SENDER_KEY
+    assert post["follow_redirects"] is False
+    assert (post["turn_id"], post["contact_id"]) == (row["id"], contact)
+    assert post["actions"] and post["actions"] == (row["response"] or {}).get("actions")
+    assert _sender_logs(row["id"]) == [("success", 200)]
+
+
+def test_a_webhook_message_of_a_contact_on_another_workspace_is_not_queued(world, monkeypatch):
+    """Ported from `test_direct_ingress.py::test_a_contact_of_another_workspace_runs_no_turn`
+    (security review L3): the sender speaks for the default workspace only, so a contact
+    stored against another workspace is not queued by the webhook and gets no POST."""
+    contact = world.contact(covered=True)
+    real = direct_ingress._on_default_workspace
+    monkeypatch.setattr(
+        direct_ingress, "_on_default_workspace", lambda db, cid: False if cid == contact else real(db, cid)
+    )
+    mid = world.message(contact, time.time() - 5, "other-workspace")
+    world.webhook(world.body(contact, mid))
+    time.sleep(1.5)
+    assert world.row_for(contact, mid) is None
+    assert world.posts_for(contact) == []
