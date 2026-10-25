@@ -55,8 +55,6 @@ def _mapped_classes():
 # Born after migration 354, so no pre-move name exists: these models chose their entity
 # type at birth and are pinned by their own test below, not by the rename contract.
 BORN_AFTER_THE_MOVE = frozenset({
-    # PROJECT-REG-PORTAL (migration prreg_0001): portal project registrations, born in `projects`.
-    "project_registrations",
     "so_supply_decisions",
     # OI-LINE-SPLIT (migration ols_0001_so_line_splits): the delivery splits staff plan for one
     # SO line, born straight into `projects` beside `sales_order_lines`.

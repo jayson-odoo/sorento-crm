@@ -16,7 +16,6 @@ from app.api.v1.projects import (
     quotation_documents,
     quotation_templates,
     quotations,
-    registrations,
     sales_orders,
     sample_requests,
     samples_pos,
@@ -99,8 +98,4 @@ router.include_router(parties.router, prefix="/parties", tags=["project-parties"
 # Leads before projects for the same reason config is: /leads/{id}/qualify returns a
 # PROJECT, but the route itself lives under the leads prefix.
 router.include_router(leads.router, prefix="/leads", tags=["project-leads"])
-# Registration queue: the literal `/projects/registrations` must precede `/projects/{project_id}`.
-router.include_router(
-    registrations.router, prefix="/projects/registrations", tags=["project-registrations"]
-)
 router.include_router(projects.router, prefix="/projects", tags=["projects"])

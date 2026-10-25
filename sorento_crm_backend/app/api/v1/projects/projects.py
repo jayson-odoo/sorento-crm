@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from typing import List, Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
@@ -18,8 +18,10 @@ from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     ClashPreviewRequest,
     ClashPreviewResponse,
+    ProjectApproveRequest,
     ProjectCollaboratorResponse,
     ProjectRegisterRequest,
+    ProjectRejectRequest,
     ProjectResponse,
     ProjectStakeholderCreate,
     ProjectStakeholderResponse,
@@ -47,6 +49,8 @@ VIEW = "projects.projects.view"
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 MANAGE = "projects.projects.manage"
+APPROVE = svc.APPROVE_REGISTRATIONS_PERMISSION
+_APPROVAL_FILTERS = ("pending", "rejected", "approved", "draft")
 
 _PROFILE_KEYS = (
     "registered_company_name",
@@ -146,6 +150,16 @@ async def list_projects(
             "valid ones."
         ),
     ),
+    approval_state: Optional[List[str]] = Query(
+        None,
+        description=(
+            "Portal registrations by approval state: pending, rejected or approved. A "
+            "contact's unsent draft is never listed."
+        ),
+    ),
+    approved_only: bool = Query(
+        False, description="Pickers: staff-registered and approved projects only."
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
@@ -155,6 +169,21 @@ async def list_projects(
 ):
     try:
         company_id = acting_company_id(db)
+        states = [
+            part.strip().lower()
+            for value in (approval_state or [])
+            for part in str(value).split(",")
+            if part.strip()
+        ]
+        unknown = [state for state in states if state not in _APPROVAL_FILTERS]
+        if unknown:
+            from app.services.error_handler import AppException
+
+            raise AppException(
+                status_code=422,
+                message=f"Unknown approval state {', '.join(repr(u) for u in unknown)}.",
+                code="project_approval_state_unknown",
+            )
         status_ids = list(status_id or [])
         if status_key:
             status_ids.extend(svc.status_ids_for_keys(db, status_key))
@@ -176,6 +205,8 @@ async def list_projects(
             type_ids=type_id,
             brand_ids=brand_id,
             only_critical=only_critical,
+            approval_states=states or None,
+            approved_only=approved_only,
             page=page,
             limit=limit,
             sort=sort,
@@ -266,12 +297,18 @@ async def get_project(
     try:
         validate_uuid_path(project_id, resource="Project")
         project = svc.get_project_or_404(db, project_id)
-        return svc.serialize_project(
+        body = svc.serialize_project(
             db,
             project,
             actor_user_id=current_user["id"],
             permissions=permission_slugs(db, current_user["id"]),
         )
+        # A pending registration names the approved projects it may repeat (D8); the list
+        # never pays that embedding call.
+        from app.services import project_registration_service as registrations
+
+        body["possible_duplicates"] = registrations.duplicates_for_project(db, project)
+        return body
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -302,6 +339,76 @@ async def update_project(
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/{project_id}/approve", response_model=ProjectResponse)
+async def approve_project(
+    project_id: str,
+    payload: Optional[ProjectApproveRequest] = None,
+    current_user: dict = Depends(require_permission(APPROVE)),
+    db: Session = Depends(get_db),
+):
+    """Approve a pending portal registration (PROJECT-REG-PORTAL R9): it draws its PPF code
+    and enters the funnel. 409 when it is not pending or repeats an approved project exactly,
+    422 without a developer."""
+    from app.services import project_registration_service as registrations
+
+    try:
+        permissions = permission_slugs(db, current_user["id"])
+        project = registrations.approve(
+            db,
+            registrations.lock_project(db, project_id),
+            payload.model_dump(exclude_unset=True) if payload else {},
+            actor_user_id=current_user["id"],
+            actor_slugs=permissions,
+        )
+        db.commit()
+        db.refresh(project)
+        registrations.notify(db, project, "approved")
+        return svc.serialize_project(
+            db, project, actor_user_id=current_user["id"], permissions=permissions
+        )
+    except HTTPException:
+        # Every refusal comes before a write, or inside the savepoint that already rolled
+        # back, so there is nothing left to undo.
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise handle_internal_error(str(exc))
+
+
+@router.post("/{project_id}/reject", response_model=ProjectResponse)
+async def reject_project(
+    project_id: str,
+    payload: ProjectRejectRequest,
+    current_user: dict = Depends(require_permission(APPROVE)),
+    db: Session = Depends(get_db),
+):
+    """Reject a pending portal registration with a reason (R10). It stays listed until the
+    portal resubmits it."""
+    from app.services import project_registration_service as registrations
+
+    try:
+        project = registrations.reject(
+            db,
+            registrations.lock_project(db, project_id),
+            payload.reason,
+            actor_user_id=current_user["id"],
+        )
+        db.commit()
+        db.refresh(project)
+        registrations.notify(db, project, "rejected")
+        return svc.serialize_project(
+            db,
+            project,
+            actor_user_id=current_user["id"],
+            permissions=permission_slugs(db, current_user["id"]),
+        )
+    except HTTPException:
+        raise  # a refusal writes nothing (reason or state checked first)
+    except Exception as exc:
+        db.rollback()
+        raise handle_internal_error(str(exc))
 
 
 @router.post("/{project_id}/status", response_model=ProjectResponse)
@@ -350,7 +457,7 @@ async def delete_project(
             permissions=permission_slugs(db, current_user["id"]),
         )
         db.commit()
-        return {"message": f"{code} deleted"}
+        return {"message": f"{code or 'The project registration'} deleted"}
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -396,7 +503,7 @@ async def add_stakeholder(
     try:
         validate_uuid_path(project_id, resource="Project")
         project = svc.get_project_or_404(db, project_id)
-        svc.assert_can_edit_project(
+        svc.assert_can_write_project(
             db,
             project,
             current_user["id"],
@@ -428,7 +535,7 @@ async def update_stakeholder(
         validate_uuid_path(project_id, resource="Project")
         validate_uuid_path(stakeholder_id, resource="Stakeholder")
         project = svc.get_project_or_404(db, project_id)
-        svc.assert_can_edit_project(
+        svc.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         stakeholder = refs.get_stakeholder_or_404(db, project_id, stakeholder_id)
@@ -454,7 +561,7 @@ async def remove_stakeholder(
         validate_uuid_path(project_id, resource="Project")
         validate_uuid_path(stakeholder_id, resource="Stakeholder")
         project = svc.get_project_or_404(db, project_id)
-        svc.assert_can_edit_project(
+        svc.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         stakeholder = refs.get_stakeholder_or_404(db, project_id, stakeholder_id)

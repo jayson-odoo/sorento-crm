@@ -320,8 +320,10 @@ class EmbeddingBackfillService:
                 out.extend(seeds[seed_offset : seed_offset + limit - len(out)])
             return out
         if source == "project":
+            from app.services.project_service import approved_projects
+
             rows = (
-                self.db.query(Project.id, Project.project_code, Project.created_at)
+                approved_projects(self.db.query(Project.id, Project.project_code, Project.created_at))
                 .order_by(Project.created_at.asc(), Project.id)
                 .offset(offset)
                 .limit(limit)

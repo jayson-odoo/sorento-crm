@@ -12,6 +12,10 @@ from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
 from app.models.projects import (
+    APPROVAL_APPROVED,
+    APPROVAL_DRAFT,
+    APPROVAL_PENDING,
+    APPROVAL_REJECTED,
     OUTCOME_OPEN,
     Project,
     ProjectBrand,
@@ -37,6 +41,58 @@ from app.services.project_clash_service import (
 )
 
 NUMBERING_DOC_TYPE = "project"
+
+#: What a project with no code yet (a portal registration before Approve) is called in every
+#: message and title, so nothing ever reads "None" (PROJECT-REG-PORTAL R2).
+AWAITING_APPROVAL_LABEL = "Awaiting approval"
+#: Lets an approver work a portal registration while it waits (R7, R8).
+APPROVE_REGISTRATIONS_PERMISSION = "projects.registrations.approve"
+
+
+def project_label(project) -> str:
+    """The project's code, or "Awaiting approval" while it has none."""
+    return (getattr(project, "project_code", None) or "").strip() or AWAITING_APPROVAL_LABEL
+
+
+def is_approved(project) -> bool:
+    """A staff project (no approval state) or an approved portal registration."""
+    return getattr(project, "approval_state", None) in (None, APPROVAL_APPROVED)
+
+
+def approved_projects(query):
+    """Narrow a `Project` query to the rows that are projects yet (R4): staff-registered
+    ones and approved portal registrations. Every internal path (pickers, validators,
+    reports, the clash check, the sweeps, embeddings) reads through this."""
+    return query.filter(
+        or_(Project.approval_state.is_(None), Project.approval_state == APPROVAL_APPROVED)
+    )
+
+
+_NOT_APPROVED_MESSAGES = {
+    APPROVAL_PENDING: "This project is awaiting approval. Nothing can be added to it until it is approved.",
+    APPROVAL_REJECTED: (
+        "This project registration was rejected, so it is not an approved project. "
+        "Nothing can be added to it."
+    ),
+    APPROVAL_DRAFT: (
+        "This project registration has not been submitted for approval yet. "
+        "Nothing can be added to it."
+    ),
+}
+
+
+def assert_project_approved(project) -> None:
+    """409 `project_not_approved` for a portal registration that is not a project yet: no
+    quotation, sample, PO, schedule, sales order, task, stakeholder or stage move (R4, R8)."""
+    if is_approved(project):
+        return
+    raise AppException(
+        status_code=409,
+        message=_NOT_APPROVED_MESSAGES.get(
+            project.approval_state, "This project is not approved yet."
+        ),
+        code="project_not_approved",
+    )
 
 
 def _describe_blockers(db: Session, blockers: List[ClashCandidate]) -> str:
@@ -101,9 +157,9 @@ def register_project(
             code="project_title_required",
         )
 
-    # The portal registration queue skips the check (PROJECT-REG-PORTAL D7): a possible
-    # duplicate is the approver's call, and only an exact developer + title repeat is refused
-    # (by the DB identity index). Staff registration keeps its lock.
+    # `skip_clash_check` (PROJECT-REG-PORTAL D7): a possible duplicate is the caller's call,
+    # and only an exact developer + title repeat is refused (by the DB identity index). Staff
+    # registration keeps its lock.
     blockers = (
         []
         if skip_clash_check
@@ -127,8 +183,29 @@ def register_project(
             code="project_already_registered",
         )
 
-    # commit_rule=False so drawing the number joins the caller's transaction: if the
-    # insert below fails, the sequence rolls back with it rather than leaving a hole.
+    project = Project(
+        company_id=company_id,
+        title=clean_title,
+        normalised_title=normalise_project_title(clean_title),
+        developer_party_id=developer_party_id,
+        type_id=type_id,
+        template_id=template_id,
+        outcome=OUTCOME_OPEN,
+        owner_user_id=owner_user_id or actor_user_id,
+        created_by=actor_user_id,
+    )
+    start_project(
+        db, project, actor_user_id=actor_user_id, details=details, brand_ids=brand_ids
+    )
+    return project
+
+
+def draw_project_code(db: Session) -> str:
+    """The next code from the `project` numbering rule (PPF, D6).
+
+    commit_rule=False so drawing the number joins the caller's transaction: if the
+    insert that follows fails, the sequence rolls back with it rather than leaving a hole.
+    """
     code = NumberingService(db).get_next_number(NUMBERING_DOC_TYPE, commit_rule=False)
     if not code:
         raise AppException(
@@ -139,20 +216,23 @@ def register_project(
             ),
             code="project_numbering_rule_missing",
         )
+    return code
 
-    project = Project(
-        company_id=company_id,
-        project_code=code,
-        title=clean_title,
-        normalised_title=normalise_project_title(clean_title),
-        developer_party_id=developer_party_id,
-        type_id=type_id,
-        template_id=template_id,
-        outcome=OUTCOME_OPEN,
-        owner_user_id=owner_user_id or actor_user_id,
-        created_by=actor_user_id,
-    )
-    db.add(project)
+
+def start_project(
+    db: Session,
+    project: Project,
+    *,
+    actor_user_id: str,
+    details: Optional[dict] = None,
+    brand_ids: Optional[List[str]] = None,
+) -> Project:
+    """Give ``project`` its code, its first funnel rung, its details and its template
+    checklist. A staff registration runs it on a new row; Approve runs it on the portal
+    registration's own row (R9). Flushes, so the identity index answers here."""
+    project.project_code = draw_project_code(db)
+    if project not in db:
+        db.add(project)
     db.flush()
 
     # The initial funnel position comes from the graph, so it is configurable and a
@@ -215,12 +295,20 @@ def _is_collaborator(db: Session, project_id: str, user_id: str) -> bool:
 def can_edit_project(
     db: Session, project: Project, user_id: str, permissions: Set[str]
 ) -> bool:
-    """Owner, approved collaborator, or manager.
+    """Owner, approved collaborator, or manager; and, for a portal registration still
+    PENDING approval, whoever may approve it (R8: the approver fixes it up before Approve).
+    The approve grant opens nothing else: not a staff project, not an approved or a
+    rejected one.
 
     Reading is intentionally wide open (UAC Group J) and is NOT gated here: the module
     exists to make other people's pursuits visible, so a read filter would defeat it.
     """
     if MANAGE_PERMISSION in (permissions or set()):
+        return True
+    if (
+        project.approval_state == APPROVAL_PENDING
+        and APPROVE_REGISTRATIONS_PERMISSION in (permissions or set())
+    ):
         return True
     if user_id and project.owner_user_id == user_id:
         return True
@@ -235,11 +323,20 @@ def assert_can_edit_project(
     raise AppException(
         status_code=403,
         message=(
-            f"{project.project_code} belongs to another salesperson. Ask to join it "
+            f"{project_label(project)} belongs to another salesperson. Ask to join it "
             "as a collaborator, or raise a dispute for a manager to decide."
         ),
         code="project_not_editable",
     )
+
+
+def assert_can_write_project(
+    db: Session, project: Project, user_id: str, permissions: Set[str]
+) -> None:
+    """The edit right plus R8: work hung on a project (quotations, samples, POs, schedules,
+    sales orders, tasks, stakeholders) waits until the project is approved."""
+    assert_can_edit_project(db, project, user_id, permissions)
+    assert_project_approved(project)
 
 
 def _add_collaborator(
@@ -287,7 +384,7 @@ def create_takeover_request(
     if project.owner_user_id and project.owner_user_id == requester_user_id:
         raise AppException(
             status_code=422,
-            message=f"You already own {project.project_code}.",
+            message=f"You already own {project_label(project)}.",
             code="project_takeover_self",
         )
 
@@ -304,7 +401,7 @@ def create_takeover_request(
         raise AppException(
             status_code=409,
             message=(
-                f"You already have a request open on {project.project_code}. "
+                f"You already have a request open on {project_label(project)}. "
                 "Wait for it to be decided."
             ),
             code="project_takeover_already_open",
@@ -543,6 +640,22 @@ def serialize_projects(
 
     next_actions = next_action_for_projects(db, [p.id for p in projects])
 
+    # A portal registration's legacy-only fields (R7), read-only under the detail header.
+    # The agent is shown by name, never only by code.
+    agent_ids = {
+        pr.sales_agent_id for pr in profiles.values() if pr.sales_agent_id
+    }
+    agent_names: Dict[str, Optional[str]] = {}
+    if agent_ids:
+        from app.models.sales_agent import SalesAgent
+        from app.services.project_registration_service import agent_display_name
+
+        agent_names = {
+            row.id: agent_display_name(row)
+            for row in db.query(SalesAgent).filter(SalesAgent.id.in_(agent_ids)).all()
+        }
+    may_approve = APPROVE_REGISTRATIONS_PERMISSION in permissions
+
     collaborating = set()
     if actor_user_id and not is_manager:
         collaborating = {
@@ -670,12 +783,43 @@ def serialize_projects(
                         and project.owner_user_id == actor_user_id
                     )
                     or project.id in collaborating
+                    or (may_approve and project.approval_state == APPROVAL_PENDING)
                 ),
+                "approval_state": project.approval_state,
+                "reject_reason": project.reject_reason,
+                "submitted_at": project.submitted_at,
+                "decided_at": project.decided_at,
+                "registration": (
+                    _registration_block(profile, agent_names)
+                    if project.approval_state is not None
+                    else None
+                ),
+                # Filled for a pending project's detail only (the route): the list never
+                # pays an embedding call per row.
+                "possible_duplicates": [],
                 "created_at": project.created_at,
                 "updated_at": project.updated_at,
             }
         )
     return out
+
+
+def _registration_block(
+    profile: Optional[ProjectSalesProfile], agent_names: Dict[str, Optional[str]]
+) -> Dict[str, Any]:
+    def value(key: str):
+        return getattr(profile, key, None) if profile is not None else None
+
+    return {
+        "sales_agent_name": agent_names.get(value("sales_agent_id")),
+        "distributor_name": value("distributor_name"),
+        "customer_name": value("customer_name"),
+        "your_ref": value("your_ref"),
+        "type_of_building": value("type_of_building"),
+        "developer_name": value("developer_name"),
+        "main_contractor_name": value("main_contractor_name"),
+        "architect_name": value("architect_name"),
+    }
 
 
 def serialize_project(
@@ -763,6 +907,8 @@ def list_projects(
     type_ids: Optional[List[str]] = None,
     brand_ids: Optional[List[str]] = None,
     only_critical: bool = False,
+    approval_states: Optional[List[str]] = None,
+    approved_only: bool = False,
     page: int = 1,
     limit: int = 50,
     sort: str = "created_at",
@@ -773,8 +919,19 @@ def list_projects(
     Sorting is whitelisted rather than reflected off the model: an arbitrary
     ``sort`` string would let a caller order by any column, including ones the
     listing never exposes.
+
+    Pending and rejected portal registrations are listed (R6), a contact's unsent
+    draft never is, whatever the filter. ``approved_only`` is the pickers' filter:
+    staff and approved projects only.
     """
-    query = db.query(Project).filter(Project.company_id == company_id)
+    query = db.query(Project).filter(
+        Project.company_id == company_id,
+        or_(Project.approval_state.is_(None), Project.approval_state != APPROVAL_DRAFT),
+    )
+    if approved_only:
+        query = approved_projects(query)
+    if approval_states:
+        query = query.filter(Project.approval_state.in_(approval_states))
 
     if search and search.strip():
         needle = f"%{search.strip().lower()}%"
@@ -818,9 +975,9 @@ def list_projects(
         "last_meaningful_activity_at": Project.last_meaningful_activity_at,
     }
     column = sortable.get(sort, Project.created_at)
-    query = query.order_by(
-        column.asc() if str(direction).lower() == "asc" else column.desc()
-    )
+    # A project with no code yet sorts after every coded one, whichever the direction.
+    ordered = column.asc() if str(direction).lower() == "asc" else column.desc()
+    query = query.order_by(ordered.nulls_last(), Project.id)
 
     page = max(1, int(page or 1))
     limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
@@ -935,7 +1092,10 @@ def update_project(
 
     if retitling or redeveloping:
         effective_title = new_title or project.title
-        blockers = [
+        # A portal registration waiting for approval sits outside the lock (R3): fixing its
+        # title or developer is the approver's preparation, and a possible duplicate never
+        # blocks it (D7). Approve answers the exact repeat.
+        blockers = [] if not is_approved(project) else [
             candidate
             for candidate in find_clashes(
                 db,
@@ -1062,7 +1222,7 @@ def change_status(
     Server-side (AC-B4): an illegal drag on the board is rejected here regardless of
     what the client sends.
     """
-    assert_can_edit_project(db, project, actor_user_id, permissions)
+    assert_can_write_project(db, project, actor_user_id, permissions)
 
     from app.services import status_service
 
@@ -1080,7 +1240,7 @@ def change_status(
             raise AppException(
                 status_code=422,
                 message=(
-                    f"{project.project_code} has no status yet, so it can only start "
+                    f"{project_label(project)} has no status yet, so it can only start "
                     f"at '{initial.label}'."
                 ),
                 code="project_status_not_started",
@@ -1133,7 +1293,7 @@ def delete_project(
         raise AppException(
             status_code=409,
             message=(
-                f"{project.project_code} has {po_count} purchase order(s) "
+                f"{project_label(project)} has {po_count} purchase order(s) "
                 "recorded against it. Archive it instead of deleting."
             ),
             code="project_has_purchase_orders",

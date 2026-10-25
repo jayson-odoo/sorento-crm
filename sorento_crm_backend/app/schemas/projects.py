@@ -162,7 +162,7 @@ class ClashCandidateResponse(BaseModel):
     """
 
     project_id: str
-    project_code: str
+    project_code: Optional[str] = None
     title: str
     outcome: str
     status_label: Optional[str] = None
@@ -256,6 +256,58 @@ class ProjectUpdateRequest(BaseModel):
     management_notes: Optional[str] = None
 
 
+class ProjectApproveRequest(BaseModel):
+    """Approve a pending portal registration (PROJECT-REG-PORTAL R9). Every field is
+    optional: the header's Approve sends `{}` once the developer was picked on the edit page,
+    and a field sent here wins over what the project already carries."""
+
+    title: Optional[str] = Field(None, min_length=1)
+    developer_party_id: Optional[str] = None
+    type_id: Optional[str] = None
+    template_id: Optional[str] = None
+    owner_user_id: Optional[str] = None
+    admin_ref: Optional[str] = Field(None, max_length=64)
+
+    registered_company_name: Optional[str] = None
+    location: Optional[str] = None
+    address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
+    architect_party_id: Optional[str] = None
+    main_contractor_party_id: Optional[str] = None
+    estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
+    launch_date: Optional[date] = None
+    expected_delivery_from: Optional[date] = None
+    expected_delivery_to: Optional[date] = None
+    brand_ids: Optional[List[str]] = None
+
+
+class ProjectRejectRequest(BaseModel):
+    reason: str
+
+
+class ProjectPossibleDuplicate(BaseModel):
+    """An approved project a pending registration may repeat (D8): a link, never a block."""
+
+    project_id: str
+    project_code: Optional[str] = None
+    title: str
+
+
+class ProjectRegistrationInfo(BaseModel):
+    """What the sales agent typed on the portal that has no home on a project (R7), shown
+    read-only under the detail header. Null on a staff-registered project."""
+
+    sales_agent_name: Optional[str] = None
+    distributor_name: Optional[str] = None
+    customer_name: Optional[str] = None
+    your_ref: Optional[str] = None
+    type_of_building: Optional[str] = None
+    developer_name: Optional[str] = None
+    main_contractor_name: Optional[str] = None
+    architect_name: Optional[str] = None
+
+
 class ProjectStatusChangeRequest(BaseModel):
     to_status_id: str
     note: Optional[str] = None
@@ -265,7 +317,7 @@ class ProjectResponse(BaseModel):
     model_config = ConfigDict(from_attributes=True)
 
     id: str
-    project_code: str
+    project_code: Optional[str] = None
     title: str
     outcome: str
     loss_reason: Optional[str] = None
@@ -338,6 +390,15 @@ class ProjectResponse(BaseModel):
     stale_since: Optional[datetime] = None
     is_unattended: bool = False
     can_edit: bool = False
+
+    # Portal registration (PROJECT-REG-PORTAL R1, R7): NULL approval_state is a staff project.
+    # A pending or rejected one has no code yet.
+    approval_state: Optional[str] = None
+    reject_reason: Optional[str] = None
+    submitted_at: Optional[datetime] = None
+    decided_at: Optional[datetime] = None
+    registration: Optional[ProjectRegistrationInfo] = None
+    possible_duplicates: List[ProjectPossibleDuplicate] = Field(default_factory=list)
 
     created_at: Optional[datetime] = None
     updated_at: Optional[datetime] = None

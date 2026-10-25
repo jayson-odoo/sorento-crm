@@ -1,10 +1,20 @@
-"""PROJECT-REG-PORTAL: portal project registrations, the profile's state and mukim, the two
-lookup sets the form reads, the approve permission and the PPF project numbering rule.
+"""PROJECT-REG-PORTAL: portal project registrations as projects, the profile's state, mukim
+and legacy fields, the two lookup sets the form reads, the approve permission and the PPF
+project numbering rule.
 
-Additive and idempotent (`IF NOT EXISTS`, `WHERE NOT EXISTS`, `ON CONFLICT`) so the shared dev
-DB, which converges through `create_all`, can take it in any order.
+Idempotent (`IF NOT EXISTS`, `WHERE NOT EXISTS`, `ON CONFLICT`) so the shared dev DB, which
+converges through `create_all`, can take it in any order.
 
-- `projects.project_registrations` (D3) and `projects.sales_profile.state` / `.mukim` (D12).
+- A portal registration IS a `projects.projects` row (owner ruling 25 Oct 17:50, PLAN R1, R12):
+  `project_code` becomes nullable (no code until Approve), and the row gains `approval_state`
+  (NULL for staff projects), `reject_reason`, `submitted_at`, `decided_at`, `decided_by`.
+  There is no registrations table: this revision neither creates nor drops
+  `projects.project_registrations` (the first version of it created one; dropping that on a
+  database that ran it is held for the owner).
+- The identity index `uq_projects_company_developer_title` becomes PARTIAL over staff and
+  approved rows (R3), so a pending, rejected or draft registration neither collides nor
+  blocks. A full index from before the rework is replaced, not kept.
+- `projects.sales_profile` gains `state` / `mukim` (D12) and the portal-only legacy fields.
 - Lookup sets `project_building_type` and `my_state`, seeded; client-editable afterwards.
 - Permission `projects.registrations.approve` (D10), granted to the admin roles and to the
   existing roles named in `APPROVER_ROLE_NAMES` (case-insensitive name match).
@@ -108,46 +118,73 @@ def _seed_lookup(bind, set_key: str, name: str, labels) -> None:
         )
 
 
+INDEX = "uq_projects_company_developer_title"
+#: R3: only staff projects (NULL) and approved registrations hold the registration lock.
+INDEX_WHERE = "approval_state IS NULL OR approval_state = 'approved'"
+
+#: `projects.projects` columns (R1), in add order.
+PROJECT_COLUMNS = (
+    ("approval_state", "VARCHAR(16)"),
+    ("reject_reason", "TEXT"),
+    ("submitted_at", "TIMESTAMP"),
+    ("decided_at", "TIMESTAMP"),
+    ("decided_by", "VARCHAR(100) REFERENCES public.users(id) ON DELETE SET NULL"),
+)
+#: `projects.sales_profile` columns: state and mukim (D12) and the portal-only legacy fields.
+PROFILE_COLUMNS = (
+    ("state", "VARCHAR(100)"),
+    ("mukim", "VARCHAR(255)"),
+    ("contact_id", "TEXT REFERENCES public.respond_contacts(id) ON DELETE SET NULL"),
+    ("sales_agent_id", "UUID REFERENCES public.sales_agents(id) ON DELETE SET NULL"),
+    ("distributor_name", "VARCHAR(255)"),
+    ("customer_id", "UUID REFERENCES public.customers(id) ON DELETE SET NULL"),
+    ("customer_name", "VARCHAR(255)"),
+    ("your_ref", "VARCHAR(255)"),
+    ("type_of_building", "VARCHAR(255)"),
+    ("developer_name", "VARCHAR(255)"),
+    ("main_contractor_name", "VARCHAR(255)"),
+    ("architect_name", "VARCHAR(255)"),
+)
+
+
+def _index_def(bind, p: str):
+    return bind.execute(
+        sa.text("SELECT indexdef FROM pg_indexes WHERE schemaname = :s AND indexname = :n"),
+        {"s": p, "n": INDEX},
+    ).scalar()
+
+
 def upgrade() -> None:
     bind = op.get_bind()
     p = _schema(bind, "projects")
-    for statement in (
+    statements = [
         f'CREATE SCHEMA IF NOT EXISTS "{p}"',
-        f"""
-        CREATE TABLE IF NOT EXISTS "{p}".project_registrations (
-            id UUID PRIMARY KEY,
-            company_id UUID NOT NULL REFERENCES public.companies(id),
-            status VARCHAR(20) NOT NULL DEFAULT 'draft',
-            contact_id TEXT REFERENCES public.respond_contacts(id) ON DELETE SET NULL,
-            sales_agent_id UUID REFERENCES public.sales_agents(id) ON DELETE SET NULL,
-            applicant_user_id VARCHAR(100) REFERENCES public.users(id) ON DELETE SET NULL,
-            project_id UUID REFERENCES "{p}".projects(id) ON DELETE SET NULL,
-            submitted_at TIMESTAMP,
-            decided_at TIMESTAMP,
-            decided_by VARCHAR(100) REFERENCES public.users(id) ON DELETE SET NULL,
-            reject_reason TEXT,
-            title TEXT,
-            distributor_name VARCHAR(255),
-            customer_id UUID REFERENCES public.customers(id) ON DELETE SET NULL,
-            customer_name VARCHAR(255),
-            type_of_building VARCHAR(255),
-            state VARCHAR(100),
-            mukim VARCHAR(255),
-            your_ref VARCHAR(255),
-            developer_name VARCHAR(255),
-            main_contractor_name VARCHAR(255),
-            architect_name VARCHAR(255),
-            created_at TIMESTAMP NOT NULL DEFAULT now(),
-            updated_at TIMESTAMP NOT NULL DEFAULT now()
-        )
-        """,
-        f'CREATE INDEX IF NOT EXISTS ix_projects_project_registrations_company_id ON "{p}".project_registrations (company_id)',
-        f'CREATE INDEX IF NOT EXISTS ix_project_registrations_status ON "{p}".project_registrations (status)',
-        f'CREATE INDEX IF NOT EXISTS ix_project_registrations_contact ON "{p}".project_registrations (contact_id)',
-        f'ALTER TABLE "{p}".sales_profile ADD COLUMN IF NOT EXISTS state VARCHAR(100)',
-        f'ALTER TABLE "{p}".sales_profile ADD COLUMN IF NOT EXISTS mukim VARCHAR(255)',
-    ):
+        f'ALTER TABLE "{p}".projects ALTER COLUMN project_code DROP NOT NULL',
+    ]
+    statements += [
+        f'ALTER TABLE "{p}".projects ADD COLUMN IF NOT EXISTS {name} {ddl}' for name, ddl in PROJECT_COLUMNS
+    ]
+    statements += [
+        f'ALTER TABLE "{p}".sales_profile ADD COLUMN IF NOT EXISTS {name} {ddl}' for name, ddl in PROFILE_COLUMNS
+    ]
+    statements.append(
+        f'CREATE INDEX IF NOT EXISTS ix_project_sales_profile_contact ON "{p}".sales_profile (contact_id)'
+    )
+    for statement in statements:
         bind.execute(sa.text(statement))
+
+    # The identity index becomes partial. A FULL one (from before the rework, or built from
+    # the old model) carries the same name, so `IF NOT EXISTS` alone would keep it.
+    current = _index_def(bind, p)
+    if current and "WHERE" not in current.upper():
+        bind.execute(sa.text(f'DROP INDEX "{p}".{INDEX}'))
+    bind.execute(
+        sa.text(
+            f'CREATE UNIQUE INDEX IF NOT EXISTS {INDEX} ON "{p}".projects '
+            f"(company_id, developer_party_id, normalised_title) NULLS NOT DISTINCT "
+            f"WHERE ({INDEX_WHERE})"
+        )
+    )
 
     for set_key, name, labels in LOOKUP_SETS:
         _seed_lookup(bind, set_key, name, labels)
@@ -235,6 +272,21 @@ def downgrade() -> None:
         {"slug": slug},
     )
     bind.execute(sa.text("DELETE FROM user_permissions WHERE slug = :slug"), {"slug": slug})
-    bind.execute(sa.text(f'ALTER TABLE "{p}".sales_profile DROP COLUMN IF EXISTS mukim'))
-    bind.execute(sa.text(f'ALTER TABLE "{p}".sales_profile DROP COLUMN IF EXISTS state'))
-    bind.execute(sa.text(f'DROP TABLE IF EXISTS "{p}".project_registrations'))
+
+    # Documented data loss: a portal registration that was never approved has no code, and
+    # the code column goes back to NOT NULL, so draft / pending / rejected rows go (their
+    # sales profiles cascade). Approved and staff projects all carry a code and stay.
+    bind.execute(sa.text(f'DELETE FROM "{p}".projects WHERE project_code IS NULL'))
+    bind.execute(sa.text(f'DROP INDEX IF EXISTS "{p}".{INDEX}'))
+    bind.execute(
+        sa.text(
+            f'CREATE UNIQUE INDEX {INDEX} ON "{p}".projects '
+            "(company_id, developer_party_id, normalised_title) NULLS NOT DISTINCT"
+        )
+    )
+    bind.execute(sa.text(f'ALTER TABLE "{p}".projects ALTER COLUMN project_code SET NOT NULL'))
+    bind.execute(sa.text(f'DROP INDEX IF EXISTS "{p}".ix_project_sales_profile_contact'))
+    for name, _ddl in reversed(PROFILE_COLUMNS):
+        bind.execute(sa.text(f'ALTER TABLE "{p}".sales_profile DROP COLUMN IF EXISTS {name}'))
+    for name, _ddl in reversed(PROJECT_COLUMNS):
+        bind.execute(sa.text(f'ALTER TABLE "{p}".projects DROP COLUMN IF EXISTS {name}'))

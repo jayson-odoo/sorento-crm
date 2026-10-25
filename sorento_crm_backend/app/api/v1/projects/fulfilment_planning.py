@@ -102,7 +102,7 @@ def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
     if not order.project_id:
         return
     project = projects.get_project_or_404(db, order.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
 

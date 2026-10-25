@@ -540,7 +540,7 @@ class ProjectLookupItem(BaseModel):
     """
 
     id: str
-    project_code: str
+    project_code: Optional[str] = None
     title: str
     company_name: Optional[str] = None
 

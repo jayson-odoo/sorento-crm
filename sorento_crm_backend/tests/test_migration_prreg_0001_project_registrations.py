@@ -274,8 +274,11 @@ def test_rw11_upgrade_adds_the_approval_columns_and_makes_the_code_nullable(conn
     assert PROFILE_COLUMNS <= set(profile), PROFILE_COLUMNS - set(profile)
 
 
-def test_rw11_upgrade_leaves_no_registrations_table(conn):
-    conn.execute(text("create table if not exists projects.project_registrations (id uuid primary key)"))
+def test_rw11_upgrade_creates_no_registrations_table(conn):
+    """Captain decision (25 Oct): the rewritten revision never touches
+    `projects.project_registrations`. It must not CREATE it on a schema that lacks it;
+    dropping the one the first version left on the dev copy is held for the owner."""
+    conn.execute(text("drop table if exists projects.project_registrations"))
     _upgrade(conn)
     assert conn.execute(text("select to_regclass('projects.project_registrations')")).scalar() is None
 

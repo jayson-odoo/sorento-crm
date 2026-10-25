@@ -25,7 +25,7 @@ from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllo
 from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
 from app.models.product import ProductAttachment
 from app.models.conversation_frame import ConversationFrame
-from app.models.projects import Project, ProjectParty, ProjectSalesProfile
+from app.models.projects import APPROVAL_APPROVED, Project, ProjectParty, ProjectSalesProfile
 from app.services.embedding_service import EmbeddingReadService, parse_debtor_seed_id
 
 logger = logging.getLogger(__name__)
@@ -482,6 +482,9 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
         project = db.query(Project).filter(Project.id == source_id).first()
         if not project:
             raise ValueError(f"Project not found: {source_id}")
+        # A portal registration is not a project until it is approved (PROJECT-REG-PORTAL R4).
+        if project.approval_state not in (None, APPROVAL_APPROVED):
+            raise ValueError(f"Project not approved yet: {source_id}")
         developer = (
             db.query(ProjectParty.name).filter(ProjectParty.id == project.developer_party_id).scalar()
             if project.developer_party_id
@@ -637,7 +640,7 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
     raise ValueError(f"Unsupported source type: {source_type}")
 
 
-def _embed_text_chunks(chunks: list[str], timeout: float = 30) -> list[list[float]]:
+def _embed_text_chunks(chunks: list[str], timeout: float | None = None) -> list[list[float]]:
     from app.services import llm_cassette
 
     if llm_cassette.mode() != "replay" and not settings.openai_api_key:
@@ -650,16 +653,17 @@ def _embed_text_chunks(chunks: list[str], timeout: float = 30) -> list[list[floa
         key=llm_cassette.embed_key(settings.embedding_model_name, json.dumps(chunks, ensure_ascii=False)),
         model=settings.embedding_model_name,
         secret=settings.openai_api_key or "",
-        live=lambda: _post_embeddings(chunks, timeout),
+        # No timeout given is the plain call (30 s); a read path that must not wait passes one.
+        live=lambda: _post_embeddings(chunks) if timeout is None else _post_embeddings(chunks, timeout),
         dump=lambda vectors: vectors,
         load=lambda vectors: [list(v) for v in vectors],
     )
 
 
-def _post_embeddings(chunks: list[str], timeout: float = 30) -> list[list[float]]:
+def _post_embeddings(chunks: list[str], timeout: float | None = None) -> list[list[float]]:
     headers = {"Authorization": f"Bearer {settings.openai_api_key}", "Content-Type": "application/json"}
     payload = {"model": settings.embedding_model_name, "input": chunks}
-    with httpx.Client(timeout=timeout) as client:
+    with httpx.Client(timeout=timeout or 30) as client:
         response = client.post(settings.openai_embeddings_url, headers=headers, json=payload)
         response.raise_for_status()
         data = response.json()

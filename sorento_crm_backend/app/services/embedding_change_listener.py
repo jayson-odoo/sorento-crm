@@ -189,33 +189,48 @@ def _attach_project_listeners() -> None:
     Only what is embedded queues an event: the title and the developer on the project, and
     the state and mukim on its sales profile. Every other write (a staleness stamp, an
     activity touch) rebuilt an embedding that could not have changed.
+
+    A portal registration is not a project until it is approved (R4): nothing is queued for
+    a draft, pending or rejected row, and Approve queues the first embedding.
     """
     from sqlalchemy import inspect as sa_inspect, select
 
     from app.models.projects import Project, ProjectSalesProfile
 
+    from app.models.projects import APPROVAL_APPROVED
+
     def _changed(target, *names: str) -> bool:
         state = sa_inspect(target)
         return any(state.attrs[name].history.has_changes() for name in names)
 
+    def _approved(approval_state) -> bool:
+        return approval_state in (None, APPROVAL_APPROVED)
+
     @event.listens_for(Project, "after_insert")
     def _project_inserted(_mapper, connection, target):
-        _queue_from_mapper(connection, "project", target.id, "project.created", target.company_id)
+        if _approved(target.approval_state):
+            _queue_from_mapper(connection, "project", target.id, "project.created", target.company_id)
 
     @event.listens_for(Project, "after_update")
     def _project_updated(_mapper, connection, target):
-        if _changed(target, "title", "developer_party_id"):
+        if _approved(target.approval_state) and _changed(
+            target, "title", "developer_party_id", "approval_state"
+        ):
             _queue_from_mapper(connection, "project", target.id, "project.updated", target.company_id)
 
     @event.listens_for(Project, "after_delete")
     def _project_deleted(_mapper, connection, target):
-        _queue_from_mapper(connection, "project", target.id, "project.deleted", target.company_id)
+        if _approved(target.approval_state):
+            _queue_from_mapper(connection, "project", target.id, "project.deleted", target.company_id)
 
     def _queue_parent(connection, target) -> None:
-        company_id = connection.execute(
-            select(Project.__table__.c.company_id).where(Project.__table__.c.id == target.project_id)
-        ).scalar()
-        _queue_from_mapper(connection, "project", target.project_id, "project.updated", company_id)
+        table = Project.__table__
+        row = connection.execute(
+            select(table.c.company_id, table.c.approval_state).where(table.c.id == target.project_id)
+        ).first()
+        if row is None or not _approved(row.approval_state):
+            return
+        _queue_from_mapper(connection, "project", target.project_id, "project.updated", row.company_id)
 
     @event.listens_for(ProjectSalesProfile, "after_insert")
     def _profile_inserted(_mapper, connection, target):

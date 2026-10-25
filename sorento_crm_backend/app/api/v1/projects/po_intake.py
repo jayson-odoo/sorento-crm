@@ -62,7 +62,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024
 def _project_for_edit(db: Session, project_id: str, current_user: dict):
     validate_uuid_path(project_id, resource="Project")
     project = projects.get_project_or_404(db, project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return project

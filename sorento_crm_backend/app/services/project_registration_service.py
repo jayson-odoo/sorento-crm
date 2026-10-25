@@ -1,13 +1,15 @@
 """Project registration from the portal (PROJECT-REG-PORTAL).
 
-Three halves in one module, because they share one row and one set of rules:
+A portal registration IS a `projects.projects` row (owner ruling 25 Oct 17:50, PLAN R1):
+`approval_state` draft / pending / rejected / approved, no code until Approve, and the
+legacy-only fields the sales agent typed on its `projects.sales_profile`. The submission id
+the portal sees is the project id. Three parts, because they share that row and its rules:
 
-- the portal half (`portal_*`): the contact's own draft, edit, submit, delete and read, which
+- the portal part (`portal_*`): the contact's own draft, edit, submit, delete and read, which
   `PortalService` delegates to for the `project_registration` kind (D1);
-- the CRM half (`list_rows`, `detail`, `approve`, `reject`): the queue a Project Sales Admin
-  works (D5, D7);
-- the possible-duplicates reader (`find_possible_duplicates`, D8), pure and computed at read
-  time, never stored.
+- the decision (`approve`, `reject`) the CRM takes on the project itself (R9, R10);
+- the possible-duplicates reader (`find_possible_duplicates`, D8), computed at read time over
+  APPROVED projects only, never stored.
 
 Plan: documentation/plans/projects/PLAN-project-registration-portal-25oct.md.
 """
@@ -25,21 +27,40 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.models.base import company_scope
-from app.models.project_registration import (
-    FIELD_KEYS,
-    STATUS_APPROVED,
-    STATUS_DRAFT,
-    STATUS_PENDING,
-    STATUS_REJECTED,
-    ProjectRegistration,
+from app.models.projects import (
+    APPROVAL_APPROVED,
+    APPROVAL_DRAFT,
+    APPROVAL_PENDING,
+    APPROVAL_REJECTED,
+    OUTCOME_OPEN,
+    Project,
+    ProjectParty,
+    ProjectSalesProfile,
+    ProjectType,
 )
-from app.models.projects import Project, ProjectParty, ProjectType
 from app.services.error_handler import AppException, handle_not_found
 
 logger = logging.getLogger(__name__)
 
 KIND = "project_registration"
 APPROVE_PERMISSION = "projects.registrations.approve"
+
+#: The eleven contact-written fields (D3), in form order. `title` lives on the project, the
+#: rest on its sales profile.
+FIELD_KEYS = (
+    "title",
+    "distributor_name",
+    "customer_id",
+    "customer_name",
+    "type_of_building",
+    "state",
+    "mukim",
+    "your_ref",
+    "developer_name",
+    "main_contractor_name",
+    "architect_name",
+)
+PROFILE_FIELD_KEYS = tuple(k for k in FIELD_KEYS if k != "title")
 
 #: Cosine at or above which the meaning signal names a project (D8, calibrated in Phase 2).
 REGISTRATION_SEMANTIC_THRESHOLD = 0.80
@@ -168,25 +189,6 @@ def semantic_matches(db: Session, *, company_id: str, text: str, top_k: int = 10
         return []
 
 
-def prime_meaning(rows: List["ProjectRegistration"]) -> bool:
-    """Embed the pending rows of a page in ONE call, so the per-row reads that follow are
-    cache hits. False when the call failed: the caller then skips the meaning signal for the
-    whole page instead of retrying it row by row."""
-    texts = [
-        canonical_text(r.title, r.developer_name, r.state, r.mukim)
-        for r in rows
-        if r.status == STATUS_PENDING and r.title
-    ]
-    if not texts:
-        return True
-    try:
-        embed_texts(texts)
-        return True
-    except Exception as exc:  # noqa: BLE001
-        logger.info("registration page embedding skipped: %s", exc)
-        return False
-
-
 def find_possible_duplicates(
     db: Session,
     *,
@@ -220,11 +222,18 @@ def find_possible_duplicates(
     )
     if not meaning:
         return []
+    from app.services.project_service import approved_projects
+
+    # Only a PROJECT is a candidate: a registration still waiting (or refused, or a draft)
+    # is never named, not even the one being read (R4).
     by_id = {
         p.id: p
-        for p in db.query(Project)
-        .filter(Project.company_id == company_id, Project.id.in_([pid for pid, _ in meaning if _is_uuid(pid)]))
-        .all()
+        for p in approved_projects(
+            db.query(Project).filter(
+                Project.company_id == company_id,
+                Project.id.in_([pid for pid, _ in meaning if _is_uuid(pid)]),
+            )
+        ).all()
     }
     out: List[Dict[str, str]] = []
     seen: set = set()
@@ -239,18 +248,25 @@ def find_possible_duplicates(
     return out
 
 
-def _duplicates_for(db: Session, row: ProjectRegistration, *, use_meaning: bool = True) -> List[Dict[str, str]]:
-    """Only a registration still waiting for a decision is checked: that is when it matters."""
-    if row.status != STATUS_PENDING or not row.title:
+
+
+def duplicates_for_project(
+    db: Session, project: Project, profile: Optional[ProjectSalesProfile] = None
+) -> List[Dict[str, str]]:
+    """The possible duplicates of a portal registration. Only one still waiting for a decision
+    is checked: that is when it matters. The CRM detail and the portal detail embed the SAME
+    text, so the second read of a row is a cache hit wherever it comes from."""
+    if project.approval_state != APPROVAL_PENDING or not _clean(project.title):
         return []
+    if profile is None:
+        profile = db.get(ProjectSalesProfile, project.id)
     return find_possible_duplicates(
         db,
-        company_id=row.company_id,
-        title=row.title,
-        developer_name=row.developer_name,
-        state=row.state,
-        mukim=row.mukim,
-        use_meaning=use_meaning,
+        company_id=project.company_id,
+        title=project.title,
+        developer_name=getattr(profile, "developer_name", None),
+        state=getattr(profile, "state", None),
+        mukim=getattr(profile, "mukim", None),
     )
 
 
@@ -263,25 +279,33 @@ def _agent_name(agent) -> Optional[str]:
     return _clean(agent.person_label) or _clean(agent.description) or agent.sales_agent
 
 
-def _agent_name_for(db: Session, row: ProjectRegistration) -> Optional[str]:
-    if not row.sales_agent_id:
+#: Public name for the project serialiser: the agent shown by name, never only by code (D4).
+agent_display_name = _agent_name
+
+
+def _agent_name_for(db: Session, profile: Optional[ProjectSalesProfile]) -> Optional[str]:
+    if profile is None or not profile.sales_agent_id:
         return None
     from app.models.sales_agent import SalesAgent
 
-    return _agent_name(db.get(SalesAgent, row.sales_agent_id))
-
-
-def _project_code(db: Session, project_id: Optional[str]) -> Optional[str]:
-    if not project_id:
-        return None
-    return db.query(Project.project_code).filter(Project.id == str(project_id)).scalar()
+    return _agent_name(db.get(SalesAgent, profile.sales_agent_id))
 
 
 def _iso(value: Optional[datetime]) -> Optional[str]:
     return value.isoformat() if value else None
 
 
-# ------------------------------------------------------------------ portal half
+def _is_uuid(value: Any) -> bool:
+    from uuid import UUID
+
+    try:
+        UUID(str(value))
+        return True
+    except (TypeError, ValueError):
+        return False
+
+
+# ------------------------------------------------------------------ portal part
 
 
 def _contact_companies(db: Session, contact_id: str) -> frozenset:
@@ -317,30 +341,28 @@ def _require_agent(db: Session, contact_id: str):
     return agents[0]
 
 
-def _own(db: Session, token, registration_id: str) -> ProjectRegistration:
-    row = (
-        db.query(ProjectRegistration)
+def _own_query(db: Session, token):
+    """The contact's own registrations: portal rows (an approval state) whose profile names
+    this contact. A staff project is nobody's portal submission."""
+    return (
+        db.query(Project, ProjectSalesProfile)
+        .join(ProjectSalesProfile, ProjectSalesProfile.project_id == Project.id)
         .filter(
-            ProjectRegistration.id == str(registration_id),
-            ProjectRegistration.contact_id == str(token.contact_id),
+            Project.approval_state.isnot(None),
+            ProjectSalesProfile.contact_id == str(token.contact_id),
         )
-        .first()
+    )
+
+
+def _own(db: Session, token, registration_id: str) -> Tuple[Project, ProjectSalesProfile]:
+    row = (
+        _own_query(db, token).filter(Project.id == str(registration_id)).first()
         if _is_uuid(registration_id)
         else None
     )
     if row is None:
         raise handle_not_found("Project registration", registration_id)
-    return row
-
-
-def _is_uuid(value: Any) -> bool:
-    from uuid import UUID
-
-    try:
-        UUID(str(value))
-        return True
-    except (TypeError, ValueError):
-        return False
+    return row[0], row[1]
 
 
 def _check_customer(db: Session, company_id: str, contact_id: str, raw: Any) -> Optional[str]:
@@ -417,69 +439,103 @@ def portal_debtors(db: Session, token, q: str = "", limit: int = 20) -> List[Dic
     ]
 
 
-def _apply(db: Session, row: ProjectRegistration, contact_id: str, payload: Dict[str, Any]) -> None:
+def _cleaned(db: Session, company_id: str, contact_id: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+    """The payload's D3 values as they will be stored, every check run BEFORE anything is
+    written (a refused value writes no row, not even a draft)."""
     _check_lengths(payload)
+    out: Dict[str, Any] = {}
     for key in FIELD_KEYS:
         if key not in payload:
             continue
         if key == "customer_id":
-            row.customer_id = _check_customer(db, row.company_id, contact_id, payload[key])
+            out[key] = _check_customer(db, company_id, contact_id, payload[key])
             continue
         value = payload[key]
         value = (str(value).strip() or None) if value is not None else None
         if key != "title":
             value = " ".join(value.split()) if value else None
-        setattr(row, key, value)
+        out[key] = value
+    return out
+
+
+def _apply(db: Session, project: Project, profile: ProjectSalesProfile, values: Dict[str, Any]) -> None:
+    from app.services.project_clash_service import normalise_project_title
+
+    if "title" in values:
+        # The project row needs a title; a draft may not have one yet.
+        project.title = values["title"] or ""
+        project.normalised_title = normalise_project_title(project.title)
+    for key in PROFILE_FIELD_KEYS:
+        if key in values:
+            setattr(profile, key, values[key])
     # A pick with no typed name shows the debtor's own name.
-    if row.customer_id and not row.customer_name:
+    if profile.customer_id and not profile.customer_name:
         from app.models.order import Customer
 
-        row.customer_name = db.query(Customer.customer_name).filter(Customer.id == row.customer_id).scalar()
+        profile.customer_name = (
+            db.query(Customer.customer_name).filter(Customer.id == profile.customer_id).scalar()
+        )
 
 
-def _editable(row: ProjectRegistration) -> bool:
-    return row.status in (STATUS_DRAFT, STATUS_REJECTED)
+def _values(project: Project, profile: Optional[ProjectSalesProfile]) -> Dict[str, Any]:
+    out: Dict[str, Any] = {"title": project.title or None}
+    for key in PROFILE_FIELD_KEYS:
+        out[key] = getattr(profile, key, None) if profile is not None else None
+    if out.get("customer_id"):
+        out["customer_id"] = str(out["customer_id"])
+    return out
 
 
-def _require_editable(row: ProjectRegistration) -> None:
-    if not _editable(row):
+def _editable(project: Project) -> bool:
+    return project.approval_state in (APPROVAL_DRAFT, APPROVAL_REJECTED)
+
+
+def _require_editable(project: Project) -> None:
+    if not _editable(project):
         raise AppException(
             status_code=422, message="This registration is locked.", code="PROJECT_REGISTRATION_LOCKED"
         )
 
 
-def _portal_summary(db: Session, row: ProjectRegistration) -> Dict[str, Any]:
-    ppf = _project_code(db, row.project_id) if row.status == STATUS_APPROVED else None
+def _ppf(project: Project) -> Optional[str]:
+    return project.project_code if project.approval_state == APPROVAL_APPROVED else None
+
+
+def _portal_summary(db: Session, project: Project, profile: Optional[ProjectSalesProfile]) -> Dict[str, Any]:
+    ppf = _ppf(project)
     return {
-        "id": str(row.id),
+        "id": str(project.id),
         "kind": KIND,
-        "title": row.title or "Project registration",
+        "title": project.title or "Project registration",
         "reference": ppf,
         "document_number": ppf,
-        "status": row.status,
+        "status": project.approval_state,
         "approval_status": None,
-        "rejection_reason": row.reject_reason,
-        "is_editable": _editable(row),
-        "is_draft": _editable(row),
-        "created_at": _iso(row.created_at),
-        "developer_name": row.developer_name,
-        "state": row.state,
-        "customer_name": row.customer_name,
+        "rejection_reason": project.reject_reason,
+        "is_editable": _editable(project),
+        "is_draft": _editable(project),
+        "created_at": _iso(project.created_at),
+        "developer_name": getattr(profile, "developer_name", None),
+        "state": getattr(profile, "state", None),
+        "customer_name": getattr(profile, "customer_name", None),
         "ppf_no": ppf,
     }
 
 
-def _portal_detail(db: Session, row: ProjectRegistration, *, with_duplicates: bool = True) -> Dict[str, Any]:
-    base = _portal_summary(db, row)
-    base.update({key: getattr(row, key) for key in FIELD_KEYS})
+def _portal_detail(
+    db: Session, project: Project, profile: Optional[ProjectSalesProfile], *, with_duplicates: bool = True
+) -> Dict[str, Any]:
+    base = _portal_summary(db, project, profile)
+    base.update(_values(project, profile))
     base.update(
         {
-            "customer_id": str(row.customer_id) if row.customer_id else None,
-            "submitted_at": _iso(row.submitted_at),
-            "sales_agent_name": _agent_name_for(db, row),
-            "reject_reason": row.reject_reason,
+            "submitted_at": _iso(project.submitted_at),
+            "sales_agent_name": _agent_name_for(db, profile),
+            "reject_reason": project.reject_reason,
+            # Code and title only: no project id and no holder in the portal.
             "possible_duplicates": [
-                {"project_code": d["project_code"], "title": d["title"]} for d in _duplicates_for(db, row)
+                {"project_code": d["project_code"], "title": d["title"]}
+                for d in duplicates_for_project(db, project, profile)
             ]
             if with_duplicates
             else [],
@@ -490,39 +546,37 @@ def _portal_detail(db: Session, row: ProjectRegistration, *, with_duplicates: bo
 
 def portal_list(db: Session, token, q: Optional[str] = None) -> List[Dict[str, Any]]:
     with _scope(db, token):
-        query = db.query(ProjectRegistration).filter(ProjectRegistration.contact_id == str(token.contact_id))
+        query = _own_query(db, token)
         if q and q.strip():
             like = f"%{q.strip()}%"
             query = query.filter(
                 or_(
-                    ProjectRegistration.title.ilike(like),
-                    ProjectRegistration.developer_name.ilike(like),
-                    ProjectRegistration.distributor_name.ilike(like),
-                    ProjectRegistration.customer_name.ilike(like),
-                    ProjectRegistration.state.ilike(like),
-                    ProjectRegistration.mukim.ilike(like),
+                    Project.title.ilike(like),
+                    ProjectSalesProfile.developer_name.ilike(like),
+                    ProjectSalesProfile.distributor_name.ilike(like),
+                    ProjectSalesProfile.customer_name.ilike(like),
+                    ProjectSalesProfile.state.ilike(like),
+                    ProjectSalesProfile.mukim.ilike(like),
                 )
             )
-        rows = query.order_by(ProjectRegistration.created_at.desc(), ProjectRegistration.id).all()
-        return [_portal_summary(db, r) for r in rows]
+        rows = query.order_by(Project.created_at.desc(), Project.id).all()
+        return [_portal_summary(db, project, profile) for project, profile in rows]
 
 
 def portal_get(db: Session, token, registration_id: str, *, full: bool = False) -> Dict[str, Any]:
     """`full` builds the possible duplicates (the detail page). Every other caller only needs
-    to know the contact owns the row, which must not cost a lot query and an embedding."""
+    to know the contact owns the row, which must not cost an embedding."""
     with _scope(db, token):
-        return _portal_detail(db, _own(db, token, registration_id), with_duplicates=full)
+        project, profile = _own(db, token, registration_id)
+        return _portal_detail(db, project, profile, with_duplicates=full)
 
 
 def portal_neighbours(db: Session, token, registration_id: str) -> Dict[str, Any]:
     with _scope(db, token):
         _own(db, token, registration_id)
         ids = [
-            str(r[0])
-            for r in db.query(ProjectRegistration.id)
-            .filter(ProjectRegistration.contact_id == str(token.contact_id))
-            .order_by(ProjectRegistration.created_at.desc(), ProjectRegistration.id)
-            .all()
+            str(row[0].id)
+            for row in _own_query(db, token).order_by(Project.created_at.desc(), Project.id).all()
         ]
     idx = ids.index(str(registration_id))
     return {
@@ -536,6 +590,7 @@ def portal_neighbours(db: Session, token, registration_id: str) -> Dict[str, Any
 def portal_save(
     db: Session, token, payload: Dict[str, Any], registration_id: Optional[str] = None
 ) -> Dict[str, Any]:
+    """Save draft creates the project row with `approval_state = draft` and no code (R5)."""
     from app.api.v1.public.portal_price_tag import _resolve_company
     from app.services import portal_rate_limit
 
@@ -544,31 +599,44 @@ def portal_save(
         agent = _require_agent(db, token.contact_id)
         company_id = _resolve_company(db, token)
         with company_scope(db, frozenset({company_id})):
-            row = ProjectRegistration(
+            values = _cleaned(db, company_id, token.contact_id, payload)
+            project = Project(
                 company_id=company_id,
-                status=STATUS_DRAFT,
+                approval_state=APPROVAL_DRAFT,
+                title="",
+                normalised_title="",
+                outcome=OUTCOME_OPEN,
+            )
+            db.add(project)
+            db.flush()
+            profile = ProjectSalesProfile(
+                project_id=project.id,
                 contact_id=str(token.contact_id),
                 sales_agent_id=agent.id,
             )
-            _apply(db, row, token.contact_id, payload)
-            db.add(row)
+            db.add(profile)
+            _apply(db, project, profile, values)
             db.commit()
-            db.refresh(row)
-            return _portal_detail(db, row, with_duplicates=False)
+            db.refresh(project)
+            db.refresh(profile)
+            return _portal_detail(db, project, profile, with_duplicates=False)
     with _scope(db, token):
-        row = _own(db, token, registration_id)
-        _require_editable(row)
-        _apply(db, row, token.contact_id, payload)
+        project, profile = _own(db, token, registration_id)
+        _require_editable(project)
+        _apply(db, project, profile, _cleaned(db, project.company_id, token.contact_id, payload))
         db.commit()
-        db.refresh(row)
-        return _portal_detail(db, row, with_duplicates=False)
+        db.refresh(project)
+        db.refresh(profile)
+        return _portal_detail(db, project, profile, with_duplicates=False)
 
 
 def _missing(values: Dict[str, Any]) -> List[str]:
     return [k for k in REQUIRED_ON_SUBMIT if not _clean(values.get(k))]
 
 
-def _linked_user_id(db: Session, contact_id: str) -> Optional[str]:
+def _linked_user_id(db: Session, contact_id: Optional[str]) -> Optional[str]:
+    if not contact_id:
+        return None
     from app.models.user import User
 
     return db.query(User.id).filter(User.respond_contact_id == str(contact_id)).scalar()
@@ -577,15 +645,17 @@ def _linked_user_id(db: Session, contact_id: str) -> Optional[str]:
 def portal_submit(
     db: Session, token, registration_id: str, payload: Optional[Dict[str, Any]] = None
 ) -> Dict[str, Any]:
+    """Draft (or rejected) -> pending. The owner is the contact's linked CRM user, else nobody
+    until Approve (R5). No number is drawn here (C4)."""
     from app.services import portal_rate_limit
 
     portal_rate_limit.project_registration_write(token.contact_id)
     with _scope(db, token):
-        row = _own(db, token, registration_id)
-        _require_editable(row)
+        project, profile = _own(db, token, registration_id)
+        _require_editable(project)
         _require_agent(db, token.contact_id)
         _check_lengths(payload or {})
-        merged = {key: getattr(row, key) for key in FIELD_KEYS}
+        merged = _values(project, profile)
         merged.update({k: v for k, v in (payload or {}).items() if k in FIELD_KEYS})
         missing = _missing(merged)
         if missing:
@@ -596,65 +666,74 @@ def portal_submit(
                 code="VALIDATION_ERROR",
             )
         if payload:
-            _apply(db, row, token.contact_id, payload)
-        row.status = STATUS_PENDING
-        row.submitted_at = _now()
-        row.reject_reason = None
-        row.decided_at = None
-        row.decided_by = None
-        row.applicant_user_id = _linked_user_id(db, token.contact_id)
+            _apply(db, project, profile, _cleaned(db, project.company_id, token.contact_id, payload))
+        project.approval_state = APPROVAL_PENDING
+        project.submitted_at = _now()
+        project.reject_reason = None
+        project.decided_at = None
+        project.decided_by = None
+        project.owner_user_id = _linked_user_id(db, token.contact_id)
         db.commit()
-        db.refresh(row)
-        notify(db, row, "submitted")
-        return _portal_detail(db, row, with_duplicates=False)
+        db.refresh(project)
+        db.refresh(profile)
+        notify(db, project, "submitted")
+        return _portal_detail(db, project, profile, with_duplicates=False)
 
 
 def portal_delete(db: Session, token, registration_id: str) -> None:
     with _scope(db, token):
-        row = _own(db, token, registration_id)
-        if row.status != STATUS_DRAFT:
+        project, _profile = _own(db, token, registration_id)
+        if project.approval_state != APPROVAL_DRAFT:
             raise AppException(status_code=422, message="Only drafts can be deleted.")
-        db.delete(row)
+        db.delete(project)
         db.commit()
 
 
 # ------------------------------------------------------------------ notifications (F1, F2)
 
 
-def _holders(db: Session, row: ProjectRegistration, exclude: Iterable[Any] = ()) -> List[str]:
+def _applicant_user_id(db: Session, project: Project) -> Optional[str]:
+    """The CRM user linked to the contact who registered it: who hears the decision."""
+    profile = db.get(ProjectSalesProfile, project.id)
+    return _linked_user_id(db, getattr(profile, "contact_id", None))
+
+
+def _holders(db: Session, project: Project, exclude: Iterable[Any] = ()) -> List[str]:
     from app.services.project_notify_service import approver_user_ids
 
     return approver_user_ids(
-        db, company_id=row.company_id, exclude={str(e) for e in exclude if e}, slug=APPROVE_PERMISSION
+        db, company_id=project.company_id, exclude={str(e) for e in exclude if e}, slug=APPROVE_PERMISSION
     )
 
 
-def notify(db: Session, row: ProjectRegistration, event: str) -> int:
+def notify(db: Session, project: Project, event: str) -> int:
     """Tell who must act (submitted) or who asked (approved, rejected). Call AFTER the move
-    commits; a failure is logged per recipient and never undoes the move."""
-    title_text = _clean(row.title) or "A project"  # one line: a title can carry newlines and tabs
+    commits; a failure is logged per recipient and never undoes the move. Every notice links
+    to the project itself: there is no registrations page any more (R11)."""
+    title_text = _clean(project.title) or "A project"  # one line: a title can carry newlines and tabs
     try:
+        applicant = _applicant_user_id(db, project)
         if event == "submitted":
-            recipients = _holders(db, row, exclude=[row.applicant_user_id])
+            recipients = _holders(db, project, exclude=[applicant])
             title = f"Project registration waits for your approval: {title_text}"
-            link = f"/project-sales/registrations/{row.id}"
         else:
-            recipients = [row.applicant_user_id] if row.applicant_user_id else []
-            code = _project_code(db, row.project_id)
+            from app.services.project_service import project_label
+
+            recipients = [applicant] if applicant else []
             title = (
-                f"Your project registration is approved as {code}: {title_text}"
+                f"Your project registration is approved as {project_label(project)}: {title_text}"
                 if event == "approved"
                 else f"Your project registration was rejected: {title_text}"
             )
-            link = f"/project-sales/{row.project_id}" if event == "approved" and row.project_id else None
+        link = f"/project-sales/{project.id}"
         from app.services.notification_service import NotificationService
 
         service = NotificationService(db)
     except Exception as exc:  # noqa: BLE001
-        logger.warning("project registration notice not sent: %s %s (%s)", event, row.id, exc)
+        logger.warning("project registration notice not sent: %s %s (%s)", event, project.id, exc)
         return 0
     sent = 0
-    stamp = row.decided_at or row.submitted_at
+    stamp = project.decided_at or project.submitted_at
     for user_id in {str(u) for u in recipients if u}:
         try:
             service.create_with_channel_preferences(
@@ -662,10 +741,10 @@ def notify(db: Session, row: ProjectRegistration, event: str) -> int:
                 type=f"project_registration_{event}",
                 title=title,
                 body=title,
-                data={"registration_id": str(row.id), **({"link": link} if link else {})},
-                source_entity_type="project_registration",
-                source_entity_id=str(row.id),
-                dedup_key=f"{row.id}:{event}:{stamp.isoformat() if stamp else ''}",
+                data={"project_id": str(project.id), "link": link},
+                source_entity_type="project",
+                source_entity_id=str(project.id),
+                dedup_key=f"{project.id}:{event}:{stamp.isoformat() if stamp else ''}",
                 event_type=f"project_registration_{event}",
                 send_in_app=True,
                 # The approvers hear in-app only; the applicant is told by email as well.
@@ -681,160 +760,30 @@ def notify(db: Session, row: ProjectRegistration, event: str) -> int:
     return sent
 
 
-# ------------------------------------------------------------------ CRM half
+# ------------------------------------------------------------------ the decision (R9, R10)
 
 
-def get_or_404(db: Session, registration_id: str, *, lock: bool = False) -> ProjectRegistration:
-    """`lock` takes the row lock a decision needs, so two approvers cannot both read it as
-    pending and each create a project."""
-    if not _is_uuid(registration_id):
-        row = None
-    elif lock:
-        row = (
-            db.query(ProjectRegistration)
-            .filter(ProjectRegistration.id == str(registration_id))
-            .with_for_update()
-            .populate_existing()
-            .first()
-        )
-    else:
-        row = db.get(ProjectRegistration, registration_id)
-    if row is None:
-        raise handle_not_found("Project registration", registration_id)
-    return row
+def lock_project(db: Session, project_id: str) -> Project:
+    """The project row under a row lock, so two approvers cannot both read it as pending."""
+    from app.services.uuid_path_param import validate_uuid_path
 
-
-def _first_party(db: Session, company_id: str, party_type: str, name: Optional[str]) -> Optional[str]:
-    if not _norm(name):
-        return None
-    row = (
-        db.query(ProjectParty.id)
-        .filter(
-            ProjectParty.company_id == company_id,
-            ProjectParty.party_type == party_type,
-            func.lower(func.btrim(ProjectParty.name)) == _norm(name),
-        )
-        .order_by(ProjectParty.created_at, ProjectParty.id)
+    validate_uuid_path(project_id, resource="Project")
+    project = (
+        db.query(Project)
+        .filter(Project.id == str(project_id))
+        .with_for_update()
+        .populate_existing()
         .first()
     )
-    return str(row[0]) if row else None
-
-
-def _prefill(db: Session, row: ProjectRegistration) -> Dict[str, Optional[str]]:
-    type_id = None
-    if _norm(row.type_of_building):
-        found = (
-            db.query(ProjectType.id)
-            .filter(
-                ProjectType.company_id == row.company_id,
-                func.lower(func.btrim(ProjectType.name)) == _norm(row.type_of_building),
-            )
-            .order_by(ProjectType.id)
-            .first()
-        )
-        type_id = str(found[0]) if found else None
-    return {
-        "developer_party_id": _first_party(db, row.company_id, "developer", row.developer_name),
-        "architect_party_id": _first_party(db, row.company_id, "architect", row.architect_name),
-        "main_contractor_party_id": _first_party(
-            db, row.company_id, "main_contractor", row.main_contractor_name
-        ),
-        "type_id": type_id,
-    }
-
-
-def _crm_row(db: Session, row: ProjectRegistration, *, use_meaning: bool = True) -> Dict[str, Any]:
-    return {
-        "id": str(row.id),
-        "submitted_at": _iso(row.submitted_at),
-        "title": row.title,
-        "developer_name": row.developer_name,
-        "state": row.state,
-        "sales_agent_name": _agent_name_for(db, row),
-        "status": row.status,
-        "possible_duplicates": _duplicates_for(db, row, use_meaning=use_meaning),
-        "project_id": str(row.project_id) if row.project_id else None,
-        "project_code": _project_code(db, row.project_id),
-    }
-
-
-def detail(db: Session, row: ProjectRegistration) -> Dict[str, Any]:
-    from app.models.user import User
-
-    decided_by_name = None
-    if row.decided_by:
-        user = db.get(User, row.decided_by)
-        decided_by_name = (user.name or user.email) if user else None
-    out = _crm_row(db, row)
-    out.update({key: getattr(row, key) for key in FIELD_KEYS})
-    out.update(
-        {
-            "customer_id": str(row.customer_id) if row.customer_id else None,
-            "reject_reason": row.reject_reason,
-            "decided_at": _iso(row.decided_at),
-            "decided_by_name": decided_by_name,
-            "applicant_user_id": row.applicant_user_id,
-            "prefill": _prefill(db, row),
-        }
-    )
-    return out
-
-
-_SORTABLE = {
-    "submitted_at": ProjectRegistration.submitted_at,
-    "created_at": ProjectRegistration.created_at,
-    "title": ProjectRegistration.title,
-    "developer_name": ProjectRegistration.developer_name,
-    "state": ProjectRegistration.state,
-    "status": ProjectRegistration.status,
-}
-
-
-def list_rows(
-    db: Session,
-    *,
-    status: Optional[str],
-    query: Optional[str],
-    page: int,
-    limit: int,
-    sort: Optional[str],
-    direction: str,
-) -> Dict[str, Any]:
-    # A contact's unsent draft is not the admin's business, whatever the filter says.
-    q = db.query(ProjectRegistration).filter(ProjectRegistration.status != STATUS_DRAFT)
-    wanted = (status or STATUS_PENDING).strip().lower()
-    if wanted != "all":
-        q = q.filter(ProjectRegistration.status.in_([s.strip() for s in wanted.split(",") if s.strip()]))
-    if query and query.strip():
-        like = f"%{query.strip()}%"
-        q = q.filter(
-            or_(
-                ProjectRegistration.title.ilike(like),
-                ProjectRegistration.developer_name.ilike(like),
-                ProjectRegistration.distributor_name.ilike(like),
-            )
-        )
-    total = q.count()
-    column = _SORTABLE.get(sort or "", ProjectRegistration.submitted_at)
-    ordered = column.asc() if (direction or "").lower() == "asc" else column.desc()
-    rows = (
-        q.order_by(ordered.nulls_last(), ProjectRegistration.id)
-        .offset((page - 1) * limit)
-        .limit(limit)
-        .all()
-    )
-    prime_meaning(rows)  # one call for the page; a failure backs off, so rows do not retry it
-    return {
-        "data": [_crm_row(db, r) for r in rows],
-        "pagination": {"total": total, "page": page, "limit": limit},
-        "empty": total == 0,
-    }
+    if project is None:
+        raise AppException(status_code=404, message="Project not found.", code="project_not_found")
+    return project
 
 
 def _not_pending() -> AppException:
     return AppException(
         status_code=409,
-        message="This registration has already been decided.",
+        message="This project is not waiting for approval.",
         code="project_registration_not_pending",
     )
 
@@ -863,7 +812,7 @@ def _unprocessable(message: str, code: str) -> AppException:
 
 
 def _owner_can_own(db: Session, user_id: Optional[str], company_id: str) -> bool:
-    """An active, untrashed user with access to the registration's company."""
+    """An active, untrashed user with access to the project's company."""
     if not user_id:
         return False
     from app.models.company import UserCompany
@@ -884,15 +833,15 @@ def _owner_can_own(db: Session, user_id: Optional[str], company_id: str) -> bool
 
 
 def _resolve_owner(
-    db: Session, row: ProjectRegistration, requested: Optional[str], actor_user_id: str, actor_slugs
+    db: Session, project: Project, requested: Optional[str], actor_user_id: str, actor_slugs
 ) -> str:
     """Who owns the project (finding S9). The applicant or the approver need no extra grant;
     anyone else is the staff rule: only a sales manager registers a project for someone else."""
-    applicant = row.applicant_user_id
-    # The review form sends the applicant; one who cannot own a project of this company
+    applicant = _applicant_user_id(db, project)
+    # The form may send the applicant; one who cannot own a project of this company
     # (inactive, no access) must not leave a non-manager unable to approve: same fallback as
     # sending no owner at all.
-    if requested and requested == applicant and not _owner_can_own(db, applicant, row.company_id):
+    if requested and requested == applicant and not _owner_can_own(db, applicant, project.company_id):
         requested = None
     if requested:
         if requested not in (applicant, actor_user_id) and MANAGE_PERMISSION not in actor_slugs:
@@ -901,17 +850,17 @@ def _resolve_owner(
                 message="Only a sales manager can register a project for someone else.",
                 code="project_owner_assign_forbidden",
             )
-        if requested != actor_user_id and not _owner_can_own(db, requested, row.company_id):
+        if requested != actor_user_id and not _owner_can_own(db, requested, project.company_id):
             raise _unprocessable(
                 "That salesperson cannot own a project of this company.",
                 "project_registration_owner_invalid",
             )
         return requested
-    return applicant if _owner_can_own(db, applicant, row.company_id) else actor_user_id
+    return applicant if _owner_can_own(db, applicant, project.company_id) else actor_user_id
 
 
 def _check_company_refs(db: Session, company_id: str, payload: Dict[str, Any]) -> None:
-    """Every id the approver sends must belong to the registration's company (finding S10):
+    """Every id the approver sends must belong to the project's company (finding S10):
     the pickers are company scoped, the API must not trust that."""
     from app.models.product import Brand
     from app.models.projects import ProjectTemplate
@@ -942,102 +891,112 @@ def _check_company_refs(db: Session, company_id: str, payload: Dict[str, Any]) -
             raise refuse
 
 
+def _exact_duplicate(db: Session, project: Project, developer_party_id: str, title: str) -> AppException:
+    from app.services.project_clash_service import normalise_project_title
+    from app.services.project_service import approved_projects, project_label
+
+    existing = approved_projects(
+        db.query(Project).filter(
+            Project.company_id == project.company_id,
+            Project.id != project.id,
+            Project.developer_party_id == developer_party_id,
+            Project.normalised_title == normalise_project_title(title),
+        )
+    ).first()
+    name = project_label(existing) if existing else "an existing project"
+    return AppException(
+        status_code=409,
+        message=f"{name} already has this developer and title. Change the title, e.g. add the phase.",
+        code="project_registration_exact_duplicate",
+        details={
+            "existing_project": {
+                "project_id": str(existing.id),
+                "project_code": existing.project_code,
+                "title": existing.title,
+            }
+        }
+        if existing
+        else None,
+    )
+
+
 def approve(
     db: Session,
-    row: ProjectRegistration,
+    project: Project,
     payload: Dict[str, Any],
     *,
     actor_user_id: str,
     actor_slugs=frozenset(),
-) -> ProjectRegistration:
-    """Create the project (PPF code drawn here) and mark the registration approved.
+) -> Project:
+    """Make the pending registration a project (R9): its PPF code, its first funnel rung, its
+    template checklist, `approval_state = approved`.
 
     A possible duplicate never blocks (D7); only the exact developer + title repeat does, and
-    that is answered 409 naming the project. The whole creation sits in a SAVEPOINT so the
-    refused attempt neither burns a number nor poisons the session.
+    that is answered 409 naming the project. Everything sits in a SAVEPOINT so the refused
+    attempt neither burns a number nor leaves the row half-approved.
     """
     from app.services import project_service
     from app.services.project_clash_service import normalise_project_title
 
-    if row.status != STATUS_PENDING:
+    if project.approval_state != APPROVAL_PENDING:
         raise _not_pending()
-    developer_party_id = payload.get("developer_party_id")
+    developer_party_id = payload.get("developer_party_id") or project.developer_party_id
     if not developer_party_id:
         raise AppException(
             status_code=422,
             message="Pick the developer before approving.",
             code="project_registration_developer_required",
         )
-    title = _clean(payload.get("title")) or _clean(row.title)
+    title = _clean(payload.get("title")) or _clean(project.title)
+    if not title:
+        raise AppException(
+            status_code=422, message="A project title is required.", code="project_title_required"
+        )
     details = {k: payload[k] for k in _APPROVE_DETAIL_KEYS if k in payload}
-    details.setdefault("state", row.state)
-    details.setdefault("mukim", row.mukim)
-    registration_id = str(row.id)
-    company_id = str(row.company_id)
-    _check_company_refs(db, company_id, payload)
-    owner = _resolve_owner(db, row, payload.get("owner_user_id"), actor_user_id, actor_slugs)
+    _check_company_refs(db, str(project.company_id), payload)
+    owner = _resolve_owner(db, project, payload.get("owner_user_id"), actor_user_id, actor_slugs)
     try:
         with db.begin_nested():
-            project = project_service.register_project(
+            project.title = title
+            project.normalised_title = normalise_project_title(title)
+            project.developer_party_id = developer_party_id
+            for key in ("type_id", "template_id"):
+                if payload.get(key):
+                    setattr(project, key, payload[key])
+            project.owner_user_id = owner
+            project.approval_state = APPROVAL_APPROVED
+            project.reject_reason = None
+            project.decided_at = _now()
+            project.decided_by = actor_user_id
+            if not project.created_by:
+                project.created_by = actor_user_id
+            project_service.start_project(
                 db,
-                company_id=company_id,
+                project,
                 actor_user_id=actor_user_id,
-                developer_party_id=developer_party_id,
-                title=title or "",
-                type_id=payload.get("type_id"),
-                template_id=payload.get("template_id"),
                 details=details,
                 brand_ids=payload.get("brand_ids"),
-                owner_user_id=owner,
-                skip_clash_check=True,
             )
     except IntegrityError as exc:
         if "uq_projects_company_developer_title" not in str(getattr(exc, "orig", exc)):
             raise
-        existing = (
-            db.query(Project)
-            .filter(
-                Project.company_id == company_id,
-                Project.developer_party_id == developer_party_id,
-                Project.normalised_title == normalise_project_title(title or ""),
-            )
-            .first()
-        )
-        code = existing.project_code if existing else "an existing project"
-        raise AppException(
-            status_code=409,
-            message=f"{code} already has this developer and title. Change the title, e.g. add the phase.",
-            code="project_registration_exact_duplicate",
-            details={
-                "existing_project": {
-                    "project_id": str(existing.id),
-                    "project_code": existing.project_code,
-                    "title": existing.title,
-                }
-            }
-            if existing
-            else None,
-        )
-    row = get_or_404(db, registration_id)
-    row.status = STATUS_APPROVED
-    row.project_id = project.id
-    row.decided_at = _now()
-    row.decided_by = actor_user_id
-    db.flush()
-    return row
+        raise _exact_duplicate(db, project, developer_party_id, title)
+    return project
 
 
-def reject(db: Session, row: ProjectRegistration, reason: Optional[str], *, actor_user_id: str) -> ProjectRegistration:
+def reject(db: Session, project: Project, reason: Optional[str], *, actor_user_id: str) -> Project:
+    """Pending -> rejected with the reason (R10). The project stays visible until the portal
+    resubmits it; no number is drawn."""
     text = (reason or "").strip()
     if not text:
         raise AppException(
             status_code=422, message="Give the reason for rejecting.", code="project_registration_reason_required"
         )
-    if row.status != STATUS_PENDING:
+    if project.approval_state != APPROVAL_PENDING:
         raise _not_pending()
-    row.status = STATUS_REJECTED
-    row.reject_reason = text
-    row.decided_at = _now()
-    row.decided_by = actor_user_id
+    project.approval_state = APPROVAL_REJECTED
+    project.reject_reason = text
+    project.decided_at = _now()
+    project.decided_by = actor_user_id
     db.flush()
-    return row
+    return project
