@@ -35,7 +35,9 @@ required) is a dead loopback proxy (the lowercase `https_proxy` required; proxy 
 case-folded), and the lowercase `no_proxy` is set to the local hosts (plus the copy's LLM
 host), with no `*` in any NO_PROXY / no_proxy. The RQ worker reads only `<backend>/.env`
 (`WORKER_ENV_FILE`), never `--env-file`: when that is another existing file it gets the same
-env checks and its refusals are prefixed `worker env <file>`. A checked value the
+env checks and its refusals are prefixed `worker env <file>`; its DATABASE_URL (last
+assignment across case variants) must name the same host, port and database as `--env-file`
+(credentials never compared or printed). A checked value the
 env file leaves out, or sets empty, is judged by its Settings default (RESPOND_BASE_URL falls
 back to https://api.respond.io, so it must be set to a `.invalid` host). It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
@@ -333,6 +335,15 @@ def check_env(env: Any) -> list[str]:
     return reasons
 
 
+def _db_identity(url: str) -> tuple[str, str, str]:
+    """(host, port, database) of a URL, credentials dropped (never printed or compared)."""
+    try:
+        parts = urlsplit(url or "")
+        return (parts.hostname or "").lower(), str(parts.port or ""), parts.path.lstrip("/")
+    except ValueError:
+        return "", "", ""
+
+
 def check_worker_env(env_file: str) -> list[str]:
     """The RQ worker loads <backend>/.env (never SORENTO_ENV_FILE): when that is another
     file and it exists, the same env checks apply to it, each reason prefixed with the file."""
@@ -342,7 +353,16 @@ def check_worker_env(env_file: str) -> list[str]:
     from dotenv import dotenv_values
 
     values = dict(dotenv_values(worker, interpolate=False))
-    return [f"worker env {worker}: {reason}" for reason in check_env(values)]
+    reasons = [f"worker env {worker}: {reason}" for reason in check_env(values)]
+    # The worker writes to ITS DATABASE_URL (last assignment across case variants): same
+    # server and database as the env file's, else the rewired copy is not the one it works on.
+    mine, theirs = _db_identity(env_file_database_url(env_file)), _db_identity(env_file_database_url(str(worker)))
+    if mine != theirs:
+        reasons.append(
+            f"worker env {worker}: its DATABASE_URL names {theirs[2] or '(none)'} on {theirs[0] or '?'}:{theirs[1] or '?'} "
+            f"but --env-file names {mine[2] or '(none)'} on {mine[0] or '?'}:{mine[1] or '?'}"
+        )
+    return reasons
 
 
 def check_neutralised(db: Any, env: Any) -> list[str]:
