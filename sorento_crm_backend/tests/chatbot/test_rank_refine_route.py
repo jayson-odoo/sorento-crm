@@ -1,7 +1,8 @@
 """RANK-REFINE-ROUTE layer-2 contract (PLAN-rank-refine-route-1025.md): the R5 ranking follow-ups CHAT-SLIM-INDEX phase 1
 lost under a prompt edit (gpt-5.4-mini, arm B vs v63 arm A) still give the user the SAME answer through the real engine seam,
 so the parser-gold flip is not a user-visible change. Each B shape is the parse the B run emitted, with exactly the fields its
-gold reasons pin (`parser_gold.grade_parse` lists every mismatch); the held ranking is the gold row's context. Fake codes.
+gold reasons pin (`parser_gold.grade_parse` lists every mismatch); the held ranking has the gold row's axis (the agent ranking
+here also carries a product and a period, which routing does not read). Fake codes.
 
 Not here (DIFFERENT, no parser field to route on, prompt lane): or5-c-03 "dealer only" where B drops `sales_channel`."""
 from __future__ import annotations
@@ -13,9 +14,8 @@ import pytest
 from tests.chatbot import test_report_ask_lane as lane_tests
 from tests.chatbot.test_engine import stub_access  # noqa: F401
 from tests.chatbot.test_report_ask_lane import PRODUCT_CODE, _say_all, console  # noqa: F401
-from tests.chatbot.test_report_channel_filter import _agent_ranking, _body, _ran, _v63
+from tests.chatbot.test_report_channel_filter import YEAR_2026, _agent_ranking, _body, _ran, _v63
 
-YEAR_2026 = {"date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
 #: Every R5 follow-up below names no entity and reuses the held subject (stored on the A and B runs alike).
 FOLLOW_UP = {"entities": [], "entity_op": "reuse"}
 
@@ -46,8 +46,8 @@ CHANNEL_ROWS = {
     "or5-c-02 B": ({"order_status": "top_selling", "sales_channel": "project", "ranking_refine": True}, "only project"),
     "or5-c-04 A": ({"sales_channel": "project", "ranking_refine": True}, "channel project sahaja"),
     "or5-c-04 B": ({"order_status": "top_selling", "sales_channel": "project", "ranking_refine": True}, "channel project sahaja"),
-    # The variant v2 re-parse (crew c02-c04-full-parses.jsonl): the channel as the axis, read as a filter (#1844).
-    "or5-c-04 v2": ({"sales_channel": "project", "ranking_refine": True, "group_by": "channel"}, "channel project sahaja"),
+    # The variant v1 re-parse (crew c02-c04-full-parses.jsonl): the channel as the axis, read as a filter (#1844).
+    "or5-c-04 v1": ({"sales_channel": "project", "ranking_refine": True, "group_by": "channel"}, "channel project sahaja"),
 }
 
 
