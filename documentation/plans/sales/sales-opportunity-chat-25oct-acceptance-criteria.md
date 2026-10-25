@@ -45,8 +45,11 @@ saved without YES. Dealers, staff and unlinked contacts are refused.
   name and account label; another agent's customers never appear. `test_options_own_customers_only`.
 - O2-2 [BE] Several own accounts of one dealer (A/C I, A/C III) are all returned, labelled.
   `test_options_returns_every_own_account`.
-- O2-3 [BE] A name that exists only as another agent's customer: `items` [] and `blocked` true; an unknown name:
-  `items` [] and `prospect` true. `test_options_blocked_and_prospect`.
+- O2-3 [BE] (crew a43805183) In the CHAT options route, when no own customer matches `q` but `q` matches (the same
+  contains-search on code or name) a customer of the company owned by another agent, `items` is [] and `blocked` is
+  true, even when `q` is only part of that customer's name ("4 SMART PLUS" for "4 SMART PLUS SDN BHD [A/C I]");
+  `prospect` is true only when `q` matches no customer at all. The portal's `customer_options` is unchanged.
+  `test_options_blocked_and_prospect`, `test_options_partial_name_of_other_agents_customer_is_blocked`.
 
 ## O3. Create route
 
@@ -70,6 +73,10 @@ saved without YES. Dealers, staff and unlinked contacts are refused.
 
 - O3-9 [BE] (review nit) An amount above the column's largest value (numeric(15,2), the portal's `_MAX_AMOUNT`)
   is a 422 `amount_too_large`, never a 500. `test_create_refuses_too_large_amount`.
+
+- O3-10 [BE] (crew a43805183) The chat create refuses a `prospect_name` that matches (contains-search) a customer of
+  the company owned by another agent: 422 `CUSTOMER_NOT_YOURS`, nothing saved (the route is the authority, not the
+  lane). `test_create_refuses_prospect_that_is_another_agents_customer`.
 
 ## O4. MCP
 

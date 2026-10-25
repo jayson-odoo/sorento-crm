@@ -193,6 +193,13 @@ on the mount; grant to admin + integration_sorento_mcp + integration_n8n only (n
 keeps the integration fields; amount upper bound; in-app assistant write permission; explicit, fresh (30 min) yes.
 Nit: the portal's `_resolve_company` alias is dropped (call `opportunity_service.resolve_company`).
 
+### Crew a43805183 (25 Oct): another agent's customer typed in chat
+
+In chat only, no own match but the words match another agent's customer of the company (contains-search) ->
+`blocked` -> "That customer is not one of yours." and the flow ends; a prospect only when the words match no customer
+at all; the create route refuses such a prospect with CUSTOMER_NOT_YOURS. The read-back shows "Prospect: <words>".
+The portal's `customer_options` is unchanged.
+
 ### Test DB
 
 `sorento_stc_throwaway` (at head oihr_0010), `.env.ci-tests`; serial pytest runs (a `-n 2` run hung in slice 1).
