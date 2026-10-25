@@ -6,10 +6,9 @@ delivery event, built per run in `_events`:
 
 * **linked**: a live DO line (not cancelled, not deleted, dated, not a replacement `REP...`)
   that resolves to a sales order line, on the DO's own date. The SO line is the line's own
-  link (`order_lines.sales_order_line_id`), else the DO header's SO (`orders.sales_order_id`)
-  and else the SO the line names (`from_doc_type` SO, `from_doc_no`, same company), each of the
-  last two narrowed to that SO's line of the same product (the first by `line_no`, so a line is
-  never fanned out). Quantity: the DO line's own, never capped at the ordered quantity.
+  link (`order_lines.sales_order_line_id`), else the line of the same product (the first by
+  `line_no`, so a line is never fanned out) on the SO the DO header names (`orders.sales_order_id`),
+  else on the SO the line names (`from_doc_type` SO, `from_doc_no`, same company). Quantity: the DO line's own, never capped at the ordered quantity.
 * **residual**: the part of a live SO line's delivered quantity (`least(qty_delivered,
   qty_ordered)`, the sales report's confirmed qty) that no linked DO line explains, on the SO
   line's own date (`required_date`, else the SO's `order_date`). Old-system DOs carry no SO link,
@@ -53,38 +52,31 @@ CHANNELS = ("project", "retail")
 #: delivery orders; a residual (no DO behind it) counts its sales order instead.
 ORDERS_COUNT_DELIVERY_ORDERS = True
 
-_SOL = sa.orm.aliased(SalesOrderLine)
-_SO = sa.orm.aliased(SalesOrder)
+_DOC_SO = sa.orm.aliased(SalesOrder)
 
-
-def _first_line_of(so_match: Any) -> Any:
-    """The id of the first line (by `line_no`) of the SO `so_match` names, of the DO line's product."""
-    return (
-        sa.select(_SOL.id)
-        .join(_SO, _SO.id == _SOL.sales_order_id)
-        .where(so_match, _SOL.product_id == OrderLine.product_id)
-        .order_by(_SOL.line_no.asc().nullslast(), _SOL.id.asc())
-        .limit(1)
-        .scalar_subquery()
-    )
-
-
+#: The SO a DO line's doc number names (`from_doc_type` SO, unique per company and number).
 _BY_DOC_NUMBER = sa.and_(
     OrderLine.from_doc_type == "SO",
-    _SO.so_number == OrderLine.from_doc_no,
-    _SO.company_id == OrderLine.company_id,
+    _DOC_SO.so_number == OrderLine.from_doc_no,
+    _DOC_SO.company_id == OrderLine.company_id,
 )
 
-#: The SO line a DO line delivered: line link, then the header's SO, then the doc number.
-RESOLVED_SO_LINE = sa.func.coalesce(
-    OrderLine.sales_order_line_id,
-    _first_line_of(_SO.id == Order.sales_order_id),
-    _first_line_of(_BY_DOC_NUMBER),
-)
+#: The SO a DO line names when its own line link is empty: the header's, then the doc number's.
+NAMED_SO = sa.func.coalesce(Order.sales_order_id, _DOC_SO.id)
 
-#: The SO a DO line names when no line of its product is on it: the header's, then the doc
-#: number's (unique per company and number, so at most one).
-NAMED_SO = sa.func.coalesce(Order.sales_order_id, sa.select(_SO.id).where(_BY_DOC_NUMBER).scalar_subquery())
+
+def _first_lines(ctx: Any) -> Any:
+    """The first line (by `line_no`) of each (sales order, product): the SO line a DO line that
+    names only its SO delivered. Joined by hash, never a per-line subquery (a per-line subquery
+    is costed per DO line and switches on JIT, the lesson `achievement_service` records)."""
+    sol = sa.orm.aliased(SalesOrderLine)
+    return (
+        sa.select(sol.id, sol.sales_order_id, sol.product_id)
+        .where(*_grant_filter(sol.company_id, ctx))
+        .distinct(sol.sales_order_id, sol.product_id)
+        .order_by(sol.sales_order_id, sol.product_id, sol.line_no.asc().nullslast(), sol.id)
+        .subquery("delivered_first_lines")
+    )
 
 
 def _fixed_filters() -> List[Any]:
@@ -115,17 +107,12 @@ def _prorated(qty: Any) -> Any:
     )
 
 
-def _events(ctx: Any) -> Any:
-    """Every delivery event of the run's period, as one subquery. Built once per run (the base,
-    the measures and the date basis must read the SAME subquery object)."""
-    cached = ctx.__dict__.get("_delivered_events")
-    if cached is not None:
-        return cached
-
-    start, end = ctx.period.start, ctx.period.end_exclusive
-    # Every live DO line of the granted companies, resolved once. Not cut to the period: a
-    # residual needs every DO line of its SO line, whatever its date.
-    do_lines = (
+def _do_lines(ctx: Any, name: str, window: tuple) -> Any:
+    """The live DO lines of the granted companies (inside `window`, when given), each with the SO
+    line it delivered: the line's own link, else the first line of its product on the SO the
+    header or the doc number names."""
+    first = _first_lines(ctx)
+    return (
         sa.select(
             OrderLine.id.label("do_line_id"),
             Order.id.label("do_id"),
@@ -138,15 +125,41 @@ def _events(ctx: Any) -> Any:
             OrderLine.warehouse_id.label("warehouse_id"),
             sa.func.coalesce(OrderLine.quantity, 0).label("qty"),
             sa.func.round(sa.func.coalesce(OrderLine.total, 0), 2).label("total"),
-            RESOLVED_SO_LINE.label("sol_id"),
+            sa.func.coalesce(OrderLine.sales_order_line_id, first.c.id).label("sol_id"),
             NAMED_SO.label("named_so_id"),
         )
         .select_from(OrderLine)
         .join(Order, Order.id == OrderLine.order_id)
-        .where(*_fixed_filters(), *_grant_filter(Order.company_id, ctx))
-        .cte("delivered_do_lines")
+        .outerjoin(_DOC_SO, _BY_DOC_NUMBER)
+        .outerjoin(
+            first,
+            sa.and_(
+                OrderLine.sales_order_line_id.is_(None),
+                first.c.sales_order_id == NAMED_SO,
+                first.c.product_id == OrderLine.product_id,
+            ),
+        )
+        .where(*_fixed_filters(), *_grant_filter(Order.company_id, ctx), *window)
+        .subquery(name)
     )
+
+
+def _events(ctx: Any) -> Any:
+    """Every delivery event of the run's period, as one subquery. Built once per run (the base,
+    the measures and the date basis must read the SAME subquery object)."""
+    cached = ctx.__dict__.get("_delivered_events")
+    if cached is not None:
+        return cached
+
+    start, end = ctx.period.start, ctx.period.end_exclusive
+    # The period's DO lines feed the linked and unlinked events; EVERY DO line feeds what a DO
+    # already explains of an SO line (a residual needs them all, whatever their date). Two
+    # subqueries, not one shared CTE: the planner cannot estimate a filtered CTE, and on 300k
+    # lines it then nested-looped every join (2.3 s against 0.3 s, measured 25 Oct 2026).
+    period_lines = _do_lines(ctx, "delivered_do_period", (Order.order_date >= start, Order.order_date < end))
+    every_line = _do_lines(ctx, "delivered_do_lines", ())
     live_so = sa.and_(SalesOrder.doc_type != DOC_TYPE_CONSIGNMENT)
+    do_lines = period_lines
     linked = (
         sa.select(
             do_lines.c.do_date.label("event_date"),
@@ -164,12 +177,12 @@ def _events(ctx: Any) -> Any:
         .select_from(do_lines)
         .join(SalesOrderLine, SalesOrderLine.id == do_lines.c.sol_id)
         .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .where(live_so, do_lines.c.do_date >= start, do_lines.c.do_date < end)
+        .where(live_so)
     )
     explained = (
-        sa.select(do_lines.c.sol_id, sa.func.sum(do_lines.c.qty).label("qty"))
-        .where(do_lines.c.sol_id.isnot(None))
-        .group_by(do_lines.c.sol_id)
+        sa.select(every_line.c.sol_id, sa.func.sum(every_line.c.qty).label("qty"))
+        .where(every_line.c.sol_id.isnot(None))
+        .group_by(every_line.c.sol_id)
         .subquery("delivered_explained")
     )
     line_date = sa.func.coalesce(SalesOrderLine.required_date, SalesOrder.order_date)
@@ -224,8 +237,6 @@ def _events(ctx: Any) -> Any:
             do_lines.c.sol_id.is_(None),
             sa.or_(SalesOrder.id.is_(None), live_so),
             do_lines.c.source_book.isnot(None),
-            do_lines.c.do_date >= start,
-            do_lines.c.do_date < end,
         )
     )
     events = sa.union_all(linked, residual, unlinked).subquery("delivered_events")
