@@ -353,18 +353,22 @@ def test_a11_an_approved_row_carries_its_ppf_no(world):
 # ------------------------------------------------------------------ A12 duplicates
 
 
-def test_a12_detail_names_a_project_on_the_same_lot_and_mukim_without_ids(world):
-    existing = project(
-        world.db, world.company_id, "KILANG ALPHA LOT 9001 MUKIM TEBRAU", code="PRJ-ZZT-9001"
-    )
-    rid = pending(
-        world,
-        title="CADANGAN PEMBINAAN GUDANG DI ATAS LOT 9001, MUKIM TEBRAU, JOHOR",
-        mukim="Tebrau",
-    )
+def test_a12_detail_names_a_meaning_match_without_ids(world):
+    """Possible duplicates are shown to everyone (owner ruling 25 Oct): code and title, no id,
+    named by meaning only, never blocking."""
+    existing = project(world.db, world.company_id, "KILANG ALPHA LOT 9001 MUKIM TEBRAU", code="PRJ-ZZT-9001")
+    world.semantic.append((existing.id, 0.93))
+    rid = pending(world, title="CADANGAN PEMBINAAN GUDANG DI ATAS LOT 9001, MUKIM TEBRAU, JOHOR")
     got = as_contact(world, world.a).get(f"{SUB}/{rid}").json()
     assert got["possible_duplicates"] == [{"project_code": existing.project_code, "title": existing.title}]
     assert existing.id not in str(got)
+
+
+def test_a12_a_lot_and_mukim_match_without_a_meaning_match_is_not_named(world):
+    project(world.db, world.company_id, "KILANG ALPHA LOT 9001 MUKIM TEBRAU", code="PRJ-ZZT-9001")
+    rid = pending(world, title="CADANGAN PEMBINAAN GUDANG DI ATAS LOT 9001, MUKIM TEBRAU, JOHOR")
+    got = as_contact(world, world.a).get(f"{SUB}/{rid}").json()
+    assert got["possible_duplicates"] == []
 
 
 def test_a12_nothing_similar_means_an_empty_list(world):

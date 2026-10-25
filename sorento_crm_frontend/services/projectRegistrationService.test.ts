@@ -96,4 +96,59 @@ describe('projectRegistrationService', () => {
       approveProjectRegistration('reg-1', { title: 'T' } as never),
     ).rejects.toThrow('PPF2509012 already has this developer and title.');
   });
+
+  const EXISTING = {
+    project_id: 'proj-77',
+    project_code: 'PPF2509012',
+    title: 'KILANG ALPHA LOT 9001',
+  };
+
+  it.each([
+    ['at the top of the body', { existing_project: EXISTING }],
+    ['under details', { details: { existing_project: EXISTING } }],
+  ])(
+    'a 409 exact duplicate throws an error carrying existingProject (%s)',
+    async (_where, extra) => {
+      apiFetch.mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            code: 'project_registration_exact_duplicate',
+            message: 'PPF2509012 already has this developer and title.',
+            detail: null,
+            ...extra,
+          }),
+          { status: 409 },
+        ),
+      );
+      const error = await approveProjectRegistration('reg-1', {
+        title: 'T',
+      } as never).catch((e: Error & { existingProject?: unknown }) => e);
+      expect((error as Error).message).toContain(
+        'PPF2509012 already has this developer and title.',
+      );
+      expect((error as { existingProject?: unknown }).existingProject).toEqual(
+        EXISTING,
+      );
+    },
+  );
+
+  it('an error without an existing project has none', async () => {
+    apiFetch.mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          code: 'project_registration_not_pending',
+          message: 'Not pending.',
+        }),
+        {
+          status: 409,
+        },
+      ),
+    );
+    const error = await approveProjectRegistration('reg-1', {
+      title: 'T',
+    } as never).catch((e: Error & { existingProject?: unknown }) => e);
+    expect(
+      (error as { existingProject?: unknown }).existingProject ?? null,
+    ).toBeNull();
+  });
 });

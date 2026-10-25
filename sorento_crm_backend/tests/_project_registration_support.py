@@ -57,14 +57,19 @@ def uid() -> str:
 # ------------------------------------------------------------------ stubs
 
 
-def stub_semantic(monkeypatch, result=None) -> None:
-    """Keep the meaning signal off the network. A module that does not exist yet is not an
-    error here: the test's own import is what fails, for the right reason."""
+def stub_semantic(monkeypatch, result=None) -> list:
+    """Keep the meaning signal off the network and under the test's control. Returns the list
+    `semantic_matches` answers with, `(project_id, cosine)` pairs: a test appends to it to say
+    "the meaning signal names this project". Duplicates are named by meaning ONLY (audit round
+    3), so this list is the only way a project becomes a possible duplicate in these suites.
+    A module that does not exist yet is not an error here: the test's own import fails."""
+    holder: list = list(result or [])
     try:
         from app.services import project_registration_service as svc
     except ImportError:
-        return
-    monkeypatch.setattr(svc, "semantic_matches", lambda db, **kw: list(result or []))
+        return holder
+    monkeypatch.setattr(svc, "semantic_matches", lambda db, **kw: list(holder))
+    return holder
 
 
 # ------------------------------------------------------------------ seeding
@@ -73,13 +78,15 @@ def stub_semantic(monkeypatch, result=None) -> None:
 def numbering_rule(
     db,
     *,
+    doc_type: str = "project",
     prefix: str = "PPF{yy}{mm}",
     digits: int = 3,
     next_value: int = 5,
     reset: str = "monthly",
     last_reset_key: str | None = "auto",
 ) -> str:
-    """The project numbering rule. `last_reset_key` defaults to this month so a monthly rule
+    """The `project` numbering rule (PPF for staff and queue registrations alike, owner ruling
+    25 Oct: one register, one series). `last_reset_key` defaults to this month so a monthly rule
     does not reset itself to start_value on the first draw."""
     if last_reset_key == "auto":
         today = date.today()
@@ -96,19 +103,6 @@ def numbering_rule(
     )
     db.flush()
     return rule_id
-
-
-def legacy_rule(w) -> None:
-    """Put the project rule back on the shipped `PRJ-` default, for tests that are about the
-    staff route or a project field and must not depend on the `{mm}` token."""
-    w.db.execute(
-        text(
-            "update document_numbering_rules set prefix_template = 'PRJ-', number_digits = 6, "
-            "reset_policy = 'none', last_reset_key = null where id = :i"
-        ),
-        {"i": w.rule_id},
-    )
-    w.db.flush()
 
 
 def rule_next_value(db, rule_id: str) -> int:
@@ -346,13 +340,15 @@ def world(monkeypatch):
     from app.models.user import User
     from app.services.notification_service import NotificationService
 
-    stub_semantic(monkeypatch)
+    semantic = stub_semantic(monkeypatch)
     sent: list = []
-    monkeypatch.setattr(
-        NotificationService,
-        "create_with_channel_preferences",
-        lambda self, **kw: sent.append((str(kw.get("user_id")), kw.get("type"))),
-    )
+    sent_kw: list = []
+
+    def _record(self, **kw):
+        sent.append((str(kw.get("user_id")), kw.get("type")))
+        sent_kw.append(kw)
+
+    monkeypatch.setattr(NotificationService, "create_with_channel_preferences", _record)
 
     with blank_session() as db:
         company_id = sorento(db)
@@ -392,7 +388,8 @@ def world(monkeypatch):
             with company_scope(db, frozenset({company_id})):
                 with TestClient(app, headers={"X-Portal-Token": "zzt-token"}) as client:
                     yield SimpleNamespace(
-                        c=client, db=db, state=state, sent=sent, perms=perms,
+                        c=client, db=db, state=state, sent=sent, sent_kw=sent_kw, perms=perms,
+                        semantic=semantic,
                         company_id=company_id, other_company=other_company, rule_id=rule_id,
                         owner=owner, approver=approver, applicant_user=applicant_user, staff=staff,
                         a=a, b=b, noagent=noagent, ungranted=ungranted,

@@ -252,14 +252,13 @@ beforeEach(() => {
 });
 
 describe('ProjectForm review mode: prefill (D5)', () => {
-  it('fills the title, the matched parties and type, State and Mukim from the registration', async () => {
+  it('fills the title, the matched parties, State and Mukim from the registration', async () => {
     renderForm();
 
     expect(
       (screen.getByLabelText(/project title/i) as HTMLTextAreaElement).value,
     ).toBe('CADANGAN BLOK PEJABAT DI ATAS LOT 7001, MUKIM KULAI');
     await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
-    await waitFor(() => expect(select('Project type').value).toBe('ty1'));
     await waitFor(() => expect(select('State').value).toBe('Johor'));
     expect((screen.getByLabelText('Mukim') as HTMLInputElement).value).toBe(
       'Kulai',
@@ -375,7 +374,7 @@ describe('ProjectForm review mode: Approve (B5, B8)', () => {
         },
       }),
     );
-    await waitFor(() => expect(select('Project type').value).toBe('ty1'));
+    await waitFor(() => expect(select('State').value).toBe('Johor'));
 
     fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
 
@@ -401,7 +400,6 @@ describe('ProjectForm review mode: Approve (B5, B8)', () => {
       expect.objectContaining({
         title: 'CADANGAN BLOK PEJABAT DI ATAS LOT 7001, MUKIM KULAI',
         developer_party_id: 'd1',
-        type_id: 'ty1',
         owner_user_id: 'u-2',
         state: 'Johor',
         mukim: 'Kulai',
@@ -446,7 +444,9 @@ describe('ProjectForm review mode: Approve (B5, B8)', () => {
     // Fix round 1 (N13): the hook's toast is the one surface for the server's message.
     await waitFor(() =>
       expect(toast.error).toHaveBeenCalledWith(
-        expect.stringContaining('PPF2509012 already has this developer and title'),
+        expect.stringContaining(
+          'PPF2509012 already has this developer and title',
+        ),
       ),
     );
     expect(screen.queryByRole('alert')).toBeNull();
@@ -589,5 +589,156 @@ describe('Registration review page (B3, G3)', () => {
     expect(
       await screen.findByText('Registration not found'),
     ).toBeInTheDocument();
+  });
+});
+
+describe('review form is the legacy fields only (audit round 3, item 10)', () => {
+  it('shows Project title, Developer, Type of building (read-only), State, Mukim, Main contractor, Architect, Salesperson', async () => {
+    renderForm();
+    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+
+    for (const label of [
+      /project title/i,
+      /^Developer/,
+      'State',
+      'Mukim',
+      /main contractor/i,
+      /^Architect/,
+      'Salesperson',
+    ]) {
+      expect(screen.getByLabelText(label)).toBeInTheDocument();
+    }
+    // Type of building is the registration's own value, shown and not editable
+    expect(screen.getByText('Type of building')).toBeInTheDocument();
+    expect(screen.getByText('Office')).toBeInTheDocument();
+    const editable = screen.queryByRole('combobox', {
+      name: /type of building/i,
+    });
+    expect(editable === null || (editable as HTMLSelectElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it('hides project type, template, company, location, address, reference, value, launch, delivery, brands and lead', async () => {
+    renderForm();
+    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+
+    for (const label of [
+      /^Project type/,
+      /^Template/,
+      /registered company/i,
+      /^Location/,
+      /^Address/,
+      /^Reference/,
+      /estimated sales value/i,
+      /launch date/i,
+      /expected delivery/i,
+      /^Brands/,
+      /^Lead/,
+    ]) {
+      expect(screen.queryByLabelText(label), String(label)).toBeNull();
+    }
+  });
+
+  it('Approve still sends the title, developer, owner, state, mukim and the matched parties', async () => {
+    renderForm();
+    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+    await waitFor(() => expect(select('Salesperson').value).toBe('u-2'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() =>
+      expect(svc.approveProjectRegistration).toHaveBeenCalledTimes(1),
+    );
+    expect(svc.approveProjectRegistration.mock.calls[0][1]).toEqual(
+      expect.objectContaining({
+        title: 'CADANGAN BLOK PEJABAT DI ATAS LOT 7001, MUKIM KULAI',
+        developer_party_id: 'd1',
+        owner_user_id: 'u-2',
+        state: 'Johor',
+        mukim: 'Kulai',
+        architect_party_id: 'a1',
+      }),
+    );
+  });
+
+  it('create and edit are unchanged: they keep type, template, company, location, address, reference, brands and lead', async () => {
+    renderWith(
+      <ProjectForm
+        mode="edit"
+        project={
+          {
+            id: 'p1',
+            project_code: 'PPF2610001',
+            title: 'Existing tower',
+            outcome: 'open',
+            developer_party_id: 'd1',
+            type_id: 'ty1',
+            brand_ids: [],
+            can_edit: true,
+          } as never
+        }
+      />,
+    );
+    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+
+    for (const label of [
+      /^Project type/,
+      /registered company/i,
+      /^Location/,
+      /^Address/,
+      /^Reference/,
+      /^Brands/,
+      /^Lead/,
+    ]) {
+      expect(screen.getByLabelText(label), String(label)).toBeInTheDocument();
+    }
+  });
+});
+
+describe('the exact-duplicate refusal names the existing project (audit round 3, item 12)', () => {
+  const existing = {
+    project_id: 'proj-77',
+    project_code: 'PPF2509012',
+    title: 'KILANG ALPHA LOT 9001',
+  };
+
+  it('shows "Already registered as <code> <title>" with the code and title as a link to the project', async () => {
+    svc.approveProjectRegistration.mockRejectedValue(
+      Object.assign(
+        new Error('PPF2509012 already has this developer and title.'),
+        {
+          existingProject: existing,
+        },
+      ),
+    );
+    renderForm();
+    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    const link = await screen.findByRole('link', {
+      name: 'PPF2509012 KILANG ALPHA LOT 9001',
+    });
+    expect(link).toHaveAttribute('href', '/project-sales/proj-77');
+    expect(link.closest('p,div,span,li')?.textContent).toContain(
+      'Already registered as',
+    );
+    expect(push).not.toHaveBeenCalled();
+  });
+
+  it('shows no such line for an error without an existing project', async () => {
+    svc.approveProjectRegistration.mockRejectedValue(
+      new Error('Something else failed'),
+    );
+    renderForm();
+    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Approve' }));
+
+    await waitFor(() =>
+      expect(svc.approveProjectRegistration).toHaveBeenCalled(),
+    );
+    expect(screen.queryByText(/Already registered as/)).toBeNull();
   });
 });

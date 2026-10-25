@@ -20,7 +20,6 @@ from ._project_registration_support import (
     as_user,
     create_draft,
     developer,
-    legacy_rule,
     pending,
     ppf_code,
     project,
@@ -123,6 +122,7 @@ def test_b2_paging_and_sorting_by_submitted_at(world):
 
 def test_b3_a_row_carries_the_agents_name_and_possible_duplicates_with_ids(world):
     existing = project(world.db, world.company_id, "KILANG ALPHA LOT 9001 MUKIM TEBRAU", code="PRJ-ZZT-9001")
+    world.semantic.append((existing.id, 0.93))  # duplicates are named by meaning only
     rid = pending(
         world,
         title="CADANGAN PEMBINAAN GUDANG DI ATAS LOT 9001, MUKIM TEBRAU, JOHOR",
@@ -378,7 +378,6 @@ def test_b9_reject_then_the_contact_edits_and_resubmits(world):
 
 
 def test_b10_staff_direct_registration_still_refuses_a_blocking_clash(world):
-    legacy_rule(world)
     dev = developer(world.db, world.company_id, "Setia Example Group")
     c = as_user(world, world.staff)
     first = c.post(f"{STAFF}/", json={"title": "Setia Alam Phase 3B", "developer_party_id": dev.id})
@@ -389,7 +388,6 @@ def test_b10_staff_direct_registration_still_refuses_a_blocking_clash(world):
 
 
 def test_b10_skip_clash_check_is_opt_in_at_the_service(world):
-    legacy_rule(world)
     import pytest
 
     from app.services.error_handler import AppException
@@ -421,7 +419,6 @@ def test_c4_submitted_and_rejected_registrations_draw_no_number(world):
 
 
 def test_e1_state_and_mukim_on_register_get_and_update(world):
-    legacy_rule(world)
     c = as_user(world, world.staff)
     made = c.post(f"{STAFF}/", json={"title": "ZZT FIELDS TOWER", "state": "Selangor", "mukim": "Petaling"})
     assert made.status_code == 201, made.text
@@ -438,7 +435,6 @@ def test_e1_state_and_mukim_on_register_get_and_update(world):
 
 
 def test_e1_a_project_without_them_returns_nulls(world):
-    legacy_rule(world)
     c = as_user(world, world.staff)
     made = c.post(f"{STAFF}/", json={"title": "ZZT PLAIN TOWER"})
     assert made.status_code == 201, made.text

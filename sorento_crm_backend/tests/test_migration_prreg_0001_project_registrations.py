@@ -41,6 +41,15 @@ def _module():
     return module
 
 
+def _downgrade(conn) -> None:
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    module = _module()
+    with Operations.context(MigrationContext.configure(conn)):
+        module.downgrade()
+
+
 def _upgrade(conn) -> None:
     from alembic.migration import MigrationContext
     from alembic.operations import Operations
@@ -252,22 +261,27 @@ def test_the_lookup_seeds_are_idempotent(conn):
     assert sets == 2
 
 
-def test_the_permission_is_granted_to_admin_roles_and_project_sales_admins_only(conn):
-    from sqlalchemy.orm import Session
+def _clear_grants(conn):
+    conn.execute(
+        text(
+            "delete from user_role_permissions where permission_id in "
+            "(select id from user_permissions where slug = :s)"
+        ),
+        {"s": PERMISSION},
+    )
 
+
+def _role(session, slug: str, name: str):
     from app.models.user import UserRole
 
-    session = Session(bind=conn)
-    existing = {r[0] for r in conn.execute(text("select slug from user_roles"))}
-    wanted = [("zzt-psa-a", "Project Sales Admin"), ("zzt-psa-b", "PROJECT sales ADMIN"),
-              ("zzt-plain", "Sales Executive"), ("superadmin", "superadmin"), ("admin", "admin")]
-    for slug, name in wanted:
-        if slug not in existing:
-            session.add(UserRole(id=str(uuid.uuid4()), slug=slug, name=name))
+    row = UserRole(id=str(uuid.uuid4()), slug=slug, name=name)
+    session.add(row)
     session.flush()
-    _upgrade(conn)
-    assert conn.execute(text("select count(*) from user_permissions where slug = :s"), {"s": PERMISSION}).scalar() == 1
-    holders = {
+    return row
+
+
+def _holders(conn) -> set:
+    return {
         r[0]
         for r in conn.execute(
             text(
@@ -278,5 +292,84 @@ def test_the_permission_is_granted_to_admin_roles_and_project_sales_admins_only(
             {"s": PERMISSION},
         )
     }
-    assert {"zzt-psa-a", "zzt-psa-b", "superadmin", "admin"} <= holders
-    assert "zzt-plain" not in holders
+
+
+def test_the_approver_role_is_one_named_constant_of_the_migration():
+    module = _module()
+    assert isinstance(module.APPROVER_ROLE_NAME, str) and module.APPROVER_ROLE_NAME.strip()
+
+
+def test_the_permission_goes_to_the_admin_roles_and_the_one_named_approver_role(conn):
+    from sqlalchemy.orm import Session
+
+    name = _module().APPROVER_ROLE_NAME  # read from the migration, never hard-coded here
+    session = Session(bind=conn)
+    existing = {r[0] for r in conn.execute(text("select slug from user_roles"))}
+    for slug in ("superadmin", "admin"):
+        if slug not in existing:
+            _role(session, slug, slug)
+    named = _role(session, "zzt-approver-named", name)
+    other = _role(session, "zzt-other-role", "Sales Executive")
+    old_match = _role(session, "zzt-old-psa", "Project Sales Admin")
+    _clear_grants(conn)
+    _upgrade(conn)
+    holders = _holders(conn)
+    assert {"superadmin", "admin", named.slug} <= holders
+    assert other.slug not in holders
+    # the old "project sales admin" name match is gone: that name is no longer special
+    if name.strip().casefold() != "project sales admin":
+        assert old_match.slug not in holders
+    assert conn.execute(text("select count(*) from user_permissions where slug = :s"), {"s": PERMISSION}).scalar() == 1
+
+
+def test_with_no_role_of_that_name_only_the_admin_roles_hold_the_permission(conn):
+    from sqlalchemy.orm import Session
+
+    name = _module().APPROVER_ROLE_NAME
+    session = Session(bind=conn)
+    conn.execute(text("delete from user_role_permissions where role_id in (select id from user_roles where name = :n)"), {"n": name})
+    conn.execute(text("delete from user_role_assignments where role_id in (select id from user_roles where name = :n)"), {"n": name})
+    conn.execute(text("delete from user_roles where name = :n"), {"n": name})
+    existing = {r[0] for r in conn.execute(text("select slug from user_roles"))}
+    for slug in ("superadmin", "admin"):
+        if slug not in existing:
+            _role(session, slug, slug)
+    _role(session, "zzt-sales-exec", "Sales Executive")
+    _role(session, "zzt-old-psa", "Project Sales Admin")
+    _clear_grants(conn)
+    _upgrade(conn)
+    assert _holders(conn) == {"superadmin", "admin"}
+
+
+# ------------------------------------------------------------------ downgrade (item 7')
+
+
+def test_downgrade_restores_the_default_project_rule_where_it_is_still_the_ppf_shape(conn):
+    rule_id = _set_project_rule(conn)
+    _upgrade(conn)
+    assert _rule(conn, rule_id) == ("PPF{yy}{mm}", 3, "monthly", 1)
+    _downgrade(conn)
+    assert _rule(conn, rule_id)[:3] == ("PRJ-", 6, "none")
+
+
+def test_downgrade_leaves_a_customised_rule_alone(conn):
+    rule_id = _set_project_rule(
+        conn, prefix_template="ACME-{year}-", number_digits=5, reset_policy="yearly", next_value=9
+    )
+    _upgrade(conn)
+    _downgrade(conn)
+    assert _rule(conn, rule_id)[:3] == ("ACME-{year}-", 5, "yearly")
+
+
+def test_downgrade_leaves_a_ppf_rule_someone_changed_since(conn):
+    """Only the exact shape the upgrade wrote is rolled back: PPF with 4 digits is a choice."""
+    rule_id = _set_project_rule(conn, prefix_template="PPF{yy}{mm}", number_digits=4, reset_policy="monthly")
+    _downgrade(conn)
+    assert _rule(conn, rule_id)[:3] == ("PPF{yy}{mm}", 4, "monthly")
+
+
+def test_downgrade_removes_the_permission_and_the_table(conn):
+    _upgrade(conn)
+    _downgrade(conn)
+    assert conn.execute(text("select count(*) from user_permissions where slug = :s"), {"s": PERMISSION}).scalar() == 0
+    assert conn.execute(text("select to_regclass('projects.project_registrations')")).scalar() is None

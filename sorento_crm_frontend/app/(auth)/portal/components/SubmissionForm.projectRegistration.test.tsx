@@ -7,7 +7,7 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 import type {
   PortalContact,
@@ -44,6 +44,7 @@ import {
   fetchSubmissionNeighbours,
   lookupDebtors,
   lookupSet,
+  saveDraft,
 } from '../lib/portal-client';
 import { SubmissionForm } from './SubmissionForm';
 
@@ -144,9 +145,9 @@ describe('SubmissionForm - project_registration (G1)', () => {
     expect(labelOrder(container)).toEqual(ORDER);
     // Nothing else sits in the field grid: no status, no id, no hidden customer id.
     const grid = container.querySelector('.grid.grid-cols-1') as HTMLElement;
-    const labels = Array.from(grid.querySelectorAll('label')).map((l) =>
-      (l.textContent ?? '').replace(/\s*\*\s*$/, '').trim(),
-    );
+    const labels = Array.from(grid.querySelectorAll('label'))
+      .map((l) => (l.textContent ?? '').replace(/\s*\*\s*$/, '').trim())
+      .filter((text) => text !== 'Date'); // the read-only submitted date is asserted on its own
     expect(labels).toEqual(ORDER);
   });
 
@@ -235,5 +236,100 @@ describe('SubmissionForm - project_registration (G1)', () => {
     expect(
       (container.querySelector('#title') as HTMLTextAreaElement).disabled,
     ).toBe(true);
+  });
+
+  it('shows a read-only Date, the submitted date as DD/MM/YYYY (audit round 3, item 11)', async () => {
+    asMock(fetchSubmission).mockResolvedValue(
+      draft({
+        status: 'pending',
+        is_editable: false,
+        is_draft: false,
+        submitted_at: '2026-10-02T08:00:00',
+      }),
+    );
+    const { container } = render(
+      <SubmissionForm kind="project_registration" submissionId="reg-1" />,
+    );
+    const label = await screen.findByText('Date', { selector: 'label' });
+    const input = container.querySelector(
+      `#${label.getAttribute('for')}`,
+    ) as HTMLInputElement;
+    expect(input.value).toBe('02/10/2026');
+    expect(input.disabled || input.readOnly).toBe(true);
+  });
+
+  it('the Customer name picker takes a pick only: typed free text is not kept (audit round 3, item 8)', async () => {
+    asMock(saveDraft).mockResolvedValue({ id: 'new-1' });
+    const { container } = render(
+      <SubmissionForm kind="project_registration" />,
+    );
+    await screen.findByText('Project Registration', { selector: 'h2' });
+    const input = container.querySelector('#customer_name') as HTMLInputElement;
+
+    fireEvent.change(input, { target: { value: 'WALK-IN BUYER' } });
+    fireEvent.keyDown(input, { key: 'Escape' });
+    fireEvent.keyDown(input, { key: 'Enter' });
+    fireEvent.blur(input);
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Save as draft' })[0],
+    );
+
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled());
+    const sent = asMock(saveDraft).mock.calls.at(-1)?.[1] as Record<
+      string,
+      unknown
+    >;
+    expect([null, undefined, '']).toContain(sent.customer_name);
+    expect([null, undefined, '']).toContain(sent.customer_id);
+    expect(input.value).not.toBe('WALK-IN BUYER');
+  });
+
+  it('a pick still works and sends the debtor (audit round 3, item 8)', async () => {
+    asMock(saveDraft).mockResolvedValue({ id: 'new-1' });
+    asMock(lookupDebtors).mockResolvedValue([
+      {
+        customer_id: 'cust-1',
+        debtor_name: 'DEBTOR ONE SDN BHD',
+        customer_code: 'D-1',
+        sales_type: null,
+      },
+    ]);
+    const { container } = render(
+      <SubmissionForm kind="project_registration" />,
+    );
+    await screen.findByText('Project Registration', { selector: 'h2' });
+    const input = container.querySelector('#customer_name') as HTMLInputElement;
+
+    fireEvent.focus(input);
+    fireEvent.click(
+      await screen.findByRole('option', { name: /DEBTOR ONE SDN BHD/ }),
+    );
+    fireEvent.click(
+      screen.getAllByRole('button', { name: 'Save as draft' })[0],
+    );
+
+    await waitFor(() => expect(saveDraft).toHaveBeenCalled());
+    const sent = asMock(saveDraft).mock.calls.at(-1)?.[1] as Record<
+      string,
+      unknown
+    >;
+    expect(sent.customer_id).toBe('cust-1');
+    expect(sent.customer_name).toBe('DEBTOR ONE SDN BHD');
+  });
+
+  it("asks the lookup for this kind, so only the agent's own debtors are offered (item 2)", async () => {
+    const { container } = render(
+      <SubmissionForm kind="project_registration" />,
+    );
+    await screen.findByText('Project Registration', { selector: 'h2' });
+    fireEvent.focus(
+      container.querySelector('#customer_name') as HTMLInputElement,
+    );
+
+    await waitFor(() => expect(lookupDebtors).toHaveBeenCalled());
+    const args = asMock(lookupDebtors)
+      .mock.calls.flat()
+      .map((a) => JSON.stringify(a));
+    expect(args.join(' ')).toContain('project_registration');
   });
 });
