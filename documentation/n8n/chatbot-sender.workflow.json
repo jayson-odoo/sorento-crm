@@ -27,7 +27,7 @@
     },
     {
       "parameters": {
-        "jsCode": "// CHAT-SPEED sender: one item per action, IN ORDER (the CRM's contract: execute in order).\n// The body mirrors POST /api/v1/external/chat/turn's response plus `contact_id`.\nconst body = $json.body || {};\nconst contactId = String(body.contact_id || '').trim();\nconst actions = Array.isArray(body.actions) ? body.actions : [];\nif (!contactId || !body.turn_id) {\n  throw new Error('chatbot-sender: body has no contact_id or turn_id');\n}\n// A webhook-started turn is never a test turn; refuse one anyway (D14 containment).\nif (body.is_test === true || actions.some((a) => a && a.dry_run === true)) {\n  return [];\n}\nreturn actions\n  .filter((a) => a && typeof a.kind === 'string')\n  .map((action, index) => ({ json: { turn_id: body.turn_id, contact_id: contactId, index, action } }));"
+        "jsCode": "// CHAT-SPEED sender: one item per action, IN ORDER (the CRM's contract: execute in order).\n// The body mirrors POST /api/v1/external/chat/turn's response plus `contact_id`.\nconst body = $json.body || {};\nconst contactId = String(body.contact_id || '').trim();\nconst actions = Array.isArray(body.actions) ? body.actions : [];\n// The turn's ctx (sub-send-attachments addresses the customer by ctx.contact.id); a CRM\n// build that sends none still gives the sub the contact.\nconst ctx = body.ctx && typeof body.ctx === 'object' ? body.ctx : { contact: { id: contactId } };\nif (!contactId || !body.turn_id) {\n  throw new Error('chatbot-sender: body has no contact_id or turn_id');\n}\n// A webhook-started turn is never a test turn; refuse one anyway (D14 containment).\nif (body.is_test === true || actions.some((a) => a && a.dry_run === true)) {\n  return [];\n}\nreturn actions\n  .filter((a) => a && typeof a.kind === 'string')\n  .map((action, index) => ({ json: { turn_id: body.turn_id, contact_id: contactId, index, action, ctx } }));"
       },
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
@@ -222,7 +222,8 @@
           "value": {
             "contact_id": "={{ $json.contact_id }}",
             "attachments_src": "={{ $json.action.attachments_src }}",
-            "reply": "={{ $json.action.reply }}"
+            "reply": "={{ $json.action.reply }}",
+            "ctx": "={{ $json.ctx }}"
           },
           "matchingColumns": [],
           "schema": [],

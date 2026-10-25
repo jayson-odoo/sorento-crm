@@ -8752,8 +8752,7 @@ def _run_entities_only_arm(
 
 def _answer_actions(answer: Any, *, dry_run: bool, reply: dict[str, Any]) -> list[dict[str, Any]]:
     """What the caller executes: the message, then any files, in that order. The files
-    action carries the persisted `reply`, as the tail's and the formatter's do:
-    `sub-send-attachments` reads its fallback text off it."""
+    action carries the persisted `reply`, as the tail's and the formatter's do."""
     built: list[dict[str, Any]] = []
     words = getattr(answer, "text", "") or ""
     if words.strip():

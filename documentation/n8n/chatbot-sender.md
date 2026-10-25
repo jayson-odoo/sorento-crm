@@ -29,14 +29,15 @@ spine's `duplicate` arm sends nothing.
    | node | spine node to copy | fields on the action |
    |---|---|---|
    | `send_message` | the sendmsg sub (`sorento-sub-respond-sendmsg-respond...`, as `send-crm-reply`) | `text`, `quick_replies` |
-   | `send_attachments` | `sub-send-attachments` (as `send-attachments`) | `attachments_src`, `reply` |
+   | `send_attachments` | `sub-send-attachments` (as `send-attachments`) | `attachments_src`, `reply`; plus the body's `ctx` (the sub addresses the customer by `ctx.contact.id`) |
    | `update_contact_fields` | the spine's contact-field write (clears `is_human_intervened`) | `fields` (`{name: value}`) |
 
    If the spine's executor is easier to copy as a block, paste it after `action-kind`
    instead. The body the CRM sends has `/chat/turn`'s own response keys (`turn_id`,
-   `is_test`, `duplicate`, `delegate`, `branch_kind`, `actions`, `reply`) plus `contact_id`,
-   so only the source of the expressions changes, from the `chat-turn` node to
-   `$('explode-actions').item.json`.
+   `is_test`, `duplicate`, `delegate`, `branch_kind`, `actions`, `reply`, `ctx`) plus
+   `contact_id`, so only the source of the expressions changes, from the `chat-turn` node to
+   `$('explode-actions').item.json` (`explode-actions` puts `ctx` on every item). The actions
+   arrive split as `/chat/turn` sends them: a long reply is several `send_message` actions.
 4. Activate it, and copy its production webhook URL.
 
 ## CRM side (owner, on the CRM screens)
