@@ -341,11 +341,13 @@ def delivered_fill_rate(
     warehouse_codes: list[str],
     policy: Any,
     company_grants: Any = None,
+    capped_by_policy: bool = True,
 ) -> Optional[float]:
     """Q3 (a), DELIVERED-DATE-BASIS: the agent fill rate over the delivered rows a delivered ranking
     counts: the share of the window's delivered orders (`delivery_order_lines._order_key`) whose
     sales order carries an agent. `filters` is the ranking's own, minus the agent filter (the
-    rate's own definition). None when the window has no order."""
+    rate's own definition). None when the window has no order. `capped_by_policy` False: a caller
+    with no location rule (the top selling route), as `resolve_locations` reads it."""
     from app.schemas.report import ReportViewConfig
     from app.services.reports import engine
 
@@ -359,7 +361,7 @@ def delivered_fill_rate(
         if not values:
             return None
         params[word] = [_CHANNEL_CLASS[v] for v in values] if word == "channel" else list(values)
-    location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy)
+    location_ids, refusal, nothing = resolve_locations(db, warehouse_codes, policy, capped_by_policy=capped_by_policy)
     if refusal is not None or nothing:
         return None
     if location_ids is not None:
@@ -369,9 +371,10 @@ def delivered_fill_rate(
         "detail": {"columns": [], "order": []},
         "pivot": {"rows": "month", "cols": "all", "measures": ["orders", "orders_with_agent"]},
     })
+    # None is the all-companies caller (a session with no company scope); a set is those companies.
+    grants = None if company_grants is None else frozenset(str(c) for c in company_grants)
     grand = engine.run_summary(
-        db, delivery_order_lines.DEFINITION, params, view,
-        company_grants=frozenset(str(c) for c in company_grants or ()),
+        db, delivery_order_lines.DEFINITION, params, view, company_grants=grants,
     ).grand_total or {}
     total = int(Decimal(grand.get("orders") or 0))
     return round(int(Decimal(grand.get("orders_with_agent") or 0)) / total, 4) if total else None

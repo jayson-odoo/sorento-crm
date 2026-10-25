@@ -209,17 +209,28 @@ def _ranked(pivot: Any) -> list[tuple[str, Decimal, Decimal]]:
     return out
 
 
+#: The row of deliveries no DO explains (DELIVERED-DATE-BASIS: an SO line's delivered quantity
+#: with no DO line behind it), in the DO list. It carries no date and lists last.
+NO_DELIVERY_ORDER = "(no delivery order)"
+
+
 def _do_rows(pivot: Any) -> list[tuple[str, str, Decimal, Decimal]]:
     """(number, date, qty, amount) per DO from a delivery_order x day pivot, latest first,
-    then by number descending."""
-    out = []
+    then by number descending; the deliveries with no DO last."""
+    from app.services.reports.engine import BLANK_VALUE
+
+    out, loose = [], []
     for number in pivot.row_values:
         by_day = pivot.cells.get(number) or {}
         day = max(by_day) if by_day else ""
         totals = pivot.row_totals.get(number) or {}
-        out.append((number, day, Decimal(totals.get("qty") or 0), Decimal(totals.get("amount") or 0)))
+        figures = (Decimal(totals.get("qty") or 0), Decimal(totals.get("amount") or 0))
+        if number == BLANK_VALUE:
+            loose.append((NO_DELIVERY_ORDER, "", *figures))
+        else:
+            out.append((number, day, *figures))
     out.sort(key=lambda r: (r[1], r[0]), reverse=True)
-    return out
+    return out + loose
 
 
 def delivered_sales_report(

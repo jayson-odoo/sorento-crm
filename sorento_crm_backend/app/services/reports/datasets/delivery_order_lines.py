@@ -344,6 +344,8 @@ COLUMNS = (
     reg.Column("product", "Product", "text", "dimension", lambda c: Product.product_code, size=160),
     reg.Column("brand", "Brand", "text", "dimension", lambda c: Brand.brand_name, size=160),
     reg.Column("category", "Category", "text", "dimension", lambda c: ProductCategory.category_name, size=160),
+    # The top selling route's category grain prints the code (`sales_report_service.top_selling`).
+    reg.Column("category_code", "Category code", "text", "dimension", lambda c: ProductCategory.category_code, size=120),
     reg.Column(
         "sales_agent",
         "Sales agent",

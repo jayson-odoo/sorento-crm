@@ -232,3 +232,55 @@ def test_the_fill_rate_note_counts_the_orders_the_delivered_ranking_counted(clie
     # The world's own Sep orders count too: B's SO (agent 2), C's SO (agent 1), the no-SO DO.
     # Sep orders: B, C, no-SO DO, SO 1's DO, SO 2's DO = 5; with an agent: B, C, SO 1 = 3.
     assert body.get("sales_agent_fill_rate") == 0.6, body
+
+
+# ------------------------------------------------------------------ the sales report's DO list
+
+
+def test_a_delivery_with_no_do_behind_it_lists_as_no_delivery_order(client, db):
+    """The residual of an SO line no DO explains is a delivery with no DO number: one row, named
+    so, with no date, so the rows still sum to the total."""
+    w = _world(db)
+    _so_line(db, cust=w.cust, prod=w.prod, wh=w.wh, qty=5, total="50.00", order_date=date(2026, 9, 3))
+    db.commit()
+    resp = client.get("/api/v1/order-management/sales-report",
+                      params={"product_code": w.prod.product_code, "group_by": "delivery_order", **SEP})
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    rows = {r["name"]: (r["qty"], r["date"]) for r in body["rows"]}
+    assert rows["(no delivery order)"] == (5, None), body["rows"]
+    assert "(blank)" not in rows
+    assert sum(r["qty"] for r in body["rows"]) == body["total"]["qty"], body
+
+
+# ------------------------------------------------------------------ Q5: the legacy top selling route
+
+
+def test_top_selling_delivered_files_by_the_do_date_and_matches_the_ranking(client, db):
+    w = _world(db)
+    contact = _full(db)
+    for period, want in ((SEP, (9, D("790.00"))), (OCT, (1, D("148.92")))):
+        resp = client.get("/api/v1/order-management/top-selling",
+                          params={"rank_by": "quantity", "basis": "delivered", "customer_ids": w.cust.id, **period})
+        assert resp.status_code == 200, resp.text
+        body = resp.json()
+        assert (body["totals"]["quantity"], money(body["totals"]["amount"])) == want, (period, body)
+        assert [r["code"] for r in body["rows"]] == [w.prod.product_code], body["rows"]
+        ranking = _ok(client, contact, customer_ids=[w.cust.id], **period)
+        assert _total(ranking) == want, period
+    project = client.get("/api/v1/order-management/top-selling",
+                         params={"rank_by": "amount", "basis": "delivered", "customer_ids": w.cust.id,
+                                 "channel": "project", **SEP}).json()
+    assert (project["totals"]["quantity"], money(project["totals"]["amount"])) == (2, D("300.00")), project
+
+
+def test_top_selling_delivered_detail_lists_customers_and_do_months(client, db):
+    w = _world(db)
+    resp = client.get("/api/v1/order-management/top-selling",
+                      params={"rank_by": "quantity", "basis": "delivered", "customer_ids": w.cust.id,
+                              "detail_code": w.prod.product_code.lower(), **Y2026})
+    assert resp.status_code == 200, resp.text
+    detail = resp.json()["detail"]
+    assert detail["code"] == w.prod.product_code, detail
+    assert [(m["month"], m["quantity"]) for m in detail["by_month"]] == [("2026-09", 9), ("2026-10", 1)], detail
+    assert [(c["customer_name"], c["quantity"]) for c in detail["by_customer"]] == [(w.cust.customer_name, 10)], detail

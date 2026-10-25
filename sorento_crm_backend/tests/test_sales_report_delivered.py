@@ -88,11 +88,11 @@ def test_dataset_catalog_dimensions_and_measures():
     dims = {c.key for c in DATASET.columns if c.tag == "dimension"}
     measures = {c.key for c in DATASET.columns if c.tag == "measure"}
     assert dims == {
-        "customer", "product", "brand", "category", "sales_agent", "location", "channel",
+        "customer", "product", "brand", "category", "category_code", "sales_agent", "location", "channel",
         "day", "week", "month", "delivery_order", "all",
     }, dims
     # REPORT-SMART-1021's count measures moved here with the report ask's delivered basis.
-    assert measures == {"amount", "qty", "customers", "orders", "products"}, measures
+    assert measures == {"amount", "qty", "customers", "orders", "products", "orders_with_agent"}, measures
 
 
 def test_dataset_is_company_scoped_and_date_based_on_the_do_date():

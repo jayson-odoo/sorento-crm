@@ -675,7 +675,18 @@ def top_selling(
     Fix lane round 4 (owner retest, 27 Sep 2026): `brand_ids` keeps products of those
     brands (`Product.brand_id`, the narrowing PR #1301 gives the outstanding report),
     and `direction="bottom"` ranks the least sold first (both metrics and the code
-    ascending). A group with no sale is never ranked, whichever the direction."""
+    ascending). A group with no sale is never ranked, whichever the direction.
+
+    DELIVERED-DATE-BASIS (owner ruling 25 Oct 2026, Q5 (a)): the delivered basis reads the one
+    delivered definition every delivered measure reads, filed by the DO that delivered it
+    (`_top_selling_delivered`). Ordered keeps the sales order lines below."""
+    if basis == "delivered":
+        return _top_selling_delivered(
+            db, rank_by=rank_by, group=group, n=n, customer_query=customer_query, customer_ids=customer_ids,
+            category_ids=category_ids, sales_agent_ids=sales_agent_ids, brand_ids=brand_ids, channel=channel,
+            date_from=date_from, date_to=date_to, dealer_scoped=dealer_scoped, detail_code=detail_code,
+            direction=direction,
+        )
     qty_expr, amount_expr = _basis_figures(basis)
     qty_sum = func.coalesce(func.sum(qty_expr), 0)
     amount_sum = func.coalesce(func.sum(amount_expr), 0)
@@ -800,4 +811,141 @@ def top_selling(
         },
         "sales_agent_fill_rate": fill_rate,
         "detail": _top_selling_detail(first) if detail_code and first else None,
+    }
+
+
+def _top_selling_delivered(
+    db: Session,
+    *,
+    rank_by: str,
+    group: str,
+    n: Optional[int],
+    customer_query: Optional[str],
+    customer_ids: Optional[list[str]],
+    category_ids: Optional[list[str]],
+    sales_agent_ids: Optional[list[str]],
+    brand_ids: Optional[list[str]],
+    channel: Optional[str],
+    date_from: date,
+    date_to: date,
+    dealer_scoped: bool,
+    detail_code: Optional[str],
+    direction: str,
+) -> dict:
+    """`top_selling` on the delivered basis: the same body, every figure an `engine.run_summary`
+    over `delivery_order_lines.DEFINITION` (the report ask's and the sales report's own), ranked
+    here exactly as the SQL ranking orders (the metric, then the other, then the code ascending)."""
+    from app.schemas.report import ReportViewConfig
+    from app.services.reports import engine
+    from app.services.reports.datasets.delivery_order_lines import DEFINITION
+    from app.services.reports.engine import BLANK_VALUE
+
+    key = "category_code" if group == "category" else "product"
+    params: dict[str, Any] = {
+        "date_basis": "order_date",
+        "period": {"kind": "custom", "from": _as_date(date_from).isoformat(), "to": _as_date(date_to).isoformat()},
+    }
+    named_ids = customer_ids
+    if customer_query:
+        pattern = f"%{_escape_like(customer_query)}%"
+        matched = [str(r[0]) for r in db.query(Customer.id).filter(
+            Customer.customer_name.ilike(pattern, escape=_LIKE_ESCAPE)).all()]
+        if customer_ids is not None:
+            matched = [c for c in matched if c in set(customer_ids)]
+        customer_ids = matched
+    filters = {
+        "customer": customer_ids, "category": category_ids, "brand": brand_ids, "sales_agent": sales_agent_ids,
+        "channel": [{"dealer": "retail", "project": "project"}[channel]] if channel in ("dealer", "project") else None,
+    }
+    empty = any(v is not None and not v for v in filters.values())
+    params.update({k: list(v) for k, v in filters.items() if v})
+
+    def _summary(rows: str, extra: Optional[dict] = None):
+        view = ReportViewConfig.model_validate({
+            "params": {**params, **(extra or {})},
+            "detail": {"columns": [], "order": []},
+            "pivot": {"rows": rows, "cols": "all", "measures": ["qty", "amount"]},
+        })
+        return engine.run_summary(db, DEFINITION, {**params, **(extra or {})}, view)
+
+    bottom = direction == "bottom"
+    sign = 1 if bottom else -1
+
+    def _ranked(pivot) -> list[tuple[Optional[str], Decimal, Decimal]]:
+        out = []
+        for value in pivot.row_values:
+            totals = pivot.row_totals.get(value) or {}
+            qty, amount = _dec(totals.get("qty")), _dec(totals.get("amount"))
+            if qty or amount:
+                out.append((None if value == BLANK_VALUE else value, qty, amount))
+        metric, other = (1, 2) if rank_by == "quantity" else (2, 1)
+        out.sort(key=lambda r: (sign * r[metric], sign * r[other], r[0] is None, r[0] or ""))
+        return out
+
+    ranked = [] if empty else _ranked(_summary(key))
+    if detail_code:
+        ranked = [r for r in ranked if (r[0] or "").upper() == detail_code.upper()]
+    shown = ranked[:n] if n is not None else ranked
+    first = ranked[0] if ranked else None
+
+    def _figures(qty, amount) -> dict:
+        return {"quantity": _qty(qty), "amount": _money_edge(amount)}
+
+    detail = None
+    if detail_code and first is not None:
+        if group == "category":
+            ids = [str(r[0]) for r in db.query(ProductCategory.id, ProductCategory.category_name).filter(
+                func.upper(ProductCategory.category_code) == detail_code.upper()).all()]
+            name = db.query(ProductCategory.category_name).filter(ProductCategory.id.in_(ids)).limit(1).scalar()
+            narrow = {"category": ids}
+        else:
+            prods = db.query(Product.id, Product.product_name).filter(
+                func.upper(Product.product_code) == detail_code.upper()).all()
+            name = prods[0][1] if prods else None
+            narrow = {"product": [str(p[0]) for p in prods]}
+        by_customer = _ranked(_summary("customer", narrow))
+        by_month = _ranked(_summary("month", narrow))
+        detail = {
+            "code": first[0],
+            "name": name,
+            "by_customer": [{"customer_name": c, **_figures(q, a)} for c, q, a in by_customer],
+            "by_month": [{"month": m, **_figures(q, a)} for m, q, a in by_month],
+        }
+
+    fill_rate = None
+    if sales_agent_ids is not None and not empty:
+        from app.services.reports.ask import delivered_fill_rate
+        from app.models.base import get_company_scope
+
+        fill_rate = delivered_fill_rate(
+            db, date_from=_as_date(date_from), date_to=_as_date(date_to),
+            filters={k: list(v) for k, v in {**filters, "channel": [channel] if filters["channel"] else None}.items() if v},
+            warehouse_codes=[], policy=None, company_grants=get_company_scope(db), capped_by_policy=False,
+        )
+
+    total_qty = sum((r[1] for r in ranked), Decimal(0))
+    total_amount = sum((r[2] for r in ranked), Decimal(0))
+    return {
+        "rank_by": rank_by,
+        "basis": "delivered",
+        "group": group,
+        "direction": "bottom" if bottom else "top",
+        "n": n,
+        "date_from": _as_date(date_from),
+        "date_to": _as_date(date_to),
+        "filters": {
+            "customer_name": _customer_echo(db, customer_query, named_ids),
+            "category_name": _category_echo(db, category_ids),
+            "brand_name": _names_in_order(db, Brand.id, Brand.brand_name, brand_ids),
+            "sales_agent": _names_in_order(db, SalesAgent.id, SalesAgent.sales_agent, sales_agent_ids),
+            "channel": channel,
+            "dealer_scoped": dealer_scoped,
+        },
+        "total_count": len(ranked),
+        "rows": [
+            {"rank": i, "code": code, **_figures(q, a)} for i, (code, q, a) in enumerate(shown, start=1)
+        ],
+        "totals": {"quantity": _qty(total_qty), "amount": _money_edge(total_amount)},
+        "sales_agent_fill_rate": fill_rate,
+        "detail": detail,
     }
