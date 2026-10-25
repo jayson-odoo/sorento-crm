@@ -12,13 +12,15 @@ candidates to the parser, which decides. Lavish page: `PLAN-chat-slim-index-25oc
 Slice WC (the water-closet code bugs) keeps its UAC: `chat-slim-index-25oct-acceptance-criteria.md`.
 Customer names are masked (public repo).
 
-## Two shapes (owner asked "after parser we have another rag step?")
-1. Lists (categories, spec words, file types, brands): code looks the message's word pieces up in each list BEFORE the
-   parser (meaning + spelling, never product codes) and shows a short candidate list; the parser picks one or none.
-2. Customers (7,000 names): the parser marks the customer words first (as v63 does today); code then looks up ONLY that
-   phrase in the customer list (meaning + spelling) and picks: one company = answer, several = one question, nothing
-   found = the whole message as a fallback. Measured reason: looking customers up on every word pulled sanitary-ware
-   shops for "water closet" (crew/state/eval/slim-index/customer-probe.md, crew-only).
+## One design for every list (owner 25 Oct: "why cant we use the same design as list ah, can keep it for DO")
+1. Every list (categories, spec words, file types, brands, salespeople, customers): code looks the message's word
+   pieces up BEFORE the parser (meaning + spelling, any language) and shows short candidate lists; customers use a
+   stricter cut-off and their lines are for use only when the message names a customer. The parser picks one or none.
+2. Product codes and document numbers (DO / SO / PO): exact look-up AFTER the parser (exact, then did-you-mean), never
+   in a candidate list.
+The customer step tests this list style (floor 0.5/0.5) head to head with "look up only the parser's customer words
+after the parser"; metric = wrong customers picked (esp. category-only messages such as "tiles"), then recall; list
+style is the default unless it picks wrong customers.
 
 ## Phase 1 sequence (owner 25 Oct; crew relays a25272575 + follow-up)
 
@@ -30,7 +32,7 @@ Customer names are masked (public repo).
 | 4 | brands | GO: 0.986, n=72 | NO REGRESSION vs v63 (prompt diet) | ~5 | APPROVED, after 3 |
 | 5 | salespeople | pull 3 sources agent asks from sales-report-for-an-agent asks; scored when it lands | GO on data first, then same gate shape | ~5 | after data passes; spend after 4 |
 | - | locations | few real messages (5) | - | - | stays as today (owner accepts) |
-| 6 | customer names, shape 2 (after the parser) | customer probe: always-on block puts sanitary-ware shops on "water closet"; phrase look-up after the parser: 0 wrong lines on category messages, recall 0.71-0.87 on 31 rows | B beats today's spelling resolver, no regression elsewhere | ~6 | APPROVED (owner 25 Oct), after brands |
+| 6 | customer names: one more list, stricter floor (0.5/0.5), head to head with phrase-first after the parser | probe: list style at 0.5 recall 0.872, 0.66 wrong lines on name-nothing msgs, 5.15 on category-only; phrase-first 0 on both | fewest wrong customers PICKED by the parser, then recall; list style unless it picks wrong ones | ~10 (re-estimated, two styles) | APPROVED, last |
 | - | spec number values (sizes) | NO-GO: 0.517 | - | - | stays in the prompt; a size is read by code (separate idea) |
 
 Later-step costs assume arm A's v63 baseline runs are reused on the same main; a new main adds ~USD 3.5.
