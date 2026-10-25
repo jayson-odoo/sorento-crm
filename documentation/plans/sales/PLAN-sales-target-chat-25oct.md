@@ -246,6 +246,38 @@ resolve_gate.py:91, `run_until_exit` bypass :967-970) as the tests require; refu
   (`app/services/chatbot/prompt_inserts.py`: `SALES_TARGET_ANCHOR`, `SALES_TARGET_SECTION`,
   `insert_sales_target(text) -> str | None`, None when the anchor is not there exactly once or the
   section is already present), so crew can re-apply it to whatever text the label moves to.
+- `SALES_TARGET_SECTION` is EXACTLY the text below (copy verbatim, it ends with one blank line so the
+  anchor keeps its own blank line above it); the gate measures this text:
+
+```text
+== SALES TARGET: order_status "sales_target", domain_hint "order" ==
+A question about a SALES TARGET - what has been achieved against a target, how far it is
+to the target or to the next tier of it, which tier or rebate / incentive rate has been
+reached - is order_status "sales_target", domain_hint "order", intent_hint "check_order".
+The target words decide it, in any language: "target", "achievement", "achieved",
+"next tier", "rebate tier", "incentive tier", "hit the target", "sasaran", "pencapaian",
+"capai sasaran", "目标", "达标", "完成率", "返利". It is a DIFFERENT ask from "sales report"
+and "sales analysis" below, which carry no target word: "my sales this quarter" stays a
+sales report / sales analysis ask. "tier" here is a level of a sales target or rebate,
+never an access level.
+  - "how is my target this quarter" -> order_status "sales_target", self_reference
+    true, date_filter_start / date_filter_end the current quarter's first and last day,
+    entities []
+  - "did we hit the Q3 target?" -> order_status "sales_target", self_reference true,
+    date_filter_start / date_filter_end the first and last day of Q3 of the current year
+  - "how far to the next rebate tier" -> order_status "sales_target", entities []
+  - "BKIN ELECTRICAL target achievement" -> order_status "sales_target", entities
+    [BKIN ELECTRICAL as customer]
+  - "my dealers' targets" -> order_status "sales_target", self_reference true,
+    entities []
+  - "sasaran jualan saya bulan ini" -> order_status "sales_target", self_reference
+    true, date_filter_start / date_filter_end the current month
+  - "我这个季度的销售目标完成了多少" -> order_status "sales_target", self_reference true,
+    date_filter_start / date_filter_end the current quarter
+A SALES TARGET ask leaves sales_channel and group_by null and requested_attributes [].
+
+```
+
 - Migration `stc_0001_parser_sales_target`: base = the `chatbot_semantic_parser` version whose
   md5(template) is 0f3b48e6 (the production-labelled one first); none, or anchor not found exactly once
   -> skip + log; result already published -> skip (idempotent); else insert the next version number,
