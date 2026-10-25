@@ -1,7 +1,7 @@
 # PLAN: a customer pick answer resumes the held sales ask (lane CHAT-CUSTOMER-PICK-RESUME)
 
-Status: IN REVIEW (reviewer READY on the pick fix; add-on re-review on the final head), small fix track (S: `report_ask.py` + one engine line, no migration, no access
-change, no new ingest, no prompt change).
+Status: IN REVIEW (reviewer READY on the pick fix; add-on re-review on the final head), small fix track (S: `report_ask.py`,
+`gate._cust_base`, the resolve gate's name fill; no migration, no access change, no new ingest, no prompt change).
 
 ## Why
 Prod 25 Oct 10:02 (prompt v63, gpt-5.4-mini), and the owner again in the staff console: t1 "Dealer <customer> oct total sales"
@@ -62,6 +62,6 @@ ask on its own family count (`gate._cust_base`), and the printed roster is rebui
 Tests: O2 (case 1, the two prod shapes, red commit first), O1 (case 2), U5 (the name fill, unit). Kill: `_cust_base` back to
 the stripped lookup fails O2; dropping the `customer_names` argument fails O1.
 
-Owner note (no change): option 1 of "Dealer fullshun oct total sales" is the whole FULLSHUN SANITARYWARE group across SRT and
-MCH (9 accounts), and that includes the ungrouped "- [IBORN]" ledger (name rule) and the inactive "(SHOWCASE)" one.
+Owner note (no change): option 1 of the prod case is the whole customer group of 300-F004 across SRT and MCH (9 accounts), and
+that includes the ungrouped 300-F033 ledger (joined by the name rule) and the inactive 305-F001.
 "water closet" read as a promotion is out of scope (separate lane).
