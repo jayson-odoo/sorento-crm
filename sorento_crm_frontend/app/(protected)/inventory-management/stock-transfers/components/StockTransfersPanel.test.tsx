@@ -354,7 +354,7 @@ describe('StockTransfersPanel - the state Back hands back', () => {
     // Every request, not only the first: one carrying the host's sort is the 422.
     for (const [params] of listStockTransfers.mock.calls) {
       expect(params).toMatchObject({
-        ...(pin.salesOrderId ? { sales_order_id: 'so-1' } : { sales_agent_id: 'sa-1' }),
+        ...('salesOrderId' in pin ? { sales_order_id: 'so-1' } : { sales_agent_id: 'sa-1' }),
         sort: 'proposed_at',
         dir: 'desc',
         page: 1,
