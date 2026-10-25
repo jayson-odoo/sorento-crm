@@ -1,6 +1,6 @@
 # PLAN: SO page Transfers tab sends the SO list's sort (422 toast)
 
-**Status:** in progress (small fix track: FE one-line guard + tests, no migration, no auth change)
+**Status:** in review, PR #1857, reviewer READY (small fix track: FE one-line guard + tests, no migration, no auth change)
 **Lane:** SO-TRANSFERS-SORT-422, branch `crew/so-transfers-sort-422`
 **UAC:** `so-transfers-sort-422-acceptance-criteria.md` (alongside)
 
@@ -39,14 +39,20 @@ Transfers page (no pin) keeps the Back-restores-state behaviour.
 
 ## Other SO-page tabs checked
 
-- Lines, Delivery, General: no list-state URL read (`SalesOrderDetail.tsx` only reads
-  `useSearchParams` at `:504` for the consignment redirect).
+- Lines, Delivery, General: no list-state URL read. `SalesOrderDetail.tsx` reads
+  `useSearchParams` for the consignment redirect (`:504`), `edit` (`:636`) and `tab` / `line`
+  (`:671-683`); none of them feeds a list request.
 - Invoices (`SalesOrderInvoices`): no `useSearchParams` / `useListStateFromUrl`.
 - So the Transfers tab is the only SO-page tab with the mismatch.
 
-Out of scope, noted for a follow-up: `SalesOrdersGrid` embedded on the sales-agent detail page
-(`SalesAgentDetail.tsx:475`) restores page + search (not sort) from the agent page URL. No 422
-(it does not take the sort), but it can open on the wrong page.
+Out of scope, noted for follow-ups:
+
+- `SalesOrdersGrid` embedded on the sales-agent detail page (`SalesAgentDetail.tsx:475`)
+  restores page + search (not sort) from the agent page URL. No 422 (it does not take the
+  sort), but it can open on the wrong page.
+- Pre-existing: Back from a transfer opened on the SO tab lands on the standalone Transfers
+  page showing every transfer, not that order's. The URL keeps `sales_order_id`, but the
+  restore callback has no setter for it or `sales_agent_id` (`StockTransfersPanel.tsx:182-191`).
 
 ## Tests
 
