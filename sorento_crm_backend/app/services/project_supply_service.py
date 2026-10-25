@@ -10063,6 +10063,28 @@ class ProjectSupplyService:
         """
         return self._po_rows(product_ids, warehouse_ids)
 
+    @staticmethod
+    def open_po_line_clauses() -> tuple:
+        """The tests a PO line must pass to still be ON ORDER, for a query that has joined
+        `PurchaseOrder` onto `PurchaseOrderLine.purchase_order_id`.
+
+        `_po_rows` reads supply under exactly these, and `StockDebtService._holds` asks the
+        same question of a placement's PO line (SUPPLY-SPO-LINK): a line that fails them is
+        not supply, so a placement on it must not stand the PO back up. One spelling, so the
+        hold and the event cannot come to disagree.
+        """
+        return (
+            # The same open-PO rule `scm.po_ordered_v` and the container request read
+            # (`container_request_service.OPEN_PO_SQL`), so "on order" means one thing.
+            PurchaseOrder.status.in_(OPEN_PO_STATUSES),
+            PurchaseOrderLine.line_status == "open",
+            PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+            # The shipping leg, not an order (see `_po_rows`). Stamped on both the header
+            # and its lines by `spo_conversion_service`; read off the HEADER, because it is
+            # the DOCUMENT that is a shipping order.
+            func.coalesce(PurchaseOrder.source_system, "") != CRM_SPO_SOURCE_SYSTEM,
+        )
+
     def _po_rows(
         self, product_ids: Iterable[str], warehouse_ids: Iterable[str]
     ) -> Dict[Tuple[str, str], List[_PoRow]]:
@@ -10147,15 +10169,7 @@ class ProjectSupplyService:
             .filter(
                 PurchaseOrderLine.product_id.in_(pids),
                 PurchaseOrderLine.warehouse_id.in_(wids),
-                # The same open-PO rule `scm.po_ordered_v` and the container request read
-                # (`container_request_service.OPEN_PO_SQL`), so "on order" means one thing.
-                PurchaseOrder.status.in_(OPEN_PO_STATUSES),
-                PurchaseOrderLine.line_status == "open",
-                PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
-                # The shipping leg, not an order (see the docstring). Stamped on both the
-                # header and its lines by `spo_conversion_service`; read off the HEADER,
-                # because it is the DOCUMENT that is a shipping order.
-                func.coalesce(PurchaseOrder.source_system, "") != CRM_SPO_SOURCE_SYSTEM,
+                *self.open_po_line_clauses(),
             )
             .all()
         )

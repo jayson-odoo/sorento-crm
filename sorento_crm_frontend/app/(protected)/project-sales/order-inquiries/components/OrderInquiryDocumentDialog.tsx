@@ -428,6 +428,29 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     size: 150,
     meta: { headerTitle: 'S/O' },
   },
+  {
+    // SUPPLY-SPO-LINK (owner, mock v2): the shipping order(s) this line was transferred
+    // onto, each the same document link an SPO number is everywhere else.
+    id: 'spo_numbers',
+    accessorFn: (line) => (line.spo_numbers ?? []).join(', '),
+    header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
+    cell: ({ row }) => {
+      const spoNumbers = row.original.spo_numbers ?? [];
+      if (!spoNumbers.length) return <span className="text-muted-foreground">-</span>;
+      return (
+        <span className="flex min-w-0 items-center gap-1" title={spoNumbers.join(', ')}>
+          {spoNumbers.map((spoNumber, index) => (
+            <React.Fragment key={spoNumber}>
+              {index > 0 && <span className="text-muted-foreground">,</span>}
+              <OrderInquiryDocumentLink kind="spo" document={spoNumber} />
+            </React.Fragment>
+          ))}
+        </span>
+      );
+    },
+    size: 170,
+    meta: { headerTitle: 'SPO' },
+  },
 ];
 
 /**
