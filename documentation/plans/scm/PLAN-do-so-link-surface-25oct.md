@@ -1,6 +1,6 @@
 # PLAN: DO <-> SO line links on the DO page and the SO Delivery tab (DO-SO-LINK-SURFACE)
 
-Status: Plan (behaviour card posted as crew-ask, waiting on owner). Track: small fix (no
+Status: Build (backend green; mock posted for owner, UI paused). Track: small fix (no
 migration, no auth/RBAC change, no new ingest surface; expected diff under ~300 lines).
 
 Owner ask (25 Oct): backfilling DOs from AutoCount, the DO page does not say which SO a DO
@@ -33,10 +33,36 @@ already are.
      (`:1030-1075`);
    - several targets = `DrillTable` lightbox (`PlanRowDialog` + `DrillTable`).
 
-Prod counts (sorento_prod_1020): NOT READ. This lane runs in a cloud sandbox with no access to
-any shared DB (crew contract). Dev figures from SO-DELIVERIES-VIEW (14 Oct): of 20,154 DO lines
-naming an SO, 9,828 resolve to one SO line, 4,694 to an SO + product group (several lines),
-771 product not on the SO (725 are 0-qty markers), 4,861 SO not in the CRM.
+Prod clone counts (sorento_prod_1020, read-only, run by crew 25 Oct; AutoCount DOs dated
+2026-08-20..10-20, synced 16 Oct):
+
+| Live AutoCount DO lines: 48,962 (db1 36,182 / db2 12,780) | Lines | Shows (R1) |
+| --- | --- | --- |
+| `sales_order_line_id` set | 31,509 (64%) | SO link + line no |
+| FromDocNo names a CRM SO, product on several SO lines | 14,346 (29%) | SO link, no line |
+| Product not on the SO (all zero-qty, db1) | 1,779 | SO link, no line |
+| SO not in the CRM | 5 | AutoCount number, text |
+| One-line match still unlinked | 2 | SO link, no line (filled on next apply) |
+| No FromDocNo, no link (db1 direct DOs, `from_doc_type` NULL) | 1,321 | `-` |
+
+So R1 links 47,636 lines (97%), text 5, dash 1,321.
+
+- Headers: `orders.sales_order_id` is 0 on all 14,749 AutoCount DOs; `ref_doc_no` is set on 4,934
+  but 0 equal a CRM SO number. The R2 strip is derived from the LINES, never the header.
+- DOs naming 2+ SOs: 418 (db1 213, db2 205).
+- Old-system DOs: 29,540 DOs / 67,907 lines, none carry FromDocNo or any SO link: `-`. Only 3
+  old DO numbers also exist as AutoCount DOs.
+- SO numbers are unique per company (0 dupes); CRM SOs go back to 2023-09 in both companies, so
+  an older AutoCount DO backfill resolves on ingest.
+
+## Owner rulings (25 Oct ~17:10, "1 a 2 a 3 a 4 a 5 b")
+
+- Q1 a: one `SO` column (link, else AutoCount text).
+- Q2 a: SO + product only: link to the SO, no line.
+- Q3 a: header strip `SO <no>` on the DO page.
+- Q4 a: SO Delivery tab, one row per DO line with SKU, total row.
+- Q5 b: MOCK FIRST (`documentation/mockups/DO-SO-LINK-SURFACE/index.html`). UI build paused
+  until the mock is approved; backend + tests continue.
 
 ## Proposed behaviour
 

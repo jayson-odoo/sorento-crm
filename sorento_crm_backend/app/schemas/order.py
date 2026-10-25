@@ -370,6 +370,14 @@ class WarehouseSimpleRef(BaseModel):
         from_attributes = True
 
 
+class SalesOrderLinkRef(BaseModel):
+    """The SO a DO line delivers (DO-SO-LINK-SURFACE). ``line_no`` only when AutoCount named
+    the exact SO line; the SO alone when it named the SO + product."""
+    id: str
+    so_number: str
+    line_no: Optional[int] = None
+
+
 class OrderLineResponse(OrderLineBase):
     id: str
     order_id: str
@@ -378,6 +386,10 @@ class OrderLineResponse(OrderLineBase):
     updated_at: datetime
     product: Optional[ProductSimpleRef] = None
     warehouse: Optional[WarehouseSimpleRef] = None
+    # AutoCount's own source document number, as sent; ``sales_order`` is it resolved to a
+    # CRM sales order (only on the single-DO read, stamped by OrderService.get_order).
+    from_doc_no: Optional[str] = None
+    sales_order: Optional[SalesOrderLinkRef] = None
 
     class Config:
         from_attributes = True
