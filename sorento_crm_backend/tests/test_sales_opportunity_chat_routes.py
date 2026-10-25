@@ -80,7 +80,9 @@ def _principal(db) -> dict:
 
 
 @contextmanager
-def make_client(db, *, api_key_principal=True):
+def make_client(db, *, api_key_principal=True, slug_granted=True):
+    from unittest.mock import patch
+
     principal = _principal(db)
 
     def _override_db():
@@ -97,7 +99,13 @@ def make_client(db, *, api_key_principal=True):
         app.dependency_overrides[get_external_api_user] = lambda: principal
         app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
     try:
-        yield TestClient(app, headers={"X-API-Key": "k"} if api_key_principal else {})
+        # The real `require_external_permission` runs; only the lookup answer is stated here.
+        with patch("app.api.v1.external.permissions.UserPermissionService") as service:
+            service.return_value.check_user_has_permission.side_effect = (
+                lambda uid, slug: slug_granted
+            )
+            service.slug_checks = service.return_value.check_user_has_permission
+            yield TestClient(app, headers={"X-API-Key": "k"} if api_key_principal else {})
     finally:
         app.dependency_overrides.clear()
 
@@ -199,12 +207,25 @@ def test_opp_routes_need_the_portal_form(client, db):
     assert _count(db) == 0
 
 
-def test_opp_routes_api_key_only(db):
-    """O1-4: the integration key needs no permission slug; a Bearer staff token is refused."""
+def test_opp_routes_need_the_integration_slug(db):
+    """O1-4: both routes carry `require_external_permission("integration.sales_opportunity.log")`."""
+    from app.api.v1.external.permissions import EXTERNAL_ENDPOINT_PERMISSIONS
+    from app.rbac import PERMISSION_REGISTRY
+
+    slug = "integration.sales_opportunity.log"
+    assert EXTERNAL_ENDPOINT_PERMISSIONS["sales-opportunities"] == slug
+    assert slug in {row["slug"] for row in PERMISSION_REGISTRY}
+
     contact, _agent_row = _salesperson(db)
-    with make_client(db) as keyed:
-        assert keyed.get(OPTIONS, params={**_me(contact), "q": "x"}).status_code == 200
-        post = keyed.post(CREATE, json=_body(contact, dry_run=True))
+    with make_client(db, slug_granted=False) as denied:
+        got = denied.get(OPTIONS, params={**_me(contact), "q": "x"})
+        assert got.status_code == 403, got.text
+        post = denied.post(CREATE, json=_body(contact))
+        assert post.status_code == 403, post.text
+    with make_client(db) as granted:
+        got = granted.get(OPTIONS, params={**_me(contact), "q": "x"})
+        assert got.status_code == 200, got.text
+        post = granted.post(CREATE, json=_body(contact, dry_run=True))
         assert post.status_code == 201, post.text
     with make_client(db, api_key_principal=False) as bearer:
         headers = {"Authorization": "Bearer staff-session-token"}
@@ -383,8 +404,8 @@ def test_opportunity_source_accepts_chat(db):
         db.flush()
         assert row.source == source
     row = _opportunity(db, agent, 1, date(2026, 12, 1))
-    row.source = "fax"
     with db.begin_nested():
+        row.source = "fax"
         with pytest.raises(IntegrityError):
             db.flush()
     db.expire_all()
@@ -396,11 +417,11 @@ def test_opp_responses_carry_no_other_ids(client, db):
     cust = _customer(db, "ZZT NOID DEALER", 1, agent=agent)
     options = client.get(OPTIONS, params={**_me(contact), "q": "ZZT NOID"})
     assert options.status_code == 200, options.text
-    for item in options.json()["items"]:
+    options_payload = options.json()
+    for item in options_payload["items"]:
         item.pop("customer_id")
     created = client.post(CREATE, json=_body(contact, customer_id=cust.id, prospect_name=None))
     assert created.status_code == 201, created.text
-    for resp in (options, created):
-        payload = options.json() if resp is options else created.json()
+    for payload in (options_payload, created.json()):
         for key, value in _walk(payload):
             assert not (isinstance(value, str) and UUID_RE.search(value)), (key, value)

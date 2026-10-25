@@ -816,10 +816,20 @@ class TestLogToolNotInReadOnlyPool:
         assert out["opportunity_no"] == "OPP-000123", out
 
     def test_the_write_tool_is_named_only_in_the_opportunity_lane(self) -> None:
+        """No chatbot module but the lane names (so calls) the write tool. The one exception is
+        its `contracts.BRAND_SCOPE_TREATMENT` entry, which `test_brand_scope_contract` requires of
+        every catalogue tool: a treatment entry is not a call (lead sign-off, plan 5e98596457)."""
+        from app.services.chatbot import contracts
+
         root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
         lane = root / "lanes" / "opportunity.py"
         assert lane.exists(), f"{lane} is missing"
         naming = sorted(
             str(p.relative_to(root)) for p in root.rglob("*.py") if LOG_TOOL in p.read_text(encoding="utf-8")
         )
-        assert naming == ["lanes/opportunity.py"], naming
+        assert "lanes/opportunity.py" in naming, naming
+        assert set(naming) <= {"lanes/opportunity.py", "contracts.py"}, naming
+        if "contracts.py" in naming:
+            # The treatment entry and nothing else: one mention, and it is that dict's key.
+            assert (root / "contracts.py").read_text(encoding="utf-8").count(LOG_TOOL) == 1
+            assert LOG_TOOL in contracts.BRAND_SCOPE_TREATMENT
