@@ -293,7 +293,7 @@ OTHER_NAME = "ZZ DEMO BATH CONCEPT SDN BHD (PROJECT)"
 GROUP_KEYS = ("ac1", "project", "iborn", "showcase")
 #: The ledgers in Mocha (MCH); the rest are Sorento (SRT). Customer groups are per company.
 MCH_KEYS = ("iborn",)
-#: The owner's prod edit (25 Oct, "i added F033 in mocha fullshun group"): "- [IBORN]" joins the MCH group of the
+#: The owner's prod edit (25 Oct, "i added F033 in mocha <W> group"): "- [IBORN]" joins the MCH group of the
 #: same name, "(SHOWCASE)" stays ungrouped.
 OWNER_EDIT = ("ac1", "project", "iborn")
 
