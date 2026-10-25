@@ -1,8 +1,8 @@
 # PLAN v2: retrieval (RAG) before the parser, every list (CHAT-SLIM-INDEX-PLAN, 25 Oct 2026)
 
-Status: PLAN v2 APPROVED (owner Lavish 25 Oct 17:34). Phase 0 DONE 18:20 (result below): GO file types, brands,
-customers; EDGE GO categories; not enough data for specs, agents, promotion kinds, locations, channels. Phase 1
-waits for the owner's call on the result. Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL (after #1856).
+Status: PLAN v2 APPROVED (owner Lavish 25 Oct 17:34). Phase 0 DONE incl. pull 2 (18:55, result below): GO categories,
+spec WORD values, file types, brands, customers; NO-GO spec NUMBER values (sizes); not enough data for sales agents,
+promotion kinds, locations, channels. Phase 1 waits for the owner's OK (spend). Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL (after #1856).
 v1 (code-first + subtractive slim) is replaced by this after the owner's note of 25 Oct 17:26 (verbatim in
 crew/state/inbox/slim-index-owner-1726.md): past slimming was long, costly and never better; the index should never
 have been spelling-only; index matching must cover ALL list data; a retrieval step BEFORE the parser passes
@@ -10,7 +10,18 @@ candidates to the parser, which decides. Lavish page: `PLAN-chat-slim-index-25oc
 Slice WC (the water-closet code bugs) keeps its UAC: `chat-slim-index-25oct-acceptance-criteria.md`.
 Customer names are masked (public repo).
 
-## Phase 0 result (25 Oct ~18:20, retrieval only, USD 0.02, no parser call)
+## Phase 0 result after pull 2 (25 Oct ~18:55, retrieval only, USD 0.021 total, no parser call)
+
+Pull 2: 183 more real messages picked by the bot's reply kind (categories, specs), labelled blind.
+
+| list | spelling only (today) | hybrid + v63 translations as data | real mentions | verdict |
+|---|---|---|---|---|
+| categories | 0.928 | 0.961 (0.981 without pasted product-list rows) | 180 | GO |
+| spec word values (colour, finish, material, bowl count, trap type) | 0.882 | 0.980 (50 of 51) | 51 | GO |
+| spec number values (200mm, 1200mm) | 0.724 | 0.517 | 29 | NO-GO: a number is read by code, not retrieved |
+| sales agents / locations | - | - | 10 / 5 | not enough data (pull 2 found none / 5) |
+
+## Phase 0 first result (25 Oct ~18:20, pull 1 only)
 
 Set: 1,318 real prod messages (crew pull, masked) + 3 console cases, labelled blind; 874 name no list value.
 Recall@10 at each list's best score floor (GO = >= 0.95 on >= 30 real mentions):

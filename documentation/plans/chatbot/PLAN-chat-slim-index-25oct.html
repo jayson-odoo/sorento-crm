@@ -31,11 +31,21 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 @media(max-width:820px){.arrow{transform:rotate(90deg);width:100%;justify-content:center}}
 </style></head><body><main>
 
-<h1>Chatbot: retrieval before the parser (plan v2 + phase 0 result)</h1>
+<h1>Chatbot: retrieval before the parser (plan v2 + phase 0 results)</h1>
 <p class="mut small">Lane CHAT-SLIM-INDEX-PLAN, 25 Oct 2026, revised after your 17:26 note. Plan only, no code. Detail and file:line evidence: <code>documentation/plans/chatbot/PLAN-chat-slim-index-25oct.md</code>. Customer names masked.</p>
 
 <div class="banner"><b>Yes to your idea.</b> A retrieval step runs before the parser. It looks up every list (categories, classes, brands, specs, sales channels, promotion kinds, file types, locations, sales agents, customer names) by meaning AND spelling, in any language. It hands the parser a short candidates list, and the parser decides. Product codes stay exact and never go into it. <b>We prove the retrieval first, for cents, with no parser money:</b> if it cannot find the right value 95% of the time for a list, that list is not moved.</div>
 
+<h2 style="border-top:none;margin-top:18px">Phase 0 after the second pull (25 Oct 18:55): categories and spec words pass</h2>
+<p class="small">183 more real messages, picked by the kind of reply the bot gave (category lists, filtered product searches), labelled blind. Retrieval only; whole phase 0 cost USD 0.021.</p>
+<div class="tablewrap"><table>
+<tr><th>list</th><th class="n">spelling only (today)</th><th class="n">meaning + spelling + v63's words as data</th><th class="n">real mentions</th><th>verdict</th></tr>
+<tr><td>categories / classes</td><td class="n">92.8%</td><td class="n">96.1%</td><td class="n">180</td><td><span class="tag free">GO</span></td></tr>
+<tr><td>spec words (colour, finish, material, single / double bowl, P trap)</td><td class="n">88.2%</td><td class="n">98.0% (50 of 51)</td><td class="n">51</td><td><span class="tag free">GO</span></td></tr>
+<tr><td>spec numbers (200mm, 1200mm)</td><td class="n">72.4%</td><td class="n">51.7%</td><td class="n">29</td><td><span class="tag stop">NO-GO</span> <span class="small mut">a size is read by code, not looked up; these lines stay in the prompt</span></td></tr>
+<tr><td>sales agents / locations</td><td class="n">-</td><td class="n">-</td><td class="n">10 / 5</td><td><span class="tag stop">NOT ENOUGH DATA</span> <span class="small mut">the second pull found none / 5</span></td></tr>
+</table></div>
+<p class="small mut">From the first pull: file types, brands and customer names also passed (table below).</p>
 <h2 style="border-top:none;margin-top:18px">Phase 0 result (25 Oct 18:20): retrieval only, USD 0.02, no parser call</h2>
 <p class="small">1,318 real prod messages (masked) + your 3 console cases, labelled blind. 874 of them name no list value at all. Recall = the right value is among the top 10 candidates. Bar: 95% on at least 30 real mentions.</p>
 <div class="tablewrap"><table>
@@ -110,12 +120,13 @@ form.q .state{font-size:12.5px;color:var(--mut);margin-left:10px}
 </table></div>
 <p class="small mut">Starts after PR #1856 (customer pick resume) merges. Hand test: "Dealer &lt;customer F&gt; oct total sales for water closet" gives one reply, F's October total, water closet only, no pick, no promotion file.</p>
 
-<h2>Your call on phase 1</h2>
-<form class="q" data-lavish-question="p1" onsubmit="return queueQ(event,'p1','Phase 1')">
-<div class="qt">What next?</div>
-<label><input type="radio" name="p1" value="a: second targeted pull first: category / spec / agent / location asks chosen by the bot's reply kind, ~500 rows, retrieval only, ~USD 0.01, ~0.5 day; then decide phase 1 with categories and specs judged"> (a) More data first: a second pull of category / spec / agent / location asks (picked by the bot's reply, not by words), retrieval only, about USD 0.01, half a day; then phase 1 with categories and specs judged <span class="rec">RECOMMENDED</span></label>
-<label><input type="radio" name="p1" value="b: start phase 1 now with file types (clean GO, ~USD 8.5 incl. baseline), categories next as an edge case, customers last as add-only"> (b) Start phase 1 now: file types first (about USD 8.5), categories next, customers last</label>
-<label><input type="radio" name="p1" value="c: stop phase 1; keep v63; only slice WC"> (c) Stop here: keep today's prompt, do only the water-closet fixes</label>
+<h2>Your call on phase 1 (needs your OK: it spends parser money)</h2>
+<p class="small">Each step: that list's text leaves today's prompt (v63), its candidates come in, tested 3 times on each side against v63 on TRAIN 118, ranking set 62 and that list's real messages; zero product-code swaps allowed; a missed bar keeps the list in the prompt. Steps run first in the test harness; product code is written only for a list that passes.</p>
+<form class="q" data-lavish-question="p1b" onsubmit="return queueQ(event,'p1b','Phase 1')">
+<div class="qt">Which lists, in what order?</div>
+<label><input type="radio" name="p1b" value="a: categories, then spec words (your two complaints, both pass); categories ~USD 9 (incl. today's-prompt baseline x3), spec words ~USD 6; ~1.5 days; spec numbers, agents, locations stay as today; file types / brands / customers later on their own OK"> (a) Categories, then spec words: about USD 9 + USD 6, about 1.5 days <span class="rec">RECOMMENDED</span><br><span class="small mut">Your two complaints, both passed. Sizes, agents and locations stay as today. File types, brands and customers later, each on its own OK.</span></label>
+<label><input type="radio" name="p1b" value="b: every list that passed, one at a time: categories ~9, spec words ~6, file types ~5, brands ~5, customers (add-only) ~6; ~USD 31, ~3 days"> (b) Every list that passed, one at a time: categories, spec words, file types, brands, customers; about USD 31, about 3 days</label>
+<label><input type="radio" name="p1b" value="c: stop; keep v63; slice WC only"> (c) Stop: keep today's prompt, do only the water-closet fixes</label>
 <button type="submit">Queue answer</button><span class="state"></span></form>
 </main>
 <script>
