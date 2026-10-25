@@ -1749,3 +1749,60 @@ def test_an_interrupted_restart_wait_stops_the_commands_process_group(tool, copy
             with contextlib.suppress(Exception):
                 os.killpg(proc.pid, signal.SIGKILL)
                 proc.wait(5)
+
+
+# --------------------------------------------------------------------------- #
+# Round 10b: the worker writes to ITS .env's DATABASE_URL. When that file is another file
+# than --env-file, its database must be the same one (host, port, name), else refuse naming
+# both databases without credentials.
+# --------------------------------------------------------------------------- #
+
+
+def _url_with(**parts: Any) -> str:
+    from sqlalchemy.engine import make_url
+
+    return make_url(THROWAWAY_URL).set(**parts).render_as_string(hide_password=False)
+
+
+def _worker_case(tool, monkeypatch, tmp_path, copy_world, worker_text: str):
+    worker_env = tmp_path / "worker-dot-env"
+    worker_env.write_text(worker_text)
+    monkeypatch.setattr(tool, "WORKER_ENV_FILE", worker_env)
+    copy_world(base_url=NEUTRAL_RESPOND, sender_url=None)
+
+
+@pytest.mark.parametrize(
+    "worker_database_url",
+    [
+        lambda: _url_with(database="zzt_other_db", password="zzt-secret-pw"),
+        lambda: _url_with(port=(int(__import__("sqlalchemy").engine.make_url(THROWAWAY_URL).port or 5432) + 1)),
+        lambda: "",
+    ],
+    ids=["other-database", "other-port", "none"],
+)
+def test_main_refuses_a_worker_dot_env_for_another_database(
+    tool, real_main, copy_world, monkeypatch, tmp_path, capsys, worker_database_url
+):
+    url = worker_database_url()
+    body = neutral_env_text(THROWAWAY_URL).split("\n", 1)[1]  # drop its DATABASE_URL line
+    _worker_case(tool, monkeypatch, tmp_path, copy_world, (f"DATABASE_URL={url}\n" if url else "") + body)
+    run = real_main()
+    out = capsys.readouterr().out
+    assert run["rc"] == 2, f"a worker .env for another database must be refused: {run['rc']!r}"
+    assert "zzt-secret-pw" not in out, "a refusal printed a password"
+    if "other-database" in str(worker_database_url) or "zzt_other_db" in url:
+        assert "zzt_other_db" in out and (__import__("sqlalchemy").engine.make_url(THROWAWAY_URL).database or "") in out, out
+
+
+def test_the_workers_last_database_url_across_case_variants_is_the_one_judged(tool, real_main, copy_world, monkeypatch, tmp_path):
+    _worker_case(
+        tool, monkeypatch, tmp_path, copy_world,
+        neutral_env_text(THROWAWAY_URL) + f"database_url={_url_with(database='zzt_other_db')}\n",
+    )
+    assert real_main()["rc"] == 2
+
+
+def test_a_worker_dot_env_for_the_same_database_passes_whatever_its_password(tool, real_main, copy_world, monkeypatch, tmp_path):
+    body = neutral_env_text(THROWAWAY_URL).split("\n", 1)[1]
+    _worker_case(tool, monkeypatch, tmp_path, copy_world, f"DATABASE_URL={_url_with(password='zzt-other-pw')}\n" + body)
+    assert real_main()["rc"] == "reached"
