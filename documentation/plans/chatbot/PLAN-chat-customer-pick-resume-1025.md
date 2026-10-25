@@ -1,6 +1,6 @@
 # PLAN: a customer pick answer resumes the held sales ask (lane CHAT-CUSTOMER-PICK-RESUME)
 
-Status: IN PROGRESS (Build done, Review next), small fix track (S: `report_ask.py` + one engine line, no migration, no access
+Status: IN REVIEW (reviewer READY on the pick fix; add-on re-review on the final head), small fix track (S: `report_ask.py` + one engine line, no migration, no access
 change, no new ingest, no prompt change).
 
 ## Why
@@ -42,8 +42,26 @@ the picked uuid, channel dealer, Oct window, no group_by, no refusal); P2 the sa
 2 picks the second account. Guards: G1 the plain pick parse, G2 "1" with group_by month. Unit U1-U4 for the seam.
 Kill: removing the engine call fails exactly P1, P2, P4.
 
-## Owner add-on (25 Oct, in review with crew)
-"Which one do you mean? 1. <one line>": a customer picker with one printed option. Suspected cause: the gate's ask decision
-(`gate._cust_base` over the resolver's display name, account code when none) and the printed roster (`ledger_family_key`
-over the CRM name) group by different names. Waiting on the t1 trace to confirm before fixing (crew-ask on the PR).
+## Owner add-on: a "picker" of one printed line (25 Oct)
+"Dealer <customer> sanitary oct total sales for water closet" -> "Which one do you mean? 1. <one line>". The gate decides to
+ask on its own family count (`gate._cust_base`), and the printed roster is rebuilt with another key (`narrow.customer_options`
+-> `ledger_family_key` over the full name it prints). Two ways they disagreed, both fixed so the ask count is the printed count:
+
+1. **Both matches named, one customer group (the prod case, crew trace afd7779e on the prod clone):** a debtor-name hit on
+   the "[A/C I]" ledger (display customer_name "... SDN BHD [A/C I]") and a customer hit on the "(PROJECT)" ledger, both
+   in one customer group. `_cust_base` looked the group up on the SUFFIX-STRIPPED name ("... SDN BHD"), which no ledger
+   carries, so `customer_group_of` (exact full name, `ledger_family.py`) missed and the row got "<key> (NO GROUP)", while
+   the "(PROJECT)" row got the group key: two gate families, one printed line. Fix: `_cust_base` IS the roster's key,
+   `ledger_family_key(_display_name(match) or canonical_code)` (`gate.py`); the gate's own regex copy of the name rule and
+   its stripped group lookup are gone.
+2. **A match with no name:** `_cust_base` fell back to the account code, the roster to the CRM name. Fix:
+   `resolve_gate.name_unnamed_customers` fills `customers.customer_name` by uuid onto an unnamed customer match before the
+   gate (after `_without_customer_rows`, so a hidden customer is never named), through the `customer_names` reader
+   (`services.customer_names_reader`, passed by `turn_runtime.py` like `account_levels`; a failed read adds nothing).
+
+Tests: O2 (case 1, the two prod shapes, red commit first), O1 (case 2), U5 (the name fill, unit). Kill: `_cust_base` back to
+the stripped lookup fails O2; dropping the `customer_names` argument fails O1.
+
+Owner note (no change): option 1 of "Dealer fullshun oct total sales" is the whole FULLSHUN SANITARYWARE group across SRT and
+MCH (9 accounts), and that includes the ungrouped "- [IBORN]" ledger (name rule) and the inactive "(SHOWCASE)" one.
 "water closet" read as a promotion is out of scope (separate lane).

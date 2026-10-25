@@ -583,11 +583,12 @@ def customer_names_reader(db: Session) -> Callable[[list[str]], dict[str, str]]:
 
         if not ids:
             return {}
-        return {
-            str(i): name
-            for i, name in db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
-            if name
-        }
+        try:
+            rows = db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
+        except Exception:  # noqa: BLE001 - a name is only added; a failed read must not cost the turn its resolve
+            logger.warning("chatbot: could not read customer names for the gate", exc_info=True)
+            return {}
+        return {str(i): name for i, name in rows if name}
 
     return read
 

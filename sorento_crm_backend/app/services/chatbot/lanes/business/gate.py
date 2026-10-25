@@ -38,7 +38,7 @@ from typing import Any
 
 from app.services.chatbot import jsc
 from app.services.chatbot.turn_runtime import SPEC_TIER
-from app.services.ledger_family import apart_from_group, customer_group_of, group_key, ledger_family_key
+from app.services.ledger_family import ledger_family_key
 
 # PLAN-chatbot-answer-half-reattach.md "Roster cap" (owner ruling 20 Sep 2026):
 # `roster_caps=None` (the parameter never supplied at all) means the CALLER predates
@@ -189,9 +189,6 @@ VALID_BRANDS = ("sorento", "cabana", "mocha")
 
 _ACCOUNT_SUFFIX_DASH = re.compile(r"\s*-\s*\[[^\]]*\]\s*\Z")
 _ACCOUNT_SUFFIX = re.compile(r"\s*\[[^\]]*\]\s*\Z")
-_BRACKET_OR_PAREN = re.compile(r"\[[^\]]*\]|\([^)]*\)")
-_LEGAL_FORM = re.compile(r"\bSDN\.?\s*BHD\.?\b|\bSDN\b|\bBHD\b")
-_NON_ALNUM_UPPER = re.compile(r"[^A-Z0-9]+")
 _BRACKET_ANY = re.compile(r"\[[^\]]*\]")
 _TRAILING_PAREN = re.compile(r"\s*-?\s*\([^)]*\)\s*\Z")
 _WS_RUN = re.compile(r"\s+")
@@ -372,18 +369,15 @@ def _display_name(match: Any) -> str | None:
 
 
 def _cust_base(match: Any) -> str:
-    """`_custBase` - the family GROUPING KEY, never customer copy."""
-    name = _cust_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or "")
-    # A customer group the turn holds for this name wins over the name rule.
-    group = customer_group_of(name)
-    if group is not None:
-        return group_key(group)
-    base = name.upper()
-    base = _BRACKET_OR_PAREN.sub(" ", base)
-    base = _LEGAL_FORM.sub(" ", base)
-    base = _NON_ALNUM_UPPER.sub(" ", base)
-    # An ungrouped row beside a group of the same key: apart or joined, by the ONE switch.
-    return apart_from_group(base.strip())
+    """`_custBase` - the family GROUPING KEY, never customer copy.
+
+    CHAT-CUSTOMER-PICK-RESUME (owner console, 25 Oct): the printed roster's own key
+    (`narrow.customer_options` -> `ledger_family_key`) over the same FULL name it prints
+    (`_display_name`), so the picker asks exactly when it prints two or more lines. The group
+    lookup is by the full name (`customer_group_of` is exact-name): looked up on the
+    suffix-stripped name, a "[A/C I]" ledger fell out of its group while its "(PROJECT)"
+    sibling stayed in, and the gate asked "Which one do you mean?" over one printed line."""
+    return ledger_family_key(_display_name(match) or jsc.js_string(jsc.get(match, "canonical_code") or ""))
 
 
 def run_gate(  # noqa: PLR0912, PLR0915 - one JS node, one function; splitting it hides the order
