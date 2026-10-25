@@ -197,3 +197,12 @@ or a 5+ char letter-digit word) never feed the meaning / spelling lists (AC-12).
   apply() removes every span, renames, appends the marker, keeps the insert byte for byte; a missing / doubled anchor
   -> None; the migration on Postgres publishes once, unlabelled, idempotent. Lead proves the edits on the real v63 text
   (crew-only) and records chars before / after.
+
+## Access scoping (lead, 26 Oct, after S2): every list shows only what the contact may see
+- Spec rows and number hits honour the contact's hidden spec keys exactly as today's candidate lines do
+  (`_candidate_lines` -> `access_mod._hidden_spec_keys`); `load_rows(db, *, hidden_spec_keys)`.
+- S3/S4: salespeople, locations and customers are built from the same visibility the existing pickers / resolvers use
+  for that contact; a customer (dealer) contact never sees another customer's name in a Customer block. Each slice adds
+  its own access tests. security-reviewer joins Phase 3 (contact data scoping).
+- S2 limits recorded: "600x400" sizes normalise but are not matched (no stored size shape found); cold cache with many
+  spec texts -> first turns spelling only; S3 moves the warm-up to a background thread for every list.
