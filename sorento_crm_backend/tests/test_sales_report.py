@@ -44,12 +44,21 @@ from app.services.integration_key_service import IntegrationKeyService
 from app.services.outstanding_report_service import _customer_echo
 
 from tests._mc_lookup_seed import customer, product, seed_mocha, warehouse
-from tests._sales_report_do_seed import line, seed_customer, seed_do
+from tests._sales_report_do_seed import line, seed_customer
+from tests._sales_report_do_seed import seed_do as _seed_do
 from tests._pg_fixture import blank_session, unique_code
 
 BASE = "/api/v1/order-management/sales-report"
 PERMISSION_SLUG = "order_management.orders.view"
 
+
+
+def seed_do(db, **kw):
+    """DELIVERED-DATE-BASIS (owner ruling 25 Oct 2026): a DO here is an AutoCount one unless a test
+    says `source_book=None`; an old-system DO with no sales order behind it is not a delivery of
+    its own any more (its SO's delivered quantity is)."""
+    kw.setdefault("source_book", "db1")
+    return _seed_do(db, **kw)
 
 def _money(v) -> Decimal:
     """Money-agnostic read: the coder may serialize a money figure as a JSON

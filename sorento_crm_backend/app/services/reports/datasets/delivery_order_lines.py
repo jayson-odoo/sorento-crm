@@ -14,9 +14,12 @@ delivery event, built per run in `_events`:
   qty_ordered)`, the sales report's confirmed qty) that no linked DO line explains, on the SO
   line's own date (`required_date`, else the SO's `order_date`). Old-system DOs carry no SO link,
   so a delivery made before the DO history counts here, as it did before this lane.
-* **unlinked**: an AutoCount DO line (`source_book` set) that resolves to no sales order, on the
-  DO's date. It is in no channel and has no agent. An old-system DO line (`source_book` NULL)
-  that resolves to no SO is left out: its SO's own delivered quantity is the residual above.
+* **unlinked**: an AutoCount DO line (`source_book` set) that resolves to no sales order line,
+  on the DO's date, at its own total. When its header or doc number still names an SO (one with
+  no line of that product), the channel and agent are that SO's; else it is in no channel and has
+  no agent. An old-system DO line (`source_book` NULL) that resolves to no SO line is left out:
+  its SO's own delivered quantity is the residual above, and its stored totals repeat the DOC
+  total on every line, so they are no line amount.
 
 A consignment SO is not a sale (AC-CONSIGN-CRM): neither its DO lines nor its residual count.
 
@@ -66,18 +69,22 @@ def _first_line_of(so_match: Any) -> Any:
     )
 
 
+_BY_DOC_NUMBER = sa.and_(
+    OrderLine.from_doc_type == "SO",
+    _SO.so_number == OrderLine.from_doc_no,
+    _SO.company_id == OrderLine.company_id,
+)
+
 #: The SO line a DO line delivered: line link, then the header's SO, then the doc number.
 RESOLVED_SO_LINE = sa.func.coalesce(
     OrderLine.sales_order_line_id,
     _first_line_of(_SO.id == Order.sales_order_id),
-    _first_line_of(
-        sa.and_(
-            OrderLine.from_doc_type == "SO",
-            _SO.so_number == OrderLine.from_doc_no,
-            _SO.company_id == OrderLine.company_id,
-        )
-    ),
+    _first_line_of(_BY_DOC_NUMBER),
 )
+
+#: The SO a DO line names when no line of its product is on it: the header's, then the doc
+#: number's (unique per company and number, so at most one).
+NAMED_SO = sa.func.coalesce(Order.sales_order_id, sa.select(_SO.id).where(_BY_DOC_NUMBER).scalar_subquery())
 
 
 def _fixed_filters() -> List[Any]:
@@ -132,6 +139,7 @@ def _events(ctx: Any) -> Any:
             sa.func.coalesce(OrderLine.quantity, 0).label("qty"),
             sa.func.round(sa.func.coalesce(OrderLine.total, 0), 2).label("total"),
             RESOLVED_SO_LINE.label("sol_id"),
+            NAMED_SO.label("named_so_id"),
         )
         .select_from(OrderLine)
         .join(Order, Order.id == OrderLine.order_id)
@@ -202,16 +210,19 @@ def _events(ctx: Any) -> Any:
             do_lines.c.qty.label("qty"),
             do_lines.c.total.label("amount"),
             sa.cast(sa.null(), SalesOrderLine.id.type).label("sol_id"),
-            sa.cast(sa.null(), SalesOrder.id.type).label("so_id"),
+            SalesOrder.id.label("so_id"),
             do_lines.c.do_id.label("do_id"),
-            do_lines.c.do_customer_id.label("customer_id"),
+            sa.func.coalesce(SalesOrder.customer_id, do_lines.c.do_customer_id).label("customer_id"),
             do_lines.c.debtor_name.label("debtor_name"),
             do_lines.c.product_id.label("product_id"),
             do_lines.c.warehouse_id.label("warehouse_id"),
             do_lines.c.company_id.label("company_id"),
         )
+        .select_from(do_lines)
+        .outerjoin(SalesOrder, SalesOrder.id == do_lines.c.named_so_id)
         .where(
             do_lines.c.sol_id.is_(None),
+            sa.or_(SalesOrder.id.is_(None), live_so),
             do_lines.c.source_book.isnot(None),
             do_lines.c.do_date >= start,
             do_lines.c.do_date < end,

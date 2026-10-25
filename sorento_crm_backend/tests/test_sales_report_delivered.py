@@ -41,7 +41,7 @@ from tests._sales_report_do_seed import (  # noqa: F401  (client / db are fixtur
     product,
     seed_agent,
     seed_customer,
-    seed_do,
+    seed_do as _seed_do,
     seed_policy,
     seed_segment,
     seed_so,
@@ -53,6 +53,14 @@ from tests._pg_fixture import unique_code
 
 D = Decimal
 
+
+
+def seed_do(db, **kw):
+    """DELIVERED-DATE-BASIS (owner ruling 25 Oct 2026): a DO here is an AutoCount one unless a test
+    says `source_book=None`; an old-system DO with no sales order behind it is not a delivery of
+    its own any more (its SO's delivered quantity is)."""
+    kw.setdefault("source_book", "db1")
+    return _seed_do(db, **kw)
 
 def _get(client, **params):
     resp = client.get(BASE, params=params)
@@ -83,19 +91,19 @@ def test_dataset_catalog_dimensions_and_measures():
         "customer", "product", "brand", "category", "sales_agent", "location", "channel",
         "day", "week", "month", "delivery_order", "all",
     }, dims
-    assert measures == {"amount", "qty"}, measures
+    # REPORT-SMART-1021's count measures moved here with the report ask's delivered basis.
+    assert measures == {"amount", "qty", "customers", "orders", "products"}, measures
 
 
 def test_dataset_is_company_scoped_and_date_based_on_the_do_date():
     """AC-SR-20: company scope fail-closed (`scope == "company"` with a company column), date
-    basis the DO's own `order_date`."""
-    from app.models.order import Order
-    from app.services.reports.datasets.delivery_order_lines import DATASET
+    basis the delivered event's date (DELIVERED-DATE-BASIS: the DO's date, else the SO line's)."""
+    from app.services.reports.datasets.delivery_order_lines import DATASET, event_date
 
     assert DATASET.scope == "company"
     assert DATASET.company_column is not None
     assert [b.key for b in DATASET.date_bases] == ["order_date"]
-    assert str(DATASET.date_bases[0].expr) == str(Order.order_date)
+    assert DATASET.date_bases[0].expr is event_date
 
 
 # ============================================================ AC-SR-20: which DOs count
@@ -159,203 +167,24 @@ def test_company_scope_never_counts_another_companys_dos(client, db):
 
 # ============================================================ AC-SR-21: the amount
 
-
-def test_legacy_do_counts_its_repeated_doc_total_once(client, db):
-    """Real example: 11 lines each carrying the DOC total 9441.44. The DO is RM 9,441.44, not 11
-    times that."""
-    cust, _prod, wh = _world(db)
-    prods = [product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code(f"P{i}")) for i in range(11)]
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
-            lines=[line(p.id, wh.id, 2, price=D("100"), total=D("9441.44")) for p in prods])
-    db.commit()
-
-    body = _get(client, customer_ids=cust.id)
-    assert body["total"]["qty"] == 22, body
-    assert money(body["total"]["amount"]) == D("9441.44"), body
-    assert money(body["periods"][0]["amount"]) == D("9441.44"), body["periods"]
+# DELIVERED-DATE-BASIS (owner ruling 25 Oct 2026, Q0 (b)): the old-system DOC split (#1401, a DOC
+# total repeated on every legacy line, split by weight, the discount normalised) is retired with
+# the rows it priced. An old-system DO line resolves to no SO line, so it is no delivery of its
+# own: its SO's delivered quantity counts instead, on the SO line's date (killed: the seven
+# share / discount / equal-share / mixed-total / product-share / location-share / no-price tests).
 
 
-def test_legacy_do_product_shares_are_weighted_by_qty_price_and_discount(client, db):
-    """Weights: A = 2 x 100 x (1 - 0) = 200, B = 1 x 100 x (1 - 0.5) = 50. DOC total 1000.00
-    repeated on both lines -> A 800.00, B 200.00."""
-    cust, _p, wh = _world(db)
-    a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SHARE-A")
-    b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SHARE-B")
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
-            lines=[
-                line(a.id, wh.id, 2, price=D("100"), discount=D("0"), total=D("1000.00")),
-                line(b.id, wh.id, 1, price=D("100"), discount=D("0.5"), total=D("1000.00")),
-            ])
-    db.commit()
-
-    body = _get(client, customer_ids=cust.id, group_by="product")
-    by_name = {r["name"]: r for r in body["rows"]}
-    assert money(by_name["ZZT-SHARE-A"]["amount"]) == D("800.00"), body["rows"]
-    assert money(by_name["ZZT-SHARE-B"]["amount"]) == D("200.00"), body["rows"]
-    assert by_name["ZZT-SHARE-A"]["qty"] == 2 and by_name["ZZT-SHARE-B"]["qty"] == 1, body["rows"]
-    assert money(body["total"]["amount"]) == D("1000.00"), body
-
-
-def test_a_discount_stored_as_a_percent_is_normalised(client, db):
-    """Fix round 1, S2: a discount above 1 is a percent (real data carries 100.0000 on three
-    lines). A legacy DO with a paid line and a 100%-off line: the free line is RM 0.00 and the
-    paid line carries the whole DOC total."""
-    cust, _p, wh = _world(db)
-    paid = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-PCT-PAID")
-    free = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-PCT-FREE")
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
-            lines=[
-                line(paid.id, wh.id, 2, price=D("100"), discount=D("0"), total=D("200.00")),
-                line(free.id, wh.id, 1, price=D("100"), discount=D("100"), total=D("200.00")),
-            ])
-    db.commit()
-
-    body = _get(client, customer_ids=cust.id, group_by="product")
-    by_name = {r["name"]: money(r["amount"]) for r in body["rows"]}
-    assert by_name == {"ZZT-PCT-PAID": D("200.00"), "ZZT-PCT-FREE": D("0.00")}, body["rows"]
-    assert money(body["total"]["amount"]) == D("200.00"), body
-
-
-def test_a_percent_discount_below_100_is_a_fraction(client, db):
-    """37 stored is 37%: weights A = 1 x 100 x 0.63 = 63, B = 1 x 100 x 1 = 100 over a repeated
-    163.00 split A 63.00, B 100.00."""
-    cust, _p, wh = _world(db)
-    a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-PCT37-A")
-    b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-PCT37-B")
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
-            lines=[
-                line(a.id, wh.id, 1, price=D("100"), discount=D("37"), total=D("163.00")),
-                line(b.id, wh.id, 1, price=D("100"), discount=D("0"), total=D("163.00")),
-            ])
-    db.commit()
-
-    body = _get(client, customer_ids=cust.id, group_by="product")
-    by_name = {r["name"]: money(r["amount"]) for r in body["rows"]}
-    assert by_name == {"ZZT-PCT37-A": D("63.00"), "ZZT-PCT37-B": D("100.00")}, body["rows"]
-
-
-def test_a_legacy_do_with_more_than_one_distinct_total_sums_its_own_line_math(client, db):
-    """Fix round 1, S1 (owner ruling, option a) refined by fix round 2, rule a2: a legacy DO
-    whose lines carry MORE THAN ONE distinct total is not one repeated DOC total, so nothing
-    is split: each line is the LESSER of qty x unit price x (1 - discount), rounded to the sen,
-    and the line's own total (a NULL total is the line math). Three real shapes, made-up codes:
-
-    * 202606-3968: 2 x 370 (total 396.27) and 3 x 370 (total 594.41) -> 396.27 + 594.41 = 990.68
-      (the stored totals are below the list-price math);
-
-    * PS202607-0355: 2 x 523 (total 1046) and 3 x 523 (total 1569) -> 1,046 + 1,569 = 2,615.00;
-    * M2609-0511: 3 x 320 d0 (960), 3 x 14 d1 (960), 2 x 320 d0 (640), 2 x 14 d1 (640)
-      -> 960 + 0 + 640 + 0 = 1,600.00 (discount 1 = free).
-    """
-    cust, _p, wh = _world(db)
-    ps_a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-MIX-PS-A")
-    ps_b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-MIX-PS-B")
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 7, 10), number="ZZT-PS0355", source_book=None,
-            lines=[
-                line(ps_a.id, wh.id, 2, price=D("523"), total=D("1046.00")),
-                line(ps_b.id, wh.id, 3, price=D("523"), total=D("1569.00")),
-            ])
-    m = [product(db, company_id=DEFAULT_COMPANY_ID, code=f"ZZT-MIX-M-{i}") for i in range(4)]
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 9, 5), number="ZZT-M0511", source_book=None,
-            lines=[
-                line(m[0].id, wh.id, 3, price=D("320"), discount=D("0"), total=D("960.00")),
-                line(m[1].id, wh.id, 3, price=D("14"), discount=D("1"), total=D("960.00")),
-                line(m[2].id, wh.id, 2, price=D("320"), discount=D("0"), total=D("640.00")),
-                line(m[3].id, wh.id, 2, price=D("14"), discount=D("1"), total=D("640.00")),
-            ])
-    r = [product(db, company_id=DEFAULT_COMPANY_ID, code=f"ZZT-MIX-R-{i}") for i in range(2)]
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 6, 20), number="ZZT-R3968", source_book=None,
-            lines=[
-                line(r[0].id, wh.id, 2, price=D("370"), total=D("396.27")),
-                line(r[1].id, wh.id, 3, price=D("370"), total=D("594.41")),
-            ])
-    db.commit()
-
-    by_do = _get(client, customer_ids=cust.id, group_by="delivery_order")
-    assert {r["name"]: money(r["amount"]) for r in by_do["rows"]} == {
-        "ZZT-PS0355": D("2615.00"),
-        "ZZT-M0511": D("1600.00"),
-        "ZZT-R3968": D("990.68"),
-    }, by_do["rows"]
-    assert money(by_do["total"]["amount"]) == D("5205.68"), by_do
-
-    by_product = _get(client, customer_ids=cust.id, group_by="product")
-    assert {r["name"]: money(r["amount"]) for r in by_product["rows"]} == {
-        "ZZT-MIX-PS-B": D("1569.00"),
-        "ZZT-MIX-PS-A": D("1046.00"),
-        "ZZT-MIX-M-0": D("960.00"),
-        "ZZT-MIX-M-2": D("640.00"),
-        "ZZT-MIX-M-1": D("0.00"),
-        "ZZT-MIX-M-3": D("0.00"),
-        "ZZT-MIX-R-1": D("594.41"),
-        "ZZT-MIX-R-0": D("396.27"),
-    }, by_product["rows"]
-
-
-def test_a_product_filter_keeps_the_products_share_of_the_whole_do(client, db):
-    """Fix round 1, S3: the share is computed over the WHOLE DO, then filtered. ZZT-SHARE-B is
-    worth 200.00 of a repeated 1000.00 (A 800); asked for B alone it is still 200.00, never the
-    whole 1000.00 re-split over the one line left."""
-    cust, _p, wh = _world(db)
-    a = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SHARE-A")
-    b = product(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SHARE-B")
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
-            lines=[
-                line(a.id, wh.id, 2, price=D("100"), discount=D("0"), total=D("1000.00")),
-                line(b.id, wh.id, 1, price=D("100"), discount=D("0.5"), total=D("1000.00")),
-            ])
-    db.commit()
-
-    body = _get(client, customer_ids=cust.id, product_code="ZZT-SHARE-B")
-    assert money(body["total"]["amount"]) == D("200.00"), body
-    assert body["total"]["qty"] == 1, body
-
-
-def test_a_location_filter_keeps_that_warehouses_share_of_the_whole_do(client, db):
-    """Fix round 1, S3: a legacy DO split across two warehouses (weights 300 and 100 over a
-    repeated 400.00), filtered to one warehouse, answers that warehouse's share."""
-    cust, prod, _w = _world(db)
-    wh_a = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SPLIT-WA")
-    wh_b = warehouse(db, company_id=DEFAULT_COMPANY_ID, code="ZZT-SPLIT-WB")
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
-            lines=[
-                line(prod.id, wh_a.id, 3, price=D("100"), total=D("400.00")),
-                line(prod.id, wh_b.id, 1, price=D("100"), total=D("400.00")),
-            ])
-    db.commit()
-
-    body = _get(client, customer_ids=cust.id, warehouse_codes="ZZT-SPLIT-WB")
-    assert money(body["total"]["amount"]) == D("100.00"), body
-    assert body["total"]["qty"] == 1, body
-
-
-def test_equal_shares_when_every_weight_is_zero(client, db):
-    """No unit price on any line: weights are all 0, so the DOC total splits equally."""
-    cust, _p, wh = _world(db)
-    prods = [product(db, company_id=DEFAULT_COMPANY_ID, code=f"ZZT-EQ-{i}") for i in range(3)]
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
-            lines=[line(p.id, wh.id, 4, price=None, total=D("90.00")) for p in prods])
-    db.commit()
-
-    body = _get(client, customer_ids=cust.id, group_by="product")
-    assert [money(r["amount"]) for r in body["rows"]] == [D("30.00")] * 3, body["rows"]
-    assert money(body["total"]["amount"]) == D("90.00"), body
-
-
-def test_a_do_with_a_quantity_but_no_price_stays_in_at_zero(client, db):
-    """The mock's DO-0824: a real qty, no price or total in the import. It stays in at RM 0.00."""
+def test_a_legacy_do_with_no_sales_order_line_is_not_a_delivery_its_sales_order_is(client, db):
     cust, prod, wh = _world(db)
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 28), number="DO-0824", source_book=None,
-            lines=[line(prod.id, wh.id, 40, price=None, total=None)])
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
+            lines=[line(prod.id, wh.id, 2, price=D("100"), total=D("1000.00"))])
+    so = seed_so(db, customer_id=cust.id)
+    seed_so_line_row(db, so=so, product_id=prod.id, qty=3, total="300.00", warehouse_id=wh.id,
+                     required_date=date(2026, 8, 20))
     db.commit()
-
-    body = _get(client, customer_ids=cust.id, group_by="delivery_order")
-    assert body["total"]["qty"] == 40, body
-    assert money(body["total"]["amount"]) == D("0.00"), body
-    assert [(r["name"], r["qty"], money(r["amount"])) for r in body["rows"]] == [
-        ("DO-0824", 40, D("0.00"))
-    ], body["rows"]
-    assert len(body["periods"]) == 1, "a priced-zero DO still counts as a delivery"
+    body = _get(client, customer_ids=cust.id)
+    assert _qty_amount(body) == (3, D("300.00")), body
+    assert [p["from"][:7] for p in body["periods"]] == ["2026-08"], body["periods"]
 
 
 def test_autocount_do_sums_its_line_totals(client, db):
@@ -376,23 +205,11 @@ def test_autocount_do_sums_its_line_totals(client, db):
     assert by_name == {"ZZT-DB1-A": D("150.00"), "ZZT-DB1-B": D("50.00")}, body["rows"]
 
 
-def test_shares_tally_to_the_sen_when_a_total_does_not_split_evenly(client, db):
-    """Three equal lines on a DOC total of 100.00: 33.33 x 3 would be 99.99. Every grouping must
-    sum to the same Total EXACTLY, so the remaining sen is allocated, not dropped."""
-    cust, _p, wh = _world(db)
-    prods = [product(db, company_id=DEFAULT_COMPANY_ID, code=f"ZZT-TALLY-{i}") for i in range(3)]
-    seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
-            lines=[line(p.id, wh.id, 1, price=D("10"), total=D("100.00")) for p in prods])
-    db.commit()
-
-    body = _get(client, customer_ids=cust.id, group_by="product")
-    assert money(body["total"]["amount"]) == D("100.00"), body
-    assert sum((money(r["amount"]) for r in body["rows"]), D("0")) == D("100.00"), body["rows"]
 
 
 def test_every_grouping_sums_to_the_same_total(client, db):
-    """Mixed legacy + AutoCount DOs over two accounts and two agents: customer, product,
-    delivery order, sales agent and the periods all sum to the Total."""
+    """AutoCount DOs over two accounts and two agents, each linked to its SO by the header:
+    customer, product, delivery order, sales agent and the periods all sum to the Total."""
     c1 = seed_customer(db, name="ZZT C1 SDN BHD")
     c2 = seed_customer(db, name="ZZT C2 SDN BHD")
     wh = warehouse(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("WH"))
@@ -404,12 +221,11 @@ def test_every_grouping_sums_to_the_same_total(client, db):
     so1 = seed_so(db, customer_id=c1.id, agent_id=a1.id)
     so2 = seed_so(db, customer_id=c1.id, agent_id=a2.id)
     so3 = seed_so(db, customer_id=c2.id, agent_id=a2.id)
-    # legacy: weights 200 and 50 over a repeated 1000.00 -> P1 800, P2 200
-    seed_do(db, customer_id=c1.id, order_date=date(2026, 8, 10), number="DO-G1", source_book=None,
+    seed_do(db, customer_id=c1.id, order_date=date(2026, 8, 10), number="DO-G1",
             sales_order_id=so1.id,
             lines=[
-                line(p1.id, wh.id, 2, price=D("100"), total=D("1000.00")),
-                line(p2.id, wh.id, 1, price=D("100"), discount=D("0.5"), total=D("1000.00")),
+                line(p1.id, wh.id, 2, price=D("400"), total=D("800.00")),
+                line(p2.id, wh.id, 1, price=D("200"), total=D("200.00")),
             ])
     # AutoCount: 150.00 + 50.00
     seed_do(db, customer_id=c1.id, order_date=date(2026, 8, 11), number="DO-G2", source_book="db1",
@@ -418,8 +234,8 @@ def test_every_grouping_sums_to_the_same_total(client, db):
                 line(p1.id, wh.id, 3, price=D("50"), total=D("150.00")),
                 line(p3.id, wh.id, 2, price=D("25"), total=D("50.00")),
             ])
-    # legacy, other account, September
-    seed_do(db, customer_id=c2.id, order_date=date(2026, 9, 2), number="DO-G3", source_book=None,
+    # other account, September
+    seed_do(db, customer_id=c2.id, order_date=date(2026, 9, 2), number="DO-G3",
             sales_order_id=so3.id,
             lines=[line(p2.id, wh.id, 4, price=D("10"), total=D("40.00"))])
     db.commit()
@@ -1139,8 +955,9 @@ def test_src4_a_named_customer_with_one_so_type_still_gets_the_channel_applied(c
     assert dealer["channel_shown"] is True, dealer
 
 
-def test_src3_a_legacy_do_with_no_links_is_in_no_channel_but_counts_without_one(client, db):
-    """AC-SRC-3: legacy import (source_book NULL), no SO link, project-segment customer."""
+def test_src3_a_legacy_do_with_no_links_counts_nowhere(client, db):
+    """AC-SRC-3, DELIVERED-DATE-BASIS: legacy import (source_book NULL), no SO link: its SO's
+    delivered quantity is the delivery, so the DO line itself counts in no total."""
     seed_segment(db, code="ZZT-PROJECT-L")
     cust = seed_customer(db, name="ZZT LEGACY SDN BHD", segment_code="ZZT-PROJECT-L")
     prod = product(db, company_id=DEFAULT_COMPANY_ID, code=unique_code("SKU"))
@@ -1148,7 +965,7 @@ def test_src3_a_legacy_do_with_no_links_is_in_no_channel_but_counts_without_one(
     seed_do(db, customer_id=cust.id, order_date=date(2026, 8, 10), source_book=None,
             lines=[line(prod.id, wh.id, 6, price=D("10"), total=D("60.00"))])
     db.commit()
-    assert _qty_amount(_get(client, customer_ids=cust.id)) == (6, D("60.00"))
+    assert _qty_amount(_get(client, customer_ids=cust.id)) == (0, D("0.00"))
     assert _qty_amount(_get(client, customer_ids=cust.id, channel="project")) == (0, D("0.00"))
     assert _qty_amount(_get(client, customer_ids=cust.id, channel="dealer")) == (0, D("0.00"))
 
@@ -1281,7 +1098,7 @@ def test_the_whole_report_is_aggregated_in_sql(client, db):
     calls: list[str] = []
 
     def _capture(conn, cursor, statement, *_a, **_kw):
-        if statement.strip().upper().startswith("SELECT"):
+        if statement.strip().upper().startswith(("SELECT", "WITH")):
             calls.append(statement)
 
     event.listen(connection, "before_cursor_execute", _capture)

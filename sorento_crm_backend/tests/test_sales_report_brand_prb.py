@@ -9,10 +9,19 @@ from decimal import Decimal
 from app.models.product import Brand
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import product, warehouse
-from tests._sales_report_do_seed import line, seed_customer, seed_do
+from tests._sales_report_do_seed import line, seed_customer
+from tests._sales_report_do_seed import seed_do as _seed_do
 from tests._pg_fixture import unique_code
 from tests.test_sales_report import BASE, client, db  # noqa: F401  (fixtures)
 
+
+
+def seed_do(db, **kw):
+    """DELIVERED-DATE-BASIS (owner ruling 25 Oct 2026): a DO here is an AutoCount one unless a test
+    says `source_book=None`; an old-system DO with no sales order behind it is not a delivery of
+    its own any more (its SO's delivered quantity is)."""
+    kw.setdefault("source_book", "db1")
+    return _seed_do(db, **kw)
 
 def _seed(db):
     mocha = Brand(id=str(uuid.uuid4()), brand_code=unique_code("MB")[:50], brand_name="ZZT Mocha", company_id=DEFAULT_COMPANY_ID)
