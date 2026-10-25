@@ -25,6 +25,7 @@ from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllo
 from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
 from app.models.product import ProductAttachment
 from app.models.conversation_frame import ConversationFrame
+from app.models.projects import Project, ProjectParty, ProjectSalesProfile
 from app.services.embedding_service import EmbeddingReadService, parse_debtor_seed_id
 
 logger = logging.getLogger(__name__)
@@ -54,6 +55,8 @@ _SOURCE_MODEL_FOR_COMPANY = {
     "customer": Customer,
     "transporter": Transporter,
     "certificate": Certificate,
+    # PROJECT-REG-PORTAL D9: the registration queue's meaning signal reads these.
+    "project": Project,
 }
 
 
@@ -474,6 +477,27 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             ]
         ).strip()
         return {"source_key": row.order_number, "title": row.order_number, "body_text": body, "visibility_scope": "internal", "source_updated_at": row.updated_at or row.created_at, "metadata": {"order_status_id": row.order_status_id, "is_cancelled": row.is_cancelled}}
+
+    if source_type == "project":
+        project = db.query(Project).filter(Project.id == source_id).first()
+        if not project:
+            raise ValueError(f"Project not found: {source_id}")
+        developer = (
+            db.query(ProjectParty.name).filter(ProjectParty.id == project.developer_party_id).scalar()
+            if project.developer_party_id
+            else None
+        )
+        profile = db.query(ProjectSalesProfile).filter(ProjectSalesProfile.project_id == project.id).first()
+        place = ", ".join(p for p in (profile.state if profile else None, profile.mukim if profile else None) if p)
+        return {
+            "source_key": project.project_code,
+            "title": project.title,
+            # `title | developer name | state, mukim` (D9), the same text a registration is embedded as.
+            "body_text": " | ".join([project.title or "", developer or "", place]),
+            "visibility_scope": "internal",
+            "source_updated_at": getattr(project, "updated_at", None) or project.created_at,
+            "metadata": {"project_id": str(project.id), "company_id": str(project.company_id)},
+        }
 
     if source_type == "customer":
         # Customer source supports two shapes:

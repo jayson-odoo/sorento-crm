@@ -83,6 +83,8 @@ export interface PortalContact {
   /** The "Portal Submission" attachment type's allowed extensions (no dots).
    *  The file picker's accept list; empty = the type sets no limit. */
   attachment_allowed_extensions?: string[];
+  /** The contact's first active sales agent as a name (project registration's read-only field). */
+  sales_agent_name?: string | null;
 }
 
 export interface PortalSubmissionSummary {

@@ -2979,7 +2979,11 @@ function PurchaseRequestFormSection({
                       f.displayFromDetail
                         ? (((detail as Record<string, unknown> | null)?.[
                             f.displayFromDetail
-                          ] as string | undefined) ?? undefined)
+                          ] as string | undefined) ??
+                          // A new form has no detail yet: the read-only agent name comes from /me.
+                          (f.widget === 'readonly'
+                            ? (contact?.sales_agent_name ?? undefined)
+                            : undefined))
                         : undefined
                     }
                   />

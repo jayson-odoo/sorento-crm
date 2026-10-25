@@ -183,6 +183,25 @@ def _attach_listeners(model, source_type: str) -> None:
         )
 
 
+def _attach_project_listeners() -> None:
+    """Projects (PROJECT-REG-PORTAL D9). The sales profile carries state and mukim, which are
+    part of the embedded text, so a profile change queues its parent project."""
+    from app.models.projects import Project, ProjectSalesProfile
+
+    _attach_listeners(Project, "project")
+
+    def _queue_parent(_mapper, connection, target):
+        company_id = connection.execute(
+            Project.__table__.select()
+            .with_only_columns(Project.__table__.c.company_id)
+            .where(Project.__table__.c.id == target.project_id)
+        ).scalar()
+        _queue_from_mapper(connection, "project", target.project_id, "project.updated", company_id)
+
+    event.listen(ProjectSalesProfile, "after_insert", _queue_parent)
+    event.listen(ProjectSalesProfile, "after_update", _queue_parent)
+
+
 def register_embedding_change_listeners() -> None:
     global _REGISTERED
     if _REGISTERED:
@@ -205,4 +224,5 @@ def register_embedding_change_listeners() -> None:
     from app.models.order import Customer, Transporter
     _attach_listeners(Customer, "customer")
     _attach_listeners(Transporter, "transporter")
+    _attach_project_listeners()
     _REGISTERED = True

@@ -14,6 +14,7 @@ from app.models.forms import Form
 from app.models.list_query_metadata import ListQueryResource
 from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
 from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
+from app.models.projects import Project
 from app.services.embedding_service import DEBTOR_SEED_ID_MAX, EmbeddingEventService, debtor_seed_id
 from app.services.mcp_tool_capability_service import build_capability_documents
 
@@ -36,6 +37,7 @@ BackfillSource = Literal[
     "order_line",
     "customer",
     "transporter",
+    "project",
     "mcp_tool",
     "all",
 ]
@@ -317,6 +319,18 @@ class EmbeddingBackfillService:
                 seed_offset = max(0, offset - self.db.query(Customer.id).count())
                 out.extend(seeds[seed_offset : seed_offset + limit - len(out)])
             return out
+        if source == "project":
+            rows = (
+                self.db.query(Project.id, Project.project_code, Project.created_at)
+                .order_by(Project.created_at.asc(), Project.id)
+                .offset(offset)
+                .limit(limit)
+                .all()
+            )
+            return [
+                {"id": r.id, "source_key": r.project_code, "source_updated_at": r.created_at}
+                for r in rows
+            ]
         if source == "transporter":
             rows = (
                 self.db.query(Transporter.id, Transporter.code, Transporter.created_at)

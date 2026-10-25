@@ -81,6 +81,7 @@ def register_project(
     owner_user_id: Optional[str] = None,
     surface_threshold: Optional[float] = None,
     block_threshold: Optional[float] = None,
+    skip_clash_check: bool = False,
 ) -> Project:
     """Claim a development for ``actor_user_id``.
 
@@ -100,18 +101,25 @@ def register_project(
             code="project_title_required",
         )
 
-    blockers = [
-        candidate
-        for candidate in find_clashes(
-            db,
-            company_id=company_id,
-            developer_party_id=developer_party_id,
-            title=clean_title,
-            surface_threshold=surface_threshold,
-            block_threshold=block_threshold,
-        )
-        if candidate.blocks
-    ]
+    # The portal registration queue skips the check (PROJECT-REG-PORTAL D7): a possible
+    # duplicate is the approver's call, and only an exact developer + title repeat is refused
+    # (by the DB identity index). Staff registration keeps its lock.
+    blockers = (
+        []
+        if skip_clash_check
+        else [
+            candidate
+            for candidate in find_clashes(
+                db,
+                company_id=company_id,
+                developer_party_id=developer_party_id,
+                title=clean_title,
+                surface_threshold=surface_threshold,
+                block_threshold=block_threshold,
+            )
+            if candidate.blocks
+        ]
+    )
     if blockers:
         raise AppException(
             status_code=409,
@@ -607,6 +615,8 @@ def serialize_projects(
                 ),
                 "location": profile.location if profile else None,
                 "address": profile.address if profile else None,
+                "state": profile.state if profile else None,
+                "mukim": profile.mukim if profile else None,
                 "architect_party_id": profile.architect_party_id if profile else None,
                 "architect_name": (
                     profile_party_names.get(profile.architect_party_id)
@@ -838,6 +848,8 @@ _PROFILE_FIELDS = (
     "registered_company_name",
     "location",
     "address",
+    "state",
+    "mukim",
     "architect_party_id",
     "main_contractor_party_id",
     "estimated_sales_value",

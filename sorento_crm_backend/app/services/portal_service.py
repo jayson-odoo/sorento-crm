@@ -80,6 +80,12 @@ OTP_DAILY_CAP = 10
 # tag writes.
 SUPPORTED_TYPES = ("complaint", "stock_inquiry", "purchase_request", "sponsorship_form")
 
+# What the generic submission routes, neighbours, list and attachments accept: the always-visible
+# base plus `project_registration` (PROJECT-REG-PORTAL D1). SUPPORTED_TYPES stays the VISIBILITY
+# base (`portal_form_visibility_service`), so the registration kind shows only when granted.
+PROJECT_REGISTRATION_KIND = "project_registration"
+GENERIC_SUBMISSION_TYPES = SUPPORTED_TYPES + (PROJECT_REGISTRATION_KIND,)
+
 # The kinds an ADMIN may grant on a contact access type, which is a different
 # question: it is about what the portal LANDING offers a contact, and the price
 # tag request has a landing card like the rest. `portal_form_types` is validated
@@ -93,6 +99,7 @@ CONVERSATION_FORM_TYPE = "conversation"
 # The kinds only a contact linked to a sales agent can hold, whatever the switch says.
 AGENT_ONLY_FORM_TYPES = (CUSTOMER_ASKS_FORM_TYPE, CONVERSATION_FORM_TYPE)
 GRANTABLE_PORTAL_FORM_TYPES = SUPPORTED_TYPES + (
+    PROJECT_REGISTRATION_KIND,
     "price_tag_request",
     "sales_opportunity",
     "sample_request",
@@ -834,8 +841,12 @@ class PortalService:
         q: Optional[str] = None,
     ) -> list[dict]:
         kind = (kind or "").strip().lower()
-        if kind not in SUPPORTED_TYPES:
+        if kind not in GENERIC_SUBMISSION_TYPES:
             raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_list(self.db, token, q)
         like = f"%{q.strip()}%" if q and q.strip() else None
         if kind == "complaint":
             query = self.db.query(Complaint).filter(
@@ -972,6 +983,10 @@ class PortalService:
 
     def get_submission(self, token: PortalToken, kind: str, submission_id: str) -> dict:
         kind = kind.strip().lower()
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_get(self.db, token, submission_id)
         if kind == "complaint":
             row = (
                 self.db.query(Complaint)
@@ -1027,6 +1042,10 @@ class PortalService:
         submission_id: Optional[str] = None,
     ) -> dict:
         kind = kind.strip().lower()
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_save(self.db, token, payload, submission_id)
         if submission_id is None:
             self._check_line_numbers(kind, payload)
             row = self._instantiate(kind, token, payload)
@@ -1070,6 +1089,10 @@ class PortalService:
         payload: Optional[dict] = None,
     ) -> dict:
         kind = kind.strip().lower()
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_submit(self.db, token, submission_id, payload)
         row = self._fetch_for_edit(kind, token, submission_id)
         if payload:
             self._apply_payload(kind, row, payload)
@@ -1337,6 +1360,11 @@ class PortalService:
     def delete_draft(self, token: PortalToken, kind: str, submission_id: str) -> None:
         """Hard-delete a draft submission. Only drafts (portal_draft_at IS NOT NULL) are deletable."""
         kind = kind.strip().lower()
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            registrations.portal_delete(self.db, token, submission_id)
+            return
         row = self._fetch_for_edit(kind, token, submission_id)
         if row.portal_draft_at is None:
             raise handle_validation_error("Only drafts can be deleted.")
@@ -1821,8 +1849,12 @@ class PortalService:
         into another contact's submissions.
         """
         kind = (kind or "").strip().lower()
-        if kind not in SUPPORTED_TYPES:
+        if kind not in GENERIC_SUBMISSION_TYPES:
             raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
+        if kind == PROJECT_REGISTRATION_KIND:
+            from app.services import project_registration_service as registrations
+
+            return registrations.portal_neighbours(self.db, token, submission_id)
         self.get_submission(token, kind, submission_id)  # ownership check; raises on miss
 
         if kind == "complaint":

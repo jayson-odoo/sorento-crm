@@ -52,6 +52,8 @@ _PROFILE_KEYS = (
     "registered_company_name",
     "location",
     "address",
+    "state",
+    "mukim",
     "architect_party_id",
     "main_contractor_party_id",
     "estimated_sales_value",

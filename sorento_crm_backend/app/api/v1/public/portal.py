@@ -60,6 +60,7 @@ from app.services.portal_service import (
     PORTAL_ATTACHMENT_TYPE_CODE,
     PortalAuthError,
     PortalService,
+    GENERIC_SUBMISSION_TYPES,
     SUPPORTED_TYPES,
     parse_allowed_extensions,
 )
@@ -332,6 +333,16 @@ class PortalMeResponse(BaseModel):
     # sorted). The file picker's `accept` is built from this, so it offers
     # exactly what the upload check below lets through. Empty = no limit set.
     attachment_allowed_extensions: list[str] = []
+    # PROJECT-REG-PORTAL D4: the contact's first active sales agent as a name, so the project
+    # registration form can show who the project is registered for before its first save.
+    sales_agent_name: Optional[str] = None
+
+
+def _sales_agent_name(db: Session, contact_id: str) -> Optional[str]:
+    from app.services.project_registration_service import _active_agents, _agent_name
+
+    agents = _active_agents(db, contact_id)
+    return _agent_name(agents[0]) if agents else None
 
 
 @router.get("/me", response_model=PortalMeResponse)
@@ -389,6 +400,7 @@ def portal_me(
             resolve_visible_form_types(db, token.contact_id)
         ),
         attachment_allowed_extensions=service.portal_allowed_extensions(),
+        sales_agent_name=_sales_agent_name(db, token.contact_id),
     )
 
 
@@ -692,6 +704,9 @@ _PORTAL_LOOKUP_SET_WHITELIST = {
     "complaints_defects_discovered",
     "procurement_sponsor_subject",
     "procurement_sales_type",
+    # The project registration form's two dropdowns (PROJECT-REG-PORTAL D3).
+    "project_building_type",
+    "my_state",
 }
 
 
@@ -776,7 +791,7 @@ def _flatten_payload(payload: SubmissionPayload) -> dict:
 
 def _check_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
-    if k not in SUPPORTED_TYPES:
+    if k not in GENERIC_SUBMISSION_TYPES:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
     require_form_visible(db, token.contact_id, k)
     return k
@@ -798,7 +813,7 @@ def _check_revisable_kind(kind: str, db: Session, token: PortalToken) -> str:
     from app.services.portal_revision_service import ADAPTERS
 
     k = (kind or "").strip().lower()
-    if k not in SUPPORTED_TYPES and k not in ADAPTERS:
+    if k not in GENERIC_SUBMISSION_TYPES and k not in ADAPTERS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
     require_form_visible(db, token.contact_id, k)
     return k
@@ -836,7 +851,7 @@ def _revision_submission_detail(
 
 def _check_attachment_kind(kind: str, db: Session, token: PortalToken) -> str:
     k = (kind or "").strip().lower()
-    if k not in SUPPORTED_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
+    if k not in GENERIC_SUBMISSION_TYPES and k not in _ATTACHMENT_ONLY_KINDS:
         raise handle_validation_error(f"Unsupported submission type: {kind!r}.")
     require_form_visible(db, token.contact_id, k)
     return k
@@ -1240,7 +1255,7 @@ def _kinds_for_entity_type(entity_type: str) -> tuple[str, ...]:
         return ("purchase_request", "sponsorship_form")
     if et in _ATTACHMENT_ONLY_KINDS:
         return (et,)
-    return (et,) if et in SUPPORTED_TYPES else ()
+    return (et,) if et in GENERIC_SUBMISSION_TYPES else ()
 
 
 def _ext(filename: Optional[str], content_type: Optional[str]) -> str:

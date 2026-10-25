@@ -212,6 +212,8 @@ class ProjectRegisterRequest(BaseModel):
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
@@ -236,6 +238,8 @@ class ProjectUpdateRequest(BaseModel):
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = Field(None, ge=0)
@@ -304,6 +308,8 @@ class ProjectResponse(BaseModel):
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
     address: Optional[str] = None
+    state: Optional[str] = None
+    mukim: Optional[str] = None
     architect_party_id: Optional[str] = None
     architect_name: Optional[str] = None
     main_contractor_party_id: Optional[str] = None
