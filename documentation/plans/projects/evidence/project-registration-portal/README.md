@@ -78,3 +78,29 @@ Console and page-error checks clean in both browser sessions (portal, CRM).
 | 375px: portal new form, list, pending detail with Date | r3-14-portal-new-form-375.png, r3-15-portal-list-375.png, r3-16-portal-pending-detail-375.png | PASS | scrollWidth equals clientWidth on all three (375/375); single column, AI Extract button reachable, Date visible. |
 | 375px: CRM list and review | r3-17-crm-list-375.png, r3-18-crm-review-375.png, r3-19-crm-review-foot-375.png | PASS | No page overflow (list 375/375, review 360/360 with the scrollbar); the list scrolls inside its card; review stacked with full-width Approve and Reject. |
 | Downgrade | (not exercised in the browser) | n/a | Covered by the migration tests only. |
+
+## Round 4 re-run (1c209d876)
+
+Fresh `sorento_browse` DB (`scripts.bootstrap_env`, then `harness/seed_browse.py`, then `scripts/seed_project_embeddings.py` and
+the queue processed; 3 `project` chunks). Backend with `OPENAI_API_KEY=dummy` as a process env var only (`.env.browse` unchanged),
+frontend `npm run dev`. Portal opened by the contact's slug link with the token in storage; CRM as `browse.admin@example.com`,
+reached by sidebar clicks (Project Sales > Registrations). Console and page errors clean in both sessions. All screenshots
+under 100 KB. The registration table lives in the `projects` schema (`projects.project_registrations`).
+
+| Check | Screenshot | Result | Observed |
+|---|---|---|---|
+| 1 Portal Date in Malaysia time | r4-02-portal-date-malaysia-1280.png | PASS | `submitted_at` set to `2026-10-24 17:30:00` (UTC, naive column); portal detail Date reads `25/10/2026` (Malaysia 01:30 on the 25th, the UTC date is the 24th). The CRM list and review show `25/10/2026` too. |
+| 2 Board card heads with the PPF number | r4-06-portal-board-approved-ppf-1280.png | PASS | Approved card text is `Approved`, `PPF2610004`, `Customer: Debtor One Sdn Bhd`, `Oct 25, 2026`: the PPF number is the heading line, not the title. |
+| 2 List view PPF column | r4-07-portal-list-view-ppf-1280.png | PASS | Headers `Form Number, Status, Project, Developer, State, PPF, Created`; row `PPF2610004, Approved, ..., PPF2610004`. Form Number also carries the PPF code. |
+| 3 State required, then submit Pending | r4-01-state-required-refused-1280.png | PASS | Toast `Missing 1 required field: State`, no POST. After Johor: POST create 200 + submit 200, card `Pending`, form read-only, `Possible duplicate: PPF2610001 KILANG ALPHA LOT 9001 MUKIM TEBRAU`. |
+| 3 CRM Registrations list | r4-03-crm-registrations-list-1280.png | PASS | Columns Date, title, Developer, State, Sales agent, Possible duplicate (link to `/project-sales/<id>`), Status `Pending`. |
+| 3 Review form, legacy fields only | r4-04-crm-review-1280.png | PASS | Developer (typed `Gamma Builders Sdn Bhd` shown as hint), Type of building, Project title, State, Mukim, Architect, Main contractor, Salesperson; metadata line and `Possible duplicate:` link; Reject and Approve at the foot. |
+| 3 Exact duplicate refused | r4-05-exact-duplicate-refused-1280.png | PASS | Developer Beta Holdings with the existing title: POST approve 409, `Already registered as PPF2610001 KILANG ALPHA LOT 9001 MUKIM TEBRAU`, the code and title is a link to that project; registration stays Pending. |
+| 3 Approve with PPF code | (list returns) | PASS | Title ` PHASE 2` added: POST approve 200, back to the list; project `PPF2610004`, registration `approved` with `project_id` set. |
+| 3 Reject, portal Rejected and editable | r4-08-portal-list-rejected-1280.png, r4-09-portal-rejected-detail-editable-1280.png | PASS | Reject dialog: button disabled until a reason is typed; POST reject 200. Portal detail: `Rejection reason: Already registered`, badge `Rejected`, fields editable, `Submit project registration` offered. |
+| 4 375px portal | r4-10-portal-rejected-detail-375.png, r4-12-portal-list-375.png, r4-13-portal-new-form-375.png | PASS | scrollWidth equals clientWidth (375/375) on the new form, list and rejected detail. |
+| 4 375px CRM list | r4-11-crm-registrations-list-375.png | PASS | 375/375, no page overflow. |
+
+Notes (not defects): the portal's `Possible duplicate:` line is plain text (no link); only the CRM shows a link. The board card's
+date is the created date (`Oct 25, 2026`), not `submitted_at`; the 17:30 UTC test row did not shift it because it is a different field.
+Harness run note: the list-view `New Project Registration` control is a button there and a link on the board.
