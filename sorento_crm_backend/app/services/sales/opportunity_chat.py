@@ -104,7 +104,7 @@ def customer_options(db: Session, agents: List[SalesAgent], q: Optional[str]) ->
         customer = rows.get(row["customer_id"])
         if customer is None:
             continue
-        items.append({"customer_id": customer.id, **_customer_out(customer)})
+        items.append({"customer_id": customer.id, **(_customer_out(customer) or {})})
     return {"items": items, "prospect": bool(found["prospect"]), "blocked": bool(found["blocked"])}
 
 

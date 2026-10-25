@@ -126,6 +126,10 @@ def is_salesperson(db: Any, contact_respond_id: Any, space_id: Any) -> bool:
 # --------------------------------------------------------------------------- #
 
 
+def _dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
 def _status(verdict: Mapping[str, Any]) -> str:
     return jsc.js_string(verdict.get("order_status") or "").strip()
 
@@ -215,7 +219,7 @@ def _customer_words(verdict: Mapping[str, Any]) -> str | None:
 
 
 def _positions(verdict: Mapping[str, Any]) -> list[int]:
-    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    answer = _dict(verdict.get("open_question_answer"))
     raw = list(answer.get("picked") or []) or list(verdict.get("reference_positions") or [])
     return [p for p in raw if isinstance(p, int) and not isinstance(p, bool)]
 
@@ -227,7 +231,7 @@ def _error_line(result: Any) -> str | None:
     status = result.get("status_code")
     if not (isinstance(status, int) and status >= 400) and not result.get("http_error"):
         return None
-    detail = result.get("detail") if isinstance(result.get("detail"), dict) else {}
+    detail = _dict(result.get("detail"))
     code = jsc.js_string(result.get("code") or detail.get("code") or "")
     if status == 403 and code in _NOT_ENABLED_CODES:
         return NOT_ENABLED
@@ -236,14 +240,14 @@ def _error_line(result: Any) -> str | None:
     return COULD_NOT_SAVE
 
 
-def _call(tool_name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any] | None, str | None]:
+def _call(tool_name: str, arguments: dict[str, Any]) -> tuple[dict[str, Any], str | None]:
     try:
         result = call_opportunity_tool(tool_name, arguments)
     except Exception:  # noqa: BLE001 - never a raw error to the customer
         logger.warning("chatbot opportunity lane: %s failed", tool_name, exc_info=True)
-        return None, COULD_NOT_SAVE
+        return {}, COULD_NOT_SAVE
     line = _error_line(result)
-    return (None, line) if line else (result, None)
+    return ({}, line) if line else (result, None)
 
 
 # --------------------------------------------------------------------------- #
@@ -309,8 +313,8 @@ def _save(values: Mapping[str, Any], *, contact_respond_id: Any, space_id: Any, 
     if dry_run or result.get("dry_run") is True:
         return LaneReply(text=TEST_RUN, called=(LOG_TOOL,))
     lines = [f"Saved {result.get('opportunity_no')}, stage {result.get('stage') or 'New'}."]
-    pipeline = result.get("pipeline") if isinstance(result.get("pipeline"), dict) else None
-    end = _date((pipeline or {}).get("target_end_date"))
+    pipeline = _dict(result.get("pipeline"))
+    end = _date(pipeline.get("target_end_date"))
     if pipeline and end is not None and pipeline.get("pipeline_value") is not None:
         lines.append(f"Open opportunities closing by {_day(end, year=False)}: {_rm(pipeline['pipeline_value'])}.")
     return LaneReply(text="\n".join(lines), called=(LOG_TOOL,))
@@ -356,7 +360,7 @@ def run(
         # A declared answer to the open question fills only the field it asked.
         return not answering or asking == name
 
-    opp = verdict.get("opportunity") if isinstance(verdict.get("opportunity"), dict) else {}
+    opp = _dict(verdict.get("opportunity"))
     title = jsc.js_string(opp.get("title") or "").strip()
     if title and wanted("title"):
         values["title"] = {"value": title, "label": title}
