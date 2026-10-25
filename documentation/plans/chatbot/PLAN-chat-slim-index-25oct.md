@@ -2,13 +2,29 @@
 
 Status: PLAN v2 APPROVED (owner Lavish 25 Oct 17:34). Phase 0 DONE incl. pull 2 (18:55, result below): GO categories,
 spec WORD values, file types, brands, customers; NO-GO spec NUMBER values (sizes); not enough data for sales agents,
-promotion kinds, locations, channels. Phase 1 waits for the owner's OK (spend). Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL (after #1856).
+promotion kinds, locations, channels. Phase 1 (a) APPROVED by the owner (crew a25272575): categories (~USD 9) then spec word values (~USD 6), OpenAI eval
+key ..bG4A only, x3, early stop, spend.log. Next lists below need their own OK. Slice WC proposed to crew as lane CHAT-WC-CATEGORY-TOTAL (after #1856).
 v1 (code-first + subtractive slim) is replaced by this after the owner's note of 25 Oct 17:26 (verbatim in
 crew/state/inbox/slim-index-owner-1726.md): past slimming was long, costly and never better; the index should never
 have been spelling-only; index matching must cover ALL list data; a retrieval step BEFORE the parser passes
 candidates to the parser, which decides. Lavish page: `PLAN-chat-slim-index-25oct.html` beside this file.
 Slice WC (the water-closet code bugs) keeps its UAC: `chat-slim-index-25oct-acceptance-criteria.md`.
 Customer names are masked (public repo).
+
+## Phase 1 sequence (owner 25 Oct: "how about attachment type, salesperson, location, all those")
+
+| step | list | data status (phase 0) | gate USD | status |
+|---|---|---|---|---|
+| 1 | categories / classes | GO: 0.961, n=180 | ~9 (incl. v63 baseline x3) | APPROVED, running |
+| 2 | spec word values | GO: 0.980, n=51 | ~6 | APPROVED, after step 1 |
+| 3 | file types (attachment types) | GO: 1.000, n=137 (spelling alone 0.993) | ~5 | needs owner OK |
+| 4 | salespeople | n=10 unbiased: not enough; pull 3 (text-found slice) pending | ~5 | data first, then owner OK |
+| 5 | locations (warehouses) | n=5 unbiased: not enough; pull 3 pending | ~5 | data first, then owner OK |
+| 6 | brands | GO: 0.986, n=72 (spelling alone the same) | ~5 | needs owner OK |
+| 7 | customer names (candidates added, no prompt text to remove) | GO: 0.960, n=75, ~6 lines per message | ~6 | needs owner OK |
+| - | spec number values (sizes) | NO-GO: 0.517; a size is read by code, not retrieved | - | stays in the prompt; separate idea |
+
+Later-step costs assume arm A's v63 baseline runs are reused on the same main; a new main adds ~USD 3.5.
 
 ## Phase 0 result after pull 2 (25 Oct ~18:55, retrieval only, USD 0.021 total, no parser call)
 
