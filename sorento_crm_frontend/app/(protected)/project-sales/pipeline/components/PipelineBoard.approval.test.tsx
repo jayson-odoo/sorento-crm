@@ -140,7 +140,9 @@ describe('PipelineBoard: Awaiting approval and Rejected lanes (RW12)', () => {
   it('a card shows "Awaiting approval" where the code would be, never None or null', () => {
     render(<PipelineBoard statuses={STATUSES} projects={[PENDING(), REJECTED(), project()]} onMove={vi.fn()} />);
     expect(within(card('Pending Tower')).getByText('Awaiting approval')).toBeInTheDocument();
-    expect(within(card('Rejected Tower')).getByText('Awaiting approval')).toBeInTheDocument();
+    // Review round 3: a rejected registration's code slot says Rejected.
+    expect(within(card('Rejected Tower')).getByText('Rejected')).toBeInTheDocument();
+    expect(within(card('Rejected Tower')).queryByText('Awaiting approval')).toBeNull();
     expect(within(card('Setia Alam Phase 3B')).getByText('PPF2610001')).toBeInTheDocument();
     expect(within(card('Setia Alam Phase 3B')).queryByText('Awaiting approval')).toBeNull();
     expect(screen.queryByText(/\b(none|null|undefined)\b/i)).toBeNull();

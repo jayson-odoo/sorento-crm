@@ -130,11 +130,21 @@ export function ProjectsGrid({
         size: 180,
         enableSorting: false,
         meta: { headerTitle: 'Developer' },
-        cell: ({ row }) => (
-          <span className="block truncate" title={row.original.developer_name ?? ''}>
-            {row.original.developer_name ?? <Muted>-</Muted>}
-          </span>
-        ),
+        cell: ({ row }) => {
+          const typed = row.original.developer_name
+            ? null
+            : row.original.registration?.developer_name?.trim();
+          // A portal registration names its developer as typed until a party is picked.
+          return typed ? (
+            <span className="block truncate" title={typed}>
+              <Muted>Typed: {typed}</Muted>
+            </span>
+          ) : (
+            <span className="block truncate" title={row.original.developer_name ?? ''}>
+              {row.original.developer_name ?? <Muted>-</Muted>}
+            </span>
+          );
+        },
       },
       {
         id: 'status_label',

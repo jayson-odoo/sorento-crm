@@ -173,6 +173,7 @@ export function projectsListParamsFromUrl(params: ListPagerParams): ProjectListP
       : undefined,
     type_id: params.filters.type_id ? [params.filters.type_id] : undefined,
     only_critical: params.filters.only_critical === 'true' || undefined,
+    approval_state: (params.filters.approval_state || undefined) as ProjectListParams['approval_state'],
     page: params.pageIndex + 1,
     limit: params.pageSize,
     sort: params.sorting[0]?.id ?? 'created_at',

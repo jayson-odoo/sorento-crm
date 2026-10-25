@@ -365,3 +365,61 @@ describe('what is shown under the header (RW13)', () => {
     expect(document.body.textContent).not.toMatch(/\bNone\b/);
   });
 });
+
+describe('review round 3 on the detail page', () => {
+  it('shows the submitted date in Malaysia time (12)', () => {
+    projectFixture = pendingProject({ submitted_at: '2026-10-24T17:30:00' } as never);
+    renderDetail();
+    expect(screen.getByText('25/10/2026')).toBeInTheDocument();
+  });
+
+  it('the "Already registered as" link clears after a later Reject (13)', async () => {
+    approve.mockRejectedValue(
+      Object.assign(new Error('dup'), {
+        existingProject: { project_id: 'proj-77', project_code: 'PPF2509012', title: 'KILANG ALPHA' },
+      }),
+    );
+    renderDetail();
+    fireEvent.click(within(header()).getByRole('button', { name: 'Approve' }));
+    await screen.findByText(/Already registered as/);
+    fireEvent.click(within(header()).getByRole('button', { name: 'Reject' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.change(within(dialog).getByRole('textbox'), { target: { value: 'Duplicate of PPF2509012' } });
+    fireEvent.click(within(dialog).getByRole('button', { name: /^reject$/i }));
+    await waitFor(() => expect(reject).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryByText(/Already registered as/)).toBeNull());
+  });
+
+  it('the link clears after a later Approve that goes through (13)', async () => {
+    approve.mockRejectedValueOnce(
+      Object.assign(new Error('dup'), {
+        existingProject: { project_id: 'proj-77', project_code: 'PPF2509012', title: 'KILANG ALPHA' },
+      }),
+    );
+    renderDetail();
+    fireEvent.click(within(header()).getByRole('button', { name: 'Approve' }));
+    await screen.findByText(/Already registered as/);
+    approve.mockResolvedValueOnce({});
+    fireEvent.click(within(header()).getByRole('button', { name: 'Approve' }));
+    await waitFor(() => expect(approve).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByText(/Already registered as/)).toBeNull());
+  });
+
+  it('a rejected project reads Rejected in the code slot, never Awaiting approval (14)', () => {
+    projectFixture = pendingProject({ approval_state: 'rejected', reject_reason: 'no' } as never);
+    renderDetail();
+    expect(screen.queryByText('Awaiting approval')).toBeNull();
+    expect(screen.getAllByText('Rejected').length).toBeGreaterThanOrEqual(2); // code slot + pill
+  });
+
+  it('an approver sees Edit once on a pending project: the header button, not a menu item too (16)', async () => {
+    renderDetail();
+    expect(within(header()).getByRole('button', { name: 'Edit' })).toBeInTheDocument();
+    fireEvent.pointerDown(within(header()).getByRole('button', { name: 'Project actions' }), {
+      button: 0,
+      ctrlKey: false,
+    });
+    expect(await screen.findByRole('menu')).toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', { name: /Edit project/ })).toBeNull();
+  });
+});

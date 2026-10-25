@@ -75,6 +75,7 @@ const listProjectTypes = vi.fn();
 const listProjectTemplates = vi.fn();
 const previewClashes = vi.fn();
 const registerProject = vi.fn();
+const updateProject = vi.fn();
 vi.mock('../services/projectService', async (importOriginal) => {
   const actual =
     await importOriginal<typeof import('../services/projectService')>();
@@ -85,6 +86,7 @@ vi.mock('../services/projectService', async (importOriginal) => {
     listProjectTemplates: (...args: unknown[]) => listProjectTemplates(...args),
     previewClashes: (...args: unknown[]) => previewClashes(...args),
     registerProject: (...args: unknown[]) => registerProject(...args),
+    updateProject: (...args: unknown[]) => updateProject(...args),
     listLeads: vi.fn(async () => ({
       data: [],
       pagination: { total: 0, page: 1, limit: 20 },
@@ -289,6 +291,48 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
     await waitFor(() => expect(select(/^Developer/).value).toBe(''));
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
+  });
+});
+
+describe('a pending or rejected project never blocks on a clash (review round 3)', () => {
+  const BLOCKING = {
+    project_id: 'p-old',
+    project_code: 'PPF2509012',
+    title: 'CADANGAN BLOK PEJABAT DI ATAS LOT 7001, MUKIM KULAI',
+    outcome: 'open',
+    owner_name: 'Ali',
+    similarity: 0.98,
+    blocks: true,
+  };
+
+  it.each(['pending', 'rejected'])(
+    'an approver picks a developer that clashes with an approved project and Save still saves (%s)',
+    async (approvalState) => {
+      previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
+      updateProject.mockResolvedValue(pendingProject({ approval_state: approvalState } as never));
+      renderEdit(pendingProject({ approval_state: approvalState } as never));
+      await waitFor(() => expect(within_options(select(/^Developer/))).toContain('d1'));
+      fireEvent.change(select(/^Developer/), { target: { value: 'd1' } });
+      const save = screen.getByRole('button', { name: 'Save changes' });
+      expect(save).not.toBeDisabled();
+      fireEvent.click(save);
+      await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
+      expect(updateProject.mock.calls[0][1]).toMatchObject({ developer_party_id: 'd1' });
+      expect(screen.queryByRole('button', { name: /ask to join/i })).toBeNull();
+      expect(screen.queryByRole('button', { name: /dispute/i })).toBeNull();
+    },
+  );
+
+  it('a staff project with the same clash is still blocked (the control)', async () => {
+    previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
+    renderEdit(
+      pendingProject({ approval_state: null, project_code: 'PRJ-000142', registration: null } as never),
+    );
+    await waitFor(() => expect(within_options(select(/^Developer/))).toContain('d1'));
+    fireEvent.change(select(/^Developer/), { target: { value: 'd1' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(previewClashes).toHaveBeenCalled());
+    expect(updateProject).not.toHaveBeenCalled();
   });
 });
 

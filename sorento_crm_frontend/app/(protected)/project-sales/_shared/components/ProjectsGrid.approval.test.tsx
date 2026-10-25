@@ -135,7 +135,8 @@ describe('ProjectsGrid: registrations that wait for a decision (RW12)', () => {
     const code = headers.findIndex((h) => h?.startsWith('Code'));
     expect(pend.getAllByRole('cell')[code]).toHaveTextContent('Awaiting approval');
     const rejected = within(await row('Rejected Registration Tower'));
-    expect(rejected.getAllByRole('cell')[code]).toHaveTextContent('Awaiting approval');
+    // Review round 3: a rejected registration's code slot says Rejected.
+    expect(rejected.getAllByRole('cell')[code]).toHaveTextContent('Rejected');
   });
 
   it('the Stage column shows an Awaiting approval pill for pending and a Rejected pill for rejected', async () => {
@@ -183,5 +184,27 @@ describe('ProjectsGrid: registrations that wait for a decision (RW12)', () => {
       'href',
       '/project-sales/p-pend',
     );
+  });
+});
+
+describe('ProjectsGrid: the typed developer of a registration (review round 3)', () => {
+  it('shows "Typed: <name>" in the Developer column while no developer party is picked', async () => {
+    renderGrid([
+      { ...PENDING, developer_name: null, registration: { developer_name: 'Example Developer Sdn Bhd' } } as Project,
+    ]);
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    const at = headers.findIndex((h) => h?.startsWith('Developer'));
+    const cell = within(await row('Pending Registration Tower')).getAllByRole('cell')[at];
+    expect(cell).toHaveTextContent('Typed: Example Developer Sdn Bhd');
+  });
+
+  it('shows the party once one is picked, and nothing typed for a staff project', async () => {
+    renderGrid([
+      { ...PENDING, developer_name: 'SP Setia', registration: { developer_name: 'Typed Name' } } as Project,
+      project({ developer_name: null }),
+    ]);
+    await row('Pending Registration Tower');
+    expect(screen.queryByText(/Typed:/)).toBeNull();
+    expect(screen.getByText('SP Setia')).toBeInTheDocument();
   });
 });

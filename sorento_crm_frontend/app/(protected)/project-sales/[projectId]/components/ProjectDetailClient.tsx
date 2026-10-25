@@ -38,6 +38,7 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -137,6 +138,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const [existingProject, setExistingProject] = React.useState<ProjectPossibleDuplicate | null>(
     null,
   );
+  // Any change that lands (an approve, an edit, a reject) re-reads the project, and the
+  // refusal it answered is then history: the link must not outlive it.
+  React.useEffect(() => {
+    setExistingProject(null);
+  }, [project?.updated_at, project?.approval_state]);
 
   function selectTab(tab: TabId) {
     const next = new URLSearchParams(searchParams.toString());
@@ -288,12 +294,15 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 {/* First item, never a second primary (AC-PF005, D9): the form is the
                     one place every field on this page is edited, so it leads the menu
                     rather than sitting after the status moves. */}
-                <DropdownMenuItem
-                  onSelect={() => router.push(`/project-sales/${project.id}/edit`)}
-                >
-                  <Pencil className="size-4" aria-hidden />
-                  Edit project
-                </DropdownMenuItem>
+                {/* An approver deciding a registration has Edit beside Approve already. */}
+                {!canDecide && (
+                  <DropdownMenuItem
+                    onSelect={() => router.push(`/project-sales/${project.id}/edit`)}
+                  >
+                    <Pencil className="size-4" aria-hidden />
+                    Edit project
+                  </DropdownMenuItem>
+                )}
                 {canReassign && (
                   <DropdownMenuItem onSelect={() => setReassigning(true)}>
                     <UserCog className="size-4" aria-hidden />
@@ -487,7 +496,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       )}
 
       {rejecting && (
-        <RejectProjectDialog projectId={project.id} onDone={() => setRejecting(false)} />
+        <RejectProjectDialog
+          projectId={project.id}
+          onDone={() => setRejecting(false)}
+          onRejected={() => setExistingProject(null)}
+        />
       )}
 
       <ConfirmDeleteDialog
@@ -516,7 +529,11 @@ function RegistrationFacts({ project }: { project: Project }) {
   return (
     <div className="space-y-2 rounded-lg border border-border px-4 py-3">
       <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-5">
-        <Fact label="Date" value={formatDate(project.submitted_at)} />
+        {/* Submitted in Malaysia: the backend stamps naive UTC. */}
+        <Fact
+          label="Date"
+          value={project.submitted_at ? formatDateInMalaysia(project.submitted_at) : null}
+        />
         <Fact label="Sales agent" value={info.sales_agent_name} />
         <Fact label="Distributor" value={info.distributor_name} />
         <Fact label="Customer" value={info.customer_name} />
@@ -581,7 +598,15 @@ function ApproveButton({
 }
 
 /** Reject needs a reason: the salesperson reads it on their registration. */
-function RejectProjectDialog({ projectId, onDone }: { projectId: string; onDone: () => void }) {
+function RejectProjectDialog({
+  projectId,
+  onDone,
+  onRejected,
+}: {
+  projectId: string;
+  onDone: () => void;
+  onRejected: () => void;
+}) {
   const reject = useRejectProject(projectId);
   const isPending = reject.isPending;
   const onCancel = onDone;
@@ -599,7 +624,10 @@ function RejectProjectDialog({ projectId, onDone }: { projectId: string; onDone:
             event.preventDefault();
             if (!trimmed || isPending) return;
             // The hook toasts a refusal; the dialog stays open with what was typed.
-            reject.mutateAsync(trimmed).then(onDone, () => undefined);
+            reject.mutateAsync(trimmed).then(() => {
+              onRejected();
+              onDone();
+            }, () => undefined);
           }}
         >
           <DialogBody className="space-y-1.5">

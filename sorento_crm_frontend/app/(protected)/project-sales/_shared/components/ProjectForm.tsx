@@ -197,10 +197,16 @@ export function ProjectForm(props: ProjectFormProps) {
   const checkable = title.trim().length >= CLASH_MIN_CHARS;
   const hasChecked = checkedTitle.length > 0;
   const rawCandidates = clash.data?.candidates ?? [];
+  // A portal registration still waiting for (or refused) approval sits outside the
+  // registration lock (PROJECT-REG-PORTAL R3, owner ruling: duplicates never block). Its
+  // matches are shown as information only; Approve's exact-duplicate 409 is the guard.
+  const awaitingDecision =
+    project?.approval_state === 'pending' || project?.approval_state === 'rejected';
   // In edit mode the project's own record is a "clash" against itself; it must never
   // block a save or show up in the panel.
-  const candidates =
-    mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates;
+  const candidates = (
+    mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates
+  ).map((c) => (awaitingDecision ? { ...c, blocks: false } : c));
   const wouldBlock =
     identityChanged && hasChecked && candidates.some((candidate) => candidate.blocks);
   const pending = register.isPending || update.isPending;
@@ -251,7 +257,7 @@ export function ProjectForm(props: ProjectFormProps) {
       return;
     }
     // The one duplicate check on submit: the guard, whether or not Check was pressed.
-    if (checkable && identityChanged) {
+    if (checkable && identityChanged && !awaitingDecision) {
       const trimmed = title.trim();
       setCheckedTitle(trimmed);
       // A failed check does not stop the user: the server refuses a blocked title
@@ -382,8 +388,16 @@ export function ProjectForm(props: ProjectFormProps) {
               candidates={candidates}
               isLoading={clash.isFetching}
               developerChosen={Boolean(developerId)}
-              onRequestJoin={(candidate) => setJoinTarget({ candidate, kind: 'join' })}
-              onDispute={(candidate) => setJoinTarget({ candidate, kind: 'dispute' })}
+              onRequestJoin={
+                awaitingDecision
+                  ? undefined
+                  : (candidate) => setJoinTarget({ candidate, kind: 'join' })
+              }
+              onDispute={
+                awaitingDecision
+                  ? undefined
+                  : (candidate) => setJoinTarget({ candidate, kind: 'dispute' })
+              }
             />
           )}
 

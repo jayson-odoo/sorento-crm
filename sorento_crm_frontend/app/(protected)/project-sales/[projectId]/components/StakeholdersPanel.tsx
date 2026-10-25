@@ -35,6 +35,7 @@ import type {
   ProjectStakeholder,
 } from '../../_shared/types/project.types';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 const INFLUENCE_OPTIONS = [
   { value: 'high', label: 'High' },
@@ -165,7 +166,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
         size: 220,
         meta: { headerTitle: 'Phone / email' },
       },
-      ...(project.can_edit
+      ...(canWorkOnProject(project)
         ? [
             {
               id: 'actions',
@@ -199,7 +200,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
           ]
         : []),
     ],
-    [project.can_edit],
+    [project.can_edit, project.approval_state],
   );
 
   const toolbar = (
@@ -217,7 +218,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
           },
         ]}
       />
-      {project.can_edit && (
+      {canWorkOnProject(project) && (
         <Button type="button" size="sm" onClick={() => setCreating(true)}>
           <Plus className="size-4" aria-hidden />
           Add stakeholder
@@ -255,7 +256,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
             ) : rows.length === 0 ? (
               <div className="rounded-lg border border-dashed border-border px-6 py-10 text-center">
                 <h3 className="text-sm font-semibold">No stakeholders recorded</h3>
-                {project.can_edit && (
+                {canWorkOnProject(project) && (
                   <Button type="button" className="mt-4" onClick={() => setCreating(true)}>
                     <Plus className="size-4" aria-hidden />
                     Add the decision maker
@@ -314,7 +315,7 @@ export function StakeholdersPanel({ project }: { project: Project }) {
                           </p>
                         )}
                       </div>
-                      {project.can_edit && (
+                      {canWorkOnProject(project) && (
                         <div className="flex shrink-0 gap-1">
                           <Button
                             mode="icon"

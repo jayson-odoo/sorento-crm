@@ -31,3 +31,16 @@ describe('projectCodeLabel', () => {
     expect(projectCodeLabel({ project_code: ' PPF2610005 ' }).trim()).toBe('PPF2610005');
   });
 });
+
+describe('projectCodeLabel on a rejected registration (review round 3)', () => {
+  it('reads Rejected where the code would be', () => {
+    expect(projectCodeLabel({ project_code: null, approval_state: 'rejected' })).toBe('Rejected');
+  });
+  it('reads Awaiting approval for a pending or a draft one', () => {
+    expect(projectCodeLabel({ project_code: null, approval_state: 'pending' })).toBe('Awaiting approval');
+    expect(projectCodeLabel({ project_code: null, approval_state: 'draft' })).toBe('Awaiting approval');
+  });
+  it('a code always wins', () => {
+    expect(projectCodeLabel({ project_code: 'PPF2610005', approval_state: 'approved' })).toBe('PPF2610005');
+  });
+});
