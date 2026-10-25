@@ -369,6 +369,24 @@ describe('SalesOrderDetail - Delivery tab DO list (DO-SO-LINK-SURFACE R3)', () =
     expect(screen.getByText(/delivered/)).toBeInTheDocument();
   });
 
+  it('also lists a DO line naming this SO whose product is on no line of it, with its SKU', async () => {
+    getSalesOrderDeliveries.mockResolvedValue({
+      lines: [
+        { line_id: LINE_A, deliveries: [row('77aa0001-0000-4000-8000-000000000001', '202610-2774', '2026-10-20', 1)], cancels: [] },
+        { line_id: LINE_B, deliveries: [], cancels: [] },
+      ],
+      groups: [],
+      others: [{ ...row('77aa0001-0000-4000-8000-000000000001', '202610-2774', '2026-10-20', 0), sku: 'PP' }],
+    });
+    renderDetail();
+    openDelivery();
+
+    const table = await screen.findByRole('region', { name: 'Delivery orders' });
+    const texts = within(table).getAllByRole('row').slice(1).map((r) => r.textContent ?? '');
+    expect(texts).toHaveLength(3);
+    expect(texts[1]).toContain('PP');
+  });
+
   it('shows no table when the SO has no DO line', async () => {
     getSalesOrderDeliveries.mockResolvedValue({
       lines: [

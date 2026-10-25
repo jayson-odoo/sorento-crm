@@ -211,8 +211,8 @@ function CancelsTable({ rows, emptyMessage }: { rows: SoLineCancelRow[]; emptyMe
 }
 
 /**
- * DO-SO-LINK-SURFACE R3: every DO row under the SO - each line's own and each "not tied to one
- * line" group's - with its SKU, oldest first (DO date, then DO no.), for the Delivery tab.
+ * DO-SO-LINK-SURFACE R3: every DO row under the SO - each line's own, each "not tied to one
+ * line" group's and each naming the SO for a product on no line of it - with its SKU, oldest first (DO date, then DO no.), for the Delivery tab.
  */
 export function soDeliveryRows(
   lines: Pick<SalesOrderLine, 'id' | 'sku'>[],
@@ -223,6 +223,7 @@ export function soDeliveryRows(
   const rows: SoDeliveryListRow[] = [
     ...data.lines.flatMap((l) => l.deliveries.map((d) => ({ ...d, sku: skuOf.get(l.line_id) }))),
     ...data.groups.flatMap((g) => g.deliveries.map((d) => ({ ...d, sku: g.sku }))),
+    ...(data.others ?? []).map((d) => ({ ...d, sku: d.sku ?? undefined })),
   ];
   return rows.sort(
     (a, b) =>

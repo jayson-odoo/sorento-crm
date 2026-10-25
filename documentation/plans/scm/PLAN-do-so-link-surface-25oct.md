@@ -78,6 +78,11 @@ So R1 links 47,636 lines (97%), text 5, dash 1,321.
   this SO (the rows `/deliveries` already returns, lines + groups): DO no. (link), DO date,
   Status, SKU, Location, Actual delivery, Qty, with a total row. Same columns as
   `SoLineHistoryBody`, plus SKU. Empty: today's sentence only.
+- **R3b Every DO line that names the SO** (crew decision 25 Oct, keeps both views equal): a DO
+  line naming this SO whose product is on no line of it (e.g. the 0-qty PP line on DO
+  202610-2774 naming SO426424) is listed on the Delivery tab too, with its own SKU.
+  `/deliveries` returns it in a new `others` list (`so_line_history.py`); the per-line lightbox
+  still leaves it out (SO-DELIVERIES-VIEW Q5 a: it belongs under no line).
 - **R4 Scope + explicit only:** reads in the DO's / SO's own company; voided and deleted DOs out
   (same filters as `so_line_history`); no name or qty matching anywhere.
 
