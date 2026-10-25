@@ -223,6 +223,17 @@ EDITS: tuple[Edit, ...] = (
     Edit("replace_line", "d0c30a54da47092cafa56701870eb534001099f413a16b4ce8a90b0825ce19c6", '    "check_order", order_status "sales_report", entities [<customer name> as customer]'),
     Edit("replace_line", "c737ef98a91b9d3fed2cbc7d147b901fcd0c7b5fe8367cc77a43360485afb57b", '  - "dealer sales report for <customer name> March" -> sales_channel "dealer", entity {raw:'),
     Edit("replace_line", "65774d7c713ff3ad023ce6d1431b812c7538a16e9383297b60c6b6ac7d44d525", '    "<customer name>", hint: "customer"}, date_filter_start "2026-03-01", date_filter_end'),
+    # Warehouse code examples in the rule text: the codes are Location candidates now, so the examples use a placeholder.
+    Edit("replace", '  - "SRTWT7443 sales order outstanding for IB" -> SRTWT7443 is the product, "IB" is a\n    warehouse entity\n  - "any DO for SRTWT7445 at BRW", "outstanding in BRW-IB", "o/s at MWH", "backlog BB"\n    -> "BRW", "BRW-IB", "MWH", "BB" are warehouse entities', '  - "SRTWT7443 sales order outstanding for <warehouse code>" -> SRTWT7443 is the product, "<warehouse code>" is a warehouse entity; "any DO for SRTWT7445 at <warehouse code>", "outstanding in <warehouse code>", "backlog <warehouse code>" -> each <warehouse code> is a warehouse entity'),
+    Edit("replace", '"at BRW"                        -> false (a place)', '"at <warehouse code>"                        -> false (a place)'),
+    Edit("replace", 'outstanding how many at BRW?" -> document ["DO"]', 'outstanding how many at <warehouse code>?" -> document ["DO"]'),
+    Edit("replace", 'outstanding how many at BRW?" ->\n    "do_outstanding" (product SRTWC8518-SH, warehouse BRW)', 'outstanding how many at <warehouse code>?" -> "do_outstanding" (product SRTWC8518-SH, warehouse <warehouse code>)'),
+    Edit("replace", 'outstanding for IB" -> document ["SO"]', 'outstanding for <warehouse code>" -> document ["SO"]'),
+    Edit("replace", 'outstanding for IB" -> "so_outstanding" (product\n    SRTWT7443, warehouse IB)', 'outstanding for <warehouse code>" -> "so_outstanding" (product SRTWT7443, warehouse <warehouse code>)'),
+    Edit("replace", 'outstanding both at BRW-IB" -> document ["SO", "DO"]', 'outstanding both at <warehouse code>" -> document ["SO", "DO"]'),
+    Edit("replace", 'outstanding both at BRW-IB" -> "outstanding_both"', 'outstanding both at <warehouse code>" -> "outstanding_both"'),
+    Edit("replace", 'outstanding for SRTWT7445 at BRW" -> document [] (no paper named)', 'outstanding for SRTWT7445 at <warehouse code>" -> document [] (no paper named)'),
+    Edit("replace", 'outstanding for SRTWT7445 at BRW" -> bare "outstanding" (no document', 'outstanding for SRTWT7445 at <warehouse code>" -> bare "outstanding" (no document'),
 )
 
 
