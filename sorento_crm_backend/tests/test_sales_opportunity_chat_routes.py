@@ -425,3 +425,155 @@ def test_opp_responses_carry_no_other_ids(client, db):
     for payload in (options_payload, created.json()):
         for key, value in _walk(payload):
             assert not (isinstance(value, str) and UUID_RE.search(value)), (key, value)
+
+
+# ===================================================================================== review round
+
+
+def test_opp_routes_need_the_sales_module(db, monkeypatch):
+    """O1-5: `sales` off under strict mode is refused like the portal (MODULE_NOT_ENABLED)."""
+    from app.config import settings
+    from app.models.app_modules import AppModuleCatalog, TenantModule
+    from app.modules.runtime.installer import DEFAULT_TENANT_ID
+
+    monkeypatch.setattr(settings, "module_guard_strict", True)
+    contact, _agent_row = _salesperson(db)
+    other_key = f"zzt_other_{_uid()[:6]}"
+    db.add(AppModuleCatalog(id=_uid(), module_key=other_key, display_name="ZZT Other", dependencies=[]))
+    db.flush()
+    db.add(TenantModule(id=_uid(), tenant_id=DEFAULT_TENANT_ID, module_key=other_key, enabled=True))
+    db.flush()
+    with make_client(db) as c:
+        got = c.get(OPTIONS, params={**_me(contact), "q": "x"})
+        post = c.post(CREATE, json=_body(contact))
+    for resp in (got, post):
+        assert resp.status_code == 403, resp.text
+        assert "module not enabled" in resp.text.lower() or "MODULE_NOT_ENABLED" in resp.text, resp.text
+    assert _count(db) == 0
+
+
+def test_opp_audit_actor_keeps_integration_fields(db):
+    """O1-8: the contact actor stamped by the gate keeps the integration actor's user_id,
+    ip_address, user_agent and tool_name."""
+    from app.audit_context import AuditActor, get_actor, stamp_actor
+
+    contact, _agent_row = _salesperson(db)
+    principal = _principal(db)
+    integration = AuditActor(
+        actor_type="integration", user_id=principal["id"], real_user_id=principal["id"],
+        auth_method="api_key", integration_id=_uid(), ip_address="203.0.113.7",
+        user_agent="zzt-agent/1.0", tool_name="crm_sales_opportunity_log",
+    )
+
+    async def _stamping_user():
+        stamp_actor(integration, db=db)
+        return principal
+
+    with make_client(db) as c:
+        app.dependency_overrides[get_external_api_user] = _stamping_user
+        resp = c.get(OPTIONS, params={**_me(contact), "q": "x"})
+    assert resp.status_code == 200, resp.text
+    actor = get_actor(db)
+    assert actor.actor_type == "contact" and actor.contact_id == contact.id
+    assert actor.user_id == integration.user_id
+    assert actor.integration_id == integration.integration_id
+    assert actor.ip_address == "203.0.113.7"
+    assert actor.user_agent == "zzt-agent/1.0"
+    assert actor.tool_name == "crm_sales_opportunity_log"
+
+
+def test_opp_slug_granted_to_chatbot_roles_only(db):
+    """O1-7: stc_0003's grant reaches admin, integration_sorento_mcp, integration_n8n only."""
+    import importlib.util
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    from app.models.user import UserPermission, UserRole, UserRolePermission
+
+    roles = {}
+    for slug in ("admin", "integration_sorento_mcp", "integration_n8n", "integration_foundryx_esb",
+                 "integration_other", "sales_manager"):
+        row = db.query(UserRole).filter(UserRole.slug == slug).first()
+        if row is None:
+            row = UserRole(id=_uid(), slug=slug, name=f"ZZT {slug} {_uid()[:6]}")
+            db.add(row)
+        roles[slug] = row
+    db.flush()
+
+    path = Path(__file__).resolve().parents[1] / "alembic" / "versions" / "stc_0003_opp_log_slug.py"
+    spec = importlib.util.spec_from_file_location("stc_0003_under_test", path)
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    with Operations.context(MigrationContext.configure(db.connection())):
+        module.upgrade()
+    db.flush()
+
+    perm = db.query(UserPermission).filter(UserPermission.slug == "integration.sales_opportunity.log").one()
+    granted = {
+        r.slug
+        for r in db.query(UserRole)
+        .join(UserRolePermission, UserRolePermission.role_id == UserRole.id)
+        .filter(UserRolePermission.permission_id == perm.id)
+    }
+    assert {"admin", "integration_sorento_mcp", "integration_n8n"} <= granted
+    assert not granted & {"integration_foundryx_esb", "integration_other", "sales_manager"}
+
+
+def test_create_refuses_too_large_amount(client, db):
+    """O3-9: above numeric(15,2) is 422 amount_too_large, never a 500."""
+    contact, _agent_row = _salesperson(db)
+    resp = client.post(CREATE, json=_body(contact, expected_amount=10**13))
+    assert resp.status_code == 422, resp.text
+    assert _code(resp) == "amount_too_large", resp.text
+    assert _count(db) == 0
+
+
+def test_assistant_log_tool_needs_opportunities_add(db, monkeypatch):
+    """O4-3: the in-app assistant maps the log tool to sales.opportunities.add and refuses
+    the confirm for a user without it."""
+    import app.services.ai_assistant_service as m
+    import app.services.user_service as us
+    from app.models.ai_assistant import AIAssistantConversation
+    from app.services.ai_assistant_service import AIAssistantChatService
+
+    assert AIAssistantChatService._WRITE_TOOL_PERMISSIONS["crm_sales_opportunity_log"] == "sales.opportunities.add"
+
+    calls = []
+
+    class _FakeMCP:
+        def __init__(self, *a, **k):
+            pass
+
+        def call_tool(self, tool_name, args):
+            calls.append((tool_name, args))
+            return "{}"
+
+    monkeypatch.setattr(m, "MCPRuntimeClient", _FakeMCP)
+    monkeypatch.setattr(us.UserPermissionService, "check_user_has_permission", lambda self, uid, slug: False)
+    user = User(id=_uid(), email=f"{unique_code('U')}@zzt.test", name="ZZT Staff", status="ACTIVE")
+    db.add(user)
+    db.flush()
+    conv = AIAssistantConversation(user_id=user.id, title="t")
+    db.add(conv)
+    db.commit()
+    svc = AIAssistantChatService(db)
+    svc._turn_trace = None
+    svc._turn_prompt_versions = []
+    svc._parse_token_usage = {"prompt_tokens": 0, "completion_tokens": 0, "total_tokens": 0}
+    import types
+
+    cfg = types.SimpleNamespace(model="gpt-x", provider="openai")
+    pending = {
+        "tool_name": "crm_sales_opportunity_log",
+        "args": {"contact_id": "c", "space_id": "s", "title": "t"},
+        "summary": "log a sales opportunity",
+    }
+    svc._serve_pending_confirmation(conv=conv, config=cfg, pending=pending, request_started=0.0)
+    loaded = svc._load_pending_confirmation(conv.id)
+    _c, msg = svc._resolve_pending_confirmation(
+        conv=conv, user_id=user.id, config=cfg, pending=loaded, action="confirm", request_started=0.0,
+    )
+    assert calls == []
+    assert msg.metadata_json["pending_confirmation"]["status"] == "denied"

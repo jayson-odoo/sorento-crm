@@ -26,8 +26,13 @@ Postgres only (`session_factory`, a blank schema). Every row seeded here.
 from __future__ import annotations
 
 import dataclasses
+import importlib
 import json
+import os
+import subprocess
+import sys
 import uuid
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -833,3 +838,129 @@ class TestLogToolNotInReadOnlyPool:
             # The treatment entry and nothing else: one mention, and it is that dict's key.
             assert (root / "contracts.py").read_text(encoding="utf-8").count(LOG_TOOL) == 1
             assert LOG_TOOL in contracts.BRAND_SCOPE_TREATMENT
+
+
+# --------------------------------------------------------------------------- #
+# O6-12 - the opportunity ask is registered as soon as the engine is imported
+# --------------------------------------------------------------------------- #
+
+BACKEND = Path(__file__).resolve().parents[2]
+
+_REGISTERED_PROBE = (
+    "import app.services.chatbot.engine\n"
+    "from app.services.chatbot import required_fields\n"
+    "print('OPPORTUNITY_ASK_REGISTERED', 'opportunity' in required_fields.ASKS)\n"
+)
+
+
+class TestOpportunityAskRegisteredOnEngineImport:
+    def test_opportunity_ask_registered_on_engine_import(self) -> None:
+        """A fresh process (the first turn after a deploy, an RQ fork) that imports ONLY the engine
+        must already know the ask, or a field answer to it reads as `required_ask_dropped` and
+        leaves the lane. The environment is inherited, so a run under SORENTO_ENV_FILE reads the
+        same settings file in the child."""
+        env = dict(os.environ)
+        env.pop("ENABLE_SCHEDULER", None)
+        env["PYTHONPATH"] = os.pathsep.join(
+            p for p in (str(BACKEND), str(BACKEND.parent / "sorento_crm_mcp"), env.get("PYTHONPATH")) if p
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", _REGISTERED_PROBE],
+            cwd=BACKEND,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=180,
+        )
+        assert proc.returncode == 0, proc.stdout[-2000:] + proc.stderr[-4000:]
+        lines = [line for line in proc.stdout.splitlines() if line.startswith("OPPORTUNITY_ASK_REGISTERED")]
+        assert lines == ["OPPORTUNITY_ASK_REGISTERED True"], proc.stdout[-2000:]
+
+
+# --------------------------------------------------------------------------- #
+# O6-13 - only a fresh (30 minutes) explicit yes saves
+# --------------------------------------------------------------------------- #
+
+TIMED_OUT = "That opportunity was not saved because the confirmation timed out."
+
+
+def _clock(monkeypatch, at: datetime) -> None:
+    """The lane's clock seam: `lanes.opportunity._now() -> aware UTC datetime`, read when the
+    read-back is armed and again when it is answered. Red (AttributeError) until it exists."""
+    lane = importlib.import_module(LANE_MODULE)
+    monkeypatch.setattr(lane, "_now", lambda: at)
+
+
+def _affirmative(mode: str | None, picked: list[int] | None = None) -> dict[str, Any]:
+    """An affirmative reading that is NOT the open question's declared yes."""
+    return _parser_output(
+        message_type="casual",
+        domain_hint=None,
+        intent_hint=None,
+        entities=[],
+        is_affirmative=True,
+        opportunity=_opp(),
+        open_question_answer=_answer(mode, picked) if mode else _no_answer(),
+        reference_positions=list(picked or []),
+    )
+
+
+class TestOnlyAFreshExplicitYesSaves:
+    @pytest.mark.parametrize(
+        "mode,picked",
+        [(None, None), ("pick", [1]), ("fill", None)],
+        ids=["is-affirmative-no-mode", "pick-1", "fill"],
+    )
+    def test_an_affirmative_that_is_not_an_explicit_yes_saves_nothing(
+        self, session_factory, monkeypatch, mode, picked
+    ) -> None:
+        _salesperson(session_factory)
+        seam = _install(monkeypatch, options={"Bath Idea": _options(BATH)})
+
+        read_back = _say(session_factory, monkeypatch, _all_four(), "log an opportunity: Bath Idea, ...")
+        assert read_back.lines == READ_BACK, read_back.text
+        answered = _say(session_factory, monkeypatch, _affirmative(mode, picked), "ok sure")
+
+        assert seam.named(LOG_TOOL) == [], seam.calls
+        assert not answered.text.startswith("Saved"), answered.text
+
+    def test_a_stale_read_back_is_not_saved_on_yes(self, session_factory, monkeypatch) -> None:
+        _salesperson(session_factory)
+        seam = _install(monkeypatch, options={"Bath Idea": _options(BATH)})
+        asked = datetime.now(timezone.utc)
+
+        _clock(monkeypatch, asked)
+        read_back = _say(session_factory, monkeypatch, _all_four(), "log an opportunity: Bath Idea, ...")
+        assert read_back.lines == READ_BACK, read_back.text
+
+        _clock(monkeypatch, asked + timedelta(minutes=31))
+        late = _say(session_factory, monkeypatch, _yes(), "yes")
+        assert late.lines == [TIMED_OUT], late.text
+        assert seam.named(LOG_TOOL) == [], seam.calls
+
+        # The flow restarts on the next ask: a new read-back, and a fresh yes saves it once.
+        again = _say(session_factory, monkeypatch, _all_four(), "log an opportunity: Bath Idea, ...")
+        assert again.lines == READ_BACK, again.text
+        saved = _say(session_factory, monkeypatch, _yes(), "yes")
+        assert saved.lines[0] == "Saved OPP-000123, stage New.", saved.text
+        assert len(seam.named(LOG_TOOL)) == 1, seam.calls
+
+    def test_only_a_fresh_explicit_yes_saves(self, session_factory, monkeypatch) -> None:
+        _salesperson(session_factory)
+        seam = _install(monkeypatch, options={"Bath Idea": _options(BATH)})
+        asked = datetime.now(timezone.utc)
+
+        _clock(monkeypatch, asked)
+        _say(session_factory, monkeypatch, _all_four(), "log an opportunity: Bath Idea, ...")
+
+        _clock(monkeypatch, asked + timedelta(minutes=29))
+        saved = _say(session_factory, monkeypatch, _yes(), "yes")
+        assert saved.lines == [
+            "Saved OPP-000123, stage New.", "Open opportunities closing by 31 Dec: RM 40,000.00.",
+        ], saved.text
+        (args,) = seam.named(LOG_TOOL)
+        _assert_payload(args, customer_id=BATH["customer_id"], title="condo job Taman X", amount=40000,
+                        close="2026-12-15")
+
+        _say(session_factory, monkeypatch, _yes(), "yes")
+        assert len(seam.named(LOG_TOOL)) == 1, seam.calls
