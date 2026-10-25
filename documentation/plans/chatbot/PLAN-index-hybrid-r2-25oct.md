@@ -1,6 +1,6 @@
 # INDEX-HYBRID-R2: hybrid index verdict round 2 + CODE-SUBSTRING port (25 Oct 2026)
 
-Status: in progress, review (crew lane INDEX-HYBRID-R2). Track: research S (done); port = small fix track (port of reviewed #1755 rounds 8-9, no migration, no auth change).
+Status: in progress, PR open, reviewer READY (crew lane INDEX-HYBRID-R2). Track: research S (done); port = small fix track (port of reviewed #1755 rounds 8-9, no migration, no auth change).
 
 Brief: crew/state/briefs/INDEX-HYBRID-R2.md. Owner approved the prod-clone read 25 Oct ~12:10.
 
@@ -65,3 +65,7 @@ B (port):
   test_replay `test_full_corpus_*` cases that read the external sorento_crm_n8n corpus and fail the same on the red commit.
 - Kill proof: the five code files back at main -> the same 28 failed + 1 ImportError; restored.
 - Owner data list: products that reach "wc" only by code, options (a) / (b), filed as crew ask (REPORT r2).
+- Review (Opus): READY, no blockers. Kill tests by the reviewer: 9 mutations red; the one that stayed green
+  (`known()` reading only the first token) is now covered by test_r9_1_unit_the_registry_word_need_not_be_the_first_token.
+  Nit kept as ported: references.py:1061-1064 stamps the printed label on every require_specific entity (harmless;
+  the comment says "shared code").
