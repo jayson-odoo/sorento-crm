@@ -120,12 +120,15 @@ def _matches(db: Session, words: str):
     )
 
 
-def _another_agents_customer(db: Session, words: str, agents: List[SalesAgent]) -> bool:
-    """Crew a43805183: the words name (contain-match) a customer another agent owns."""
+def _not_yours(db: Session, words: str, agents: List[SalesAgent]) -> bool:
+    """Crew a43805183, O2-4: the words name (contain-match) a customer of the company that is not
+    the salesperson's: another agent's, or one with no agent at all."""
+    from sqlalchemy import or_
+
     own = [a.id for a in agents]
     return (
         _matches(db, words)
-        .filter(Customer.sales_agent_id.isnot(None), Customer.sales_agent_id.notin_(own))
+        .filter(or_(Customer.sales_agent_id.is_(None), Customer.sales_agent_id.notin_(own)))
         .first()
         is not None
     )
@@ -133,9 +136,9 @@ def _another_agents_customer(db: Session, words: str, agents: List[SalesAgent]) 
 
 def customer_options(db: Session, agents: List[SalesAgent], q: Optional[str]) -> dict:
     """The salesperson's OWN customers matching `q`, each labelled (A/C I ...). With no own match,
-    `blocked` is true when the same search finds another agent's customer, and `prospect` only
-    when it finds no customer at all (crew a43805183: a partial name of someone else's customer is
-    theirs, never a prospect)."""
+    `blocked` is true when the same search finds a customer that is not theirs (another agent's,
+    or one with no agent), and `prospect` only when it finds no customer at all (crew a43805183,
+    O2-4: a partial name of a customer that is not theirs is never a prospect)."""
     found = svc.customer_options(db, q=q, sales_agent_id=[a.id for a in agents])
     ids = [row["customer_id"] for row in found["items"]]
     rows = {c.id: c for c in db.query(Customer).filter(Customer.id.in_(ids)).all()} if ids else {}
@@ -148,7 +151,7 @@ def customer_options(db: Session, agents: List[SalesAgent], q: Optional[str]) ->
     words = (q or "").strip()
     if items or not words:
         return {"items": items, "prospect": bool(found["prospect"]), "blocked": bool(found["blocked"])}
-    blocked = _another_agents_customer(db, words, agents)
+    blocked = _not_yours(db, words, agents) or bool(found["blocked"])
     prospect = not blocked and _matches(db, words).first() is None
     return {"items": [], "prospect": prospect, "blocked": blocked}
 
@@ -195,8 +198,8 @@ def create(
         raise _unprocessable("An expected close date is required.", "close_date_required")
     customer_id = (customer_id or "").strip() or None
     prospect_name = (prospect_name or "").strip() or None
-    if prospect_name and not customer_id and _another_agents_customer(db, prospect_name, agents):
-        # Crew a43805183: a "prospect" whose name is another agent's customer is that customer.
+    if prospect_name and not customer_id and _not_yours(db, prospect_name, agents):
+        # Crew a43805183, O2-4: a "prospect" whose name is a customer that is not theirs is that customer.
         raise _unprocessable("That customer is not yours.", "CUSTOMER_NOT_YOURS")
     body = {
         "customer_id": customer_id,
