@@ -103,7 +103,7 @@ describe('KonvaTagLayer barcode: pending vs failed', () => {
       />,
     );
 
-    expect(screen.queryByText('Loading')).toBeNull();
+    expect(screen.queryByText('Preparing barcode')).toBeNull();
     expect(screen.queryByText('cannot encode')).toBeNull();
   });
 
@@ -121,7 +121,7 @@ describe('KonvaTagLayer barcode: pending vs failed', () => {
     );
 
     expect(screen.getByText('cannot encode')).toBeInTheDocument();
-    expect(screen.queryByText('Loading')).toBeNull();
+    expect(screen.queryByText('Preparing barcode')).toBeNull();
   });
 });
 

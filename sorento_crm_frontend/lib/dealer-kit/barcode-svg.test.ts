@@ -373,3 +373,58 @@ describe('svgDataUrl', () => {
     expect(decodeURIComponent(url.slice(url.indexOf(',') + 1))).toBe(svg);
   });
 });
+
+// ---------------------------------------------------------------------------
+// Review round 1 (PR #1858)
+// ---------------------------------------------------------------------------
+
+describe('barcodeSvg: each digit sits centred in its own 7-module cell', () => {
+  it('places digit 1 in the quiet zone and the rest at the centre of their cells', () => {
+    const p = parse(svgFor(VALID_EAN13));
+    const X = p.W / 113;
+    const digits = p.texts.filter((t) => /^\d$/.test(t.text)).sort((a, b) => a.x - b.x);
+    expect(digits[0].x).toBeCloseTo(6 * X, 2);
+    for (let d = 0; d < 12; d += 1) {
+      const cell = d < 6 ? 3 + d * 7 : 50 + (d - 6) * 7;
+      expect(digits[d + 1].x).toBeCloseTo((11 + cell + 3.5) * X, 2);
+    }
+  });
+
+  it('keeps a monospace digit (0.6em wide) inside its 7-module cell, clear of the guards', () => {
+    const p = parse(svgFor(VALID_EAN13));
+    const X = p.W / 113;
+    for (const d of p.texts.filter((t) => /^\d$/.test(t.text))) {
+      expect(0.6 * d.fontSize).toBeLessThanOrEqual(7 * X);
+    }
+  });
+});
+
+describe('barcodeSvg: codes with wide capitals are compressed, never clipped', () => {
+  it('compresses a code of Ws and Ms that fits by count but not by width', () => {
+    const code = 'WWMMWWMMWWMMWW';
+    const p = parse(svgFor(VALID_EAN13, { code }));
+    const text = p.texts.find((t) => t.text === code);
+    expect(text?.textLength).not.toBeNull();
+    expect(parseFloat(text!.textLength!)).toBeLessThanOrEqual(p.W);
+  });
+});
+
+describe('barcodeSvg: always valid XML', () => {
+  function parseErrors(svg: string): number {
+    const doc = new DOMParser().parseFromString(svg, 'image/svg+xml');
+    return doc.getElementsByTagName('parsererror').length;
+  }
+
+  it('escapes markup characters in the code', () => {
+    const svg = svgFor(VALID_EAN13, { code: 'A&B<C>"D"' });
+    expect(parseErrors(svg)).toBe(0);
+    expect(parse(svg).texts[0].text).toBe('A&B<C>"D"');
+  });
+
+  it('drops control characters (a GS1 separator) from the printed text, keeping the SVG valid', () => {
+    const svg = svgFor('AB\u001DCD', { code: 'ZZT\u0001-1', widthMm: 60 });
+    expect(parseErrors(svg)).toBe(0);
+    const texts = parse(svg).texts.map((t) => t.text);
+    expect(texts).toEqual(['ZZT-1', 'ABCD']);
+  });
+});
