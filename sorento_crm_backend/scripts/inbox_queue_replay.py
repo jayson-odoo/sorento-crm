@@ -15,13 +15,15 @@ One run at a time per copy (a Postgres advisory lock held for the whole run).
 **Each turn calls the copy's LLM provider** (its parser and lanes run for real), so a run costs
 what that many real turns cost on the copy's keys; the provider and model are printed first.
 
-**Refuses anything but a local copy**: `check_target` judges the env file's DATABASE_URL as
-dotenv resolves it (the last assignment wins; a relative path is read against the backend
-directory, as Settings reads it): the host must be loopback with no `host` / `hostaddr` /
-`dbname` / `service` override in its query, the database must not be the shared dev DB nor
-have `prod` in its name, `DATABASE_URL` / `DIRECT_URL` (any case) must not be exported in the
-shell, and `--api` must be http(s) on localhost; `check_connected` then asks the database it
-actually reached (`current_database()`, `inet_server_addr()`). It also refuses when an earlier run was not cleaned up
+**Refuses anything but a local, neutralised copy**: `check_target` judges the env file's
+DATABASE_URL as dotenv resolves it (the last assignment wins; a relative path is read against
+the backend directory, as Settings reads it): the host must be loopback with no `host` /
+`hostaddr` / `dbname` / `service` override in its query, `DATABASE_URL` / `DIRECT_URL` (any
+case) must not be exported in the shell, and `--api` must be http(s) on localhost;
+`check_connected` then asks the server it actually reached (`inet_server_addr()`). No rule on
+the database name (crew copies are prod clones): `check_neutralised` reads the ORIGINAL values
+before setup and refuses unless respond.io, every n8n URL and SMTP are empty or on `.invalid`,
+the workspace sender URL is empty, and the env file's HTTPS_PROXY is a dead loopback proxy. It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
 tool could not add one that verifies without dropping one of respond.io's).
 
@@ -56,7 +58,8 @@ Scenarios (fresh message ids: a respond.io id IS its send time in epoch microsec
 text but delivered after it (its read is attempted by the copy's RQ worker and fails, since
 the photo URL is a closed local port: what s2 shows is the photo answered first); s3 one
 message delivered twice through the webhook and once through `/chat/turn`; s4 a 6-message
-burst, then a backend restart (`--no-restart` skips the wait). Stdlib plus the repo's own
+burst, then a backend restart: `--restart-cmd "<shell command>"` runs it once itself (else the
+tool asks a person to restart and waits); `--no-restart` skips it. Stdlib plus the repo's own
 modules; never imports `app.services.chatbot`.
 """
 from __future__ import annotations
@@ -84,8 +87,9 @@ from urllib.parse import parse_qs, urlsplit
 SENDER_CHANNEL = "chatbot_sender"
 OVERALL_SECONDS = 300.0
 DRAIN_LET_GO_SECONDS = 180.0
+# `--restart-cmd` is run once in scenario 4 and given this long to finish.
+RESTART_CMD_SECONDS = 300.0
 LOOPBACK_HOSTS = frozenset({"localhost", "127.0.0.1", "::1"})
-SHARED_DEV_DATABASE = "sorento_cagent_stack"
 # `app.api.v1.public.respond_webhook.MAX_KEYS`: the webhook verifies against the first ten.
 MAX_WEBHOOK_KEYS = 10
 CONTACT_PREFIX = "zzt-replay-"
@@ -121,15 +125,6 @@ def _host(url: str) -> str:
         return ""
 
 
-def _name_reasons(name: str) -> list[str]:
-    reasons: list[str] = []
-    if name == SHARED_DEV_DATABASE:
-        reasons.append(f"the database is the shared dev DB ({SHARED_DEV_DATABASE})")
-    if "prod" in (name or "").lower():
-        reasons.append("the database name contains 'prod'")
-    return reasons
-
-
 def check_target(*, database_url: str, api: str, environ: Any) -> list[str]:
     """The reasons to refuse this target (empty means go): only a LOCAL copy."""
     reasons: list[str] = []
@@ -143,7 +138,6 @@ def check_target(*, database_url: str, api: str, environ: Any) -> list[str]:
         parts, query = urlsplit(""), set()
     if query & CONNECTION_OVERRIDE_KEYS:
         reasons.append("the database URL overrides its host or database in the query string")
-    reasons += _name_reasons((parts.path or "").lstrip("/"))
     for var in ("DATABASE_URL", "DIRECT_URL", "database_url", "direct_url"):
         if environ.get(var):
             reasons.append(f"{var} is exported in this shell; unset it, the env file is the one source")
@@ -174,7 +168,8 @@ def env_file_database_url(path: str) -> str:
 
 def check_connected(engine: Any) -> list[str]:
     """What the engine ACTUALLY reaches: no host / database override in its URL query, and
-    the server it connects to is local (unix socket or loopback) with a passing name."""
+    the server it connects to is local (unix socket or loopback). No rule on the database
+    NAME: crew copies are neutralised prod clones (`check_neutralised` judges them)."""
     from sqlalchemy import text
 
     reasons: list[str] = []
@@ -183,7 +178,7 @@ def check_connected(engine: Any) -> list[str]:
         reasons.append("the database URL overrides its host or database in the query string")
     with engine.connect() as conn:
         row = conn.execute(text("SELECT current_database(), inet_server_addr()")).first()
-    name, addr = (row[0], row[1]) if row is not None else ("", "unknown")
+    addr = row[1] if row is not None else "unknown"
     if addr is not None:
         try:
             loopback = ipaddress.ip_address(str(addr).split("/", 1)[0]).is_loopback
@@ -191,7 +186,77 @@ def check_connected(engine: Any) -> list[str]:
             loopback = False
         if not loopback:
             reasons.append("the connected database server is not on this machine")
-    reasons += _name_reasons(str(name or ""))
+    return reasons
+
+
+N8N_SETTING_COLUMNS = (
+    "n8n_attachment_webhook_url",
+    "n8n_crm_chat_outbound_webhook_url",
+    "n8n_stock_inquiry_revise_webhook_url",
+    "n8n_close_convo_webhook_url",
+)
+
+
+def _neutral(value: Any) -> bool:
+    """Empty, or a URL / host on the reserved `.invalid` TLD (never resolves anywhere)."""
+    text_value = str(value or "").strip()
+    if not text_value:
+        return True
+    host = _host(text_value) if "://" in text_value else text_value.split(":", 1)[0].lower()
+    return host.rstrip(".").endswith(".invalid") or host == "invalid"
+
+
+def _dead_loopback_proxy(proxy: str) -> bool:
+    """A loopback proxy whose port refuses a TCP connect: egress is blocked, not routed."""
+    import socket
+
+    try:
+        parts = urlsplit(proxy)
+        host, port = (parts.hostname or "").lower(), parts.port
+    except ValueError:
+        return False
+    if host not in LOOPBACK_HOSTS or not port:
+        return False
+    try:
+        with socket.create_connection((host, port), timeout=1.0):
+            return False
+    except OSError:
+        return True
+
+
+def check_neutralised(db: Any, env: Any) -> list[str]:
+    """The reasons this copy is NOT neutralised (empty means safe to rewire), read on the
+    ORIGINAL values before setup; `env` is the copy's env file. Each reason names its value."""
+    from app.models.respond_workspace import RespondWorkspace
+    from app.models.user import SystemSetting
+
+    env = env or {}
+    reasons: list[str] = []
+
+    def need(label: str, value: Any, rule: str = "must be empty or a .invalid host") -> None:
+        if not _neutral(value):
+            reasons.append(f"{label} = {value!r} {rule}")
+
+    need("env RESPOND_BASE_URL", env.get("RESPOND_BASE_URL"))
+    need("env N8N_WEBHOOK_URL", env.get("N8N_WEBHOOK_URL"))
+    need("env SMTP_HOST", env.get("SMTP_HOST"))
+    row = db.query(SystemSetting).first()
+    if row is not None:
+        for column in N8N_SETTING_COLUMNS:
+            need(f"system_settings.{column}", getattr(row, column, None))
+        need("system_settings.smtp_host", getattr(row, "smtp_host", None))
+    for workspace in db.query(RespondWorkspace).all():
+        space = workspace.space_id
+        need(f"respond_workspaces[{space}].base_url", workspace.base_url)
+        need(f"respond_workspaces[{space}].chatbot_retry_ingress_url", workspace.chatbot_retry_ingress_url)
+        sender = (workspace.chatbot_sender_url or "").strip()
+        if sender and _host(sender) not in LOOPBACK_HOSTS:
+            reasons.append(f"respond_workspaces[{space}].chatbot_sender_url = {sender!r} must be empty")
+    proxy = env.get("HTTPS_PROXY") or env.get("https_proxy") or ""
+    if not proxy:
+        reasons.append("env HTTPS_PROXY / https_proxy is not set: egress must go through a dead loopback proxy")
+    elif not _dead_loopback_proxy(proxy):
+        reasons.append(f"env HTTPS_PROXY = {proxy!r} must be a loopback proxy whose port refuses connections")
     return reasons
 
 
@@ -542,7 +607,7 @@ class Replay:
         self.contact = f"{CONTACT_PREFIX}{uuid.uuid4().hex[:10]}"
         self.phone = f"+000{random.randrange(10**8, 10**9)}"
         self.signing_key = secrets.token_urlsafe(33)  # 44 chars, like a respond.io key
-        self.sender_key = f"zzt-replay-{secrets.token_hex(12)}"
+        self.sender_key = f"zzt-replay-{secrets.token_hex(12)}"  # gitleaks:allow
         self.api_key = getattr(settings, "external_api_key", None) or ""
         self.local = Local(args.port)
         # Only values THIS process read and wrote (never loaded from another run's file).
@@ -560,9 +625,12 @@ class Replay:
         from app.database import SessionLocal
         from app.models.user import SystemSetting
 
+        from dotenv import dotenv_values
+
         db = SessionLocal()
         try:
             reasons = detect_leftover(db, state_file=self.args.state_file)
+            reasons += check_neutralised(db, dotenv_values(resolve_env_file(self.args.env_file)))
             row = db.query(SystemSetting).first()
             if row is not None and len(self._existing_keys(row)) >= MAX_WEBHOOK_KEYS:
                 reasons.append(
@@ -653,7 +721,7 @@ class Replay:
             if workspace is None:
                 workspace = RespondWorkspace(
                     id=self.saved["workspace_id"], space_id="zzt-replay", name="ZZT replay",
-                    is_default=True, is_active=True, api_key_ciphertext=encrypt_secret("zzt-replay-placeholder"),
+                    is_default=True, is_active=True, api_key_ciphertext=encrypt_secret("zzt-replay-placeholder"),  # gitleaks:allow
                 )
                 db.add(workspace)
             # Every existing key kept (the webhook verifies the first ten; preflight refuses a
@@ -662,7 +730,7 @@ class Replay:
             row.chatbot_direct_ingress_mode = "contacts"
             row.chatbot_direct_ingress_contacts = self.contact
             workspace.base_url = self.local.base
-            workspace.api_key_ciphertext = encrypt_secret(f"zzt-replay-not-a-key-{secrets.token_hex(8)}")
+            workspace.api_key_ciphertext = encrypt_secret(f"zzt-replay-not-a-key-{secrets.token_hex(8)}")  # gitleaks:allow
             workspace.chatbot_sender_url = f"https://127.0.0.1:{self.args.port}/sender"
             workspace.chatbot_sender_key_ciphertext = encrypt_secret(self.sender_key)
             db.flush()
@@ -927,9 +995,22 @@ class Replay:
         codes = self.burst([self.body(m) for m in order])
         restarted = None
         if not self.args.no_restart:
-            print("\n>>> RESTART THE COPY BACKEND NOW (stop it and start it again). Waiting for /health to go down...")
+            command = getattr(self.args, "restart_cmd", None)
+            process = None
+            if command:
+                import subprocess
+
+                print(f"\n>>> restarting the copy backend: {command}")
+                process = subprocess.Popen(command, shell=True)
+            else:
+                print("\n>>> RESTART THE COPY BACKEND NOW (stop it and start it again). Waiting for /health to go down...")
             went_down = self._wait_health(False, 180)
             came_back = went_down and self._wait_health(True, 240)
+            if process is not None:
+                try:
+                    process.wait(timeout=RESTART_CMD_SECONDS)
+                except Exception:  # noqa: BLE001 - bounded: a hung restart command is stopped
+                    process.kill()
             restarted = bool(went_down and came_back)
             print(">>> backend is back; collecting" if restarted else ">>> no restart seen; collecting anyway")
             deadline = max(deadline, time.monotonic() + 120)
@@ -950,7 +1031,7 @@ class Replay:
         while time.monotonic() < end:
             if healthy(self.api) == up:
                 return True
-            time.sleep(0.5)
+            time.sleep(0.2)
         return False
 
     # ---------------------------------------------------------------- report
@@ -994,7 +1075,8 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--state-file", default=DEFAULT_STATE_FILE, help="crash-safety file (originals)")
     parser.add_argument("--restore-from", help="restore the copy from a state file and exit")
     parser.add_argument("--scenarios", default="s1,s2,s3,s4")
-    parser.add_argument("--no-restart", action="store_true", help="s4 without waiting for a restart")
+    parser.add_argument("--no-restart", action="store_true", help="s4 without a restart")
+    parser.add_argument("--restart-cmd", help="shell command s4 runs once to restart the copy backend")
     parser.add_argument("--keep-rows", action="store_true", help="keep the synthetic contact's (closed) rows")
     return parser
 
