@@ -256,3 +256,66 @@ def test_o2_two_ledgers_of_one_customer_group_are_one_customer_not_a_picker(chat
     calls = _report_calls(captured)
     assert len(calls) == 1 and sorted(calls[0].get("customer_ids") or []) == sorted(ids), captured
     assert calls[0].get("channel") == "dealer", calls[0]
+
+
+def _group_with_strays(ids: dict[str, str]) -> ResolveGateServices:
+    """Prod clone (crew, 25 Oct, "Dealer fullshun oct total sales"): the grouped "[A/C I]" ledger as a debtor-name hit,
+    its grouped "(PROJECT)" sibling, two ledgers of the same name with NO group ("- [IBORN]" and an inactive
+    "*... (SHOWCASE)"), and a different customer "(PROJECT)"."""
+
+    def hit(key: str, name: str, **display: Any) -> dict[str, Any]:
+        return {"entity_type": "customer", "canonical_code": name, "uuid": ids[key], "company_code": "SRT",
+                "display": {"customer_name": name, **display}}
+
+    def _resolve(body: dict[str, Any]) -> dict[str, Any]:
+        return {
+            "tokens": ["zz demo"],
+            "resolutions": [{"token": "zz demo", "matches": [
+                {**hit("ac1", f"{ONE_NAME} [A/C I]", debtor_name=ONE_NAME, source="orders"), "canonical_code": ONE_NAME},
+                hit("project", f"{ONE_NAME} (PROJECT)"),
+                hit("iborn", f"{ONE_NAME} - [IBORN]"),
+                hit("showcase", f"*{ONE_NAME} (SHOWCASE)"),
+                hit("other", OTHER_NAME),
+            ]}],
+            "unresolved_tokens": [],
+        }
+
+    return ResolveGateServices(
+        access_types=lambda **_: [{"name": "Sorento Dealer"}],
+        resolve_entity=validating_resolve_entity(_resolve),
+        probe=lambda **_: {"items": [], "has_result": False},
+    )
+
+
+OTHER_NAME = "ZZ DEMO BATH CONCEPT SDN BHD (PROJECT)"
+
+
+def test_o3_the_group_s_ungrouped_ledgers_ride_option_1_and_the_roster_has_two_lines(chat, session_factory):
+    """Owner ruling 25 Oct 17:35: the "- [IBORN]" and inactive "(SHOWCASE)" ledgers count in the group's option."""
+    from app.models.order import CustomerGroup
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._mc_lookup_seed import customer
+
+    db = session_factory()
+    group = CustomerGroup(name=ONE_NAME, company_id=DEFAULT_COMPANY_ID)
+    db.add(group)
+    db.flush()
+    names = {"ac1": f"{ONE_NAME} [A/C I]", "project": f"{ONE_NAME} (PROJECT)", "iborn": f"{ONE_NAME} - [IBORN]",
+             "showcase": f"*{ONE_NAME} (SHOWCASE)", "other": OTHER_NAME}
+    rows = {key: customer(db, company_id=DEFAULT_COMPANY_ID, name=name) for key, name in names.items()}
+    for key in ("ac1", "project"):
+        rows[key].customer_group_id = group.id
+    ids = {key: row.id for key, row in rows.items()}
+    db.commit()
+    db.close()
+    result, captured = chat(_t1(), "Dealer zz demo oct total sales", "ZZT-cpr-o3-1",
+                            resolve_services=_group_with_strays(ids))
+    question = chat.session().get("open_question") or {}
+    options = question.get("options") or []
+    assert question.get("kind") == "customer_pick" and len(options) == 2, (_reply(result), options)
+    group_ids = {ids[k] for k in ("ac1", "project", "iborn", "showcase")}
+    assert set(options[0]["uuids"]) == group_ids, options[0]
+    assert options[1]["uuids"] == [ids["other"]], options[1]
+    result, captured = chat(_t2(group_by=None, order_status=None), "1", "ZZT-cpr-o3-2")
+    calls = _report_calls(captured)
+    assert len(calls) == 1 and set(calls[0].get("customer_ids") or []) == group_ids, captured
