@@ -1690,11 +1690,31 @@ class ComplaintService:
             )
             order += 1
 
+    def _assert_linkable_project(self, project_id, current=None) -> None:
+        """A complaint links to a PROJECT, never a portal registration still waiting for
+        approval (PROJECT-REG-PORTAL R4). Re-saving the link it already has is not a change."""
+        if not project_id or str(project_id) == str(current or ""):
+            return
+        from app.models.projects import Project
+        from app.services.error_handler import AppException
+        from app.services.project_service import approved_projects
+
+        if (
+            approved_projects(self.db.query(Project.id).filter(Project.id == str(project_id))).first()
+            is None
+        ):
+            raise AppException(
+                status_code=422,
+                message="That project is not approved yet. Pick a project from the list.",
+                code="complaint_project_not_approved",
+            )
+
     def create_complaint(self, complaint_data: ComplaintCreate):
         """Create a new complaint with attachments (generic entity_attachment_links)."""
         complaint_dict = complaint_data.model_dump(
             exclude={"attachments", "product_lines", "assigned_to_name", "last_responded_by_name"}
         )
+        self._assert_linkable_project(complaint_dict.get("project_id"))
         if complaint_dict.get("technical_team_response"):
             complaint_dict["technical_team_response"] = self._normalize_complaint_reply_body_for_storage(
                 str(complaint_dict["technical_team_response"])
@@ -1767,6 +1787,8 @@ class ComplaintService:
         complaint = self.get_complaint(complaint_id)
 
         update_data = complaint_data.model_dump(exclude_unset=True)
+        if "project_id" in update_data:
+            self._assert_linkable_project(update_data["project_id"], complaint.project_id)
         explicit_lines = update_data.pop("product_lines", None)
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
@@ -1877,6 +1899,8 @@ class ComplaintService:
         # so refuse it outside the response stage rather than gating one field.
         assert_response_write_allowed("complaint", complaint.status)
         update_data = complaint_data.model_dump(exclude_unset=True)
+        if "project_id" in update_data:
+            self._assert_linkable_project(update_data["project_id"], complaint.project_id)
         # Same handling as update_complaint: `product_lines` dumps to a list of plain
         # dicts, and the setattr loop below would assign them straight onto the ORM
         # relationship ("'dict' object has no attribute '_sa_instance_state'"). The

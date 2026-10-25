@@ -860,35 +860,10 @@ def _resolve_owner(
 
 
 def _check_company_refs(db: Session, company_id: str, payload: Dict[str, Any]) -> None:
-    """Every id the approver sends must belong to the project's company (finding S10):
-    the pickers are company scoped, the API must not trust that."""
-    from app.models.product import Brand
-    from app.models.projects import ProjectTemplate
+    """Every id the approver sends must belong to the project's company (finding S10)."""
+    from app.services.project_service import check_company_refs
 
-    refuse = _unprocessable("Pick the parties, type and template from this company.", "project_registration_ref_invalid")
-    for key in ("developer_party_id", "architect_party_id", "main_contractor_party_id"):
-        value = payload.get(key)
-        if value and not (
-            _is_uuid(value)
-            and db.query(ProjectParty.id)
-            .filter(ProjectParty.id == str(value), ProjectParty.company_id == company_id)
-            .first()
-        ):
-            raise refuse
-    for key, model in (("type_id", ProjectType), ("template_id", ProjectTemplate)):
-        value = payload.get(key)
-        if value and not (
-            _is_uuid(value)
-            and db.query(model.id).filter(model.id == str(value), model.company_id == company_id).first()
-        ):
-            raise refuse
-    brand_ids = {str(b) for b in (payload.get("brand_ids") or [])}
-    if brand_ids:
-        if not all(_is_uuid(b) for b in brand_ids) or (
-            db.query(func.count(Brand.id)).filter(Brand.id.in_(brand_ids), Brand.company_id == company_id).scalar()
-            != len(brand_ids)
-        ):
-            raise refuse
+    check_company_refs(db, company_id, payload, code="project_registration_ref_invalid")
 
 
 def _exact_duplicate(db: Session, project: Project, developer_party_id: str, title: str) -> AppException:

@@ -49,9 +49,18 @@ AWAITING_APPROVAL_LABEL = "Awaiting approval"
 APPROVE_REGISTRATIONS_PERMISSION = "projects.registrations.approve"
 
 
+REJECTED_LABEL = "Rejected"
+
+
 def project_label(project) -> str:
-    """The project's code, or "Awaiting approval" while it has none."""
-    return (getattr(project, "project_code", None) or "").strip() or AWAITING_APPROVAL_LABEL
+    """The project's code; while it has none, "Rejected" for a refused registration and
+    "Awaiting approval" for any other."""
+    code = (getattr(project, "project_code", None) or "").strip()
+    if code:
+        return code
+    if getattr(project, "approval_state", None) == APPROVAL_REJECTED:
+        return REJECTED_LABEL
+    return AWAITING_APPROVAL_LABEL
 
 
 def is_approved(project) -> bool:
@@ -68,17 +77,68 @@ def approved_projects(query):
     )
 
 
+# Each opens with the label the project carries in place of a code (R2).
 _NOT_APPROVED_MESSAGES = {
-    APPROVAL_PENDING: "This project is awaiting approval. Nothing can be added to it until it is approved.",
+    APPROVAL_PENDING: (
+        f"{AWAITING_APPROVAL_LABEL}: nothing can be added to this project until it is approved."
+    ),
     APPROVAL_REJECTED: (
-        "This project registration was rejected, so it is not an approved project. "
-        "Nothing can be added to it."
+        f"{REJECTED_LABEL}: this project registration is not approved, so nothing can be "
+        "added to it."
     ),
     APPROVAL_DRAFT: (
-        "This project registration has not been submitted for approval yet. "
-        "Nothing can be added to it."
+        f"{AWAITING_APPROVAL_LABEL}: this project registration has not been submitted for "
+        "approval yet."
     ),
 }
+
+
+def check_company_refs(
+    db: Session, company_id: str, payload: Dict[str, Any], *, code: str = "project_ref_invalid"
+) -> None:
+    """Every party, type, template and brand id a caller sends must belong to the project's
+    company (security S10 / N1): the pickers are company scoped, the API must not trust that."""
+    from uuid import UUID
+
+    from app.models.product import Brand
+
+    def is_uuid(value: Any) -> bool:
+        try:
+            UUID(str(value))
+            return True
+        except (TypeError, ValueError):
+            return False
+
+    refuse = AppException(
+        status_code=422,
+        message="Pick the parties, type and template from this company.",
+        code=code,
+    )
+    for key in ("developer_party_id", "architect_party_id", "main_contractor_party_id"):
+        value = payload.get(key)
+        if value and not (
+            is_uuid(value)
+            and db.query(ProjectParty.id)
+            .filter(ProjectParty.id == str(value), ProjectParty.company_id == company_id)
+            .first()
+        ):
+            raise refuse
+    for key, model in (("type_id", ProjectType), ("template_id", ProjectTemplate)):
+        value = payload.get(key)
+        if value and not (
+            is_uuid(value)
+            and db.query(model.id).filter(model.id == str(value), model.company_id == company_id).first()
+        ):
+            raise refuse
+    brand_ids = {str(b) for b in (payload.get("brand_ids") or [])}
+    if brand_ids:
+        if not all(is_uuid(b) for b in brand_ids) or (
+            db.query(func.count(Brand.id))
+            .filter(Brand.id.in_(brand_ids), Brand.company_id == company_id)
+            .scalar()
+            != len(brand_ids)
+        ):
+            raise refuse
 
 
 def assert_project_approved(project) -> None:
@@ -369,6 +429,8 @@ def create_takeover_request(
     Hard blocking with no way out produces defensive land-grabbing and pushes the
     argument back into WhatsApp, so both routes exist and both leave a record.
     """
+    # Nobody joins or disputes a registration that is not a project yet (security N3).
+    assert_project_approved(project)
     if kind not in TAKEOVER_KINDS:
         raise AppException(
             status_code=422,
@@ -975,9 +1037,11 @@ def list_projects(
         "last_meaningful_activity_at": Project.last_meaningful_activity_at,
     }
     column = sortable.get(sort, Project.created_at)
-    # A project with no code yet sorts after every coded one, whichever the direction.
     ordered = column.asc() if str(direction).lower() == "asc" else column.desc()
-    query = query.order_by(ordered.nulls_last(), Project.id)
+    if column is Project.project_code:
+        # A project with no code yet sorts after every coded one, whichever the direction.
+        ordered = ordered.nulls_last()
+    query = query.order_by(ordered)
 
     page = max(1, int(page or 1))
     limit = max(1, min(int(limit or 50), MAX_PAGE_LIMIT))
@@ -1078,6 +1142,7 @@ def update_project(
     the exact-key case, but only the matcher catches the near-duplicate.
     """
     assert_can_edit_project(db, project, actor_user_id, permissions)
+    check_company_refs(db, str(project.company_id), payload)
 
     new_title = payload.get("title")
     new_developer = (
@@ -1283,6 +1348,14 @@ def delete_project(
     action for that case.
     """
     assert_can_edit_project(db, project, actor_user_id, permissions)
+    # An approver may edit a pending registration but never delete one: a registration
+    # that should not stand is Rejected, so the salesperson reads why (security S2).
+    if not is_approved(project) and MANAGE_PERMISSION not in (permissions or set()):
+        raise AppException(
+            status_code=403,
+            message="Reject this registration instead: only a sales manager can delete it.",
+            code="project_delete_forbidden",
+        )
 
     # Through the ORM rather than raw SQL: the table is `projects.purchase_orders` and
     # `public.purchase_orders` is a DIFFERENT, supplier-side table (ADR-0002, ADR-0011),

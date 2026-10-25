@@ -302,6 +302,15 @@ async def get_project(
     try:
         validate_uuid_path(project_id, resource="Project")
         project = svc.get_project_or_404(db, project_id)
+        # A contact's unsent draft is nobody's read (N2), and the AI read tools answer about
+        # approved projects only (S1): both read as "not found", the same as the list.
+        if project.approval_state == "draft" or (
+            current_user.get("auth_method") in _MACHINE_AUTH_METHODS
+            and not svc.is_approved(project)
+        ):
+            from app.services.error_handler import AppException
+
+            raise AppException(status_code=404, message="Project not found.", code="project_not_found")
         body = svc.serialize_project(
             db,
             project,

@@ -1156,6 +1156,24 @@ class PortalService:
                 # so a bare resubmit of an already-saved draft is checked too, not only
                 # a submit that also sends a fresh `products` payload.
                 self._require_sponsorship_unit_prices(row)
+            elif getattr(row, "project_id", None):
+                # A purchase request may name a project too: never a registration still
+                # waiting for approval (PROJECT-REG-PORTAL R4). Checked on submit, as
+                # sponsorship's link is, because a draft may be incomplete.
+                from app.models.projects import Project
+                from app.services.project_service import approved_projects
+
+                if (
+                    approved_projects(
+                        self.db.query(Project.id).filter(Project.id == str(row.project_id))
+                    ).first()
+                    is None
+                ):
+                    raise AppException(
+                        status_code=422,
+                        message="That project is not approved yet. Pick a project from the list.",
+                        code="purchase_request_project_not_approved",
+                    )
             approval_rejected = (
                 (getattr(row, "approval_status", None) or "").strip().lower() == "rejected"
             )

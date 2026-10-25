@@ -580,6 +580,21 @@ def test_rw9_can_edit_in_the_payload_follows_the_same_rule(world):
     row = _rows(world)[rid]
     assert row["can_edit"] is False  # the list was read as `staff`
 
+    # The approve grant opens a PENDING project only: not a staff project, not an approved
+    # or a rejected one (review round 3: `or may_approve` alone must not survive).
+    staff_project = project(world.db, world.company_id, "CAN EDIT STAFF", code="PRJ-ZZT-CE1", owner=world.owner)
+    ok = pending(world, title="CAN EDIT APPROVED")
+    assert approve(world, ok).status_code == 200
+    rej = pending(world, title="CAN EDIT REJECTED")
+    assert reject(world, rej).status_code == 200
+    c = as_user(world, world.coordinator)
+    for other in (staff_project.id, ok, rej):
+        assert c.get(f"{STAFF}/{other}").json()["can_edit"] is False, other
+    listed = {r["id"]: r for r in c.get(LIST, params={"limit": 100}).json()["data"]}
+    assert listed[rid]["can_edit"] is True
+    for other in (staff_project.id, ok, rej):
+        assert listed[other]["can_edit"] is False, other
+
 
 def test_rw9_once_approved_the_approve_right_alone_no_longer_edits_it(world):
     rid = pending(world)
