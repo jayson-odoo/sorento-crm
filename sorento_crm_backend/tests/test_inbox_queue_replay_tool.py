@@ -55,7 +55,7 @@ from app.config import settings
 from app.database import SessionLocal
 from app.database import engine as db_engine
 from app.utils.field_encryption import decrypt_secret, encrypt_secret
-from tests.chatbot.test_inbox_queue_order import iq_serial, redis_client  # noqa: F401 - fixtures
+from tests.chatbot.test_inbox_queue_order import iq_serial, redis_client, wait_until  # noqa: F401 - fixtures
 
 BACKEND = Path(__file__).resolve().parents[1]
 TOOL_PATH = BACKEND / "scripts" / "inbox_queue_replay.py"
@@ -75,11 +75,13 @@ CREW_NO_PROXY = "localhost,127.0.0.1,::1"
 
 def neutral_env_text(database_url: str) -> str:
     """An env file shaped like a crew copy's: respond.io and n8n on `.invalid`, no SMTP host,
-    and egress through a dead loopback proxy (nothing listens on its port)."""
+    egress through dead loopback proxies (`https_proxy` AND `HTTPS_PROXY`), and `no_proxy` AND
+    `NO_PROXY` listing named hosts only."""
     return (
         f"DATABASE_URL={database_url}\nDIRECT_URL={database_url}\n"
         f"RESPOND_BASE_URL={NEUTRAL_RESPOND}\nN8N_WEBHOOK_URL={NEUTRAL_N8N}\nSMTP_HOST=\n"
-        f"HTTPS_PROXY=http://127.0.0.1:{_free_port()}\nNO_PROXY={CREW_NO_PROXY}\n"
+        f"https_proxy=http://127.0.0.1:{_free_port()}\nHTTPS_PROXY=http://127.0.0.1:{_free_port()}\n"
+        f"no_proxy={CREW_NO_PROXY}\nNO_PROXY={CREW_NO_PROXY}\n"
     )
 
 
@@ -1062,7 +1064,8 @@ def _dead_proxy() -> str:
 def _crew_env(**overrides: str | None) -> dict[str, str]:
     env = {
         "RESPOND_BASE_URL": NEUTRAL_RESPOND, "N8N_WEBHOOK_URL": NEUTRAL_N8N, "SMTP_HOST": "",
-        "HTTPS_PROXY": _dead_proxy(), "NO_PROXY": CREW_NO_PROXY,
+        "https_proxy": _dead_proxy(), "HTTPS_PROXY": _dead_proxy(),
+        "no_proxy": CREW_NO_PROXY, "NO_PROXY": CREW_NO_PROXY,
     }
     for key, value in overrides.items():
         if value is None:
@@ -1093,14 +1096,11 @@ def _neutral_db(db, **columns: Any) -> None:
     db.commit()
 
 
-@pytest.mark.parametrize("proxy_var", ["HTTPS_PROXY", "https_proxy"])
-def test_check_neutralised_passes_a_crew_shaped_copy(tool, blank_db, proxy_var):
+def test_check_neutralised_passes_a_crew_shaped_copy(tool, blank_db):
     """The crew copy: DB `sorento_prod_1020` on localhost (judged by `check_target`, see
     the accept cases), respond.io and n8n on `.invalid`, no SMTP host, a dead loopback proxy."""
     _neutral_db(blank_db, **{"settings.n8n_attachment_webhook_url": "https://n8n.invalid/webhook/attach"})
-    env = _crew_env(HTTPS_PROXY=None)
-    env[proxy_var] = _dead_proxy()
-    assert tool.check_neutralised(blank_db, env) == []
+    assert tool.check_neutralised(blank_db, _crew_env()) == []
 
 
 @pytest.mark.parametrize(
@@ -1118,7 +1118,7 @@ def test_check_neutralised_passes_a_crew_shaped_copy(tool, blank_db, proxy_var):
         ("smtp_host", {}, {"settings.smtp_host": "smtp.example-zzt.com"}),
         ("chatbot_sender_url", {}, {"workspace.chatbot_sender_url": REAL_LOOKING}),
         ("proxy", {"HTTPS_PROXY": "http://10.255.255.1:3128"}, {}),
-        ("proxy", {"HTTPS_PROXY": None}, {}),
+        ("proxy", {"HTTPS_PROXY": None, "https_proxy": None}, {}),
     ],
     ids=[
         "env-respond", "workspace-respond", "env-n8n", "n8n-attachment", "n8n-chat-outbound",
@@ -1301,7 +1301,7 @@ def test_check_connected_judges_every_other_name_by_neutralisation_only(tool, na
 @pytest.mark.parametrize(
     ("overrides", "names"),
     [
-        ({"NO_PROXY": None}, "no_proxy"),
+        ({"NO_PROXY": None, "no_proxy": None}, "no_proxy"),
         ({"NO_PROXY": "*"}, "no_proxy"),
         ({"NO_PROXY": None, "no_proxy": "localhost,*"}, "no_proxy"),
         ({"no_proxy": "*"}, "no_proxy"),
@@ -1407,3 +1407,93 @@ def test_a_restart_command_that_never_returns_is_killed_and_reaped(tool, copy_wo
             with contextlib.suppress(Exception):
                 proc.kill()
                 proc.wait(5)
+
+
+# --------------------------------------------------------------------------- #
+# Round 8 (reviewer confirm):
+#
+# * The respond.io URL is judged as the app RESOLVES it: an empty or bare `RESPOND_BASE_URL`
+#   becomes the real host (`base_url or settings.respond_base_url or
+#   "https://api.respond.io"`, `app/services/integration_service.py`), so it is not neutral;
+#   an empty workspace `base_url` resolves to the (neutral) env value and passes. N8N / SMTP
+#   stay neutral when empty or bare: their defaults are empty.
+# * The LOWERCASE proxy keys must be in the file: `https_proxy` (it wins over `HTTPS_PROXY`)
+#   and `no_proxy` (the worker is launched with `no_proxy='*'`, which only a lowercase key in
+#   the file overrides). Uppercase-only is refused; lowercase-only passes.
+# * A compound `--restart-cmd` that outlives its bound has its whole process group stopped
+#   (`start_new_session` + `killpg`), not only the shell.
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.parametrize("value", ["", None], ids=["empty", "bare-line"])
+def test_an_empty_or_bare_respond_base_url_is_not_neutral(tool, blank_db, value):
+    _neutral_db(blank_db)
+    env = _crew_env()
+    env["RESPOND_BASE_URL"] = value  # a bare `RESPOND_BASE_URL` line: dotenv gives None
+    reasons = tool.check_neutralised(blank_db, env)
+    assert any("respond_base_url" in r.lower() for r in reasons), (
+        f"RESPOND_BASE_URL={value!r} resolves to https://api.respond.io: {reasons}"
+    )
+
+
+@pytest.mark.parametrize("value", ["", None], ids=["empty", "bare-line"])
+def test_an_empty_or_bare_n8n_or_smtp_value_stays_neutral(tool, blank_db, value):
+    _neutral_db(blank_db)
+    env = _crew_env()
+    env["N8N_WEBHOOK_URL"] = value
+    env["SMTP_HOST"] = value
+    assert tool.check_neutralised(blank_db, env) == []
+
+
+def test_an_empty_workspace_base_url_resolves_to_the_neutral_env_value(tool, blank_db):
+    _neutral_db(blank_db, **{"workspace.base_url": ""})
+    assert tool.check_neutralised(blank_db, _crew_env()) == []
+
+
+@pytest.mark.parametrize(
+    ("left_out", "named"),
+    [("no_proxy", "no_proxy"), ("https_proxy", "https_proxy")],
+    ids=["only-uppercase-NO_PROXY", "only-uppercase-HTTPS_PROXY"],
+)
+def test_a_file_with_only_the_uppercase_proxy_key_is_refused(tool, blank_db, left_out, named):
+    _neutral_db(blank_db)
+    reasons = tool.check_neutralised(blank_db, _crew_env(**{left_out: None}))
+    assert any(named in r for r in reasons), f"only the uppercase key is set; {named} must be required: {reasons}"
+
+
+def test_a_file_with_the_lowercase_proxy_keys_only_passes(tool, blank_db):
+    _neutral_db(blank_db)
+    assert tool.check_neutralised(blank_db, _crew_env(NO_PROXY=None, HTTPS_PROXY=None)) == []
+
+
+def test_a_compound_restart_command_that_outlives_its_bound_has_its_whole_group_stopped(tool, copy_world, monkeypatch, tmp_path):
+    """The command backgrounds a child and waits. After `RESTART_CMD_SECONDS` the shell AND
+    its child are stopped (the whole process group), not the shell alone."""
+    pid_file = tmp_path / "restart-child.pid"
+    monkeypatch.setattr(tool, "RESTART_CMD_SECONDS", 1.0)
+    world = copy_world()
+    world.args.restart_cmd = f"sleep 600 & echo $! > {pid_file}; wait"
+    world.args.no_restart = False
+    monkeypatch.setattr(world.replay, "burst", lambda bodies: [200] * len(bodies))
+    monkeypatch.setattr(world.replay, "_wait_health", lambda up, timeout: True)
+    monkeypatch.setattr(world.replay, "wait_for", lambda mids, deadline, settle=3.0: [])
+
+    child: int | None = None
+    try:
+        run = _s4_on_a_thread(world, bound=30)
+        assert run["finished"], "the scenario waited on a restart command that never returns"
+        assert wait_until(lambda: pid_file.exists() and pid_file.read_text().strip(), timeout=5), "no child pid written"
+        child = int(pid_file.read_text().strip())
+
+        def gone() -> bool:
+            try:
+                os.kill(child, 0)
+            except ProcessLookupError:
+                return True
+            return False
+
+        assert wait_until(gone, timeout=5), f"the restart command's child {child} outlived the kill: only the shell was stopped"
+    finally:
+        if child is not None:
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(child, signal.SIGKILL)
