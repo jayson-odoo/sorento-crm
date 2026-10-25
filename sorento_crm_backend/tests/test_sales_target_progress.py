@@ -885,3 +885,49 @@ def test_agent_line_target_end_date(client, db):
     assert {l["target_end_date"] for l in body["own"]} == {"2026-12-31"}
     assert body["team"] and all(l["target_end_date"] is None for l in body["team"])
     assert body["dealers"] and all(l["target_end_date"] is None for l in body["dealers"])
+
+
+def test_response_narrowed_flag(client, db):
+    """T2-15: `narrowed` is false with no customer_ids, true with them (own and team then [])."""
+    contact, agent = _salesperson_contact(db)
+    owned = _customer(db, "ZZT NARROW DEALER", 1, agent=agent)
+    _target(db, "agent", agent=agent)
+    _dealer_target(db, [owned])
+
+    wide = _get(client, contact)
+    assert wide.status_code == 200, wide.text
+    assert wide.json()["narrowed"] is False
+    assert wide.json()["own"]
+
+    narrow = _get(client, contact, customer_ids=[owned.id])
+    assert narrow.status_code == 200, narrow.text
+    body = narrow.json()
+    assert body["narrowed"] is True
+    assert body["own"] == [] and body["team"] == []
+    assert len(body["dealers"]) == 1
+
+
+def test_dealer_subject_label_without_marker(client, db):
+    """T2-16: no ledger marker in a dealer's subject_label; a shared customer group keeps its name."""
+    from app.models.order import CustomerGroup
+
+    ply1 = _customer(db, "W-PLY HOMEWARE SDN BHD [A/C I]", 1)
+    ply3 = _customer(db, "W-PLY HOMEWARE SDN BHD [A/C III]", 3)
+    dash = _customer(db, "BKIN ELECTRICAL SDN BHD - [IBORN]")
+    g1 = _customer(db, "ZZT GROUPED [A/C I]", 1)
+    g3 = _customer(db, "ZZT GROUPED [A/C III]", 3)
+    group = CustomerGroup(id=_uid(), company_id=DEFAULT_COMPANY_ID, name="ZZT Group Name")
+    db.add(group)
+    db.flush()
+    g1.customer_group_id = g3.customer_group_id = group.id
+    db.flush()
+    t_ply = _dealer_target(db, [ply1, ply3])
+    t_dash = _dealer_target(db, [dash])
+    t_group = _dealer_target(db, [g1, g3])
+
+    resp = _get(client, _dealer_contact(db, ply1, ply3, dash, g1, g3))
+    assert resp.status_code == 200, resp.text
+    labels = {l["target_no"]: l["subject_label"] for l in resp.json()["dealers"]}
+    assert labels[t_ply.target_no] == "W-PLY HOMEWARE SDN BHD"
+    assert labels[t_dash.target_no] == "BKIN ELECTRICAL SDN BHD"
+    assert labels[t_group.target_no] == "ZZT Group Name"

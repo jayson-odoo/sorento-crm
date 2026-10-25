@@ -225,3 +225,21 @@ def test_present_pipeline_date_is_target_end() -> None:
     text = _text(body)
     assert "Open opportunities closing by 31 Dec: RM 40,000.00" in text.split("\n"), text
     assert "closing by 31 Oct" not in text, text
+
+
+# ------------------------------------------------------------------ T3-10
+
+def test_present_named_dealer_has_no_own_block() -> None:
+    text = _text(_body("salesperson-narrowed"))
+    for absent in ("Your sales target", "No sales target is set for you", "Team "):
+        assert absent not in text, text
+    assert (
+        "BKIN ELECTRICAL SDN BHD [A/C I, A/C III, A/C IV]: RM 19,973.83 of RM 50,000.00 (Tier 1), RM 30,026.17 to go"
+        in text.split("\n")
+    ), text
+
+
+def test_not_narrowed_with_no_own_still_says_no_target() -> None:
+    body = _body("salesperson-narrowed")
+    body["narrowed"] = False
+    assert _text(body).startswith("No sales target is set for you right now."), body
