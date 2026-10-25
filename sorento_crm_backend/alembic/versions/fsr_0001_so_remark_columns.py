@@ -5,7 +5,7 @@ SPONSORSHIP), the SO line remark (RTF stripped at ingest) and the text-only head
 line. Three nullable columns; the per-SO remark rules read them.
 
 Revision ID: fsr_0001_so_remark_columns
-Revises: or_r4b_top_selling_off
+Revises: iq_0001_turns_inbox_idx
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "fsr_0001_so_remark_columns"
-down_revision = "or_r4b_top_selling_off"
+down_revision = "iq_0001_turns_inbox_idx"
 branch_labels = None
 depends_on = None
 
