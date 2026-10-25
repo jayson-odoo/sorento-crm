@@ -217,6 +217,12 @@ EDITS: tuple[Edit, ...] = (
     Edit("replace_line", "e4da542d5e7b7b0764b42abaa205bb4fa949ebc298fa148b623d4f613a5dc2a2", 'false when the message names another party ("outstanding for <customer name>") or no one ("list'),
     Edit("replace_line", "b2205ea7092741e89652ffb61a14ce834da344b377bc7f5a80dfafc6cf44a541", 'the person to answer later. "PO for SRTWC8517", "delivery to <customer name>", "price of'),
     Edit("replace_line", "bc6fb7bc1622d6a81de4978e6ce80e6664a68c91e80c2efc05c7e232dc390909", 'orders records found for customer <customer name>. Would you like me'),
+    Edit("replace_line", "957046097dd2b880236ec5af196ab49b5d93d6195928e56f19ecce360b3c673d", 'Anything LONGER than that is a CUSTOMER name, however it is capitalised: "<customer name>",'),
+    Edit("replace_line", "d644222dcffdf3d88d3598b3c16f6d862bd2767ef8d393ae877f957bd8e271a4", '"<customer name>", "<customer name>", "<customer name>" are customer entities, never'),
+    Edit("replace_line", "c6b4f273cc08bccaf3009af57374abbeeb0672921d9df6af21cfde3bf24045bd", '  - "how much did <customer name> sell this year" -> domain_hint "order", intent_hint'),
+    Edit("replace_line", "d0c30a54da47092cafa56701870eb534001099f413a16b4ce8a90b0825ce19c6", '    "check_order", order_status "sales_report", entities [<customer name> as customer]'),
+    Edit("replace_line", "c737ef98a91b9d3fed2cbc7d147b901fcd0c7b5fe8367cc77a43360485afb57b", '  - "dealer sales report for <customer name> March" -> sales_channel "dealer", entity {raw:'),
+    Edit("replace_line", "65774d7c713ff3ad023ce6d1431b812c7538a16e9383297b60c6b6ac7d44d525", '    "<customer name>", hint: "customer"}, date_filter_start "2026-03-01", date_filter_end'),
 )
 
 
