@@ -247,7 +247,10 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   ],
   [
     'app/(protected)/scm/sales-orders/[id]/components/SoLineHistoryBody.tsx',
-    2, // the delivered-DOs DrillTable and the Cancel SO DrillTable, same as SoLineLinksBody
+    // The delivered-DOs DrillTable and the Cancel SO DrillTable, same as SoLineLinksBody.
+    // The delivered-DOs one is conditional (`onPage ? undefined : false`, #1855): the SO
+    // page's Delivery tab keeps the bounded default, the lightbox opts out.
+    2,
   ],
   [
     'app/(protected)/scm/loading-plan/components/ContainerRequestSection.tsx',
@@ -263,8 +266,9 @@ const SCROLLER_MAX_HEIGHT_FALSE_SITES = new Map<string, number>([
   ],
 ]);
 
+// `scrollerMaxHeight={cond ? x : false}` counts too: it opts out in its dialog branch.
 const SCROLLER_MAX_HEIGHT_FALSE =
-  /scrollerMaxHeight:\s*false|scrollerMaxHeight=\{false\}/g;
+  /scrollerMaxHeight:\s*false|scrollerMaxHeight=\{(?:[^{}?:]+\?[^{}:]+:\s*)?false\}/g;
 
 describe('A grid inside a Dialog/Sheet body opts out of the bounded scroller (B2, M5 review run 1)', () => {
   it('every scrollerMaxHeight: false site is enumerated with a reason', () => {
