@@ -1,14 +1,11 @@
 # UAC: rank-refine-route (lane RANK-REFINE-ROUTE, 25 Oct 2026)
 
-Context: a sales ranking is on screen ("Top 5 sales agents, 2026, product <code>, by delivered qty").
+Context: a sales ranking is on screen. The arm A (v63) and arm B parses of each R5 row CHAT-SLIM-INDEX lost run through the
+real engine seam.
 
-- AC-RR1: "only project" re-runs that ranking with Channel: Project team; the axis, count, period, product, measure and basis
-  on screen stay; the bot asks nothing.
-- AC-RR2: the same holds when the parser labels the follow-up `top_selling`, or `sales_ranking` with `ranking_refine` null or
-  false, or repeats the held axis.
-- AC-RR3: "dealer only" filters to Channel: Dealer the same way.
-- AC-RR4: a count in the same message ("project top 3") applies too.
-- AC-RR5: a dealer contact gets the existing refusal (as "Dealer sales only", #1844).
-- AC-RR6 (unchanged): no ranking held, a stale one, a held total or month list, a named product / customer / brand, another
-  axis, the parser's explicit new ask (axis typed + `ranking_refine` false) or a `new_subject` op keep today's reply.
-- AC-RR7 (unchanged): a position ("yang 3 tu sahaja") keeps today's rank pick.
+- AC-RR1: "only project" and "channel project sahaja" after "Top 5 sales agents by delivered qty" re-run that ranking with
+  Channel: Project team, for the A parse (sales_ranking) and the B parse (top_selling, no grain); nothing is asked.
+- AC-RR2: "yang 3 tu sahaja" after "Top 5 products by delivered qty" opens rank 3 for the A and B parses alike (crew a35910508:
+  position vs count is the parser's call).
+- AC-RR3: a row whose answers differ gets a code fix only when a parser field marks what the user said (crew rule); "dealer
+  only" with the channel dropped and "srt a3 flyer" with the kind dropped have no such field and go to the prompt lane.
