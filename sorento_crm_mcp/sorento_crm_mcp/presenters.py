@@ -3810,7 +3810,7 @@ def _target_block(prefix: str, lines: list[dict], as_of: date | None, *, team: b
         body = [head, *_target_line_lines(line, as_of)]
         pipeline = line.get("pipeline_value")
         if pipeline and float(pipeline) > 0:
-            body.append(f"Open opportunities closing by {_target_dmon(_target_date(line['period_end']))}: {_target_money(pipeline)}")
+            body.append(f"Open opportunities closing by {_target_dmon(_target_date(line.get('target_end_date') or line['period_end']))}: {_target_money(pipeline)}")
         blocks.append("\n".join(body))
     return "\n\n".join(blocks)
 
@@ -3824,7 +3824,7 @@ def _target_dealer_row(line: dict) -> str:
         return f"{head}, points not converted yet"
     if nxt:
         return (
-            f"{head} of {_target_money(line.get('target_value'), unit)} (Tier {nxt['tier']}), "
+            f"{head} of {_target_money(nxt.get('threshold'), unit)} (Tier {nxt['tier']}), "
             f"{_target_money(nxt.get('gap'), unit)} to go"
         )
     if reached:
