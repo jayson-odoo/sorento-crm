@@ -1,6 +1,7 @@
 # PLAN: parser prompt v107 and its publish gate (PROMPT-V107)
 
-Status: in progress (small fix track: prompt text + eval gate, no product code, no migration).
+Status: gate FAIL at part 1, early stop, owner decision pending (small fix track: prompt text + eval gate, no product
+code, no migration). Production stays on v63.
 Owner approval: 25 Oct 2026 ~12:30, budget about USD 9-10 on the OpenAI DEV key.
 UAC: `prompt-v107-gate-25oct-acceptance-criteria.md` (alongside).
 
@@ -38,7 +39,7 @@ writes inside BEGIN/ROLLBACK or restored by script.
 2. R4 replay: R3 owner script x 3 audiences + 30 real prod_1020 sessions x 3 turns, x2 runs per arm.
    Pass: no row worse in both runs.
 3. Dealer battery, 229 turns per arm. Pass: B no worse than A.
-4. EXPLORE-1023C, 23 rows per arm. Pass: B no worse than A, rows 13 and 16 fixed.
+4. EXPLORE-1023C, 23 rows per arm. Pass: B no worse than A, part 6 turn 3 ("Project sales top 10 ...") fixed.
 
 Spend: ledger at crew/state/eval/v107/LEDGER.md, one line per run (calls, tokens, USD, md5s).
 Checkpoints at 25 / 50 / 75 % of each part; stop early on a regression or when the pass is out of
@@ -47,7 +48,28 @@ reach. Runners stop on any 429 or two busy replies in a row.
 If B loses only on closed-list rows where Index mode would pass, the report says so (the owner may
 publish with Index mode).
 
+## Result (25 Oct 2026)
+
+Arm A = md5 0f3b48e6 (copy id 44e007d0). Arm B = v107, md5 45d1b908 (copy id 12b3aa1c, version 109 on
+sorento_explore1020; drafts 107 and 108 were rule-3 wording probes). Numbers only; the item texts are crew-only.
+
+| gate part | A | B | verdict |
+|---|---|---|---|
+| 1 TRAIN 118, engine-built | 93 (78.8%) | 64 (54.2%), paired 38:9, p<0.0001, 6 of 7 slices down 3+ points | FAIL |
+| 1 R5 ranking 62 | 17 | 45, paired 0:28 | B better |
+| 1 held-out 113 | not run | not run | early stop |
+| 2 R4 replay, 3 dealer battery, 4 EXPLORE-1023C | not run | not run | early stop |
+
+Attribution: on the 47 split TRAIN items v103 (no new rules) scores 16/47 and v107 in Index mode 17/47 (A 38/47), so
+the loss belongs to the v103 lineage (CODE LOOKUP swaps a typed code for a listed variant or another code; intent
+drift), not to the three rules, and Index mode does not rescue it. The ranking rules do what they should (R5).
+Spend: USD 3.28 of the approved ~9-10 (ledger crew/state/eval/v107/LEDGER.md).
+
+The three rules as written (appended to v103's candidate-pick line and its `sales_channel` line): crew/state/eval/v107/v107_vs_v103.diff.
+
 ## Publish (owner only, never this lane)
+
+Not recommended for v107. If a later candidate passes, the steps are:
 
 Prompts page: save the v107 text as a new version of `chatbot_semantic_parser`, move its
 `production` label to it. Rollback: move the label back to v63.
