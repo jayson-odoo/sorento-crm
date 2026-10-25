@@ -243,3 +243,11 @@ def test_not_narrowed_with_no_own_still_says_no_target() -> None:
     body = _body("salesperson-narrowed")
     body["narrowed"] = False
     assert _text(body).startswith("No sales target is set for you right now."), body
+
+
+def test_present_narrowed_no_dealer_lines() -> None:
+    body = _body("salesperson-narrowed")
+    body["dealers"] = []
+    assert _text(body) == "No sales target is set for that dealer right now."
+    body["window"] = {"date_from": "2026-07-01", "date_to": "2026-09-30"}
+    assert _text(body) == "No sales target is set for that dealer for Q3 2026."

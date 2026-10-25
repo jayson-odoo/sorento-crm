@@ -931,3 +931,22 @@ def test_dealer_subject_label_without_marker(client, db):
     assert labels[t_ply.target_no] == "W-PLY HOMEWARE SDN BHD"
     assert labels[t_dash.target_no] == "BKIN ELECTRICAL SDN BHD"
     assert labels[t_group.target_no] == "ZZT Group Name"
+
+
+def test_group_name_with_brackets_kept(client, db):
+    """T2-16: a shared customer group's name is kept exactly, brackets included."""
+    from app.models.order import CustomerGroup
+
+    a1 = _customer(db, "JUBIN BMS [A/C I]", 1)
+    a3 = _customer(db, "JUBIN BMS [A/C III]", 3)
+    group = CustomerGroup(id=_uid(), company_id=DEFAULT_COMPANY_ID, name="JUBIN BMS (1990) SDN BHD")
+    db.add(group)
+    db.flush()
+    a1.customer_group_id = a3.customer_group_id = group.id
+    db.flush()
+    _dealer_target(db, [a1, a3])
+
+    resp = _get(client, _dealer_contact(db, a1, a3))
+    assert resp.status_code == 200, resp.text
+    (line,) = resp.json()["dealers"]
+    assert line["subject_label"] == "JUBIN BMS (1990) SDN BHD"
