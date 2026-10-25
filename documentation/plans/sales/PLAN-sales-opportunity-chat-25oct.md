@@ -48,9 +48,13 @@ per-contact control as the portal). Crew default; flag if the owner wants a sepa
 
 ### Backend: two API-key routes (`app/api/v1/external/sales_opportunities.py`, ideation precedent)
 
-Auth `get_external_api_user` (dependencies.py:622, as `external/ideation.py:33-36`): no integration role holds
-`sales.opportunities.add` (measured on the dev copy), and the portal route has no slug either; the per-contact gate
-below is the authorization, as in the portal.
+Auth (lead ruling after the first coder round): every /external prefix carries a slug
+(`tests/test_external_permission_coverage.py`; `external/permissions.py` EXTERNAL_ENDPOINT_PERMISSIONS), and chatbot
+endpoints use `integration.*` slugs granted by migration (`integration.ideation.submit`, 357
+`integration.chatbot_media.process`, 472 `integration.chat_turn.submit`). So both routes use
+`require_external_permission("integration.sales_opportunity.log")`, the slug is registered, and the grant migration
+gives it to the chatbot integration role(s) as 357 / 472 do. No integration role holds `sales.opportunities.add`
+(measured), so that slug is not reused. The per-contact gate below still decides which contact may log.
 
 Gate, both routes, in this order (one helper):
 1. `contact_id` and `space_id` stripped and both required: 422 `contact_identity_required`.
@@ -161,6 +165,13 @@ the open question's yes answer, never a new ask.
 ```
 
 ### Lead decisions from the red tests (25 Oct)
+
+- Test fixes signed off by the lead (tester edits, not the coder): `test_opportunity_source_accepts_chat` sets
+  the bad source inside the nested block; `test_opp_responses_carry_no_other_ids` parses once;
+  `test_the_write_tool_is_named_only_in_the_opportunity_lane` allows the `contracts.BRAND_SCOPE_TREATMENT` entry (a
+  treatment entry is not a call; `test_brand_scope_contract` requires every catalogue tool there);
+  `test_branch_kinds_are_the_fifteen_the_router_decides` gains `log_opportunity` (the /chat/turn response type only
+  accepts known branch kinds).
 
 - Seam: `lanes.opportunity.call_opportunity_tool(tool_name, arguments) -> dict` (module global, calls
   `MCPRuntimeClient.call_tool` directly, returns decoded JSON), the ideate shape.

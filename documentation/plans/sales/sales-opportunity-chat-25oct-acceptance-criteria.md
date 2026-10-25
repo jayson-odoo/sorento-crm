@@ -18,8 +18,12 @@ saved without YES. Dealers, staff and unlinked contacts are refused.
   CRM user is inactive or trashed: 403 `not_a_salesperson`. `test_opp_routes_refuse_non_salespeople`.
 - O1-3 [BE] A salesperson whose contact may not see the portal "sales_opportunity" form: 403
   `opportunity_not_enabled`. `test_opp_routes_need_the_portal_form`.
-- O1-4 [BE] Both routes accept the integration API key with no permission slug; a Bearer staff token is refused.
-  `test_opp_routes_api_key_only`.
+- O1-4 [BE] (lead ruling 25 Oct, the repo's /external rule, tests/test_external_permission_coverage.py) Both
+  routes carry `require_external_permission("integration.sales_opportunity.log")`: `sales-opportunities` is mapped
+  in `EXTERNAL_ENDPOINT_PERMISSIONS`, the slug is in the permission registry, and a migration grants it to the
+  chatbot's integration role(s) the way 357_chatbot_media_permissions / 472_chatbot_turns do. A key whose act-as user
+  lacks the slug gets 403; a Bearer staff token is refused. `test_opp_routes_need_the_integration_slug`,
+  `test_external_permission_coverage` (existing, green).
 
 ## O2. Customer options route
 
