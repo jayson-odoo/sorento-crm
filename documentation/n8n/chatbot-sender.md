@@ -26,9 +26,9 @@ spine's `duplicate` arm sends nothing.
 3. **The three Execute Workflow nodes** carry placeholder ids. Point each one at the sub the
    spine's action Switch already calls for that kind, with the same inputs the spine maps:
 
-   | node | spine node to copy | fields on the action |
+   | node | spine node to copy | inputs (from the item: `action.*`, `contact_id`, `turn_id`, `ctx`) |
    |---|---|---|
-   | `send_message` | the sendmsg sub (`sorento-sub-respond-sendmsg-respond...`, as `send-crm-reply`) | `text`, `quick_replies`; plus `contact` = `ctx.contact` (else `{id: contact_id}`): the sub saves the contact's phone and name with the message record |
+   | `send_message` | the sendmsg sub (`sorento-sub-respond-sendmsg-respond...`, as the spine's `sendmsg-action`) | the sub's own input names: `contact_identifer` = `contact_id`, `message` = `action.text`, `quick_reply` = `action.quick_replies` joined as the spine joins them, `result_set` = `action.result_set` (numbered follow-ups resolve against it), `turn_id`, and `contact` = `ctx.contact` (else `{id: contact_id}`): the sub saves the contact's phone and name with the message record |
    | `send_attachments` | `sub-send-attachments` (as `send-attachments`) | `attachments_src`, `reply`; plus the body's `ctx` (the sub addresses the customer by `ctx.contact.id`), with `ctx.text.message.message.attachment` deep-defaulted to `{}` so the link fallback does not throw on a turn with no text or attachment |
    | `update_contact_fields` | the spine's contact-field write (clears `is_human_intervened`) | `fields` (`{name: value}`) |
 
