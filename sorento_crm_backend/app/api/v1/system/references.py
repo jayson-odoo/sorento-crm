@@ -1631,6 +1631,13 @@ class ResolveReferenceRequest(BaseModel):
 #: code prefix, a code substring, a set's head code, the AND probe (code-only by design).
 #: Never `embedding`, `trgm` or `spec_search`: those are nearest-neighbour guesses.
 _CODE_MATCH_TIERS = frozenset({"exact", "prefix", "substring", "head_code", "and"})
+#: The code tiers that read a token as a code FRAGMENT: only a token with a digit may make one.
+_CODE_FRAGMENT_TIERS = frozenset({"substring", "and"})
+
+
+def _has_digit(token: Any) -> bool:
+    """An ASCII digit (`str.isdigit` also takes "\u00b2" and Arabic-Indic digits)."""
+    return re.search(r"[0-9]", str(token or "")) is not None
 
 
 def _contact_hidden_spec_keys(db: Session, payload: "ResolveReferenceRequest") -> set[str]:
@@ -1683,20 +1690,17 @@ def _code_matched(result: dict[str, Any], tokens: list[str] | None = None, *, ce
     one list, so the caller's own `tokens` are tested against it instead.
     """
 
-    def _fold(value: Any) -> str:
-        return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
-
     def _hit(token: Any, match: Any) -> bool:
-        fragment = _fold(token)
+        fragment = _fold_code(token)
         if certificates and isinstance(match, dict) and match.get("entity_type") == "certificate":
             # CLOSED LISTS: a certificate matched exactly (by number, or scheme and number).
-            return any(ch.isdigit() for ch in fragment) and match.get("match_tier") == "exact"
+            return _has_digit(fragment) and match.get("match_tier") == "exact"
         return (
-            any(ch.isdigit() for ch in fragment)
+            _has_digit(fragment)
             and isinstance(match, dict)
             and match.get("entity_type") == "product"
             and match.get("match_tier") in _CODE_MATCH_TIERS
-            and fragment in _fold(match.get("canonical_code"))
+            and fragment in _fold_code(match.get("canonical_code"))
         )
 
     for resolution in result.get("resolutions") or []:
@@ -1737,6 +1741,8 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
     seen: set[str] = set()
 
     def _take(match: Any) -> None:
+        # The rows the early drop (`_drop_word_code_fragments`) left are the only gate on code
+        # fragments: a row still here is a code hit for its token.
         if not isinstance(match, dict) or match.get("entity_type") != "product":
             return
         if match.get("match_tier") not in _CODE_MATCH_TIERS:
@@ -1758,6 +1764,95 @@ def _collect_lookup_product_ids(result: dict[str, Any]) -> list[str]:
 _NEIGHBOUR_TIERS = frozenset({"embedding", "trgm"})
 
 
+def _fold_code(value: Any) -> str:
+    return re.sub(r"[^0-9a-z]", "", str(value or "").lower())
+
+
+def _rebuild_intersection_fields(result: dict[str, Any]) -> None:
+    """The fields derived from `intersection`, after a drop took rows out of it: the by-type
+    view, `empty`, and every token unresolved once nothing is left."""
+    if not isinstance(result.get("intersection"), list):
+        return
+    by_type: dict[str, list[dict[str, Any]]] = {}
+    for m in result["intersection"]:
+        by_type.setdefault(m["entity_type"], []).append(m)
+    result["by_entity_type"] = by_type
+    result["empty"] = not result["intersection"]
+    if result["empty"]:
+        result["unresolved_tokens"] = list(result.get("tokens") or [])
+
+
+def _restate_resolution(result: dict[str, Any], tr: dict[str, Any], kept: list[Any]) -> None:
+    """A resolution's rows were cut to `kept`: its flags and the result's token lists say what the
+    rows left say (the resolver's own meaning, `_suppress_brand_prefix_junk`: resolved = exactly one
+    match, ambiguous = more than one)."""
+    tr["matches"] = kept
+    tr["resolved"] = len(kept) == 1
+    tr["ambiguous"] = len(kept) > 1
+    if not tr["ambiguous"] and "ambiguous_tokens" in result:
+        result["ambiguous_tokens"] = [t for t in result["ambiguous_tokens"] if t != tr.get("token")]
+    result["unresolved_tokens"] = [
+        r["token"] for r in result.get("resolutions") or [] if isinstance(r, dict) and not (r.get("matches") or [])
+    ]
+
+
+def _drop_word_code_fragments(result: dict[str, Any], vocabulary: Any) -> None:
+    """CODE-SUBSTRING (crew a59517206 (a)): a WORD token (no ASCII digit) gets no product from a
+    code fragment read. A registry word is never a code hit, as a substring or as whole code
+    segments. Kept: exact / head_code rows, a row whose code IS the token (separators aside,
+    whatever its tier: the AND probe has no exact tier), and a row whose code holds the token's
+    words as whole code segments when the registry does not know them ("bidet" in ACC-BIDET on a
+    catalogue with no bidet class: the code is the only reading of the word). Dropped: rows with
+    the word INSIDE the code, and rows that start with it (prefix, or AND tier) when the registry
+    knows the word (`vocabulary`, a set or a callable read only when such a row needs it: a code
+    family such as "QAMS" or a brand word keeps its prefix rows). A token with a digit keeps them
+    all (a code fragment). Runs once, early, so every reader of the result sees the same rows."""
+    words: list[frozenset[str]] = []
+
+    def known(tokens: list[str]) -> bool:
+        if not words:
+            words.append(vocabulary() if callable(vocabulary) else vocabulary)
+        return any(w in words[0] for t in tokens for w in re.split(r"[^a-z0-9]+", str(t or "").lower()) if w)
+
+    def whole_segments(code: Any, token: Any) -> bool:
+        token_words = [w for w in re.split(r"[^a-z0-9]+", str(token or "").lower()) if w]
+        segments = [w for w in re.split(r"[^a-z0-9]+", str(code or "").lower()) if w]
+        return bool(token_words) and any(
+            segments[i : i + len(token_words)] == token_words for i in range(len(segments) - len(token_words) + 1)
+        )
+
+    def kept(match: Any, tokens: list[str]) -> bool:
+        if not isinstance(match, dict) or match.get("entity_type") != "product":
+            return True
+        tier = match.get("match_tier")
+        if tier not in _CODE_FRAGMENT_TIERS and tier != "prefix":
+            return True
+        code = _fold_code(match.get("canonical_code"))
+        if code in {_fold_code(t) for t in tokens}:
+            return True
+        segment_tokens = [t for t in tokens if whole_segments(match.get("canonical_code"), t)]
+        if segment_tokens:
+            return not known(segment_tokens)  # whole code words: a code hit unless a registry word
+        if tier == "substring" or not any(code.startswith(_fold_code(t)) for t in tokens):
+            return False  # the word sits inside the code, not at its start
+        return not known(tokens)  # a code that STARTS with the word: a family sibling unless it is a registry word
+
+    for resolution in result.get("resolutions") or []:
+        if not isinstance(resolution, dict) or _has_digit(resolution.get("token")):
+            continue
+        rows = resolution.get("matches") or []
+        keep = [m for m in rows if kept(m, [resolution.get("token")])]
+        if len(keep) != len(rows):
+            _restate_resolution(result, resolution, keep)
+    tokens = [t for t in result.get("tokens") or []]
+    if isinstance(result.get("intersection"), list) and not any(_has_digit(t) for t in tokens):
+        rows = result["intersection"]
+        keep = [m for m in rows if kept(m, tokens)]
+        if len(keep) != len(rows):
+            result["intersection"] = keep
+            _rebuild_intersection_fields(result)
+
+
 def _drop_word_neighbours(result: dict[str, Any]) -> None:
     """Fix round 10 on PR #833 (owner, 28 Sep 2026: "i tried to search like gunmetal
     basin, there is no such thing and it gives me flexible trap", "for #833 yeah exact
@@ -1767,7 +1862,7 @@ def _drop_word_neighbours(result: dict[str, Any]) -> None:
     with a digit keeps them: a code typo ("SRWC8088") still finds its code. Customers,
     orders and every other entity type are untouched."""
     def word(token: Any) -> bool:
-        return not any(ch.isdigit() for ch in str(token or ""))
+        return not _has_digit(token)
 
     def neighbour(match: Any) -> bool:
         return (
@@ -1794,13 +1889,7 @@ def _drop_word_neighbours(result: dict[str, Any]) -> None:
             result["alternatives"] = [m for m in result["alternatives"] if not neighbour(m)]
         if isinstance(result.get("intersection"), list):
             result["intersection"] = [m for m in result["intersection"] if not neighbour(m)]
-            by_type: dict[str, list[dict[str, Any]]] = {}
-            for m in result["intersection"]:
-                by_type.setdefault(m["entity_type"], []).append(m)
-            result["by_entity_type"] = by_type
-            result["empty"] = not result["intersection"]
-            if result["empty"]:
-                result["unresolved_tokens"] = list(result.get("tokens") or [])
+            _rebuild_intersection_fields(result)
 
 
 # A COPY of `app.services.chatbot.head.output_exchange._CERT_RE`, never an import of it:
@@ -2075,8 +2164,6 @@ def _strip_name_kinds_for_locked(
     resolutions = result.get("resolutions")
     if not isinstance(resolutions, list):
         return result
-    changed = False
-    ambiguous = list(result.get("ambiguous_tokens") or [])
     for tr in resolutions:
         if not isinstance(tr, dict) or _norm_locked_token(tr.get("token")) not in locked:
             continue
@@ -2086,18 +2173,7 @@ def _strip_name_kinds_for_locked(
             continue
         # The resolver's own meaning of the two flags (`_suppress_brand_prefix_junk`):
         # resolved = exactly one match, ambiguous = more than one.
-        tr["matches"] = kept_matches
-        tr["resolved"] = len(kept_matches) == 1
-        tr["ambiguous"] = len(kept_matches) > 1
-        if not tr["ambiguous"]:
-            ambiguous = [t for t in ambiguous if t != tr.get("token")]
-        changed = True
-    if changed:
-        result["unresolved_tokens"] = [
-            tr["token"] for tr in resolutions if isinstance(tr, dict) and not (tr.get("matches") or [])
-        ]
-        if "ambiguous_tokens" in result:
-            result["ambiguous_tokens"] = ambiguous
+        _restate_resolution(result, tr, kept_matches)
     return result
 
 
@@ -3476,6 +3552,11 @@ def resolve_reference_post(
         _keep_exact_variants(result, picked_variants)
     if payload.exact_match:
         _drop_word_neighbours(result)
+    if payload.require or payload.spec_fallback:
+        # CODE-SUBSTRING: before Shape B and the spec fallback read the rows.
+        from app.services.product_spec_search import _search_vocabulary
+
+        _drop_word_code_fragments(result, lambda: _search_vocabulary(db, brands=[]))
 
     # Shape B: a domain predicate over the described set. This is NOT a fallback -
     # "what faucets have certs" is a different question from "find me a faucet",
@@ -3638,6 +3719,10 @@ def resolve_reference_post(
         # message down to 15.
         # Read BEFORE `_emit_spec_matches` adds the qualifying set to the resolutions.
         lookup_ids = _collect_lookup_product_ids(result)
+        if not (lookup_ids or specs or scope_terms or brand or payload.free_terms):
+            # Nothing is left to describe a set (a separator-only token, a word that was no code
+            # hit): a set built off no description would be the whole catalogue.
+            return _stamp_brand_on_products(db, result)
         outcome = resolve_product_set(
             db,
             # R14/AC-1338: the PROMOTED require (a bare `true` recovered a
