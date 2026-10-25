@@ -1,6 +1,6 @@
 # PLAN: DO <-> SO line links on the DO page and the SO Delivery tab (DO-SO-LINK-SURFACE)
 
-Status: Review (mock v2 approved 17:22; UI built, reviewer READY, review fixes folded in; browser pass next). Track: small fix (no
+Status: Review (mock v2 approved 17:22; UI built, reviewer READY with fixes folded in, cloud browser pass PASS; hand test filed). Track: small fix (no
 migration, no auth/RBAC change, no new ingest surface; expected diff under ~300 lines).
 
 Owner ask (25 Oct): backfilling DOs from AutoCount, the DO page does not say which SO a DO
