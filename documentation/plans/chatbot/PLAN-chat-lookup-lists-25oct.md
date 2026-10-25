@@ -73,7 +73,7 @@ UAC: `chat-lookup-lists-25oct-acceptance-criteria.md`. Eval history and gates: `
 
 ## Hand test + final check
 - Crew test copy, label moved to the new version for the window only. Script: laneboard/scripts/<PR>.md (owner's
-  console cases: "Dealer fullshun oct total sales for water closet", "dealer only", "srt a3 flyer", a spec size, a
+  console cases: "Dealer <customer F> oct total sales for water closet", "dealer only", "srt a3 flyer", a spec size, a
   brand, a salesperson, a location, a customer name).
 - Final paid check (owner OK, USD <= 5): TRAIN 118 + R5 62 + category set, x1 per arm (x3 if it fits), eval key.
 
