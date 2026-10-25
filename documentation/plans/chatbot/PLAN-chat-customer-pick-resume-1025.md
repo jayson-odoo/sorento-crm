@@ -74,8 +74,8 @@ ruling (b) stays, no code rule.
 Owner's prod edit, 25 Oct: MCH 300-F033 ("- [IBORN]") added to the MCH group of the same name (groups are per company:
 SRT holds 300-F004/F010/F017/F026/F029, MCH 300-F031/F032 and now F033). 305-F001 (inactive "(SHOWCASE)") and 300-F059
 stay ungrouped. So "Dealer <customer> sanitary oct total sales" still asks between the group and "(SHOWCASE)" (ruling (b));
-on the plain "Dealer <customer> oct total sales" the inactive ledger rides option 1 only by resolver order. Owner's call
-whether 305-F001 joins the SRT group.
+on the plain "Dealer <customer> oct total sales" the inactive ledger rides option 1 only by resolver order. Owner ruling
+25 Oct: no change for the inactive 305-F001 (it stays ungrouped and behaves as described).
 
 Tests (per-company seed: SRT and MCH groups of one name, the contact sees both): O3 (all four grouped plus another
 customer: two lines, option 1 carries the four, the pick reports them), O4 (only the group matches: no question; red at
