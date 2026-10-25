@@ -2021,10 +2021,48 @@ class StockDebtService:
             ).append(row)
         return out
 
-    def _transferred_capacity(self, po_line_ids: Sequence[str]) -> Dict[str, float]:
-        """SUPPLY-SPO-LINK: by PO line id, what the SPO allocations the line was
-        transferred onto can hold of its placements (`_follow_capacity`, summed) - the part
-        of those placements `_holds` never puts on the PO itself."""
+    def _follow_totals(
+        self, po_line_ids: Sequence[str], spo_ids: Sequence[str]
+    ) -> Tuple[Dict[str, float], Dict[str, float]]:
+        """SUPPLY-SPO-LINK, for `_book_so_holds`: the split `_holds` makes of PO
+        placements, totalled over every live placement.
+
+        Returns `(capacity, claims)`. `capacity`, by PO line id in `po_line_ids`: what the
+        SPO allocations the line was transferred onto can hold of its placements
+        (`_follow_capacity`, summed), the part `_holds` never puts on the PO itself.
+        `claims`, by allocation id in `spo_ids`: how much of the placements on the PO line
+        an allocation came from follows onto it, earliest allocation first, as `_holds`
+        hands them out. Four reads, none when nothing is asked.
+        """
+        triples: List[Tuple[str, str, str]] = []
+        if spo_ids:
+            triples = [
+                (po_number, ref, str(product_id))
+                for po_number, ref, product_id in self.db.query(
+                    SPOAllocation.from_po_number,
+                    func.btrim(SPOAllocation.from_po_line_ref),
+                    SPOAllocation.product_id,
+                )
+                .filter(
+                    SPOAllocation.id.in_(list(spo_ids)),
+                    SPOAllocation.from_po_number.isnot(None),
+                    func.coalesce(func.btrim(SPOAllocation.from_po_line_ref), "") != "",
+                )
+                .all()
+            ]
+        wanted = []
+        if po_line_ids:
+            wanted.append(PurchaseOrderLine.id.in_(list(po_line_ids)))
+        if triples:
+            wanted.append(
+                tuple_(
+                    PurchaseOrder.po_number,
+                    func.btrim(PurchaseOrderLine.source_ref),
+                    PurchaseOrderLine.product_id,
+                ).in_(sorted(set(triples)))
+            )
+        if not wanted:
+            return {}, {}
         lines = (
             self.db.query(
                 PurchaseOrderLine.id.label("po_line_id"),
@@ -2033,19 +2071,40 @@ class StockDebtService:
                 PurchaseOrderLine.product_id.label("po_product_id"),
             )
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .filter(PurchaseOrderLine.id.in_(list(po_line_ids)))
+            .filter(or_(*wanted))
             .all()
         )
+        if not lines:
+            return {}, {}
         transferred_to = self._transferred_allocations(lines)
-        return {
-            str(line.po_line_id): sum(
-                _follow_capacity(spo)
-                for spo in transferred_to.get(
-                    (line.po_number, line.po_line_ref, str(line.po_product_id)), ()
-                )
+        placed = {
+            str(line_id): _float(qty)
+            for line_id, qty in self.db.query(
+                OrderInquiryLink.po_line_id, func.sum(OrderInquiryLink.qty)
             )
-            for line in lines
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .filter(
+                OrderInquiryLink.po_line_id.in_([str(line.po_line_id) for line in lines]),
+                OrderInquiryRow.state != INQUIRY_CANCELLED,
+            )
+            .group_by(OrderInquiryLink.po_line_id)
+            .all()
         }
+        capacity: Dict[str, float] = {}
+        claims: Dict[str, float] = {}
+        for line in lines:
+            spos = transferred_to.get(
+                (line.po_number, line.po_line_ref, str(line.po_product_id)), ()
+            )
+            capacity[str(line.po_line_id)] = sum(_follow_capacity(spo) for spo in spos)
+            rest = placed.get(str(line.po_line_id), 0.0)
+            for spo in spos:
+                take = min(rest, _follow_capacity(spo))
+                if take > EPSILON:
+                    key = str(spo.spo_allocation_id)
+                    claims[key] = claims.get(key, 0.0) + take
+                    rest -= take
+        return capacity, claims
 
     def _stand_in_floors(
         self,
@@ -2550,8 +2609,8 @@ class StockDebtService:
         way the PO lines tab resolves it (`order_link_service.book_sales_orders_by_ref`,
         document level), and handed to `book_so_pins` beside the ref itself so the pin
         lands on the LINE the ref names (R43). Only PO lines already in this read's supply
-        are asked about. Two reads for the whole page - the refs and the placements - never
-        one per product.
+        are asked about. A fixed handful of reads for the whole page - the refs, the
+        placements, and `_follow_totals` - never one per product.
 
         What the S/O may still pin is the PO line's outstanding LESS every live placement
         link on it (`order_inquiry_links.po_line_id`, any sales-order line): a placement is
@@ -2631,11 +2690,11 @@ class StockDebtService:
         named_po_ids = [parse_supply_key(key)[1] for key in named if key.startswith("po:")]
         named_spo_ids = [parse_supply_key(key)[1] for key in named if key.startswith("spo:")]
         placed: Dict[str, float] = {}
+        # SUPPLY-SPO-LINK: `_holds` puts a PO placement on its line's transferred SPO
+        # allocations first and on the PO only for the rest, so the PO nets only that rest
+        # and each allocation nets what followed onto it as well as its own placements.
+        transferred, followed = self._follow_totals(named_po_ids, named_spo_ids)
         if named_po_ids:
-            # SUPPLY-SPO-LINK: a placement sits on the PO only for what its line's
-            # transferred SPO allocations cannot hold (`_holds` takes those first), so only
-            # that part is netted from what the S/O may pin.
-            transferred = self._transferred_capacity(named_po_ids)
             placed.update(
                 {
                     f"po:{line_id}": max(
@@ -2656,7 +2715,13 @@ class StockDebtService:
         if named_spo_ids:
             placed.update(
                 {
-                    f"spo:{allocation_id}": _float(qty)
+                    f"spo:{allocation_id}": followed.get(str(allocation_id), 0.0)
+                    for allocation_id in named_spo_ids
+                }
+            )
+            placed.update(
+                {
+                    f"spo:{allocation_id}": placed[f"spo:{allocation_id}"] + _float(qty)
                     for allocation_id, qty in self.db.query(
                         OrderInquiryLink.spo_allocation_id, func.sum(OrderInquiryLink.qty)
                     )
