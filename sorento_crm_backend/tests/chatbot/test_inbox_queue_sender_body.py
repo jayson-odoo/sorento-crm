@@ -104,3 +104,31 @@ def test_an_answers_attachments_action_carries_the_reply():
     assert attach == [
         {"kind": "send_attachments", "attachments_src": files, "reply": reply, "dry_run": False}
     ], attach
+
+
+def test_a_drained_answer_with_files_hands_the_sender_its_own_persisted_reply(world, monkeypatch):
+    """`_run_answer` passes the reply it persisted (the body's `reply`) to the files action,
+    not some other dict: a real queued turn whose answer carries a file."""
+    from dataclasses import replace
+
+    files = [{"url": "https://example.invalid/zzt.pdf", "name": "zzt.pdf", "type": "file"}]
+    real = engine_mod._run_answer
+
+    def with_a_file(**kw):
+        kw["answer"] = replace(kw["answer"], files=list(files))
+        return real(**kw)
+
+    monkeypatch.setattr(engine_mod, "_run_answer", with_a_file)
+    bodies = _capture_bodies(world, monkeypatch)
+    contact = world.contact(covered=True)
+    mid = world.message(contact, time.time() - 20, "files1")
+
+    queued, _ = world.chat_turn(world.body(contact, mid))
+    assert_nothing_to_send(queued)
+    world.wait_posts(1, contact)
+
+    body = _body_for(bodies, contact)
+    attach = [a for a in body.get("actions") or [] if a.get("kind") == "send_attachments"]
+    assert len(attach) == 1, body.get("actions")
+    assert body.get("reply") and body["reply"].get("attachments_src"), body.get("reply")
+    assert attach[0].get("reply") == body["reply"], (attach[0].get("reply"), body["reply"])
