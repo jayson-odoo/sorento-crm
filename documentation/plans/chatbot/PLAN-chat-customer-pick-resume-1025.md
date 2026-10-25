@@ -1,6 +1,6 @@
 # PLAN: a customer pick answer resumes the held sales ask (lane CHAT-CUSTOMER-PICK-RESUME)
 
-Status: IN REVIEW (reviewer READY on the pick fix; add-on re-review on the final head), small fix track (S: `report_ask.py`,
+Status: IN REVIEW (Opus reviewer READY at 1ae7b94d; owner data fix for the group ruled 25 Oct), small fix track (S: `report_ask.py`,
 `gate._cust_base`, the resolve gate's name fill; no migration, no access change, no new ingest, no prompt change).
 
 ## Why
@@ -60,10 +60,19 @@ ask on its own family count (`gate._cust_base`), and the printed roster is rebui
    gate (after `_without_customer_rows`, so a hidden customer is never named), through the `customer_names` reader
    (`services.customer_names_reader`, passed by `turn_runtime.py` like `account_levels`; a failed read adds nothing).
 
-Tests: O2 (case 1, the two prod shapes, red commit first), O3 (the group with its "- [IBORN]" and "(SHOWCASE)" ledgers:
-two lines, option 1 carries all four ledgers, the pick reports them; red commit first, against c05682bf), O1 (case 2), U5
-(the name fill, unit). Kill: dropping `len(printed_lines) > 1` fails O2; dropping the `customer_names` argument fails O1.
+Tests: O2 (case 1, the two prod shapes, red commit first), O1 (case 2), U5 (the name fill, unit). Kill: dropping
+`len(printed_lines) > 1` fails O2; dropping the `customer_names` argument fails O1.
 
-Owner ruling 25 Oct 17:35 (no change, keep today's grouping): option 1 of the prod case is the whole customer group of 300-F004 across SRT and MCH (9 accounts), and
-that includes the ungrouped 300-F033 ledger (joined by the name rule) and the inactive 305-F001; both SHOULD count in that group.
+## Owner ruling on the group's ungrouped ledgers (25 Oct)
+17:35: 300-F033 ("- [IBORN]") and the inactive 305-F001 count in the 300-F004 group. Neither has a customer group, so by
+ruling (b) of 2 Oct (an ungrouped ledger is never joined by the name rule; `UNGROUPED_JOINS_NAME_MATCHED_GROUP` False) they
+are a customer of their own, and they reached option 1 of the prod case only by resolver order (the gate's stripped-name
+family, reviewer). Crew live check @1ae7b94d (b): "Dealer <customer> sanitary oct total sales", where no other customer
+matches, asked between the group and "- [IBORN]". 18:4x, option (a) DATA: the office adds both ledgers to the group;
+ruling (b) stays, no code rule.
+
+Tests: O3 (the group, all four of its ledgers grouped, plus another customer: two lines, option 1 carries the four, the
+pick reports them; red against c05682bf), O4 (only the group's ledgers match: no question, one report over the four; red at 26c2aec1 on the
+ungrouped data, before the data fix was ruled), O5 (guard, ruling (b): with the two ledgers ungrouped
+they stay their own line). Kill: `UNGROUPED_JOINS_NAME_MATCHED_GROUP` True fails exactly O5.
 "water closet" read as a promotion is out of scope (separate lane).
