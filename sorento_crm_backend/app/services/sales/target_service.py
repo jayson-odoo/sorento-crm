@@ -2224,7 +2224,11 @@ def period_progress(
             # single account's name loses its marker.
             from app.services.ledger_family import ledger_family_label
 
-            subject = ledger_family_label(dealer_label(db, dealer_accounts))
+            subject = dealer_label(db, dealer_accounts)
+            groups = {c.customer_group_id for c in dealer_accounts}
+            shared_group = len(groups) == 1 and None not in groups
+            if not (shared_group and db.get(CustomerGroup, next(iter(groups))) is not None):
+                subject = ledger_family_label(subject)
         elif target.subject_kind == "agent":
             agent = agents.get(target.sales_agent_id)
             subject = agent_label(agent) if agent else ""
