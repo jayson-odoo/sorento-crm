@@ -98,6 +98,17 @@ def test_another_companys_so_with_the_same_number_is_not_resolved(db):
     assert _line(_read(db, d), 1)["sales_order"] is None
 
 
+def test_a_stored_link_to_another_companys_so_line_is_not_shown(db):
+    so = seed_so(db, OTHER_COMPANY)
+    p = seed_product(db, DEFAULT_COMPANY_ID)
+    wh = seed_wh(db, DEFAULT_COMPANY_ID)
+    foreign = seed_so_line(db, so, p, company_id=OTHER_COMPANY)
+    d = seed_do(db, DEFAULT_COMPANY_ID)
+    seed_do_line(db, d, p, wh, so_line=foreign, from_doc_no=None, from_doc_type=None)
+
+    assert _line(_read(db, d), 1)["sales_order"] is None
+
+
 def test_non_so_source_is_not_resolved_as_an_so(db):
     """A DO line transferred from a quotation (`QT`) whose number happens to match an SO."""
     so = seed_so(db, DEFAULT_COMPANY_ID)

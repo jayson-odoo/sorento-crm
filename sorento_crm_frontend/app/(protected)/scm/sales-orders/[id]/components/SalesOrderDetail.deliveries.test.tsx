@@ -97,7 +97,7 @@ vi.mock('../../../services/salesOrderService', async (importOriginal) => ({
 }));
 
 import { SalesOrderDetail } from './SalesOrderDetail';
-import type { SalesOrder, SalesOrderLine } from '../../../types/scm.types';
+import type { SalesOrder } from '../../../types/scm.types';
 
 const LINE_A = '5b0e8c3a-1f2d-4e6a-9b7c-0d1e2f3a4b01';
 const LINE_B = '5b0e8c3a-1f2d-4e6a-9b7c-0d1e2f3a4b02';

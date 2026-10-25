@@ -21,7 +21,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { FileDropzone } from '@/components/common/FileDropzone';
-import { Trash2, Plus, Upload } from 'lucide-react';
+import { Trash2, Plus, Upload, Link as LinkIcon } from 'lucide-react';
 import { useBulkDeleteOrderLines, useCreateOrderLine } from '../hooks/useOrders';
 import { importDeliveryOrderDetail } from '../services/orderService';
 import type { OrderLine } from '../types/order.types';
@@ -195,6 +195,41 @@ export default function OrderLinesCard({ orderId, lines, readOnly = false }: Ord
         cell: ({ row }) => <span className="block text-right">{formatNum(row.original.quantity)}</span>,
         size: 90,
         meta: { headerTitle: 'Qty' },
+      },
+      {
+        // DO-SO-LINK-SURFACE R1: the SO this line delivers, the SPO page's own PO column
+        // grammar (SPODocumentDetail.tsx `po`). A link when the CRM has the SO AutoCount
+        // named (with the line no. only when it named the line), its number as plain text
+        // when it does not, "-" for a direct DO.
+        id: 'sales_order',
+        accessorFn: (row) => row.sales_order?.so_number ?? row.from_doc_no ?? '',
+        header: ({ column }) => <DataGridColumnHeader title="SO" column={column} />,
+        cell: ({ row }) => {
+          const so = row.original.sales_order;
+          if (!so) {
+            const text = row.original.from_doc_no;
+            if (!text) return <span className="text-muted-foreground">-</span>;
+            return (
+              <span className="block truncate" title={text}>
+                {text}
+              </span>
+            );
+          }
+          const label = so.line_no != null ? `${so.so_number} · line ${so.line_no}` : so.so_number;
+          return (
+            <Link
+              href={`/scm/sales-orders/${so.id}`}
+              className="flex items-center gap-1 text-primary hover:underline"
+              title={label}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <LinkIcon className="size-3 shrink-0" />
+              <span className="truncate">{label}</span>
+            </Link>
+          );
+        },
+        size: 170,
+        meta: { headerTitle: 'SO' },
       },
       {
         id: 'unit_price',

@@ -1492,8 +1492,7 @@ class OrderService:
                        for lid, line_no, sid, no in rows}
         numbers = {
             ln.from_doc_no for ln in lines
-            if ln.from_doc_no and ln.from_doc_type in (None, "SO")
-            and str(ln.sales_order_line_id or "") not in by_line
+            if ln.from_doc_no and str(ln.sales_order_line_id or "") not in by_line
         }
         by_number = {}
         if numbers:

@@ -60,6 +60,13 @@ function renderCard() {
   );
 }
 
+function soCell(code: string) {
+  const headers = screen.getAllByRole('columnheader');
+  const index = headers.findIndex((h) => (h.textContent ?? '').trim() === 'SO');
+  expect(index).toBeGreaterThanOrEqual(0);
+  return rowOf(code).querySelectorAll('td')[index] as HTMLElement;
+}
+
 function rowOf(code: string) {
   return screen.getByText(new RegExp(`^${code} - `)).closest('tr') as HTMLElement;
 }
@@ -85,17 +92,15 @@ describe('OrderLinesCard - SO column (DO-SO-LINK-SURFACE R1)', () => {
 
   it("shows AutoCount's number as plain text when the SO is not in the CRM", () => {
     renderCard();
-    const row = rowOf('BT012-CR');
-    expect(within(row).getByText('SO400001')).toBeInTheDocument();
-    expect(within(row).queryByRole('link', { name: /SO400001/ })).toBeNull();
+    const cell = soCell('BT012-CR');
+    expect((cell.textContent ?? '').trim()).toBe('SO400001');
+    expect(within(cell).queryByRole('link')).toBeNull();
   });
 
   it('shows "-" for a direct DO line', () => {
     renderCard();
-    const row = rowOf('SRTWB1515');
-    expect(within(row).queryByText(/^SO/)).toBeNull();
-    expect(within(row).queryAllByRole('link').map((a) => a.getAttribute('href'))).not.toContainEqual(
-      expect.stringContaining('/scm/sales-orders/'),
-    );
+    const cell = soCell('SRTWB1515');
+    expect((cell.textContent ?? '').trim()).toBe('-');
+    expect(within(cell).queryByRole('link')).toBeNull();
   });
 });

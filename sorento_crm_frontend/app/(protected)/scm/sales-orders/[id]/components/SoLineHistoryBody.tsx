@@ -56,17 +56,33 @@ function Figure({ label, value }: { label: string; value: string }) {
   );
 }
 
-function DeliveriesTable({
+/** A DO row with the SKU it delivered - only the Delivery tab's all-lines list reads `sku`. */
+export type SoDeliveryListRow = SoLineDeliveryRow & { sku?: string };
+
+const SKU_COLUMN: ColumnDef<SoDeliveryListRow> = {
+  id: 'sku',
+  header: 'SKU',
+  cell: ({ row }) => textCell(row.original.sku),
+  size: 160,
+};
+
+export function DeliveriesTable({
   rows,
   canOpenDo,
   emptyMessage,
+  withSku = false,
+  onPage = false,
 }: {
-  rows: SoLineDeliveryRow[];
+  rows: SoDeliveryListRow[];
   canOpenDo: boolean;
   emptyMessage: string;
+  /** DO-SO-LINK-SURFACE R3: the Delivery tab lists every line's DOs, so it names the SKU. */
+  withSku?: boolean;
+  /** On a page rather than inside a lightbox: the grid keeps its own bounded scroller. */
+  onPage?: boolean;
 }) {
   const total = rows.reduce((sum, r) => sum + Number(r.qty ?? 0), 0);
-  const columns = useMemo<ColumnDef<SoLineDeliveryRow>[]>(
+  const columns = useMemo<ColumnDef<SoDeliveryListRow>[]>(
     () => [
       {
         id: 'do_number',
@@ -87,6 +103,7 @@ function DeliveriesTable({
         size: 150,
       },
       { id: 'do_date', header: 'DO date', cell: ({ row }) => fmtDate(row.original.do_date), size: 130 },
+      ...(withSku ? [SKU_COLUMN] : []),
       { id: 'location', header: 'Location', cell: ({ row }) => textCell(row.original.location), size: 110 },
       {
         id: 'status',
@@ -110,7 +127,7 @@ function DeliveriesTable({
         meta: RIGHT,
       },
     ],
-    [canOpenDo, total],
+    [canOpenDo, total, withSku],
   );
   if (rows.length === 0) return <p className="text-sm text-muted-foreground">{emptyMessage}</p>;
   return (
@@ -119,7 +136,7 @@ function DeliveriesTable({
       rows={rows}
       getRowId={(r, i) => `${r.do_number}-${i}`}
       emptyMessage={emptyMessage}
-      scrollerMaxHeight={false}
+      scrollerMaxHeight={onPage ? undefined : false}
     />
   );
 }
@@ -158,6 +175,26 @@ function CancelsTable({ rows, emptyMessage }: { rows: SoLineCancelRow[]; emptyMe
       emptyMessage={emptyMessage}
       scrollerMaxHeight={false}
     />
+  );
+}
+
+/**
+ * DO-SO-LINK-SURFACE R3: every DO row under the SO - each line's own and each "not tied to one
+ * line" group's - with its SKU, oldest first (DO date, then DO no.), for the Delivery tab.
+ */
+export function soDeliveryRows(
+  lines: Pick<SalesOrderLine, 'id' | 'sku'>[],
+  data: SalesOrderDeliveries | undefined,
+): SoDeliveryListRow[] {
+  if (!data) return [];
+  const skuOf = new Map(lines.map((l) => [l.id, l.sku]));
+  const rows: SoDeliveryListRow[] = [
+    ...data.lines.flatMap((l) => l.deliveries.map((d) => ({ ...d, sku: skuOf.get(l.line_id) }))),
+    ...data.groups.flatMap((g) => g.deliveries.map((d) => ({ ...d, sku: g.sku }))),
+  ];
+  return rows.sort(
+    (a, b) =>
+      (a.do_date ?? '9999').localeCompare(b.do_date ?? '9999') || a.do_number.localeCompare(b.do_number),
   );
 }
 
