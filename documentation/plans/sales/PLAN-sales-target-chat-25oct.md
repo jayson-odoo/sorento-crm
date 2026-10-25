@@ -1,11 +1,10 @@
 # PLAN: sales target achievement and sales opportunities over the chat (SALES-TARGET-CHAT)
 
-Status: **slice 1 (read-only) building, ships DARK without the parser change (crew decision a30290657, 25 Oct
-2026: parser gate B3 failed the re-measure rule; candidate text handed to the next prompt lane, see "Parser gate
-record").** Owner answered card v1. Size L, full track (lead
-pattern: tester red tests, coder, reviewer + security-reviewer, parser gate). Slice 2 after the slice 1
-hand test. UAC: `sales-target-chat-25oct-acceptance-criteria.md`. Lane branch
-`crew/sales-target-chat`, base origin/main b2f15efb32.
+Status: **slice 1 built, PR #1861 ready (cff6a82501), ships DARK; waiting on the owner hand test
+(laneboard/scripts/1861.md) and the ci label. Reviewer READY, security-reviewer CLEAN. Parser candidate not shipped
+(crew decision a30290657, see "Parser gate record"); crew moves the TEST COPY label to B3 for the hand-test window
+only (a30577014). Slice 2 (log an opportunity, salespeople only) starts after the slice 1 hand test. Size L, full
+track.**
 
 ## Owner ask (25 Oct ~19:17 MYT, verbatim)
 
