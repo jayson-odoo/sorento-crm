@@ -98,3 +98,39 @@ Fixtures are invented (no real names); developer / title shapes follow the card'
   "Possible duplicate:" line with links; foot CTA Approve; Reject opens a reason dialog; Approve with no developer shows
   the field error; a 409 exact duplicate shows its message. No clash Join / Dispute panel in review mode.
 - G4 Usable and unclipped at 375 and 1280.
+
+## RW. Rework: registrations are projects (owner 25 Oct 17:50; PLAN R1-R14). Supersedes B1-B5 (queue + review), G2, G3.
+
+- RW1 Portal save creates a `projects.projects` row with `approval_state = draft`, `project_code` NULL, the legacy fields
+  on the row / its sales_profile; there is no `projects.project_registrations` table after the migration.
+- RW2 Submit -> `pending` with `submitted_at`; the A-section rules (visibility, agent, debtor pick, required fields,
+  types, title cap, rate limits, ownership 404) all still hold on the new storage.
+- RW3 `GET /api/v1/project-sales/projects/` returns pending and rejected portal projects (with `approval_state`,
+  `project_code` null) and never drafts; `approval_state=pending|rejected|approved` filters work; a picker filter
+  (e.g. `approved_only=true`) returns approved and staff projects only.
+- RW4 Two pending projects with the same title and no developer party both exist (no unique violation); a pending one
+  never blocks a staff registration of the same title and developer, and is never a clash candidate.
+- RW5 `POST .../{id}/approve` by a holder of `projects.registrations.approve` (Coordinator role, no manage): needs a
+  developer party (422 without), draws `PPF<yy><mm><nnn>`, sets the first stage, template tasks, `approval_state =
+  approved`, decided_*; the portal detail now shows that code. Without the permission -> 403. Not pending -> 409.
+- RW6 Approve when an approved project has exactly the same developer + normalised title -> 409
+  `project_registration_exact_duplicate` with `details.existing_project`; nothing changes; no number drawn.
+- RW7 `POST .../{id}/reject` needs a non-blank reason (422); -> `rejected`; still listed (RW3); the portal shows the
+  reason and lets the salesperson edit and resubmit (-> pending, reason cleared).
+- RW8 A pending or rejected project: status move -> 409 `project_not_approved`; quotation / sample PO / PO intake /
+  task / schedule / sales order / stakeholder writes -> 409 `project_not_approved`; not offered by the portal or staff
+  project pickers and refused by their validators; not resolved by the entity resolver; not in forecast / conversion /
+  per-salesperson reports; not embedded; never a possible-duplicate candidate; not in the staleness sweep.
+- RW9 An approver may edit a pending project (PUT) and pick the developer party; the owner (linked user) may too;
+  others get 403.
+- RW10 No message, title or label anywhere reads "None" for a missing code (helper renders "Awaiting approval").
+- RW11 Migration: upgrade on a DB that has staff projects keeps them intact (approval_state NULL, codes kept); the
+  partial index exists; downgrade removes code-less portal rows, restores NOT NULL, the full index and the PRJ- rule
+  + counter.
+- RW12 FE board: lanes "Awaiting approval" and "Rejected" before the stages with their counts; cards show "Awaiting
+  approval" instead of a code; no drag into or out of those lanes. Grid: Stage pill and code text as above.
+- RW13 FE detail: a pending project shows Approve (primary) + Reject (reason dialog) for approvers only, Edit beside
+  them, the read-only legacy metadata (Date, Sales agent name, Distributor, Customer, Your ref), possible-duplicate
+  links; the 409 exact duplicate shows "Already registered as <code> <title>" as a link; rejected shows the reason.
+- RW14 FE: no Registrations menu item or pages remain; ProjectForm has no review mode; the edit form shows
+  "Typed: <developer_name>" under Developer while no party is picked.
