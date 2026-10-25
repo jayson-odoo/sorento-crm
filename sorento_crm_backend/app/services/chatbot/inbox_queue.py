@@ -22,7 +22,7 @@ Three rules that make it safe:
 
 * **Look-ahead** (rule 4). Right before the turn writes conversation state, or closes, the
   engine calls `checkpoint`: when a message of the contact that goes before it is queued (a
-  photo or voice note, or an EARLIER-sent message, `_order_key`), the turn yields
+  photo, or an EARLIER-sent message, `_order_key`), the turn yields
   (`TurnYielded`) with nothing written, its row goes back to `queued`, and the drain takes
   that one first.
 * **Never lose** (rule 5). Rows live in Postgres. `sweep` (every API process, at start-up
@@ -97,7 +97,8 @@ _RELEASE_LUA = (
 
 class TurnYielded(BaseException):
     """The running turn gives way, with nothing written: to a queued message that goes
-    before it (look-ahead, `_order_key`), or because its photo read is still pending or shutdown began (parked).
+    before it (look-ahead, `_order_key`), or because its photo read is still pending or
+    shutdown began (parked).
 
     A BaseException on purpose: every `except Exception` in the engine and its lanes turns
     a failure into an error reply and a closed row, and a yield must pass all of them."""
@@ -479,12 +480,14 @@ def _send_key(envelope: Any, created_at: Any) -> float:
 
 
 def _order_key(send_key: float, attachment_type: Any, mime_type: Any) -> tuple[int, float]:
-    """PHOTO-FIRST-LOOKAHEAD (owner, 25 Oct): a queued photo or voice note is answered
-    before the contact's other queued rows, whatever the send times say (WhatsApp sends a
-    photo once it has uploaded, so a text tapped right after overtakes it); send order
-    otherwise. Only rows already queued count: nothing waits for one that is not."""
-    media = media_intake.detect({"attachment": {"type": attachment_type, "mimeType": mime_type}}) is not None
-    return (0 if media else 1, send_key)
+    """PHOTO-FIRST-LOOKAHEAD (owner, 25 Oct): a queued photo is answered before the
+    contact's other queued rows, whatever the send times say (WhatsApp sends a photo once it
+    has uploaded, so a text tapped right after overtakes it); send order otherwise, a voice
+    note included ("Photo only"). Only rows already queued count: nothing waits for one that
+    is not."""
+    detected = media_intake.detect({"attachment": {"type": attachment_type, "mimeType": mime_type}})
+    photo = detected is not None and detected[0] == "image"
+    return (0 if photo else 1, send_key)
 
 
 def _row_order_key(envelope: Any, created_at: Any) -> tuple[int, float]:

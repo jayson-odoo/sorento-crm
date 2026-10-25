@@ -9,3 +9,5 @@
   the texts keep their send order.
 - PF-4: With no photo queued, nothing changes and nothing waits.
 - PF-5: A photo of another contact never affects this contact's order.
+- PF-6: A voice note is not a photo: queued behind a running text, it is answered after it
+  (owner, 25 Oct: "Photo only").

@@ -12,14 +12,15 @@ later-sent photo was not taken: the replies went text first, then photo.
 
 ## Rule (owner, 25 Oct)
 
-Right before a text turn writes its reply, if a media row (photo or voice note) of the same
-contact is already queued and unanswered, the photo is answered first, then the text,
-whatever the respond.io send times say. No timer, no wait: only rows already queued count.
+Right before a text turn writes its reply, if a photo row of the same contact is already
+queued and unanswered, the photo is answered first, then the text, whatever the respond.io
+send times say. No timer, no wait: only rows already queued count. Photo only (owner, 25
+Oct): a voice note keeps send order and never jumps ahead of a running text.
 
 ## Change
 
 One ordering key for the contact's queued rows, used by both the claim (`_claim_next`) and
-the look-ahead (`checkpoint`): media rows first (send order among them), then every other
+the look-ahead (`checkpoint`): photo rows first (send order among them), then every other
 row in send order. Same key on both sides, so a text that gave way to a photo is not
 re-claimed ahead of it, and a photo never gives way back to the text it overtook.
 
@@ -38,7 +39,8 @@ envelope (IQ-33).
 3. Two texts and one photo queued behind the running first text: photo, text 1, text 2.
 4. No photo: unchanged, posts at once.
 5. A photo of another contact: ignored.
-6. `_order_key` alone: image, voice, an `image/*` file first; text, document, sticker in send order.
+6. `_order_key` alone: an image and an `image/*` file first; voice, text, document, sticker in send order.
+7. A voice note queued behind the running text does not go first (owner: "Photo only").
 
 ## UAC
 
