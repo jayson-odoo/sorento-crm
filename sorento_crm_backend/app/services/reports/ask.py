@@ -371,8 +371,12 @@ def delivered_fill_rate(
         "detail": {"columns": [], "order": []},
         "pivot": {"rows": "month", "cols": "all", "measures": ["orders", "orders_with_agent"]},
     })
-    # None is the all-companies caller (a session with no company scope); a set is those companies.
-    grants = None if company_grants is None else frozenset(str(c) for c in company_grants)
+    # A set is those companies; anything else (None = every company, the session's UNSET) is the
+    # engine's own to read, fail-closed.
+    grants = (
+        frozenset(str(c) for c in company_grants)
+        if isinstance(company_grants, (set, frozenset, list, tuple)) else company_grants
+    )
     grand = engine.run_summary(
         db, delivery_order_lines.DEFINITION, params, view, company_grants=grants,
     ).grand_total or {}

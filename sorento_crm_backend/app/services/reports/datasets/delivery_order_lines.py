@@ -181,7 +181,9 @@ def _events(ctx: Any) -> Any:
         )
         .select_from(do_lines)
         .join(SalesOrderLine, SalesOrderLine.id == do_lines.c.sol_id)
-        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        # The DO's own company: a link never borrows another company's customer or agent.
+        .join(SalesOrder, sa.and_(SalesOrder.id == SalesOrderLine.sales_order_id,
+                                  SalesOrder.company_id == do_lines.c.company_id))
         .where(live_so)
     )
     explained = (
@@ -237,7 +239,8 @@ def _events(ctx: Any) -> Any:
             do_lines.c.company_id.label("company_id"),
         )
         .select_from(do_lines)
-        .outerjoin(SalesOrder, SalesOrder.id == do_lines.c.named_so_id)
+        .outerjoin(SalesOrder, sa.and_(SalesOrder.id == do_lines.c.named_so_id,
+                                       SalesOrder.company_id == do_lines.c.company_id))
         .where(
             do_lines.c.sol_id.is_(None),
             sa.or_(SalesOrder.id.is_(None), live_so),

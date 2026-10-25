@@ -300,3 +300,40 @@ def test_a_do_linked_delivery_is_worth_the_do_lines_own_total(client, db):
     body = _ok(client, _full(db), product_code=w.prod.product_code, channel="dealer", **SEP)
     # C (3 pcs, RM 90) + the DO's 4 pcs at RM 380 + the 6 pcs no DO explains at RM 600.
     assert _total(body) == (13, D("1070.00")), body["total"]
+
+
+# ------------------------------------------------------------------ company isolation (security review)
+
+
+def test_another_companys_delivered_events_never_count(db):
+    """Mocha's linked, residual and unlinked events are invisible under a Sorento grant, and an
+    empty grant is nobody's (the fill rate answers nothing)."""
+    from app.schemas.report import ReportViewConfig
+    from app.services.reports import ask, engine
+    from app.services.reports.datasets.delivery_order_lines import DEFINITION
+    from tests._mc_lookup_seed import product, seed_mocha
+
+    mocha = seed_mocha(db).id
+    cust = seed_customer(db, name=unique_code("DDBM"), company_id=mocha)
+    wh = warehouse(db, company_id=mocha)
+    prod = product(db, company_id=mocha, code=unique_code("ZZTDDBM"))
+    so = seed_so(db, customer_id=cust.id, company_id=mocha, demand_class="retail")
+    sol = seed_so_line_row(db, so=so, product_id=prod.id, qty=5, total="50.00", warehouse_id=wh.id,
+                           required_date=date(2026, 9, 2))
+    spec = line(prod.id, wh.id, 2, price=D("10"), total=D("20.00"), sales_order_line_id=sol.id)
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 9, 3), source_book="db1", lines=[spec], company_id=mocha)
+    seed_do(db, customer_id=cust.id, order_date=date(2026, 9, 4), source_book="db1", company_id=mocha,
+            lines=[line(prod.id, wh.id, 1, price=D("10"), total=D("10.00"))])
+    db.commit()
+
+    params = {"date_basis": "order_date", "period": {"kind": "custom", "from": "2026-09-01", "to": "2026-09-30"},
+              "product": [prod.id]}
+    view = ReportViewConfig.model_validate({"params": params, "detail": {"columns": [], "order": []},
+                                            "pivot": {"rows": "month", "cols": "all", "measures": ["qty"]}})
+    own = engine.run_summary(db, DEFINITION, params, view, company_grants=frozenset({mocha})).grand_total
+    other = engine.run_summary(db, DEFINITION, params, view, company_grants=frozenset({DEFAULT_COMPANY_ID})).grand_total
+    assert own.get("qty") == "6", own  # 2 linked + 3 residual + 1 unlinked
+    assert not other or other.get("qty") in (None, "0"), other
+    assert ask.delivered_fill_rate(db, date_from=date(2026, 9, 1), date_to=date(2026, 9, 30), filters={},
+                                   warehouse_codes=[], policy=None, company_grants=set(),
+                                   capped_by_policy=False) is None
