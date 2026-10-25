@@ -6,18 +6,22 @@ running LOCAL test copy (backend + sweeper, and its RQ worker for the photo scen
     cd sorento_crm_backend
     venv/bin/python scripts/inbox_queue_replay.py --env-file .env.<copy> \\
         --api http://localhost:<copy backend port> --port 8399 \\
-        --out /tmp/inbox-replay.md --state-file /tmp/inbox-replay-state.json
+        --out ~/inbox-replay.md --state-file ~/inbox-replay-state.json
 
 After a hard stop (kill -9, a crash) put the copy back with
-`--env-file .env.<copy> --restore-from /tmp/inbox-replay-state.json`.
+`venv/bin/python scripts/inbox_queue_replay.py --env-file .env.<copy> --restore-from ~/inbox-replay-state.json`.
+One run at a time per copy (a Postgres advisory lock held for the whole run).
 
 **Each turn calls the copy's LLM provider** (its parser and lanes run for real), so a run costs
 what that many real turns cost on the copy's keys; the provider and model are printed first.
 
-**Refuses anything but a local copy** (`check_target`): the database host must be loopback, the
-database must not be the shared dev DB nor have `prod` in its name, `DATABASE_URL` /
-`DIRECT_URL` must not be exported in the shell (the env file is the one source), and `--api`
-must be http(s) on localhost. It also refuses when an earlier run was not cleaned up
+**Refuses anything but a local copy**: `check_target` judges the env file's DATABASE_URL as
+dotenv resolves it (the last assignment wins; a relative path is read against the backend
+directory, as Settings reads it): the host must be loopback with no `host` / `hostaddr` /
+`dbname` / `service` override in its query, the database must not be the shared dev DB nor
+have `prod` in its name, `DATABASE_URL` / `DIRECT_URL` (any case) must not be exported in the
+shell, and `--api` must be http(s) on localhost; `check_connected` then asks the database it
+actually reached (`current_database()`, `inet_server_addr()`). It also refuses when an earlier run was not cleaned up
 (`detect_leftover`) or when the copy already holds the maximum number of webhook keys (the
 tool could not add one that verifies without dropping one of respond.io's).
 
@@ -33,10 +37,13 @@ server on 127.0.0.1:`--port`, which answers the drain's takeover lookup
 * a synthetic `respond_contacts` row (AI allowed, photos allowed).
 
 The originals (ciphertexts only) go to `--state-file` (mode 0600) BEFORE the first change.
-Restore, at the end and on Ctrl-C, SIGTERM, SIGHUP or an error: first one commit closes every
-open row of the synthetic contact (`failed`) and sets the switch back; then it waits (bounded)
-until the contact's drain mutex is gone; only then one transaction writes the workspace back
-and removes the run's rows (`--keep-rows` keeps them, closed). The state file is removed last.
+The state file also names the database it was written against; `--restore-from` refuses a
+file from another one. Restore runs on the main path (SIGTERM and SIGHUP only exit, Ctrl-C
+interrupts the run): it closes every open row of the synthetic contact (`failed`) and sets the
+switch back, then repeats close-then-wait until a pass closes nothing and the contact's drain
+mutex is gone (bounded); only then one transaction closes again, writes the workspace back and
+removes the run's rows (`--keep-rows` keeps them, closed). The state file is removed last; on a
+timeout or a second Ctrl-C it stays and the exact `--restore-from` command is printed.
 
 **Where the replies are read.** The CRM's outbound URL guard refuses any loopback or private
 sender URL by design (SSRF rule, `app/services/outbound_url_guard.py`), so no sender POST can
@@ -56,6 +63,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import ipaddress
 import hmac
 import json
 import os
@@ -70,7 +78,8 @@ import urllib.request
 import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
-from urllib.parse import urlsplit
+from pathlib import Path
+from urllib.parse import parse_qs, urlsplit
 
 SENDER_CHANNEL = "chatbot_sender"
 OVERALL_SECONDS = 300.0
@@ -80,6 +89,12 @@ SHARED_DEV_DATABASE = "sorento_cagent_stack"
 # `app.api.v1.public.respond_webhook.MAX_KEYS`: the webhook verifies against the first ten.
 MAX_WEBHOOK_KEYS = 10
 CONTACT_PREFIX = "zzt-replay-"
+# One run at a time per copy: a session-level advisory lock held for the whole run.
+RUN_LOCK_KEY = 727327105
+BACKEND = Path(__file__).resolve().parent.parent
+# The crash-safety file lives in the user's own space (not /tmp: world-readable, cleaned on reboot).
+DEFAULT_STATE_FILE = str(Path.home() / "inbox-replay-state.json")
+CONNECTION_OVERRIDE_KEYS = frozenset({"host", "hostaddr", "dbname", "service"})
 
 
 def last4(value: str | None) -> str:
@@ -106,18 +121,30 @@ def _host(url: str) -> str:
         return ""
 
 
+def _name_reasons(name: str) -> list[str]:
+    reasons: list[str] = []
+    if name == SHARED_DEV_DATABASE:
+        reasons.append(f"the database is the shared dev DB ({SHARED_DEV_DATABASE})")
+    if "prod" in (name or "").lower():
+        reasons.append("the database name contains 'prod'")
+    return reasons
+
+
 def check_target(*, database_url: str, api: str, environ: Any) -> list[str]:
     """The reasons to refuse this target (empty means go): only a LOCAL copy."""
     reasons: list[str] = []
     db_host = _host(database_url or "")
     if db_host not in LOOPBACK_HOSTS:
         reasons.append("the database host is not loopback: this tool only rewires a local copy")
-    name = (urlsplit(database_url or "").path or "").lstrip("/").split("?", 1)[0]
-    if name == SHARED_DEV_DATABASE:
-        reasons.append(f"the database is the shared dev DB ({SHARED_DEV_DATABASE})")
-    if "prod" in name.lower():
-        reasons.append("the database name contains 'prod'")
-    for var in ("DATABASE_URL", "DIRECT_URL"):
+    try:
+        parts = urlsplit(database_url or "")
+        query = {k.lower() for k in parse_qs(parts.query, keep_blank_values=True)}
+    except ValueError:
+        parts, query = urlsplit(""), set()
+    if query & CONNECTION_OVERRIDE_KEYS:
+        reasons.append("the database URL overrides its host or database in the query string")
+    reasons += _name_reasons((parts.path or "").lstrip("/"))
+    for var in ("DATABASE_URL", "DIRECT_URL", "database_url", "direct_url"):
         if environ.get(var):
             reasons.append(f"{var} is exported in this shell; unset it, the env file is the one source")
     try:
@@ -129,16 +156,93 @@ def check_target(*, database_url: str, api: str, environ: Any) -> list[str]:
     return reasons
 
 
-def _env_file_value(path: str, name: str) -> str:
+def resolve_env_file(path: str) -> str:
+    """The absolute file Settings reads for this SORENTO_ENV_FILE value (a relative path is
+    read against the backend directory, as `app.config._resolve_settings_env_file` does)."""
+    candidate = Path(path)
+    if not candidate.is_absolute():
+        candidate = BACKEND / candidate
+    return str(candidate)
+
+
+def env_file_database_url(path: str) -> str:
+    """DATABASE_URL as dotenv resolves it (the last assignment wins, `export` included)."""
+    from dotenv import dotenv_values
+
+    return str(dotenv_values(resolve_env_file(path)).get("DATABASE_URL") or "")
+
+
+def check_connected(engine: Any) -> list[str]:
+    """What the engine ACTUALLY reaches: no host / database override in its URL query, and
+    the server it connects to is local (unix socket or loopback) with a passing name."""
+    from sqlalchemy import text
+
+    reasons: list[str] = []
+    query = {str(k).lower() for k in (getattr(engine.url, "query", None) or {})}
+    if query & CONNECTION_OVERRIDE_KEYS:
+        reasons.append("the database URL overrides its host or database in the query string")
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT current_database(), inet_server_addr()")).first()
+    name, addr = (row[0], row[1]) if row is not None else ("", "unknown")
+    if addr is not None:
+        try:
+            loopback = ipaddress.ip_address(str(addr).split("/", 1)[0]).is_loopback
+        except ValueError:
+            loopback = False
+        if not loopback:
+            reasons.append("the connected database server is not on this machine")
+    reasons += _name_reasons(str(name or ""))
+    return reasons
+
+
+def take_run_lock(engine: Any) -> Any:
+    """The run lock (one run at a time): a connection holding the advisory lock, kept open
+    for the whole run, or None when another run holds it."""
+    from sqlalchemy import text
+
+    conn = engine.connect()
     try:
-        with open(path, encoding="utf-8") as fh:
-            for line in fh:
-                key, sep, value = line.strip().partition("=")
-                if sep and key.strip() == name:
-                    return value.strip().strip('"').strip("'")
-    except OSError:
+        got = conn.execute(text("SELECT pg_try_advisory_lock(:k)"), {"k": RUN_LOCK_KEY}).scalar()
+        conn.commit()
+    except Exception:
+        conn.close()
+        raise
+    if not got:
+        conn.close()
+        return None
+    return conn
+
+
+def release_run_lock(conn: Any) -> None:
+    from sqlalchemy import text
+
+    if conn is None:
+        return
+    try:
+        conn.execute(text("SELECT pg_advisory_unlock(:k)"), {"k": RUN_LOCK_KEY})
+        conn.commit()
+    except Exception:  # noqa: BLE001 - closing the session releases it anyway
         pass
-    return ""
+    finally:
+        conn.close()
+
+
+def _current_database() -> tuple[str, Any]:
+    from sqlalchemy import text
+
+    from app.database import engine
+
+    with engine.connect() as conn:
+        row = conn.execute(text("SELECT current_database(), inet_server_addr()")).first()
+    return str(row[0]), (str(row[1]) if row[1] is not None else None)
+
+
+def restore_hint(state_file: str) -> str:
+    env_file = os.environ.get("SORENTO_ENV_FILE", ".env.<copy>")
+    return (
+        f"to finish the restore run: venv/bin/python scripts/inbox_queue_replay.py "
+        f"--env-file {env_file} --restore-from {state_file}"
+    )
 
 
 def detect_leftover(db: Any, *, state_file: str) -> list[str]:
@@ -292,8 +396,34 @@ def _remove_rows(db: Any, contact: str) -> None:
     db.execute(text("DELETE FROM respond_contacts WHERE respond_io_id = :c"), params)
 
 
-def restore_saved(saved: dict[str, Any], *, keep_rows: bool) -> None:
-    """Put the copy back from `saved` (the state file's content), in the safe order."""
+def _close_open_rows(db: Any, contact: str) -> int:
+    from sqlalchemy import text
+
+    return int(
+        db.execute(
+            text(
+                "UPDATE chatbot.turns SET status = 'failed', stage = 'replay_restore', "
+                "error = 'Closed by the replay tool restore.', finished_at = now() "
+                "WHERE contact_respond_id = :c AND status IN ('queued', 'processing', 'delegated')"
+            ),
+            {"c": contact},
+        ).rowcount
+        or 0
+    )
+
+
+def _drain_alive(contact: str) -> bool:
+    from app.services.queue_service import redis_conn
+
+    try:
+        return bool(redis_conn.exists(f"chatbot:drain:{contact}"))
+    except Exception:  # noqa: BLE001 - unreadable reads as alive: do not restore under it
+        return True
+
+
+def restore_saved(saved: dict[str, Any], *, keep_rows: bool, state_file: str = "") -> bool:
+    """Put the copy back from `saved` (the state file's content), in the safe order. False
+    (nothing written back to the workspace) when the contact's drain does not go quiet."""
     from sqlalchemy import text
 
     from app.database import SessionLocal
@@ -302,18 +432,11 @@ def restore_saved(saved: dict[str, Any], *, keep_rows: bool) -> None:
 
     contact = saved["contact"]
     created = saved.get("created") or {}
-    # 1. Close every open row of the synthetic contact and set the switch back, in one
-    #    commit: a drain mid-row then finds its row closed and posts nothing more.
+    # 1. Close every open row of the synthetic contact and set the switch back: a drain
+    #    mid-row then finds its row closed and posts nothing more.
     db = SessionLocal()
     try:
-        db.execute(
-            text(
-                "UPDATE chatbot.turns SET status = 'failed', stage = 'replay_restore', "
-                "error = 'Closed by the replay tool restore.', finished_at = now() "
-                "WHERE contact_respond_id = :c AND status IN ('queued', 'processing', 'delegated')"
-            ),
-            {"c": contact},
-        )
+        _close_open_rows(db, contact)
         row = db.query(SystemSetting).filter(SystemSetting.id == saved["settings_id"]).first()
         if row is not None:
             # A row this run created had no mode of its own: `off` until step 3 removes it.
@@ -323,12 +446,30 @@ def restore_saved(saved: dict[str, Any], *, keep_rows: bool) -> None:
         db.commit()
     finally:
         db.close()
-    # 2. Wait (bounded) for the contact's drain to let go.
-    if not _drain_gone(contact, DRAIN_LET_GO_SECONDS):
-        print(f"warning: the drain of {contact} still held its mutex after {DRAIN_LET_GO_SECONDS:.0f}s")
-    # 3. Only then the workspace, and the run's rows, in one transaction.
+    # 2. Close-then-wait until a pass closes nothing and the drain has let go (bounded).
+    deadline = time.monotonic() + DRAIN_LET_GO_SECONDS
+    while True:
+        db = SessionLocal()
+        try:
+            closed = _close_open_rows(db, contact)
+            db.commit()
+        finally:
+            db.close()
+        if closed == 0 and not _drain_alive(contact):
+            break
+        if time.monotonic() >= deadline:
+            print(
+                f"restore stopped: the drain of {contact} did not go quiet within "
+                f"{DRAIN_LET_GO_SECONDS:.0f}s; the workspace was NOT written back"
+            )
+            if state_file:
+                print(restore_hint(state_file))
+            return False
+        time.sleep(0.2)
+    # 3. Only then, in one transaction: close again, the workspace, the run's rows.
     db = SessionLocal()
     try:
+        _close_open_rows(db, contact)
         workspace = db.query(RespondWorkspace).filter(RespondWorkspace.id == saved["workspace_id"]).first()
         if workspace is not None and created.get("workspace"):
             db.delete(workspace)
@@ -353,26 +494,33 @@ def restore_saved(saved: dict[str, Any], *, keep_rows: bool) -> None:
         pass
     print("restored: switch, webhook keys, workspace base URL, API key and sender"
           + ("" if keep_rows else f"; removed {contact} and its rows"))
+    return True
 
 
-def restore_from_file(path: str) -> None:
-    """After a hard stop: restore from the state file alone, then remove it."""
+def restore_from_file(path: str) -> bool:
+    """After a hard stop: restore from the state file alone, then remove it. Refuses a file
+    written against another database (it stays)."""
     with open(path, encoding="utf-8") as fh:
         saved = json.load(fh)
-    restore_saved(saved, keep_rows=bool(saved.get("keep_rows")))
+    current, _addr = _current_database()
+    if saved.get("database") != current:
+        raise Refused(
+            f"the state file was written against database {saved.get('database')!r}, "
+            f"not the connected {current!r}; nothing restored"
+        )
+    if not restore_saved(saved, keep_rows=bool(saved.get("keep_rows")), state_file=path):
+        return False
     os.remove(path)
+    return True
 
 
 def install_signal_handlers(replay: "Replay") -> None:
-    """SIGTERM and SIGHUP take the restore path, then exit non-zero (Ctrl-C does it through
-    KeyboardInterrupt)."""
+    """SIGTERM and SIGHUP only exit (non-zero); `main`'s `finally` runs the restore, on the
+    main path, never inside a signal handler."""
+    _ = replay
 
     def _on_signal(signum: int, frame: Any) -> None:
-        print(f"signal {signum}: restoring the copy")
-        try:
-            replay.restore()
-        finally:
-            raise SystemExit(128 + signum)
+        raise SystemExit(128 + signum)
 
     for name in ("SIGTERM", "SIGHUP"):
         sig = getattr(signal, name, None)
@@ -397,7 +545,9 @@ class Replay:
         self.sender_key = f"zzt-replay-{secrets.token_hex(12)}"
         self.api_key = getattr(settings, "external_api_key", None) or ""
         self.local = Local(args.port)
+        # Only values THIS process read and wrote (never loaded from another run's file).
         self.saved: dict[str, Any] = {}
+        self.state_written = False
         self.restored = False
         self.verified = False
         self.labels: dict[str, str] = {}  # message id -> label
@@ -456,6 +606,7 @@ class Replay:
     def _write_state(self) -> None:
         payload = json.dumps(self.saved, default=str).encode()
         fd = os.open(self.args.state_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        self.state_written = True
         try:
             os.write(fd, payload)
         finally:
@@ -475,8 +626,11 @@ class Replay:
             row = db.query(SystemSetting).first()
             workspace = db.query(RespondWorkspace).filter(RespondWorkspace.is_default.is_(True)).first()
             keys = self._existing_keys(row) if row is not None else []
+            database, server_addr = _current_database()
             # The originals, ciphertexts only, on disk BEFORE the first change.
             self.saved = {
+                "database": database,
+                "server_addr": server_addr,
                 "contact": self.contact,
                 "keep_rows": bool(self.args.keep_rows),
                 "created": {"settings": row is None, "workspace": workspace is None},
@@ -531,13 +685,23 @@ class Replay:
             db.close()
         print(f"contact {self.contact}; sender key {last4(self.sender_key)}; local server {self.local.base}")
 
-    def restore(self) -> None:
-        if self.restored or not self.saved:
-            return
+    def restore(self) -> bool:
+        """True when the copy is back (or this process changed nothing); False when the
+        drain did not go quiet (the state file stays, the hint is printed)."""
+        if self.restored or not self.saved or not self.state_written:
+            return True
+        try:
+            done = restore_saved(self.saved, keep_rows=bool(self.args.keep_rows), state_file=self.args.state_file)
+        except KeyboardInterrupt:
+            print("restore interrupted; the copy is NOT fully restored")
+            print(restore_hint(self.args.state_file))
+            raise
+        if not done:
+            return False
         self.restored = True
-        restore_saved(self.saved, keep_rows=bool(self.args.keep_rows))
-        if self.args.state_file and os.path.exists(self.args.state_file):
+        if os.path.exists(self.args.state_file):
             os.remove(self.args.state_file)
+        return True
 
     # ---------------------------------------------------------------- messages
 
@@ -827,7 +991,7 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--api", help="the copy's backend, e.g. http://localhost:8106")
     parser.add_argument("--port", type=int, default=8399, help="port for the local lookup server")
     parser.add_argument("--out", help="markdown report path")
-    parser.add_argument("--state-file", default="inbox-replay-state.json", help="crash-safety file (originals)")
+    parser.add_argument("--state-file", default=DEFAULT_STATE_FILE, help="crash-safety file (originals)")
     parser.add_argument("--restore-from", help="restore the copy from a state file and exit")
     parser.add_argument("--scenarios", default="s1,s2,s3,s4")
     parser.add_argument("--no-restart", action="store_true", help="s4 without waiting for a restart")
@@ -835,11 +999,18 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _refuse(reasons: list[str]) -> int:
+    for reason in reasons:
+        print(f"refused: {reason}")
+    return 2
+
+
 def main(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
-    database_url = _env_file_value(args.env_file, "DATABASE_URL")
+    env_file = resolve_env_file(args.env_file)
     api = (args.api or "http://localhost").rstrip("/")
-    reasons = check_target(database_url=database_url, api=api, environ=os.environ)
+    reasons = [] if os.path.exists(env_file) else [f"the env file {env_file} does not exist"]
+    reasons += check_target(database_url=env_file_database_url(env_file), api=api, environ=os.environ)
     if not args.restore_from and not args.api:
         reasons.append("--api is required for a run")
     if not args.restore_from and not args.out:
@@ -847,30 +1018,42 @@ def main(argv: list[str] | None = None) -> int:
     if not args.restore_from and args.state_file and os.path.exists(args.state_file):
         reasons.append(f"an earlier run's state file is still there ({args.state_file}); restore with --restore-from")
     if reasons:
-        for reason in reasons:
-            print(f"refused: {reason}")
-        return 2
+        return _refuse(reasons)
 
-    os.environ["SORENTO_ENV_FILE"] = args.env_file
-    sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-    if args.restore_from:
-        restore_from_file(args.restore_from)
-        return 0
-    if not healthy(api):
-        print(f"refused: {api}/health does not answer 200; start the copy first")
-        return 2
+    os.environ["SORENTO_ENV_FILE"] = env_file
+    sys.path.insert(0, str(BACKEND))
+    from app.database import engine
 
+    reasons = check_connected(engine)
+    if reasons:
+        return _refuse(reasons)
+    if not args.restore_from and not healthy(api):
+        return _refuse([f"{api}/health does not answer 200; start the copy first"])
+    lock = take_run_lock(engine)
+    if lock is None:
+        return _refuse(["another replay run holds this copy's run lock; wait for it to finish"])
+    try:
+        if args.restore_from:
+            try:
+                return 0 if restore_from_file(args.restore_from) else 3
+            except Refused as exc:
+                return _refuse([str(exc)])
+        return _run(args)
+    finally:
+        release_run_lock(lock)
+
+
+def _run(args: argparse.Namespace) -> int:
     replay = Replay(args)
     reasons = replay.preflight()
     if reasons:
         replay.local.stop()
-        for reason in reasons:
-            print(f"refused: {reason}")
-        return 2
+        return _refuse(reasons)
 
     results: list[dict[str, Any]] = []
     install_signal_handlers(replay)
     replay.local.start()
+    restored = False
     try:
         replay.setup()
         started = time.monotonic()
@@ -883,19 +1066,21 @@ def main(argv: list[str] | None = None) -> int:
                 print(f"  {'PASS' if ok else 'FAIL'}: {check}")
     except KeyboardInterrupt:
         replay.notes.append("Interrupted (Ctrl-C) before every scenario finished.")
-        print("interrupted; restoring")
+        print("interrupted; restoring (a second Ctrl-C stops the restore; the state file stays)")
     except Abort as exc:
         replay.notes.append(f"Stopped: {exc}")
         print(f"stopped: {exc}; restoring")
         results.append({"title": "stopped", "codes": [], "got": [], "checks": [(str(exc), False)], "delivered": []})
     finally:
         try:
-            replay.restore()
+            restored = replay.restore()
         finally:
             replay.local.stop()
             with open(args.out, "w", encoding="utf-8") as fh:
                 fh.write(replay.report(results))
             print(f"report written to {args.out}")
+    if not restored:
+        return 3
     failed = [c for r in results for c in r["checks"] if not c[1]]
     return 1 if failed else 0
 
