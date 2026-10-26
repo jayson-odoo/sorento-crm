@@ -641,8 +641,13 @@ def provider_embedder(api_key: str) -> Embedder:
     row matrix of a row set (built once); `pieces` embeds a message's pieces without storing them as rows."""
     from app.services.llm_provider import OpenAIProvider
 
+    made: list[Any] = []
+
     def client():
-        return OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
+        """One HTTP client for every call of this embedder (a kept connection, no new handshake per turn)."""
+        if not made:
+            made.append(OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0))
+        return made[0]
 
     def store(chunk: list[str], resp) -> None:
         vectors = _unit_rows([item.embedding for item in resp.data])
@@ -719,6 +724,28 @@ def provider_embedder(api_key: str) -> Embedder:
 
 
 _warm_lock = threading.Lock()
+#: The engine's provider embedder per API key, kept for the process (its client and its caches with it).
+_embedders: dict[str, Embedder] = {}
+
+
+def prefetch(message: str, embed: Embedder | None) -> Callable[[], None]:
+    """CHAT-V66-REGRESSIONS: start the message pieces' embedding (the lookup's one network call per turn) on a thread,
+    so the round trip overlaps the turn's database work; the returned call waits for it, at most `EMBED_TIMEOUT`.
+    Only the provider embedder (`pieces`) is prefetched. A failure is left to `shortlist`, which asks again or reads
+    spelling only."""
+    usable = [p for p in pieces(message) if not _code_like(p)]
+    if embed is None or not hasattr(embed, "pieces") or not usable:
+        return lambda: None
+
+    def run() -> None:
+        try:
+            embed.pieces(usable)  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001 - advisory
+            pass
+
+    thread = threading.Thread(target=run, name="lookup-lists-prefetch", daemon=True)
+    thread.start()
+    return lambda: thread.join(EMBED_TIMEOUT)
 
 
 def row_texts(rows: list[LookupRow]) -> list[str]:
@@ -760,4 +787,8 @@ def embedder(db: "Session") -> Embedder | None:
     from app.services.ai_assistant_service import AIAssistantConfigService
 
     key = llm_provider.resolve_api_key(AIAssistantConfigService(db).get(), "openai")
-    return provider_embedder(key) if key else None
+    if not key:
+        return None
+    if key not in _embedders:
+        _embedders[key] = provider_embedder(key)
+    return _embedders[key]

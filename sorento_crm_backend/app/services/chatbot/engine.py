@@ -1233,6 +1233,9 @@ def _lookup_lines(
     try:
         from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
+        # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
+        embed = lookup_lists.embedder(db)
+        pieces_ready = lookup_lists.prefetch(message, embed)
         resolved = guarded(
             lambda: resolve_contact_with_null_workspace_fallback(
                 db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
@@ -1247,11 +1250,11 @@ def _lookup_lines(
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands,
             )
             brand_words = lookup_lists.brand_words(db, brands)
-            embed = lookup_lists.embedder(db)
             lookup_lists.warm(rows, embed)
-            hits = lookup_lists.shortlist(
-                message, rows, lookup_lists.usable_embedder(rows, embed), brand_words=brand_words, held=held,
-            )
+            usable = lookup_lists.usable_embedder(rows, embed)
+            if usable is not None:
+                pieces_ready()
+            hits = lookup_lists.shortlist(message, rows, usable, brand_words=brand_words, held=held)
             # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
             if numbers:
