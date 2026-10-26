@@ -63,3 +63,44 @@ Fixtures in tests are invented (public repo): never a real customer, salesperson
   in S2.
 - **AC-S1-14 [T]** No behaviour change: no module on the turn path imports `list_resolver` in S1; the existing head
   lookup tests pass unchanged.
+
+## S2: span pass before the parser, dark behind a new parser prompt version
+
+Owner (26 Oct ~23:58, via crew): S2 ships dark behind a new prompt version; the owner hand-tests the two-pass path in
+the Chatbot Console by picking that version; spend cap lifted for the S2 gate (both prompts on TRAIN + R5 + the
+200-message set). Model per contact (owner rule 24 Oct) applies to the span call too (crew review 26 Oct).
+
+Journey: the same six steps as above; S2 adds steps 3 and 5 (span pass, parser sees only matched rows) for a parser
+version that carries the span marker. Every other version behaves exactly as today.
+
+- **AC-S2-1 [BE]** On a parser version WITHOUT the span marker the turn is unchanged: same lookup lines, no span
+  call, no `span_extract` trace event, no `chatbot_span_extract` usage row.
+- **AC-S2-2 [BE]** With the marker (`== LOOKUP SPANS ==` on its own line), exactly one span call runs before the
+  parser, with no DB session open, and its spans go through `list_resolver.resolve` over the rows the contact may see
+  (a dealer: its own customers only; salespeople only when the contact may see them), the same visibility as today.
+- **AC-S2-3 [BE]** The lookup blocks then hold only rows the resolver matched (resolved or ambiguous), plus held
+  values and number hits as today. A row the message never names is not offered: "check stock", "any promotion?" and
+  "basin price" offer no customer, promotion kind or yes/no spec row unless a span names one.
+- **AC-S2-4 [BE]** An ambiguous span renders at most `lookup_lists.TOP_K[list]` rows of a list, best first; the trace
+  records how many rows were close.
+- **AC-S2-5 [BE]** A span call that fails, times out or returns invalid JSON leaves the turn on today's n-gram lookup
+  lines; the trace says `fallback`; the turn still answers.
+- **AC-S2-6 [BE]** The span call's tokens and cost are recorded under feature `chatbot_span_extract`; the trace event
+  `span_extract` carries the spans, each status, the rows rendered, ms, provider, model and model source.
+- **AC-S2-7 [BE]** Model per contact: the span call resolves provider/model through the parser's ladder (contact
+  override -> contact tag -> the span prompt's `production` label row -> global AI config) via
+  `contact_llm_choice.apply_choice`, fed the same choice the parser gets in that turn. One test per rung, plus a chosen
+  provider with no API key -> the default pair with source `fallback_no_key` and no key text in logs.
+- **AC-S2-8 [T]** Migration: seeds the span prompt (`chatbot_span_extractor` v1, labelled production; unused unless
+  a parser version carries the marker) and publishes one UNLABELLED `chatbot_semantic_parser` version = the
+  PROMPT-RULES-DIET text with its `== LOOKUP LISTS ==` line replaced by `== LOOKUP SPANS ==`; idempotent; downgrade
+  removes only its own rows; the production label never moves; single alembic head.
+- **AC-S2-9 [T]** The S1 import guard narrows on purpose: only `head/span_extract.py` and the engine seam import
+  `list_resolver`.
+- **AC-S2-10 [T]** Gate (paid; estimate and actual spend in a crew-note): both prompts (A = today's production text,
+  B = the S2 version; plus the PROMPT-RULES-DIET lookup version as reference) on parser gold TRAIN + R5 and the
+  phase-1 200-message set. Pass: B's right row on the 200 set >= A's and >= the reference, rows offered that the message
+  never named <= 0.5 per message, p50 added latency <= 1.2 s, and no TRAIN/R5 row that passes on A fails on B without a
+  named cause. The span call also runs on the staff Gemini model for the 186 non-code messages (org-key ledger rules).
+- **AC-S2-11 [UX]** Hand test: the owner picks the S2 version in the Chatbot Console and runs the script in
+  `laneboard/scripts/<PR>.md`; each step names the exact rows the reply must use.
