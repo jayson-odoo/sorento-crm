@@ -162,7 +162,7 @@ export default function AccessSheetImportDialog({
 
   return (
     <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90vh] sm:max-w-5xl">
+      <DialogContent className="max-h-[90dvh] sm:max-w-5xl">
         <DialogHeader>
           <DialogTitle>
             {step === 'upload'
@@ -355,7 +355,7 @@ function BlockList({
     blocks[0] ? { [blocks[0].key]: true } : {},
   );
   return (
-    <div className="max-h-[50vh] space-y-2 overflow-auto">
+    <div className="max-h-[50dvh] space-y-2 overflow-auto">
       {blocks.map((block) => {
         const isOpen = !!openKeys[block.key];
         const badge = BLOCK_BADGE[block.status];
