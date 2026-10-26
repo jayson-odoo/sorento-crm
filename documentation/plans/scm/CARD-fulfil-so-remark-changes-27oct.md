@@ -1,6 +1,6 @@
 # Behaviour card: per-SO Remark after Confirm also when the Confirm carries changes (FULFIL-SO-REMARK-CHANGES)
 
-Status: Build (owner answered Q1-Q5, 26 Oct ~21:10 and ~21:45; one follow-up question R5 open).
+Status: Hand test (built R1-R5, review round 1 fixed; the R5 stock-only crew-ask still open).
 Track: L (two Confirm paths unified, no migration). Follows FULFIL-SO-REMARK (#1847, `CARD-fulfil-so-remark-25oct.md`) and
 OI-EMAIL-PURCHASING-FOCUS (#1871, merged 242cb0d554).
 
