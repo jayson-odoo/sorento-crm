@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from decimal import Decimal
-from typing import List, Optional
+from typing import List, Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -547,6 +547,27 @@ class SalesAgentOption(BaseModel):
 
 # --- purchase orders --------------------------------------------------------
 
+class DocumentReceiptOut(BaseModel):
+    """LINKAGE-UNIFY: one GR bin goods were received at, and how many."""
+
+    qty: str
+    bin: Optional[str] = None
+
+
+class PoLineSpoOut(BaseModel):
+    """LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto
+    (`goods_chain.spo_lines_of`) - the PO screens' SPO column, drawn with the order
+    inquiry's own document pills."""
+
+    spo_number: Optional[str] = None
+    #: `L12` when the book numbered the line.
+    line_label: Optional[str] = None
+    #: Where the SPO line's landed goods sit, per GR bin. Empty while in transit.
+    receipts: List[DocumentReceiptOut] = []
+    #: `spo_withdrawn` when the SPO line brings nothing.
+    dead_reason: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
+
+
 class PurchaseOrderLine(BaseModel):
     id: str
     sku: str
@@ -608,6 +629,10 @@ class PurchaseOrderLine(BaseModel):
     #: and resolving it per page would be a full `sales_orders` scan per search keystroke.
     #: The detail/update routes (`get_one`, `update`) always resolve and never emit `None`.
     book_so_unresolved: Optional[bool] = None
+    #: LINKAGE-UNIFY U4: every SPO line this PO line was transferred onto, with where its
+    #: goods landed or why it brings nothing. Filled on the detail and update routes; the
+    #: list leaves it empty.
+    spos: List[PoLineSpoOut] = []
 
 
 class PurchaseOrderSpoLanding(BaseModel):

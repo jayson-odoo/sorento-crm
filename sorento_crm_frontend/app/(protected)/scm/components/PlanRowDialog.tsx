@@ -1620,6 +1620,9 @@ export interface SoCoverageRow {
    *  from `kind` (which family the row came from). A project row is always `'project'`; a
    *  book line carries whatever its own sales order was stamped, including `null` (R3). */
   demand_class: 'project' | 'retail' | null;
+  /** LINKAGE-UNIFY U4 (the SPO document's read-only "SO covered" list): the PO number a
+   *  placement reached this SPO through, printed "via PO <number>" beside its order. */
+  via_po?: string | null;
 }
 
 /**
@@ -1801,7 +1804,17 @@ export function SoCoveragePicker({
         id: 'document',
         accessorFn: (c) => c.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
-        cell: ({ row }) => textCell(row.original.document),
+        cell: ({ row }) =>
+          row.original.via_po ? (
+            <span className="flex min-w-0 items-center gap-1">
+              <span className="truncate">{textCell(row.original.document)}</span>
+              <span className="shrink-0 text-2xs text-muted-foreground">
+                via PO {row.original.via_po}
+              </span>
+            </span>
+          ) : (
+            textCell(row.original.document)
+          ),
         footer: () => TOTAL_LABEL,
         size: 130,
         meta: { skeleton: SKELETON_CELL },

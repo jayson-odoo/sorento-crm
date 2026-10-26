@@ -24,6 +24,7 @@ from pydantic import (
 )
 
 from app.schemas.project_line_split import LineSplitViewOut
+from app.schemas.scm_orders import PoLineSpoOut
 from app.services.uuid_path_param import UUID_PATTERN
 
 #: The longest free-text search string the worklist routes accept
@@ -1307,6 +1308,10 @@ class OrderInquiryPoDetailLine(BaseModel):
     #: SUPPLY-SPO-LINK: every SPO this line was transferred onto (OI-SPO-EXACT), sorted,
     #: each once. Empty when the line never moved onto a shipping order.
     spo_numbers: List[str] = []
+    #: LINKAGE-UNIFY U4: one entry per SPO line this line was transferred onto, with where
+    #: its goods landed (`receipts`) or why it brings nothing (`dead_reason`) - the popup's
+    #: SPO column draws them with the document pills.
+    spos: List[PoLineSpoOut] = []
 
 
 class OrderInquiryDocumentAllocation(BaseModel):

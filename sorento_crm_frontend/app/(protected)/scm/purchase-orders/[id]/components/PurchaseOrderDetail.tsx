@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import Link from 'next/link';
 import {
   ColumnDef,
   SortingState,
@@ -63,6 +64,7 @@ import { purchaseOrdersPagerQuery } from '../../../hooks/usePurchaseOrders';
 import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { BookSoCell, bookSoSortValue } from '../../../components/BookSoCell';
+import { PoLineSpoCell } from '@/app/(protected)/project-sales/order-inquiries/components/orderInquiryDocumentPills';
 import { PoLinePlacementsBody, placedQtyOf } from './PoLinePlacementsBody';
 import { PoPlanCard } from './PoPlanCard';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
@@ -589,14 +591,16 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         },
       },
       {
+        // LINKAGE-UNIFY U4 (owner ruling): AutoCount's TRANSFER of the line onto a shipping
+        // order, never a receipt - what landed is in the SPO column.
         id: 'qty_received',
         accessorFn: (line) => Number(line.qty_received),
-        header: ({ column }) => <DataGridColumnHeader title="Qty received" column={column} />,
+        header: ({ column }) => <DataGridColumnHeader title="Transferred" column={column} />,
         cell: ({ row }) => fmtInt(row.original.qty_received),
         size: 130,
         footer: () => fmtInt(qtyReceivedTotal),
         meta: {
-          headerTitle: 'Qty received',
+          headerTitle: 'Transferred',
           headerClassName: 'text-right',
           cellClassName: 'text-right tabular-nums',
         },
@@ -856,6 +860,30 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         cell: ({ row }) => <BookSoCell line={row.original} />,
         size: 150,
         meta: { headerTitle: 'S/O' },
+      },
+      {
+        // LINKAGE-UNIFY U4: the SPO line(s) this line was transferred onto, each with the
+        // order inquiry's own document pills (where its goods landed, red "SPO withdrawn"),
+        // through the piece the order inquiry's PO popup draws too. The number opens the
+        // SPO document and never truncates.
+        id: 'spos',
+        accessorFn: (line) => (line.spos ?? []).map((spo) => spo.spo_number ?? '').join(', '),
+        header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
+        cell: ({ row }) => (
+          <PoLineSpoCell
+            spos={row.original.spos}
+            renderDocument={(spoNumber) => (
+              <Link
+                href={`/procurement-management/spo-allocations/${encodeURIComponent(spoNumber)}`}
+                className="shrink-0 whitespace-nowrap font-medium tabular-nums text-primary hover:underline"
+              >
+                {spoNumber}
+              </Link>
+            )}
+          />
+        ),
+        size: 320,
+        meta: { headerTitle: 'SPO' },
       },
       {
         id: 'expected_date',

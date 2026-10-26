@@ -727,6 +727,18 @@ export interface PurchaseOrderLine {
   /** True when the book named a sales order this CRM does not hold. Three display states,
    *  not two - see `BookSoCell`. */
   book_so_unresolved?: boolean | null;
+  /** LINKAGE-UNIFY U4: every SPO line this line was transferred onto, with where its goods
+   *  landed or why it brings nothing. Filled on the detail read; the list leaves it empty. */
+  spos?: PurchaseOrderLineSpo[];
+}
+
+/** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto (same shape as the order
+ *  inquiry PO popup's own). */
+export interface PurchaseOrderLineSpo {
+  spo_number: string | null;
+  line_label: string | null;
+  receipts: { qty: string; bin: string | null }[];
+  dead_reason: 'po_cancelled' | 'spo_withdrawn' | null;
 }
 
 /**

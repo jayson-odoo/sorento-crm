@@ -30,6 +30,7 @@ import type {
   OrderInquirySpoDetailLine,
 } from '../../_shared/types/orderInquiry.types';
 import { BookSoCell, bookSoSortValue } from '@/app/(protected)/scm/components/BookSoCell';
+import { PoLineSpoCell } from './orderInquiryDocumentPills';
 import { sameDisplayText } from '@/lib/product-display';
 
 /**
@@ -372,17 +373,19 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     meta: { headerTitle: 'Ordered' },
   },
   {
+    // LINKAGE-UNIFY U4 (owner ruling): the PO line's figure is AutoCount's TRANSFER onto a
+    // shipping order, never a receipt - what landed is on the SPO cells beside it.
     accessorKey: 'qty_received',
     header: ({ column }) => (
-      <DataGridColumnHeader title="Received" column={column} className="justify-end" />
+      <DataGridColumnHeader title="Transferred" column={column} className="justify-end" />
     ),
     cell: ({ row }) => (
       <span className="block text-end tabular-nums">
         {formatInquiryQty(row.original.qty_received)}
       </span>
     ),
-    size: 100,
-    meta: { headerTitle: 'Received' },
+    size: 110,
+    meta: { headerTitle: 'Transferred' },
   },
   {
     accessorKey: 'remaining',
@@ -436,25 +439,31 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
   },
   {
     // SUPPLY-SPO-LINK (owner, mock v2): the shipping order(s) this line was transferred
-    // onto, each the same document link an SPO number is everywhere else.
+    // onto, each the same document link an SPO number is everywhere else. LINKAGE-UNIFY U4:
+    // one entry per SPO LINE with the U3 document pills - where its goods landed, or red
+    // "SPO withdrawn" - through the piece the SCM purchase order's Lines tab draws too.
     id: 'spo_numbers',
-    accessorFn: (line) => (line.spo_numbers ?? []).join(', '),
+    accessorFn: (line) =>
+      (line.spos ?? []).map((spo) => spo.spo_number ?? '').join(', ') ||
+      (line.spo_numbers ?? []).join(', '),
     header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
     cell: ({ row }) => {
-      const spoNumbers = row.original.spo_numbers ?? [];
-      if (!spoNumbers.length) return <span className="text-muted-foreground">-</span>;
+      const spos =
+        row.original.spos ??
+        (row.original.spo_numbers ?? []).map((spoNumber) => ({
+          spo_number: spoNumber,
+          line_label: null,
+        }));
       return (
-        <span className="flex min-w-0 items-center gap-1" title={spoNumbers.join(', ')}>
-          {spoNumbers.map((spoNumber, index) => (
-            <React.Fragment key={spoNumber}>
-              {index > 0 && <span className="text-muted-foreground">,</span>}
-              <OrderInquiryDocumentLink kind="spo" document={spoNumber} />
-            </React.Fragment>
-          ))}
-        </span>
+        <PoLineSpoCell
+          spos={spos}
+          renderDocument={(spoNumber) => (
+            <OrderInquiryDocumentLink kind="spo" document={spoNumber} whole />
+          )}
+        />
       );
     },
-    size: 170,
+    size: 320,
     meta: { headerTitle: 'SPO' },
   },
 ];
