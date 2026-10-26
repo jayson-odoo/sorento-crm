@@ -2997,7 +2997,9 @@ def _phone_turn(
                 records=turn_trace.persisted(),
             )
             # Nothing is sent: a phone-flow failure must not answer a contact the CRM cannot yet identify.
-            return dataclasses_replace(_failed_result(turn_id, "received", message, [], dry_run, reply_text=""), actions=[])
+            failed = _failed_result(turn_id, "received", message, [], dry_run, reply_text="")
+            failed.actions = []
+            return failed
         turn_trace.record(
             "received",
             status="skipped",
