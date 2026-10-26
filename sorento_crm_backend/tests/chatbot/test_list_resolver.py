@@ -185,10 +185,10 @@ def _fake_embedder():
 
     def vec(text):
         t = " ".join(text.casefold().split())
-        if t in ("booster pump", "water pump"):
+        if t in ("pam air", "water pump"):
             v = [0.0] * dim
             v[255] = 1.0
-            v[254] = 0.1 if t == "booster pump" else 0.0
+            v[254] = 0.1 if t == "pam air" else 0.0
             return v
         idx = seen.setdefault(t, len(seen))
         v = [0.0] * dim
@@ -202,14 +202,14 @@ def _fake_embedder():
 
 
 def test_meaning_resolves_with_embedder_signal_meaning():
-    res = _one("booster pump", "category", BASE, embed=_fake_embedder())
+    res = _one("pam air", "category", BASE, embed=_fake_embedder())
     assert res.status == "resolved"
     assert res.candidates[0].row.key == "c2" and res.candidates[0].signal == "meaning"
 
 
 def test_no_embedder_still_resolves_spelled_spans():
     assert _one("Mocha", "brand", BASE, embed=None).status == "resolved"
-    assert _one("booster pump", "category", BASE, embed=None).status != "resolved"
+    assert _one("pam air", "category", BASE, embed=None).status != "resolved"
 
 
 def test_raising_embedder_never_raises_and_spelled_spans_resolve():
@@ -217,7 +217,7 @@ def test_raising_embedder_never_raises_and_spelled_spans_resolve():
         raise RuntimeError("provider down")
 
     lr = _lr()
-    out = lr.resolve([lr.Span("Mocha", "brand"), lr.Span("booster pump", "category")], BASE, embed=boom)
+    out = lr.resolve([lr.Span("Mocha", "brand"), lr.Span("pam air", "category")], BASE, embed=boom)
     assert out[0].status == "resolved" and out[0].candidates[0].row.key == "b1"
     assert out[1].status != "resolved"
 
@@ -306,7 +306,7 @@ def test_ambiguity_margin_separates_close_from_clear_gap():
 @pytest.mark.parametrize("text", ["tradng sdn bhd", "traiding sdn bhd"])
 def test_typo_of_common_word_is_not_a_rare_word(text):
     res = _one(text, "customer", CUSTOMERS)
-    assert res.status != "resolved", [(c.row.label, c.score) for c in res.candidates]
+    assert res.status == "unresolved", [(c.row.label, c.score) for c in res.candidates]
 
 
 # AC-S1-5 "never a filter": a typed list wins only within the margin
