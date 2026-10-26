@@ -26,6 +26,9 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
   The turn is recorded with one of the four phone branch kinds (WU1).
 - WU4 A not-linked contact WITH a phone in the envelope is not this flow: today's behaviour is unchanged.
 - WU5 A test / console (dry-run) turn takes the same decisions but makes no Respond.io call.
+- WU20 Only WhatsApp turns take the phone flow: the envelope's `channel.source` (or `channel.type`) read through
+  `chat_history_ingest_service.normalise_channel` must be `whatsapp` (an empty source counts as WhatsApp, as there).
+  An unknown phoneless contact on any other channel (e.g. WeChat, Messenger) is unchanged (today's silent close).
 
 ## Ask
 - WU6 [Q3] An unknown phoneless contact whose message is not an accepted card gets the ask: the Respond.io
@@ -67,6 +70,9 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
   writes before the Respond.io step succeeds, so nothing is half-linked.
 - WU17 A repeat of the same webhook (same message id) does not merge or write twice. A second accepted card after
   linking is WU2.
+- WU21 An accepted card always attempts the link, even inside a 24 h window that already holds a hand-off (a
+  Respond.io error must not lock the user out for a day). Only the hand-off comment stays once per 24 h: a second
+  failed link inside the window writes no second comment.
 
 ## Safety
 - WU18 Logs never carry a full phone number (masked as the phone sign-in does); the staff comment may.
