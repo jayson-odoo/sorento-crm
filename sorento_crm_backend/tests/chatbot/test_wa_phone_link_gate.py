@@ -81,6 +81,8 @@ class World:
         self.template = "ok"  # or "skipped"
         self.phone_contact_id: int | None = PHONE_ID
         self.merge_error: Exception | None = None
+        self.messages: list[tuple[str, str]] = []
+        self.comments: list[tuple[str, str]] = []
 
     def client(self):
         world = self
@@ -97,6 +99,16 @@ class World:
                 world.calls.append(("merge", [int(i) for i in ids]))
                 if world.merge_error:
                     raise world.merge_error
+                return {}
+
+            def send_message(self, identifier, text_):
+                world.calls.append(("send_message", str(identifier), text_))
+                world.messages.append((str(identifier), text_))
+                return {}
+
+            def create_comment(self, identifier, text_):
+                world.calls.append(("create_comment", str(identifier), text_))
+                world.comments.append((str(identifier), text_))
                 return {}
 
             def update_contact(self, ident, payload):
@@ -141,8 +153,7 @@ def _run(session_factory, envelope):
     return engine_mod.run_turn(envelope, session_factory=session_factory)
 
 
-def _kinds(actions) -> list[str]:
-    return [a.get("kind") for a in (actions or [])]
+VERIFIED = "Phone number verified, you may start using the AI"
 
 
 def _seed_turn(session_factory, branch_kind: str, *, hours_ago: float = 1.0, is_test: bool = False) -> None:
@@ -231,7 +242,8 @@ def test_wu3_the_ask_turn_never_reaches_a_business_answer(session_factory, parse
     result = _run(session_factory, _env("text", text_="price for SRTWC8517"))
     assert result.branch_kind in PHONE_KINDS
     assert "business" not in str(result.branch_kind)
-    assert not any(k == "send_message" for k in _kinds(result.actions))
+    assert result.actions == []
+    assert world.messages == []
 
 
 # ---------------------------------------------------------------- 7. cap
@@ -243,13 +255,14 @@ def test_wu7_fourth_ask_becomes_a_handoff_then_silence(session_factory, parser_c
         _seed_turn(session_factory, "phone_ask", hours_ago=h)
     fourth = _run(session_factory, _env("text"))
     assert fourth.branch_kind == "phone_handoff"
-    assert _kinds(fourth.actions).count("add_comment") == 1
-    assert "assign_conversation" not in _kinds(fourth.actions)
-    assert "send_message" not in _kinds(fourth.actions)
+    assert fourth.actions == []
+    assert len(world.comments) == 1 and world.comments[0][0] == str(CONTACT_ID)
+    assert world.messages == []
     assert world.sends == []
     fifth = _run(session_factory, _env("text"))
     assert fifth.branch_kind == "phone_ignored"
     assert fifth.actions == [] and world.sends == []
+    assert len(world.comments) == 1 and world.messages == []
     assert parser_calls == []
 
 
@@ -278,11 +291,13 @@ def test_wu8_unmapped_template_hands_off_once(session_factory, parser_calls, wor
     world.template = "skipped"
     first = _run(session_factory, _env("text"))
     assert first.branch_kind == "phone_handoff"
-    assert _kinds(first.actions).count("add_comment") == 1
-    assert "send_message" not in _kinds(first.actions)
+    assert first.actions == []
+    assert len(world.comments) == 1 and world.comments[0][0] == str(CONTACT_ID)
+    assert world.messages == []
     second = _run(session_factory, _env("text"))
     assert second.branch_kind == "phone_ignored"
     assert second.actions == []
+    assert len(world.comments) == 1
     assert parser_calls == []
 
 
@@ -313,10 +328,22 @@ def test_wu15_link_ok_and_ai_allowed_sends_the_verified_line(
     result = _run(session_factory, _env(kind))
     assert result.branch_kind == "phone_linked"
     assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
-    sends = [a for a in result.actions if a.get("kind") == "send_message"]
-    assert len(sends) == 1
-    assert "Phone number verified, you may start using the AI" in sends[0]["text"]
+    assert result.actions == []
+    assert world.messages == [(str(PHONE_ID), VERIFIED)]
     assert parser_calls == []
+
+
+def test_wu15_phone_set_case_sends_the_verified_line_to_the_turn_contact(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    world.phone_contact_id = None
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_linked"
+    assert result.actions == []
+    assert world.merges() == []
+    assert world.messages == [(str(CONTACT_ID), VERIFIED)]
 
 
 def test_wu15_link_ok_and_ai_off_tells_staff_only(session_factory, parser_calls, world, monkeypatch):
@@ -324,8 +351,9 @@ def test_wu15_link_ok_and_ai_off_tells_staff_only(session_factory, parser_calls,
     _seed_phone_row(session_factory, allowed=False)
     result = _run(session_factory, _env("tap"))
     assert result.branch_kind == "phone_linked"
-    assert "send_message" not in _kinds(result.actions)
-    assert _kinds(result.actions).count("add_comment") == 1
+    assert result.actions == []
+    assert world.messages == []
+    assert len(world.comments) == 1 and world.comments[0][0] == str(PHONE_ID)
     assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
 
 
@@ -336,8 +364,9 @@ def test_wu16_link_failure_hands_off_without_a_customer_line(session_factory, pa
     world.merge_error = httpx.HTTPStatusError("boom", request=req, response=httpx.Response(500, request=req))
     result = _run(session_factory, _env("tap"))
     assert result.branch_kind == "phone_handoff"
-    assert "send_message" not in _kinds(result.actions)
-    assert _kinds(result.actions).count("add_comment") == 1
+    assert result.actions == []
+    assert world.messages == []
+    assert len(world.comments) == 1 and world.comments[0][0] == str(CONTACT_ID)
     row = session_factory().execute(
         text("SELECT respond_io_id FROM respond_contacts WHERE phone_number = :p"), {"p": f"+{E164}"}
     ).scalar()
@@ -383,6 +412,8 @@ def test_wu5_a_test_turn_makes_no_respond_call(session_factory, parser_calls, wo
     assert result.branch_kind in PHONE_KINDS
     assert world.calls == []
     assert world.sends == []
+    assert world.messages == [] and world.comments == []
+    assert result.actions == []
     assert parser_calls == []
 
 
@@ -390,7 +421,8 @@ def test_wu5_a_test_turn_takes_the_same_decision_as_live(session_factory, parser
     _install(world, monkeypatch)
     result = _run(session_factory, _env("text", is_test=True))
     assert result.branch_kind == "phone_ask"
-    assert all(a.get("dry_run") is True for a in (result.actions or []))
+    assert result.actions == []
+    assert world.calls == [] and world.sends == []
 
 
 # ---------------------------------------------------------------- 1. never the parser
