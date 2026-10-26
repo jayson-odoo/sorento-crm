@@ -1281,6 +1281,24 @@ export interface OrderInquiryPoDetailLine {
   book_so_unresolved?: boolean | null;
   /** SUPPLY-SPO-LINK: every SPO this line was transferred onto, sorted; empty when none. */
   spo_numbers?: string[];
+  /**
+   * LINKAGE-UNIFY U4: one entry per SPO line this line was transferred onto, with where its
+   * goods landed (`receipts`, per GR bin) or why it brings nothing (`dead_reason`). The
+   * popup's SPO column draws them with the document pills.
+   */
+  spos?: OrderInquiryPoLineSpo[];
+  /** Owner Q5 (a): `po_cancelled` when the line itself brings nothing; the SPO cell draws
+   *  the red pill. */
+  dead_reason?: 'po_cancelled' | null;
+}
+
+/** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto. */
+export interface OrderInquiryPoLineSpo {
+  spo_number: string | null;
+  /** `L12` when the book numbered the line. */
+  line_label: string | null;
+  receipts: OrderInquiryLinkReceipt[];
+  dead_reason: OrderInquiryDeadReason | null;
 }
 
 /**

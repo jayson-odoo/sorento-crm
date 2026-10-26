@@ -2746,6 +2746,10 @@ class OrderInquiryWorklistService:
         )
         line_ids = [str(line[0]) for line in lines]
         spo_numbers_by_line = self._spo_numbers_by_po_line(po)
+        # LINKAGE-UNIFY U4: each line's SPO lines with where their goods landed (GR bins)
+        # or why they bring nothing - one read for the document, the goods chain's own.
+        spos_by_line = goods_chain.spo_lines_of(self.db, line_ids)
+        dead_ids = goods_chain.dead_po_line_ids(self.db, line_ids)
         # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
         # per line - the same reader the SCM purchase-order detail's Lines tab already
         # calls, so the book's linkage reads identically wherever a line is shown.
@@ -2805,6 +2809,10 @@ class OrderInquiryWorklistService:
                     # than a second copy of the derivation.
                     **order_link_service.book_so_fields(from_so_line_ref, book_so_by_ref),
                     "spo_numbers": spo_numbers_by_line.get(str(line_id), []),
+                    "spos": spos_by_line.get(str(line_id), []),
+                    # Owner Q5 (a): a placement on a dead PO line reads "PO cancelled", by
+                    # the chain's own rule (`goods_chain.po_line_is_dead`).
+                    "dead_reason": "po_cancelled" if str(line_id) in dead_ids else None,
                 }
                 for (
                     line_id,

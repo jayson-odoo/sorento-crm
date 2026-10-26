@@ -708,6 +708,10 @@ class SPODocumentLineSOCovered(BaseModel):
     customer: Optional[str] = None
     demand_class: str
     qty: float
+    #: LINKAGE-UNIFY U4: the PO number a placement reached this SPO line through (it was
+    #: placed on the PO line and follows its goods here). None for a placement on the SPO
+    #: itself and for a retail take.
+    via_po: Optional[str] = None
 
 
 class SPODocumentLine(BaseModel):

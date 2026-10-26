@@ -1269,6 +1269,7 @@ export function SPODocumentDetail({ spoNumber }: { spoNumber: string }) {
                 warehouse_code: null,
                 taken_qty: 0,
                 taken_by: [],
+                via_po: c.via_po ?? null,
               }),
             )}
             tickedKeys={[]}
