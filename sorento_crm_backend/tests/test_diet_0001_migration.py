@@ -118,3 +118,22 @@ def test_downgrade_removes_only_its_own_unlabelled_version():
         db.expire_all()
         assert [r.version for r in _versions(db)] == [80, 82, 83]
         assert _versions(db)[0].id == prod.id
+
+
+def test_a_text_without_the_marker_goes_through_the_lookup_edits_first(monkeypatch):
+    """The v63 path: the migration calls build(), not apply(), so the list-free step runs on a marker-less text."""
+    m = _migration()
+    v63 = f"Rules.\n{ANCHOR}\nTail.\n"
+    stub_out = TEXT
+    calls = []
+
+    def stub(text):
+        calls.append(text)
+        return stub_out
+
+    monkeypatch.setattr(lle, "apply", stub)
+    with blank_session() as db:
+        _production(db, v63)
+        assert m.publish_on_production(db) == 81
+        assert calls == [v63]
+        assert _versions(db)[-1].template == diet.apply(stub_out) and "Short." in _versions(db)[-1].template

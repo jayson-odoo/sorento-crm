@@ -162,3 +162,52 @@ def test_apply_is_sequential_later_anchor_inside_earlier_payload(monkeypatch):
     monkeypatch.setattr(diet, "EDITS", (lle.Edit("replace", "AAA long", "BBB inner short"), lle.Edit("replace", "inner", "x")))
     out = diet.apply("keep\nAAA long\nend\n" + MARKER + "\n")
     assert out == "keep\nBBB x short\nend\n" + MARKER + "\n"
+
+
+def test_independent_set_cannot_shrink_silently():
+    dropped = len(ALL_TEXT_EDITS) - len(TEXT_EDITS)
+    assert dropped <= 4, f"the replay filter now drops {dropped} edits (4 today)"
+    assert len(TEXT_EDITS) >= 100
+
+
+# ------------------------------------------------------------------ replace_line branch of apply
+
+
+def _sha(line: str) -> str:
+    return lle._sha(line)
+
+
+def _only(monkeypatch, *edits):
+    monkeypatch.setattr(diet, "EDITS", tuple(edits))
+
+
+def test_replace_line_replaces_exactly_that_line(monkeypatch):
+    secret = "ZZ fake sentence quoted only by its hash"
+    _only(monkeypatch, lle.Edit("replace_line", _sha(secret), "renamed line"))
+    out = diet.apply(f"line a\n{secret}\nline c\n{MARKER}\n")
+    assert out == f"line a\nrenamed line\nline c\n{MARKER}\n"
+
+
+def test_replace_line_empty_payload_removes_the_line(monkeypatch):
+    secret = "ZZ fake sentence to drop"
+    _only(monkeypatch, lle.Edit("replace_line", _sha(secret), ""))
+    assert diet.apply(f"line a\n{secret}\nline c\n{MARKER}\n") == f"line a\nline c\n{MARKER}\n"
+
+
+def test_replace_line_missing_doubled_or_partial_line_gives_none(monkeypatch):
+    secret = "ZZ fake sentence twice"
+    _only(monkeypatch, lle.Edit("replace_line", _sha(secret), "x"))
+    assert diet.apply(f"a\n{secret}\n{secret}\nb\n{MARKER}\n") is None
+    assert diet.apply(f"a\nnothing like it\nb\n{MARKER}\n") is None
+    assert diet.apply(f"a\nprefix {secret}\nb\n{MARKER}\n") is None
+
+
+def test_text_edit_may_anchor_inside_an_earlier_replace_line_payload(monkeypatch):
+    secret = "ZZ fake original line"
+    _only(
+        monkeypatch,
+        lle.Edit("replace_line", _sha(secret), "renamed with a MARKERWORD inside"),
+        lle.Edit("replace", "MARKERWORD", "word"),
+    )
+    out = diet.apply(f"a\n{secret}\nb\n{MARKER}\n")
+    assert out == f"a\nrenamed with a word inside\nb\n{MARKER}\n"
