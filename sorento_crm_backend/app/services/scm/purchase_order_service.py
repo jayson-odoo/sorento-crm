@@ -146,7 +146,8 @@ class PurchaseOrderService:
                   allocated_qty: float = 0.0,
                   allocations: Optional[list[dict]] = None,
                   spo_plan: Optional[dict] = None,
-                  book_so_by_ref: Optional[dict[str, str]]) -> dict:
+                  book_so_by_ref: Optional[dict[str, str]],
+                  spos_by_line: Optional[dict[str, list]] = None) -> dict:
         """`book_so_by_ref` is REQUIRED, with no default (review of PR #764, F2/F4). A
         caller that forgot it used to get `book_so_unresolved=True` on every linked line -
         the CRM reading "linked, not held" for orders it actually holds - rather than a
@@ -172,7 +173,13 @@ class PurchaseOrderService:
         # line's `qty_cancelled`, and how each was matched. One read for the order.
         from app.models.autocount_cancel import AutocountCancelLine
         from app.services.autocount_cancel_ingest_service import cancel_sources
+        from app.services.scm import goods_chain
 
+        dead_ids = (
+            goods_chain.dead_po_line_ids(self.db, [ln.id for ln in po.lines])
+            if spos_by_line is not None
+            else set()
+        )
         cancels = cancel_sources(
             self.db, AutocountCancelLine.purchase_order_line_id,
             [ln.id for ln in po.lines if getattr(ln, "qty_cancelled", None)],
@@ -257,6 +264,14 @@ class PurchaseOrderService:
                 # (review of PR #764, F5) - it also carries the FOURTH, list-only state
                 # `book_so_by_ref is BOOK_SO_NOT_RESOLVED`.
                 **order_link_service.book_so_fields(ln.from_so_line_ref, book_so_by_ref),
+                # LINKAGE-UNIFY U4: every SPO line this line was transferred onto, with
+                # where its goods landed or why it brings nothing (`goods_chain`). Only the
+                # detail and update routes pass it; the list leaves the column empty.
+                "spos": (spos_by_line or {}).get(str(ln.id), []),
+                # Owner Q5 (a): the chain's own dead-PO-line rule, so a placement on this
+                # line reads "PO cancelled" here as on the popup. None on the list, which
+                # does not resolve `spos`.
+                "dead_reason": "po_cancelled" if str(ln.id) in dead_ids else None,
             })
         return {
             "id": po.id,
@@ -887,6 +902,7 @@ class PurchaseOrderService:
             allocations=self._allocations_for(po),
             spo_plan=spo_plan,
             book_so_by_ref=book_so_by_ref,
+            spos_by_line=self._spos_for(po),
         )
 
     def list_supplier_options(
@@ -997,8 +1013,20 @@ class PurchaseOrderService:
         # Resolved here too, or the S/O column blanks out the moment the buyer saves an
         # unrelated edit and the screen renders this response.
         return self.serialize(
-            po, gr_refs.get(po.id), book_so_by_ref=self._book_so_for(po.lines)
+            po,
+            gr_refs.get(po.id),
+            book_so_by_ref=self._book_so_for(po.lines),
+            spos_by_line=self._spos_for(po),
         )
+
+    def _spos_for(self, po: PurchaseOrder) -> dict[str, list]:
+        """LINKAGE-UNIFY U4: by line id, the SPO lines each line was transferred onto, one
+        read for the order - the same reader the order inquiry's PO popup calls."""
+        # Local import: `goods_chain` pulls in the supply engine, which this module must
+        # not load at import time.
+        from app.services.scm import goods_chain
+
+        return goods_chain.spo_lines_of(self.db, [str(ln.id) for ln in po.lines])
 
     def _upsert_lines(self, po: PurchaseOrder, incoming: list) -> None:
         """Reconcile ``po.lines`` against the payload IN PLACE, never delete + recreate.

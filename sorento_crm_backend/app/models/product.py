@@ -128,6 +128,16 @@ class Brand(Base, CompanyScopedMixin):
     # brand it reaches first and names the other brands in weight order. 0 = no preference.
     # Seeded Sorento 1.5 by migration bcw_0001; edited on Master Data > Brands.
     chatbot_weight = Column(Numeric(6, 2), nullable=False, default=0, server_default=text("0"))
+    # BULK-CONTACT-ACCESS (owner ruling 26 Oct): the company whose dealers get this brand from
+    # the access-sheet upload. NULL = a project brand the upload never gives.
+    dealer_company_id = Column(
+        UUID(as_uuid=False), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True
+    )
+    dealer_company = relationship("Company", foreign_keys=[dealer_company_id], lazy="select")
+
+    @property
+    def dealer_company_name(self):
+        return self.dealer_company.name if self.dealer_company is not None else None
     # "Customers can ask for this brand" (#1286, D3). False for OTHERS and NO LOGO,
     # which is how the catalogue records the ABSENCE of a brand: the understanding
     # model is never offered them, and a single word never binds one in search (a
