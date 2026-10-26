@@ -402,10 +402,10 @@ describe.each<Where>(['worklist', 'lines'])('R5 the number leads, the receipt gi
 
 describe('R7 the default SPO column width shows the full receipt pill', () => {
   // number + "via PO" + "Received 486 at BRW-BB" (147 px) + gaps/padding: worklist ~355,
-  // Lines tab (wider number) ~374.
+  // Lines tab (wider number) ~374; measured in the browser: full at 400 / 420, clipped at 360 / 380.
   it.each([
-    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 360],
-    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 380],
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 400],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 420],
   ] as Array<[string, () => unknown[], number]>)('the %s default size is >= %i', (_n, build, floor) => {
     const { result } = renderHook(build);
     const column = result.current.find((c) => (c as { id?: string }).id === 'spo_number') as {
