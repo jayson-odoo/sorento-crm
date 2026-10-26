@@ -76,8 +76,9 @@ Backend `tests/test_email_outbox_attachment_download.py` (MagicMock DB + TestCli
 4. missing row -> 404.
 5. storage "not found" -> 404 with the clear message.
 6. no `system.email_outbox.view` -> 403.
+7. malformed `extra_attachments` (non-string key / filename) never 500 the row.
 
-Frontend `EmailOutboxList.attachments.test.tsx` (vitest):
+Frontend `EmailOutboxAttachments.test.tsx` + `emailOutboxService.test.ts` (vitest):
 1. dialog shows each attachment filename with Download; no block when none.
 2. Download calls the service with (row id, index) and saves the blob under the filename.
 3. Download failure toasts the server message.

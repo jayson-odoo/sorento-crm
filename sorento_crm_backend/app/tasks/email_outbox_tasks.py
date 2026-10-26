@@ -113,12 +113,16 @@ def attachment_refs(row: EmailOutbox) -> list[dict]:
 
     meta = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     for extra in meta.get("extra_attachments") or []:
-        if not isinstance(extra, dict) or not extra.get("storage_key"):
+        # A key that is not a string can never be fetched; skipping it keeps one malformed
+        # entry from failing the whole send or the Email Outbox list that shows these.
+        if not isinstance(extra, dict) or not isinstance(extra.get("storage_key"), str):
             continue
         key = extra["storage_key"]
+        if not key:
+            continue
         refs.append(
             {
-                "filename": extra.get("filename") or key.rsplit("/", 1)[-1],
+                "filename": str(extra.get("filename") or "") or key.rsplit("/", 1)[-1],
                 "storage_provider": extra.get("storage_provider"),
                 "storage_key": key,
                 "optional": bool(extra.get("optional")),

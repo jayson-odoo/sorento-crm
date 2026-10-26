@@ -111,7 +111,7 @@ async def get_email_outbox(
 
 
 @router.get("/email-outbox/{row_id}/attachments/{index}")
-async def download_email_outbox_attachment(
+def download_email_outbox_attachment(
     row_id: str,
     index: int = Path(..., ge=0),
     current_user: dict = Depends(require_permission("system.email_outbox.view")),
@@ -120,7 +120,8 @@ async def download_email_outbox_attachment(
     """The bytes of one file the row's email carries, by its position in `attachments`.
 
     Addressed by position, never by a storage key from the caller, so only an object the row
-    itself lists can be served.
+    itself lists can be served. A plain `def`: the storage read blocks, so it runs on the
+    threadpool rather than the event loop.
     """
     row = db.query(EmailOutbox).filter(EmailOutbox.id == row_id).first()
     if row is None:
