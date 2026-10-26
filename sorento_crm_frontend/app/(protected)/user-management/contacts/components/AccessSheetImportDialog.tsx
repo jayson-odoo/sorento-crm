@@ -160,8 +160,6 @@ export default function AccessSheetImportDialog({
     }
   };
 
-  const confirmedCount = selection ? Object.values(selection.confirmed).filter(Boolean).length : 0;
-
   return (
     <Dialog open={open} onOpenChange={close}>
       <DialogContent className="max-h-[90vh] sm:max-w-5xl">
@@ -228,7 +226,7 @@ export default function AccessSheetImportDialog({
               <Button variant="outline" onClick={() => setStep('upload')} disabled={busy}>
                 Back
               </Button>
-              <Button onClick={() => void runApply()} disabled={busy || confirmedCount === 0}>
+              <Button onClick={() => void runApply()} disabled={busy}>
                 Apply access
               </Button>
             </>
@@ -453,7 +451,15 @@ function AccountsTable({
                 <Checkbox
                   aria-label={`Link ${a.customer_code}`}
                   checked={ticked.includes(a.customer_id)}
-                  onCheckedChange={() => onChange(toggleTicked(selection, block.key, a.customer_id))}
+                  onCheckedChange={() => {
+                    const next = toggleTicked(selection, block.key, a.customer_id);
+                    // Ticking an account is the admin's say-so for a pick/none dealer; none ticked = not confirmed.
+                    onChange(
+                      block.status === 'exact'
+                        ? next
+                        : setConfirmed(next, block.key, (next.ticked[block.key] ?? []).length > 0),
+                    );
+                  }}
                 />
               </td>
               <Cell title={a.customer_code}>{a.customer_code}</Cell>
@@ -501,8 +507,8 @@ function ExtraCustomers({
       value={extra}
       onChange={(ids) => {
         const next = setTicked(selection, block.key, [...ticked.filter((id) => known.has(id)), ...ids]);
-        // Picking an account is the admin's say-so for this dealer.
-        onChange(ids.length ? setConfirmed(next, block.key, true) : next);
+        // Picking an account is the admin's say-so for this dealer; none ticked = not confirmed.
+        onChange(setConfirmed(next, block.key, (next.ticked[block.key] ?? []).length > 0));
       }}
       fetchOptions={fetchOptions}
       selectedOptions={extra.map((id) => ({ value: id, label: labels[id] ?? 'Customer' }))}

@@ -2,16 +2,23 @@
 
 import { useState } from 'react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { getCompaniesSelect } from '@/app/(protected)/system-management/companies/services/companyService';
+import { getCompaniesSelect, getMyCompanyContext } from '@/app/(protected)/system-management/companies/services/companyService';
 
 async function fetchCompanyOptions(query: string) {
   try {
     const needle = query.trim().toLowerCase();
-    return (await getCompaniesSelect())
+    let companies: { id: string; name: string; code: string }[];
+    try {
+      companies = await getCompaniesSelect();
+    } catch {
+      // The full list is superadmin-only; anyone else picks from the companies the header switcher offers.
+      companies = (await getMyCompanyContext()).companies;
+    }
+    return companies
       .filter((c) => !needle || `${c.name} ${c.code}`.toLowerCase().includes(needle))
       .map((c) => ({ value: c.id, label: c.name, description: c.code }));
   } catch {
-    // The list is superadmin-only; anyone else still sees the stored company by name.
+    // Neither source answered; the stored company is still shown by name.
     return [];
   }
 }
