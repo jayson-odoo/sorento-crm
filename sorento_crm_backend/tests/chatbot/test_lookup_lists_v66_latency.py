@@ -2,7 +2,7 @@
 
 Prod 26 Oct: turn medians rose about 2 s when the lookup went live while the parser call stayed flat. The one
 network call the lookup makes per turn (the message pieces' vectors) ran after the contact checks and `load_rows`;
-it now starts first and overlaps them, and one HTTP client per key is kept for the process instead of one per call.
+it now starts first and overlaps them (the provider already keeps one client per key, `OpenAIProvider._client`).
 Same hits either way. Fake data only (ZZ prefix).
 """
 from __future__ import annotations
@@ -77,29 +77,6 @@ def test_prefetch_without_an_embedder_or_pieces_is_a_no_op():
     ll.prefetch("SRTZZ1234", lambda texts: (_ for _ in ()).throw(AssertionError("called")))()
 
 
-def test_one_http_client_serves_every_call_of_an_embedder(monkeypatch):
-    calls: list[list[str]] = []
-    made: list[int] = []
-    embed = _fresh_embedder(monkeypatch, calls, made)
-    embed(["zz one"])
-    embed(["zz two"])
-    embed.pieces(["zz three"])
-    embed.fill(["zz four"])
-    assert len(calls) == 4 and len(made) == 1, (calls, made)
-
-
-def test_the_engine_embedder_is_built_once_per_key(monkeypatch):
-    from app.services import ai_assistant_service, llm_provider
-
-    monkeypatch.setattr(ll, "EMBED", ll.USE_PROVIDER)
-    monkeypatch.setattr(ai_assistant_service, "AIAssistantConfigService", lambda d: types.SimpleNamespace(get=lambda: None))
-    monkeypatch.setattr(llm_provider, "resolve_api_key", lambda config, provider: "sk-zz-v66-a")
-    first = ll.embedder(None)
-    assert first is not None and ll.embedder(None) is first
-    monkeypatch.setattr(llm_provider, "resolve_api_key", lambda config, provider: "sk-zz-v66-b")
-    assert ll.embedder(None) is not first
-
-
 def test_lookup_lines_starts_the_piece_embedding_before_the_rows_load(session_factory, monkeypatch):  # noqa: F811
     order: list[str] = []
     real_prefetch, real_load = ll.prefetch, ll.load_rows
@@ -120,3 +97,55 @@ def test_lookup_lines_starts_the_piece_embedding_before_the_rows_load(session_fa
     lines, event = engine_mod._lookup_lines(db, "zz tandas closet", None, frozenset(), "ZZ-no-contact", None)
     assert not event.get("failed"), event
     assert order[:2] == ["prefetch", "load_rows"], order
+
+
+def test_prefetch_join_says_whether_the_pieces_arrived(monkeypatch):
+    calls: list[list[str]] = []
+    made: list[int] = []
+    embed = _fresh_embedder(monkeypatch, calls, made)
+    assert ll.prefetch("zz toilet bowl", embed)() is True
+    gate = threading.Event()
+    slow = _fresh_embedder(monkeypatch, [], [], gate)
+    monkeypatch.setattr(ll, "EMBED_TIMEOUT", 0.2)
+    assert ll.prefetch("zz slow piece", slow)() is False  # still in flight at the deadline
+    gate.set()
+
+    def broken(*a, **k):
+        raise RuntimeError("provider down")
+
+    failing = _fresh_embedder(monkeypatch, [], [])
+    monkeypatch.setattr(failing, "pieces", broken)
+    assert ll.prefetch("zz failing piece", failing)() is False
+
+
+def test_a_prefetch_that_did_not_arrive_means_spelling_only_and_no_second_request(session_factory, monkeypatch):  # noqa: F811
+    _seed_world(session_factory)
+    seen: dict = {}
+    provider_like = types.SimpleNamespace(pieces=lambda texts: None, needs_warm=False)
+    monkeypatch.setattr(ll, "embedder", lambda db: provider_like)
+    monkeypatch.setattr(ll, "prefetch", lambda message, embed: (lambda: False))
+    real = ll.shortlist
+
+    def shortlist(message, rows, embed, **kw):
+        seen["embed"] = embed
+        return real(message, rows, None, **kw)
+
+    monkeypatch.setattr(ll, "shortlist", shortlist)
+    lines, event = engine_mod._lookup_lines(session_factory(), "zz tandas closet", None, frozenset(), "ZZ-no-contact", None)
+    assert not event.get("failed"), event
+    assert seen["embed"] is None
+
+
+def test_a_failing_key_read_leaves_the_blocks_and_the_session_usable(session_factory, monkeypatch):  # noqa: F811
+    from sqlalchemy import text
+
+    _seed_world(session_factory)
+    db = session_factory()
+
+    def broken(d):
+        d.execute(text("SELECT * FROM zz_no_such_table_v66"))
+
+    monkeypatch.setattr(ll, "embedder", broken)
+    lines, event = engine_mod._lookup_lines(db, "zz tandas closet", None, frozenset(), "ZZ-no-contact", None)
+    assert not event.get("failed"), event
+    assert db.execute(text("SELECT 1")).scalar() == 1
