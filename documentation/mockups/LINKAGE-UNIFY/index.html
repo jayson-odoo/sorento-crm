@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>LINKAGE-UNIFY mockup</title>
+<title>LINKAGE-UNIFY mockup v2</title>
 <style>
   :root {
     --bg: #f3f4f6; --card: #fff; --border: #e5e7eb; --muted: #6b7280; --fg: #111827;
@@ -96,7 +96,7 @@
 </head>
 <body>
 <div class="wrap">
-  <h1>LINKAGE-UNIFY: PO and SPO chips on order inquiry rows</h1>
+  <h1>LINKAGE-UNIFY v2: PO and SPO chips on order inquiry rows</h1>
   <p class="lead">Real dev rows (customers and projects not shown). <span class="legend"></span>marks a cell that changes. Use the toggle on each screen for Before, After or both stacked.</p>
 
   <!-- ================= SCREEN 1 ================= -->
@@ -126,12 +126,12 @@
       <ul>
         <li>Line 880 (OI line 22): PO 202607-S0100 closed 486/486 transferred, then SPO-2026/09-0107 L9 486/486 <code>fully_received</code>, bin BRW-BB. The shipment still reads <code>in_transit</code> (no arrival date on any dev shipment), so landing is decided by the receipt fields.</li>
         <li>Before: SPO "-" because the chained SPO is hidden once received. After: PO and SPO both shown (Q1), SPO pill reads "Received 486 at BRW-BB".</li>
-        <li>Line 832: 46 on PO 202607-S0083 moved to SPO-2026/10-0046 L172 (not received, so the PO chip carries no received pill, Q3) plus 440 direct on SPO-2026/08-0046 L189, received. The "+1" is the second SPO.</li>
+        <li>Line 832: 46 on PO 202607-S0083 moved to SPO-2026/10-0046 L172 (not received yet) plus 440 direct on SPO-2026/08-0046 L189, received. The "+1" is the second SPO.</li>
         <li>Line 944: direct on SPO-2026/09-0036 L129, received at BRW-BB.</li>
         <li>Line 1040 (second SRTSS4210 row, raised, unlinked) is untouched. Line 1024 (PO still on order) is untouched.</li>
         <li>Parity: the Lines tab today draws only the "via" pill; After it draws the same document pills as the worklist.</li>
         <li>State pill "On PO/SPO" is unchanged on every row (Q2).</li>
-        <li>Assumption: the PO chip keeps its "received" pill once the SPO has landed (same meaning as the worklist today, Q3). Open for the owner: drop it when the SPO pill is shown.</li>
+        <li>v2 (owner note on v1): the PO chip never carries a "received" pill. The received state lives only on the SPO chip ("Received 486 at BRW-BB"). Line 880 PO cell is therefore unchanged from today on the Lines tab.</li>
         <li>Before for line 832 SPO cell is inferred from the visibility rule (direct landed link shown, chained open SPO as "+1"); not run through the screen.</li>
       </ul>
     </aside>
@@ -196,7 +196,7 @@
       <h3>Notes (not part of the UI)</h3>
       <ul>
         <li>Rows: OI-2609-0128 L880 (class c, landed); OI-2609-0194 L64 (PO 202607-S0105 links 701+3+194 = 898, plus 194 direct on SPO-2026/10-0008 L76, 1092 allocated, 0 received, in transit); OI-2609-0252 L784 two rows (294 on PO 202607-S0100, and 354 = 294 direct on retired L7 + 60 direct on L12); OI-2609-0194 line 16 (class z).</li>
-        <li>Q3: row L64 PO chip loses "received": PO line 1092/1092 transferred, but SPO L76 received 0.</li>
+        <li>v2 (owner note on v1): no PO chip shows "received" any more, on every row (L880, L64, L784); the received state is on the SPO chip only. L64: SPO L76 is still in transit (0 received), so no row pill at all.</li>
         <li>Q1: landed SPO chip reads "Received <i>qty</i> at <i>bin</i>". Assumption: qty is the placement's share (294 on L12 although L12 holds 354), not the allocation total.</li>
         <li>Q5: the 294 direct on retired L7 stays placed; the chip is red "SPO withdrawn". L7 and L12 share one document number, so the "+1" popover lists them by line. Class z: PO 202607-S0083, line cancelled, received 0, 728 placed on live SO396348 line 16.</li>
         <li>Dead document filter counts are dev placements on open SO lines: 20 PO cancelled (2,565 units), 4 SPO withdrawn (443 units).</li>
@@ -216,12 +216,12 @@
       <tbody>
         <tr><td>SPO chip stays visible after the SPO is received (Lines tab SPO column)</td><td><code>order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx:136</code> (LineDocumentsCell), <code>:186</code> (DocumentCell), <code>:769</code> (SPO column); backend visibility <code>project_order_inquiry_service.py:366</code> (derived_spo_open_clauses)</td><td>Q1</td></tr>
         <tr><td>Pill "Received &lt;qty&gt; at &lt;bin&gt;" on the SPO chip</td><td><code>WorklistPill</code> <code>order-inquiries/components/orderInquiryWorklistColumns.tsx:74</code> (Badge secondary light, <code>components/ui/badge.tsx</code>), placed where the "received" pill sits <code>orderInquiryWorklistColumns.tsx:405</code></td><td>Q1</td></tr>
-        <tr><td>PO chip "received" only when the goods landed on the SPO</td><td><code>orderInquiryWorklistColumns.tsx:405-419</code> (received pill), backend flag that feeds it (worklist service documents entries)</td><td>Q3</td></tr>
+        <tr><td>PO chip carries no "received" pill (v2, owner note); received shows only on the SPO chip</td><td><code>orderInquiryWorklistColumns.tsx:405-419</code> (received pill), backend flag that feeds it (worklist service documents entries)</td><td>Q3, v1 note</td></tr>
         <tr><td>Row state label "On PO/SPO"</td><td><code>_shared/components/OrderInquiryVerbPill.tsx:98</code> (STATE_LABEL), <code>:106</code> palette; Lines tab <code>orderInquiryHeaderLinesColumns.tsx:846</code></td><td>Q2 (unchanged)</td></tr>
         <tr><td>Red pill "PO cancelled" / "SPO withdrawn" on the document chip</td><td><code>WorklistPill</code> with the Badge destructive light variant (<code>components/ui/badge.tsx:94</code>); both screens</td><td>Q5</td></tr>
         <tr><td>Retired-SPO link no longer hidden in Lines tab</td><td><code>orderInquiryHeaderLinesColumns.tsx:136</code> via <code>documentsOf</code>; hiding rule <code>project_order_inquiry_service.py:366</code></td><td>Q5</td></tr>
         <tr><td>Worklist "Dead document" filter</td><td>Filters popover <code>order-inquiries/components/OrderInquiriesClient.tsx:1577</code> (SearchableSelect, clearable, same pattern as State)</td><td>Q5</td></tr>
-        <tr><td>Lines tab gets the worklist's document pills</td><td>Same pill markup as <code>orderInquiryWorklistColumns.tsx:391-419</code> (via and received) inside DocumentCell <code>orderInquiryHeaderLinesColumns.tsx:186</code></td><td>Parity</td></tr>
+        <tr><td>Lines tab gets the worklist's document pills</td><td>Same pill markup as <code>orderInquiryWorklistColumns.tsx:391-419</code> (via pill; the received state is on the SPO chip) inside DocumentCell <code>orderInquiryHeaderLinesColumns.tsx:186</code></td><td>Parity</td></tr>
         <tr><td>"+N" overflow lists documents with their pills</td><td><code>orderInquiryHeaderLinesColumns.tsx:136</code> popover (LineDocumentsCell); worklist <code>orderInquiryWorklistColumns.tsx:434</code> badge</td><td>Parity, Q5</td></tr>
         <tr><td>Stage cards: landed units leave "Purchased" (optional Received card)</td><td><code>order-inquiries/components/OrderInquiryStrip.tsx</code>, <code>_shared/components/SupplyKindCard.tsx</code>, <code>_shared/lib/orderInquiryKinds.ts:47</code> (KIND_LABELS); backend <code>order_inquiry_worklist_service.py:1179</code> (_derived_cover_qty), <code>:3066</code> (_stage_rows, _kinds)</td><td>Proposal, needs owner OK</td></tr>
       </tbody>
@@ -254,8 +254,8 @@
       spoB: cell(chip('SPO-2026/08-0046'), { n: 1, title: 'SPO-2026/10-0046' }),
       spoA: cell(chip('SPO-2026/08-0046', [RCV(440)]), { n: 1, title: 'SPO-2026/10-0046' }), chg: [0, 1] },
     { no: 880, p: 'SRTSS4210', q: 486, d: '01/09/2026', st: 'placed',
-      poB: cell(chip('202607-S0100')), poA: cell(chip('202607-S0100', [RECEIVED])),
-      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(486)])), chg: [0, 1] },
+      poB: cell(chip('202607-S0100')), poA: cell(chip('202607-S0100')),
+      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(486)])), chg: [1] },
     { no: 944, p: 'SRTWT2215', q: 486, d: '01/09/2026', st: 'placed',
       poB: cell(null), poA: cell(null),
       spoB: cell(chip('SPO-2026/09-0036')), spoA: cell(chip('SPO-2026/09-0036', [RCV(486)])), chg: [1] },
@@ -285,14 +285,14 @@
   var RED_SPO = { t: 'SPO withdrawn', red: true };
   var work = [
     { oi: 'OI-2609-0128', so: 'SO364824', l: 880, p: 'SRTSS4210', q: 486,
-      poB: cell(chip('202607-S0100', [RECEIVED])), poA: cell(chip('202607-S0100', [RECEIVED])),
-      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(486)])), chg: [1] },
+      poB: cell(chip('202607-S0100', [RECEIVED])), poA: cell(chip('202607-S0100')),
+      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(486)])), chg: [0, 1] },
     { oi: 'OI-2609-0194', so: 'SO396348', l: 64, p: 'SRTA8046', q: 1092,
       poB: cell(chip('202607-S0105', [RECEIVED])), poA: cell(chip('202607-S0105')),
       spoB: cell(chip('SPO-2026/10-0008')), spoA: cell(chip('SPO-2026/10-0008')), chg: [0] },
     { oi: 'OI-2609-0252', so: 'SO396349', l: 784, p: 'SRTSS3170', q: 294,
-      poB: cell(chip('202607-S0100', [RECEIVED])), poA: cell(chip('202607-S0100', [RECEIVED])),
-      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(294)])), chg: [1] },
+      poB: cell(chip('202607-S0100', [RECEIVED])), poA: cell(chip('202607-S0100')),
+      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(294)])), chg: [0, 1] },
     { oi: 'OI-2609-0252', so: 'SO396349', l: 784, p: 'SRTSS3170', q: 354,
       poB: cell(null), poA: cell(null),
       spoB: cell(chip('SPO-2026/09-0107', [RECEIVED])),
