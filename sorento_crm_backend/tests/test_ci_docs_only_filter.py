@@ -162,6 +162,11 @@ LEAN_KEYS = {"lean", "base_sha"}
 PR_KEYS = {"validated"}
 LAST_RELEASE = "e" * 40
 TREE = "f" * 40
+# A pull_request: the PR head, main's head when GitHub built its merge commit
+# (`SHA`), and a later main (CI-STALE-MERGE-REF).
+PR_HEAD = "3" * 40
+MAIN = "4" * 40
+NEWER_MAIN = "5" * 40
 RELEASE_RUNS = "repos/jayson-odoo/sorento-crm/actions/workflows/deploy.yml/runs?branch=main&event=workflow_dispatch&status=success&per_page=1"
 
 
@@ -178,6 +183,8 @@ def run_step(
     last_release: str | None = None,
     validated: bool = False,
     pr_validated: bool = False,
+    main_now: str | None = MAIN,
+    merge_head: str = PR_HEAD,
 ) -> dict[str, str]:
     """Run the real step with `files` as the API answer; return $GITHUB_OUTPUT.
 
@@ -187,7 +194,9 @@ def run_step(
     pull_request event. On a dispatch, `last_release` is the head of the
     last successful release (None: the lookup finds none) and `files` is the
     compare from it to the head; `validated` says a validated-tree artifact
-    exists for the head's tree.
+    exists for the head's tree. On a pull_request, GitHub's merge commit (`SHA`)
+    has parents (MAIN, `merge_head`) and `main_now` is main's head when the step
+    runs (None: the lookup fails); the defaults are a fresh merge of the head.
     """
     entries = []
     for f in files:
@@ -200,7 +209,9 @@ def run_step(
         f"repos/jayson-odoo/sorento-crm/compare/{before}...{SHA}": {"files": entries},
         f"repos/jayson-odoo/sorento-crm/compare/{'c' * 40}...{'d' * 40}": {"files": entries},
         RELEASE_RUNS: {"workflow_runs": [{"head_sha": last_release}] if last_release else []},
-        f"repos/jayson-odoo/sorento-crm/git/commits/{SHA}": {"sha": SHA, "tree": {"sha": TREE}},
+        f"repos/jayson-odoo/sorento-crm/git/commits/{SHA}": {
+            "sha": SHA, "tree": {"sha": TREE}, "parents": [{"sha": MAIN}, {"sha": merge_head}],
+        },
         f"repos/jayson-odoo/sorento-crm/actions/artifacts?name=validated-tree-{TREE}&per_page=5": {
             "artifacts": [{"name": f"validated-tree-{TREE}", "expired": False}] if validated else []
         },
@@ -210,8 +221,11 @@ def run_step(
     }
     if last_release:
         fixtures[f"repos/jayson-odoo/sorento-crm/compare/{last_release}...{SHA}"] = {"files": entries}
+    if main_now:
+        fixtures["repos/jayson-odoo/sorento-crm/git/ref/heads/main"] = {"ref": "refs/heads/main", "object": {"sha": main_now}}
     env = {
         "EVENT": event, "LABEL": label if event == "pull_request" else "", "PR": "1",
+        "HEAD_SHA": PR_HEAD if event == "pull_request" else "",
         "PUSH_BEFORE": before, "PUSH_AFTER": SHA,
         "MG_BASE": "c" * 40, "MG_HEAD": "d" * 40, "SKIP_TESTS": skip_tests, "FULL_SUITE": full_suite,
     }
@@ -1960,3 +1974,185 @@ def test_the_pr_marker_name_is_never_the_release_marker():
     prefix = _expression(name[: -len(tree)])
     assert _gh_eval(prefix, {"github": {"event_name": "pull_request"}}) == "pr-validated-tree-"
     assert _gh_eval(prefix, {"github": {"event_name": "workflow_dispatch"}}) == "validated-tree-"
+
+
+# ---------------------------------------------------------------------------
+# CI-STALE-MERGE-REF: GitHub builds the PR's merge commit (`github.sha`) when
+# the head is pushed and does not rebuild it when main moves. Run 40354117904
+# (#1876) checked out `Merge 149c4b3d into 1aaeed54` while main was seven
+# merges on, and took the marker for that old tree: nothing was tested. The
+# PR gate now tests the head merged into main's head at job time, and the
+# marker counts only for a merge commit that is exactly that.
+# ---------------------------------------------------------------------------
+
+PR_BACKEND = ["sorento_crm_backend/app/services/inventory_service.py"]
+
+
+def test_a_merge_commit_built_on_an_older_main_never_takes_the_marker(tmp_path):
+    out = run_step(tmp_path, "pull_request", PR_BACKEND, pr_validated=True, main_now=NEWER_MAIN)
+    assert out["backend"] == "true" and "validated" not in out
+
+
+def test_a_merge_commit_of_an_older_head_never_takes_the_marker(tmp_path):
+    out = run_step(tmp_path, "pull_request", PR_BACKEND, pr_validated=True, merge_head="6" * 40)
+    assert out["backend"] == "true" and "validated" not in out
+
+
+def test_a_failed_main_lookup_tests(tmp_path):
+    out = run_step(tmp_path, "pull_request", PR_BACKEND, pr_validated=True, main_now=None)
+    assert out["backend"] == "true" and "validated" not in out
+
+
+def test_a_fresh_merge_commit_still_takes_the_marker(tmp_path):
+    """The CI-COST round 2 saving stays: main has not moved, the head is the same."""
+    out = run_step(tmp_path, "pull_request", PR_BACKEND, pr_validated=True, main_now=MAIN, merge_head=PR_HEAD)
+    assert out == {**NO_AREA, "docs_only": "false", "validated": "true"}
+    detect = _step_script("Detect changed areas")
+    assert "git/ref/heads/main" in detect and "$HEAD_SHA" in detect
+    env = re.search(r"- name: Detect changed areas\n(.*?)\n        run: \|", _workflow_text(), re.S).group(1)
+    assert re.search(r"^          HEAD_SHA: \$\{\{ github\.event\.pull_request\.head\.sha \}\}$", env, re.M)
+
+
+def _changes_steps() -> dict[str, str]:
+    block = _job_block("changes")
+    steps = re.split(r"\n      - name: ", block)[1:]
+    return {s.splitlines()[0]: s for s in steps}
+
+
+def _with(step: str, key: str) -> str:
+    match = re.search(rf"^          {key}: (.*)$", step, re.M)
+    return _expression(match.group(1)) if match else ""
+
+
+PR_CTX = {"github": {"event_name": "pull_request", "event": {"pull_request": {"head": {"sha": PR_HEAD}}}},
+          "needs": {"changes": {"outputs": {"frontend": "false"}}}}
+RELEASE_CTX = {"github": {"event_name": "workflow_dispatch", "event": {}},
+               "needs": {"changes": {"outputs": {"frontend": "true"}}}}
+MERGE_STEP = "Merge main's current head into the PR head"
+
+
+def test_the_pr_gate_tests_the_head_merged_into_main_now():
+    steps = _lean_gate_steps()
+    names = list(steps)
+    ref = _with(steps["Checkout"], "ref")
+    assert ref and _gh_eval(ref, PR_CTX) == PR_HEAD, "the PR head, not GitHub's merge commit"
+    assert _gh_eval(ref, RELEASE_CTX) == "", "a release checks out its own ref as before"
+    merge = steps[MERGE_STEP]
+    assert names.index(MERGE_STEP) == names.index("Checkout") + 1, "before every gate"
+    assert re.search(r"^        if: github\.event_name == 'pull_request'$", merge, re.M)
+    assert re.search(r"^        id: merge$", merge, re.M)
+    assert "bash scripts/ci_merge_main.sh" in merge
+    assert names.index(MERGE_STEP) < names.index("Single alembic head") < names.index("Mark this tree as validated")
+    assert "git rev-parse 'HEAD^{tree}'" in steps["Mark this tree as validated"], "the marker is the live merge's tree"
+
+
+def test_the_pr_gate_vitest_diffs_against_the_main_it_merged():
+    step = _lean_gate_steps()["Run the vitest files related to the change (executing gate)"]
+    base = _expression(re.search(r"^          BASE_SHA: (.*)$", step, re.M).group(1))
+    merged = {**PR_CTX, "steps": {"merge": {"outputs": {"main": NEWER_MAIN}}}}
+    merged["github"] = {**PR_CTX["github"], "event": {"pull_request": {"base": {"sha": MAIN}}}}
+    assert _gh_eval(base, merged) == NEWER_MAIN
+    release = {**RELEASE_CTX, "needs": {"changes": {"outputs": {"base_sha": LAST_RELEASE}}}}
+    assert _gh_eval(base, release) == LAST_RELEASE
+
+
+def test_the_selection_reads_the_same_live_merge():
+    steps = _changes_steps()
+    names = list(steps)
+    checkout = steps["Checkout backend sources for test selection"]
+    assert _gh_eval(_with(checkout, "ref"), PR_CTX) == PR_HEAD
+    assert _gh_eval(_with(checkout, "ref"), RELEASE_CTX) == ""
+    depth = _with(checkout, "fetch-depth")
+    assert str(_gh_eval(depth, PR_CTX)) == "0", "the merge needs the history"
+    assert str(_gh_eval(depth, RELEASE_CTX)) == "1", "a release fetches as before"
+    assert re.search(r"^            scripts$", checkout, re.M), "the merge script is in the sparse checkout"
+    merge = steps[MERGE_STEP]
+    assert names.index("Checkout backend sources for test selection") < names.index(MERGE_STEP) < names.index("Select backend tests by import")
+    cond = re.search(r"^        if: (.*)$", merge, re.M).group(1)
+    assert cond == ("github.event_name == 'pull_request' && "
+                    "(steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true')"), cond
+    assert "bash scripts/ci_merge_main.sh" in merge
+
+
+MERGE_SCRIPT = REPO / "scripts" / "ci_merge_main.sh"
+# No user identity anywhere: the runner has none either.
+GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
+
+
+def _git(cwd: Path, *args: str) -> str:
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(cwd), **GIT_ENV,
+           "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@example.invalid",
+           "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@example.invalid"}
+    return subprocess.run(["git", *args], cwd=cwd, env=env, check=True, capture_output=True, text=True).stdout.strip()
+
+
+def _commit(work: Path, path: str, text: str) -> str:
+    (work / path).write_text(text)
+    _git(work, "add", path)
+    _git(work, "commit", "-q", "-m", f"edit {path}")
+    return _git(work, "rev-parse", "HEAD")
+
+
+def _merge_repo(tmp_path: Path, *, conflict: bool = False, head_has_main: bool = False) -> tuple[Path, str, str]:
+    """An origin whose main moved after the PR branched; a runner checkout at the PR head."""
+    origin = tmp_path / "origin.git"
+    work = tmp_path / "work"
+    _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
+    _git(tmp_path, "clone", "-q", str(origin), str(work))
+    _git(work, "checkout", "-q", "-b", "main")
+    _commit(work, "shared.txt", "base\n")
+    _git(work, "push", "-q", "origin", "main")
+    _git(work, "checkout", "-q", "-b", "pr")
+    head = _commit(work, "shared.txt" if conflict else "pr.txt", "from the pr\n")
+    _git(work, "checkout", "-q", "main")
+    main = _commit(work, "shared.txt" if conflict else "main.txt", "from main\n")
+    _git(work, "push", "-q", "origin", "main")
+    if head_has_main:
+        _git(work, "checkout", "-q", "pr")
+        _git(work, "merge", "-q", "--no-edit", "main")
+        head = _git(work, "rev-parse", "HEAD")
+    runner = tmp_path / "runner"
+    _git(tmp_path, "clone", "-q", str(origin), str(runner))
+    _git(runner, "fetch", "-q", str(work), head)
+    _git(runner, "checkout", "-q", "--detach", head)
+    return runner, head, main
+
+
+def _run_merge_script(runner: Path, tmp_path: Path) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
+    output = tmp_path / "merge-output.txt"
+    output.write_text("")
+    result = subprocess.run(
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(MERGE_SCRIPT)],
+        cwd=runner,
+        env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path), **GIT_ENV,
+             "GITHUB_OUTPUT": str(output)},
+        capture_output=True,
+        text=True,
+    )
+    return result, dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
+
+
+def test_the_merge_script_tests_the_head_merged_into_mains_head(tmp_path):
+    runner, head, main = _merge_repo(tmp_path)
+    result, outputs = _run_merge_script(runner, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _git(runner, "rev-parse", "HEAD^1") == head and _git(runner, "rev-parse", "HEAD^2") == main
+    assert (runner / "pr.txt").exists() and (runner / "main.txt").exists()
+    assert outputs == {"main": main}
+    assert head in result.stdout and main in result.stdout
+
+
+def test_the_merge_script_fails_loudly_on_a_conflict(tmp_path):
+    runner, head, main = _merge_repo(tmp_path, conflict=True)
+    result, outputs = _run_merge_script(runner, tmp_path)
+    assert result.returncode != 0
+    assert "::error" in result.stdout and "shared.txt" in result.stdout and main in result.stdout
+    assert outputs == {}
+
+
+def test_the_merge_script_leaves_a_head_that_already_holds_main(tmp_path):
+    runner, head, main = _merge_repo(tmp_path, head_has_main=True)
+    result, outputs = _run_merge_script(runner, tmp_path)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert _git(runner, "rev-parse", "HEAD") == head
+    assert outputs == {"main": main}
