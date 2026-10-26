@@ -552,3 +552,24 @@ def test_wu16_row_with_a_workspace_while_no_default_workspace_exists_fails():
         assert out.status == "failed"
         assert "merge" not in client.kinds() and "put" not in client.kinds()
         assert [r.respond_io_id for r in _rows(db)] == ["900000077"]
+
+
+def test_wu12_a_merge_response_naming_a_third_id_is_ignored_and_the_second_lookup_decides():
+    m = _mod()
+    third = 900000055
+
+    class _Third(FakeClient):
+        def merge_contacts(self, contact_ids):
+            super().merge_contacts(contact_ids)
+            return {"contactId": third}
+
+    with blank_session() as db:
+        ws = _workspace(db)
+        row = _row(db, f"+{E164}", respond_io_id="900000077", workspace_id=str(ws.id))
+        client = _Third(after_merge_id=TURN_ID)
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged"
+        assert out.survivor_respond_id == str(TURN_ID)
+        assert client.kinds().count("lookup") == 2
+        assert [r.respond_io_id for r in _rows(db)] == [str(TURN_ID)]
+        assert str(row.id) == str(_rows(db)[0].id)

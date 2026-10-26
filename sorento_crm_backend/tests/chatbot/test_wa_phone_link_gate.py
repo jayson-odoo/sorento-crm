@@ -100,6 +100,7 @@ class World:
         self.merge_error: Exception | None = None
         self.merge_survivor = "phone"  # "phone" | "turn"
         self.order: list[str] = []
+        self.lookup_fails_after_merge = False
         self.send_error: Exception | None = None
         self.template_error: Exception | None = None
         self.messages: list[tuple[str, str]] = []
@@ -111,6 +112,8 @@ class World:
         class _C:
             def get_contact_by_phone(self, phone):
                 world.order.append("client"); world.calls.append(("lookup", phone))
+                if world.lookup_fails_after_merge and world.merges():
+                    raise RuntimeError("zzt second lookup failed")
                 if world.phone_contact_id is None:
                     req = httpx.Request("GET", "https://api.example.test/x")
                     raise httpx.HTTPStatusError("nf", request=req, response=httpx.Response(404, request=req))
@@ -120,6 +123,8 @@ class World:
                 world.order.append("client"); world.calls.append(("merge", [int(i) for i in ids]))
                 if world.merge_error:
                     raise world.merge_error
+                if world.merge_survivor == "none":
+                    return {}
                 return {"contactId": PHONE_ID if world.merge_survivor == "phone" else CONTACT_ID}
 
             def send_message(self, identifier, text_):
@@ -656,10 +661,13 @@ def test_wu25_an_unexpected_error_closes_the_turn_failed_not_processing(
         raise RuntimeError("zzt unexpected")
 
     monkeypatch.setattr(wa_phone_link, "accepted_card_phone", _boom)
+    result = None
     try:
-        _run(session_factory, _env("tap", mid="WU-boom-1"))
+        result = _run(session_factory, _env("tap", mid="WU-boom-1"))
     except Exception:
         pass
+    if result is not None:
+        assert result.actions == []
     rows = (
         session_factory()
         .query(ChatbotTurn)
@@ -763,4 +771,65 @@ def test_wu26_crm_write_failing_after_a_merge_comments_on_the_survivor(
     assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
     assert len(world.comments) == 1
     assert world.comments[0][0] == str(expected)
+    assert world.messages == []
+
+
+# ---------------------------------------------------------------- round 4
+
+
+def test_wu24_an_ask_skipped_for_no_template_writes_one_skipped_row(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    world.template = "skipped"
+    result = _run(session_factory, _env("text"))
+    assert result.branch_kind == "phone_handoff"
+    rows = _logs(session_factory)
+    skipped = [r for r in rows if r.status == "skipped"]
+    assert len(skipped) == 1, [r.status for r in rows]
+    _no_phone_in(rows)
+
+
+def test_wu18_an_unexpected_error_leaks_no_full_phone_to_logs_or_the_turn_row(
+    session_factory, parser_calls, world, monkeypatch, caplog
+):
+    import logging
+
+    from app.services import wa_phone_link
+
+    _install(world, monkeypatch)
+    caplog.set_level(logging.DEBUG)
+
+    def _boom(body):
+        raise RuntimeError(f"zzt crm phone query failed for +{E164} and {E164}")
+
+    monkeypatch.setattr(wa_phone_link, "accepted_card_phone", _boom)
+    try:
+        _run(session_factory, _env("tap", mid="WU-leak-1"))
+    except Exception:
+        pass
+    assert E164 not in caplog.text
+    rows = (
+        session_factory()
+        .query(ChatbotTurn)
+        .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID), ChatbotTurn.message_id == "WU-leak-1")
+        .all()
+    )
+    assert len(rows) == 1
+    assert E164 not in str(rows[0].error or "")
+    assert E164 not in json.dumps(rows[0].trace or [])
+
+
+def test_wu26_no_contactid_and_a_failing_second_lookup_comments_on_the_phone_contact(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    world.merge_survivor = "none"
+    world.lookup_fails_after_merge = True
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_handoff"
+    assert len(world.merges()) == 1
+    assert len(world.comments) == 1
+    assert world.comments[0][0] == str(PHONE_ID)
     assert world.messages == []
