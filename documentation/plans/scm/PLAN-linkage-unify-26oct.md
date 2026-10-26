@@ -270,3 +270,50 @@ U3/U4 wait on an approved mock. No migration in any slice under the rulings, unl
 GR pull (then that pull is its own slice, U0, ahead of U2's Q4 part). Per the lane contract each
 slice runs tester (red tests from the UAC) -> coder -> reviewer, security-reviewer only if a GR
 pull adds an ingest surface.
+
+## 7. U1 contract (tester and coder both build to this; owner approved mock v2 09:39)
+
+Track: L, slice U1 of 6. Branch `crew/linkage-unify`, PR U1. No migration, no UI, no RBAC.
+Behaviour: Stock Debt reads exactly as today (AC-C8); the new module is the only addition.
+
+Module `app/services/scm/goods_chain.py`:
+
+- State constants: `ON_ORDER = "on_order"`, `IN_TRANSIT = "in_transit"`, `RECEIVED = "received"`
+  (U1); `RECEIVED_DIRECT = "received_direct"`, `DEAD = "dead"` declared now, produced from U2.
+- `@dataclass(frozen=True) class Hop`: `kind` (`"po"` | `"spo"`), `state`, `qty: Decimal`,
+  `po_line_id`, `po_number`, `purchase_order_id`, `spo_allocation_id`, `spo_number`,
+  `spo_line_number`, `warehouse_id`, `warehouse_code` (all `Optional`, ids as `str`),
+  `reason: Optional[str] = None` (U2: `"po_cancelled"` | `"spo_withdrawn"`).
+- `@dataclass(frozen=True) class LinkChain`: `link_id: str`, `row_id: str`, `placed_qty: Decimal`,
+  `hops: Tuple[Hop, ...]`; property `unplaced_qty = placed_qty - sum(hop.qty)`.
+- `chains_for_links(db, link_ids) -> Dict[str, LinkChain]` and
+  `chains_for_rows(db, row_ids) -> Dict[str, List[LinkChain]]` (links of a row in `linked_at, id`
+  order). A link on a cancelled OI row is absent from the result. A direct link on a retired SPO
+  line with 0 received has a chain with no hops in U1 (U2 makes it a `dead` hop).
+- Moved from `stock_debt_service.py` unchanged in logic, public names: `landed_qty(...)`
+  (was `_landed_qty` :158), `follow_capacity(spo)` (was `_follow_capacity` :175),
+  `transferred_allocations(db, po_lines)` (was `StockDebtService._transferred_allocations` :1957,
+  same key, same order, same company predicate). Stock Debt imports them.
+
+Rules (each already in `_holds` SDS:1614-1952; U1 lifts them, it does not invent):
+
+- Live placement: `order_inquiry_links` row whose OI row is not cancelled, passing
+  `spo_supply.visible_line_clauses()` on its SPO side (SDS:1797-1808). Placements on delivered or
+  closed SO lines count too: the split is screen-independent. Measured: 0 PO lines on dev where
+  that differs from Stock Debt's in-span split (`sql/v-split-scope.sql`).
+- PO placement: in `linked_at, id` order over ALL live placements on that PO line, take each
+  transferred SPO (key and order of `transferred_allocations`) up to its remaining
+  `follow_capacity`; still incoming -> `spo` hop `in_transit`; not incoming -> `spo` hop
+  `received` for `min(take, landed)` at the SPO's warehouse (nothing if 0); then the PO's own
+  `ordered - received` while `open_po_line_clauses()` passes -> `po` hop `on_order`.
+- Direct SPO placement: incoming (`open_incoming_clauses()` and allocated > received) -> `spo`
+  hop `in_transit` for the placement qty (not capped, as today; `assign()` caps); not incoming ->
+  `received` for `min(qty, landed)` at the SPO's warehouse, nothing if 0.
+- Stock Debt `_holds` maps hops to `Hold`s exactly as today: `in_transit` -> `spo:<id>` hold;
+  `received` -> `on_hand:<bin>` hold unless `found_empty`; `on_order` -> `po:<line>` hold.
+  `_follow_totals` keeps its signature and calls the moved helpers.
+
+Tests (red first, tester): `tests/scm/test_goods_chain.py` (new) for AC-C1..C7; AC-C8 = the
+existing `tests/scm/test_stock_debt_po_transferred.py`, `tests/scm/test_stock_debt_routes.py`,
+`tests/scm/test_oi_po_lightbox_spo_numbers.py` pass unedited (baseline 78 passed on the lane
+throwaway DB `sorento_lu_throwaway`, 26 Oct).
