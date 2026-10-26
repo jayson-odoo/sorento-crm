@@ -125,3 +125,26 @@ Engine (`tests/chatbot/test_wa_phone_link_gate.py`, harness `tests/chatbot/test_
 12. same envelope twice -> one merge (WU17).
 13. test / dry-run turn -> no Respond.io call.
 14. `wa_phone_share` is in `TEMPLATE_DEFAULT_USE_CASES`; FE vitest: the WhatsApp Templates use-case list has it.
+
+## Hand test on the crew copy (crew audit 27 Oct: never a live Respond.io merge)
+The copy routes every Respond.io call to a dead proxy (`crew.toml` egress block) and its Respond.io settings live in
+the shared dev DB, so no stub can be wired in safely. The hand test is therefore decision-level, on the copy's own
+data (`sorento_prod_1020`), with no LLM call (every phone decision is taken before the parser).
+
+Replay tool (outside the repo: `crew/state/handtest/1888/replay_wa_username.py`; no real data in git). Run with the
+copy's backend venv and `.env` (so DB = the copy's, egress = blackholed). Args: `--dealer-respond-id`,
+`--dealer-phone` (a real dealer contact crew picks: access configured, AI on), `--api` (the copy's API base URL).
+Each step uses a FRESH fake username contact id (`9000xxxxx`, random per run) so the 24 h hand-off silence of one
+step never hides the next. A step = the webhook's own store step (`map_webhook_message` + `upsert_message_row`,
+so Chat History shows the message) then the turn the drain runs (`engine.run_turn(direct_ingress.envelope_for(...))`),
+printing branch kind + trace summary. Steps:
+1. username contact texts "hi" -> phone flow, ask attempted; Respond.io unreachable -> `phone_handoff`.
+2. username contact hand-shares a card with the dealer's number (origin `other`, wa_id = sender) -> not accepted,
+   no link attempted -> `phone_handoff` (ask attempted).
+3. username contact taps (origin `contact_request`, wa_id = card phone = the dealer's number, signed ingress) ->
+   accepted, link attempted, Respond.io unreachable -> `phone_handoff`; the dealer's CRM row is unchanged.
+4. the dealer's own (linked) contact sends a card -> `phone_ignored`, no reply, no business answer (the side bug).
+5. the step-3 tap with ingress `webhook` (the n8n path) -> not accepted -> `phone_handoff` (ask attempted).
+6. `POST {api}/api/v1/external/chat/turn` with ingress `respond_webhook` and the copy's integration key -> 422.
+Every attempted send leaves a failed Respond outbox row (WU24), visible in Integration Logs. The merge and the
+CRM re-point are proven by the pytest suites (fake client), not on the copy.
