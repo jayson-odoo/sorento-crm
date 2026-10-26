@@ -27,7 +27,8 @@ from typing import Any
 FAILED_OUTCOMES: tuple[str, ...] = ("technical", "cannot_do", "missed")
 
 #: `branch_kind` values that are a denial by policy.
-_DENIAL_BRANCHES = frozenset({
+_DENIAL_BRANCHES = frozenset(
+    {
         "access_denied",
         "ai_not_allowed",
         "stock_denied",
@@ -35,7 +36,8 @@ _DENIAL_BRANCHES = frozenset({
         "phone_linked",
         "phone_ignored",
         "phone_handoff",
-    })
+    }
+)
 
 #: `branch_kind` values that ask the customer something back instead of answering.
 _CLARIFY_BRANCHES = frozenset({"clarify_menu", "demand_qty", "escalate_offer", "offer_hold"})

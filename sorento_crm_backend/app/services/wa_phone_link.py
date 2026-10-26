@@ -118,7 +118,7 @@ def _outbox(
                 status=status,
                 status_code=getattr(resp, "status_code", None),
                 response_payload=str(response)[:50000] if response else None,
-                error_message=_PHONE_RE.sub("[phone]", str(error))[:2000] if error else None,
+                error_message=scrub_phone(error)[:2000] if error else None,
             ),
             request_payload_dict=request_payload,
         )
@@ -135,7 +135,15 @@ def send_ask(db: Session, *, contact_respond_id: str, turn_id: Optional[str] = N
         result = respond_messaging_service.send_template_for_use_case(
             db, identifier=contact_respond_id, use_case=WA_PHONE_SHARE_USE_CASE, context_vars={}
         )
-    except respond_messaging_service.TemplateSendSkipped:
+    except respond_messaging_service.TemplateSendSkipped as skipped:
+        _outbox(
+            db,
+            identifier=contact_respond_id,
+            business_id=business_id,
+            status="skipped",
+            request_payload={"use_case": WA_PHONE_SHARE_USE_CASE},
+            error=skipped,
+        )
         return False
     except Exception as e:
         _outbox(
@@ -182,14 +190,20 @@ def _failed(reason: str, survivor: Optional[str] = None, **log_args: Any) -> Lin
     return LinkOutcome(status="failed", survivor_respond_id=survivor, reason=reason)
 
 
-def _merge_survivor(response: Any) -> Optional[str]:
-    """The surviving contact id a merge response names (`contactId`, also under `data`), or None."""
+def _merge_survivor(response: Any, merged_ids: tuple[str, str]) -> Optional[str]:
+    """The surviving contact id a merge response names (`contactId`, also under `data`), or None.
+    An id that is not one of the two merged contacts is not believed."""
     if not isinstance(response, dict):
         return None
     for source in (response, response.get("data")):
-        if isinstance(source, dict) and source.get("contactId") not in (None, ""):
+        if isinstance(source, dict) and str(source.get("contactId") or "") in merged_ids:
             return str(source["contactId"])
     return None
+
+
+def scrub_phone(text: Any) -> str:
+    """`text` with every phone-shaped run replaced; for logs, the outbox and a stored turn error."""
+    return _PHONE_RE.sub("[phone]", str(text))
 
 
 def _err(exc: Exception) -> str:
@@ -221,6 +235,7 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
     # Respond.io step first; nothing below touches the CRM until it has succeeded.
     try:
         phone_contact_id: Optional[str] = None
+        merged_phone_contact: Optional[str] = None  # set once the merge call returned
         phone_contact: dict = {}
         try:
             phone_contact = parse_respond_contact_payload(client.get_contact_by_phone(f"+{num}"))
@@ -230,12 +245,14 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
                 raise
         if phone_contact_id is not None and phone_contact_id != str(contact_respond_id):
             # Respond.io keeps the OLDER contact whatever the order, so read the survivor.
-            survivor = _merge_survivor(client.merge_contacts([int(phone_contact_id), int(contact_respond_id)]))
+            merge_response = client.merge_contacts([int(phone_contact_id), int(contact_respond_id)])
+            merged_phone_contact = phone_contact_id
+            survivor = _merge_survivor(merge_response, (phone_contact_id, str(contact_respond_id)))
             if survivor is None:
                 again = parse_respond_contact_payload(client.get_contact_by_phone(f"+{num}"))
                 survivor = again.get("respond_io_id")
             if survivor is None:
-                return _failed("the merge did not name a surviving contact", phone=shown)
+                return _failed("the merge did not name a surviving contact", merged_phone_contact, phone=shown)
             status = "merged"
         elif phone_contact_id is not None:
             status, survivor = "phone_set", str(contact_respond_id)
@@ -243,7 +260,8 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
             client.update_contact(str(contact_respond_id), {"phone": f"+{num}"})
             status, survivor = "phone_set", str(contact_respond_id)
     except Exception as e:  # noqa: BLE001 - any Respond.io failure is a hand-off, never a half-link
-        return _failed(f"Respond.io step failed ({_err(e)})", phone=shown)
+        # After a merge the turn's own id is gone or not: the phone contact is the one that surely exists.
+        return _failed(f"Respond.io step failed ({_err(e)})", merged_phone_contact, phone=shown)
     merged_survivor = survivor if status == "merged" else None
 
     try:

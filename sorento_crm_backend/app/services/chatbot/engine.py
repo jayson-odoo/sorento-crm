@@ -2972,8 +2972,11 @@ def _phone_turn(
                 )
                 why = "A WhatsApp username-only contact has no phone, so the CRM cannot tell who it is until it shares one."
         except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never left `processing`
-            message = f"{type(exc).__name__}: {exc}"
-            logger.exception("chatbot turn %s failed in the phone flow", turn_id)
+            from app.services import wa_phone_link
+
+            # WU18: the message can carry a phone; log and store the scrubbed text, no traceback.
+            message = wa_phone_link.scrub_phone(f"{type(exc).__name__}: {exc}")
+            logger.error("chatbot turn %s failed in the phone flow: %s", turn_id, message)
             db.rollback()
             turn_trace.record(
                 "received",
@@ -2993,7 +2996,8 @@ def _phone_turn(
                 error=message,
                 records=turn_trace.persisted(),
             )
-            return _failed_result(turn_id, "received", message, [], dry_run)
+            # Nothing is sent: a phone-flow failure must not answer a contact the CRM cannot yet identify.
+            return dataclasses_replace(_failed_result(turn_id, "received", message, [], dry_run, reply_text=""), actions=[])
         turn_trace.record(
             "received",
             status="skipped",
