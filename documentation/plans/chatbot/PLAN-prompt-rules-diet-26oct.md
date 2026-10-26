@@ -74,9 +74,14 @@ CONFIDENCE 3,399 (L419); ENTITY OPERATIONS 3,235 (L366); COMPANY-NAME REPLY 3,12
 |---|---|---|---|---|---|---|---|---|
 | 0 (A = v185) | none | 129,651 | 22/22/23 per run | 95/93/96 per run | dealer 3/3, a3 3/3 | 22 | 3.73 | baseline |
 | 1 | escalation, decisive terms, requested attrs, message type, entity conf/ops, superseded dups | 120,208 | 22 vs 22 | 97 vs 96 | 3/3, 3/3 | 20 vs 22 | 3.62 | PASS |
-Drafted, not yet gated: r02 (continuations, broaden, numbered answers, spec entity, low stock) 114,053; r03a+r03b (order
-/ output / PO / quantity / access / self reference) 103,559; r04 (ranking, top selling, sales report / channel / analysis)
-98,339; r05 (second pass outside r04's sections) 88,588.
+| 2 (r02) | continuations, broaden, numbered answers, open question, spec entity, low stock | 114,053 | 20 vs 22 | - | - | - | 0.83 | EARLY STOP (or5-c-03, or5-m-03 -> top_selling) |
+| 2b (r02 minus numbered answers) | | 114,876 | ok | 93 vs 97 | | | 2.55 | EARLY STOP (spec asks -> intent attachments) |
+| 2c (2b minus open question + spec) | | 115,794 | 21 vs 22 | - | | | 0.55 | EARLY STOP (coin-flip rows) |
+Crew a83045112 (b): from here A = v185 fixed, the rest gated in two steps (S1 = r01..r04, S2 = full chain), one retry.
+| S1 (r01, r02c, r03a, r03b, r04) | + order / output / PO / quantity / access; ranking set | 100,080 | 20 vs 22 | - | | | 0.53 | EARLY STOP (or5-5-01, or5-c-01) |
+| diags (7 variants, 3-6 rows x3) | | | | | | | 0.62 | or5-5-01 <- NARROWING A TOP SELLING ASK edit; top_selling flips <- ORDER_STATUS FILTER / TOPIC RESET / OUTPUT / GROUP_BY / TOP_N group |
+| S1 retry s1c (r01, r02c, r03c, r03b, r04b) | both culprits dropped | 102,402 | 22 vs 22 | 95 vs 96 (per-run means 94.67 = 94.67) | 3/3, 3/3 | not run | 2.52 | EARLY STOP by one TRAIN item; decision with crew |
+Full chain on the s1c base (r05d, r06c, r07): 91,663, not gated; the last ~4k sits in the sections the diags tied to flips.
 
 ## Trigger to stop early
 A round that cannot pass the bar after one shrink: stop, report the accepted size and the section that resists.
