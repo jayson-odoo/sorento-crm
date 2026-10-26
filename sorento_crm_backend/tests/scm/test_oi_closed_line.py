@@ -79,7 +79,7 @@ def _stock_dry(stock) -> None:
     stock.quantity_reserved = stock.quantity_on_hand
 
 
-def _assert_applied_and_order_row_cancelled(world, batch, line, calls):
+def _assert_applied_and_order_row_cancelled(world, batch, line, calls, *, took_back="CANCEL ORDER"):
     db = world.db
     db.expire_all()
     pcr = db.query(PlanningChangeRow).filter(PlanningChangeRow.batch_id == batch.id).one()
@@ -94,8 +94,9 @@ def _assert_applied_and_order_row_cancelled(world, batch, line, calls):
     lines = handover[0]["context"]["handover"]["lines"]
     assert [entry["item_code"] for entry in lines] == [order_row.item_code]
     # ORDERBACK-DELTA (owner, 13 Oct 2026): one line saying the decision, and that the
-    # Buy purchasing holds is to be taken back.
-    assert "CANCEL ORDER" in lines[0]["remark"], lines[0]
+    # Buy purchasing holds is to be taken back. Stock taking its place reads as the change
+    # (OI-EMAIL-PURCHASING-FOCUS Q4, owner 26 Oct 2026), never "CANCEL ORDER".
+    assert took_back in lines[0]["remark"], lines[0]
 
 
 # ------------------------------------------------------------------- AC-1 / AC-2
@@ -125,7 +126,10 @@ def test_ac_1_2_confirm_on_a_closed_line_applies_and_cancels_the_raised_order_ro
     planning_change_service.apply(world.db, str(batch.id), world.actor)
     world.db.commit()
 
-    _assert_applied_and_order_row_cancelled(world, batch, line, calls)
+    _assert_applied_and_order_row_cancelled(
+        world, batch, line, calls,
+        took_back=f"CHANGED: ORDER 72 -> USE {world.pool_wh.warehouse_code} 72",
+    )
 
 
 def _core_line_of(world, line):
@@ -593,12 +597,9 @@ def test_a_short_reserve_reads_just_its_decision_in_the_purchasing_email(api, mo
     response = _reserve(client, world, order, line, "10")
 
     assert response.status_code == 200, response.text
-    handover = _handover_calls(calls)
-    assert len(handover) == 1, [c["trigger_type"] for c in calls]
-    context = handover[0]["context"]["handover"]
-    assert "STOCK SHORT" not in context["verbs"], context["verbs"]
-    (told,) = context["lines"]
-    assert (told["qty"], told["remark"]) == ("10", f"USE {world.pool_wh.warehouse_code}"), told
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026): a Use BRW line is not purchasing's, so
+    # this Confirm sends no email at all (and so no STOCK SHORT line either).
+    assert _handover_calls(calls) == [], [c["trigger_type"] for c in calls]
     world.db.expire_all()
     assert (
         world.db.query(OrderInquiryRow).filter(OrderInquiryRow.so_line_id == line.id).count()
