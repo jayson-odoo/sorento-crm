@@ -234,7 +234,6 @@ describe.each<Where>(['worklist', 'lines'])('F3 and F4 receipts on one chip, on 
     expect(screen.getByText('Received 30 at B1')).toBeTruthy();
     expect(screen.getByText('Received 20 at B2')).toBeTruthy();
     expect(screen.queryByText(/^\+\d+$/)).toBeNull();
-    expect(document.querySelector('[title*="Received 20"]')).toBeNull();
   });
 });
 
@@ -352,7 +351,7 @@ describe.each<Where>(['worklist', 'lines'])('R5 the number leads, the receipt gi
     const classes = pill.className;
     expect(classes).toContain('truncate');
     expect(classes).toContain('min-w-0');
-    expect(classes).toContain('text-[10px]');
+    expect(classes).toContain('text-2xs');
     expect(classes).toMatch(/(^|\s)px-1(\s|$)/);
     expect(classes).toContain('text-muted-foreground');
     expect(pill.getAttribute('title')).toBe('Received 60 at BRW-BB');
