@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -58,7 +58,7 @@ class SpanConfig:
     prompt_version: int | None
     provider: str
     model: str
-    api_key: str
+    api_key: str = field(repr=False)
     model_source: str
 
 
@@ -132,7 +132,8 @@ def extract(config: SpanConfig, message: str) -> SpanAnswer | None:
         "prompt_tokens": int(getattr(result, "prompt_tokens", 0) or 0),
         "completion_tokens": int(getattr(result, "completion_tokens", 0) or 0),
         "total_tokens": int(getattr(result, "total_tokens", 0) or 0),
-        "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0),
+        # NULL when the provider reported none (CU-2); `ChatResult` carries 0 for that.
+        "cached_tokens": int(getattr(result, "cached_tokens", 0) or 0) or None,
     }
     try:
         spans: list[Span] | None = _read(getattr(result, "content", None))

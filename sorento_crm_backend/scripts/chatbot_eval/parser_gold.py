@@ -353,8 +353,10 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     # CHAT-V66-REGRESSIONS: a lookup version gets the engine's lookup blocks (the message's own text plus the values the
     # row's subject holds) and loses the per-turn lists, as `engine.run_turn` builds it. The gold contact resolves to
     # no one, so no Salesperson or Customer block (staff-only blocks the harness never sees).
-    lookup = bool(getattr(config, "lookup_lists", False))
+    spans = bool(getattr(config, "lookup_spans", False))
+    lookup = bool(getattr(config, "lookup_lists", False)) or spans
     lookup_lines = None
+    span_prep = None
     db = factory()
     try:
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
@@ -368,13 +370,23 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
             if config.closed_lists
             else (None, frozenset(), {})
         )
-        if lookup:
+        if spans:
+            # ENTITY-EXTRACT-MATCH S2: the span seam, as the engine runs it (the call itself after the session closes).
+            span_prep = engine._span_prep(
+                db, user_turn.own_text, frozenset(), "parser-gold", None, brands,
+                lookup_lists.held_values(_subject_values(held.get("subject"))), None,
+            )
+        elif lookup:
             lookup_lines, _event = engine._lookup_lines(
                 db, user_turn.own_text, config, frozenset(), "parser-gold", None, brands,
                 lookup_lists.held_values(_subject_values(held.get("subject"))),
             )
     finally:
         db.close()
+    if span_prep is not None:
+        lookup_lines, _event, _span_event = engine._span_lookup(
+            span_prep, session_factory=factory, contact_respond_id="parser-gold", dry_run=True, turn_id=None
+        )
     # As the engine: an empty state adds no block.
     held_any = bool(
         held.get("subject") or held.get("open_question") or held.get("last_list") or held.get("pending_task")

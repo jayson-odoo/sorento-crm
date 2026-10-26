@@ -19,7 +19,7 @@ import copy
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -85,7 +85,7 @@ class ParserConfig:
     prompt_version: int | None
     provider: str
     model: str
-    api_key: str
+    api_key: str = field(repr=False)
     # CHAT-CLOSED-LISTS: the version carries the CLOSED LISTS section, so the user turn
     # carries the candidate block and grounding validates picks against the lists.
     closed_lists: bool = False

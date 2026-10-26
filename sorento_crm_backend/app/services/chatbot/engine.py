@@ -1299,7 +1299,6 @@ class _SpanPrep:
     held: dict[str, tuple[str, ...]]
     embed: Any
     config: span_extract.SpanConfig | None
-    config_error: bool = False
 
 
 def _span_prep(
@@ -1321,15 +1320,14 @@ def _span_prep(
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
-        config, config_error = None, False
+        config = None
         try:
             with db.begin_nested():
                 config = span_extract.resolve_config(db, llm_choice=llm_choice)
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
-            config_error = True
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, config_error)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config)
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
@@ -1353,12 +1351,14 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
     """The span call, then the lookup blocks. Runs with no DB session open. Returns (lines, `lookup_lists` event,
     `span_extract` event). A call that fails or answers unreadably leaves today's n-gram lines (`fallback`)."""
     config = prep.config
+    started = time.perf_counter()
     answer = span_extract.extract(config, prep.message) if config is not None else None
+    elapsed_ms = int((time.perf_counter() - started) * 1000) if config is not None else 0
     event: dict[str, Any] = {
-        "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
+        "spans": [], "rows_rendered": 0, "ms": elapsed_ms,
         "provider": config.provider if config else None, "model": config.model if config else None,
         "model_source": config.model_source if config else None, "fallback": False,
-        "tokens": {k: answer.usage.get(k, 0) for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
+        "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
     }
     if answer is not None and not dry_run:
         try:
@@ -1369,27 +1369,35 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 )
         except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
             logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
-    usable = lookup_lists.usable_embedder(prep.rows, prep.embed)
     try:
-        if answer is None or answer.spans is None:
+        hits: dict[str, list[lookup_lists.Hit]] | None = None
+        if answer is not None and answer.spans is not None:
+            try:
+                all_rows = [*prep.rows, *prep.spec_key_rows]
+                resolutions = list_resolver.resolve(answer.spans, all_rows, embed=lookup_lists.usable_embedder(all_rows, prep.embed))
+                hits = _hits_of(resolutions)
+                for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
+                    known = {h.row.key for h in held_hits}
+                    hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
+                hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
+                event["spans"] = [
+                    {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates)}
+                    for r in resolutions
+                ]
+                lookup_event: dict[str, Any] = {"spans": [r.span.text for r in resolutions]}
+            except Exception:  # noqa: BLE001 - the resolver or the adapter failed: today's n-gram lines take over
+                logger.warning("chatbot: span matching failed; using the n-gram lookup", exc_info=True)
+                hits = None
+        if hits is None:
             event["fallback"] = True
-            hits = lookup_lists.shortlist(prep.message, prep.rows, usable, brand_words=prep.brand_words, held=prep.held)
+            hits = lookup_lists.shortlist(
+                prep.message, prep.rows, lookup_lists.usable_embedder(prep.rows, prep.embed),
+                brand_words=prep.brand_words, held=prep.held,
+            )
             lookup_event = {"pieces": lookup_lists.pieces(prep.message), "fallback": True}
-        else:
-            all_rows = [*prep.rows, *prep.spec_key_rows]
-            resolutions = list_resolver.resolve(answer.spans, all_rows, embed=lookup_lists.usable_embedder(all_rows, prep.embed))
-            hits = _hits_of(resolutions)
-            for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
-                known = {h.row.key for h in held_hits}
-                hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
-            hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
-            if prep.numbers:
-                hits["spec"] = [*prep.numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
-            event["spans"] = [
-                {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates)}
-                for r in resolutions
-            ]
-            lookup_event = {"spans": [r.span.text for r in resolutions]}
+        # Spec NUMBERS join the spec block on every path, as in `_lookup_lines`.
+        if prep.numbers:
+            hits["spec"] = [*prep.numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
         lines = lookup_lists.render(hits)
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
         lookup_event["hits"] = [
