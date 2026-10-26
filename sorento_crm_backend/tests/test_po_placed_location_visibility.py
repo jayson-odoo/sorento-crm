@@ -1,13 +1,17 @@
-"""STOCK-TOTAL-OS-SCOPE tester finding: the zero-stock reply's on-order note (the
-`crm_procurement_po_placed_list` rung) printed `*Location:* BRW-NTC` for a contact whose
-stock-visibility policy hides BRW-NTC. Same rule as the stock reply: a hidden warehouse is
-never shown or hinted.
+"""The zero-stock reply's on-order note (the `crm_procurement_po_placed_list` rung) under a
+contact's stock-visibility policy.
 
-Under a `contact_id`, `GET /procurement/purchase-orders/placed` omits `location` on every
-row whose location the contact may not see (the same `warehouse_criterion` + active
-filter the stock lines use). The row itself stays: what is on order is still the answer,
-only the location is withheld. `availability` mode names no location at all, and an
-unresolvable contact fails closed. No `contact_id` (staff, n8n) is unchanged.
+STOCK-TOTAL-OS-SCOPE (#1431) first stopped the note NAMING a hidden location, but it kept the
+row and only withheld `location`. CHAT-PO-LOCATION-SCOPE (owner report, 26 Oct 2026): a
+contact allowed BRW and MWH was still shown the PO lines on BRW-BB and BRW-NTC, printed with
+no location line. The on-order rows a contact sees are now scoped exactly like its stock
+lines: the active warehouses `stock_visibility.warehouse_criterion` allows. A row outside that
+scope is not returned at all, and neither is a PO line with no warehouse (it is in no named
+location; same ruling as open SO with no warehouse in #1431). A sub-location (BRW-BB) is its
+own warehouse row, so a contact scoped to BRW does not see it. `availability` mode is scoped
+the same way and still names no location; an unresolvable contact fails closed with no rows,
+as the stock list does. No `contact_id` (staff, n8n) and a policy naming no location list are
+unchanged.
 
 Postgres only, blank schema, every row seeded here (CI's database has none).
 """
@@ -74,53 +78,149 @@ def _rows(client, prod, **params):
     return resp, {r["po_number"]: r for r in resp.json()["data"]}
 
 
-def test_restricted_contact_never_sees_a_hidden_location(client, db):
+def test_owner_report_contact_on_brw_and_mwh_sees_only_the_brw_lines(client, db):
+    """The owner's 26 Oct case: scoped to BRW + MWH, 0 stock, open PO lines on BRW, on its
+    sub-locations BRW-BB and BRW-NTC (their own warehouse rows, pooled to BRW), and none on
+    MWH. Only the BRW lines come back, each naming BRW, and the summary counts them alone."""
+    brw = _warehouse(db, code=unique_code("BRW"))
+    mwh = _warehouse(db, code=unique_code("MWH"))
+    bb = _warehouse(db, code=f"{brw.warehouse_code}-BB")
+    ntc = _warehouse(db, code=f"{brw.warehouse_code}-NTC")
+    bb.pool_warehouse_id = brw.id
+    ntc.pool_warehouse_id = brw.id
+    prod = product(db, company_id=DEFAULT_COMPANY_ID)
+    _po_line(db, product_id=prod.id, ordered=72, received=0, po_number="PO-BB", warehouse_id=bb.id)
+    _po_line(db, product_id=prod.id, ordered=32, received=0, po_number="PO-BRW-1", warehouse_id=brw.id)
+    _po_line(db, product_id=prod.id, ordered=57, received=0, po_number="PO-NTC", warehouse_id=ntc.id)
+    _po_line(db, product_id=prod.id, ordered=8, received=0, po_number="PO-BRW-2", warehouse_id=brw.id)
+    db.flush()
+    contact = _contact(db)
+    _policy(db, contact, mode="compact", warehouse_ids=[brw.id, mwh.id])
+
+    resp, rows = _rows(client, prod, contact_id=contact.id, include_summary="true")
+
+    assert set(rows) == {"PO-BRW-1", "PO-BRW-2"}
+    assert {r["location"] for r in rows.values()} == {brw.warehouse_code}
+    assert bb.warehouse_code not in resp.text
+    assert ntc.warehouse_code not in resp.text
+    summary = resp.json()["summary"]
+    assert summary["po_placed_qty"] == 40
+    assert summary["po_placed_count"] == 2
+
+
+def test_restricted_contact_never_sees_a_row_outside_its_locations(client, db):
     vis, hid, prod = _seed(db)
     contact = _contact(db)
     _policy(db, contact, mode="compact", warehouse_ids=[vis.id])
 
     resp, rows = _rows(client, prod, contact_id=contact.id)
 
+    # The hidden PO line, the hidden SPO allocation (by location code) and the line with no
+    # warehouse are all outside the contact's locations: none of them is returned.
+    assert set(rows) == {"PO-VIS"}
     assert rows["PO-VIS"]["location"] == vis.warehouse_code
-    # The on-order rows stay; only the hidden location is withheld.
-    assert rows["PO-HID"]["location"] is None
-    assert rows["SPO-HID"]["location"] is None
-    assert rows["PO-NONE"]["location"] is None
     assert hid.warehouse_code not in resp.text
 
 
-def test_exclusion_policy_withholds_the_excluded_location(client, db):
+def test_exclusion_policy_drops_the_excluded_location(client, db):
     vis, hid, prod = _seed(db)
     contact = _contact(db)
     _policy(db, contact, mode="detailed", excluded_warehouse_ids=[hid.id])
 
     resp, rows = _rows(client, prod, contact_id=contact.id)
 
+    assert set(rows) == {"PO-VIS"}
     assert rows["PO-VIS"]["location"] == vis.warehouse_code
-    assert rows["PO-HID"]["location"] is None
     assert hid.warehouse_code not in resp.text
 
 
-def test_every_warehouse_policy_keeps_every_location(client, db):
+def test_a_visible_spo_matched_by_location_code_alone_comes_back(client, db):
+    vis, _hid, prod = _seed(db)
+    _spo(db, product_id=prod.id, allocated=3, number="SPO-VIS", location_code=vis.warehouse_code)
+    contact = _contact(db)
+    _policy(db, contact, mode="compact", warehouse_ids=[vis.id])
+
+    _resp, rows = _rows(client, prod, contact_id=contact.id)
+
+    assert set(rows) == {"PO-VIS", "SPO-VIS"}
+    assert rows["SPO-VIS"]["location"] == vis.warehouse_code
+
+
+def test_merged_access_type_policy_scopes_like_the_stock_lines(client, db):
+    """Two access types: one includes VIS and HID, the other excludes HID. The merged
+    policy (`stock_visibility._merge_access_type_rows`) is VIS alone, and so are the rows."""
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    vis, hid, prod = _seed(db)
+    contact = _contact(db)
+    wide, narrow = unique_code("WIDE")[:50], unique_code("NARROW")[:50]
+    db.add_all([ContactAccessType(code=wide, name="ZZT wide"), ContactAccessType(code=narrow, name="ZZT narrow")])
+    db.flush()
+    db.execute(
+        respond_contact_access_types.insert(),
+        [{"contact_id": contact.id, "access_type_code": c} for c in (wide, narrow)],
+    )
+    db.add_all(
+        [
+            StockVisibilityPolicy(
+                id=str(uuid.uuid4()), access_type_code=wide, mode="compact", warehouse_ids=[vis.id, hid.id]
+            ),
+            StockVisibilityPolicy(
+                id=str(uuid.uuid4()), access_type_code=narrow, mode="compact", excluded_warehouse_ids=[hid.id]
+            ),
+        ]
+    )
+    db.flush()
+
+    resp, rows = _rows(client, prod, contact_id=contact.id)
+
+    assert set(rows) == {"PO-VIS"}
+    assert hid.warehouse_code not in resp.text
+
+
+def test_empty_include_list_returns_no_rows(client, db):
+    _vis, _hid, prod = _seed(db)
+    contact = _contact(db)
+    _policy(db, contact, mode="compact", warehouse_ids=[])
+
+    resp, rows = _rows(client, prod, contact_id=contact.id, include_summary="true")
+
+    assert rows == {}
+    assert resp.json()["summary"]["po_placed_count"] == 0
+
+
+def test_a_named_warehouse_never_widens_the_contact_scope(client, db):
+    vis, hid, prod = _seed(db)
+    contact = _contact(db)
+    _policy(db, contact, mode="compact", warehouse_ids=[vis.id])
+
+    _resp, rows = _rows(client, prod, contact_id=contact.id, warehouse_ids=hid.id)
+
+    assert rows == {}
+
+
+def test_every_warehouse_policy_keeps_every_row(client, db):
     vis, hid, prod = _seed(db)
     contact = _contact(db)
     _policy(db, contact, mode="compact")
 
     _resp, rows = _rows(client, prod, contact_id=contact.id)
 
+    assert set(rows) == {"PO-VIS", "PO-HID", "PO-NONE", "SPO-HID"}
     assert rows["PO-VIS"]["location"] == vis.warehouse_code
     assert rows["PO-HID"]["location"] == hid.warehouse_code
     assert rows["SPO-HID"]["location"] == hid.warehouse_code
 
 
-def test_availability_mode_names_no_location(client, db):
-    vis, hid, prod = _seed(db)
+def test_availability_mode_is_scoped_and_names_no_location(client, db):
+    vis, _hid, prod = _seed(db)
     contact = _contact(db)
-    _policy(db, contact, mode="availability", warehouse_ids=[vis.id, hid.id])
+    _policy(db, contact, mode="availability", warehouse_ids=[vis.id])
 
     _resp, rows = _rows(client, prod, contact_id=contact.id)
 
-    assert {r["location"] for r in rows.values()} == {None}
+    assert set(rows) == {"PO-VIS"}
+    assert rows["PO-VIS"]["location"] is None
 
 
 def test_unresolvable_contact_fails_closed(client, db):
@@ -128,7 +228,7 @@ def test_unresolvable_contact_fails_closed(client, db):
 
     _resp, rows = _rows(client, prod, contact_id="no-such-contact")
 
-    assert {r["location"] for r in rows.values()} == {None}
+    assert rows == {}
 
 
 def test_staff_call_without_contact_is_unchanged(client, db):
@@ -136,6 +236,7 @@ def test_staff_call_without_contact_is_unchanged(client, db):
 
     _resp, rows = _rows(client, prod)
 
+    assert set(rows) == {"PO-VIS", "PO-HID", "PO-NONE", "SPO-HID"}
     assert rows["PO-VIS"]["location"] == vis.warehouse_code
     assert rows["PO-HID"]["location"] == hid.warehouse_code
     assert rows["SPO-HID"]["location"] == hid.warehouse_code
