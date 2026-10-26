@@ -380,3 +380,13 @@ def test_typed_list_wins_when_slightly_below_other_list():
     ]
     res = _one("harbour glass", "brand", rows)  # brand 0.684 vs customer 0.765
     assert res.status == "resolved" and res.candidates[0].row.key == "b1"
+
+
+# AC-S1-6: among close rows, the one the span equals outright is the answer (exact-class rule)
+def test_exact_row_beats_longer_row_containing_it():
+    rows = [
+        R("spec_key", "k1", "Length"), R("spec_key", "k2", "Trap outlet length"),
+        R("spec_key", "k3", "Pipe size"), R("spec_key", "k4", "Finish or colour"), R("spec_key", "k5", "Wall thickness"),
+    ]
+    res = _one("length", None, rows)
+    assert res.status == "resolved" and res.candidates[0].row.key == "k1"
