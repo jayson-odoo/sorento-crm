@@ -86,7 +86,8 @@ Fixtures: one company, one product, bins B1 and B2, open SO lines. "Placement" =
 
 - **AC-D1 (Q1).** OI Lines tab and worklist: a PO-placed line whose SPO is received shows the PO
   chip and the SPO chip; the SPO chip carries "Received <qty> at <bin>" (L880: "Received 486 at
-  BRW-BB").
+  BRW-BB"). The PO chip never carries a "received" pill (owner note on mock v1); the received
+  state shows only on the SPO chip. Class d (no SPO) pill placement: pending owner (mock v2 ask).
 - **AC-D2 (Q2).** The state pill reads "On PO/SPO" on every placed row, unchanged.
 - **AC-D3 (Q5).** Dead hops show red "PO cancelled" / "SPO withdrawn"; the worklist "Dead
   document" filter lists exactly those rows; a retired SPO link is no longer hidden.
