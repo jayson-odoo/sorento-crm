@@ -1,0 +1,3 @@
+{"mid": "m1", "mentions": [{"span": "srt", "type": "brand", "row_ids": ["b2"], "in_list": true}, {"span": "马桶", "type": "category", "row_ids": ["c1"], "in_list": true}], "none": false}
+{"mid": "m2", "mentions": [{"span": "kimlan", "type": "customer", "row_ids": ["u1"], "in_list": true}], "none": false}
+{"mid": "m3", "mentions": [{"span": "mocha", "type": "brand", "row_ids": ["b1"], "in_list": true}, {"span": "trading sdn bhd", "type": "customer", "row_ids": ["u1"], "in_list": true}], "none": false}
