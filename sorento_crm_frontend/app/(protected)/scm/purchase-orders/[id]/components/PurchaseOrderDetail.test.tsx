@@ -196,6 +196,14 @@ function openTab(name: 'General' | 'Lines' | 'Goods receipt') {
   fireEvent.mouseDown(screen.getByRole('tab', { name }), { button: 0, ctrlKey: false });
 }
 
+/** U4 (LINKAGE-UNIFY): the new SPO column prints its own muted dash for a line with no SPO,
+ * so the book S/O assertions below look only inside the S/O cell. */
+function soCell(row: HTMLElement): HTMLElement {
+  const headers = screen.getAllByRole('columnheader').map((h) => (h.textContent ?? '').trim());
+  const at = headers.findIndex((h) => h === 'S/O');
+  return row.querySelectorAll('td')[at] as HTMLElement;
+}
+
 beforeEach(() => {
   cleanup();
   usePurchaseOrder.mockReset();
@@ -508,10 +516,10 @@ describe('PurchaseOrderDetail - the lines grid', () => {
     expect(skuOrder()).toEqual(['SKU-A', 'SKU-B', 'SKU-C']);
   });
 
-  it('orders by what has been received', () => {
+  it('orders by what has been transferred (owner ruling c, 26 Oct: "Transferred" replaces "Qty received")', () => {
     renderDetail();
     openTab('Lines');
-    fireEvent.click(screen.getByRole('button', { name: 'Qty received' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Transferred' }));
     expect(skuOrder()).toEqual(['SKU-C', 'SKU-B', 'SKU-A']);
   });
 
@@ -594,7 +602,7 @@ describe('PurchaseOrderDetail - the book\'s own S/O linkage (AC-A1/A2/A3/A8)', (
     openTab('Lines');
 
     const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
-    expect(within(row).getByText('-')).toBeInTheDocument();
+    expect(within(soCell(row)).getByText('-')).toBeInTheDocument();
     expect(within(row).queryByText('Linked, not held')).not.toBeInTheDocument();
   });
 
@@ -613,7 +621,7 @@ describe('PurchaseOrderDetail - the book\'s own S/O linkage (AC-A1/A2/A3/A8)', (
     const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
     expect(within(row).getByText('Linked, not held')).toBeInTheDocument();
     // And it is NOT the dash, or the two states would be indistinguishable.
-    expect(within(row).queryByText('-')).not.toBeInTheDocument();
+    expect(within(soCell(row)).queryByText('-')).not.toBeInTheDocument();
   });
 
   it('never renders the raw AutoCount ref, which is a machine key', () => {
@@ -657,7 +665,7 @@ describe('PurchaseOrderDetail - the book\'s own S/O linkage (AC-A1/A2/A3/A8)', (
     openTab('Lines');
 
     const row = screen.getByText('CW-BASIN-450').closest('tr') as HTMLElement;
-    expect(within(row).getByText('-')).toBeInTheDocument();
+    expect(within(soCell(row)).getByText('-')).toBeInTheDocument();
   });
 
   it('does not turn the sales order into a link (a deliberate omission)', () => {
@@ -946,13 +954,13 @@ describe('PurchaseOrderDetail - AutoCount Cancel PO on the lines', () => {
     });
   }
 
-  it('states Qty cancelled right after Qty received, with the document and match on it', () => {
+  it('states Qty cancelled right after Transferred (owner ruling c, 26 Oct), with the document and match on it', () => {
     usePurchaseOrder.mockReturnValue({ data: cancelledPo(), isLoading: false, isError: false });
     renderDetail();
     openTab('Lines');
 
     const headers = screen.getAllByRole('columnheader').map((h) => h.textContent ?? '');
-    const received = headers.findIndex((h) => h.includes('Qty received'));
+    const received = headers.findIndex((h) => h.includes('Transferred'));
     expect(headers[received + 1]).toContain('Qty cancelled');
     const cell = screen.getByTestId('qty-cancelled-l-1');
     expect(cell).toHaveTextContent('20');
