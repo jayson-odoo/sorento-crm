@@ -689,6 +689,7 @@ class IncomingStockService:
                     _still_incoming_filter(),
                     _not_draft_shipment_filter(),
                     _region_filter(self.regions),
+                    self._line_in_scope_clause(),
                     InboundShipmentLine.product_id.in_(candidate_ids),
                 )
                 .distinct()
@@ -1112,18 +1113,23 @@ class IncomingStockService:
                 "bill_of_lading_number",
                 "invoice_number",
             ),
-            extra_filters=(_not_draft_shipment_filter(), _region_filter(self.regions)),
+            extra_filters=(
+                _not_draft_shipment_filter(),
+                _region_filter(self.regions),
+                self._shipment_in_scope_clause(),
+            ),
         )
         if resolved is None or not resolved:
             return {"data": None, "empty": True}
-        # A business code can name several shipments; the region filter picks among them,
-        # so an ambiguous ref resolves to the one this contact may see.
+        # A business code can name several shipments; the region and location filters pick among
+        # them, so an ambiguous ref resolves to the one this contact may see.
         shipment = (
             self.db.query(InboundShipment)
             .filter(
                 InboundShipment.id.in_(resolved),
                 _not_draft_shipment_filter(),
                 _region_filter(self.regions),
+                self._shipment_in_scope_clause(),
             )
             .first()
         )
@@ -1221,6 +1227,9 @@ class IncomingStockService:
                 }
             )
 
+        if not products:
+            # Scoped takes left nothing this contact may be told: the container is not told.
+            return {"data": None, "empty": True}
         return {
             "data": {
                 "shipment_number": shipment.shipment_number,

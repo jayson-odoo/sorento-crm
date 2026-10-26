@@ -55,21 +55,23 @@ class _Contact:
         #: The packing list regions this contact may be told about; None = no contact, no filter.
         self.regions = self.rules.regions if self.rules is not None else None
         #: CHAT-INCOMING-LOCATION-SCOPE: the warehouse ids this contact's stock-visibility
-        #: policy lets it be told about (`stock_visibility.scope_warehouse_ids`, the one scope
-        #: the stock lines and the placed route use). None = no contact, or a policy naming
-        #: no location list: no filter. [] = an unresolvable contact: fail closed.
+        #: policy lets it be told about (`stock_visibility.contact_location_scope`, the one
+        #: scope the stock lines use). None = no contact, or a policy naming no location list:
+        #: no filter. [] = an unresolvable contact: fail closed. Kept in full here for the
+        #: single-shipment routes, which print quantities and documents in every mode.
+        self.location_scope: Optional[list[str]] = None
+        #: The scope the list-shaped routes apply. An availability (dealer) contact's answer
+        #: there is product + ETAs only, and owner 26 Oct: location scoping does not apply to
+        #: ETA, so it is not narrowed; every other mode takes `location_scope`.
         self.warehouse_scope: Optional[list[str]] = None
         if contact_id:
-            from app.services.stock_visibility import resolve_policy, scope_warehouse_ids
+            from app.services.stock_visibility import contact_location_scope
 
             # The id `resolve_request_contact` already resolved (NULL-workspace fallback
             # included), so a contact this route admits is not read as nobody here.
-            policy = resolve_policy(db, self.resolved) if self.resolved else None
-            self.warehouse_scope = [] if policy is None else scope_warehouse_ids(db, policy)
-            if policy is not None and policy.mode == "availability":
-                # owner 26 Oct: location scoping does not apply to ETA. A dealer is told
-                # product + ETAs only, no quantity, allocation or warehouse.
-                self.warehouse_scope = None
+            policy, self.location_scope = contact_location_scope(db, self.resolved)
+            dealer = policy is not None and policy.mode == "availability"
+            self.warehouse_scope = None if dealer else self.location_scope
 
     def eta_from(self, db: Session, eta_from: Optional[date]) -> Optional[date]:
         return query_eta_from(db, self.rules, eta_from)
@@ -579,7 +581,7 @@ def get_incoming_shipment_products(
     try:
         contact = _Contact(db, contact_id, space_id)
         svc = IncomingStockService(
-            db, regions=contact.regions, warehouse_scope=contact.warehouse_scope
+            db, regions=contact.regions, warehouse_scope=contact.location_scope
         )
         return _for_contact(
             db,
@@ -608,7 +610,7 @@ def get_incoming_shipment_attachment(
     try:
         contact = _Contact(db, contact_id, space_id)
         svc = IncomingStockService(
-            db, regions=contact.regions, warehouse_scope=contact.warehouse_scope
+            db, regions=contact.regions, warehouse_scope=contact.location_scope
         )
         data = svc.shipment_attachment(shipment_id)
         if data is None:

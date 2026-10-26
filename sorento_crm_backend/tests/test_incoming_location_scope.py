@@ -203,10 +203,15 @@ def test_ac2_ac3_shipment_products_drops_hidden_lines(client, db):
 
 
 def test_ac2_shipment_products_for_a_shipment_with_no_visible_line_is_empty(client, db):
+    """AC-12: the container is not told at all, its packing list and number included."""
     w = World(db)
-    _, body = _get(client, f"/shipments/{w.k2.id}/products", contact_id=w.contact.id)
+    w.k2.attachment_id = _attachment(db).id
+    db.flush()
+    resp, body = _get(client, f"/shipments/{w.k2.id}/products", contact_id=w.contact.id)
     assert body["empty"] is True
-    assert not (body.get("data") or {}).get("products")
+    assert body["data"] is None
+    assert "packing-list" not in resp.text
+    assert w.k2.shipping_container_number not in resp.text
 
 
 # --------------------------------------------------------------------- AC-4
@@ -421,3 +426,89 @@ def test_attachment_of_a_shipment_with_an_in_scope_line_is_returned(client, db):
     _, body = _get(client, f"/shipments/{w.k1.id}/attachment", contact_id=w.contact.id)
     assert body["empty"] is False
     assert body["data"]["attachment"]["filename"] == "packing-list.pdf"
+
+
+# --------------------------------------------------------------------- single-shipment routes, dealer
+
+def test_dealer_on_shipment_products_is_scoped_in_every_mode(client, db):
+    """The ETA ruling covers the list-shaped routes only: `/shipments/{id}/products` prints
+    quantities and allocations, so an availability dealer gets the same scope as anyone."""
+    w = World(db, mode="availability")
+    resp, body = _get(client, f"/shipments/{w.k1.id}/products", contact_id=w.contact.id)
+    products = {p["product_code"]: p for p in body["data"]["products"]}
+    assert set(products) == {w.p.product_code}
+    line = products[w.p.product_code]
+    assert _codes(line["warehouse_allocations"]) == {w.brw.warehouse_code: 30}
+    assert line["remaining_incoming_quantity"] == 30
+    assert line.get("unallocated_quantity") is None
+    assert w.bb.warehouse_code not in resp.text
+    _, hidden = _get(client, f"/shipments/{w.k2.id}/products", contact_id=w.contact.id)
+    assert hidden["empty"] is True and hidden["data"] is None
+
+
+def test_dealer_on_shipment_attachment_is_scoped_in_every_mode(client, db):
+    w = World(db, mode="availability")
+    w.k1.attachment_id = _attachment(db).id
+    w.k2.attachment_id = _attachment(db).id
+    db.flush()
+    _, shown = _get(client, f"/shipments/{w.k1.id}/attachment", contact_id=w.contact.id)
+    assert shown["empty"] is False
+    _, hidden = _get(client, f"/shipments/{w.k2.id}/attachment", contact_id=w.contact.id)
+    assert hidden["empty"] is True and hidden["data"] is None
+
+
+# --------------------------------------------------------------------- alternatives
+
+
+def test_alternatives_never_offer_a_neighbour_that_is_incoming_only_out_of_scope(client, db, monkeypatch):
+    """S is incoming only at BRW-NTC; its sibling S2 too. The empty answer for S must not
+    suggest S2: it is no more visible to this contact than S."""
+    w = World(db)
+    s2 = product(db, company_id=DEFAULT_COMPANY_ID)
+    _incoming_line(db, shipment_id=w.k2.id, product_id=s2.id, shipped=10)
+    _alloc(db, w.k2, s2, w.ntc, 10)
+    db.flush()
+    offered = []
+
+    def fake_neighbours(db_, code, *, has_data):
+        offered.extend(has_data([str(s2.id), str(w.p.id)]))
+        return []
+
+    monkeypatch.setattr("app.services.entity_resolver.find_entity_neighbours_with_data", fake_neighbours)
+    _get(client, "/by-product", product_ids=w.s.id, contact_id=w.contact.id)
+    assert str(s2.id) not in offered
+    assert str(w.p.id) in offered
+
+
+# --------------------------------------------------------------------- split lines (S4)
+
+
+def test_split_line_product_shows_the_in_scope_outstanding_once_across_lines(client, db):
+    """P on K1 has lines of 100 and 40; BRW's allocation is 30 with 10 received (20 to come),
+    BRW-BB another 50. Every route totals 20 for P, never 20 per line, and tells no gap."""
+    w = World(db)
+    _incoming_line(db, shipment_id=w.k1.id, product_id=w.p.id, shipped=40)
+    db.query(SPOAllocation).filter(
+        SPOAllocation.inbound_shipment_id == w.k1.id, SPOAllocation.warehouse_id == w.brw.id
+    ).update({"quantity_received": 10})
+    db.flush()
+    cid = w.contact.id
+
+    _, lst = _get(client, "/list", product_ids=w.p.id, contact_id=cid)
+    lines = [ln for s in lst["data"] for ln in s["lines"]]
+    assert sum(ln["remaining_incoming_quantity"] for ln in lines) == 20
+    assert all(ln.get("unallocated_quantity") is None for ln in lines)
+
+    _, by = _get(client, "/by-product", product_ids=w.p.id, contact_id=cid)
+    ships = by["data"][0]["shipments"]
+    assert sum(sh["remaining_incoming_quantity"] for sh in ships) == 20
+    assert all(sh.get("unallocated_quantity") is None for sh in ships)
+
+    _, prods = _get(client, f"/shipments/{w.k1.id}/products", contact_id=cid)
+    mine = [p for p in prods["data"]["products"] if p["product_code"] == w.p.product_code]
+    assert sum(p["remaining_incoming_quantity"] for p in mine) == 20
+    assert all(p.get("unallocated_quantity") is None for p in mine)
+
+    _, ships_body = _get(client, "/shipments", shipment_ids=str(w.k1.id), contact_id=cid)
+    (row,) = ships_body["data"]
+    assert row["total_remaining_incoming_quantity"] == 20

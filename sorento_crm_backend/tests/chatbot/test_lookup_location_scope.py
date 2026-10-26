@@ -83,3 +83,61 @@ def test_ac9_scope_none_means_no_filter(db):
     expected = {brw.warehouse_code, bb.warehouse_code, mwh.warehouse_code}
     assert expected <= _codes(ll._location_rows(db, None))
     assert expected <= _codes(ll.load_rows(db, warehouse_scope=None))
+
+
+# ---------------------------------------------------------------- engine wiring (AC-10)
+
+
+def _engine_locations(db, monkeypatch, contact_id):
+    from app.services.chatbot import engine as engine_mod
+
+    seen: list = []
+    real = ll.load_rows
+
+    def spy(*a, **k):
+        rows = real(*a, **k)
+        seen.extend(r for r in rows if r.list_name == "location")
+        return rows
+
+    monkeypatch.setattr(ll, "embedder", lambda d: None)
+    monkeypatch.setattr(ll, "load_rows", spy)
+    _, event = engine_mod._lookup_lines(db, "brw", None, frozenset(), contact_id, None)
+    assert not event.get("failed"), event
+    return _codes(seen)
+
+
+def _contact_with_policy(db, warehouse_ids):
+    import uuid
+
+    from app.models.access import RespondContact, StockVisibilityPolicy
+
+    contact = RespondContact(
+        id=unique_code("CONTACT"), phone_number=f"+60{uuid.uuid4().int % 10**9:09d}", name="ZZT Contact"
+    )
+    db.add(contact)
+    db.flush()
+    db.add(
+        StockVisibilityPolicy(
+            id=str(uuid.uuid4()), contact_id=contact.id, mode="compact", warehouse_ids=warehouse_ids
+        )
+    )
+    db.flush()
+    return contact
+
+
+def test_engine_scoped_contact_gets_only_its_location_rows(db, monkeypatch):
+    brw, bb, mwh = _world(db)
+    contact = _contact_with_policy(db, [brw.id])
+    codes = _engine_locations(db, monkeypatch, contact.id)
+    assert codes == {brw.warehouse_code}
+
+
+def test_engine_contact_that_resolves_to_nobody_gets_no_location_rows(db, monkeypatch):
+    _world(db)
+    assert _engine_locations(db, monkeypatch, "no-such-contact") == set()
+
+
+def test_engine_empty_contact_id_gets_every_active_location(db, monkeypatch):
+    brw, bb, mwh = _world(db)
+    codes = _engine_locations(db, monkeypatch, "")
+    assert {brw.warehouse_code, bb.warehouse_code, mwh.warehouse_code} <= codes

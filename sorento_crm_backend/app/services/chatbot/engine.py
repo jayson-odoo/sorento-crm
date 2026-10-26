@@ -1248,12 +1248,11 @@ def _lookup_lines(
         # stock-visibility policy allows. No contact id in play = unchanged; one that does not
         # resolve (or whose policy cannot be read) = no location rows.
         def _warehouse_scope():
-            from app.services.stock_visibility import resolve_policy, scope_warehouse_ids
+            from app.services.stock_visibility import contact_location_scope
 
             if not contact_respond_id:
                 return None
-            policy = resolve_policy(db, str(resolved)) if resolved else None
-            return [] if policy is None else scope_warehouse_ids(db, policy)
+            return contact_location_scope(db, str(resolved) if resolved else None)[1]
 
         warehouse_scope = guarded(_warehouse_scope, [])
         with db.begin_nested():
