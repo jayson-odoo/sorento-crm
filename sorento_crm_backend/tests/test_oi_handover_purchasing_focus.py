@@ -402,3 +402,106 @@ def test_a_first_confirm_over_two_imported_orders_reads_each_row_as_a_later_conf
 
     assert len(emails) == 1, emails
     assert [l["remark"] for l in emails[0]["lines"]] == ["CHANGED: ORDER 10 & ORDER 3 -> ORDER 8"]
+
+
+def test_a_first_confirm_that_turns_an_imported_order_to_use_brw_says_it_changed(api, emails):
+    _client, world = api
+    _stock(world.db, world.product, world.pool_wh, on_hand=50)
+    world.db.commit()
+    pool = world.pool_wh.warehouse_code
+    order, line = _imported_raised_order(api)
+    emails.clear()
+
+    _post(api, order, [_line_payload(
+        line.id, reserve=[{"warehouse_id": world.pool_wh.id, "qty": "10"}],
+    )])
+
+    assert len(emails) == 1, emails
+    assert [l["remark"] for l in emails[0]["lines"]] == [f"CHANGED: ORDER 10 -> USE {pool} 10"]
+
+
+def test_a_first_confirm_that_turns_an_imported_order_to_incoming_names_the_spo(api, emails):
+    """Hand-test step 8's shape: Use incoming on a line purchasing holds a raised ORDER for."""
+    import uuid
+    from datetime import date
+
+    from app.models.procurement import InboundShipment, SPOAllocation
+
+    _client, world = api
+    shipment = InboundShipment(
+        id=str(uuid.uuid4()), shipment_number=f"ZZT-SHIP-{uuid.uuid4().hex[:8]}",
+        shipment_date=date(2026, 9, 1), estimated_arrival_date=date(2026, 10, 1),
+    )
+    world.db.add(shipment)
+    world.db.flush()
+    spo = f"ZZT-SPO-{uuid.uuid4().hex[:6]}"
+    world.db.add(SPOAllocation(
+        id=str(uuid.uuid4()), spo_number=spo, spo_line_number=1,
+        inbound_shipment_id=shipment.id, warehouse_id=world.own_wh.id,
+        product_id=world.product.id, allocated_quantity=10, quantity_received=0,
+        receipt_status="pending", company_id=world.company_id,
+    ))
+    world.db.commit()
+    order, line = _imported_raised_order(api)
+    emails.clear()
+
+    _post(api, order, [_line_payload(line.id, timely_spo_qty="10")])
+
+    assert len(emails) == 1, emails
+    [remark] = [l["remark"] for l in emails[0]["lines"]]
+    assert remark.startswith("CHANGED: ORDER 10 -> ") and remark.endswith(" 10"), remark
+    assert spo in remark, remark
+
+
+def test_the_first_take_back_words_local_buy_and_an_order_back_row_by_their_own_kind():
+    """Local buy is not purchasing's, so a raised order turned LOCAL BUY reads as the change;
+    an ORDER BACK row taken back names ORDER BACK, its own kind (crew final audit (3))."""
+    from decimal import Decimal
+
+    from app.services.project_order_inquiry_service import first_take_back_remark
+
+    local = _snap(_buy("10"), buy_origin="local")
+    assert first_take_back_remark([("ORDER", Decimal("10"))], local) == (
+        "CHANGED: ORDER 10 -> LOCAL BUY 10"
+    )
+    own = _snap(_reserve("10", "BRW-IB"))
+    assert first_take_back_remark([("ORDER BACK", Decimal("10"))], own) == (
+        "CHANGED: ORDER BACK 10 -> USE BRW-IB 10"
+    )
+
+
+def test_a_planners_own_remark_never_hides_a_first_confirm_take_back(api, emails):
+    """Crew final audit (2): a stock-only first Confirm that carries the planner's own REMARK
+    still tells the raised order it takes back, as the change."""
+    _client, world = api
+    _stock(world.db, world.product, world.own_wh, on_hand=50)
+    world.db.commit()
+    own = world.own_wh.warehouse_code
+    order, line = _imported_raised_order(api)
+    emails.clear()
+
+    payload = _line_payload(line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}])
+    payload["remark"] = "Site wants it from stock."
+    _post(api, order, [payload])
+
+    assert len(emails) == 1, emails
+    assert [l["remark"] for l in emails[0]["lines"]] == [f"CHANGED: ORDER 10 -> USE {own} 10"]
+
+
+def test_the_board_preview_of_a_first_confirm_take_back_equals_the_email():
+    """Crew final audit (4): the guide gets the raised rows' kind and qty, so hand-test step 4
+    previews exactly what the email says."""
+    from decimal import Decimal
+
+    from app.services.project_order_inquiry_service import saved_draft_remark
+
+    draft = {"verdict": "amended", "reserve": [{"location": "BRW-BB", "qty": "48"}],
+             "borrow": [], "buy_qty": "4"}
+    assert saved_draft_remark(
+        draft, location="BRW-BB", held_rows=[("ORDER", Decimal("52"))]
+    ) == "ORDER 4, CHANGED: ORDER 52 -> USE BRW-BB 48"
+    # A whole Buy over its own raised row takes nothing back: plain ORDER.
+    whole = {"verdict": "amended", "reserve": [], "borrow": [], "buy_qty": "52"}
+    assert saved_draft_remark(whole, location="BRW-BB", held_rows=[("ORDER", Decimal("52"))]) == (
+        "ORDER"
+    )

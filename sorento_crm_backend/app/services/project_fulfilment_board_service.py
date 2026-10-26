@@ -71,6 +71,8 @@ from app.models.project_so import (
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
+    IV_ORDER,
+    IV_ORDER_BACK,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -5400,6 +5402,26 @@ class FulfilmentBoardService:
         }
         inquiries = ProjectOrderInquiryService(self.db)
         links = inquiries._links_by_row(sorted(held)) if held else {}
+        # A line's FIRST Confirm takes back the raised orders purchasing holds on it (a sheet
+        # import's rows): their kind and qty, so the guide words them as the email will
+        # (`first_take_back_remark`, crew final audit, 26 Oct 2026). One read.
+        first = [
+            str(row.project_line_id)
+            for row in rows
+            if decisions.get(id(row)) and not row.decision and row.project_line_id
+        ]
+        raised_rows: Dict[str, List[Tuple[str, Decimal]]] = {}
+        if first:
+            for line_id, verb, qty in self.db.query(
+                OrderInquiryRow.so_line_id, OrderInquiryRow.verb, OrderInquiryRow.qty
+            ).filter(
+                OrderInquiryRow.so_line_id.in_(first),
+                OrderInquiryRow.state == INQUIRY_RAISED,
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+            ).order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc()):
+                raised_rows.setdefault(str(line_id), []).append(
+                    ("ORDER BACK" if verb == IV_ORDER_BACK else "ORDER", _dec(qty))
+                )
 
         def _withdraws(row: _Row) -> bool:
             if not _rejecting(row):
@@ -5435,6 +5457,7 @@ class FulfilmentBoardService:
                     if (row.order_inquiry or {}).get("state")
                     in (INQUIRY_RAISED, INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
                     else None,
+                    held_rows=raised_rows.get(str(row.project_line_id or ""), ()),
                 )
             elif row.cancelled and not row.cancelled_at:
                 row.saved_remark = handover_remark("cancelled", row, None)

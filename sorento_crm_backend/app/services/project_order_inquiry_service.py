@@ -639,6 +639,32 @@ def held_change_remark(before: Mapping[str, Any], now: Mapping[str, Any]) -> Opt
     return None
 
 
+def _held_word(verb: Optional[str]) -> str:
+    """How a take-back names the order purchasing held: its row's own kind."""
+    return "ORDER BACK" if verb == IV_ORDER_BACK else "ORDER"
+
+
+def first_take_back_remark(
+    held: Sequence[Tuple[str, Decimal]], now: Mapping[str, Any]
+) -> str:
+    """A line's FIRST Confirm takes back orders purchasing held with no decision behind them
+    (raised rows, e.g. from the sheet import): `held` is `(ORDER / ORDER BACK, qty)` per row.
+    Shared by the email (`_queue_saved_line`) and the board's preview (`saved_draft_remark`).
+
+    The new side is what is no longer theirs (stock, incoming, LOCAL BUY), and purchasing's own
+    remaining part leads: "ORDER 4, CHANGED: ORDER 10 -> USE BRW-BB 6". With no stock part (a
+    Borrow) the new side is the whole decision."""
+    stock = " & ".join(
+        f"{words} {_qty_str(qty)}"
+        for words, _l, qty, key in _saved_line_parts(now, name_donors=True)
+        if key not in _PURCHASING_KEYS
+    )
+    olds = " & ".join(f"{word} {_qty_str(qty)}" for word, qty in held)
+    change = f"CHANGED: {olds} -> {stock or _parts_with_qty(now)}"
+    theirs = purchasing_remark(now)
+    return f"{theirs}, {change}" if theirs and stock else change
+
+
 def _parts_with_qty(snapshot: Mapping[str, Any]) -> str:
     """Every part of a saved line with its quantity, `ORDER 10` / `USE BRW-BB 6 & ORDER 4`: one
     side of a `CHANGED: ... -> ...` REMARK."""
@@ -657,6 +683,7 @@ def saved_draft_remark(
     buy_origin: Optional[str] = None,
     withdraws_raised: bool = False,
     before: Optional[Mapping[str, Any]] = None,
+    held_rows: Sequence[Tuple[str, Decimal]] = (),
 ) -> Optional[str]:
     """OI-SPLIT-GUIDE (UAC F3, F11): what the purchasing email will say for a line whose
     decision is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`,
@@ -686,6 +713,11 @@ def saved_draft_remark(
     if verdict == "rejected":
         return handover_remark("cancelled", None, None) if withdraws_raised else None
     now = _draft_snapshot(decision, location, codes or {}, spo_numbers, buy_origin)
+    if not before and held_rows:
+        # A first Confirm over raised rows purchasing holds (`held_rows`, `(ORDER / ORDER
+        # BACK, qty)`): the email tells what the draft no longer orders as the change.
+        if _purchasing_qty(now) < sum((qty for _w, qty in held_rows), _ZERO):
+            return first_take_back_remark(held_rows, now)
     if before:
         held = _draft_snapshot(before, location, codes or {}, spo_numbers, buy_origin)
         # The email tells a CHANGED only when the rows take something purchasing held back.
@@ -4687,6 +4719,9 @@ class ProjectOrderInquiryService:
             #: A Borrow's hole raised, resized or cancelled: `record_saved_lines` reads
             #: a donor move or reshuffle as the one hole settled (`_hole_move`).
             "kind": kind,
+            #: The row's own kind of order (ORDER / ORDER BACK), so a take-back names what
+            #: purchasing actually held (crew final audit, 26 Oct 2026).
+            "verb": getattr(row, "verb", None),
             "borrow_hole": (
                 _is_borrow_order_back(row) if borrow_hole is None else borrow_hole
             ),
@@ -4741,7 +4776,17 @@ class ProjectOrderInquiryService:
             ):
                 # The planner's words on a line purchasing holds nothing for (Use own
                 # location, Use BRW, incoming, LOCAL BUY): not theirs (owner, 26 Oct 2026).
-                continue
+                # Unless its rows take back an order they held (a raised row on a first
+                # Confirm): that is told, as the change (crew final audit, 26 Oct 2026).
+                takes_back = any(
+                    IV_CANCEL_BALANCE in (item.get("verb_keys") or ())
+                    and _dec(((item.get("line") or {}).get("was") or {}).get("qty"))
+                    > _dec((item.get("line") or {}).get("qty"))
+                    for item in row_lines
+                )
+                if not takes_back:
+                    continue
+                own = None
             if own is not None and not unchanged:
                 # UAC F27: the planner's own words are the line's REMARK, told once in place
                 # of whatever its rows queued (`_queue_saved_line`'s explicit remark, as a
@@ -4799,7 +4844,7 @@ class ProjectOrderInquiryService:
             netted = {id(i) for i in holes}
             # Each row that took back part of an order purchasing held: (what it held, what it
             # holds now). The email's CHANGED reads these (crew final audit, 26 Oct 2026).
-            taken_rows: List[Tuple[Decimal, Decimal]] = []
+            taken_rows: List[Tuple[Decimal, Decimal, str]] = []
             for item in row_lines:
                 if id(item) in netted:
                     continue
@@ -4808,7 +4853,9 @@ class ProjectOrderInquiryService:
                 keys_told = item.get("verb_keys") or ()
                 if IV_CANCEL_BALANCE in keys_told and was_qty > _dec(entry.get("qty")):
                     taken_back += was_qty - _dec(entry.get("qty"))
-                    taken_rows.append((was_qty, _dec(entry.get("qty"))))
+                    taken_rows.append(
+                        (was_qty, _dec(entry.get("qty")), _held_word(item.get("verb")))
+                    )
                 else:
                     raised += _dec(item.get("adds_order"))
             lines_told = len(row_lines)
@@ -5258,7 +5305,7 @@ class ProjectOrderInquiryService:
         keys: Optional[List[str]] = None,
         taken_back: Decimal = _ZERO,
         raised: Optional[Decimal] = None,
-        taken_rows: Sequence[Tuple[Decimal, Decimal]] = (),
+        taken_rows: Sequence[Tuple[Decimal, Decimal, str]] = (),
     ) -> None:
         explicit = remark is not None
         if not explicit:
@@ -5285,20 +5332,13 @@ class ProjectOrderInquiryService:
             if taken_back > _ZERO:
                 # The line's FIRST Confirm took back an order purchasing held with no decision
                 # behind it (a raised row from the sheet import): told as the change, never
-                # dropped (crew final audit, 26 Oct 2026), "ORDER 4, CHANGED: ORDER 10 -> USE
-                # BRW-BB 6". The new side is what is not theirs any more.
-                stock = " & ".join(
-                    f"{words} {_qty_str(qty)}"
-                    for words, _l, qty, key in _saved_line_parts(now, name_donors=True)
-                    if key not in _PURCHASING_KEYS
+                # dropped (crew final audit, 26 Oct 2026). One function with the board's
+                # preview of it.
+                remark = first_take_back_remark(
+                    [(word, was_qty) for was_qty, _now, word in taken_rows]
+                    or [("ORDER", taken_back)],
+                    now,
                 )
-                # Each row held, as a later Confirm reads them ("ORDER 10 & ORDER 3").
-                held = " & ".join(
-                    f"ORDER {_qty_str(was_qty)}"
-                    for was_qty in ([w for w, _now in taken_rows] or [taken_back])
-                )
-                change = f"CHANGED: {held} -> {stock or _parts_with_qty(now)}"
-                remark = f"{remark}, {change}" if remark and stock else change
                 keys = keys + ["CHANGED"]
         if before is not None:
             qty_before = _dec(before.get("open_qty"))
@@ -5385,11 +5425,15 @@ class ProjectOrderInquiryService:
                     # on the left, what purchasing holds after on the right. "CHANGED: ORDER 5
                     # -> ORDER 50" (a redirect), "CHANGED: ORDER 10 & ORDER 3 -> ORDER 8".
                     pieces = [piece for piece in pieces if piece in date_words]
-                    olds = [was_qty for was_qty, _now in taken_rows] or [taken_back]
-                    new = (raised or _ZERO) + sum((now_qty for _w, now_qty in taken_rows), _ZERO)
+                    olds = [(word, was_qty) for was_qty, _now, word in taken_rows] or [
+                        ("ORDER", taken_back)
+                    ]
+                    new = (raised or _ZERO) + sum(
+                        (now_qty for _w, now_qty, _word in taken_rows), _ZERO
+                    )
                     pieces.append(
                         "CHANGED: "
-                        + " & ".join(f"ORDER {_qty_str(qty)}" for qty in olds)
+                        + " & ".join(f"{word} {_qty_str(qty)}" for word, qty in olds)
                         + f" -> ORDER {_qty_str(new)}"
                     )
                     keys = [key for key in keys if key in (IV_DELAY, IV_ADVANCE)] + ["CHANGED"]
