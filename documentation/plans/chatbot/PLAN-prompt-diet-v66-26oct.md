@@ -1,6 +1,6 @@
 # PLAN: PROMPT-DIET-V66 (the PROMPT-RULES-DIET edits on the production v66 parser text)
 
-Status: Build (crew brief PROMPT-DIET-V66, size S, small fix track: under 300 lines, no migration, no schema, no
+Status: Review (PR #1883, reviewer READY; text delivered to crew/state/outbox/diet-v66, gate PASS 26 Oct 22:36; crew brief PROMPT-DIET-V66, size S, small fix track: under 300 lines, no migration, no schema, no
 auth/RBAC, no ingest surface). Follow-up of #1867.
 
 ## Scope change (owner via crew, 26 Oct ~21:55)
@@ -46,3 +46,8 @@ Parser-level gold gate, arm A = v66 (md5 fb7b4283), arm B = the v66 diet text, c
 ## Not in scope
 No new edits, no re-measure of the other 111 edits (they apply unchanged), no label move (promotion stays one label move
 in the Chatbot Console).
+
+## Gate result (26 Oct 22:08-22:36, USD 2.57 of 3)
+A v66 fb7b4283 vs B diet_v66 79a21014, gpt-5.4-mini, prompt-diet harness diag.py. R5 x2: e2e majority 22 vs 22, raw majority
+20 vs 21, hard rows 2/2 in both, no A-only row. TRAIN x1: 97 vs 97 (3 flips each way). PASS on the #1867 bar. Category set
+not run (over the cap). Full table: crew/state/outbox/diet-v66/GATE.md.
