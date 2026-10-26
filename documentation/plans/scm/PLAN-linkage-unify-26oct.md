@@ -515,5 +515,6 @@ make an SPO's S/O pin less. The OI worklist "taken" counts both (`order_inquiry_
 
 Follow-up lane (not built here): release the redundant links on the over-placed SPO allocations,
 like AC-REMOVED-LINES #1878. Measured: 24 SPO allocations carry more live placed qty (direct +
-followed) than allocated, 923 excess units (`sql/d-14.sql`, `data-D-divergence-dev.md:51`);
+followed) than allocated, 923 excess units (`sql/d-14.sql` on sorento_cagent_stack, 15 Oct data,
+`data-D-divergence-dev.md:51`; the count on newer data may differ);
 row list `sql/d-14-list.sql` (read-only, for crew / the owner to run; not run from this lane).
