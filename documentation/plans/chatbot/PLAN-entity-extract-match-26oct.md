@@ -1,6 +1,6 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: Phase 1 (scout + measurement, report only, no product code). Track: L (chatbot architecture), lead pattern.
+Status: Phase 1 measured, report + recommendation filed, waiting on owner OK of design (no product code yet). Track: L (chatbot architecture), lead pattern.
 Owner OK on the design from the numbers is required before any product code.
 
 ## Owner ask (26 Oct ~14:40)
@@ -138,6 +138,84 @@ B2 (B1 + 6 invented examples) vs B1 on the 186: recall 90.3 vs 88.3, type 82.7 v
 All three parser arms are weakest on spec_key, spec_value and promotion_kind; the span extractor is not
 (spec_key 71 / spec_value 87 / promotion_kind 100 recall). Some L/N/C2 misses are field-mapping gaps in the scorer
 (parser files "dealer" under access_levels, "dimension" under requested_attributes); Part D re-scores with those mapped.
+
+### Run 4 (Part D): scorer field map fixed, meaning ablation (no LLM)
+
+The scorer now also reads where the parser files mentions outside `entities[]` (access_levels dealer/project,
+requested_attributes, routing certification, escalation.company_pick). Re-scored, 200 messages ("x" = fixed map):
+
+| Arm | Span recall | Type acc | Right row | vs Lx (95% CI) |
+| --- | --- | --- | --- | --- |
+| Lx today | 86.3% | 88.4% | 78.2% | - |
+| Nx no lists | 79.3% | 84.9% | 72.0% | -6.3 [-10.5, -2.2] |
+| C2x two-pass | 84.3% | 89.7% | 79.0% | +0.7 [-2.2, +3.8] |
+| B1 + resolver v2 alone | 88.3% | 81.5% | 80.1% | +1.8 [-4.2, +7.7] |
+| Ux = C2x + span mentions the parser left out | 92.3% | 89.5% | 84.5% | +6.3 [+2.5, +10.4] |
+| U2 = C2x + B2 spans (186 non-code msgs) | - | - | 84.9% | +6.6 [+2.8, +10.6] |
+
+Only the union clears zero. All parser arms are weakest on spec_value (right row 33-38%) and spec_key (36-43%); the
+span pass lifts spec_key to 79%.
+
+Meaning (cosine) ablation, resolver v2: spelling + partial alone reaches 263/271 oracle (97.0%) vs 269/271 with
+meaning; on B1 spans 76.5% vs 77.3% (test half). Meaning only rescues vocabulary gaps (handbidet -> Bidet, booster pump ->
+Water pump, A3 -> A3 Flyer, over flow -> Without overflow). Cold start: embedding all 4,530 list texts takes ~12 s, so
+a fresh worker is spelling-only for ~10 s with today's in-process cache.
+
+Spend: 1,462 live calls, ~USD 3.38 LLM + ~USD 0.002 embeddings (cap 1,500 / USD 6).
+
+## Answers
+
+**Chicken and egg.** The model does not need the values to find mentions; it needs the TYPES. A 434-token typed span
+prompt with no value lists finds 88-90% of the named spans (product codes 97%). Matching to rows is code: resolver v2
+reaches 99.3% given the right span. What the parser cannot do without lists is type and fill everything inside the big
+parse (no-lists arm -6.3 points, significant). Precise rows from a span pass fix that without n-gram noise: rows
+offered per message drop from 6.50 (4.64 noise) to 1.94 (0.28 noise).
+
+**Aliases (owner question 2).** 23 of 271 real mentions (8.5%) need a non-label text; all 23 resolve from alias data
+that already exists, and no mention in the set needs a NEW alias. 7 of the 23 depend on the code constant
+`PROMPT_SYNONYMS` (`head/lookup_lists.py:57-76`), which no admin can edit. "srt" already resolves from the lookup_sets
+brand_alias row and "wc" spells the WC category row, so the prompt line "Sorento = SRT, Mocha = MCH, Cabana = CBN" is
+redundant (MCH/CBN do not exist in data at all). Mined aliases (23 brand prefixes, 9 class segments at >= 90-95%
+purity) rescue 0 mentions: people write segments inside full codes, which resolve as products. Did-you-mean picks (47
+pairs) are product codes, not list rows. AutoCount descriptions are on all 14,935 products but no mention needed them.
+
+## Recommendation
+
+Extract then match, two-pass, built in slices; the n-gram lookup retires once the span path proves itself in prod.
+
+1. Span pass: one small LLM call before the parser, typed spans, schema-only prompt (B2 shape), stored as its own
+   versioned prompt row. ~430 tokens in / ~35 out, p50 ~1.0 s, ~USD 0.0005.
+2. Resolver (code) for every span against every list: exact, alias texts (existing tables), IDF token partial,
+   trigram, meaning (today's lookup vector cache); per-list floors calibrated on spans; type is a tie-break, never a
+   filter; two close rows -> ambiguous -> clarify.
+3. Parser gets ONLY the resolved rows in the existing lookup blocks (same render).
+4. List mentions the span pass resolved but the parser left out are added to the parse as entities (union, +6.3
+   points). Never overrides a parser verdict (domain, intent, tool). Slice 3 first measures this against a parser-input
+   alternative (stronger lookup-block header) and keeps the one that wins.
+
+Cost: +~1.0 s per turn (sequential call) and +~9% LLM USD per turn.
+
+What happens to `head/lookup_lists.py`: `load_rows` (row source, visibility rules), the vector cache and the block render
+stay; `pieces()` + `shortlist()` (n-gram matching) retire after slice 2 runs a week in prod; `PROMPT_SYNONYMS` moves to
+data. The prompt: lists are already out (#1865); the blocks shrink to resolved rows; alias lines are dropped in the next
+version. Prompt size is rules, not lists (PROMPT-RULES-DIET is the lane for that).
+
+Not now, with named triggers:
+- Persisted shared list-vector table (text sha -> vector): build when traces show spelling-only turns after deploys
+  matter; today meaning is worth ~2 oracle points and the cold window is ~10 s per worker.
+- Alias mining + approval queue: build when a label-only ablation on a fresh month of messages shows >= 8 real
+  mentions a mined alias would fix.
+- A new unified alias table: build when an alias kind appears that none of lookup_sets, spec registry user_synonyms,
+  sales_agents.aliases or customer_aliases can hold.
+
+## Slices (one lane PR each; sizes are estimates)
+
+| # | Slice | Size | Gate |
+| --- | --- | --- | --- |
+| 1 | `head/list_resolver.py`: span -> rows over all lists (exact, alias texts, IDF partial, trigram, meaning), per-list floors, ambiguity; eval script in scripts/chatbot_eval; no behaviour change | M, ~500 lines, no migration | unit tests on fixture lists; span eval >= this report |
+| 2 | Span pass prompt row (migration, unlabelled) + `head/span_extract.py` + engine wiring behind a parser_config flag replacing pieces/shortlist; blocks from resolved rows; ships dark | L, ~700 lines + migration | parser-level eval: C2 >= L on this set, parser gold TRAIN + R5 no regression, p50 +<= 1.2 s |
+| 3 | Union merge vs stronger header, measured (~400 calls, ~USD 2), then build the winner | M, ~300 lines | eval CI clears zero; owner hand test |
+| 4 | `PROMPT_SYNONYMS` -> lookup_sets rows (migration seed); drop prompt alias lines in next version | S, ~150 lines + migration | label-only ablation unchanged; eval no loss |
 
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 
