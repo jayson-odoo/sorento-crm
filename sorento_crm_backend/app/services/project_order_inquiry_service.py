@@ -579,6 +579,49 @@ def saved_line_remark(snapshot: Mapping[str, Any]) -> Tuple[str, Optional[str]]:
     return remark, parts[0][1]
 
 
+#: The parts of a saved line purchasing acts on (OI-EMAIL-PURCHASING-FOCUS, owner 26 Oct
+#: 2026): a Buy and an Order back (a Buy's or a Borrow's). Use own location, Use BRW, Use /
+#: Borrow incoming and LOCAL BUY are not theirs, so the email never names them.
+_PURCHASING_KEYS = frozenset({IV_ORDER, IV_ORDER_BACK})
+
+
+def purchasing_remark(snapshot: Mapping[str, Any]) -> str:
+    """What a saved line's purchasing email line says: only the parts purchasing acts on, in
+    `saved_line_remark`'s words. `""` when there is none (the line is not sent). A line of
+    several parts names each of purchasing's with its quantity (`USE BRW-BB 6 & ORDER 4` reads
+    `ORDER 4`, owner Q1 (a), 26 Oct 2026)."""
+    parts = _saved_line_parts(snapshot, name_donors=True)
+    theirs = [part for part in parts if part[3] in _PURCHASING_KEYS]
+    if not theirs:
+        return ""
+    if len(parts) == 1:
+        return theirs[0][0]
+    return " & ".join(f"{words} {_qty_str(qty)}" for words, _location, qty, _key in theirs)
+
+
+def _parts_with_qty(snapshot: Mapping[str, Any]) -> str:
+    """Every part of a saved line with its quantity, `ORDER 10` / `USE BRW-BB 6 & ORDER 4`: one
+    side of a `CHANGED: ... -> ...` REMARK."""
+    return " & ".join(
+        f"{words} {_qty_str(qty)}"
+        for words, _location, qty, _key in _saved_line_parts(snapshot, name_donors=True)
+    )
+
+
+def _purchasing_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
+    """What purchasing holds for a saved line: its date, product and their parts (words with
+    the donor named, quantity). Two snapshots with the same key ask purchasing nothing new."""
+    return (
+        snapshot.get("required_date"),
+        snapshot.get("item_code"),
+        tuple(
+            (words, qty)
+            for words, _location, qty, key in _saved_line_parts(snapshot, name_donors=True)
+            if key in _PURCHASING_KEYS
+        ),
+    )
+
+
 def saved_draft_remark(
     decision: Optional[Mapping[str, Any]],
     *,
@@ -4626,6 +4669,12 @@ class ProjectOrderInquiryService:
             row_lines = told.get(str(line.id), [])
             unchanged = before is not None and _saved_decision_key(before) == _saved_decision_key(now)
             own = _own_remark(now)
+            if own is not None and not unchanged and not (
+                purchasing_remark(now) or (before is not None and purchasing_remark(before))
+            ):
+                # The planner's words on a line purchasing holds nothing for (Use own
+                # location, Use BRW, incoming, LOCAL BUY): not theirs (owner, 26 Oct 2026).
+                continue
             if own is not None and not unchanged:
                 # UAC F27: the planner's own words are the line's REMARK, told once in place
                 # of whatever its rows queued (`_queue_saved_line`'s explicit remark, as a
@@ -5120,8 +5169,18 @@ class ProjectOrderInquiryService:
     ) -> None:
         explicit = remark is not None
         if not explicit:
-            remark, location = saved_line_remark(now)
-            keys = [key for _w, _l, _q, key in _saved_line_parts(now)]
+            # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026): only purchasing's parts. A line
+            # with none is not sent, unless it takes back something they held (Q4).
+            _words, location = saved_line_remark(now)
+            remark = purchasing_remark(now)
+            keys = [key for _w, _l, _q, key in _saved_line_parts(now) if key in _PURCHASING_KEYS]
+            if not remark and not (before is not None and taken_back > _ZERO):
+                return
+            if before is not None and taken_back <= _ZERO and _purchasing_key(
+                before
+            ) == _purchasing_key(now):
+                # Only the stock side moved: what purchasing holds is as it was.
+                return
         else:
             location = now.get("location") or None
             keys = list(keys or [])
@@ -5184,20 +5243,21 @@ class ProjectOrderInquiryService:
                 # the same decision reads as today's settle line did ("DELAY, ORDER 3").
                 # A donor move also reads its decision words, so the new donor is named
                 # beside any date or quantity word (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
-                if (
-                    not same_kinds
-                    or not pieces
-                    or _borrow_donors(before) != _borrow_donors(now)
-                ):
-                    pieces.append(remark)
                 if ("qty" not in was or raised is not None) and taken_back > _ZERO:
                     # The rows of this line told purchasing to cancel something they hold
                     # (a raised order withdrawn, settled down, a CANCEL BALANCE exception).
                     # Read off what the rows actually did, never off the Buy's size: a Buy
                     # whose goods arrived and now cover the line from stock is not an order
-                    # to take back (crew audit, SO400236).
-                    pieces.append(f"CANCEL ORDER {_qty_str(taken_back)}")
-                    keys.append(IV_CANCEL_BALANCE)
+                    # to take back (crew audit, SO400236). Told as the change it is, never
+                    # "CANCEL ORDER", which purchasing reads as the customer cancelling
+                    # (owner Q4, 26 Oct 2026): "CHANGED: ORDER 10 -> USE BRW-BB 10".
+                    pieces.append(f"CHANGED: {_parts_with_qty(before)} -> {_parts_with_qty(now)}")
+                elif (
+                    not same_kinds
+                    or not pieces
+                    or _borrow_donors(before) != _borrow_donors(now)
+                ):
+                    pieces.append(remark)
                 remark = ", ".join(piece for piece in pieces if piece)
             if before.get("item_code") and before.get("item_code") != now.get("item_code"):
                 was["item_code"] = before.get("item_code")
@@ -14221,28 +14281,31 @@ def store_handover_excel(
     context: Dict[str, Any],
     inquiry_ids: Sequence[str],
     *,
-    row_ids: Optional[Sequence[str]] = None,
+    lines_by_inquiry: Optional[Dict[str, List[Dict[str, Any]]]] = None,
 ) -> None:
-    """Render and store each named OI's own Excel export (the workbook the detail page's
-    Export Excel makes) and put it first in the context's `email_attachments` (owner ruling,
-    16 Oct: the handover carries the OI Excel). `row_ids` limits the workbook to those rows
-    (Send to purchasing with lines ticked); `None` is the whole OI, as Export Excel prints it.
+    """Render and store each named OI's Excel and put it first in the context's
+    `email_attachments` (owner ruling, 16 Oct: the handover carries the OI Excel).
 
-    The render runs in a SAVEPOINT: a database error inside it is rolled back to there, so
-    the session the email is then sent on stays usable (review B1). Any failure is logged and
-    that workbook left out: the email still goes, the same rule as the per-line files."""
+    The workbook is written from the email's OWN lines (`handover_xlsx`), never from an OI
+    query, so its rows are the email's rows (owner, 26 Oct 2026: a cancel-all used to print the
+    OI's other open rows and none of the cancelled lines). `lines_by_inquiry` splits the lines
+    when the email names several OIs; `None` puts every line in each named OI's workbook (the
+    resend names one).
+
+    Any failure is logged and that workbook left out: the email still goes, the same rule as
+    the per-line files."""
     from app.services import storage_router
-    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+    from app.services.order_inquiry_worklist_service import handover_xlsx
 
+    every_line = list((context.get("handover") or {}).get("lines") or [])
     stored: List[Dict[str, Any]] = []
     for inquiry_id, header in _handover_excel_names(db, inquiry_ids):
         filename = f"{header.inquiry_no}.xlsx"
         try:
-            with company_scope(db, frozenset({str(header.company_id)})), db.begin_nested():
-                _name, file_bytes = OrderInquiryWorklistService(db).export_xlsx(
-                    inquiry_id=inquiry_id,
-                    **({"row_ids": list(row_ids)} if row_ids is not None else {}),
-                )
+            lines = (
+                every_line if lines_by_inquiry is None else lines_by_inquiry.get(inquiry_id, [])
+            )
+            file_bytes = handover_xlsx(lines)
             provider = storage_router.default_provider()
             stored_key, _signed = storage_router.get_backend(provider).upload_file(
                 file_content=file_bytes,
@@ -14264,6 +14327,19 @@ def store_handover_excel(
             )
     if stored:
         context["email_attachments"] = stored + list(context.get("email_attachments") or [])
+
+
+def _lines_by_inquiry(
+    items: Sequence[Dict[str, Any]], lines: Sequence[Dict[str, Any]], inquiry_ids: Sequence[str]
+) -> Dict[str, List[Dict[str, Any]]]:
+    """The email's lines per OI. `_build_handover_context` builds one line per item, in
+    `_handover_sort_key` order, so the two zip; a line naming no OI goes with the first OI so no
+    email line is ever missing from the Excel."""
+    first = inquiry_ids[0] if inquiry_ids else None
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for item, line in zip(sorted(items, key=_handover_sort_key), lines):
+        out.setdefault(item.get("order_inquiry_id") or first, []).append(line)
+    return out
 
 
 def build_handover_email(
@@ -14302,7 +14378,12 @@ def build_handover_email(
         f"{header.inquiry_no}.xlsx" for _id, header in _handover_excel_names(db, inquiry_ids)
     ]
     if store_excel:
-        store_handover_excel(db, context, inquiry_ids)
+        store_handover_excel(
+            db,
+            context,
+            inquiry_ids,
+            lines_by_inquiry=_lines_by_inquiry(items, context["handover"]["lines"], inquiry_ids),
+        )
     return context, source_id
 
 

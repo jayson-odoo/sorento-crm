@@ -3816,6 +3816,87 @@ class OrderInquiryWorklistService:
         return out
 
 
+#: OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, Q5 (a)): the handover Excel's columns, the
+#: email's own line table plus the S/O facts each row needs on a sheet. The bracketed three of
+#: the email (NEW ITEM CODE / NEW QTY / NEW DATE) print only when a line in it has one.
+HANDOVER_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "NEW ITEM CODE",
+    "QTY",
+    "NEW QTY",
+    "DELIVERY DATE",
+    "NEW DATE",
+    "PROJECT/CUSTOMER",
+    "LOCATION",
+    "REMARK",
+)
+_HANDOVER_CHANGE_KEYS = {"NEW ITEM CODE": "item_code", "NEW QTY": "qty", "NEW DATE": "delivery_date"}
+
+
+def _sheet_date(value: Any) -> Any:
+    """A handover line's `21/07/2026` as a date, so the sheet formats it like every other."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%d/%m/%Y").date()
+    except ValueError:
+        return value
+
+
+def _sheet_qty(value: Any) -> Optional[float]:
+    return float(_dec(value)) if value not in (None, "") else None
+
+
+def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
+    """The OI Excel a handover email attaches, written from that email's OWN lines
+    (`handover.lines`, `_build_handover_context`), so its rows are the email's rows: the same
+    lines, in the same order, with the same values (owner, 26 Oct 2026: "the rows in OI must be
+    truthful to the rows in the email"). One sheet, the house style."""
+    import openpyxl
+
+    from app.services.project_order_inquiry_service import project_customer_label
+
+    def was(line: Dict[str, Any], key: str) -> Any:
+        return (line.get("was") or {}).get(key)
+
+    columns = [
+        heading
+        for heading in HANDOVER_HEADINGS
+        if heading not in _HANDOVER_CHANGE_KEYS
+        or any(was(line, _HANDOVER_CHANGE_KEYS[heading]) for line in lines)
+    ]
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = EXPORT_TITLE
+    sheet.append([EXPORT_TITLE])
+    sheet.append(columns)
+    for line in lines:
+        # As the email prints a changed line: the old value, then the new one beside it.
+        values = {
+            "SO DATE": _sheet_date(line.get("so_date")),
+            "S/O NO": line.get("so_number") or "",
+            "ITEM CODE": was(line, "item_code") or line.get("item_code") or "",
+            "NEW ITEM CODE": line.get("item_code") if was(line, "item_code") else None,
+            "QTY": _sheet_qty(was(line, "qty") or line.get("qty")),
+            "NEW QTY": _sheet_qty(line.get("qty")) if was(line, "qty") else None,
+            "DELIVERY DATE": _sheet_date(was(line, "delivery_date") or line.get("delivery_date")),
+            "NEW DATE": _sheet_date(line.get("delivery_date"))
+            if was(line, "delivery_date")
+            else None,
+            "PROJECT/CUSTOMER": project_customer_label(line.get("customer"), line.get("project"))
+            or "",
+            "LOCATION": line.get("location") or "",
+            "REMARK": line.get("remark") or "",
+        }
+        sheet.append([values[heading] for heading in columns])
+    _style_sheet(sheet, columns)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 #: OI-DOWNLOAD (owner, 21 Oct: "nicer, like the LOW STOCK REPORT"): each heading's width, by
 #: NAME so a cut column list (the 10-column worksheet) or a heading added later keeps its own;
 #: a heading not listed takes `_EXPORT_DEFAULT_WIDTH`.
@@ -3838,10 +3919,13 @@ _EXPORT_WIDTHS = {
     "SUGGESTED": 20,
     "CHANGE QUANTITY": 12,
     "CHANGE DATE": 13,
+    "NEW ITEM CODE": 18,
+    "NEW QTY": 9,
+    "NEW DATE": 13,
     "REMARK": 30,
 }
 _EXPORT_DEFAULT_WIDTH = 14
-_EXPORT_DATE_HEADINGS = frozenset({"SO DATE", "DELIVERY DATE", "CHANGE DATE"})
+_EXPORT_DATE_HEADINGS = frozenset({"SO DATE", "DELIVERY DATE", "CHANGE DATE", "NEW DATE"})
 
 
 def _style_sheet(sheet, columns: Sequence[str]) -> None:

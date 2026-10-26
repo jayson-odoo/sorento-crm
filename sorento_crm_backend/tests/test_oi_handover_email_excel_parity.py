@@ -124,7 +124,7 @@ def _excel_rows(body):
         (
             row.get("ITEM CODE") or "",
             _num(row.get("QTY")),
-            _num(row.get("QTY CHANGE TO")),
+            _num(row.get("NEW QTY")),
             row.get("LOCATION") or "",
             row.get("REMARK") or "",
         )
@@ -183,7 +183,7 @@ def test_an_amendment_excel_is_the_one_changed_line_with_its_change_column(api, 
 
     [context] = contexts
     headings, body = _sheet(context, uploads)
-    assert "QTY CHANGE TO" in headings
+    assert "NEW QTY" in headings
     for gone in ("REQUESTED RESERVE", "RESERVED", "TOTAL QTY"):
         assert gone not in headings
     assert _excel_rows(body) == _email_rows(context)
