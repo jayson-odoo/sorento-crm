@@ -691,8 +691,8 @@ jobs:
       # PR the PR head with its history (sparse means blob:none, so commits
       # and trees only), merged with main's head in the next step: the
       # selection reads the tree the PR gate tests, not GitHub's merge
-      # commit (CI-STALE-MERGE-REF). The
-      # `ref` is empty off a PR, so a release checks out as before.
+      # commit (CI-STALE-MERGE-REF). The `ref` is empty off a PR, so a
+      # release checks out as before.
       - name: Checkout backend sources for test selection
         if: steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true'
         uses: actions/checkout@v4

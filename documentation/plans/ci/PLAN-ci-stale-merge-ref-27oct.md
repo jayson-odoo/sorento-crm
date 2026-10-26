@@ -1,6 +1,6 @@
 # PLAN: the PR gate tests the PR head merged into main's CURRENT head (CI-STALE-MERGE-REF)
 
-Status: PR #1886, review round 2 (inline merge step); proof run on draft #1887 waits on Actions billing (small fix track: CI workflow only, no migration, no product code)
+Status: PR #1886, reviewer READY at round 2 (inline merge step); proof run on draft #1887 waits on Actions billing (small fix track: CI workflow only, no migration, no product code)
 
 UAC: `ci-stale-merge-ref-27oct-acceptance-criteria.md` (alongside).
 
