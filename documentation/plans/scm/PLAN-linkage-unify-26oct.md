@@ -417,3 +417,26 @@ retired-0 link listed, `dead_document` filter) on the real cases L880 / L64 / L7
 L16 shapes; vitest for the shared pill piece (PO no received pill, SPO receipt pill wording,
 dead pills, class d PO receipt pill) and the filter select. Browser pass 1280 / 375 on the crew
 test copy, then hand test.
+
+## 10. U5 contract (one key everywhere + the candidate walk sees followed placements)
+
+Track: slice U5, S, backend only, stacked on U3. No migration, no UI.
+
+1. Candidate walk (Link dialog, cascade, `po_candidates_for_row`, `has_link_candidate`):
+   `_linked_by_target` (PS ~10000-10050) nets an SPO allocation's remaining by the placements
+   that FOLLOW onto it from their PO line (the chain's split: the same claims `_follow_totals`
+   computes for Stock Debt), so 486 placed on PO 202607-S0100 leaves SPO-2026/09-0107 L9 with
+   no free 486 for another row (A-R11 / D4). The followed split comes from `goods_chain`, never
+   a second copy.
+2. One PO -> SPO key: own-arrival readers (`_po_received_by_so_line_ref` PSS ~3107,
+   `_po_received_by_product` ~3184, `_prefetch_own_arrival` ~3312, and `_landed_holds` through
+   them), the ingest SPO hook (`_refs_from_written_spo_allocations`, `api/v1/external/ingest.py`
+   ~735) and `_book_names_target_for_line` (PS ~4014) match SPO to PO line through
+   `goods_chain`'s key (PO number + trimmed line ref + product + company, plus the FK route).
+   Measured: the loose own-arrival key gives 0 cross-PO pairs on dev (`sql/v-key.sql`), so this
+   is behaviour-neutral on today's data; it closes the collision risk on bare-ordinal refs.
+
+Tests (red first): the candidate walk offers no free SPO quantity a followed placement already
+holds; a space-padded `from_po_line_ref` is followed by the own-arrival readers; an SPO with the
+same line ref under ANOTHER PO number is not; the ingest hook and `_book_names_target_for_line`
+follow the same key (trim, product).
