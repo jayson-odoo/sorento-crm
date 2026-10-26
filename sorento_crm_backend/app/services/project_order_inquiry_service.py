@@ -5431,10 +5431,16 @@ class ProjectOrderInquiryService:
                     new = (raised or _ZERO) + sum(
                         (now_qty for _w, now_qty, _word in taken_rows), _ZERO
                     )
+                    # The right side in the rows' own kind, or the decision itself when
+                    # nothing of purchasing's is left (never "ORDER 0").
+                    word = olds[0][0] if len({w for w, _q in olds}) == 1 else "ORDER"
+                    after = (
+                        f"{word} {_qty_str(new)}" if new > _ZERO else _parts_with_qty(now) or "0"
+                    )
                     pieces.append(
                         "CHANGED: "
                         + " & ".join(f"{word} {_qty_str(qty)}" for word, qty in olds)
-                        + f" -> ORDER {_qty_str(new)}"
+                        + f" -> {after}"
                     )
                     keys = [key for key in keys if key in (IV_DELAY, IV_ADVANCE)] + ["CHANGED"]
                 elif (
