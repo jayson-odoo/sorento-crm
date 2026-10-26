@@ -1,7 +1,7 @@
 # PLAN: upload a dealer-contact sheet, bulk-configure each contact's access (BULK-CONTACT-ACCESS)
 
-Status: Phase 2 - owner answered the card (26 Oct ~15:10: Q1 a, Q2 a, Q3 brands data-driven from
-`brands.company_id`, Q4 b every exact account ticked, Q5 a) and approved mock v1 (15:03); red tests next. Track: L
+Status: Phase 2 - owner answered the card (26 Oct ~15:10: Q1 a, Q2 a, Q3 brands by dealer group (15:20: new
+`brands.dealer_company_id`, seeded), Q4 b every exact account ticked, Q5 a) and approved mock v1 (15:03); red tests next. Track: L
 (new upload flow, bulk writes to contact access settings, customer linking). LEAD pattern. UAC:
 `bulk-contact-access-26oct-acceptance-criteria.md`. Test DB: `sorento_bca_throwaway` via `.env.ci-tests`.
 
@@ -42,6 +42,14 @@ Shared mechanism (one copy, no second matcher, no second planner):
   The engine keeps taking `rules`; the script keeps its 4 Oct `RULES`. Engine gains only what the 26 Oct
   template needs: a list of owner types per company (Q2 cabana_dealer) and a brands facet (NULL -> template set;
   a set list -> union with the template).
+- Brand dealer group (owner 15:20): migration adds `brands.dealer_company_id` (nullable FK `companies.id`, ON DELETE
+  SET NULL) and seeds it by brand code (UAC U21); model column on `Brand` (`app/models/product.py:99`); brand
+  schemas + router accept/return it (+ `dealer_company_name`); master-data brand form gets a clearable
+  SearchableSelect "Dealer group". Template brands = active brands whose `dealer_company_id` is in the row's
+  companies. Mocha only gets MOCHA + IBORN explicitly: safe because the brand rule restricts only companies that
+  OWN a listed brand (`app/services/contact_brand_scope.py:3-9`); MOCHA/IBORN rows are owned by Sorento Sdn Bhd,
+  so all 3481 Mocha Sdn Bhd products (none carry a brand) stay visible. Crew dev-DB SQL:
+  `crew/state/migrations/BULK-CONTACT-ACCESS.sql`.
 - `app/services/contact_access_sheet_service.py` (new): `TEMPLATE` (the 26 Oct rules: card section 3),
   `parse_respond_csv(bytes)`, `plan(db, rows, actor_id)` (contacts, dealer blocks, candidates, per-contact
   changes, warnings), `apply(db, rows, confirmed, actor_id)` (re-plan, validate confirmed ids, write, audit

@@ -1,7 +1,7 @@
 # UAC - BULK-CONTACT-ACCESS (upload the Respond dealer-contact sheet, set each contact's access)
 
 Status: APPROVED rules. Owner rulings 26 Oct ~15:10: Q1 (a) add only, Q2 (a) cabana_dealer for Sorento owners,
-Q3 brands = every brand of the contact's companies (data-driven), Q4 (b) link EVERY exact account, ticked,
+Q3 brands by the brand's dealer group (15:20: Sorento group / Mocha group / project), Q4 (b) link EVERY exact account, ticked,
 Q5 (a) skip phones not in the CRM. Mock v1 approved 15:03. Card: `CARD-bulk-contact-access-26oct.md`. Plan +
 API contract: `PLAN-bulk-contact-access-26oct.md`.
 
@@ -21,11 +21,12 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
 ## Template (per contact, from its own row)
 - U4 Access types: owner gets `dealer` + `cabana_dealer` for SRT, `mocha_dealer` for MCH, plus `end_user`;
   employee gets `end_user` only.
-- U5 Companies = the row's companies. Brands [Q3] = every ACTIVE brand whose `brands.company_id` is one of the
-  row's companies (no brand list in code). Contact brands NULL -> set to that list; already a list -> union. No
-  brand found for the row's companies -> brands untouched. Locations (stock visibility, mode `availability`,
-  hide-zero off, no exclusions): SRT -> warehouses BRW, MWH of company SRT; MCH -> HQ, MOCHA-WH of company MCH;
-  both = union.
+- U5 Companies = the row's companies. Brands [Q3, owner 15:20] = every ACTIVE brand whose `dealer_company_id` is
+  one of the row's companies (Sorento only -> SORENTO, CABANA, ELLECI, WDI, NO LOGO; Mocha only -> MOCHA, IBORN;
+  both -> union; project brands BRAVAT, INFINITY, JOHNSON SUISSE, TP ENTERPRISE, OTHERS have none and are never
+  given). Contact brands NULL -> set to that list; already a list -> union (never remove); a brand outside it ->
+  warning `holds_more`. Locations (stock visibility, mode `availability`, hide-zero off, no exclusions): SRT ->
+  warehouses BRW, MWH of company SRT; MCH -> HQ, MOCHA-WH of company MCH; both = union.
 - U6 Every contact: packing list OFF, ETA buffer ON, stock ON, AI replies ON, escalation OFF, segment `retail`,
   image media allowed, agent grants `general_enquiries`, `order_enquiries`, `incoming_stock_enquiries` allowed
   1 Jan 2026 00:00 - 31 Dec 2026 00:00.
@@ -65,6 +66,12 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
   `contact_access_copy_service.facets_to_skip`.
 - U19 Only customers inside the caller's company scope are proposed; a confirmed id that is unknown or outside
   the caller's scope is refused (422) and nothing is written.
+
+## Brand dealer group (owner 15:20)
+- U21 `brands.dealer_company_id` (nullable, FK companies): the company whose dealers get the brand. Migration seeds
+  SORENTO, CABANA, ELLECI, WDI, NO LOGO -> Sorento Sdn Bhd; MOCHA, IBORN -> Mocha Sdn Bhd; the rest NULL. Brand
+  create / edit (master data) has a clearable "Dealer group" select of companies; the brand API accepts and returns
+  `dealer_company_id` + `dealer_company_name`; an unknown company id is refused (422).
 
 ## Screen
 - U20 Contacts list > Actions > Import access sheet (shown with `user_management.contacts.edit`) opens a dialog:
