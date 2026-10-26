@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.services.chatbot.head import candidates
-from app.services.chatbot_lookup_edits import MARKER
+from app.services.chatbot_lookup_edits import MARKER, SPAN_MARKER
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -102,6 +102,7 @@ HELD_SUBJECT_LISTS = {
 }
 
 _LINE_RE = re.compile(r"^[ \t]*" + re.escape(MARKER) + r"[ \t]*$", re.MULTILINE)
+_SPAN_LINE_RE = re.compile(r"^[ \t]*" + re.escape(SPAN_MARKER) + r"[ \t]*$", re.MULTILINE)
 _CUSTOMER_BLOCKERS = frozenset({"category", "brand", "sales_channel", "location"})
 _WORD_RE = re.compile(r"[^\W_]+")
 _CODE_WORD_RE = re.compile(r"\d{3,}|(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{5,}")
@@ -128,6 +129,11 @@ class Hit:
 def gate_on(template: str | None) -> bool:
     """True when the RAW template carries the marker as its own line."""
     return bool(template) and _LINE_RE.search(template) is not None
+
+
+def spans_gate_on(template: str | None) -> bool:
+    """True when the RAW template carries the span marker as its own line (ENTITY-EXTRACT-MATCH S2)."""
+    return bool(template) and _SPAN_LINE_RE.search(template) is not None
 
 
 def header(list_name: str) -> str:
