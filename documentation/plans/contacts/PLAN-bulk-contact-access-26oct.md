@@ -1,8 +1,8 @@
 # PLAN: upload a dealer-contact sheet, bulk-configure each contact's access (BULK-CONTACT-ACCESS)
 
-Status: Review done, hand test filed (laneboard/scripts/1875.md). PR #1875 at round 3: reviewer READY,
+Status: Review done, hand test re-filed after crew audit round 4 (pick-block confirm fix). PR #1875 at round 4 (round 3: reviewer READY,
 security-reviewer CLEAN, browser preview pass PASS (preview only on the shared dev copy). Three red/kill rounds
-(crew audit: account-tag name key; security: caps, actor, error text; browser: granted-company scope). Track: L
+(crew audit: account-tag name key; security: caps, actor, error text; browser: granted-company scope); round 4 red d0b93b7c1b + fix 8e280eec57). Track: L
 (new upload flow, bulk writes to contact access settings, customer linking). LEAD pattern. UAC:
 `bulk-contact-access-26oct-acceptance-criteria.md`. Test DB: `sorento_bca_throwaway` via `.env.ci-tests`.
 
