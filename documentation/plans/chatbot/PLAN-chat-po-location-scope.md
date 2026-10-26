@@ -52,8 +52,10 @@ see BRW-BB stock lines, and must not see BRW-BB PO lines either. No ask needed.
    the owner made for open SO with no warehouse in #1431 (option b: no Unassigned line).
    Dev data (`sorento_cagent_stack`, read-only): 944 of 4,705 open PO lines have no warehouse,
    mostly 2019-2022; every pending SPO allocation has one.
-4. Contacts whose policy names no location list (staff, the inert default) and calls without
-   `contact_id` (n8n, staff UI): unchanged.
+4. Contacts whose policy names no location list (the inert default included) and calls without
+   `contact_id` (staff screens, a direct MCP / n8n call naming no contact): unchanged. The
+   chatbot sends `contact_id` for staff contacts too, so a staff contact whose policy names a
+   location list gets on-order lines scoped to it, the same as its stock lines.
 
 ## Other surfaces checked (known gap, follow-up lane)
 
