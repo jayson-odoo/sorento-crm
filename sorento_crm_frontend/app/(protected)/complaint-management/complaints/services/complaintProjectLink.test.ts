@@ -87,4 +87,11 @@ describe('searchProjectsForLink', () => {
     apiFetch.mockResolvedValue({ ok: false, json: async () => ({}) });
     await expect(searchProjectsForLink('x')).rejects.toThrow(/Failed to load projects/);
   });
+
+  it('asks for approved projects only, so a registration waiting for approval is never offered', async () => {
+    apiFetch.mockResolvedValue(ok([]));
+    await searchProjectsForLink('setia');
+    const params = new URLSearchParams(String(apiFetch.mock.calls[0][0]).split('?')[1]);
+    expect(params.get('approved_only')).toBe('true');
+  });
 });

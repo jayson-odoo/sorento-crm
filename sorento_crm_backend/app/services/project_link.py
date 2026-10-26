@@ -30,13 +30,19 @@ def _unchanged(value, current) -> bool:
 
 
 def check_project_link(
-    db: Session, project_id: Optional[str], *, current: Optional[str] = None
+    db: Session,
+    project_id: Optional[str],
+    *,
+    current: Optional[str] = None,
+    not_approved_code: str = "project_not_approved",
 ) -> Optional[str]:
     """Return the id to store: None for a blank value, the id for a visible project.
 
     Anything else (free text, a missing project, one outside the editor's companies) is a
     422 on the project field, so a bad pick is never silently dropped nor a 500 at the FK.
-    `current` is the row's stored link; sending it back unchanged always passes.
+    A visible portal registration still waiting for approval is a 422 `not_approved_code`
+    (PROJECT-REG-PORTAL R4). `current` is the row's stored link; sending it back unchanged
+    always passes.
     """
     value = (project_id or "").strip() if isinstance(project_id, str) else project_id
     if not value:
@@ -66,13 +72,25 @@ def check_project_link(
             code="PROJECT_LINK_NOT_FOUND",
             details={"field": "project_id"},
         )
+    from app.services.project_service import assert_linkable_project
+
+    # After the checks above, so free text never reaches the uuid column's query.
+    assert_linkable_project(db, value, current, code=not_approved_code)
     return value
 
 
-def apply_project_link(db: Session, payload: dict, *, current: Optional[str] = None) -> None:
+def apply_project_link(
+    db: Session,
+    payload: dict,
+    *,
+    current: Optional[str] = None,
+    not_approved_code: str = "project_not_approved",
+) -> None:
     """Check a payload's `project_id` in place, when the payload carries one."""
     if "project_id" in payload:
-        payload["project_id"] = check_project_link(db, payload["project_id"], current=current)
+        payload["project_id"] = check_project_link(
+            db, payload["project_id"], current=current, not_approved_code=not_approved_code
+        )
 
 
 def check_portal_project_link(
@@ -83,9 +101,10 @@ def check_portal_project_link(
     code: str = "PROJECT_LINK_NOT_ALLOWED",
     current: Optional[str] = None,
 ) -> Optional[str]:
-    """The portal rule: a picked project must belong to one of the contact's companies (the
-    same set the portal lookup lists). Blank means no link; the row's unchanged link passes;
-    anything else is a 422."""
+    """The portal rule: a picked project must belong to one of the contact's companies and be
+    approved (the same set the portal lookup lists; a registration waiting for approval is not
+    a project yet, PROJECT-REG-PORTAL R4). Blank means no link; the row's unchanged link
+    passes; anything else is a 422."""
     value = (project_id or "").strip() if isinstance(project_id, str) else project_id
     if not value:
         return None
@@ -93,6 +112,7 @@ def check_portal_project_link(
         return str(value)
     from app.models.base import company_scope
     from app.models.projects import Project
+    from app.services.project_service import approved_projects
     from app.services.sponsorship_link_service import contact_company_ids
 
     value = str(value)
@@ -101,9 +121,11 @@ def check_portal_project_link(
     if company_ids and _is_uuid(value):
         with company_scope(db, frozenset(company_ids)):
             allowed = (
-                db.query(Project.id)
-                .filter(Project.id == value, Project.company_id.in_(company_ids))
-                .first()
+                approved_projects(
+                    db.query(Project.id).filter(
+                        Project.id == value, Project.company_id.in_(company_ids)
+                    )
+                ).first()
                 is not None
             )
     if not allowed:

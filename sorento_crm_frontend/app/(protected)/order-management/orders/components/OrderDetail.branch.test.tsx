@@ -25,7 +25,17 @@ vi.mock('../actions', () => ({
 }));
 vi.mock('@/hooks/useDeletedRecordGuard', () => ({ useDeletedRecordGuard: () => false }));
 vi.mock('@/components/common/DetailActions', () => ({ default: () => null }));
-vi.mock('./OrderLinesCard', () => ({ default: () => null }));
+const linesCardProps = vi.fn();
+vi.mock('./OrderLinesCard', () => ({
+  default: (props: Record<string, unknown>) => {
+    linesCardProps(props);
+    return null;
+  },
+}));
+let granted = new Set<string>();
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => granted.has(slug),
+}));
 vi.mock('./OrderFulfilledComplaintsCard', () => ({ default: () => null }));
 
 function mockOrder(overrides: Record<string, unknown>) {
@@ -51,7 +61,11 @@ function branchValue(): string | null {
   return within(cell).getAllByText(/.+/)[1]?.textContent ?? null;
 }
 
-beforeEach(() => useOrder.mockReset());
+beforeEach(() => {
+  useOrder.mockReset();
+  linesCardProps.mockReset();
+  granted = new Set();
+});
 
 describe('Delivery order detail: Branch', () => {
   it('shows the branch name', () => {
@@ -72,5 +86,21 @@ describe('Delivery order detail: Branch', () => {
     mockOrder({ branch_name: null });
     render(<OrderDetail orderId="o-1" listSearch="" />);
     expect(branchValue()).toBe('-');
+  });
+});
+
+// DO-SO-LINK-SURFACE: the SO column links only for a user who can open sales orders.
+describe('Delivery order detail: SO column permission', () => {
+  it('lets the SO column link when the user can open sales orders', () => {
+    granted = new Set(['scm.dashboard.view']);
+    mockOrder({ lines: [] });
+    render(<OrderDetail orderId="o-1" listSearch="" />);
+    expect(linesCardProps).toHaveBeenLastCalledWith(expect.objectContaining({ canOpenSo: true }));
+  });
+
+  it('keeps the SO column as text when the user cannot', () => {
+    mockOrder({ lines: [] });
+    render(<OrderDetail orderId="o-1" listSearch="" />);
+    expect(linesCardProps).toHaveBeenLastCalledWith(expect.objectContaining({ canOpenSo: false }));
   });
 });

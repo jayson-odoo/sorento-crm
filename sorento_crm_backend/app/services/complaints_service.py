@@ -1711,7 +1711,9 @@ class ComplaintService:
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
         if respond_inbox_url is not None:
             complaint_dict["respond_inbox_url"] = respond_inbox_url
-        apply_project_link(self.db, complaint_dict)
+        # Visible to the editor, and never a portal registration still waiting for approval
+        # (PROJECT-REG-PORTAL R4); re-saving the link it already has is not a change.
+        apply_project_link(self.db, complaint_dict, not_approved_code="complaint_project_not_approved")
         complaint = Complaint(**complaint_dict)
         self.db.add(complaint)
         self.db.flush()
@@ -1776,7 +1778,9 @@ class ComplaintService:
 
         update_data = complaint_data.model_dump(exclude_unset=True)
         explicit_lines = update_data.pop("product_lines", None)
-        apply_project_link(self.db, update_data, current=complaint.project_id)
+        apply_project_link(
+            self.db, update_data, current=complaint.project_id, not_approved_code="complaint_project_not_approved"
+        )
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -1892,7 +1896,9 @@ class ComplaintService:
         # edit page posts the whole complaint, lines included, so Update & Reply 500'd
         # there for any complaint with a product row.
         explicit_lines = update_data.pop("product_lines", None)
-        apply_project_link(self.db, update_data, current=complaint.project_id)
+        apply_project_link(
+            self.db, update_data, current=complaint.project_id, not_approved_code="complaint_project_not_approved"
+        )
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)

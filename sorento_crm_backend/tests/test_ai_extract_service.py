@@ -732,7 +732,7 @@ def test_ac_b1_extract_prompt_key_names_the_form():
 
 
 def test_ac_b1_every_registered_form_key_has_a_prompt_key():
-    """AC-B1: PROMPT_KEYS holds one entry per registered form key - the 5
+    """AC-B1: PROMPT_KEYS holds one entry per registered form key - the 6
     `portal.*` keys in `form_schema_registry.py` plus the 4 `master.*` keys in
     `_ENTITY_TO_FORM_KEY` - each `active=True`, `variables=[]`, non-empty
     fallback."""
@@ -740,7 +740,7 @@ def test_ac_b1_every_registered_form_key_has_a_prompt_key():
     from app.services.ai_prompt_registry import PROMPT_KEYS
 
     form_keys = _all_registered_form_keys()
-    assert len(form_keys) == 9, "9 registered form keys (5 portal.* + 4 master.*)"
+    assert len(form_keys) == 10, "10 registered form keys (6 portal.* + 4 master.*)"
 
     for form_key in form_keys:
         key = extract_prompt_key(form_key)
@@ -753,7 +753,7 @@ def test_ac_b1_every_registered_form_key_has_a_prompt_key():
 
 def test_ac_b2_only_the_price_tag_forms_fallback_carries_rule_8():
     """AC-B2: only `ai_extract_portal_price_tag_request`'s fallback states rule
-    (8) - the word REQUIRED and "every product code". The other 8 keep
+    (8) - the word REQUIRED and "every product code". The other 9 keep
     today's rules (1) to (7) verbatim, with no rule (8)."""
     from app.services.ai_extract.extract_service import extract_prompt_key
     from app.services.ai_prompt_registry import PROMPT_KEYS

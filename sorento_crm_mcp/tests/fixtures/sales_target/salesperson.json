@@ -1,0 +1,237 @@
+{
+  "asker": "salesperson",
+  "as_of": "2026-10-23",
+  "window": {
+    "date_from": "2026-10-25",
+    "date_to": "2026-10-25"
+  },
+  "own": [
+    {
+      "target_no": "TGT-000060",
+      "name": "AGENT Q4",
+      "subject_kind": "agent",
+      "subject_label": "SRT SALES AGENT ONE",
+      "company_code": "SRT",
+      "period_start": "2026-10-01",
+      "period_end": "2026-12-31",
+      "is_current": true,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": false,
+      "accounts": [],
+      "target_value": 100000.0,
+      "target_points": null,
+      "achieved_value": 40000.0,
+      "ratio_missing": false,
+      "tier_reached": null,
+      "next_tier": null,
+      "pipeline_value": 40000.0
+    }
+  ],
+  "team": [
+    {
+      "target_no": "TGT-000070",
+      "name": "TEAM Q4",
+      "subject_kind": "team",
+      "subject_label": "SRT TEAM ALPHA",
+      "company_code": "SRT",
+      "period_start": "2026-10-01",
+      "period_end": "2026-12-31",
+      "is_current": true,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": false,
+      "accounts": [],
+      "target_value": 300000.0,
+      "target_points": null,
+      "achieved_value": 120000.0,
+      "ratio_missing": false,
+      "tier_reached": null,
+      "next_tier": null,
+      "pipeline_value": null
+    }
+  ],
+  "dealers": [
+    {
+      "target_no": "TGT-000020",
+      "name": "BKIN Q4",
+      "subject_kind": "dealer",
+      "subject_label": "BKIN ELECTRICAL SDN BHD",
+      "company_code": "SRT",
+      "period_start": "2026-10-01",
+      "period_end": "2026-12-31",
+      "is_current": true,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": true,
+      "accounts": [
+        {
+          "code": "300-B111",
+          "label": "A/C I"
+        }
+      ],
+      "target_value": 50000.0,
+      "target_points": null,
+      "achieved_value": 5275.8,
+      "ratio_missing": false,
+      "tier_reached": null,
+      "next_tier": {
+        "tier": 1,
+        "threshold": 50000.0,
+        "threshold_points": null,
+        "rates": [
+          {
+            "label": "A/C I",
+            "rate": 3.0
+          }
+        ],
+        "additional_rates": [],
+        "gap": 44724.2
+      },
+      "pipeline_value": null
+    },
+    {
+      "target_no": "TGT-000040",
+      "name": "CRAFT Q4",
+      "subject_kind": "dealer",
+      "subject_label": "A CRAFT IDEA SDN BHD",
+      "company_code": "SRT",
+      "period_start": "2026-10-01",
+      "period_end": "2026-12-31",
+      "is_current": true,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": true,
+      "accounts": [
+        {
+          "code": "300-A077",
+          "label": "A/C I"
+        }
+      ],
+      "target_value": 60000.0,
+      "target_points": null,
+      "achieved_value": 866.4,
+      "ratio_missing": false,
+      "tier_reached": null,
+      "next_tier": {
+        "tier": 1,
+        "threshold": 60000.0,
+        "threshold_points": null,
+        "rates": [
+          {
+            "label": "A/C I",
+            "rate": 3.0
+          }
+        ],
+        "additional_rates": [],
+        "gap": 59133.6
+      },
+      "pipeline_value": null
+    },
+    {
+      "target_no": "TGT-000012",
+      "name": "BATH IDEA 2026",
+      "subject_kind": "dealer",
+      "subject_label": "BATH IDEA BATHROOM & KITCHEN MARKETING SDN BHD",
+      "company_code": "SRT",
+      "period_start": "2026-10-01",
+      "period_end": "2026-12-31",
+      "is_current": true,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": true,
+      "accounts": [
+        {
+          "code": "300-B129",
+          "label": "A/C I"
+        }
+      ],
+      "target_value": 85000.0,
+      "target_points": null,
+      "achieved_value": 17414.05,
+      "ratio_missing": false,
+      "tier_reached": null,
+      "next_tier": {
+        "tier": 1,
+        "threshold": 85000.0,
+        "threshold_points": null,
+        "rates": [
+          {
+            "label": "A/C I",
+            "rate": 3.0
+          }
+        ],
+        "additional_rates": [],
+        "gap": 67585.95
+      },
+      "pipeline_value": null
+    },
+    {
+      "target_no": "TGT-000080",
+      "name": "NOTIER",
+      "subject_kind": "dealer",
+      "subject_label": "NO TIER DEALER SDN BHD",
+      "company_code": "SRT",
+      "period_start": "2026-10-01",
+      "period_end": "2026-12-31",
+      "is_current": true,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": true,
+      "accounts": [
+        {
+          "code": "300-N001",
+          "label": "A/C I"
+        },
+        {
+          "code": "300-N003",
+          "label": "A/C III"
+        }
+      ],
+      "target_value": 20000.0,
+      "target_points": null,
+      "achieved_value": 8000.0,
+      "ratio_missing": false,
+      "tier_reached": null,
+      "next_tier": null,
+      "pipeline_value": null
+    },
+    {
+      "target_no": "TGT-000050",
+      "name": "TOP Q4",
+      "subject_kind": "dealer",
+      "subject_label": "ZZ TOP DEALER SDN BHD",
+      "company_code": "SRT",
+      "period_start": "2026-10-01",
+      "period_end": "2026-12-31",
+      "is_current": true,
+      "metric": "amount",
+      "threshold_unit": "amount",
+      "provisional": true,
+      "accounts": [
+        {
+          "code": "300-Z001",
+          "label": "A/C I"
+        }
+      ],
+      "target_value": 50000.0,
+      "target_points": null,
+      "achieved_value": 95000.0,
+      "ratio_missing": false,
+      "tier_reached": {
+        "tier": 3,
+        "threshold": 90000.0,
+        "threshold_points": null,
+        "rates": [
+          {
+            "label": "A/C I",
+            "rate": 5.0
+          }
+        ],
+        "additional_rates": []
+      },
+      "next_tier": null,
+      "pipeline_value": null
+    }
+  ]
+}

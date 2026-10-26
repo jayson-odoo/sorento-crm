@@ -123,6 +123,24 @@ class CanonicalSalesOrderLine(_CanonicalLine):
     # PER LINE, not per header: one order routinely carries several dates and the
     # coverage timeline has no time axis without them (ADR-0011).
     required_date: Optional[date] = None
+    # FULFIL-SO-REMARK: AutoCount `SODTL.FurtherDescription` (raw RTF, stripped below) and the
+    # nearest earlier text-only heading line. Written when sent, left alone when absent.
+    line_remark: Optional[str] = Field(None, max_length=8000)
+    section_heading: Optional[str] = Field(None, max_length=255)
+
+    @field_validator("line_remark", mode="before")
+    @classmethod
+    def _plain_line_remark(cls, value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        # Cut the RAW text first so a huge RTF never reaches the stripper whole.
+        plain = strip_rtf(value[:262144])
+        return plain[:8000] if plain and len(plain) > 8000 else plain
+
+    @field_validator("section_heading", mode="before")
+    @classmethod
+    def _cut_heading(cls, value: Any) -> Any:
+        return value[:255] if isinstance(value, str) else value
 
 
 class CanonicalPurchaseOrderLine(_CanonicalLine):
@@ -267,6 +285,14 @@ class CanonicalSalesOrder(_CanonicalDocument):
     # mapping. Its own field: `ref` keeps feeding the Project label. Written whenever the
     # key is SENT (blank clears), left alone when it is absent.
     po_ref: Optional[str] = Field(None, max_length=255)
+    # AutoCount `SO.ShipInfo` (FULFIL-SO-REMARK): customer PO number, or PURCHASE REQUEST /
+    # SPONSORSHIP. Written when sent, left alone when absent (same shape as `po_ref`).
+    ship_info: Optional[str] = Field(None, max_length=255)
+
+    @field_validator("ship_info", mode="before")
+    @classmethod
+    def _cut_ship_info(cls, value: Any) -> Any:
+        return value[:255] if isinstance(value, str) else value
     lines: list[CanonicalSalesOrderLine] = Field(default_factory=list, max_length=2000)
 
     @field_validator("internal_note", mode="before")

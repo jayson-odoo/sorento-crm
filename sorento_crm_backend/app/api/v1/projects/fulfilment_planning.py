@@ -59,6 +59,7 @@ from app.services import project_service as projects
 from app.services.audit_service import log_audit
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.project_classification_evidence import classification_evidence
+from app.services.field_access import staff_may_see_clearance
 from app.services import confirm_simulation  # noqa: F401 - registers the engine commit guard
 from app.services import project_line_draft_service
 from app.services.project_fulfilment_board_service import FulfilmentBoardService
@@ -101,7 +102,7 @@ def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
     if not order.project_id:
         return
     project = projects.get_project_or_404(db, order.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
 
@@ -348,7 +349,9 @@ def get_planning_board(
     """
     try:
         numbers = [part.strip() for part in (orders or "").split(",") if part.strip()]
-        body = FulfilmentBoardService(db).build(
+        body = FulfilmentBoardService(
+            db, reveal_eta_delay=staff_may_see_clearance(db, _user)
+        ).build(
             numbers,
             granularity=granularity,
             as_of=as_of,
@@ -519,7 +522,7 @@ def _run_confirm_many(
         # opened HERE - inside that per-order try - never survives past this order's own
         # write). `entry.rejected_line_ids` is this order's own half of the board's
         # withdrawal, `entry` itself the composition `confirm()` already reads.
-        return _confirm_with_possible_rejects(
+        result = _confirm_with_possible_rejects(
             db,
             supply,
             order,
@@ -538,6 +541,15 @@ def _run_confirm_many(
                 preview=preview,
             ),
         )
+        # FULFIL-SO-REMARK (AC-10): the planner's own SO remark rides on every handover line this
+        # order queued, whichever branch wrote it (plain, batch, withdraw-only, Cancel SO only).
+        # Scoped to this order's pso_id; absent computes the default when the email is built.
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        ProjectOrderInquiryService(db).stamp_so_remark(
+            str(order.id), getattr(entry, "so_remark", None)
+        )
+        return result
 
     results = supply.confirm_many(
         payload.orders,
@@ -974,7 +986,9 @@ def get_stock_detail(
         # repeated params, deduplicates, and refuses a value that is not an id by naming the
         # parameter - rather than handing the typo to the query.
         wanted = parse_uuid_list([line_ids], param_name="line_ids") or []
-        return FulfilmentBoardService(db).stock_detail(
+        return FulfilmentBoardService(
+            db, reveal_eta_delay=staff_may_see_clearance(db, _user)
+        ).stock_detail(
             product_id, warehouse_id, line_ids=wanted, group=group
         )
     except Exception as exc:

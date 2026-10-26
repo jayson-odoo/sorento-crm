@@ -155,6 +155,10 @@ class SalesOrderLine(BaseModel):
     #: sorts and labels by (PLAN-so-lines-autocount-order.md). `None` for a line AutoCount
     #: never numbered.
     line_no: Optional[int] = None
+    #: FULFIL-SO-REMARK (AC-16): the line reads as a mockup line, and wears the Mockup label
+    #: (only when the order mixes mockup and actual lines).
+    is_mockup: bool = False
+    mockup_label: bool = False
     #: Where THIS LINE came from - never inherited from the header (R2): a line with no
     #: provenance of its own reads `manual` even under an AutoCount or uploaded header.
     source: str = "manual"
@@ -337,6 +341,9 @@ class SalesOrder(BaseModel):
     is_transferable: Optional[bool] = None
     #: The customer's own PO number as AutoCount printed it (SO-PO-REF). Read-only.
     po_ref: Optional[str] = None
+    #: FULFIL-SO-REMARK (AC-16): AutoCount Shipping Info, and the default SO remark over all lines.
+    ship_info: Optional[str] = None
+    remark: str = ""
     #: The purchase orders its lines wait on, each with whether the pairing is resolved.
     #: Present on the LIST (attached in one query per page); absent on a single read.
     linked_purchase_orders: List[LinkedPurchaseOrder] = Field(default_factory=list)
@@ -863,6 +870,11 @@ class SoLineDeliveryRow(BaseModel):
     qty: float
 
 
+class SoOtherDeliveryRow(SoLineDeliveryRow):
+    """A DO line naming the SO whose product is on no line of it: it names its own SKU."""
+    sku: Optional[str] = None
+
+
 class SoLineCancelRow(BaseModel):
     doc_no: str
     doc_date: Optional[date] = None
@@ -887,3 +899,5 @@ class SoProductGroupHistory(BaseModel):
 class SalesOrderDeliveries(BaseModel):
     lines: List[SoLineHistory]
     groups: List[SoProductGroupHistory]
+    # DO lines naming this SO whose product is on no line of it (DO-SO-LINK-SURFACE).
+    others: List[SoOtherDeliveryRow] = []

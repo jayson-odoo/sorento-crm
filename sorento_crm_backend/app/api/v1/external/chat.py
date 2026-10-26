@@ -53,7 +53,7 @@ from app.models.user import SystemSetting
 from app.dependencies import get_external_api_user
 from app.schemas.chatbot_turn import ChatbotTurnResponse
 from app.schemas.integration import IntegrationLogCreate
-from app.services.chatbot import complete_turn, run_turn
+from app.services.chatbot import complete_turn, inbox_queue, run_turn
 # The head's OWN lookup for "which row is this message's turn" (D15), so the id-less
 # complete route and the duplicate-delivery check can never pick different rows.
 from app.services.chatbot.engine import find_turn_for_message
@@ -215,12 +215,28 @@ def chat_turn(
         # log below simply begins a new one. `db.info` (the company scope `get_db` set)
         # is session state, not transaction state, and survives.
         db.rollback()
-        result = run_turn(payload.envelope, session_factory=SessionLocal)
-        response_payload = TurnResponse(**result.as_dict())
-        if result.status == "failed":
-            # A failed TURN is still a successful CALL: the caller gets the error reply to
-            # send and the failure is recorded on the row and the trace (R4, no auto retry).
-            error_message = result.error
+        if inbox_queue.accepts(db, payload.envelope):
+            # CHAT-INBOX-QUEUE (IQ-5): a covered contact's message is only queued; the
+            # contact's drain answers it through the sender. The answer is the shape the
+            # spine already treats as nothing to send.
+            try:
+                turn_id, _created = inbox_queue.enqueue(db, payload.envelope, rate_limit=True)
+            except inbox_queue.InboxRefused as refused:
+                # IQ-33 / IQ-40: the rate limit or the pile-up cap. The message has one failed,
+                # staff-visible row (logged as an error where it fired); nothing is sent.
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail=f"This message was not queued ({refused.stage}).",
+                )
+            inbox_queue.kick(inbox_queue.contact_of(payload.envelope))
+            response_payload = TurnResponse(turn_id=turn_id, duplicate=True, actions=[])
+        else:
+            result = run_turn(payload.envelope, session_factory=SessionLocal)
+            response_payload = TurnResponse(**result.as_dict())
+            if result.status == "failed":
+                # A failed TURN is still a successful CALL: the caller gets the error reply to
+                # send and the failure is recorded on the row and the trace (R4, no auto retry).
+                error_message = result.error
     except HTTPException as http_exc:
         response_status = http_exc.status_code
         error_message = str(http_exc.detail)

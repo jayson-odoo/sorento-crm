@@ -83,6 +83,8 @@ export interface PortalContact {
   /** The "Portal Submission" attachment type's allowed extensions (no dots).
    *  The file picker's accept list; empty = the type sets no limit. */
   attachment_allowed_extensions?: string[];
+  /** The contact's first active sales agent as a name (project registration's read-only field). */
+  sales_agent_name?: string | null;
 }
 
 export interface PortalSubmissionSummary {
@@ -1039,8 +1041,12 @@ export async function lookupProducts(
 export async function lookupDebtors(
   q: string,
   limit = 20,
+  /** The form asking: `project_registration` is offered only the agent's own debtors. */
+  kind?: string,
 ): Promise<DebtorLookupItem[]> {
-  const url = `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}`;
+  const url =
+    `/api/v1/public/portal/lookups/debtors?q=${encodeURIComponent(q)}&limit=${limit}` +
+    (kind ? `&kind=${encodeURIComponent(kind)}` : '');
   const res = await portalFetch(url);
   return unwrap<DebtorLookupItem[]>(res, 'Failed to load debtors.');
 }
@@ -1215,6 +1221,7 @@ export const AI_EXTRACT_FORM_KEYS: Record<PortalLandingKind, string> = {
   stock_inquiry: 'portal.stock_inquiry',
   purchase_request: 'portal.purchase_request',
   sponsorship_form: 'portal.sponsorship_form',
+  project_registration: 'portal.project_registration',
   // D7: registered in the backend's FORM_SCHEMAS with the same `portal.`
   // prefix as every other portal form key (Phase 1 briefly had this as a
   // bare `price_tag_request` - wrong; fixed to match convention).

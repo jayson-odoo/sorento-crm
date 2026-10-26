@@ -73,11 +73,12 @@ class NumberingService:
             rule.next_value = rule.start_value
             rule.last_reset_key = current_key
 
-        # Format prefix: support {year} (4-digit), {yy} (2-digit), {month}, {day}
+        # Format prefix: support {year} (4-digit), {yy} (2-digit), {mm} (zero-padded month), {month}, {day}
         yy = str(reference_date.year % 100).zfill(2)  # 2026 -> "26", 2000 -> "00"
         prefix = (rule.prefix_template or "").format(
             year=reference_date.year,
             yy=yy,
+            mm=f"{reference_date.month:02d}",
             month=reference_date.month,
             day=reference_date.day,
         )

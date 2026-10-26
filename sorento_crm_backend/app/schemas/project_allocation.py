@@ -32,7 +32,7 @@ class CandidateHolder(BaseModel):
     """The project a pile is held for, and the CS to ask (AC-H2)."""
 
     project_id: str
-    project_code: str
+    project_code: Optional[str] = None
     project_title: Optional[str] = None
     cs_user_id: Optional[str] = None
     cs_name: Optional[str] = None
@@ -77,7 +77,7 @@ class AllocationCandidateList(BaseModel):
     qty: Decimal
     uom: Optional[str] = None
     delivery_date: Optional[date] = None
-    project_code: str
+    project_code: Optional[str] = None
     brw_warehouse_code: Optional[str] = None
     candidates: List[AllocationCandidate]
     plan: List[PlannedSource]
@@ -137,11 +137,11 @@ class AllocationClaimRow(BaseModel):
     qty: Decimal
     reason: Optional[str] = None
     from_project_id: str
-    from_project_code: str
+    from_project_code: Optional[str] = None
     from_project_title: Optional[str] = None
     from_project_cs_name: Optional[str] = None
     to_project_id: str
-    to_project_code: str
+    to_project_code: Optional[str] = None
     to_project_title: Optional[str] = None
     to_project_cs_name: Optional[str] = None
     product_id: Optional[str] = None

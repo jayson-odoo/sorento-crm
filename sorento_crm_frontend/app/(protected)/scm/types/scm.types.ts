@@ -267,6 +267,9 @@ export type SalesOrderStatus =
 
 export interface SalesOrderLine {
   id: string;
+  /** FULFIL-SO-REMARK: the line reads as a mockup line; `mockup_label` = wear the badge. */
+  is_mockup?: boolean;
+  mockup_label?: boolean;
   /** AC-CONSIGN-CRM: what a Consignment Return handed back; reporting only. */
   qty_returned?: number;
   /**
@@ -524,6 +527,9 @@ export interface SalesOrder {
   project_label_source?: 'inquiry' | 'note' | 'ref' | 'delivery' | null;
   /** The customer's own PO number as AutoCount printed it; read-only, null when blank. */
   po_ref?: string | null;
+  /** FULFIL-SO-REMARK: AutoCount Shipping Info, and the default SO remark over all lines. */
+  ship_info?: string | null;
+  remark?: string;
   /** Every distinct location its lines ship from. Plural: one order can land in two. */
   stock_locations?: string[];
   /** The planning class this order was classified into, or `null` when nobody has ever
@@ -940,6 +946,11 @@ export interface SoLineDeliveryRow {
   qty: number;
 }
 
+/** A DO line naming the SO whose product is on no line of it: it names its own SKU. */
+export interface SoOtherDeliveryRow extends SoLineDeliveryRow {
+  sku: string | null;
+}
+
 /** One Cancel SO line placed under a sales-order line; `qty` is null for `group_whole`. */
 export interface SoLineCancelRow {
   doc_no: string;
@@ -966,4 +977,6 @@ export interface SoProductGroupHistory {
 export interface SalesOrderDeliveries {
   lines: SoLineHistory[];
   groups: SoProductGroupHistory[];
+  /** DO lines naming this SO whose product is on no line of it (DO-SO-LINK-SURFACE). */
+  others?: SoOtherDeliveryRow[];
 }

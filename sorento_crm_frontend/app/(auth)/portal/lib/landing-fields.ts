@@ -43,6 +43,12 @@ const KIND_FIELDS: Record<PortalLandingKind, LandingField[]> = {
     { key: 'customer_name', label: 'Customer', type: 'text' },
     { key: 'purpose', label: 'Purpose', type: 'text' },
   ],
+  project_registration: [
+    { key: 'title', label: 'Project', type: 'text' },
+    { key: 'developer_name', label: 'Developer', type: 'text' },
+    { key: 'state', label: 'State', type: 'text' },
+    { key: 'ppf_no', label: 'PPF', type: 'text' },
+  ],
   complaint: [
     { key: 'product_code', label: 'Product', type: 'text' },
     { key: 'project_title', label: 'Project', type: 'text' },
@@ -75,9 +81,17 @@ export function landingFieldsFor(kind: PortalLandingKind): LandingField[] {
   return [...COMMON_FIELDS, ...(KIND_FIELDS[kind] ?? [])];
 }
 
+/**
+ * Whether a row reads as a Draft. A rejected project registration is still editable (the
+ * server sends is_draft true so the form opens), but the label comes from its status.
+ */
+export function isShownAsDraft(row: PortalSubmissionSummary): boolean {
+  return Boolean(row.is_draft) && (row.status || '').toLowerCase() !== 'rejected';
+}
+
 /** Draft or the real status label - same rule the card badge already uses. */
 export function submissionStatusLabel(row: PortalSubmissionSummary): string {
-  if (row.is_draft) return 'Draft';
+  if (isShownAsDraft(row)) return 'Draft';
   if (row.status_label) return row.status_label;
   return row.kind === 'complaint'
     ? complaintStatusLabel(row.status)

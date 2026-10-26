@@ -218,8 +218,12 @@ def _check_refs(db: Session, data: Dict[str, Any]) -> None:
             details={"field": "customer_id"},
         )
     pid = data.get("project_id")
+    from app.services.project_service import approved_projects
+
+    # A portal registration waiting for approval is not a project yet (PROJECT-REG-PORTAL R4).
     if pid and (
-        not _is_uuid(pid) or db.query(Project.id).filter(Project.id == pid).first() is None
+        not _is_uuid(pid)
+        or approved_projects(db.query(Project.id).filter(Project.id == pid)).first() is None
     ):
         raise AppException(
             status_code=422,

@@ -59,8 +59,12 @@ def projects_for_contact(
 
     from app.models.base import company_scope
 
+    from app.services.project_service import approved_projects
+
     with company_scope(db, frozenset(company_ids)):
-        rows = (
+        # A portal registration still waiting for approval is not a project to attach
+        # anything to yet (PROJECT-REG-PORTAL R4).
+        rows = approved_projects(
             db.query(Project, Company.name)
             .join(Company, Company.id == Project.company_id)
             .filter(Project.company_id.in_(company_ids))
@@ -114,8 +118,10 @@ def assert_project_requirement(
             )
         from app.models.base import company_scope
 
+        from app.services.project_service import approved_projects
+
         with company_scope(db, frozenset(company_ids)):
-            project = db.query(Project).filter(Project.id == project_id).first()
+            project = approved_projects(db.query(Project).filter(Project.id == project_id)).first()
         if project is None or str(project.company_id) not in company_ids:
             raise AppException(
                 status_code=422,

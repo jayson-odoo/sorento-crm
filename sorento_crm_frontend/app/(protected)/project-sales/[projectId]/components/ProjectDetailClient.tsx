@@ -13,6 +13,7 @@ import {
   History,
   Info,
   ListChecks,
+  Loader2,
   Package,
   Paperclip,
   Pencil,
@@ -28,18 +29,37 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { DropdownMenuItem } from '@/components/ui/dropdown-menu';
 import { Skeleton } from '@/components/ui/skeleton';
+import {
+  Dialog,
+  DialogBody,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog';
+import { Label } from '@/components/ui/label';
+import { Textarea } from '@/components/ui/textarea';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import DetailActions from '@/components/common/DetailActions';
 import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
-import type { Project } from '../../_shared/types/project.types';
+import type { Project, ProjectPossibleDuplicate } from '../../_shared/types/project.types';
 import {
   projectsPagerQuery,
+  useApproveProject,
   useChangeProjectStatus,
   useDeleteProject,
   useProject,
+  useRejectProject,
 } from '../../_shared/hooks/useProjects';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { isProjectApproved } from '../../_shared/lib/projectApproval';
+import {
+  ApprovalStatePill,
+  isAwaitingDecision,
+} from '../../_shared/components/ApprovalStatePill';
 import EntityActivitiesLayout from '@/components/common/ActivitiesNotesPanel/EntityActivitiesLayout';
 import { STALE_TONE_CLASS, describeStaleness } from '../../_shared/lib/staleness';
 import { CriticalPanel } from './CriticalPanel';
@@ -114,7 +134,19 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const [confirmDelete, setConfirmDelete] = React.useState(false);
   const [reassigning, setReassigning] = React.useState(false);
   // Moving an owner is a manager act server-side too (project_service.update_project).
-  const canReassign = useHasPermission('projects.projects.manage');
+  const isManager = useHasPermission('projects.projects.manage');
+  // PROJECT-REG-PORTAL R7: a pending portal registration is approved or rejected here.
+  const mayApprove = useHasPermission('projects.registrations.approve');
+  const [rejecting, setRejecting] = React.useState(false);
+  // The approved project an exact-duplicate refusal names, linked under the header.
+  const [existingProject, setExistingProject] = React.useState<ProjectPossibleDuplicate | null>(
+    null,
+  );
+  // Any change that lands (an approve, an edit, a reject) re-reads the project, and the
+  // refusal it answered is then history: the link must not outlive it.
+  React.useEffect(() => {
+    setExistingProject(null);
+  }, [project?.updated_at, project?.approval_state]);
 
   function selectTab(tab: TabId) {
     const next = new URLSearchParams(searchParams.toString());
@@ -153,10 +185,20 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   }
 
   const stale = describeStaleness(project);
-  const moves = project.can_edit
-    ? availableStatusMoves(graph.data, project.status_id)
-    : [];
+  // A registration waiting for (or refused) approval has no stage to move: only Approve
+  // gives it its first one.
+  const waiting = isAwaitingDecision(project.approval_state);
+  const canDecide = mayApprove && project.approval_state === 'pending';
+  const moves =
+    project.can_edit && !waiting ? availableStatusMoves(graph.data, project.status_id) : [];
   const { secondary: secondaryMoves } = splitStatusMoves(moves);
+  // The gear's items, each with its own rule; the gear itself shows only when one applies,
+  // so an approver deciding a registration (Edit in the header, no Reassign, no Delete,
+  // no stage moves) never opens an empty menu.
+  const showEditItem = !canDecide;
+  const showDeleteItem = isProjectApproved(project) || isManager;
+  const hasGearItems =
+    showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem;
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
@@ -196,15 +238,20 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         <div className="min-w-0 break-words">
           <div className="flex flex-wrap items-center gap-2">
             <span className="text-sm text-muted-foreground">
-              {project.project_code}
+              {projectCodeLabel(project)}
             </span>
             {/* ONE pill. The outcome is DERIVED from the rung (a project on Lost reads
                 outcome "lost"), so showing both put "Registered Open" and, on the lead,
-                "Qualified Qualified" side by side. See components/common/StatusPill. */}
-            <ProjectStatusPill
-              statusKey={project.status_key}
-              label={project.status_label}
-            />
+                "Qualified Qualified" side by side. See components/common/StatusPill. A
+                registration waiting for approval has no rung: its approval pill stands there. */}
+            {waiting ? (
+              <ApprovalStatePill state={project.approval_state} />
+            ) : (
+              <ProjectStatusPill
+                statusKey={project.status_key}
+                label={project.status_label}
+              />
+            )}
             {project.is_critical && (
               <Badge variant="destructive" className="gap-1">
                 <Flame className="size-3" aria-hidden />
@@ -238,18 +285,36 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             ariaLabel: 'project',
           }}
           gear={
-            project.can_edit && (
+            <>
+            {canDecide && (
+              <>
+                <Button type="button" variant="outline" onClick={() => setRejecting(true)}>
+                  Reject
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => router.push(`/project-sales/${project.id}/edit`)}
+                >
+                  Edit
+                </Button>
+              </>
+            )}
+            {project.can_edit && hasGearItems && (
               <DetailActionsMenu ariaLabel="Project actions">
                 {/* First item, never a second primary (AC-PF005, D9): the form is the
                     one place every field on this page is edited, so it leads the menu
                     rather than sitting after the status moves. */}
-                <DropdownMenuItem
-                  onSelect={() => router.push(`/project-sales/${project.id}/edit`)}
-                >
-                  <Pencil className="size-4" aria-hidden />
-                  Edit project
-                </DropdownMenuItem>
-                {canReassign && (
+                {/* An approver deciding a registration has Edit beside Approve already. */}
+                {showEditItem && (
+                  <DropdownMenuItem
+                    onSelect={() => router.push(`/project-sales/${project.id}/edit`)}
+                  >
+                    <Pencil className="size-4" aria-hidden />
+                    Edit project
+                  </DropdownMenuItem>
+                )}
+                {isManager && (
                   <DropdownMenuItem onSelect={() => setReassigning(true)}>
                     <UserCog className="size-4" aria-hidden />
                     Reassign
@@ -266,25 +331,49 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                     {option.label}
                   </DropdownMenuItem>
                 ))}
-                <DropdownMenuItem
-                  variant="destructive"
-                  onSelect={() => setConfirmDelete(true)}
-                >
-                  <Trash2 className="size-4" aria-hidden />
-                  Delete project
-                </DropdownMenuItem>
+                {/* An unapproved registration is Rejected, not deleted, unless a manager
+                    removes it (security S2): the server refuses anyone else with 403. */}
+                {showDeleteItem && (
+                  <DropdownMenuItem
+                    variant="destructive"
+                    onSelect={() => setConfirmDelete(true)}
+                  >
+                    <Trash2 className="size-4" aria-hidden />
+                    Delete project
+                  </DropdownMenuItem>
+                )}
               </DetailActionsMenu>
-            )
+            )}
+            </>
           }
           primary={
-            <ProjectStatusAction
-              moves={moves}
-              isPending={move.isPending}
-              onMove={moveTo}
-            />
+            canDecide ? (
+              <ApproveButton projectId={project.id} onRefused={setExistingProject} />
+            ) : (
+              <ProjectStatusAction
+                moves={moves}
+                isPending={move.isPending}
+                onMove={moveTo}
+              />
+            )
           }
         />
       </header>
+
+      {/* Read-only metadata of a portal registration, directly under the header (R7). */}
+      {project.registration && <RegistrationFacts project={project} />}
+
+      {existingProject && (
+        <p className="text-sm text-destructive" role="alert">
+          Already registered as{' '}
+          <Link
+            href={`/project-sales/${existingProject.project_id}`}
+            className="font-medium underline"
+          >
+            {projectCodeLabel(existingProject)} {existingProject.title}
+          </Link>
+        </p>
+      )}
 
       {/* The ladder says its own reason and its own consequence (AC-H6). A badge alone
           leaves the reader guessing what "Unattended" changed; this states it, and the
@@ -331,6 +420,8 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
               <Fact label="Registered company / SPV" value={project.registered_company_name} />
               <Fact label="Location" value={project.location} />
               <Fact label="Address" value={project.address} />
+              <Fact label="State" value={project.state} />
+              <Fact label="Mukim" value={project.mukim} />
               <Fact label="Project type" value={project.type_name} />
               <Fact label="Template" value={project.template_name} />
               <Fact label="Reference" value={project.admin_ref} />
@@ -422,11 +513,19 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         <ReassignProjectDialog project={project} onDone={() => setReassigning(false)} />
       )}
 
+      {rejecting && (
+        <RejectProjectDialog
+          projectId={project.id}
+          onDone={() => setRejecting(false)}
+          onRejected={() => setExistingProject(null)}
+        />
+      )}
+
       <ConfirmDeleteDialog
         open={confirmDelete}
         onOpenChange={setConfirmDelete}
         title="Confirm delete"
-        description={`Delete ${project.project_code} "${project.title}"? This action cannot be undone. If a customer purchase order has been recorded against it, archive it instead.`}
+        description={`Delete ${projectCodeLabel(project)} "${project.title}"? This action cannot be undone. If a customer purchase order has been recorded against it, archive it instead.`}
         onDelete={async () => {
           await remove.mutateAsync(project.id);
         }}
@@ -435,6 +534,142 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       />
     </div>
     </EntityActivitiesLayout>
+  );
+}
+
+/**
+ * What the sales agent typed on the portal that has no home on a project (R7), read-only,
+ * plus the approved projects it may repeat (links, never a block) and, once rejected, why.
+ */
+function RegistrationFacts({ project }: { project: Project }) {
+  const info = project.registration!;
+  const duplicates = project.possible_duplicates ?? [];
+  return (
+    <div className="space-y-2 rounded-lg border border-border px-4 py-3">
+      <dl className="grid gap-x-6 gap-y-2 sm:grid-cols-3 lg:grid-cols-5">
+        {/* Submitted in Malaysia: the backend stamps naive UTC. */}
+        <Fact
+          label="Date"
+          value={project.submitted_at ? formatDateInMalaysia(project.submitted_at) : null}
+        />
+        <Fact label="Sales agent" value={info.sales_agent_name} />
+        <Fact label="Distributor" value={info.distributor_name} />
+        <Fact label="Customer" value={info.customer_name} />
+        <Fact label="Your ref" value={info.your_ref} />
+      </dl>
+      {duplicates.length > 0 && (
+        <p className="text-sm">
+          <span className="text-muted-foreground">Possible duplicate: </span>
+          {duplicates.map((duplicate, index) => (
+            <React.Fragment key={duplicate.project_id}>
+              {index > 0 && ', '}
+              <Link
+                href={`/project-sales/${duplicate.project_id}`}
+                className="text-primary hover:underline"
+              >
+                {projectCodeLabel(duplicate)} {duplicate.title}
+              </Link>
+            </React.Fragment>
+          ))}
+        </p>
+      )}
+      {project.approval_state === 'rejected' && project.reject_reason && (
+        <div className="text-sm">
+          <p className="text-xs text-muted-foreground">Reason for rejecting</p>
+          <p className="break-words">{project.reject_reason}</p>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * The header's primary slot on a pending registration, for an approver. Approve sends no
+ * form: the developer is picked on the edit page first. A refusal is toasted by the hook;
+ * an exact duplicate also hands back the project it repeats, for the link under the header.
+ */
+function ApproveButton({
+  projectId,
+  onRefused,
+}: {
+  projectId: string;
+  onRefused: (existing: ProjectPossibleDuplicate | null) => void;
+}) {
+  const approve = useApproveProject(projectId);
+  return (
+    <Button
+      type="button"
+      disabled={approve.isPending}
+      onClick={() => {
+        onRefused(null);
+        approve.mutateAsync(undefined).catch((error: unknown) => {
+          onRefused(
+            (error as { existingProject?: ProjectPossibleDuplicate }).existingProject ?? null,
+          );
+        });
+      }}
+    >
+      {approve.isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
+      Approve
+    </Button>
+  );
+}
+
+/** Reject needs a reason: the salesperson reads it on their registration. */
+function RejectProjectDialog({
+  projectId,
+  onDone,
+  onRejected,
+}: {
+  projectId: string;
+  onDone: () => void;
+  onRejected: () => void;
+}) {
+  const reject = useRejectProject(projectId);
+  const isPending = reject.isPending;
+  const onCancel = onDone;
+  const [reason, setReason] = React.useState('');
+  const trimmed = reason.trim();
+
+  return (
+    <Dialog open onOpenChange={(next) => !next && onCancel()}>
+      <DialogContent className="w-full max-w-md" aria-describedby={undefined}>
+        <DialogHeader>
+          <DialogTitle>Reject this registration</DialogTitle>
+        </DialogHeader>
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            if (!trimmed || isPending) return;
+            // The hook toasts a refusal; the dialog stays open with what was typed.
+            reject.mutateAsync(trimmed).then(() => {
+              onRejected();
+              onDone();
+            }, () => undefined);
+          }}
+        >
+          <DialogBody className="space-y-1.5">
+            <Label htmlFor="project-reject-reason">Reason</Label>
+            <Textarea
+              id="project-reject-reason"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+              rows={4}
+              autoFocus
+            />
+          </DialogBody>
+          <DialogFooter className="flex-col gap-2 sm:flex-row sm:justify-end">
+            <Button type="button" variant="outline" onClick={onCancel}>
+              Cancel
+            </Button>
+            <Button type="submit" variant="destructive" disabled={!trimmed || isPending}>
+              {isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
+              Reject
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
   );
 }
 

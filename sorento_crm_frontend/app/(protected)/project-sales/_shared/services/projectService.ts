@@ -7,6 +7,7 @@ import type {
   ProjectListParams,
   ProjectParty,
   ProjectPartyBody,
+  ProjectPossibleDuplicate,
   ProjectRegisterBody,
   ProjectStakeholder,
   ProjectStakeholderBody,
@@ -63,8 +64,33 @@ import type {
   TaskPhase,
   TaskStatusChangeBody,
 } from '../types/project.types';
+import { projectCodeLabel } from '../lib/projectCode';
 
 const BASE = '/api/v1/project-sales';
+
+/**
+ * A refused approve. An exact developer + title repeat names the approved project it repeats
+ * (`existing_project`, at the top of the body or under `details`), so the header can link it.
+ */
+export class ProjectApprovalError extends Error {
+  existingProject?: ProjectPossibleDuplicate;
+}
+
+async function approvalError(response: Response, fallback: string): Promise<ProjectApprovalError> {
+  const spare = response.clone();
+  const error = new ProjectApprovalError(await extractApiError(response, fallback));
+  try {
+    const body = (await spare.json()) as {
+      existing_project?: ProjectPossibleDuplicate;
+      details?: { existing_project?: ProjectPossibleDuplicate };
+    };
+    const existing = body.existing_project ?? body.details?.existing_project;
+    if (existing && typeof existing === 'object') error.existingProject = existing;
+  } catch {
+    // not JSON: the message is all there is
+  }
+  return error;
+}
 
 interface ListEnvelope<T> {
   data: T[];
@@ -77,6 +103,8 @@ function buildProjectParams(params: ProjectListParams): string {
   const sp = new URLSearchParams();
   if (params.query) sp.set('query', params.query);
   if (params.only_critical) sp.set('only_critical', 'true');
+  if (params.approval_state) sp.set('approval_state', params.approval_state);
+  if (params.approved_only) sp.set('approved_only', 'true');
   if (params.page) sp.set('page', String(params.page));
   if (params.limit) sp.set('limit', String(params.limit));
   if (params.sort) sp.set('sort', params.sort);
@@ -116,6 +144,8 @@ export async function listEditableProjectOptions(query: string) {
   for (;;) {
     const body = await listProjects({
       query: query || undefined,
+      // A registration waiting for approval takes no uploads (PROJECT-REG-PORTAL R4).
+      approved_only: true,
       page,
       limit: PROJECTS_MAX_PAGE_LIMIT,
     });
@@ -130,7 +160,7 @@ export async function listEditableProjectOptions(query: string) {
     .map((project) => ({
       value: project.id,
       label: project.title,
-      description: [project.project_code, project.developer_name].filter(Boolean).join(' · '),
+      description: [projectCodeLabel(project), project.developer_name].filter(Boolean).join(' · '),
     }));
 }
 
@@ -197,6 +227,36 @@ export async function changeProjectStatus(
   });
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to move the project'));
+  return response.json();
+}
+
+/**
+ * Approve a pending portal registration (PROJECT-REG-PORTAL R9): it draws its PPF code and
+ * enters the funnel. The header button sends no body once the developer was picked on the
+ * edit page.
+ */
+export async function approveProject(
+  projectId: string,
+  body: Partial<ProjectRegisterBody> = {},
+): Promise<Project> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/approve`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body),
+  });
+  if (!response.ok) throw await approvalError(response, 'Failed to approve the project');
+  return response.json();
+}
+
+/** Reject a pending portal registration with the reason the salesperson reads (R10). */
+export async function rejectProject(projectId: string, reason: string): Promise<Project> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/reject`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ reason }),
+  });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to reject the project'));
   return response.json();
 }
 

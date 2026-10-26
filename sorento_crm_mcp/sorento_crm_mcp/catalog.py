@@ -845,6 +845,28 @@ CATALOG: tuple[ToolSpec, ...] = (
         restricted_fields=(("sales_orders.sales_report", "Sales report"),),
     ),
     ToolSpec(
+        "crm_sales_target_progress",
+        (
+            "SALES TARGET progress for the asking contact: what has been achieved against a "
+            "target, the tier reached, the next tier and the gap to it. A dealer sees the targets "
+            "of its own accounts; a salesperson sees their own target, their team's and their "
+            "dealers' (smallest gap first). The figure is the CRM target engine's own.\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the answer "
+            "is per contact (422 `contact_identity_required` otherwise). `date_from`/`date_to` "
+            "pick the target periods that overlap the window; omit both for today. "
+            "`customer_ids` (repeatable) narrows the dealer lines to those customers; one outside "
+            "the contact's scope answers 403 `customer_not_permitted`. A contact without the "
+            "Sales target grant answers 403 `sales_target_not_enabled`."
+        ),
+        "/api/v1/sales/target-progress",
+        (),
+        ("contact_id", "space_id", "date_from", "date_to", "customer_ids"),
+        domain="orders",
+        related_tools=("crm_sales_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales.sales_target", "Sales target"),),
+    ),
+    ToolSpec(
         "crm_report_ask",
         (
             "ONE flexible sales report: rank or total sales by any one dimension, for a REQUIRED "
@@ -1616,6 +1638,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "<developer>', 'projects at tendering stage', 'critical projects', 'what is <salesperson> "
             "working on'. NOT for delivery orders or purchase orders -- a project is a pursuit, not a "
             "transaction.\n\n"
+            "Only APPROVED projects are listed: a portal project registration still waiting for "
+            "approval (or rejected) is not a project yet and is left out, so every row carries a "
+            "project_code.\n\n"
             "Each row returns project_code, title, developer_name, type_name, status_label, outcome "
             "(open / won / lost / partial), owner_name, estimated_sales_value, launch_date, "
             "days_since_last_activity, next_action_date, next_action_overdue, stale_level (0 fine, "

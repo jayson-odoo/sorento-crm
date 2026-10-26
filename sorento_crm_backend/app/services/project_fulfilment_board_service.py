@@ -80,6 +80,7 @@ from app.models.project_so import (
 from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services import project_line_draft_service
+from app.services import so_remark_rules
 from app.services.error_handler import AppException
 from app.services.project_line_numbering import LineFacts, number_lines
 from app.services.project_supply_service import (
@@ -94,6 +95,7 @@ from app.services.project_supply_service import (
 from app.services.scm import ladder_steps
 from app.services.scm import priority
 from app.services.scm import sales_agent_service
+from app.services.scm import spo_supply
 from app.services.scm import supply_assignment
 from app.services.scm.supply_origin import buy_origin_by_product
 from app.services.scm.planning_predicate import (
@@ -325,8 +327,26 @@ def _parse_iso_date(value: Optional[str]) -> Optional[date]:
         return None
 
 
+def _shown(value: Any) -> Any:
+    """The response as its viewer may read it: a masked delay becomes the published ETA.
+
+    `spo_supply.MaskedEta` already PRINTS as the published date, but a response model
+    serialises a date by its value, which is the delay.
+    """
+    if isinstance(value, spo_supply.MaskedEta):
+        return value.published
+    if isinstance(value, dict):
+        return {key: _shown(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_shown(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_shown(item) for item in value)
+    return value
+
+
 def _date_words(when: Optional[date]) -> str:
     """A date as it is said out loud: `3 Sep 2026`. Never ISO inside a sentence."""
+    when = spo_supply.shown_date(when)
     if when is None:
         return "an unstated date"
     return f"{when.day} {_MONTHS[when.month - 1]} {when.year}"
@@ -385,6 +405,16 @@ def _project_label_from_note(note: Optional[str]) -> Optional[str]:
     return text_value
 
 
+def _remark_facts(order: SalesOrder, line: Any) -> Dict[str, Any]:
+    """FULFIL-SO-REMARK: the two facts the Confirm guide's default remark is decided from."""
+    return {
+        "is_mockup": so_remark_rules.is_mockup_line(
+            order.internal_note, line.line_remark, line.section_heading
+        ),
+        "remark_type": so_remark_rules.remark_type(order.ship_info),
+    }
+
+
 def _project_label(order: SalesOrder) -> Optional[str]:
     # PLAN-so-project-label.md: the column, once a rule has ever written it, before the
     # note-reading fallback below - so the board keeps reading exactly what it always has
@@ -436,6 +466,9 @@ class _Row:
         #: OI-SPLIT-GUIDE (UAC F3, F10): the purchasing email's words for what the next
         #: Confirm sends for this line (`_attach_saved_remarks`). `None` when it sends nothing.
         "saved_remark",
+        #: FULFIL-SO-REMARK: `so_remark_rules.is_mockup_line` for this line, and the order's
+        #: `remark_type` (Sponsorship / Purchase Request / None). Read by the Confirm guide.
+        "is_mockup", "remark_type",
     )
 
     def __init__(self, **kw: Any) -> None:
@@ -570,9 +603,11 @@ class _Row:
 class FulfilmentBoardService:
     """`GET /project-sales/fulfilment-planning/board`. A pure read."""
 
-    def __init__(self, db: Session):
+    def __init__(self, db: Session, *, reveal_eta_delay: bool = True):
         self.db = db
-        self.supply = ProjectSupplyService(db)
+        # A viewer without `view_clearance` is shown the published ETA, never the delay
+        # (owner ruling 17 Oct 2026); the route says which this request's viewer is.
+        self.supply = ProjectSupplyService(db, reveal_eta_delay=reveal_eta_delay)
         # Per-request stock facts, filled by `_allocate` and read by `_cell`. Cached rather
         # than re-read because the cell states the same figures the allocation was computed
         # from - a second read could disagree with the proposal sitting next to it.
@@ -622,7 +657,15 @@ class FulfilmentBoardService:
 
     # ----------------------------------------------------------------- public
 
-    def build(
+    def build(self, so_numbers: Sequence[str], **kwargs: Any) -> Dict[str, Any]:
+        """`_build`, with every masked delay printed as its published ETA."""
+        return _shown(self._build(so_numbers, **kwargs))
+
+    def stock_detail(self, product_id: str, *args: Any, **kwargs: Any) -> Dict[str, Any]:
+        """`_stock_detail`, with every masked delay printed as its published ETA."""
+        return _shown(self._stock_detail(product_id, *args, **kwargs))
+
+    def _build(
         self,
         so_numbers: Sequence[str],
         *,
@@ -931,7 +974,7 @@ class FulfilmentBoardService:
 
     # ----------------------------------------------------- the stock drill-down
 
-    def stock_detail(
+    def _stock_detail(
         self,
         product_id: str,
         warehouse_id: Optional[str] = None,
@@ -1657,6 +1700,7 @@ class FulfilmentBoardService:
                 # see `_Row.__slots__`'s own docstring.
                 source_ref=line.source_ref,
                 company_id=str(line.company_id) if line.company_id else None,
+                **_remark_facts(order, line),
             )
             addressing = self._addressing.get(str(line.id), {})
             # Null when nobody has adopted this sales order: there is no record to confirm
@@ -1824,6 +1868,7 @@ class FulfilmentBoardService:
                     bucket_key=NO_DATE_BUCKET,
                     cancelled=change_row.kind == "cancelled",
                     pending_change_batch_id=str(change_row.batch_id),
+                    **_remark_facts(order, core_line),
                     source_ref=core_line.source_ref,
                     company_id=(
                         str(core_line.company_id) if core_line.company_id else None
@@ -1897,6 +1942,7 @@ class FulfilmentBoardService:
                     customer_name=customers.get(customer_id or ""),
                     line_no=project_line.line_no,
                     so_line_no=core_line.line_no,
+                    **_remark_facts(order, core_line),
                     item_code=product.product_code,
                     product_id=str(core_line.product_id) if core_line.product_id else None,
                     project_sales_order_id=str(project_line.project_sales_order_id),
@@ -3108,7 +3154,9 @@ class FulfilmentBoardService:
             )
             if order is None:
                 continue
-            supply = ProjectSupplyService(self.db)
+            supply = ProjectSupplyService(
+                self.db, reveal_eta_delay=self.supply.reveal_eta_delay
+            )
             lines = supply.lines_of(pso_id)
             wanted = {str(row.project_line_id) for row in rows}
             replacing = {str(line.id) for line in lines if str(line.id) in wanted}
@@ -5422,6 +5470,8 @@ class FulfilmentBoardService:
             #: .line_no`), `None` when AutoCount gave the line none. What the Line column,
             #: the drawer title and every confirm message print; `line_no` is addressing.
             "so_line_no": row.so_line_no,
+            #: FULFIL-SO-REMARK: the Confirm guide's Mockup badge and default remark.
+            "is_mockup": bool(row.is_mockup),
             "item_code": row.item_code,
             #: The quantity this board PLANS for, kept under its old name because the
             #: frontend reads it. Since the 14 September 2026 ruling that is
@@ -5748,6 +5798,8 @@ class FulfilmentBoardService:
                     #: DATE before (or without) a split read.
                     "so_date": row.order_date,
                     "customer_name": row.customer_name,
+                    #: FULFIL-SO-REMARK: Sponsorship / Purchase Request / null, off Shipping Info.
+                    "remark_type": row.remark_type,
                     "line_count": 0,
                     "decided_count": 0,
                     "unplannable_count": 0,

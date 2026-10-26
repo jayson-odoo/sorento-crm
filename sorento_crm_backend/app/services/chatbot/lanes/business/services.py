@@ -575,6 +575,24 @@ def account_levels_reader(db: Session) -> Callable[[list[str]], dict[str, int | 
     return read
 
 
+def customer_names_reader(db: Session) -> Callable[[list[str]], dict[str, str]]:
+    """`customers.customer_name` by customer uuid, one query (CHAT-CUSTOMER-PICK-RESUME, the roster's name)."""
+
+    def read(ids: list[str]) -> dict[str, str]:
+        from app.models.order import Customer
+
+        if not ids:
+            return {}
+        try:
+            rows = db.query(Customer.id, Customer.customer_name).filter(Customer.id.in_(ids)).all()
+        except Exception:  # noqa: BLE001 - a name is only added; a failed read must not cost the turn its resolve
+            logger.warning("chatbot: could not read customer names for the gate", exc_info=True)
+            return {}
+        return {str(i): name for i, name in rows if name}
+
+    return read
+
+
 def customer_scope(db: Session, contact_respond_id: Any, space_id: str | None) -> dict[str, Any] | None:
     """The asking contact's customer scope, read ONCE per turn
     (PLAN-chatbot-customer-scope-29sep.md D1/D3): None when nobody linked the contact to a

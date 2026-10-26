@@ -110,6 +110,30 @@ def ask(
     )
 
 
+#: The ranking fields a pick interrupting a ranking resumes (REPORT-SMART-L R1 review).
+_HELD_RANKING_KEYS = (
+    "group_by", "top_n", "measure", "basis", "rank_direction", "rank_by", "rank_group", "date_filter_start",
+    "date_filter_end",
+)
+
+
+def asked_report(verdict: dict[str, Any] | None) -> dict[str, Any]:
+    """The asking turn's own ask, as a roster pending's payload carries it, so the pick continues THAT ask: its
+    `status` (AC-1704's carry) and, for a ranking (`sales_ranking` / `top_selling`), the `ranking_ask` it interrupts
+    (`turn/apply._answer_pending` fills what the answering verdict leaves empty). Parser fields only. The ONE rule
+    for the gate's picker (`answer_bridge._offer_ask_payload`) and the narrower's roster (`turn/apply.py`)."""
+    verdict = verdict or {}
+    out: dict[str, Any] = {}
+    order_status = verdict.get("order_status")
+    if order_status:
+        out["status"] = order_status
+    if order_status in ("sales_ranking", "top_selling"):
+        held = {k: verdict[k] for k in _HELD_RANKING_KEYS if verdict.get(k) not in (None, "", [])}
+        if held:
+            out["ranking_ask"] = held
+    return out
+
+
 def top_selling_pick(
     result_set: list[dict[str, Any]] | None,
     *,

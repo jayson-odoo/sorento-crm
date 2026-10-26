@@ -41,7 +41,7 @@ from app.models.base import set_brand_scope, set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services import llm_cassette
 from app.services.reports.ask import SALES_CHANNELS
-from app.services.chatbot import direct_ingress, dispatch, jsc, llm_call, media_intake, send_order, trace as trace_mod
+from app.services.chatbot import direct_ingress, dispatch, inbox_queue, jsc, llm_call, media_intake, send_order, trace as trace_mod
 from app.services.chatbot import user_turn as user_turn_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
@@ -1749,8 +1749,31 @@ def _close_turn(
         f"{stage!r} is not a declared turn stage - a typo here lands in the column and "
         f"reads as an unknown state on the trace screen. Declared: {TURN_FAILURE_STAGES}"
     )
+    # CHAT-INBOX-QUEUE: on the inbox drain a turn may still yield here (look-ahead), before
+    # anything is written, and its close leaves the row `processing`: the drain marks it
+    # with this status only once the sender POST has returned (`inbox_queue._finish`).
+    drain_run = inbox_queue.current_run(turn_id)
+    if drain_run is not None:
+        inbox_queue.checkpoint(turn_id)
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
     if row is None:  # pragma: no cover - the row was inserted two lines earlier
+        return
+    if drain_run is not None:
+        if drain_run.close is not None and drain_run.close[0] in _TERMINAL_STATUSES:
+            logger.debug("chatbot turn %s: refused a second close on the inbox drain", turn_id)
+            return
+        drain_run.close = (status, stage)
+        if status not in _TERMINAL_STATUSES:
+            # `delegated`: the in-process tail (`complete_turn`) runs from this state.
+            row.status = status
+            row.stage = stage
+        row.branch_kind = branch_kind
+        row.error = error
+        marker = [] if inbox_queue.inbox_records(records) else inbox_queue.inbox_records(row.trace)
+        row.trace = [*marker, *records]
+        row.response = trace_mod.cap_document(response)
+        row.finished_at = _now()
+        db.commit()
         return
     if row.finished_at is not None and row.status in _TERMINAL_STATUSES:
         # Debug, not warning: this is an EXPECTED sequence on the failure path (the tail
@@ -2569,10 +2592,21 @@ def _positions_read_elsewhere(state: Any) -> bool:
 
 
 def run_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    offload: bool | None = None,
+    queued_turn_id: str | None = None,
 ) -> TurnResult:
     """One turn, then the final reply pass (`_localize_result`, called by `_run_turn` at its
-    one exit, just before the messages answered ahead are put in front of the actions)."""
+    one exit, just before the messages answered ahead are put in front of the actions).
+
+    `queued_turn_id` (CHAT-INBOX-QUEUE): the inbox drain runs a row it already claimed, in
+    this process (`inbox_queue.drain`)."""
+    if queued_turn_id is not None:
+        return _run_turn(
+            envelope, session_factory=session_factory, offload=False, queued_turn_id=queued_turn_id
+        )
     return _run_turn(envelope, session_factory=session_factory, offload=offload)
 
 
@@ -2639,7 +2673,11 @@ def _ai_allowed(session_factory: SessionFactory, contact_respond_id: str) -> boo
 
 
 def _ai_not_allowed_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, contact_respond_id: str
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    contact_respond_id: str,
+    turn_id: str | None = None,
 ) -> TurnResult:
     """Close a turn for a contact the CRM does not let the AI answer, sending nothing.
 
@@ -2658,8 +2696,13 @@ def _ai_not_allowed_turn(
     dry_run = envelope.dry_run
     message_id = _message_id(envelope)
     with _session(session_factory) as db:
-        existing = _existing_turn(
-            db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+        # `turn_id`: the inbox drain's claimed row (CHAT-INBOX-QUEUE), closed in place.
+        existing = (
+            None
+            if turn_id is not None
+            else _existing_turn(
+                db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+            )
         )
         retrying = existing if _awaiting_retry(existing) else None
         if existing is not None and retrying is None:
@@ -2670,24 +2713,25 @@ def _ai_not_allowed_turn(
             .first()
             is not None
         )
-        try:
-            row = _insert_turn(
-                db,
-                envelope=envelope,
-                contact_respond_id=contact_respond_id,
-                retrying=retrying,
-                queued=False,
-            )
-        except IntegrityError:
-            # Same TOCTOU as `_run_turn`: a racing delivery inserted first; read its row.
-            db.rollback()
-            winner = _select_turn(
-                db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
-            )
-            if winner is None or _awaiting_retry(winner):
-                raise
-            return _duplicate_result(winner)
-        turn_id = str(row.id)
+        if turn_id is None:
+            try:
+                row = _insert_turn(
+                    db,
+                    envelope=envelope,
+                    contact_respond_id=contact_respond_id,
+                    retrying=retrying,
+                    queued=False,
+                )
+            except IntegrityError:
+                # Same TOCTOU as `_run_turn`: a racing delivery inserted first; read its row.
+                db.rollback()
+                winner = _select_turn(
+                    db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+                )
+                if winner is None or _awaiting_retry(winner):
+                    raise
+                return _duplicate_result(winner)
+            turn_id = str(row.id)
         turn_trace.record(
             "received",
             status="skipped",
@@ -2720,7 +2764,11 @@ def _ai_not_allowed_turn(
 
 @_refer_tracked
 def _run_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    offload: bool | None = None,
+    queued_turn_id: str | None = None,
 ) -> TurnResult:
     """Run the head of one turn. NEVER raises for a business failure; records it.
 
@@ -2738,6 +2786,10 @@ def _run_turn(
     `offload` exists for ONE caller: the RQ job (`app/tasks/chat_turns.py`) passes `False`
     so the worker actually runs the turn instead of enqueuing it to itself forever. Every
     other caller leaves it None and gets whatever `CHATBOT_TURN_ON_WORKER` says.
+
+    `queued_turn_id` (CHAT-INBOX-QUEUE): the row the inbox drain claimed. It already exists
+    and the drain holds the contact's mutex, so there is no dedup, no ticket, no insert and
+    no answering of earlier messages (the drain takes them in send order).
     """
     contact_respond_id = _contact_respond_id(envelope)
     # H56. BEFORE the offload branch, so the invariant reads the same on every entry:
@@ -2756,7 +2808,10 @@ def _run_turn(
     # "could not tell" must never answer the customer.
     if not _ai_allowed(session_factory, contact_respond_id):
         return _ai_not_allowed_turn(
-            envelope, session_factory=session_factory, contact_respond_id=contact_respond_id
+            envelope,
+            session_factory=session_factory,
+            contact_respond_id=contact_respond_id,
+            turn_id=queued_turn_id,
         )
 
     if offload is None:
@@ -2797,15 +2852,23 @@ def _run_turn(
             # this contact, EVERY live turn of it takes the ticket: the direct turn, and the
             # n8n copy of a later message that would otherwise run beside it.
             ordered = (
-                _s7_mode(db, switches)
-                or envelope.ingress == DIRECT_INGRESS
-                or direct_ingress.covers(switches, contact_respond_id)
-            ) and not dry_run
-            existing = _existing_turn(
-                db,
-                contact_respond_id=contact_respond_id,
-                message_id=message_id,
-                is_test=dry_run,
+                (
+                    _s7_mode(db, switches)
+                    or envelope.ingress == DIRECT_INGRESS
+                    or direct_ingress.covers(switches, contact_respond_id)
+                )
+                and not dry_run
+                and queued_turn_id is None
+            )
+            existing = (
+                None
+                if queued_turn_id is not None
+                else _existing_turn(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    message_id=message_id,
+                    is_test=dry_run,
+                )
             )
             retrying = existing if _awaiting_retry(existing) else None
             if existing is not None and retrying is None:
@@ -2858,33 +2921,36 @@ def _run_turn(
                     )
                     ticket = None
 
-            try:
-                row = _insert_turn(
-                    db,
-                    envelope=envelope,
-                    contact_respond_id=contact_respond_id,
-                    retrying=retrying,
-                    queued=ticket is not None,
-                )
-            except IntegrityError:
-                # The SELECT above is a TOCTOU window, not a lock: a webhook delivery
-                # racing a poller re-delivery can both miss and both insert. The unique
-                # index is the real guarantee, so the loser reads the winner's row rather
-                # than 500ing. The ticket it took is released by the `finally` below.
-                db.rollback()
-                winner = _select_turn(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    message_id=message_id,
-                    is_test=dry_run,
-                )
-                if winner is None or _awaiting_retry(winner):
-                    # Either some OTHER constraint failed, or two retries of one message
-                    # raced - neither is a duplicate, and guessing would answer the
-                    # customer from a turn that never ran.
-                    raise
-                return _duplicate_result(winner)
-            turn_id = str(row.id)
+            if queued_turn_id is not None:
+                turn_id = str(queued_turn_id)
+            else:
+                try:
+                    row = _insert_turn(
+                        db,
+                        envelope=envelope,
+                        contact_respond_id=contact_respond_id,
+                        retrying=retrying,
+                        queued=ticket is not None,
+                    )
+                except IntegrityError:
+                    # The SELECT above is a TOCTOU window, not a lock: a webhook delivery
+                    # racing a poller re-delivery can both miss and both insert. The unique
+                    # index is the real guarantee, so the loser reads the winner's row rather
+                    # than 500ing. The ticket it took is released by the `finally` below.
+                    db.rollback()
+                    winner = _select_turn(
+                        db,
+                        contact_respond_id=contact_respond_id,
+                        message_id=message_id,
+                        is_test=dry_run,
+                    )
+                    if winner is None or _awaiting_retry(winner):
+                        # Either some OTHER constraint failed, or two retries of one message
+                        # raced - neither is a duplicate, and guessing would answer the
+                        # customer from a turn that never ran.
+                        raise
+                    return _duplicate_result(winner)
+                turn_id = str(row.id)
 
         # The stage the turn is currently in, for the catch-all below. A plain list because
         # the inner stages update it and the handler reads it.
@@ -2964,7 +3030,7 @@ def _run_turn(
             # Issue #1262: every earlier-SENT message of this contact the CRM already
             # knows about is answered before this one, on its own row, and its actions go
             # out ahead of this turn's. No timer: only messages the CRM has seen count.
-            if not dry_run:
+            if not dry_run and queued_turn_id is None:
                 earlier_actions, send_order_facts = _answer_earlier_messages(
                     envelope,
                     session_factory=session_factory,
@@ -3736,6 +3802,8 @@ def _close_the_episode(
             logger.warning("chatbot: the open topic read did not run", exc_info=True)
     close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
     if close_trigger is not None and may_write_episode:
+        # CHAT-INBOX-QUEUE look-ahead: the episode is conversation state too.
+        inbox_queue.checkpoint(turn_id)
         try:
             written_frame = memory_mod.write_episode_for_reset(
                 db,
@@ -4970,6 +5038,8 @@ def _run_stages_body(  # noqa: PLR0915
     # so grounding never splits one ("ZZT SINK" into the class SINK plus a spec word).
     from app.services.chatbot.lanes.business import report_ask as _report_ask
 
+    # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
+    verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
     verdict = _report_ask.by_capability(verdict)
     verdict, _ranking_words = _report_ask.hold_words(verdict)
@@ -5595,6 +5665,11 @@ def _run_stages_body(  # noqa: PLR0915
         ) or (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
             and _SALES_REPORT_GRANT in _granted
+        ) or (
+            # SALES-TARGET-CHAT: the target ask is exempt under its own grant; whose customer
+            # it may name is the route's call (403 customer_not_permitted).
+            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_target"
+            and "sales.sales_target" in _granted
         )
         # The grant opens the report's customers, never their delivery orders: the picker's DO
         # probe stays off for any unlinked contact that is not document staff.
@@ -7748,7 +7823,12 @@ def _run_stages_body(  # noqa: PLR0915
                     "delegate_error": lane_error_text,
                 },
             )
-        elif delegate is not None and (s7_mode or envelope.ingress == DIRECT_INGRESS) and not dry_run:
+        elif (
+            delegate is not None
+            and (s7_mode or envelope.ingress == DIRECT_INGRESS or inbox_queue.draining())
+            and not dry_run
+        ):
+            # CHAT-INBOX-QUEUE (IQ-44): a queued turn has no n8n spine waiting on it either.
             # CHAT-SPEED: a webhook-started turn has no n8n spine behind it either, so a lane
             # that still delegates is closed the S7 way rather than left as a ghost.
             # S7 mode retires the n8n tail: a turn that still delegates has NOBODY to
@@ -7760,6 +7840,10 @@ def _run_stages_body(  # noqa: PLR0915
                 f"system_settings.chatbot_completed_lanes on a build that can complete "
                 f"it, or turn S7 mode off."
                 if s7_mode
+                else f"This turn ran on the inbox queue, which has no n8n spine to finish "
+                f"the {delegate!r} lane. Leave this lane's messages to n8n by turning "
+                f"direct ingress off until the CRM completes {branch_kind!r}."
+                if inbox_queue.draining()
                 else f"This turn came through direct ingress (the respond.io webhook), "
                 f"which has no n8n spine to finish the {delegate!r} lane. Leave this "
                 f"lane's messages to n8n by turning direct ingress off until the CRM "
@@ -8350,7 +8434,7 @@ def _run_answer(
             written=written,
             facts_saved=facts_saved,
         )
-        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
+        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run, reply=reply)]
         turn_trace.record(
             "sent",
             summary="Handed the reply to the caller to send.",
@@ -8673,8 +8757,9 @@ def _run_entities_only_arm(
     )
 
 
-def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
-    """What the caller executes: the message, then any files, in that order."""
+def _answer_actions(answer: Any, *, dry_run: bool, reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the caller executes: the message, then any files, in that order. The files
+    action carries the persisted `reply`, as the tail's and the formatter's do."""
     built: list[dict[str, Any]] = []
     words = getattr(answer, "text", "") or ""
     if words.strip():
@@ -8687,7 +8772,12 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
         )
     if answer.files:
         built.append(
-            {"kind": "send_attachments", "attachments_src": answer.files, "dry_run": dry_run}
+            {
+                "kind": "send_attachments",
+                "attachments_src": answer.files,
+                "reply": dict(reply),
+                "dry_run": dry_run,
+            }
         )
     return built
 
@@ -9137,6 +9227,8 @@ def _remember_on_delegated_arm(
     write to `complete_turn` (casual, escalation): apply the verdict's statements and
     record the `memory` event, so a statement-only turn is remembered and traced like
     any other (reviewer pass at d89110c0, B1 and S22)."""
+    # CHAT-INBOX-QUEUE (IQ-45): on the inbox drain the turn gives way BEFORE it commits facts.
+    inbox_queue.checkpoint(turn_id)
     if verdict is None or remembered_before is None or contact_respond_id is None:
         return
     facts_saved = _apply_profile_statements(
@@ -9541,6 +9633,9 @@ def _run_escalation_arm(
     # or a newer product already replaced it). The lane reads its brand off the product
     # row. On the lane's item only: the row keeps the route-turn item it always had.
     lane_item = {**item, "focus_products": _focus_products(state)}
+    # CHAT-INBOX-QUEUE (IQ-27): the lane commits an SLA row and a round-robin draw it cannot
+    # undo, so on the inbox drain the turn gives way to an earlier-sent message HERE.
+    inbox_queue.checkpoint(turn_id)
     try:
         # The lane opens its OWN session (its writes are a unit of work of their own), and
         # it opens it off THIS factory rather than `SessionLocal`, so the contact's company

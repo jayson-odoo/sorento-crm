@@ -25,6 +25,7 @@ import { FormSection } from '@/components/common/FormSection';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import { getUserLookup } from '@/services/userSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import {
@@ -85,6 +86,11 @@ export function ProjectForm(props: ProjectFormProps) {
     project?.registered_company_name ?? '',
   );
   const [location, setLocation] = React.useState(project?.location ?? '');
+  const [state, setState] = React.useState(project?.state ?? '');
+  const [mukim, setMukim] = React.useState(project?.mukim ?? '');
+  // What the salesperson typed on a portal registration, shown under a party picker until
+  // somebody picks the party (PROJECT-REG-PORTAL R7).
+  const typed = project?.registration ?? null;
   const [address, setAddress] = React.useState(project?.address ?? '');
   const [adminRef, setAdminRef] = React.useState(project?.admin_ref ?? '');
   const [architectId, setArchitectId] = React.useState(project?.architect_party_id ?? '');
@@ -126,6 +132,7 @@ export function ProjectForm(props: ProjectFormProps) {
   const types = useProjectTypes();
   const templates = useProjectTemplates(typeId || undefined);
   const brands = useBrandSelectQuery();
+  const states = useLookupSetOptions('my_state');
   const fetchLeadOptions = useFetchLeadOptions();
   const users = useQuery({
     queryKey: ['user-lookup', 'project-owner'],
@@ -190,10 +197,16 @@ export function ProjectForm(props: ProjectFormProps) {
   const checkable = title.trim().length >= CLASH_MIN_CHARS;
   const hasChecked = checkedTitle.length > 0;
   const rawCandidates = clash.data?.candidates ?? [];
+  // A portal registration still waiting for (or refused) approval sits outside the
+  // registration lock (PROJECT-REG-PORTAL R3, owner ruling: duplicates never block). Its
+  // matches are shown as information only; Approve's exact-duplicate 409 is the guard.
+  const awaitingDecision =
+    project?.approval_state === 'pending' || project?.approval_state === 'rejected';
   // In edit mode the project's own record is a "clash" against itself; it must never
   // block a save or show up in the panel.
-  const candidates =
-    mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates;
+  const candidates = (
+    mode === 'edit' ? rawCandidates.filter((c) => c.project_id !== project!.id) : rawCandidates
+  ).map((c) => (awaitingDecision ? { ...c, blocks: false } : c));
   const wouldBlock =
     identityChanged && hasChecked && candidates.some((candidate) => candidate.blocks);
   const pending = register.isPending || update.isPending;
@@ -221,6 +234,8 @@ export function ProjectForm(props: ProjectFormProps) {
       owner_user_id: ownerUserId || null,
       registered_company_name: registeredCompany.trim() || null,
       location: location.trim() || null,
+      state: state || null,
+      mukim: mukim.trim() || null,
       address: address.trim() || null,
       admin_ref: adminRef.trim() || null,
       architect_party_id: architectId || null,
@@ -242,7 +257,7 @@ export function ProjectForm(props: ProjectFormProps) {
       return;
     }
     // The one duplicate check on submit: the guard, whether or not Check was pressed.
-    if (checkable && identityChanged) {
+    if (checkable && identityChanged && !awaitingDecision) {
       const trimmed = title.trim();
       setCheckedTitle(trimmed);
       // A failed check does not stop the user: the server refuses a blocked title
@@ -302,6 +317,7 @@ export function ProjectForm(props: ProjectFormProps) {
                 placeholder="Search developers"
                 emptyMessage="No developers yet. Add one under Parties"
               />
+              <TypedHint typed={typed?.developer_name} picked={developerId} />
             </div>
 
             <div className="space-y-1.5">
@@ -372,8 +388,16 @@ export function ProjectForm(props: ProjectFormProps) {
               candidates={candidates}
               isLoading={clash.isFetching}
               developerChosen={Boolean(developerId)}
-              onRequestJoin={(candidate) => setJoinTarget({ candidate, kind: 'join' })}
-              onDispute={(candidate) => setJoinTarget({ candidate, kind: 'dispute' })}
+              onRequestJoin={
+                awaitingDecision
+                  ? undefined
+                  : (candidate) => setJoinTarget({ candidate, kind: 'join' })
+              }
+              onDispute={
+                awaitingDecision
+                  ? undefined
+                  : (candidate) => setJoinTarget({ candidate, kind: 'dispute' })
+              }
             />
           )}
 
@@ -424,6 +448,40 @@ export function ProjectForm(props: ProjectFormProps) {
                 value={location}
                 onChange={(event) => setLocation(event.target.value)}
                 placeholder="e.g. Setia Alam, Selangor"
+              />
+            </div>
+          </div>
+
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-1.5">
+              <Label htmlFor="project-state">State</Label>
+              <SearchableSelect
+                id="project-state"
+                value={state}
+                onChange={setState}
+                clearable
+                loadError={states.error}
+                onRetry={() => void states.refetch()}
+                options={[
+                  // A stored value the lookup set no longer offers still shows as itself.
+                  ...(state && !(states.data ?? []).some((o) => o.value === state)
+                    ? [{ value: state, label: state }]
+                    : []),
+                  ...(states.data ?? []).map((option) => ({
+                    value: option.value,
+                    label: option.label,
+                  })),
+                ]}
+                placeholder="Select a state"
+              />
+            </div>
+            <div className="space-y-1.5">
+              <Label htmlFor="project-mukim">Mukim</Label>
+              <Input
+                id="project-mukim"
+                value={mukim}
+                onChange={(event) => setMukim(event.target.value)}
+                placeholder="Optional"
               />
             </div>
           </div>
@@ -509,6 +567,7 @@ export function ProjectForm(props: ProjectFormProps) {
                 placeholder="Search architects"
                 emptyMessage="No architects yet. Add one under Parties"
               />
+              <TypedHint typed={typed?.architect_name} picked={architectId} />
             </div>
             <div className="space-y-1.5">
               <Label htmlFor="project-contractor">Main contractor</Label>
@@ -526,6 +585,7 @@ export function ProjectForm(props: ProjectFormProps) {
                 placeholder="Search main contractors"
                 emptyMessage="No main contractors yet. Add one under Parties"
               />
+              <TypedHint typed={typed?.main_contractor_name} picked={mainContractorId} />
             </div>
           </div>
 
@@ -633,6 +693,12 @@ export function ProjectForm(props: ProjectFormProps) {
       )}
     </>
   );
+}
+
+/** The name a portal registration typed, while no party is picked for it. */
+function TypedHint({ typed, picked }: { typed?: string | null; picked: string }) {
+  if (picked || !typed?.trim()) return null;
+  return <p className="text-xs text-muted-foreground">Typed: {typed.trim()}</p>;
 }
 
 /**

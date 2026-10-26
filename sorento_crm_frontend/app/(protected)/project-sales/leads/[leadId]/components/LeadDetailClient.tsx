@@ -54,6 +54,7 @@ import { DisqualifyLeadDialog } from './DisqualifyLeadDialog';
 import { EditLeadInformantDialog } from './EditLeadInformantDialog';
 import { LeadTimelinePanel } from './LeadTimelinePanel';
 import { QualifyLeadDialog } from './QualifyLeadDialog';
+import { projectCodeLabel } from '../../../_shared/lib/projectCode';
 
 /**
  * One recorded sighting: who told us, what we heard, and what it became.
@@ -594,8 +595,8 @@ function QualifiedProjects({ lead }: { lead: LeadWithAcceptance }) {
         accessorFn: (row) => row.project_code,
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
         cell: ({ row }) => (
-          <span className="truncate text-sm" title={row.original.project_code}>
-            {row.original.project_code}
+          <span className="truncate text-sm" title={projectCodeLabel(row.original)}>
+            {projectCodeLabel(row.original)}
           </span>
         ),
         size: 140,
@@ -716,7 +717,7 @@ function AccountPanel({
         accessorFn: (row) => row.project_code,
         header: ({ column }) => <DataGridColumnHeader title="Project" column={column} />,
         cell: ({ row }) => (
-          <span className="truncate text-sm">{row.original.project_code}</span>
+          <span className="truncate text-sm">{projectCodeLabel(row.original)}</span>
         ),
         size: 140,
         meta: { headerTitle: 'Project' },

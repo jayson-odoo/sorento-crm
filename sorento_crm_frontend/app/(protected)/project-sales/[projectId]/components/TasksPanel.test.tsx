@@ -408,3 +408,19 @@ describe('TasksPanel', () => {
     expect(screen.queryByText(/checklist copies in/i)).toBeNull();
   });
 });
+
+describe('TasksPanel on a project waiting for approval (review round 3)', () => {
+  it.each(['pending', 'rejected'] as const)(
+    'offers no Add task on a %s registration, even to someone who may edit it',
+    async (approvalState) => {
+      renderPanel({ approval_state: approvalState, project_code: null, can_edit: true });
+      await waitFor(() => expect(listProjectTasks).toHaveBeenCalled());
+      expect(screen.queryByRole('button', { name: /Add task/i })).toBeNull();
+    },
+  );
+
+  it('an approved registration offers it again', async () => {
+    renderPanel({ approval_state: 'approved', project_code: 'PPF2610001', can_edit: true });
+    expect(await screen.findByRole('button', { name: /Add task/i })).toBeInTheDocument();
+  });
+});

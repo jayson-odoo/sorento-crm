@@ -9329,8 +9329,15 @@ class PurchaseRequestService:
             payload["customer_name"] = linked_name
 
     def _apply_project_link(self, header, payload: dict) -> None:
-        """#1689: a staff pick reaches the row only if the editor can see that project."""
-        apply_project_link(self.db, payload, current=getattr(header, "project_id", None))
+        """#1689: a staff pick reaches the row only if the editor can see that project, and
+        never a portal registration waiting for approval (R4). Only a CHANGED link is
+        checked, so an older one keeps saving."""
+        apply_project_link(
+            self.db,
+            payload,
+            current=getattr(header, "project_id", None),
+            not_approved_code="purchase_request_project_not_approved",
+        )
 
     def create_request(self, data: PurchaseRequestHeaderCreate):
         """Create purchase request header + lines (internal API)."""
@@ -9361,7 +9368,11 @@ class PurchaseRequestService:
         requestor_value = dump.pop("requested_by_contact_id", None)
         from app.services.project_link import apply_project_link
 
-        apply_project_link(self.db, dump)
+        # Visible to the editor, and never a portal registration waiting for approval
+        # (PROJECT-REG-PORTAL R4).
+        apply_project_link(
+            self.db, dump, not_approved_code="purchase_request_project_not_approved"
+        )
         if "customer_id" in dump:
             from app.services.debtor_type import link_customer
 

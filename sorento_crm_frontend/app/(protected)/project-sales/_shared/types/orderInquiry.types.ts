@@ -1251,6 +1251,8 @@ export interface OrderInquiryPoDetailLine {
   book_so_number?: string | null;
   /** True when the book named a sales order this CRM does not hold. */
   book_so_unresolved?: boolean | null;
+  /** SUPPLY-SPO-LINK: every SPO this line was transferred onto, sorted; empty when none. */
+  spo_numbers?: string[];
 }
 
 /**
