@@ -25,13 +25,16 @@ SPO LINES NEED AN ALLOW-LIST (AC-RL-45, owner via crew, 26 Oct 2026)
 ---------------------------------------------------------------------
 The data cannot tell a removed SPO line from one dropped by a cancelled SPO push or a
 superseded DocKey, and a placement on a cancelled SPO stays placed. So `--apply` releases an
-SPO line ONLY when its DtlKey is passed with `--only` (repeatable or comma separated, SPO
-DtlKeys); without it no SPO line is released. The dry run lists every SPO candidate with its
-SPO number, DtlKey, item code, placed qty and the SO numbers of its links. A listed key that
-matches no retired SPO line is reported under `ignored_keys` and does nothing.
+SPO line ONLY when its key is passed with `--only` (repeatable or comma separated); without
+it no SPO line is released. The key is `<source DB>:<DtlKey>` (AC-RL-46: one SPO number can
+hold live rows from two AutoCount databases), printed by the dry run as `key=`. The dry run
+lists every SPO candidate with its SPO number, key, item code, placed qty and the SO numbers
+of its links. A well-formed key that matches no retired SPO line is reported under
+`ignored_keys` and does nothing; a bare DtlKey and a key matching more than one candidate are
+reported under `refused_keys` and release nothing, while other valid keys in the run apply.
 
 Runbook: dry run -> crew checks each SPO line against AutoCount -> owner OK ->
-`--apply --only <keys>`.
+`--apply --only AED_SORENTO:<DtlKey>[,...]`.
 
 A second run finds nothing: every selector needs a link, an open claim or a live row, and the
 release removes exactly that.
@@ -47,7 +50,7 @@ USAGE
 -----
     venv/bin/python -m scripts.release_removed_autocount_lines --company <company id>
     venv/bin/python -m scripts.release_removed_autocount_lines --company <company id> --apply \
-        --only <SPO DtlKey>[,<SPO DtlKey>...]
+        --only AED_SORENTO:<DtlKey>[,<source DB>:<DtlKey>...]
 """
 from __future__ import annotations
 
@@ -90,6 +93,14 @@ CANCELLED = "cancelled"
 def _dtl_key(source_ref: str | None) -> str:
     """The DtlKey is the last segment of `<db>:<doc key>:<dtl key>`."""
     return (source_ref or "").rsplit(":", 1)[-1]
+
+
+def _spo_key(source_ref: str | None) -> str:
+    """The SPO allow-list key (AC-RL-46): `<source DB>:<DtlKey>`, the first and last parts of
+    the `source_ref`. A bare DtlKey is not unique: one SPO number can hold live rows from two
+    AutoCount databases."""
+    parts = (source_ref or "").split(":")
+    return f"{parts[0]}:{parts[-1]}" if len(parts) > 1 else (source_ref or "")
 
 
 def _qty(value: Any) -> str:
@@ -192,6 +203,7 @@ def _spo_candidates(db, company_id: str) -> list[dict[str, Any]]:
                 "so_numbers": sorted(so_numbers.get(str(alloc.id), ())),
                 "document": alloc.spo_number,
                 "dtl_key": _dtl_key(alloc.source_ref),
+                "key": _spo_key(alloc.source_ref),
                 "product_code": code,
                 "line_qty": _qty(alloc.allocated_quantity),
                 "linked_qty": _qty(linked),
@@ -280,14 +292,22 @@ def run(
         spo = _spo_candidates(db, company_id)
         so = _so_candidates(db, company_id)
         wanted = {str(k).strip() for k in spo_dtl_keys if str(k).strip()}
-        spo_to_release = [c for c in spo if c["dtl_key"] in wanted]
+        by_key: dict[str, list[dict[str, Any]]] = {}
+        for c in spo:
+            by_key.setdefault(c["key"], []).append(c)
+        # AC-RL-46: a bare DtlKey (no source DB) and a key matching more than one candidate
+        # are refused; every other listed key is judged on its own.
+        refused = sorted(k for k in wanted if ":" not in k or len(by_key.get(k, ())) > 1)
+        spo_to_release = [
+            c for k in wanted if k not in refused for c in by_key.get(k, ())
+        ]
         retired_keys = {
-            _dtl_key(ref)
+            _spo_key(ref)
             for (ref,) in db.query(SPOAllocation.source_ref).filter(
                 SPOAllocation.company_id == company_id, SPOAllocation.retired_at.isnot(None)
             )
         }
-        ignored = sorted(wanted - retired_keys)
+        ignored = sorted(wanted - retired_keys - set(refused))
         if not dry_run:
             service = ProjectOrderInquiryService(db)
             if po:
@@ -321,6 +341,7 @@ def run(
         "spo_lines": len(counted_spo),
         "rows_affected": sum(c["rows_affected"] for c in (*po, *so, *counted_spo)),
         "ignored_keys": ignored,
+        "refused_keys": refused,
         "lines": lines,
     }
 
@@ -333,7 +354,7 @@ def main(argv: list[str] | None = None) -> int:
         "--only",
         action="append",
         default=[],
-        help="SPO DtlKey to release (repeatable or comma separated); no SPO line is "
+        help="SPO key <source DB>:<DtlKey> to release (repeatable or comma separated); no SPO line is "
         "released without it",
     )
     args = parser.parse_args(argv)
@@ -348,10 +369,16 @@ def main(argv: list[str] | None = None) -> int:
         for line in report["lines"]:
             print(
                 f"{line['kind'].upper()} {line['document']} dtl={line['dtl_key']} "
-                f"product={line['product_code']} line_qty={line['line_qty']} "
+                + (f"key={line['key']} " if line.get("key") else "")
+                + f"product={line['product_code']} line_qty={line['line_qty']} "
                 f"linked_qty={line['linked_qty']} rows={line['rows_affected']}"
                 + (f" so={','.join(line['so_numbers'])}" if line.get("so_numbers") else "")
                 + (f" released={line['released']}" if "released" in line else "")
+            )
+        if report["refused_keys"]:
+            print(
+                "refused --only keys (a bare DtlKey, or ambiguous: use <source DB>:<DtlKey>): "
+                + ", ".join(report["refused_keys"])
             )
         if report["ignored_keys"]:
             print(f"ignored --only keys (no retired SPO line): {', '.join(report['ignored_keys'])}")
