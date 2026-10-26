@@ -116,36 +116,10 @@ def _require_agents(db: Session, token: PortalToken) -> List[SalesAgent]:
     return agents
 
 
-def _resolve_company(db: Session, *, customer_id: Optional[str], agent: SalesAgent) -> str:
-    """Never widens past what `_require_agents` already scoped this request to (Phase 3
-    fix S2): the customer's own company (a SCOPED lookup - `Customer` is
-    `CompanyScopedMixin`, so a customer outside the current scope resolves to nothing
-    rather than to its real, out-of-scope company), else the agent's own company but
-    only when the current scope already permits it (an agent whose `company_id` somehow
-    disagrees with the request's own scope must never widen it), else the scope's one
-    company if it names exactly one, else the single-tenant default.
-
-    No unordered `Company.first()`: a `LIMIT 1` with no `ORDER BY` is Postgres's choice,
-    not a business rule, and it can hand back a company neither the customer nor the
-    agent has any connection to at all.
-    """
-    from app.models.order import Customer
-    from app.services.company_scope import DEFAULT_COMPANY_ID
-
-    scope = get_company_scope(db)
-
-    if customer_id:
-        customer = db.query(Customer).filter(Customer.id == customer_id).first()
-        if customer is not None and customer.company_id:
-            return customer.company_id
-
-    if agent.company_id and (scope is None or (isinstance(scope, frozenset) and agent.company_id in scope)):
-        return agent.company_id
-
-    if isinstance(scope, frozenset) and len(scope) == 1:
-        return next(iter(scope))
-
-    return DEFAULT_COMPANY_ID
+#: Moved to `opportunity_service.resolve_company` (SALES-TARGET-CHAT slice 2): the chat's create
+#: route resolves the company by the same rule. This module calls it directly; the old name stays
+#: importable only because `tests/test_fix_S2_portal_company_resolution.py` imports it from here.
+_resolve_company = svc.resolve_company
 
 
 def _reraise(db: Session, exc: Exception):
@@ -243,7 +217,7 @@ def portal_create_sales_opportunity(
         agent = svc.agent_owning_customer(db, agents, body.get("customer_id")) or svc.default_portal_agent(
             db, agents
         )
-        company_id = _resolve_company(db, customer_id=body.get("customer_id"), agent=agent)
+        company_id = svc.resolve_company(db, customer_id=body.get("customer_id"), agent=agent)
         with company_scope(db, frozenset({company_id})):
             opportunity = svc.create_opportunity(
                 db,

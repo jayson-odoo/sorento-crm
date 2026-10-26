@@ -48,7 +48,7 @@ export interface SalesOpportunityListItem {
   project_code?: string | null;
   /** `CODE - Title`, ready to display. */
   project_label?: string | null;
-  source: 'portal' | 'crm';
+  source: 'portal' | 'crm' | 'chat';
   created_by_label?: string | null;
   created_by_contact_id?: string | null;
   created_at?: string | null;

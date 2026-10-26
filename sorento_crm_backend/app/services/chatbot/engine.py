@@ -67,6 +67,10 @@ from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
 from app.services.chatbot.lanes import fallback as fallback_mod
+# SALES-TARGET-CHAT slice 2: imported here, not only at its seam, so `OPPORTUNITY_ASK` is registered in
+# `required_fields.ASKS` the moment the engine is (a fresh process's first turn answering the lane's field
+# question must not read as `required_ask_dropped`).
+from app.services.chatbot.lanes import opportunity as opportunity_lane
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.analytics import facts as chat_facts
@@ -5300,6 +5304,41 @@ def _run_stages_body(  # noqa: PLR0915
         open_ask = state_in.focus.required_ask
         state_in.focus.required_ask = None
         asked_before, replaced_ask = open_ask, None
+        # SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity. The parser's
+        # `log_opportunity` status, a declared answer to the lane's own field question, or a
+        # yes / no to its read-back is the lane's turn, answered whole before any other seam
+        # reads the verdict (`lanes/opportunity.py`). Any other ask drops an open read-back.
+        # Reachable only when the active parser prompt carries the LOG OPPORTUNITY line
+        # (`ParserConfig.opportunity`): a prompt without it (production v63) never offers the lane.
+        if (
+            access.get("allowed") is True
+            and parser_config.opportunity
+            and opportunity_lane.takes_turn(verdict, open_ask, state_in.pending)
+        ):
+            return _run_opportunity_arm(
+                db,
+                turn_id=turn_id,
+                envelope=envelope,
+                verdict=verdict,
+                parser_verdict=parser_verdict,
+                open_ask=open_ask,
+                state=state_in,
+                access=access,
+                actions=actions,
+                dry_run=dry_run,
+                session_factory=session_factory,
+                turn_trace=turn_trace,
+                stage=stage,
+                contact_respond_id=contact_respond_id,
+                session_block=session_block,
+                known_phone=known_phone,
+                remembered_before=remembered_before,
+                recalled=recalled,
+                user_turn=user_turn,
+                profile=profile,
+            )
+        if opportunity_lane.own_pending(state_in.pending) is not None:
+            state_in = dataclasses_replace(state_in, pending=None)
         parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(
             verdict, open_ask, parser_ops=parser_ops
@@ -8662,6 +8701,93 @@ def _dropped_reason(db: Session, key: str, value: Any) -> str:
     if profile_facts_mod._normalize_for_stated(key, spec, value, db) is None:
         return "invalid value"
     return "outranked"
+
+
+def _run_opportunity_arm(
+    db: Session,
+    *,
+    turn_id: str,
+    envelope: Envelope,
+    verdict: dict[str, Any],
+    parser_verdict: dict[str, Any],
+    open_ask: Any,
+    state: Any,
+    access: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    contact_respond_id: str,
+    session_block: Any,
+    known_phone: str | None,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    user_turn: Any,
+    profile: Any,
+) -> TurnResult:
+    """SALES-TARGET-CHAT slice 2: the `log_opportunity` arm. The lane answers the whole turn
+    (`lanes/opportunity.run`: who may log, the field asked, the read-back or the save); this
+    routes it, carries its open field question (`focus.required_ask`) and its read-back
+    (`pending`) to the next message, and hands the reply to the ONE answer tail. A dry run
+    calls the lane too: the write goes with `dry_run`, so nothing is saved (LESSONS-LEARNT 101)."""
+    branch_kind = opportunity_lane.BRANCH_KIND
+    space_id = default_space_id(db)
+    salesperson = opportunity_lane.is_salesperson(db, contact_respond_id, space_id)
+    item = _stamp_item(access, branch_kind, {})
+    item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
+    turn_trace.record(
+        "routed",
+        summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
+        why="The parser read the message as logging a sales opportunity, or as the answer to its question.",
+        facts={"lane": branch_kind, "salesperson": salesperson, "domains": ["sales"]},
+        raw={"item": item},
+    )
+    stage[0] = "looked_up"
+    lane = opportunity_lane.run(
+        verdict,
+        open_ask=open_ask,
+        pending=state.pending,
+        salesperson=salesperson,
+        contact_respond_id=contact_respond_id,
+        space_id=space_id,
+        dry_run=dry_run,
+        turn_no=state.turn_no,
+    )
+    turn_trace.add("opportunity", {"called": list(lane.called), "asking": (lane.slot or {}).get("asking"),
+                                   "read_back": lane.pending is not None, "dry_run": dry_run})
+    state_out = dataclasses_replace(state, pending=lane.pending)
+    state_out.focus.required_ask = lane.slot
+    ctx = build_ctx(
+        contact=_contact_block(envelope, known_phone),
+        text=_tf_message(envelope),
+        session=session_block,
+        parse={"output": verdict, "_parser_raw": parser_verdict},
+        access=access,
+        media=getattr(envelope, "media", None),
+    )[0]["json"]["ctx"]
+    # The routing session read only; it is done before the answer tail writes, as on the main
+    # path (whose tail runs after that session's block has closed it).
+    db.close()
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind=branch_kind,
+        actions=actions,
+        answer=turn_compose.Answer(text=lane.text),
+        state=state_out,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+        chat_console=_chat_console(envelope),
+        refused=not salesperson,
+    )
 
 
 def _run_entities_only_arm(

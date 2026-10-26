@@ -181,6 +181,39 @@ def default_portal_agent(db: Session, agents: List[SalesAgent]) -> SalesAgent:
     return next((agent for agent in agents if visible(agent)), agents[0])
 
 
+def resolve_company(db: Session, *, customer_id: Optional[str], agent: SalesAgent) -> str:
+    """Portal and chat: the company a new opportunity is saved in. Never widens past what the
+    caller's gate (`_require_agents`, the chat route's gate) already scoped this request to (Phase 3
+    fix S2): the customer's own company (a SCOPED lookup - `Customer` is
+    `CompanyScopedMixin`, so a customer outside the current scope resolves to nothing
+    rather than to its real, out-of-scope company), else the agent's own company but
+    only when the current scope already permits it (an agent whose `company_id` somehow
+    disagrees with the request's own scope must never widen it), else the scope's one
+    company if it names exactly one, else the single-tenant default.
+
+    No unordered `Company.first()`: a `LIMIT 1` with no `ORDER BY` is Postgres's choice,
+    not a business rule, and it can hand back a company neither the customer nor the
+    agent has any connection to at all.
+    """
+    from app.models.base import get_company_scope
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    scope = get_company_scope(db)
+
+    if customer_id:
+        customer = db.query(Customer).filter(Customer.id == customer_id).first()
+        if customer is not None and customer.company_id:
+            return customer.company_id
+
+    if agent.company_id and (scope is None or (isinstance(scope, frozenset) and agent.company_id in scope)):
+        return agent.company_id
+
+    if isinstance(scope, frozenset) and len(scope) == 1:
+        return next(iter(scope))
+
+    return DEFAULT_COMPANY_ID
+
+
 def _assert_customer_exists(db: Session, customer_id: str) -> None:
     """N2 (Phase 3): a customer_id that names no row is a 422, not a silent FK-less
     write - `restrict_customer_to_agent_id` already proves existence for the portal

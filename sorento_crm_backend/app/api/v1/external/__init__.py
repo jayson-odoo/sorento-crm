@@ -52,6 +52,7 @@ from app.api.v1.external import (
     media,
     chat,
     contract,
+    sales_opportunities,
 )
 
 router = APIRouter()
@@ -267,4 +268,18 @@ router.include_router(
     prefix="/contract",
     tags=["external"],
     dependencies=[Depends(require_external_permission(EXTERNAL_ENDPOINT_PERMISSIONS["contract"]))],
+)
+# SALES-TARGET-CHAT slice 2 (PLAN-sales-opportunity-chat-25oct, UAC O1-4): the chatbot logs a
+# salesperson's opportunity. The integration slug says which key may call it; the per-contact
+# gate in `opportunity_chat.gate` says for whom, as on the portal.
+router.include_router(
+    sales_opportunities.router,
+    prefix="/sales-opportunities",
+    tags=["external"],
+    dependencies=[
+        Depends(sales_opportunities.SLUG_GUARD),
+        # The sales module is installable: under strict mode a tenant without `sales` gets
+        # 403 "Module not enabled: sales", as the portal's own opportunity routes do.
+        Depends(require_module_enabled_with_api_key("sales")),
+    ],
 )
