@@ -98,6 +98,13 @@ Reconciliation (Q4 a)
   at all (PO and SO lines unaffected). A listed DtlKey that is not a candidate is reported and
   ignored. On `--apply` each SPO entry says whether it was released, and the summary's SPO line
   and affected-row counts cover only the released lines (the owner reads these numbers).
+- AC-RL-46 An allow-list key names the AutoCount database as well as the DtlKey (crew audit, 26 Oct:
+  SPO-2026/10-0002 has live rows from two AutoCount databases, AED_SORENTO and AED_V2_MOCHA, so a
+  bare DtlKey is not unique). The dry run prints each SPO candidate's key as
+  `<source DB>:<DtlKey>` (the first and last parts of its `source_ref`); `--only` /
+  `spo_dtl_keys` take exactly that form. A bare DtlKey (no source DB) and a key that matches more
+  than one candidate are REFUSED: reported as such, nothing released for them; other valid keys
+  in the same run still apply.
 - AC-RL-44 The reconciliation sends nothing: `--apply` retires SO rows (AC-RL-20) but queues no
   purchasing handover email or other notification (owner: minimum change management; these
   removals are weeks old). The ingest path keeps its AC-RL-20 handover.
