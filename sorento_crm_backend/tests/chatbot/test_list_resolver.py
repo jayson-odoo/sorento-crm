@@ -280,3 +280,22 @@ def test_nothing_on_the_turn_path_imports_list_resolver():
     assert offenders == []
     # and the module itself must exist for the guard to mean anything
     assert (root / "head" / "list_resolver.py").is_file()
+
+
+# AC-S1-6 guard: the margin itself (a zero margin must fail this)
+def test_ambiguity_margin_separates_close_from_clear_gap():
+    filler = [
+        R("customer", "f1", "KESTREL HARDWARE"), R("customer", "f2", "LOTUS PAINTS"),
+        R("customer", "f3", "QUARTZ TILES"), R("customer", "f4", "DELTA PIPES"),
+    ]
+    span = "harbour glas supply"
+    # scores 0.654 vs 0.630: a small non-zero gap inside the margin
+    close = [R("customer", "a", "HARBOUR GLASS SUPPLIES"), R("customer", "b", "HARBOUR GLASS SUPPLIERS")]
+    res = _one(span, "customer", close + filler)
+    assert res.status == "ambiguous"
+    assert [c.row.key for c in res.candidates] == ["a", "b"]
+    assert 0 < res.candidates[0].score - res.candidates[1].score < 0.03
+    # scores 0.704 vs 0.654: a gap clearly above the margin
+    far = [R("customer", "a", "HARBOUR GLASSWORKS SUPPLY"), R("customer", "b", "HARBOUR GLASS SUPPLIES")]
+    res = _one(span, "customer", far + filler)
+    assert res.status == "resolved" and res.candidates[0].row.key == "a"
