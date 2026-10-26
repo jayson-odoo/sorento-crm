@@ -1213,9 +1213,10 @@ def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[st
 
 def _lookup_lines(
     db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
-    brands: list[dict[str, Any]] | None = None,
+    brands: list[dict[str, Any]] | None = None, held: dict[str, tuple[str, ...]] | None = None,
 ) -> tuple[list[str], dict[str, Any]]:
-    """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line, plus the trace event
+    """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line and the values the State already holds
+    (`held`, CHAT-V66-REGRESSIONS), plus the trace event
     (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
     resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
@@ -1248,7 +1249,9 @@ def _lookup_lines(
             brand_words = lookup_lists.brand_words(db, brands)
             embed = lookup_lists.embedder(db)
             lookup_lists.warm(rows, embed)
-            hits = lookup_lists.shortlist(message, rows, lookup_lists.usable_embedder(rows, embed), brand_words=brand_words)
+            hits = lookup_lists.shortlist(
+                message, rows, lookup_lists.usable_embedder(rows, embed), brand_words=brand_words, held=held,
+            )
             # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
             if numbers:
@@ -4633,6 +4636,7 @@ def _run_stages_body(  # noqa: PLR0915
         lookup_lines, lookup_event = (
             _lookup_lines(
                 db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+                lookup_lists.held_values(chat_state._subject(state_in.focus)),
             )
             if parser_config.lookup_lists else (None, None)
         )

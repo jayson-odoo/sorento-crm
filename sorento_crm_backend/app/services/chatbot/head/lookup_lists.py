@@ -93,6 +93,14 @@ USE_PROVIDER = _UseProvider()
 #: `None` means spelling only; tests set a callable or None.
 EMBED: Any = USE_PROVIDER
 
+#: CHAT-V66-REGRESSIONS: the State subject keys whose values a list holds (`chat_state._subject`), so a value the
+#: conversation already settled stays nameable on a turn whose own words do not repeat it (v63 listed every brand,
+#: location, salesperson and channel on every turn).
+HELD_SUBJECT_LISTS = {
+    "brand": "brand", "warehouse": "location", "customer": "customer", "channel": "sales_channel",
+    "category": "category", "salesperson": "salesperson", "attachment_type": "file_type",
+}
+
 _LINE_RE = re.compile(r"^[ \t]*" + re.escape(MARKER) + r"[ \t]*$", re.MULTILINE)
 _CUSTOMER_BLOCKERS = frozenset({"category", "brand", "sales_channel", "location"})
 _WORD_RE = re.compile(r"[^\W_]+")
@@ -214,17 +222,43 @@ def _meaning(embed: Embedder | None, usable: list[str], texts: list[str]):
         return None
 
 
+def held_values(subject: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    """List name -> the values the State subject holds for it (`HELD_SUBJECT_LISTS`); other subject keys are dropped."""
+    out: dict[str, tuple[str, ...]] = {}
+    for key, name in HELD_SUBJECT_LISTS.items():
+        value = subject.get(key)
+        values = tuple(str(v) for v in (value if isinstance(value, list) else [value]) if v and _fold(str(v)))
+        if values:
+            out[name] = values
+    return out
+
+
+def _held_hits(rows: list[LookupRow], held: dict[str, tuple[str, ...]]) -> dict[str, dict[str, Hit]]:
+    """Per list, the rows whose own text is a held value, case and punctuation aside (no near spelling, no meaning)."""
+    wanted = {name: {_fold(v) for v in values} for name, values in held.items()}
+    out: dict[str, dict[str, Hit]] = {}
+    for row in rows:
+        folded = wanted.get(row.list_name)
+        match = next((_fold(t) for t in row.texts if _fold(t) in folded), None) if folded else None
+        if match:
+            out.setdefault(row.list_name, {})[row.key] = Hit(row, match, 1.0, 0.0)
+    return out
+
+
 def shortlist(
     message: str,
     rows: list[LookupRow],
     embed: Embedder | None,
     *,
     brand_words: frozenset[str] = frozenset(),
+    held: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, list[Hit]]:
-    """Per list, the rows the message spells or means near, best first, cut to `TOP_K`."""
+    """Per list, the rows the message spells or means near, and the rows `held` names (`held_values`), best first,
+    cut to `TOP_K`."""
+    best: dict[str, dict[str, Hit]] = _held_hits(rows, held) if held else {}
     usable = [p for p in pieces(message) if not _code_like(p)]
     if not usable or not rows:
-        return {}
+        return _ordered(best)
     # One-span-one-list: a piece that holds a brand word feeds no category row.
     by_list: dict[str, list[str]] = {}
     for name in {r.list_name for r in rows}:
@@ -240,7 +274,6 @@ def shortlist(
     meaning = _meaning(embed, usable, row_texts)
     piece_grams = {p: candidates.trigrams(p) for p in usable}
 
-    best: dict[str, dict[str, Hit]] = {}
     for row in rows:
         row_pieces = by_list.get(row.list_name) or []
         floor_meaning = FLOOR_MEANING_BY_LIST.get(row.list_name, _FLOOR_MEANING_OTHER)
@@ -256,8 +289,12 @@ def shortlist(
                 score = max(s if s >= FLOOR_SPELLING else 0.0, m if m >= floor_meaning else 0.0)
                 if score > score_best:
                     piece_best, score_best = piece, score
-        if spell_best >= FLOOR_SPELLING or mean_best >= floor_meaning:
+        if (spell_best >= FLOOR_SPELLING or mean_best >= floor_meaning) and row.key not in best.get(row.list_name, {}):
             best.setdefault(row.list_name, {})[row.key] = Hit(row, piece_best, spell_best, mean_best)
+    return _ordered(best)
+
+
+def _ordered(best: dict[str, dict[str, Hit]]) -> dict[str, list[Hit]]:
     out: dict[str, list[Hit]] = {}
     for name, hits in best.items():
         ordered = sorted(hits.values(), key=lambda h: (-max(h.spelling, h.meaning), h.row.label))
