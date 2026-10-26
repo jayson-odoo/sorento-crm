@@ -256,3 +256,42 @@ def test_a_customer_cut_of_the_same_buy_still_reads_cancel_n(api, emails):
 
     assert entry["remark"] == "CANCEL 2", entry
     assert entry["was"] == {"qty": "10"}, entry
+
+
+def test_a_stock_only_saved_line_keeps_its_cancel_balance_notice_and_drops_its_delay():
+    """Lane review S3: a saved line that tells purchasing nothing (stock only) no longer has a
+    `saved:` line to carry its rows' news, so the apply's CANCEL BALANCE notice (an AutoCount cut
+    of a row purchasing holds) stays; its DELAY notice still goes. A line that WAS told keeps
+    today's rule: every notice of it goes."""
+    from uuid import uuid4
+
+    from app.services.project_order_inquiry_service import (
+        _HANDOVER_PENDING_KEY,
+        _SAVED_TOLD_KEY,
+        ProjectOrderInquiryService,
+    )
+
+    from ._pg_fixture import blank_session
+
+    with blank_session() as db:
+        pso_id, quiet, told = str(uuid4()), str(uuid4()), str(uuid4())
+
+        def item(line_id, keys, row_id=None):
+            return {
+                "row_id": row_id or str(uuid4()), "so_line_id": line_id, "pso_id": pso_id,
+                "verb_keys": list(keys), "line": {},
+            }
+
+        cut = item(quiet, ["CANCEL_BALANCE"])
+        db.info[_SAVED_TOLD_KEY] = {pso_id: {quiet, told}}
+        db.info[_HANDOVER_PENDING_KEY] = [
+            cut,
+            item(quiet, ["DELAY"]),
+            item(told, ["ORDER"], row_id=f"saved:{told}"),
+            item(told, ["CANCEL_BALANCE"]),
+        ]
+
+        ProjectOrderInquiryService(db).forget_rows_told_for_saved_lines(pso_id)
+
+        left = db.info[_HANDOVER_PENDING_KEY]
+        assert [i["row_id"] for i in left] == [cut["row_id"], f"saved:{told}"], left
