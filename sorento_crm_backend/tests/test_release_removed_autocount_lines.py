@@ -38,6 +38,7 @@ from app.models.procurement import (
 )
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
+    INQUIRY_ACTIONED,
     INQUIRY_CANCELLED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
@@ -56,11 +57,14 @@ DB = "ZZT_DB"
 K_PO_REMOVED, K_PO_CLAIM_ONLY = "81001", "81002"
 K_PO_CANCEL_DOC, K_PO_REFLESS, K_PO_OPEN, K_PO_HDR_CANCELLED = "81003", "81004", "81005", "81006"
 K_SO_REMOVED, K_SO_CS_BOARD, K_SO_NO_ROWS = "82001", "82002", "82003"
-K_SPO_RETIRED, K_SPO_NOT_RETIRED = "83001", "83002"
-SELECTED = (K_PO_REMOVED, K_PO_CLAIM_ONLY, K_SO_REMOVED, K_SPO_RETIRED)
+K_SO_CANCEL_DOC, K_SO_HDR_CANCELLED, K_SO_ACTIONED_ONLY = "82004", "82005", "82006"
+K_SPO_RETIRED, K_SPO_NOT_RETIRED, K_SPO_RETIRED_B = "83001", "83002", "83003"
+SELECTED = (K_PO_REMOVED, K_PO_CLAIM_ONLY, K_SO_REMOVED, K_SPO_RETIRED, K_SPO_RETIRED_B)
+ALL_SPO = [K_SPO_RETIRED, K_SPO_RETIRED_B]
 UNSELECTED = (
     K_PO_CANCEL_DOC, K_PO_REFLESS, K_PO_OPEN, K_PO_HDR_CANCELLED,
     K_SO_CS_BOARD, K_SO_NO_ROWS, K_SPO_NOT_RETIRED,
+    K_SO_CANCEL_DOC, K_SO_HDR_CANCELLED, K_SO_ACTIONED_ONLY,
 )
 
 
@@ -106,6 +110,7 @@ def _row_linked(db, company, product, *, po_line=None, spo=None, doc, qty="10", 
         spo_allocation_id=spo.id if spo else None, document=doc,
     )
     row.po_ref = doc
+    row.zzt_so_number = so.so_number
     return row, link
 
 
@@ -167,11 +172,15 @@ def _world(db) -> World:
 
     # --- SO lines: removed + live row (selected); CS board cancelled (cancelled_at set);
     # removed but its only row is already cancelled (no live rows).
-    def _so_chain(dtl, *, cs_board=False, row_state=INQUIRY_RAISED):
+    def _so_chain(dtl, *, cs_board=False, row_state=INQUIRY_RAISED, cancel_doc=False,
+                  header_cancelled=False):
         so, core, pso, mirror = _line_chain(db, c, w.product, qty="10", line_status="cancelled")
         so.source_system = "autocount"
+        if header_cancelled:
+            so.status = "cancelled"
         core.source_system = "autocount"
-        core.source_ref = _ref(dtl)
+        core.source_ref = _ref(dtl) if dtl else None
+        core.cancelled_by_cancel_doc = cancel_doc
         if cs_board:
             core.cancelled_at = datetime(2026, 10, 1)
         inquiry = _inquiry(db, c, pso.id)
@@ -185,6 +194,21 @@ def _world(db) -> World:
     w.so_removed, w.so_core_removed, w.so_row_removed = _so_chain(K_SO_REMOVED)
     _so, _core, w.so_row_cs_board = _so_chain(K_SO_CS_BOARD, cs_board=True)
     _so, _core, w.so_row_no_live = _so_chain(K_SO_NO_ROWS, row_state=INQUIRY_CANCELLED)
+
+    # --- SO lines the filter alone must keep out, each with a live row the retire would act on
+    # (except the actioned-only one, whose row the retire only flags).
+    _so, _core, w.so_row_cancel_doc = _so_chain(K_SO_CANCEL_DOC, cancel_doc=True)
+    _so, _core, w.so_row_hdr_cancelled = _so_chain(K_SO_HDR_CANCELLED, header_cancelled=True)
+    _so, _core, w.so_row_refless = _so_chain(None)
+    _so, _core, w.so_row_actioned_only = _so_chain(
+        K_SO_ACTIONED_ONLY, row_state=INQUIRY_ACTIONED
+    )
+    w.so_untouched = {
+        "cancel_doc": (w.so_row_cancel_doc, INQUIRY_RAISED),
+        "hdr_cancelled": (w.so_row_hdr_cancelled, INQUIRY_RAISED),
+        "refless": (w.so_row_refless, INQUIRY_RAISED),
+        "actioned_only": (w.so_row_actioned_only, INQUIRY_ACTIONED),
+    }
 
     # --- SPO lines: retired + linked (selected), closed but never retired (not selected).
     def _spo(dtl, *, retired):
@@ -201,6 +225,10 @@ def _world(db) -> World:
     w.spo_retired = _spo(K_SPO_RETIRED, retired=True)
     w.row_spo_retired, w.link_spo_retired = _row_linked(
         db, c, w.product, spo=w.spo_retired, doc=w.spo_retired.spo_number
+    )
+    w.spo_retired_b = _spo(K_SPO_RETIRED_B, retired=True)
+    w.row_spo_retired_b, w.link_spo_retired_b = _row_linked(
+        db, c, w.product, spo=w.spo_retired_b, doc=w.spo_retired_b.spo_number
     )
     w.spo_live = _spo(K_SPO_NOT_RETIRED, retired=False)
     _row, link = _row_linked(db, c, w.product, spo=w.spo_live, doc=w.spo_live.spo_number)
@@ -302,7 +330,7 @@ def test_ac_rl_42_apply_releases_exactly_what_the_ingest_releases_and_leaves_the
 
     w = _world(db)
 
-    run(db, w.company, dry_run=False)
+    run(db, w.company, dry_run=False, spo_dtl_keys=ALL_SPO)
 
     db.expire_all()
     live_links = _link_ids(db)
@@ -310,14 +338,16 @@ def test_ac_rl_42_apply_releases_exactly_what_the_ingest_releases_and_leaves_the
     assert str(w.link_po_removed.id) not in live_links
     assert _row_state(db, w.row_po_removed) == INQUIRY_RAISED
     assert db.get(OrderInquiryRow, w.row_po_removed.id).ack_state == ACK_ACKNOWLEDGED
-    # open claim on a removed line resolved (AC-RL-04).
-    assert not _open_claim(db, w.claim_only)
+    # open claim on a removed line is DELETED, not stamped resolved (AC-RL-04).
+    assert db.get(OrderLinkClaim, w.claim_only.id) is None
     # SPO line retired: link gone (AC-RL-10).
     assert str(w.link_spo_retired.id) not in live_links
     assert _row_state(db, w.row_spo_retired) == INQUIRY_RAISED
     # SO line removed: live row retired like Transfer to Cancel SO (AC-RL-20), and the
     # core line is not given the CS board's `cancelled_at`.
     assert _row_state(db, w.so_row_removed) == INQUIRY_CANCELLED
+    note = db.get(OrderInquiryRow, w.so_row_removed.id).note or ""
+    assert "Removed in AutoCount" in note and "Transferred to Cancel SO" not in note, note
     core = db.execute(
         text("SELECT cancelled_at FROM sales_order_lines WHERE id = :i"),
         {"i": str(w.so_core_removed.id)},
@@ -328,16 +358,20 @@ def test_ac_rl_42_apply_releases_exactly_what_the_ingest_releases_and_leaves_the
         assert link_id in live_links, f"{name}: link must survive the reconciliation"
     assert _row_state(db, w.so_row_cs_board) == INQUIRY_RAISED
     assert _row_state(db, w.so_row_no_live) == INQUIRY_CANCELLED
+    # guard: every SO filter on its own keeps its line untouched (AC-RL-41).
+    for name, (row, state) in w.so_untouched.items():
+        assert _row_state(db, row) == state, f"{name} must not be touched by apply"
+        assert db.get(OrderInquiryRow, row.id).note in (None, ""), name
 
 
 def test_ac_rl_42_a_second_apply_finds_nothing(db):
     from scripts.release_removed_autocount_lines import run
 
     w = _world(db)
-    run(db, w.company, dry_run=False)
+    run(db, w.company, dry_run=False, spo_dtl_keys=ALL_SPO)
     after_first = _snapshot(db)
 
-    again = run(db, w.company, dry_run=False)
+    again = run(db, w.company, dry_run=False, spo_dtl_keys=ALL_SPO)
 
     text_ = _flat(again)
     for dtl in SELECTED:
@@ -381,7 +415,7 @@ def test_ac_rl_43_cli_prints_the_dry_run_report_and_writes_only_with_apply(
     for dtl in SELECTED:
         assert dtl in out, f"the CLI dry run must print {dtl}"
 
-    code = mod.main(["--company", str(w.company), "--apply"])
+    code = mod.main(["--company", str(w.company), "--apply", "--only", K_SPO_RETIRED])
 
     assert code in (0, None)
     live_links = _link_ids(db)
@@ -409,3 +443,85 @@ def test_ac_rl_44_apply_retires_so_rows_but_queues_no_handover(db, monkeypatch):
     assert _row_state(db, w.so_row_removed) == INQUIRY_CANCELLED, "the SO row is retired"
     assert _handover_calls(calls) == [], "the reconciliation must queue no handover"
     assert not [c for c in calls if str(c["trigger_type"]).startswith("order_inquiry")], calls
+
+
+# ====================================================================== AC-RL-45
+def test_ac_rl_45_dry_run_lists_each_spo_candidate_with_its_evidence(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+
+    report = run(db, w.company, dry_run=True)
+
+    text_ = _flat(report)
+    for dtl, alloc, row in (
+        (K_SPO_RETIRED, w.spo_retired, w.row_spo_retired),
+        (K_SPO_RETIRED_B, w.spo_retired_b, w.row_spo_retired_b),
+    ):
+        assert dtl in text_, dtl
+        assert alloc.spo_number.lower() in text_, "the SPO number"
+        assert row.zzt_so_number.lower() in text_, "the SO numbers of its links"
+    assert w.product.product_code.lower() in text_, "the item code"
+    assert " 10" in f" {text_}" or "10.0" in text_, "the placed qty"
+
+
+def test_ac_rl_45_apply_without_an_allow_list_releases_no_spo_line(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+
+    run(db, w.company, dry_run=False)
+
+    live = _link_ids(db)
+    assert str(w.link_spo_retired.id) in live and str(w.link_spo_retired_b.id) in live
+    assert _row_state(db, w.row_spo_retired) == INQUIRY_PLACED
+    # PO and SO candidates are unaffected by the missing allow-list.
+    assert str(w.link_po_removed.id) not in live
+    assert _row_state(db, w.so_row_removed) == INQUIRY_CANCELLED
+
+
+def test_ac_rl_45_apply_releases_only_the_listed_spo_line(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+
+    run(db, w.company, dry_run=False, spo_dtl_keys=[K_SPO_RETIRED])
+
+    live = _link_ids(db)
+    assert str(w.link_spo_retired.id) not in live, "A is listed: released"
+    assert str(w.link_spo_retired_b.id) in live, "B is not listed: keeps its links"
+    assert _row_state(db, w.row_spo_retired_b) == INQUIRY_PLACED
+
+
+def test_ac_rl_45_a_listed_key_that_is_not_a_candidate_is_reported_and_ignored(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+    before = _snapshot(db)
+
+    report = run(db, w.company, dry_run=False, spo_dtl_keys=["99999", K_SPO_NOT_RETIRED])
+
+    text_ = _flat(report)
+    assert "99999" in text_ and K_SPO_NOT_RETIRED in text_, "unknown keys are reported"
+    live = _link_ids(db)
+    assert w.kept_links["spo_not_retired"] in live, "a non-candidate is never touched"
+    assert str(w.link_spo_retired.id) in live and str(w.link_spo_retired_b.id) in live
+    assert before["links"] - live <= {str(w.link_po_removed.id)}, "only PO/SO work was done"
+
+
+def test_ac_rl_45_cli_only_releases_that_spo_line_and_apply_alone_releases_none(
+    db, monkeypatch
+):
+    import scripts.release_removed_autocount_lines as mod
+
+    w = _world(db)
+    monkeypatch.setattr(mod, "SessionLocal", lambda: _Session(db))
+
+    mod.main(["--company", str(w.company), "--apply"])
+    live = _link_ids(db)
+    assert str(w.link_spo_retired.id) in live and str(w.link_spo_retired_b.id) in live
+
+    mod.main(["--company", str(w.company), "--apply", "--only", K_SPO_RETIRED_B])
+    live = _link_ids(db)
+    assert str(w.link_spo_retired_b.id) not in live, "B listed with --only: released"
+    assert str(w.link_spo_retired.id) in live, "A not listed: keeps its links"

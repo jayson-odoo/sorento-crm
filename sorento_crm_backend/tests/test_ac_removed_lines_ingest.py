@@ -329,9 +329,9 @@ def test_ac_rl_01_every_row_linked_to_the_removed_line_is_released(env, monkeypa
 
 
 # ======================================================================== AC-RL-04
-def test_ac_rl_04_open_claims_on_the_removed_line_are_resolved(env):
-    """An open `scm.order_link_claim` on the removed line is no longer open afterwards
-    (resolved or removed); a claim on the live line B is left open."""
+def test_ac_rl_04_open_claims_on_the_removed_line_are_deleted(env):
+    """An open `scm.order_link_claim` on the removed line is DELETED (not stamped resolved:
+    a resolved claim would read "matched to PO X"); a claim on the live line B stays open."""
     w = _push_po(env)
     _oi_row_on(env, w)
     claims = []
@@ -351,17 +351,15 @@ def test_ac_rl_04_open_claims_on_the_removed_line_are_resolved(env):
 
     _repush_without_a(env, w)
 
-    def _open(claim_id):
+    def _count(claim_id, *, open_only=False):
+        extra = " AND resolved_at IS NULL AND po_line_id IS NOT NULL" if open_only else ""
         return env.db.execute(
-            text(
-                "SELECT count(*) FROM order_link_claim "
-                "WHERE id = :i AND resolved_at IS NULL AND po_line_id IS NOT NULL"
-            ),
+            text(f"SELECT count(*) FROM order_link_claim WHERE id = :i{extra}"),
             {"i": claim_id},
         ).scalar()
 
-    assert _open(claims[0]) == 0, "the removed line's claim is still open"
-    assert _open(claims[1]) == 1, "the live line's claim must stay as it was"
+    assert _count(claims[0]) == 0, "the removed line's claim row must be gone"
+    assert _count(claims[1], open_only=True) == 1, "the live line's claim must stay open"
 
 
 # ======================================================================== AC-RL-05
@@ -483,6 +481,9 @@ def test_ac_rl_20_a_removed_so_line_retires_its_live_rows_like_transfer_to_cance
             .count()
         )
         assert audits == 1, (row_id, audits)
+        note = snap["note"] or ""
+        assert "Removed in AutoCount" in note, (row_id, note)
+        assert "Transferred to Cancel SO" not in note, (row_id, note)
     core = env.db.execute(
         text("SELECT line_status, cancelled_at, cancelled_by_id FROM sales_order_lines WHERE id = :i"),
         {"i": str(line_x["id"])},
@@ -663,3 +664,54 @@ def test_ac_rl_34_guard_a_line_the_push_still_carries_keeps_its_links(env, a_rec
     after = _row_snapshot(env, row_id, inquiry_id)
     assert after["link_ids"] == set(link_ids), after
     assert after["state"] == INQUIRY_PLACED, after
+
+
+# ================================================================ AC-RL-07 zero-line push
+def _assert_claim_open(env, claim_id):
+    assert env.db.execute(
+        text("SELECT count(*) FROM order_link_claim WHERE id = :i AND resolved_at IS NULL"),
+        {"i": claim_id},
+    ).scalar() == 1
+
+
+def test_ac_rl_07_a_zero_line_po_push_releases_and_retires_nothing(env):
+    w = _push_po(env)
+    row_id, inquiry_id, link_ids = _oi_row_on(env, w)
+    claim = OrderLinkClaim(
+        so_number=f"ZZT-SO-{uuid.uuid4().hex[:6]}", po_number=w.po_number,
+        item_code=w.product_code, source="manual", po_line_id=w.line_a,
+        company_id=env.company_a,
+    )
+    env.db.add(claim)
+    env.db.flush()
+    env.db.commit()
+
+    res = env.post(INGEST_PO, [dict(w.record, lines=[])])
+    assert res.status_code == 200, res.text
+    env.db.expire_all()
+
+    after = _row_snapshot(env, row_id, inquiry_id)
+    assert after["link_ids"] == set(link_ids), after
+    assert after["state"] == INQUIRY_PLACED, after
+    _assert_claim_open(env, str(claim.id))
+
+
+def test_ac_rl_07_a_zero_line_so_push_retires_no_row(env):
+    po = _push_po(env)
+    record, header, line_x, y = _push_so(env)
+    placed, links = _so_mirror_row(
+        env, header, line_x, state=INQUIRY_PLACED, links=1, qty="4",
+        po_line_id=po.line_b, po_number=po.po_number,
+    )
+    raised, _ = _so_mirror_row(
+        env, header, line_x, state=INQUIRY_RAISED, share=_so_mirror_row.last
+    )
+
+    res = env.post(INGEST_SO, [dict(record, lines=[])])
+    assert res.status_code == 200, res.text
+    env.db.expire_all()
+
+    snap = _row_snapshot(env, placed)
+    assert snap["link_ids"] == set(links), snap
+    assert snap["state"] == INQUIRY_PLACED, snap
+    assert _row_snapshot(env, raised)["state"] == INQUIRY_RAISED

@@ -195,7 +195,7 @@ def test_ac_rl_10_an_actioned_row_stays_actioned_and_loses_the_link(env, monkeyp
     quiet.assert_nothing_queued()
 
 
-def test_ac_rl_10_open_claims_on_the_retired_spo_line_are_resolved(env):
+def test_ac_rl_10_open_claims_on_the_retired_spo_line_are_deleted(env):
     w = _push_spo(env)
     _row_on_spo(env, w, links=[(w.alloc_a, QTY)])
     claims = []
@@ -212,17 +212,15 @@ def test_ac_rl_10_open_claims_on_the_retired_spo_line_are_resolved(env):
 
     _repush(env, w, lines=[w.payload_b])
 
-    def _open(claim_id):
+    def _count(claim_id, *, open_only=False):
+        extra = " AND resolved_at IS NULL AND spo_allocation_id IS NOT NULL" if open_only else ""
         return env.db.execute(
-            text(
-                "SELECT count(*) FROM order_link_claim WHERE id = :i "
-                "AND resolved_at IS NULL AND spo_allocation_id IS NOT NULL"
-            ),
+            text(f"SELECT count(*) FROM order_link_claim WHERE id = :i{extra}"),
             {"i": claim_id},
         ).scalar()
 
-    assert _open(claims[0]) == 0, "the retired line's claim is still open"
-    assert _open(claims[1]) == 1, "the live line's claim must stay open"
+    assert _count(claims[0]) == 0, "the retired line's claim row must be gone"
+    assert _count(claims[1], open_only=True) == 1, "the live line's claim must stay open"
 
 
 # ================================================================ AC-RL-31 (guard)
@@ -265,3 +263,28 @@ def test_ac_rl_31_guard_a_cancelled_push_that_also_drops_a_line_keeps_that_lines
     after = _snapshot(env, row_id, inquiry_id)
     assert after["link_ids"] == set(link_ids), after
     assert after["state"] == INQUIRY_PLACED, after
+
+
+def test_ac_rl_07_a_zero_line_spo_push_releases_nothing(env):
+    w = _push_spo(env)
+    row_id, inquiry_id, link_ids = _row_on_spo(env, w, links=[(w.alloc_a, QTY)])
+    claim = OrderLinkClaim(
+        so_number=f"ZZT-SO-{uuid.uuid4().hex[:6]}", po_number=w.spo_number,
+        item_code=w.product_code, source="manual", spo_allocation_id=w.alloc_a,
+        company_id=env.company_a,
+    )
+    env.db.add(claim)
+    env.db.flush()
+    env.db.commit()
+
+    res = env.post(INGEST_SPO, [dict(w.record, lines=[])])
+    assert res.status_code == 200, res.text
+    env.db.expire_all()
+
+    after = _snapshot(env, row_id, inquiry_id)
+    assert after["link_ids"] == set(link_ids), after
+    assert after["state"] == INQUIRY_PLACED, after
+    assert env.db.execute(
+        text("SELECT count(*) FROM order_link_claim WHERE id = :i AND resolved_at IS NULL"),
+        {"i": str(claim.id)},
+    ).scalar() == 1
