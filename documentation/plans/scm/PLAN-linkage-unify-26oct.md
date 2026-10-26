@@ -132,8 +132,8 @@ Second and later callers exist today (section 2), so the lift is earned.
 |---|---|---|
 | `on_order` | PO hop, `ProjectSupplyService.open_po_line_clauses()` PSS:10067 | `min(rest, ordered - received)` |
 | `in_transit` | SPO hop, `open_incoming_clauses()` AND allocated > received | `_follow_capacity` |
-| `received` | SPO hop not incoming, `_landed_qty > 0`; warehouse = the SPO's bin | `min(rest, landed)` |
-| `received_direct` | PO line transferred, not cancelled, no SPO under the key (class d, 8 of 9); bin + qty from the AutoCount GR when synced (Q4 ruling, GR check pending), else the PO line's bin | `min(rest, received on the PO)` |
+| `received` | SPO hop not incoming, `_landed_qty > 0`; bin(s) from the GR lines naming the SPO line (`picking_lines.spo_allocation_id`, 5a), else the SPO's bin (Q6) | `min(rest, landed)`, split per GR bin in GR date order |
+| `received_direct` | PO line transferred, not cancelled, no SPO under the key (class d); bin(s) + qty from the GR lines naming the PO line (`picking_lines.po_line_id`, 5a), else the PO line's bin (Q4) | `min(rest, received on the PO)`, split per GR bin |
 | `dead` | PO line cancelled / closed with nothing transferred (z), Cancel PO (d, 1 of 9), SPO retired with 0 received (x), SPO closed with nothing landed | 0 |
 
 Hop quantities foot to the placed qty; anything left is reported as `unplaced` (an over-placed
@@ -224,9 +224,37 @@ detail (Qty received label, SPO column), Stock Debt (class d lines pin under Q4)
 email ("received" wording under Q3). Mock v1 = OI Lines tab + worklist:
 `documentation/mockups/LINKAGE-UNIFY/index.html`.
 
-### 5a. Q4: is the AutoCount GR synced?
+### 5a. Q4: is the AutoCount GR synced? YES (evidence `gr-E-autocount-gr-sync.md`, `sql/e-*.sql`)
 
-Pending (read-only check of ingest code + dev data in progress).
+- Code: ingest entity `goods_receive_notes` (`app/services/autocount_doc_ingest_service.py:82`,
+  `_apply_grn` :1231, `_grn_links` :985, `_po_or_spo_line` :949; route `api/v1/external/ingest.py:1005`;
+  on-request pull `app/services/autocount_pull_service.py:44-74`). Lands in `picking_headers`
+  (`picking_type = 'goods_received'`, `doc_key` = AutoCount DocKey) and `picking_lines`
+  (`location_code` = received bin, `qty`, `from_doc_no`, `po_line_id` OR `spo_allocation_id`).
+  One AutoCount table serves PO and SPO, so a GR line links to either.
+- Data: 470 of 1,359 GRs on dev are AutoCount-synced (2026-08-21 to 2026-10-15); the other 889
+  are Excel/CRM GRs (`doc_key` NULL, `qty` NULL, `quantity_picked`, bin only in
+  `source_warehouse_id`, no `po_line_id`). What Excel `source_warehouse_id` means is UNVERIFIED.
+- Class d (8 non-cancel placements): every one is explained by GRs except PO 202104-S0087 (2
+  placements, 3 units, older than the sync and the Excel imports). PO-2026/03-0024 WESERP10B:
+  30,000 = 12,680 AutoCount GR + 17,320 Excel GR, received at BRW 6,680 / DC1 + DC1-HOLD 10,000 /
+  WH3 10,320, so the PO line's own bin (BRW) is right for only 6,680. PO-2026/04-0018,
+  PO-2026/05-0011, PO-2026/09-0023: GR bin = PO bin. PO-2025/12-0013 is the Cancel PO (dead).
+- Q4 therefore follows PO -> GR: bin and qty from the GR lines that name the PO line, split in
+  GR date order; the PO line's bin only when no GR exists (202104-S0087). Excel GRs carry no
+  `po_line_id`: they reach a PO line only by header `spo_number` (which holds the PO number) +
+  product, unambiguous only when the PO has one line of that product (WESERP10B's 17,320 needs
+  it). No pull needed for the
+  build; if the owner wants those 2 old lines exact, the existing on-request GRN pull with a 2021
+  DocDate range covers it (read-only for AutoCount, no new code).
+- Same truth for SPO receipts (`sql/v-gr-spo.sql`, `sql/v-gr-bin.sql`): L880's SPO line was
+  received by GR-2026/10-0017 (5 Oct) 486 at BRW-BB, matching. But of 801 received SPO lines with
+  placements and an AutoCount GR, 248 have a GR bin different from the SPO's warehouse (top
+  pairs: SPO BRW -> GR MWH 345 lines, BRW-BB -> DC1-BB 287, BRW-BB -> MWH-BB 237). Today the
+  pill would name the SPO bin and Stock Debt (SPO-RECEIVED-PIN) pins at the SPO bin, so those
+  lines read on an empty or wrong bin. Design: a `received` hop takes its bin(s) and qty from the
+  GR lines naming the document (PO line or SPO line), falling back to the document's own bin.
+  Filed as Q6 to confirm.
 
 ## 6. Slicing (one lane per slice, in order)
 
