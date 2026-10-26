@@ -1,7 +1,8 @@
 # PLAN: Outbox row attachments can be downloaded and previewed (OUTBOX-ATTACHMENT)
 
-Status: in progress (small fix track: one screen, no migration, no permission change; reuses the
-existing `system.email_outbox.view` guard)
+Status: built, PR #1879 (small fix track: one screen, no migration, no permission change; reuses the
+existing `system.email_outbox.view` guard). Reviewer READY, security-reviewer CLEAN, browser pass
+1280/375 PASS on the crew test copy; waiting on CI and the owner hand test.
 
 UAC: `documentation/plans/email/outbox-attachment-acceptance-criteria.md`
 
