@@ -702,18 +702,21 @@ def provider_embedder(api_key: str) -> Embedder:
     def pieces_matrix(texts: list[str]):
         import numpy as np
 
+        # The message's own vectors are read before the cache evicts: a cached piece at the front of the cache is
+        # still this message's piece (CHAT-V66-REGRESSIONS: it raised KeyError and the turn lost its meaning scores).
         with _store_lock:
-            todo = [t for t in dict.fromkeys(texts) if t not in _pieces]
+            got = {t: _pieces[t] for t in texts if t in _pieces}
+        todo = [t for t in dict.fromkeys(texts) if t not in got]
         if todo:
             resp = client().embeddings.create(model=EMBED_MODEL, input=todo)
             vectors = _unit_rows([item.embedding for item in resp.data])
+            got.update(zip(todo, vectors))
             with _store_lock:
                 for t, vec in zip(todo, vectors):
                     _pieces[t] = vec
                 while len(_pieces) > _PIECES_CAP:
                     _pieces.pop(next(iter(_pieces)))
-        with _store_lock:
-            return np.stack([_pieces[t] for t in texts])
+        return np.stack([got[t] for t in texts])
 
     embed.fill = fill  # type: ignore[attr-defined]
     embed.matrix = matrix  # type: ignore[attr-defined]
