@@ -71,7 +71,11 @@ Postgres/Redis service containers; xdist stays 2 workers (PLAN-ci-mac-cap-18oct.
 one job at a time; a second runner would need another 6 GiB the Mac does not have.
 
 Mac swap (`sysctl vm.swapusage`, used): 6.08 GB VM off (00:06) -> 8.8-10.2 GB while the VM
-built images -> 8.9-10.5 GB during the proof run (VM peak 2.6 GB used; other lanes moved too).
+built images -> 8.9-10.5 GB during the proof run (VM peak 2.6 GB used; other lanes moved too)
+-> 13.4 GB at ~00:45 with the VM idle. The VM never hands touched memory back: its
+`com.apple.Virtualization.VirtualMachine` process holds a 6,160 MB `phys_footprint` (`footprint
+-p`) while the guest reports 650 MB used. Budget the full 6 GiB as a fixed cost while the VM is
+up; `colima stop ci` (or a restart) is the only way to give it back.
 
 ### Proof run
 
