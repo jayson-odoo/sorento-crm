@@ -306,12 +306,20 @@ def run(
                 db.commit()
         else:
             db.rollback()
+    counted_spo = spo
+    if not dry_run:
+        # AC-RL-45: on apply each SPO entry says whether it was released, and the counts
+        # cover only the released lines.
+        released_ids = {c["id"] for c in spo_to_release}
+        for c in spo:
+            c["released"] = c["id"] in released_ids
+        counted_spo = spo_to_release
     lines = [{k: v for k, v in c.items() if k != "id"} for c in (*po, *so, *spo)]
     return {
         "po_lines": len(po),
         "so_lines": len(so),
-        "spo_lines": len(spo),
-        "rows_affected": sum(c["rows_affected"] for c in (*po, *so, *spo)),
+        "spo_lines": len(counted_spo),
+        "rows_affected": sum(c["rows_affected"] for c in (*po, *so, *counted_spo)),
         "ignored_keys": ignored,
         "lines": lines,
     }
@@ -343,6 +351,7 @@ def main(argv: list[str] | None = None) -> int:
                 f"product={line['product_code']} line_qty={line['line_qty']} "
                 f"linked_qty={line['linked_qty']} rows={line['rows_affected']}"
                 + (f" so={','.join(line['so_numbers'])}" if line.get("so_numbers") else "")
+                + (f" released={line['released']}" if "released" in line else "")
             )
         if report["ignored_keys"]:
             print(f"ignored --only keys (no retired SPO line): {', '.join(report['ignored_keys'])}")

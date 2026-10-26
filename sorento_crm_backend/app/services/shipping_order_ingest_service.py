@@ -583,7 +583,8 @@ class ShippingOrderIngestService(MasterRefResolver):
         if newly_retired_ids and not force_closed and payload.lines:
             # AC-REMOVED-LINES (owner, 26 Oct 2026): a line AutoCount dropped gives back
             # its links. Only on the push that newly retires it, and never for a document
-            # pushed cancelled (`force_closed`) or carries no lines at all (AC-RL-07), which keeps its placements.
+            # pushed cancelled (`force_closed`) or carrying no lines at all (AC-RL-07), which
+            # keep their placements.
             from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
             ProjectOrderInquiryService(self.db).release_removed_lines(
