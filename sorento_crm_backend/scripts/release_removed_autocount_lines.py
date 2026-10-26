@@ -36,6 +36,10 @@ reported under `refused_keys` and release nothing, while other valid keys in the
 Runbook: dry run -> crew checks each SPO line against AutoCount -> owner OK ->
 `--apply --only AED_SORENTO:<DtlKey>[,...]`.
 
+A PO or SO document whose EVERY line is cancelled under a header that is not cancelled is what a
+zero-line push leaves (AC-RL-07, AC-RL-48): it contributes no candidate and is listed under
+`all_cancelled_documents` (document, line count) to check in AutoCount.
+
 Claims naming a removed SO line (AC-RL-47) are LEFT in place and listed under
 `so_line_claims_left` (PO number, PO line DtlKey, SO number, SO line DtlKey, claim qty): the live
 PO line's own AutoCount book still names that SO line, so the fix belongs in AutoCount.
@@ -107,6 +111,26 @@ def _spo_key(source_ref: str | None) -> str:
     return f"{parts[0]}:{parts[-1]}" if len(parts) > 1 else (source_ref or "")
 
 
+def _live_headers(db, line_model, fk) -> set[str]:
+    """Headers with at least one line that is not cancelled (AC-RL-48): a document whose EVERY
+    line is cancelled is what a zero-line push leaves, not a set of removals."""
+    return {
+        str(h)
+        for (h,) in db.query(fk)
+        .filter(func.coalesce(line_model.line_status, "open") != CANCELLED)
+        .distinct()
+    }
+
+
+def _line_counts(db, fk, header_ids: set[str]) -> dict[str, int]:
+    if not header_ids:
+        return {}
+    return {
+        str(h): n
+        for h, n in db.query(fk, func.count()).filter(fk.in_(list(header_ids))).group_by(fk)
+    }
+
+
 def _qty(value: Any) -> str:
     return format(Decimal(value or 0).normalize(), "f")
 
@@ -130,7 +154,7 @@ def _claim_ids(db, column) -> set[str]:
     }
 
 
-def _po_candidates(db, company_id: str) -> list[dict[str, Any]]:
+def _po_candidates(db, company_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     links = _links_by(db, OrderInquiryLink.po_line_id)
     claims = _claim_ids(db, OrderLinkClaim.po_line_id)
     lines = (
@@ -149,9 +173,14 @@ def _po_candidates(db, company_id: str) -> list[dict[str, Any]]:
         .all()
     )
     found = []
+    live = _live_headers(db, PurchaseOrderLine, PurchaseOrderLine.purchase_order_id)
+    skipped: dict[str, str] = {}
     for line, number, code in lines:
         linked, rows = links.get(str(line.id), (Decimal(0), set()))
         if not rows and str(line.id) not in claims:
+            continue
+        if str(line.purchase_order_id) not in live:
+            skipped[str(line.purchase_order_id)] = number
             continue
         found.append(
             {
@@ -165,7 +194,11 @@ def _po_candidates(db, company_id: str) -> list[dict[str, Any]]:
                 "rows_affected": len(rows),
             }
         )
-    return found
+    counts = _line_counts(db, PurchaseOrderLine.purchase_order_id, set(skipped))
+    return found, [
+        {"kind": "po", "document": number, "line_count": counts.get(h, 0)}
+        for h, number in skipped.items()
+    ]
 
 
 def _spo_candidates(db, company_id: str) -> list[dict[str, Any]]:
@@ -216,7 +249,7 @@ def _spo_candidates(db, company_id: str) -> list[dict[str, Any]]:
     return found
 
 
-def _so_candidates(db, company_id: str) -> list[dict[str, Any]]:
+def _so_candidates(db, company_id: str) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     live_rows = (
         db.query(
             ProjectSalesOrderLine.core_sales_order_line_id,
@@ -260,8 +293,13 @@ def _so_candidates(db, company_id: str) -> list[dict[str, Any]]:
         .all()
     )
     found = []
+    live_headers = _live_headers(db, SalesOrderLine, SalesOrderLine.sales_order_id)
+    skipped: dict[str, str] = {}
     for line, number, code in lines:
         if str(line.id) not in live:
+            continue
+        if str(line.sales_order_id) not in live_headers:
+            skipped[str(line.sales_order_id)] = number
             continue
         found.append(
             {
@@ -275,7 +313,11 @@ def _so_candidates(db, company_id: str) -> list[dict[str, Any]]:
                 "rows_affected": live[str(line.id)][0],
             }
         )
-    return found
+    counts = _line_counts(db, SalesOrderLine.sales_order_id, set(skipped))
+    return found, [
+        {"kind": "so", "document": number, "line_count": counts.get(h, 0)}
+        for h, number in skipped.items()
+    ]
 
 
 def _claims_on_removed_so_lines(db, company_id: str, release_po_ids: set[str]) -> list[dict[str, Any]]:
@@ -328,9 +370,9 @@ def run(
     """
     register_company_scope_listeners()
     with company_scope(db, frozenset({company_id})):
-        po = _po_candidates(db, company_id)
+        po, po_all_cancelled = _po_candidates(db, company_id)
         spo = _spo_candidates(db, company_id)
-        so = _so_candidates(db, company_id)
+        so, so_all_cancelled = _so_candidates(db, company_id)
         wanted = {str(k).strip() for k in spo_dtl_keys if str(k).strip()}
         kept_claims = _claims_on_removed_so_lines(db, company_id, {c["id"] for c in po})
         by_key: dict[str, list[dict[str, Any]]] = {}
@@ -384,6 +426,7 @@ def run(
         "ignored_keys": ignored,
         "refused_keys": refused,
         "so_line_claims_left": kept_claims,
+        "all_cancelled_documents": [*po_all_cancelled, *so_all_cancelled],
         "lines": lines,
     }
 
@@ -417,6 +460,10 @@ def main(argv: list[str] | None = None) -> int:
                 + (f" so={','.join(line['so_numbers'])}" if line.get("so_numbers") else "")
                 + (f" released={line['released']}" if "released" in line else "")
             )
+        if report["all_cancelled_documents"]:
+            print("\nDocuments with every line cancelled: check in AutoCount")
+            for d in report["all_cancelled_documents"]:
+                print(f"  {d['kind'].upper()} {d['document']} lines={d['line_count']}")
         if report["so_line_claims_left"]:
             print("\nClaims naming a removed SO line: correct in AutoCount")
             for c in report["so_line_claims_left"]:
