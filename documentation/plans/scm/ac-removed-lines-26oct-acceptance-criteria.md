@@ -115,6 +115,11 @@ Reconciliation (Q4 a)
   re-write the claim; the fix belongs in AutoCount). The dry run (and apply) report lists them for
   the owner to correct in AutoCount: PO number, PO line (DtlKey), SO number + SO line (DtlKey),
   claim qty; no customer or contact names. Dev copy, 26 Oct: 12 claims on 10 removed SO lines.
+- AC-RL-48 The script never treats a zero-line push as a removal (reviewer, 26 Oct): a PO or SO
+  document whose EVERY line is `cancelled` under a header that is not cancelled (what a zero-line
+  push leaves, AC-RL-07: the lines are still in AutoCount) contributes NO candidate; the dry run
+  and apply report list such documents (document number, line count) for the owner to check in
+  AutoCount, and apply touches nothing on them.
 - AC-RL-44 The reconciliation sends nothing: `--apply` retires SO rows (AC-RL-20) but queues no
   purchasing handover email or other notification (owner: minimum change management; these
   removals are weeks old). The ingest path keeps its AC-RL-20 handover.
