@@ -447,22 +447,22 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
       (line.spos ?? []).map((spo) => spo.spo_number ?? '').join(', ') ||
       (line.spo_numbers ?? []).join(', '),
     header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-    cell: ({ row }) => {
-      const spos =
-        row.original.spos ??
-        (row.original.spo_numbers ?? []).map((spoNumber) => ({
-          spo_number: spoNumber,
-          line_label: null,
-        }));
-      return (
-        <PoLineSpoCell
-          spos={spos}
-          renderDocument={(spoNumber) => (
-            <OrderInquiryDocumentLink kind="spo" document={spoNumber} whole />
-          )}
-        />
-      );
-    },
+    cell: ({ row }) => (
+      <PoLineSpoCell
+        // `spo_numbers` (numbers only) still rides the wire beside `spos`; read only when
+        // `spos` is absent.
+        spos={
+          row.original.spos ??
+          (row.original.spo_numbers ?? []).map((spoNumber) => ({
+            spo_number: spoNumber,
+            line_label: null,
+          }))
+        }
+        renderDocument={(spoNumber) => (
+          <OrderInquiryDocumentLink kind="spo" document={spoNumber} whole />
+        )}
+      />
+    ),
     size: 320,
     meta: { headerTitle: 'SPO' },
   },

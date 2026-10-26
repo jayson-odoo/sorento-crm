@@ -43,6 +43,7 @@ import { purchaseOrderStatusPill } from '../lib/purchaseOrderStatus';
 import { useContainerRequestDrill } from '../hooks/useContainerRequestDrill';
 import { useLocationStock } from '../reorder/hooks/useReorderRun';
 import { StockDocumentsPanel } from '../../project-sales/fulfilment-planning/components/StockDocumentsPanel';
+import { WorklistPill } from '../../project-sales/order-inquiries/components/orderInquiryDocumentPills';
 import type {
   ContainerRequestDrillIncomingPlRow,
   ContainerRequestDrillPoRow,
@@ -1804,13 +1805,21 @@ export function SoCoveragePicker({
         id: 'document',
         accessorFn: (c) => c.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
+        // LINKAGE-UNIFY U4 round 2: the SO number never truncates; "via PO <number>" is
+        // the order inquiry's own shared pill and gives way first (full text in its title).
         cell: ({ row }) =>
           row.original.via_po ? (
             <span className="flex min-w-0 items-center gap-1">
-              <span className="truncate">{textCell(row.original.document)}</span>
-              <span className="shrink-0 text-2xs text-muted-foreground">
-                via PO {row.original.via_po}
+              <span className="shrink-0 whitespace-nowrap">
+                {textCell(row.original.document)}
               </span>
+              <WorklistPill
+                truncate
+                testId={`so-covered-via-po-${row.original.key}`}
+                title={`via PO ${row.original.via_po}`}
+              >
+                {`via PO ${row.original.via_po}`}
+              </WorklistPill>
             </span>
           ) : (
             textCell(row.original.document)

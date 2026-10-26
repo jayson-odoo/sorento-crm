@@ -65,6 +65,7 @@ import { PlanRowDialog } from '../../../components/PlanRowDialog';
 import { PlanNumberButton } from '../../../components/PlanNumberButton';
 import { BookSoCell, bookSoSortValue } from '../../../components/BookSoCell';
 import { PoLineSpoCell } from '@/app/(protected)/project-sales/order-inquiries/components/orderInquiryDocumentPills';
+import { spoDetailHref } from '@/lib/spo-detail';
 import { PoLinePlacementsBody, placedQtyOf } from './PoLinePlacementsBody';
 import { PoPlanCard } from './PoPlanCard';
 import { BASE_CURRENCY, fmtDate, fmtInt } from '../../../lib/format';
@@ -874,7 +875,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
             spos={row.original.spos}
             renderDocument={(spoNumber) => (
               <Link
-                href={`/procurement-management/spo-allocations/${encodeURIComponent(spoNumber)}`}
+                href={spoDetailHref(spoNumber)}
                 className="shrink-0 whitespace-nowrap font-medium tabular-nums text-primary hover:underline"
               >
                 {spoNumber}
@@ -1369,7 +1370,9 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 </div>
               ) : qtyReceivedTotal > 0 ? (
                 <p className="text-sm text-muted-foreground">
-                  {fmtInt(qtyReceivedTotal)} of {fmtQtyCell(qtyOrderedTotal)} received.{' '}
+                  {/* LINKAGE-UNIFY U4 (owner ruling c): AutoCount's TRANSFER onto a
+                      shipping order, never a receipt. */}
+                  {fmtInt(qtyReceivedTotal)} of {fmtQtyCell(qtyOrderedTotal)} transferred.{' '}
                   {fmtQtyCell(outstandingTotal)} still to arrive.
                 </p>
               ) : (
