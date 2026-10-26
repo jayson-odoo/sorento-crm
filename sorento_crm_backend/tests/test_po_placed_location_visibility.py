@@ -240,3 +240,74 @@ def test_staff_call_without_contact_is_unchanged(client, db):
     assert rows["PO-VIS"]["location"] == vis.warehouse_code
     assert rows["PO-HID"]["location"] == hid.warehouse_code
     assert rows["SPO-HID"]["location"] == hid.warehouse_code
+
+
+# HOTFIX-PO-NULL-WORKSPACE: the chatbot asks by Respond.io id + space_id, and admits a contact
+# whose `workspace_id` is NULL through `resolve_contact_with_null_workspace_fallback`. The
+# route must resolve that same contact, not read it as nobody and fail closed.
+
+_SPACE_ID = "364817"
+
+
+def _null_workspace_contact(db, respond_io_id=None) -> RespondContact:
+    contact = _contact(db)
+    contact.respond_io_id = respond_io_id or unique_code("RIO")
+    db.flush()
+    assert contact.workspace_id is None
+    return contact
+
+
+def test_null_workspace_contact_without_a_location_policy_gets_every_row(client, db):
+    """HPNW-1: no policy = the default (every location), so the same rows a staff call gets,
+    each naming its location - not the empty answer #1880 gave this contact."""
+    vis, hid, prod = _seed(db)
+    contact = _null_workspace_contact(db)
+
+    resp, rows = _rows(
+        client, prod, contact_id=contact.respond_io_id, space_id=_SPACE_ID, include_summary="true"
+    )
+
+    assert set(rows) == {"PO-VIS", "PO-HID", "PO-NONE", "SPO-HID"}
+    assert rows["PO-VIS"]["location"] == vis.warehouse_code
+    assert rows["PO-HID"]["location"] == hid.warehouse_code
+    assert rows["SPO-HID"]["location"] == hid.warehouse_code
+    assert resp.json()["summary"]["po_placed_count"] == 4
+
+
+def test_null_workspace_contact_with_a_location_list_sees_only_in_scope_rows(client, db):
+    """HPNW-2: its own include list applies, rows and summary alike."""
+    vis, hid, prod = _seed(db)
+    contact = _null_workspace_contact(db)
+    _policy(db, contact, mode="compact", warehouse_ids=[vis.id])
+
+    resp, rows = _rows(
+        client, prod, contact_id=contact.respond_io_id, space_id=_SPACE_ID, include_summary="true"
+    )
+
+    assert set(rows) == {"PO-VIS"}
+    assert rows["PO-VIS"]["location"] == vis.warehouse_code
+    assert hid.warehouse_code not in resp.text
+    summary = resp.json()["summary"]
+    assert summary["po_placed_qty"] == 10
+    assert summary["po_placed_count"] == 1
+
+
+def test_unknown_respond_io_id_with_space_id_still_fails_closed(client, db):
+    """HPNW-3."""
+    _vis, _hid, prod = _seed(db)
+
+    _resp, rows = _rows(client, prod, contact_id=unique_code("RIO-NOBODY"), space_id=_SPACE_ID)
+
+    assert rows == {}
+
+
+def test_respond_io_id_shared_by_two_null_workspace_contacts_fails_closed(client, db):
+    """HPNW-4: two people behind one id is never a guess."""
+    _vis, _hid, prod = _seed(db)
+    shared = unique_code("RIO-TWIN")
+    _null_workspace_contact(db, respond_io_id=shared)
+    _null_workspace_contact(db, respond_io_id=shared)
+
+    _resp, rows = _rows(client, prod, contact_id=shared, space_id=_SPACE_ID)
+
+    assert rows == {}
