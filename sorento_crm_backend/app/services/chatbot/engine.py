@@ -1227,14 +1227,14 @@ def _lookup_lines(
             with db.begin_nested():
                 return fn()
         except Exception:  # noqa: BLE001 - fail closed
-            logger.warning("chatbot: lookup list visibility check failed", exc_info=True)
+            logger.warning("chatbot: lookup list check failed", exc_info=True)
             return default
 
     try:
         from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
         # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
-        embed = lookup_lists.embedder(db)
+        embed = guarded(lambda: lookup_lists.embedder(db), None)
         pieces_ready = lookup_lists.prefetch(message, embed)
         resolved = guarded(
             lambda: resolve_contact_with_null_workspace_fallback(
@@ -1252,8 +1252,8 @@ def _lookup_lines(
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)
             usable = lookup_lists.usable_embedder(rows, embed)
-            if usable is not None:
-                pieces_ready()
+            if usable is not None and not pieces_ready():
+                usable = None  # the round trip did not arrive in time: spelling only, never a second request
             hits = lookup_lists.shortlist(message, rows, usable, brand_words=brand_words, held=held)
             # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
