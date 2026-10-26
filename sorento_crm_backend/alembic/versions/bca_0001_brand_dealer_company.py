@@ -5,7 +5,7 @@ have none), ON DELETE SET NULL. Seeded by `companies.code` and brand code; only 
 are touched, so a re-run never overwrites an admin's choice.
 
 Revision ID: bca_0001_brand_dealer_company
-Revises: stc_0003_opp_log_slug
+Revises: diet_0001_parser_prompt_diet
 Create Date: 2026-10-26
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from sqlalchemy.dialects import postgresql
 
 
 revision = "bca_0001_brand_dealer_company"
-down_revision = "stc_0003_opp_log_slug"
+down_revision = "diet_0001_parser_prompt_diet"
 branch_labels = None
 depends_on = None
 
