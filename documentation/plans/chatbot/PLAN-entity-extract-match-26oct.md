@@ -107,6 +107,38 @@ Oracle (gold span + gold type through the same resolver): 250/271 = 92.3%; failu
 promotion_kind over-labelled (generic "promotion"), spec_value typed as other types, customer row 51%.
 Cost: A1+B1 on 338 = 676 calls, USD 0.30.
 
+### Run 2: resolver v2 (no LLM)
+
+Added an IDF-weighted token partial score (each span token matches a row token exactly, by trigram >= 0.6, or by one
+edit; weights = per-list IDF over that list's row texts, so SDN/BHD/TRADING weigh little); per-list floors calibrated
+on half the gold, reported on the other half.
+
+| Resolver | Oracle (gold span + type) | B1 spans, test half |
+| --- | --- | --- |
+| v1 (spelling + meaning, calibrated) | 242/271 = 89.3% | 72.0% |
+| v2 (+ IDF token partial) | 269/271 = 99.3% | 77.3% (noise 0.21 rows/msg) |
+| v2 + customer_aliases table | 268/271 | no gain |
+| v2 + mined code-segment aliases (23 brand prefixes, 9 class segments) | 266/271 | no gain (slightly worse) |
+
+Alias ablation (rows reduced to their label only): 23 of 271 gold mentions (8.5%) need a non-label text, and every one
+is rescued by alias text that ALREADY exists: attachment-type words 10, `PROMPT_SYNONYMS` code constant 7 (cert, image,
+马桶), category search_synonyms 5 (basin, hose), sales_agents.aliases 1. Mined aliases and customer_aliases rescue none.
+
+### Run 3: full parser (v185 text, gpt-5.4-mini, 200 messages: 186 with a non-code mention + 14 others)
+
+| Arm | Span recall | Type acc | Right row | vs L (95% CI, paired bootstrap) | Rows offered / msg (noise) | Parser ms p50 | USD / turn |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| L today (lookup on) | 78.7% | 92.4% | 74.5% | - | 6.50 (4.64) | 2,806 | 0.0050 |
+| N no lists at all | 73.3% | 84.5% | 67.2% | -7.4 [-12.0, -3.4] | 0 | 3,100 | 0.0049 |
+| C2 two-pass: B1 -> resolver -> parser sees resolved rows only | 77.7% | 93.1% | 75.6% | +1.1 [-2.0, +4.4] | 1.94 (0.28) | 3,052 + B1 984 | 0.0054 |
+| B1 + resolver v2 alone (no parser) | 88.3% | 81.5% | 80.1% | +5.5 [-0.4, +11.3] | - | 984 | 0.0005 |
+| U: C2 parser entities + B1 mentions the parser left out | 90.0% | 92.2% | 85.6% | +11.1 [+6.4, +15.7] | 1.94 (0.28) | as C2 | 0.0054 |
+
+B2 (B1 + 6 invented examples) vs B1 on the 186: recall 90.3 vs 88.3, type 82.7 vs 81.5, right row 83.0 vs 80.1.
+All three parser arms are weakest on spec_key, spec_value and promotion_kind; the span extractor is not
+(spec_key 71 / spec_value 87 / promotion_kind 100 recall). Some L/N/C2 misses are field-mapping gaps in the scorer
+(parser files "dealer" under access_levels, "dimension" under requested_attributes); Part D re-scores with those mapped.
+
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 
 | Place | What | Editable by |
