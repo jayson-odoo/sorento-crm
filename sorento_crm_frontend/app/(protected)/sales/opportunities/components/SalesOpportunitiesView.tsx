@@ -46,7 +46,7 @@ import SalesOpportunityModal from './SalesOpportunityModal';
  * `sales.opportunities.add`. Filters (Stage, Agent, Customer, close date range) and paging
  * are server-side - `manualPagination`, `recordCount` from the API's own total.
  */
-const SOURCE_LABEL: Record<string, string> = { portal: 'Portal', crm: 'CRM' };
+const SOURCE_LABEL: Record<string, string> = { portal: 'Portal', crm: 'CRM', chat: 'Chat' };
 
 export default function SalesOpportunitiesView() {
   const canAdd = useHasPermission('sales.opportunities.add');

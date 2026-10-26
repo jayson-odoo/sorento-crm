@@ -266,7 +266,7 @@ class SalesOpportunity(CompanyScopedMixin, Base):
         CheckConstraint(
             "outcome IN ('open', 'won', 'lost')", name="ck_sales_opportunities_outcome"
         ),
-        CheckConstraint("source IN ('portal', 'crm')", name="ck_sales_opportunities_source"),
+        CheckConstraint("source IN ('portal', 'crm', 'chat')", name="ck_sales_opportunities_source"),
         Index(
             "uq_sales_opportunities_company_no", "company_id", "opportunity_no", unique=True
         ),
