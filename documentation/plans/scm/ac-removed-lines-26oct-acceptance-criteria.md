@@ -38,21 +38,24 @@ PO line removed (Q2)
   inquiry header state is refreshed.
 - AC-RL-03 Nothing else changes on the row: `ack_state` unchanged (no To confirm flip), `note`
   unchanged (no "Unlinked from" text), no notification or email is queued.
-- AC-RL-04 Open `scm.order_link_claim` rows on that `po_line_id` are DELETED, not stamped
-  `resolved_at` (a resolved claim reads "matched to PO X" on the SO list,
-  `scm/sales_order_service.py:1160`; the line no longer exists in AutoCount).
+- AC-RL-04 EVERY `scm.order_link_claim` row on that `po_line_id`, open AND resolved, whatever its
+  source, is DELETED (crew audit after the dev apply, 26 Oct: resolved AutoCount claims kept
+  reserving SO demand on removed lines, `scm/purchase_order_service.py:591-623`
+  `reservations_by_target`, so Placed still read 117 / 43 / 31 / 33 / 47 / 138; owner Q2: the
+  line is gone in AutoCount, the source of truth). Never stamped `resolved_at` (a resolved claim
+  reads "matched to PO X" on the SO list, `scm/sales_order_service.py:1160`).
 - AC-RL-05 The PO line itself is written exactly as today: `line_status = cancelled`, quantities,
   `from_so_line_ref` and received qty untouched; no new column.
-- AC-RL-06 PO detail Placed for that line reads 0 after the push
-  (`scm/purchase_order_service.py` `_allocations_for`).
+- AC-RL-06 PO detail Placed for that line reads 0 after the push, counting OI links AND claim
+  dedications (`scm/purchase_order_service.py` `_allocations_for` + `reservations_by_target`).
 - AC-RL-07 A push of a document that is NOT cancelled but carries ZERO lines releases nothing
   and retires nothing (PO, SO and SPO): a header-only or failed-detail push must not wipe a
   document's links (security review). The lines are swept as today.
 
 SPO line removed (Q2)
 - AC-RL-10 When a push retires an SPO line (its `retired_at` newly set), every OI link with that
-  `spo_allocation_id` is deleted and open claims on it deleted (AC-RL-04), with AC-RL-02 and
-  AC-RL-03.
+  `spo_allocation_id` is deleted and every claim on it (open and resolved) deleted (AC-RL-04),
+  with AC-RL-02 and AC-RL-03.
 
 SO line removed (Q1 a)
 - AC-RL-20 When a push removes an SO line, its live raised / partly linked / placed rows are
@@ -79,10 +82,11 @@ Reconciliation (Q4 a)
   Dry run writes nothing and returns counts plus a per-line list: document number, DtlKey, product
   code, line qty, linked qty, OI rows affected; no customer or contact names.
 - AC-RL-41 It selects only: PO lines `cancelled`, AutoCount source with a DtlKey, header not
-  cancelled, not `cancelled_by_cancel_doc`, with a live OI link or open claim; SO lines the same
+  cancelled, not `cancelled_by_cancel_doc`, with a live OI link or ANY claim (open or resolved; a
+  line holding only a claim is selected, e.g. SRTPW0035-CR 138 on the dev copy); SO lines the same
   plus `cancelled_at IS NULL`, with rows the AC-RL-20 retire acts on (raised / partly linked /
   placed; actioned rows are only flagged, so they never select a line); SPO lines with
-  `retired_at` set and a live OI link or open claim. Tests pin every SO filter: a Cancel-SO-doc
+  `retired_at` set and a live OI link or any claim. Tests pin every SO filter: a Cancel-SO-doc
   line, a line on a cancelled SO, a ref-less line and a line whose only live row is actioned are
   never selected.
 - AC-RL-42 `dry_run=False` applies exactly the ingest's release (same functions, AC-RL-01..20)
