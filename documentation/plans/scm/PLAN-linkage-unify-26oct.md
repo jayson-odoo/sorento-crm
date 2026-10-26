@@ -429,3 +429,36 @@ test copy, then hand test.
   screens renamed "Transferred"; (b) "SPO withdrawn" explained on #1870 (`retired_at`, L784
   example); the red pill stays until the owner picks a name ("SPO line removed" /
   "Dropped from SPO" offered). Build U4 after the #1870 round-5 pill fix.
+
+## 12. U4 contract (PO / SPO popups, SPO document, SCM PO detail; mock U4 + rulings s11)
+
+Track: slice U4, M, stacked on U3 (sibling of U5). No migration, no RBAC. UI per
+`documentation/mockups/LINKAGE-UNIFY-U4/index.html` with the owner's rulings: NO "In transit"
+tag anywhere (the mock drew one: drop it); "Transferred" replaces "Qty received" / "Received"
+for the PO line figure on both PO screens; pills exactly as U3 (shared pill piece, quiet
+receipt pill, red "SPO withdrawn" / "PO cancelled", number never truncates).
+
+goods_chain gains `placements_on(db, po_line_ids=(), spo_allocation_ids=())`: every live
+placement whose chain passes through those documents, each with its `LinkChain` (the same split,
+GR bins and dead rules; placements on a PO line that follow onto an SPO are returned for that
+SPO with `via_po` = the PO number).
+
+1. PO popup (`OrderInquiryWorklistService.get_po_detail` WS ~2595, `_spo_numbers_by_po_line`
+   ~2716, "Allocated to" `_allocations_on` ~2893; FE `OrderInquiryDocumentDialog.tsx`
+   `PO_LINE_COLUMNS` ~344): each PO line carries `spos` = one entry per SPO line it was
+   transferred onto (`spo_number`, `line_label`, `receipts`, `dead_reason`), drawn with the
+   shared pills; the column headed "Received" reads "Transferred"; "Allocated to" rows carry
+   where the placement's goods are now (`receipts` / SPO in transit / `dead_reason`).
+2. SPO popup (`get_spo_detail` WS ~2759): "Allocated to" also lists placements that reached the
+   SPO through their PO line, marked "via PO <number>".
+3. SPO document page (`procurement_service.get_document` ~2942, "SO covered" ~3044-3135; FE
+   `procurement-management/spo-allocations/components/SPODocumentDetail.tsx`): "SO covered"
+   includes the via-PO placements, marked the same way.
+4. SCM PO detail Lines tab (`scm/purchase_order_service.py` ~145; FE
+   `scm/purchase-orders/[id]/components/PurchaseOrderDetail.tsx` ~592-642): header "Qty received"
+   -> "Transferred"; new SPO column per PO line (same `spos` entries, shared pills).
+
+Real cases: PO 202607-S0100 (L880 on SPO-2026/09-0107 L9 "Received 486 at BRW-BB"; L784's 294 via
+PO on L12), SPO-2026/09-0107 (L7 withdrawn), PO 202607-S0083 (cancelled line, OI-2609-0194 L16).
+Tests (red first): backend wire for 1-4 incl. `placements_on`; vitest for the dialog headers,
+SPO cells and via-PO rows, and the SCM PO detail header + SPO column; browser 1280 / 375.
