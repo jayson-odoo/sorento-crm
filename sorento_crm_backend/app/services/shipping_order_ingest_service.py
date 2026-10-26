@@ -558,6 +558,7 @@ class ShippingOrderIngestService(MasterRefResolver):
         for row in [*retired_refs, *pool, *already_closed]:
             row.line_status = LINE_CLOSED
             counts["cancelled"] += 1
+        newly_retired_ids: list[str] = []
         for row in retired_refs:
             # D28d + D28c, for a REF row only: this push no longer names the
             # line, so it is RETIRED - marked as such (the group recompute
@@ -577,7 +578,17 @@ class ShippingOrderIngestService(MasterRefResolver):
                 row.stated_received = frozen
             if row.retired_at is None:
                 row.retired_at = datetime.now(timezone.utc)
+                newly_retired_ids.append(str(row.id))
         self.db.flush()
+        if newly_retired_ids and not force_closed:
+            # AC-REMOVED-LINES (owner, 26 Oct 2026): a line AutoCount dropped gives back
+            # its links. Only on the push that newly retires it, and never for a document
+            # pushed cancelled (`force_closed`), which keeps its placements.
+            from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+            ProjectOrderInquiryService(self.db).release_removed_lines(
+                spo_allocation_ids=newly_retired_ids
+            )
         self._write_order_link_claims(payload)
         self.spo_numbers_touched.add(payload.spo_number)
         # AC-RL-49: THIS record has now fully succeeded (everything above this

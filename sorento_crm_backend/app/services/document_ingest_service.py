@@ -1636,6 +1636,13 @@ class DocumentIngestService(MasterRefResolver):
         # same thing for every row of THIS line table in THIS sweep - fetched
         # once here rather than once per row inside `is_referenced`.
         line_referrers = referrers_of(self.db, line_table)
+        # AC-REMOVED-LINES (owner, 26 Oct 2026): an AutoCount line (`by_ref`: it has a DtlKey
+        # this push no longer carries) that ends cancelled on a header this push does NOT
+        # cancel was REMOVED, not cancelled. Pool, duplicate-ref and already-cancelled rows
+        # are not removed AutoCount lines, and the TRANSITION guard keeps a later push of the
+        # same reduced document from releasing again.
+        removed_ids = {id(row) for row in by_ref.values()}
+        removed_lines: list[Any] = []
         for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
             prior_line_status = row.line_status
             if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
@@ -1652,10 +1659,25 @@ class DocumentIngestService(MasterRefResolver):
                 # re-confirmed on every later push of the same reduced document.
                 if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
                     newly_cancelled_so_line_ids.append(row.id)
+                if (
+                    id(row) in removed_ids
+                    and prior_line_status != CANCELLED
+                    and header.status != CANCELLED
+                ):
+                    removed_lines.append(row)
             else:
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
+        if removed_lines:
+            from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+            oi_service = ProjectOrderInquiryService(self.db)
+            if spec.entity_type == "purchase_orders":
+                oi_service.release_removed_lines(po_line_ids=[r.id for r in removed_lines])
+            elif spec.entity_type == "sales_orders":
+                # Retire BEFORE the flag below, which then only meets actioned rows.
+                oi_service.retire_rows_for_removed_so_lines(removed_lines)
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,

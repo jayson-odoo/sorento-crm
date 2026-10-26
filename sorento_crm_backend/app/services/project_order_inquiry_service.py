@@ -66,6 +66,7 @@ from app.models.procurement import (
     Supplier,
 )
 from app.models.product import Product
+from app.models.scm import OrderLinkClaim
 from app.models.product_companion import ProductCompanionRule, ProductCompanionRuleHost
 from app.services.product_companion_service import (
     bundled_with_item_codes_map as _bundled_with_item_codes_map,
@@ -5770,6 +5771,117 @@ class ProjectOrderInquiryService:
             row, kind="settled", was=dict(moves), actor_user_id=actor_user_id,
             borrow_hole=True,
         )
+
+    def release_removed_lines(
+        self,
+        *,
+        po_line_ids: Sequence[str] = (),
+        spo_allocation_ids: Sequence[str] = (),
+    ) -> int:
+        """AC-REMOVED-LINES (owner, 26 Oct 2026): a PO line or SPO allocation AutoCount
+        REMOVED gives back every link the CRM holds on it, whatever the row's state.
+
+        The unlink path's own `_remove_links`, minus the row note, then the same
+        `refresh_link_state` / `_refresh_inquiry_states` pair `unplace` ends with, so a row
+        reads `raised` / `partly linked` by the normal rules and an `actioned` one stays
+        actioned. No `ack_state` change, no notification, no email: AutoCount's linkage is
+        the source of truth, nobody is asked to confirm. Open `order_link_claim` rows on the
+        same ids are resolved. A reserve link names neither id, so it is never matched.
+        Returns the number of rows that lost a link. In the caller's transaction.
+        """
+        po_ids = [str(i) for i in po_line_ids if i]
+        spo_ids = [str(i) for i in spo_allocation_ids if i]
+        if not po_ids and not spo_ids:
+            return 0
+        conditions = []
+        if po_ids:
+            conditions.append(OrderInquiryLink.po_line_id.in_(po_ids))
+        if spo_ids:
+            conditions.append(OrderInquiryLink.spo_allocation_id.in_(spo_ids))
+        links = self.db.query(OrderInquiryLink).filter(or_(*conditions)).all()
+        by_row: Dict[str, List[OrderInquiryLink]] = defaultdict(list)
+        for link in links:
+            by_row[str(link.row_id)].append(link)
+        rows = (
+            self.db.query(OrderInquiryRow).filter(OrderInquiryRow.id.in_(list(by_row))).all()
+            if by_row
+            else []
+        )
+        for row in rows:
+            self._remove_links(row, by_row[str(row.id)], note=False)
+        if rows:
+            self.refresh_link_state(rows)
+            self.db.flush()
+            self._refresh_inquiry_states({row.order_inquiry_id for row in rows})
+        claim_conditions = []
+        if po_ids:
+            claim_conditions.append(OrderLinkClaim.po_line_id.in_(po_ids))
+        if spo_ids:
+            claim_conditions.append(OrderLinkClaim.spo_allocation_id.in_(spo_ids))
+        now = datetime.utcnow()
+        for claim in (
+            self.db.query(OrderLinkClaim)
+            .filter(OrderLinkClaim.resolved_at.is_(None), or_(*claim_conditions))
+            .all()
+        ):
+            claim.resolved_at = now
+        self.db.flush()
+        return len(rows)
+
+    def retire_rows_for_removed_so_lines(
+        self,
+        core_lines: Sequence[SalesOrderLine],
+        *,
+        actor_user_id: Optional[str] = None,
+        reason: str = "Removed in AutoCount",
+    ) -> int:
+        """AC-REMOVED-LINES (owner, 26 Oct 2026): a sales order line AutoCount REMOVED has its
+        order inquiry rows retired exactly as CS's Transfer to Cancel SO retires them - the
+        calls `ProjectSupplyService.cancel_lines` makes after writing the core line (drafts
+        dropped, `retire_rows_for_cancelled_lines`, the purchasing handover) - but the core
+        line gets no `cancelled_at` / `cancelled_by_id` / `cancel_reason`: those mean the CS
+        board. The ONE sequence the ingest and `scripts/release_removed_autocount_lines.py`
+        share. Handover lines are queued only for lines whose rows actually retired. Call
+        before `flag_rows_for_cancelled_lines`, which then only meets actioned rows.
+        """
+        from app.services import project_line_draft_service
+
+        lines = [line for line in core_lines if line is not None]
+        if not lines:
+            return 0
+        core_ids = [str(line.id) for line in lines]
+        project_line_draft_service.delete_drafts_for_lines(
+            self.db,
+            core_ids,
+            company_id=str(lines[0].company_id) if lines[0].company_id else None,
+        )
+        retired = self.retire_rows_for_cancelled_lines(
+            [(cid, reason) for cid in core_ids], actor_user_id=actor_user_id
+        )
+        queued = {
+            str(item.get("so_line_id"))
+            for item in (self.db.info.get(_HANDOVER_PENDING_KEY) or [])
+        }
+        if queued:
+            mirrors = (
+                self.db.query(ProjectSalesOrderLine)
+                .filter(
+                    ProjectSalesOrderLine.core_sales_order_line_id.in_(core_ids),
+                    ProjectSalesOrderLine.id.in_(list(queued)),
+                )
+                .all()
+            )
+            core_by_id = {str(line.id): line for line in lines}
+            by_pso: Dict[str, List[Tuple[ProjectSalesOrderLine, Any]]] = defaultdict(list)
+            for mirror in mirrors:
+                core = core_by_id.get(str(mirror.core_sales_order_line_id))
+                if core is not None:
+                    by_pso[str(mirror.project_sales_order_id)].append((mirror, core))
+            for pso_id, pairs in by_pso.items():
+                self.record_cancelled_lines(
+                    pso_id=pso_id, cancelled=pairs, actor_user_id=actor_user_id
+                )
+        return retired
 
     def retire_rows_for_cancelled_lines(
         self,
@@ -13559,8 +13671,13 @@ class ProjectOrderInquiryService:
         links: Sequence[OrderInquiryLink],
         *,
         stamp_for: Optional[Callable[[OrderInquiryLink], str]] = None,
+        note: bool = True,
     ) -> None:
         """Delete these links and the audit claim each one put up.
+
+        `note=False` leaves the row's note alone (AC-REMOVED-LINES, owner 26 Oct 2026: a line
+        AutoCount removed is released with no "Unlinked from" text); every other caller keeps
+        the default.
 
         The claim goes only when THIS link is what wrote it (`source = 'order_inquiry'`,
         held by `order_link_service.delete_own_claim`): a claim at the same identity that
@@ -13573,7 +13690,8 @@ class ProjectOrderInquiryService:
             stamp = f"Unlinked from {document}" if document else "Unlinked"
             if stamp_for is not None:
                 stamp = stamp_for(link)
-            row.note = f"{row.note}; {stamp}" if row.note else stamp
+            if note:
+                row.note = f"{row.note}; {stamp}" if row.note else stamp
             # By ID, not by identity. `delete_own_claim` matches on (SO number, PO number,
             # item) and would have taken down the claim behind a SIBLING link on the same
             # document - a row linked to two lines of one purchase order lost both claims
