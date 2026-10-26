@@ -2870,6 +2870,13 @@ def _phone_gate_applies(
     """
     from app.models.access import RespondContact
     from app.services import wa_phone_link
+    from app.services.chat_history_ingest_service import normalise_channel
+
+    # WU20: Share Contact Info is a WhatsApp feature; any other channel is not this flow.
+    channel = envelope.message.get("channel")
+    channel = channel if isinstance(channel, dict) else {}
+    if normalise_channel(channel.get("source") or channel.get("type")) != "whatsapp":
+        return None
 
     with _session(session_factory) as db:
         linked = (

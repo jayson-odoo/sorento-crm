@@ -18,6 +18,7 @@ from sqlalchemy.orm import Session
 from app.models.access import RespondContact
 from app.schemas.user import RespondContactCreate
 from app.services import respond_messaging_service
+from app.services.contact_service import parse_respond_contact_payload
 from app.services.phone_signin_service import mask
 from app.services.phone_utils import normalize_msisdn
 
@@ -126,10 +127,10 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
     # Respond.io step first; nothing below touches the CRM until it has succeeded.
     try:
         phone_contact_id: Optional[str] = None
+        phone_contact: dict = {}
         try:
-            found = client.get_contact_by_phone(f"+{num}")
-            if found.get("id") not in (None, ""):
-                phone_contact_id = str(found["id"])
+            phone_contact = parse_respond_contact_payload(client.get_contact_by_phone(f"+{num}"))
+            phone_contact_id = phone_contact.get("respond_io_id")
         except httpx.HTTPStatusError as e:
             if e.response is None or e.response.status_code != 404:
                 raise
@@ -151,8 +152,9 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
         else:
             from app.services.contact_service import ContactService
 
+            names = {k: phone_contact[k] for k in ("first_name", "last_name", "name") if phone_contact.get(k)}
             row = ContactService(db).create_contact(
-                RespondContactCreate(phone_number=f"+{num}", respond_io_id=survivor)
+                RespondContactCreate(phone_number=f"+{num}", respond_io_id=survivor, **names)
             )
     except Exception as e:  # noqa: BLE001
         db.rollback()
