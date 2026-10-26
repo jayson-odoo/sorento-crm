@@ -13,6 +13,7 @@
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/components/ui/tooltip', async () => {
@@ -294,5 +295,34 @@ describe('R3 the SPO column is wide enough on both tables', () => {
   it('(3) the Lines tab SPO column is at least 320 wide', () => {
     const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
     expect(sizeOf(result.current)).toBeGreaterThanOrEqual(320);
+  });
+});
+
+
+describe('R4 a saved narrow width cannot shrink the SPO column below 320', () => {
+  const tables: Array<[string, () => unknown[]]> = [
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[]],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[]],
+  ];
+
+  it.each(tables)('(a) the %s SPO column def has minSize >= 320', (_name, build) => {
+    const { result } = renderHook(build);
+    const column = result.current.find((c) => (c as { id?: string }).id === 'spo_number') as {
+      minSize?: number;
+    };
+    expect(column.minSize ?? 0).toBeGreaterThanOrEqual(320);
+  });
+
+  it.each(tables)('(b) the %s table clamps a saved spo_number width of 170 to >= 320', (_name, build) => {
+    const { result } = renderHook(() => {
+      const columns = build();
+      return useReactTable({
+        data: [] as unknown[],
+        columns: columns as never,
+        getCoreRowModel: getCoreRowModel(),
+        state: { columnSizing: { spo_number: 170 } },
+      });
+    });
+    expect(result.current.getColumn('spo_number')!.getSize()).toBeGreaterThanOrEqual(320);
   });
 });
