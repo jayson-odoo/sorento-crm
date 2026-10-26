@@ -1,7 +1,6 @@
 # UAC - one answer to "where are this SO line's goods now" (LINKAGE-UNIFY)
 
-Plan: `PLAN-linkage-unify-26oct.md`. Status: DRAFT 26 Oct 2026. U1 and U2 are ruled except Q6
-(GR bin for SPO receipts, filed); U3 and U4 wait on the owner's mock approval
+Plan: `PLAN-linkage-unify-26oct.md`. Status: DRAFT 26 Oct 2026. U1..U4 are ruled; mock v2 approved (09:39), Q6 (a) and no Received card (09:45)
 (`documentation/mockups/LINKAGE-UNIFY/index.html`).
 
 ## Journey
@@ -74,7 +73,7 @@ Fixtures: one company, one product, bins B1 and B2, open SO lines. "Placement" =
   = `qty_received`); SPO line retired with 0 received; SPO line closed with nothing landed. Each:
   one hop `dead` with reason `po_cancelled` or `spo_withdrawn`, qty 0; the row state stays
   `placed` ("On PO/SPO", Q2); `received` false; Stock Debt holds nothing.
-- **AC-R7 GR bin for SPO receipts (Q6, only if ruled (a)).** SPO A received 260, SPO bin B1, GR
+- **AC-R7 GR bin for SPO receipts (Q6 (a), ruled).** SPO A received 260, SPO bin B1, GR
   line naming A received 260 at B2: hop `received` at B2; Stock Debt pins on B2. Real case:
   OI-2609-0352, SO396194 L1216, CGB762 260, SPO-2026/08-0083 L29 (bin BRW-BB, 0 on hand),
   GR-2026/08-0155 at MWH.
@@ -87,13 +86,14 @@ Fixtures: one company, one product, bins B1 and B2, open SO lines. "Placement" =
 - **AC-D1 (Q1).** OI Lines tab and worklist: a PO-placed line whose SPO is received shows the PO
   chip and the SPO chip; the SPO chip carries "Received <qty> at <bin>" (L880: "Received 486 at
   BRW-BB"). The PO chip never carries a "received" pill (owner note on mock v1); the received
-  state shows only on the SPO chip. Class d (no SPO) pill placement: pending owner (mock v2 ask).
+  state shows only on the SPO chip. Class d (no SPO): the PO chip carries "Received <qty> at <bin>" from its GR (lead default, the
+  mock v2 ask; owner may override).
 - **AC-D2 (Q2).** The state pill reads "On PO/SPO" on every placed row, unchanged.
 - **AC-D3 (Q5).** Dead hops show red "PO cancelled" / "SPO withdrawn"; the worklist "Dead
   document" filter lists exactly those rows; a retired SPO link is no longer hidden.
 - **AC-D4 (parity).** The Lines tab draws the same document pills as the worklist.
-- **AC-D5 (proposal, only if approved).** Worklist stage cards stop counting landed units as
-  "Purchased".
+- **AC-D5 (owner 09:45).** Worklist stage cards are unchanged: no Received card; landed units
+  stay in Purchased as today.
 - **AC-D6 (U4).** PO popup SPO column shows each SPO with its state; "Allocated to" on the PO
   popup, the SPO popup and the SPO document lists every placement whose chain passes through
   that document (OI-2609-0128 L880 appears on SPO-2026/09-0107's).

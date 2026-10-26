@@ -1,7 +1,7 @@
 # PLAN: one answer to "where are this SO line's goods now" (LINKAGE-UNIFY)
 
-Status: RULED 26 Oct 2026 (owner, card a76592390, section 5). Size L, lead pattern. UAC: `linkage-unify-26oct-acceptance-criteria.md`. Mock v1 filed (1b863a9f54), Q6 filed. Waiting on the owner: mock v1 review and
-Q6 (GR bin); build only after the owner approves the mock. The fix is cut into the slices of section 6.
+Status: RULED 26 Oct 2026 (owner, card a76592390, section 5). Size L, lead pattern. UAC: `linkage-unify-26oct-acceptance-criteria.md`. Mock v2 APPROVED (owner 09:39); Q6 (a) and NO Received card (owner 09:45). Building U1.
+ The fix is cut into the slices of section 6.
 Lane LINKAGE-UNIFY, branch `crew/linkage-unify`, base origin/main 263643ae36.
 
 Evidence (committed beside this plan, `evidence/linkage-unify/`):
@@ -197,6 +197,10 @@ the owner asks for "where is my order" in chat); pile readers (correct as they a
   GR) instead of assuming the PO bin; if not, state it with evidence and propose the smallest
   read-only pull. Finding: section 5a.
 - Q5 (a): stays placed, red "PO cancelled" / "SPO withdrawn", worklist filter.
+- Mock v1 note: the PO chip never shows "received"; the received state is on the SPO chip only.
+- Mock v2: "ok" (09:39). Q6 (a) (09:45): every received bin comes from the GR lines naming the
+  document, falling back to the SPO / PO bin. Stage cards: NO new Received card; landed units
+  stay in Purchased exactly as today (no card change).
 
 The card as filed:
 
@@ -218,7 +222,7 @@ The card as filed:
 
 Screens that change visibly under the rulings (each through a Lavish mock on a real case before
 build): OI Lines tab (SPO column, pills, dead-document pill), OI worklist (pill meaning, filter,
-card proposal), PO and SPO popups (state, Allocated to), SPO document detail (SO covered), SCM PO
+stage cards unchanged), PO and SPO popups (state, Allocated to), SPO document detail (SO covered), SCM PO
 detail (Qty received label, SPO column), Stock Debt (class d lines pin under Q4), CS reserve
 email ("received" wording under Q3). Mock v1 = OI Lines tab + worklist:
 `documentation/mockups/LINKAGE-UNIFY/index.html`.
@@ -261,7 +265,7 @@ email ("received" wording under Q3). Mock v1 = OI Lines tab + worklist:
 |---|---|---|---|
 | U1 | `goods_chain.py` + Stock Debt calls it (move, no behaviour change); chain tests per class a..z | M (about 400 lines, no UI) | no |
 | U2 | received semantics (Q3, Q4, Q5 data side) across the OI received tests, reserve, planning change, Stock Debt | M | pill / email wording, Stock Debt class d |
-| U3 | OI display: SPO column every hop with "Received <qty> at <bin>" (Q1), dead pills + filter (Q5), Lines tab pill parity, card proposal if approved; label unchanged (Q2) | M (mock) | yes |
+| U3 | OI display: SPO column every hop with "Received <qty> at <bin>" (Q1), dead pills + filter (Q5), Lines tab pill parity; label unchanged (Q2); stage cards unchanged | M (mock) | yes |
 | U4 | popups, SPO document, SCM PO detail via `placements_on` | M (mock) | yes |
 | U5 | candidate walk netting + one key everywhere (step 5 and 6) | S | no (closes a double offer) |
 

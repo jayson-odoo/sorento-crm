@@ -60,7 +60,6 @@
   .kc .l { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
   .kc .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
   .kc .q { display: block; margin-top: 6px; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
-  .kc.prop { border: 1px dashed #d97706; background: #fffbeb; }
   .tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; background: #d97706; color: #fff; border-radius: 4px; padding: 1px 5px; margin-bottom: 4px; }
   .rose { background: #f43f5e; } .sky { background: #0ea5e9; } .violet { background: #8b5cf6; } .emerald { background: #10b981; }
   .t-rose { color: #be123c; } .t-sky { color: #0369a1; } .t-violet { color: #6d28d9; } .t-emerald { color: #047857; }
@@ -182,15 +181,6 @@
         </div>
       </div>
 
-      <div class="frame" id="prop" style="margin-top:16px">
-        <span class="tag">Proposal, needs owner OK</span>
-        <div class="strip four">
-          <div class="kc"><span class="l"><span class="sw rose"></span>Buy</span><span class="q t-rose">0</span></div>
-          <div class="kc"><span class="l"><span class="sw sky"></span>Purchased</span><span class="q t-sky">1626</span></div>
-          <div class="kc"><span class="l"><span class="sw violet"></span>Incoming</span><span class="q t-violet">548</span></div>
-          <div class="kc prop"><span class="l"><span class="sw emerald"></span>Received</span><span class="q t-emerald">780</span></div>
-        </div>
-      </div>
     </div>
     <aside class="notes">
       <h3>Notes (not part of the UI)</h3>
@@ -201,8 +191,7 @@
         <li>Q5: the 294 direct on retired L7 stays placed; the chip is red "SPO withdrawn". L7 and L12 share one document number, so the "+1" popover lists them by line. Class z: PO 202607-S0083, line cancelled, received 0, 728 placed on live SO396348 line 16.</li>
         <li>Dead document filter counts are dev placements on open SO lines: 20 PO cancelled (2,565 units), 4 SPO withdrawn (443 units).</li>
         <li>State "On PO/SPO" stays on every row (Q2); shown unchanged in the State column.</li>
-        <li>Cards: figures are for the five sample rows only, computed by hand from the stage formulas (<code>_incoming_qty</code>, <code>_purchased_qty</code>); not run through the live summary. Today landed PO-linked units (486 + 294) fall back into Purchased because the derived cover only counts allocated minus received.</li>
-        <li>Proposal alternatives: a fourth Received card (shown), or simply drop those units from every card. Either way Purchased reads 1626 here.</li>
+        <li>Stage cards: unchanged (owner, 26 Oct 09:45: no Received card; landed units stay in Purchased as today).</li>
         <li>Side effect to note (not a ruling): on row L64 the 898 PO units read as Purchased even though SPO L76 is in transit, because the SPO the row also links directly is excluded from the derived cover.</li>
       </ul>
     </aside>
@@ -223,7 +212,6 @@
         <tr><td>Worklist "Dead document" filter</td><td>Filters popover <code>order-inquiries/components/OrderInquiriesClient.tsx:1577</code> (SearchableSelect, clearable, same pattern as State)</td><td>Q5</td></tr>
         <tr><td>Lines tab gets the worklist's document pills</td><td>Same pill markup as <code>orderInquiryWorklistColumns.tsx:391-419</code> (via pill; the received state is on the SPO chip) inside DocumentCell <code>orderInquiryHeaderLinesColumns.tsx:186</code></td><td>Parity</td></tr>
         <tr><td>"+N" overflow lists documents with their pills</td><td><code>orderInquiryHeaderLinesColumns.tsx:136</code> popover (LineDocumentsCell); worklist <code>orderInquiryWorklistColumns.tsx:434</code> badge</td><td>Parity, Q5</td></tr>
-        <tr><td>Stage cards: landed units leave "Purchased" (optional Received card)</td><td><code>order-inquiries/components/OrderInquiryStrip.tsx</code>, <code>_shared/components/SupplyKindCard.tsx</code>, <code>_shared/lib/orderInquiryKinds.ts:47</code> (KIND_LABELS); backend <code>order_inquiry_worklist_service.py:1179</code> (_derived_cover_qty), <code>:3066</code> (_stage_rows, _kinds)</td><td>Proposal, needs owner OK</td></tr>
       </tbody>
     </table>
   </div>
@@ -324,8 +312,6 @@
       p.hidden = !(v === 'both' || p.getAttribute('data-pane') === v);
       p.style.marginTop = (v === 'both' && p.getAttribute('data-pane') === 'after') ? '16px' : '0';
     });
-    var prop = root.querySelector('#prop');
-    if (prop) prop.hidden = (v === 'before');
     document.querySelectorAll('.seg[data-target="' + id + '"] button').forEach(function (b) {
       b.setAttribute('aria-pressed', b.getAttribute('data-v') === v ? 'true' : 'false');
     });
