@@ -196,3 +196,66 @@ def test_k4_book_names_target_requires_the_same_product(scm_app):
     assert _service(db)._book_names_target_for_line(
         core, po_line_id=None, spo_allocation_id=str(a.id),
     ) is False
+
+
+# ---------------------------------------------------------------------------- U5 round 2
+
+
+def _followed_world(db):
+    """PO line 486 transferred onto SPO A 486 (in transit, at a pool bin B1); row 1 places 486
+    on the PO line; row 2 is a second unlinked row of the same product."""
+    w = _World(db)
+    w.b2.pool_warehouse_id = w.b1.id
+    db.flush()
+    po, po_line = w.po(ordered=486, transferred=486)
+    a = w.onto(po, po_line, qty=486, warehouse=w.b1)
+    row1, _link = w.place_on_po(po_line, 486, minute=1)
+    row2 = _unlinked_row(db, w, 486)
+    return w, a, row1, row2
+
+
+def _remaining_of(db, row, spo):
+    offered = [
+        c for c in _service(db).po_candidates_for_row(str(row.id))
+        if c["spo_allocation_id"] == str(spo.id)
+    ]
+    return [Decimal(str(c["remaining"])) for c in offered]
+
+
+def test_b1_the_row_that_placed_on_the_po_is_still_offered_the_spo_its_own_goods_followed_onto(scm_app):
+    """Own links are credited back (S8 "choose document"): row 1's own 486 sits on A, so for
+    row 1 A still reads 486 remaining; for row 2 it reads 0 (K1)."""
+    db = scm_app[1]
+    w, a, row1, row2 = _followed_world(db)
+    assert _remaining_of(db, row1, a) == [Decimal("486")]
+    assert all(r == 0 for r in _remaining_of(db, row2, a))
+
+
+def test_k5_an_spo_of_another_company_is_not_counted_by_the_batch_own_arrival_reader(scm_app):
+    """The key's company condition, stated by the reader itself (the batch read states no
+    company of its own): an SPO of ANOTHER company naming the same PO number, ref and product
+    lands nothing for this company's SO line."""
+    from app.models.company import Company
+
+    db = scm_app[1]
+    w, po, po_line, a, so_ref = _own_arrival_world(db)
+    other = _u()
+    db.add(Company(id=other, name="ZZT K5 other", code=f"ZZTK5{_u()[:6]}".upper(), is_active=True))
+    db.flush()
+    a.company_id = other
+    db.flush()
+    assert _landed_batch(db, w, so_ref) == Decimal("0")
+    assert _landed_single(db, w, so_ref) == Decimal("0")
+
+
+def test_k6_an_spo_naming_the_po_line_by_fk_is_counted_as_landed(scm_app):
+    """The FK route of the one key: `spo_allocations.po_line_id` names the PO line, with no
+    from_po_number / from_po_line_ref at all."""
+    db = scm_app[1]
+    w, po, po_line, a, so_ref = _own_arrival_world(db)
+    a.from_po_number = None
+    a.from_po_line_ref = None
+    a.po_line_id = po_line.id
+    db.flush()
+    assert _landed_single(db, w, so_ref) == Decimal("50")
+    assert _landed_batch(db, w, so_ref) == Decimal("50")
