@@ -260,17 +260,20 @@ const SPO_VIA_RECEIVED: Link = {
 };
 
 describe.each<Where>(['worklist', 'lines'])('R3 layout of the SPO cell on the %s', (where) => {
-  it('(1) the SPO number button has a non-zero min-width floor and a title with the full number', () => {
+  it('(1) the SPO number never truncates: shrink-0, no truncate / max-w, title holds the full number', () => {
+    // Owner ruling (26 Oct, #1870 hand test) SUPERSEDES the round-3 "min-width floor": the
+    // number is the focus and never gives way; the receipt pill gives way first (R5 below).
     show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
     const button = screen.getByText(SPO).closest('button') as HTMLElement;
     expect(button.getAttribute('title')).toContain(SPO);
-    expect(button.className).toMatch(/(^|\s)min-w-(?!0(\s|$))\S+/);
-    expect(button.className).not.toMatch(/(^|\s)w-0(\s|$)/);
+    expect(button.className).toContain('shrink-0');
+    expect(button.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis|(^|\s)max-w-/);
   });
 
   it('(2) the pills keep their full text: shrink-0 and no truncation class', () => {
     show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
-    for (const text of ['via PO', 'Received 60 at BRW-BB']) {
+    // (The receipt pill is the one that gives way first now: see R5.)
+    for (const text of ['via PO']) {
       const pill = screen.getByText(text);
       expect(pill.className).toContain('shrink-0');
       expect(pill.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis/);
@@ -324,5 +327,65 @@ describe('R4 a saved narrow width cannot shrink the SPO column below 320', () =>
       });
     });
     expect(result.current.getColumn('spo_number')!.getSize()).toBeGreaterThanOrEqual(320);
+  });
+});
+
+
+// ---------------------------------------------------------------------------- round 5
+
+function receiptPill() {
+  return screen.getByText('Received 60 at BRW-BB');
+}
+
+describe.each<Where>(['worklist', 'lines'])('R5 the number leads, the receipt gives way, on the %s', (where) => {
+  it('T1 a PO number never truncates either', () => {
+    show(cellOf(where, 'po_number', rowWith([PO_LINK])));
+    const button = screen.getByText('202607-S0083').closest('button') as HTMLElement;
+    expect(button.getAttribute('title')).toContain('202607-S0083');
+    expect(button.className).toContain('shrink-0');
+    expect(button.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis|(^|\s)max-w-/);
+  });
+
+  it('T2 the receipt pill is quiet and gives way first', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    const pill = receiptPill();
+    const classes = pill.className;
+    expect(classes).toContain('truncate');
+    expect(classes).toContain('min-w-0');
+    expect(classes).toContain('text-[10px]');
+    expect(classes).toMatch(/(^|\s)px-1(\s|$)/);
+    expect(classes).toContain('text-muted-foreground');
+    expect(pill.getAttribute('title')).toBe('Received 60 at BRW-BB');
+  });
+
+  it('T3 a compact clickable fallback names the receipt and opens the same view as +N', async () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    const fallback = document.querySelector(
+      'button[aria-label*="Received 60 at BRW-BB"]',
+    ) as HTMLElement | null;
+    expect(fallback).not.toBeNull();
+    fireEvent.click(fallback!);
+    expect(await screen.findByRole('dialog')).toBeTruthy();
+  });
+
+  it('T4 container queries pick which one shows', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    const number = screen.getByText(SPO).closest('button') as HTMLElement;
+    expect(number.closest('[class~="@container"]')).not.toBeNull();
+
+    let hider: HTMLElement | null = receiptPill();
+    let hides = false;
+    while (hider && !hides) {
+      hides = /(^|\s)@max-\S+:hidden(\s|$)/.test(hider.className);
+      hider = hider.parentElement;
+    }
+    expect(hides).toBe(true);
+
+    const fallback = document.querySelector(
+      'button[aria-label*="Received 60 at BRW-BB"]',
+    ) as HTMLElement | null;
+    expect(fallback).not.toBeNull();
+    expect(fallback!.className).toMatch(/(^|\s)hidden(\s|$)/);
+    expect(fallback!.className).toMatch(/@max-\S+:(inline-flex|flex|inline-block|block)/);
   });
 });
