@@ -38,21 +38,28 @@ PO line removed (Q2)
   inquiry header state is refreshed.
 - AC-RL-03 Nothing else changes on the row: `ack_state` unchanged (no To confirm flip), `note`
   unchanged (no "Unlinked from" text), no notification or email is queued.
-- AC-RL-04 Open `scm.order_link_claim` rows on that `po_line_id` are resolved.
+- AC-RL-04 Open `scm.order_link_claim` rows on that `po_line_id` are DELETED, not stamped
+  `resolved_at` (a resolved claim reads "matched to PO X" on the SO list,
+  `scm/sales_order_service.py:1160`; the line no longer exists in AutoCount).
 - AC-RL-05 The PO line itself is written exactly as today: `line_status = cancelled`, quantities,
   `from_so_line_ref` and received qty untouched; no new column.
 - AC-RL-06 PO detail Placed for that line reads 0 after the push
   (`scm/purchase_order_service.py` `_allocations_for`).
+- AC-RL-07 A push of a document that is NOT cancelled but carries ZERO lines releases nothing
+  and retires nothing (PO, SO and SPO): a header-only or failed-detail push must not wipe a
+  document's links (security review). The lines are swept as today.
 
 SPO line removed (Q2)
 - AC-RL-10 When a push retires an SPO line (its `retired_at` newly set), every OI link with that
-  `spo_allocation_id` is deleted and open claims on it resolved, with AC-RL-02 and AC-RL-03.
+  `spo_allocation_id` is deleted and open claims on it deleted (AC-RL-04), with AC-RL-02 and
+  AC-RL-03.
 
 SO line removed (Q1 a)
 - AC-RL-20 When a push removes an SO line, its live raised / partly linked / placed rows are
   retired the way Transfer to Cancel SO retires them (`ProjectSupplyService.cancel_lines`,
   `project_supply_service.py:1405-1443`, via `retire_rows_for_cancelled_lines`): links back,
-  row `cancelled`, the same audit and purchasing handover that path produces. Actioned rows are
+  row `cancelled`, the same audit and purchasing handover that path produces. The retired row's
+  note reads "Removed in AutoCount" (not "Transferred to Cancel SO: ..."). Actioned rows are
   only flagged, as today. The core line is NOT given `cancelled_at` / `cancelled_by_id` (those
   mean the CS board).
 
@@ -75,7 +82,9 @@ Reconciliation (Q4 a)
   cancelled, not `cancelled_by_cancel_doc`, with a live OI link or open claim; SO lines the same
   plus `cancelled_at IS NULL`, with rows the AC-RL-20 retire acts on (raised / partly linked /
   placed; actioned rows are only flagged, so they never select a line); SPO lines with
-  `retired_at` set and a live OI link or open claim.
+  `retired_at` set and a live OI link or open claim. Tests pin every SO filter: a Cancel-SO-doc
+  line, a line on a cancelled SO, a ref-less line and a line whose only live row is actioned are
+  never selected.
 - AC-RL-42 `dry_run=False` applies exactly the ingest's release (same functions, AC-RL-01..20)
   and a second run finds nothing.
 - AC-RL-43 A CLI entry (`python -m scripts.release_removed_autocount_lines --company <id>
