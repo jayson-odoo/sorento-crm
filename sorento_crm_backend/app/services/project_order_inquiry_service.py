@@ -4797,6 +4797,9 @@ class ProjectOrderInquiryService:
             taken_back += max(held - holds, _ZERO)
             raised += max(holds - held, _ZERO)
             netted = {id(i) for i in holes}
+            # Each row that took back part of an order purchasing held: (what it held, what it
+            # holds now). The email's CHANGED reads these (crew final audit, 26 Oct 2026).
+            taken_rows: List[Tuple[Decimal, Decimal]] = []
             for item in row_lines:
                 if id(item) in netted:
                     continue
@@ -4805,6 +4808,7 @@ class ProjectOrderInquiryService:
                 keys_told = item.get("verb_keys") or ()
                 if IV_CANCEL_BALANCE in keys_told and was_qty > _dec(entry.get("qty")):
                     taken_back += was_qty - _dec(entry.get("qty"))
+                    taken_rows.append((was_qty, _dec(entry.get("qty"))))
                 else:
                     raised += _dec(item.get("adds_order"))
             lines_told = len(row_lines)
@@ -4816,6 +4820,7 @@ class ProjectOrderInquiryService:
             self._queue_saved_line(
                 pso_id, line, now, before, actor_user_id=actor_user_id,
                 taken_back=taken_back,
+                taken_rows=taken_rows,
                 # Several row lines for one line of the same kind (a redirect, two rows):
                 # what purchasing must order is what the rows raised, never need - held.
                 raised=raised if same_kind and lines_told > 1 else None,
@@ -5253,6 +5258,7 @@ class ProjectOrderInquiryService:
         keys: Optional[List[str]] = None,
         taken_back: Decimal = _ZERO,
         raised: Optional[Decimal] = None,
+        taken_rows: Sequence[Tuple[Decimal, Decimal]] = (),
     ) -> None:
         explicit = remark is not None
         if not explicit:
@@ -5261,7 +5267,7 @@ class ProjectOrderInquiryService:
             _words, location = saved_line_remark(now)
             remark = purchasing_remark(now)
             keys = [key for _w, _l, _q, key in _saved_line_parts(now) if key in _PURCHASING_KEYS]
-            if not remark and not (before is not None and taken_back > _ZERO):
+            if not remark and taken_back <= _ZERO:
                 return
         else:
             location = now.get("location") or None
@@ -5276,6 +5282,20 @@ class ProjectOrderInquiryService:
                 if qty_now - moved_in <= _ZERO:
                     return
                 remark = f"ORDER {_qty_str(qty_now - moved_in)}"
+            if taken_back > _ZERO:
+                # The line's FIRST Confirm took back an order purchasing held with no decision
+                # behind it (a raised row from the sheet import): told as the change, never
+                # dropped (crew final audit, 26 Oct 2026), "ORDER 4, CHANGED: ORDER 10 -> USE
+                # BRW-BB 6". The new side is what is not theirs any more.
+                stock = " & ".join(
+                    f"{words} {_qty_str(qty)}"
+                    for words, _l, qty, key in _saved_line_parts(now, name_donors=True)
+                    if key not in _PURCHASING_KEYS
+                )
+                held = sum((was_qty for was_qty, _now in taken_rows), _ZERO) or taken_back
+                change = f"CHANGED: ORDER {_qty_str(held)} -> {stock or _parts_with_qty(now)}"
+                remark = f"{remark}, {change}" if remark and stock else change
+                keys = keys + ["CHANGED"]
         if before is not None:
             qty_before = _dec(before.get("open_qty"))
             date_before, date_now = before.get("required_date"), now.get("required_date")
@@ -5356,15 +5376,19 @@ class ProjectOrderInquiryService:
                     pieces.append(changed)
                     keys = [key for key in keys if key in (IV_DELAY, IV_ADVANCE)] + ["CHANGED"]
                 elif taken_back > _ZERO and not customer_cut:
-                    # What the rows did, in numbers: the fresh order, then what is taken back,
-                    # marked as a change rather than a customer cancel (lane review B2).
+                    # What the rows did, in their numbers (lane review B2), as a change and
+                    # with no cancel word (crew final audit, 26 Oct 2026): the rows taken back
+                    # on the left, what purchasing holds after on the right. "CHANGED: ORDER 5
+                    # -> ORDER 50" (a redirect), "CHANGED: ORDER 10 & ORDER 3 -> ORDER 8".
                     pieces = [piece for piece in pieces if piece in date_words]
-                    if raised is not None and raised > _ZERO:
-                        pieces.append(f"ORDER {_qty_str(raised)}")
-                    pieces.append(f"CHANGED: CANCEL {_qty_str(taken_back)}")
-                    keys = [key for key in keys if key in (IV_DELAY, IV_ADVANCE)] + (
-                        [IV_ORDER] if raised is not None and raised > _ZERO else []
-                    ) + ["CHANGED"]
+                    olds = [was_qty for was_qty, _now in taken_rows] or [taken_back]
+                    new = (raised or _ZERO) + sum((now_qty for _w, now_qty in taken_rows), _ZERO)
+                    pieces.append(
+                        "CHANGED: "
+                        + " & ".join(f"ORDER {_qty_str(qty)}" for qty in olds)
+                        + f" -> ORDER {_qty_str(new)}"
+                    )
+                    keys = [key for key in keys if key in (IV_DELAY, IV_ADVANCE)] + ["CHANGED"]
                 elif (
                     # The decision's words when the KIND of decision moved (Buy to Use BRW,
                     # a new part) or nothing above says anything; a pure date or quantity

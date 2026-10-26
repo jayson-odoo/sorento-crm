@@ -428,7 +428,7 @@ def test_redirected_row_falls_back_to_todays_per_row_lines(api, monkeypatch):
     pool (no own-arrival credit), so `placed` is 0 and the fresh row is ORDER 50 - not
     the 5 a totals line (45 -> 50) would have said. The email prints today's lines
     instead: ADVANCE (date only), the fresh ORDER 50 and B's 5 taken back - since
-    ORDERBACK-DELTA all on the saved line's one line, B's 5 as "CHANGED: CANCEL 5" since the
+    ORDERBACK-DELTA all on the saved line's one line, as "CHANGED: ORDER 5 -> ORDER 50" since the
     26 Oct 2026 crew audit."""
     from app.models.project_so import OrderInquiryLink
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
@@ -479,11 +479,11 @@ def test_redirected_row_falls_back_to_todays_per_row_lines(api, monkeypatch):
 
     entries = _line_entries(calls, row_a.item_code)
     # ORDERBACK-DELTA (owner, 13 Oct 2026): ONE line for the saved line, saying what the
-    # rows did - the date moved, the fresh row's own 50 to buy (never need - held), B's 5
-    # taken back, marked as a change, never "CANCEL ORDER" (crew audit + lane review B2,
-    # 26 Oct 2026: the numbers are the rows', not the decision's 40 -> 50).
+    # rows did - the date moved, B's 5 taken back for the fresh row's own 50 (never need -
+    # held), as a change with no cancel word (crew final audit + lane review B2, 26 Oct 2026:
+    # the numbers are the rows', not the decision's 40 -> 50).
     assert [entry["remark"] for entry in entries] == [
-        "ADVANCE, ORDER 50, CHANGED: CANCEL 5"
+        "ADVANCE, CHANGED: ORDER 5 -> ORDER 50"
     ], entries
     assert entries[0]["qty"] == "50", entries[0]
     # OI-EMAIL-PRINT (AC-P2): AC-OH-40..42's wording stays on the fresh row, not in the email.

@@ -1244,8 +1244,8 @@ def test_named_two_live_rows_supersede(api, monkeypatch):
     # order and both still-owed rows taken back, as a change (crew audit 26 Oct 2026: never
     # "CANCEL ORDER").
     assert len(lines) == 1, lines
-    # The rows' own numbers (lane review B2): 10 + 3 held, a fresh 8.
-    assert lines[0]["remark"] == "ORDER 8, CHANGED: CANCEL 13", f"AC-R2-12: got {lines}"
+    # The rows' own numbers (lane review B2): 10 + 3 held, a fresh 8 (crew final audit wording).
+    assert lines[0]["remark"] == "CHANGED: ORDER 10 & ORDER 3 -> ORDER 8", f"AC-R2-12: got {lines}"
 
 
 # --------------------------------------------------------------------------- #

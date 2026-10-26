@@ -326,3 +326,55 @@ def test_the_board_preview_reads_a_grown_purchasing_part_as_the_email_does():
 
     assert saved_draft_remark(whole_buy, location="BRW-BB", before=held_mix) == "ORDER"
     assert saved_draft_remark(more_buy, location="BRW-BB", before=held_mix) == "ORDER 6"
+
+
+# ----------- crew final audit (26 Oct): a raised order cancelled on a line's FIRST Confirm
+
+
+def _imported_raised_order(api, qty="10"):
+    """An undecided line that already carries a raised ORDER row (as a 20 Sep sheet import
+    left them): purchasing holds that order though no decision was ever confirmed."""
+    from .test_oi_cancelled_line_used_confirm import _inquiry, _oi_row
+    from .test_oi_saved_line_email import _one_line_order
+
+    _client, world = api
+    order, line, _core = _one_line_order(world, qty)
+    inquiry = _inquiry(world.db, world.company_id, order.id)
+    _oi_row(world.db, world.company_id, inquiry.id, line.id, world.product.product_code, qty)
+    world.db.commit()
+    return order, line
+
+
+def test_a_first_confirm_that_turns_an_imported_order_to_own_stock_says_it_changed(api, emails):
+    _client, world = api
+    _stock(world.db, world.product, world.own_wh, on_hand=50)
+    world.db.commit()
+    own = world.own_wh.warehouse_code
+    order, line = _imported_raised_order(api)
+    emails.clear()
+
+    _post(api, order, [_line_payload(
+        line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}],
+    )])
+
+    assert len(emails) == 1, "purchasing holds that order: it must be told"
+    assert [l["remark"] for l in emails[0]["lines"]] == [f"CHANGED: ORDER 10 -> USE {own} 10"]
+
+
+def test_a_first_confirm_that_moves_part_of_an_imported_order_to_own_stock(api, emails):
+    _client, world = api
+    _stock(world.db, world.product, world.own_wh, on_hand=50)
+    world.db.commit()
+    own = world.own_wh.warehouse_code
+    order, line = _imported_raised_order(api)
+    emails.clear()
+
+    _post(api, order, [_line_payload(
+        line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "6"}], buy_qty="4",
+        amend_reason="Part from stock.",
+    )])
+
+    assert len(emails) == 1, emails
+    assert [l["remark"] for l in emails[0]["lines"]] == [
+        f"ORDER 4, CHANGED: ORDER 10 -> USE {own} 6"
+    ]
