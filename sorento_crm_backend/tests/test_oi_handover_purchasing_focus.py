@@ -505,3 +505,33 @@ def test_the_board_preview_of_a_first_confirm_take_back_equals_the_email():
     assert saved_draft_remark(whole, location="BRW-BB", held_rows=[("ORDER", Decimal("52"))]) == (
         "ORDER"
     )
+
+
+def test_a_first_confirm_over_an_imported_order_back_names_it_order_back(api, emails):
+    """Crew final audit (3): the row taken back was an ORDER BACK, so the email says so, not
+    ORDER."""
+    from app.models.project_so import IV_ORDER_BACK, OrderInquiryRow
+
+    from .test_oi_cancelled_line_used_confirm import _inquiry, _oi_row
+    from .test_oi_saved_line_email import _one_line_order
+
+    _client, world = api
+    _stock(world.db, world.product, world.own_wh, on_hand=50)
+    order, line, _core = _one_line_order(world, "10")
+    inquiry = _inquiry(world.db, world.company_id, order.id)
+    row = _oi_row(world.db, world.company_id, inquiry.id, line.id, world.product.product_code, "10")
+    world.db.query(OrderInquiryRow).filter(OrderInquiryRow.id == row.id).update(
+        {"verb": IV_ORDER_BACK}
+    )
+    world.db.commit()
+    own = world.own_wh.warehouse_code
+    emails.clear()
+
+    _post(api, order, [_line_payload(
+        line.id, reserve=[{"warehouse_id": world.own_wh.id, "qty": "10"}],
+    )])
+
+    assert len(emails) == 1, emails
+    assert [l["remark"] for l in emails[0]["lines"]] == [
+        f"CHANGED: ORDER BACK 10 -> USE {own} 10"
+    ]
