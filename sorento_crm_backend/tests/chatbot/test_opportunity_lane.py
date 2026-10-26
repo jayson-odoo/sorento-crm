@@ -366,6 +366,48 @@ def _assert_payload(args: dict[str, Any], *, customer_id: str | None, title: str
     assert bool(args.get("dry_run")) is dry_run, args
 
 
+class TestLaneStaysDarkWithoutThePromptLine:
+    """Crew a77485227: the lane is reachable only when the active parser prompt carries the
+    LOG OPPORTUNITY line (`ParserConfig.opportunity`). Production v63 has none, so a model-invented
+    `log_opportunity` status must not reach it."""
+
+    @staticmethod
+    def _v63_config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(
+            system_prompt="stub\n",
+            prompt_version=63,
+            provider="openai",
+            model="gpt-test",
+            api_key="sk-test",
+        )
+
+    def test_no_prompt_line_never_reaches_the_lane(self, session_factory, monkeypatch) -> None:
+        _salesperson(session_factory)
+        seam = _install(monkeypatch, options={"Bath Idea": _options(BATH)})
+        monkeypatch.setattr(sys.modules[__name__], "_stub_config", self._v63_config)
+
+        turn = _say(
+            session_factory, monkeypatch, _all_four(),
+            "log an opportunity: Bath Idea, condo job Taman X, RM 40k, closing mid Dec",
+        )
+
+        assert turn.result.branch_kind != "log_opportunity", turn.result.branch_kind
+        assert seam.calls == [], seam.calls
+        assert turn.lines != READ_BACK, turn.text
+        assert "Save this opportunity?" not in turn.text, turn.text
+
+    def test_prompt_line_present_reaches_the_lane(self, session_factory, monkeypatch) -> None:
+        _salesperson(session_factory)
+        _install(monkeypatch, options={"Bath Idea": _options(BATH)})
+
+        turn = _say(
+            session_factory, monkeypatch, _all_four(),
+            "log an opportunity: Bath Idea, condo job Taman X, RM 40k, closing mid Dec",
+        )
+
+        assert turn.result.branch_kind == "log_opportunity", turn.result.branch_kind
+
+
 # --------------------------------------------------------------------------- #
 # O6-1 - all four fields in one message: the read-back, no write
 # --------------------------------------------------------------------------- #
