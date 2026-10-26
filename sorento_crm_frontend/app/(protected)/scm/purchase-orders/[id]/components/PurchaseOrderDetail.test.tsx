@@ -429,6 +429,11 @@ describe('PurchaseOrderDetail - the goods-receipt tab', () => {
     openTab('Goods receipt');
 
     expect(screen.getByText(/Nothing transferred yet/i)).toBeInTheDocument();
+    // Owner ruling c: the second sentence speaks of transfers, not receipts.
+    expect(
+      screen.getByText(/Transfers recorded against this order show here\./),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Receipts recorded/)).toBeNull();
     expect(screen.queryByText(/from the purchase orders list/i)).toBeNull();
   });
 

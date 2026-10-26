@@ -201,6 +201,28 @@ def test_k7_via_po_share_on_each_spo_is_the_chains_split(scm_app):
     }
     assert shares(b) == {str(p2.id): (Decimal("40"), po.po_number)}
 
+    # The figure `placements_on` itself returns (what the SPO document prints), not only the
+    # hops it carries: P1 50 and P2 10 on A, P2 40 on B.
+    def item_qtys(spo):
+        return {
+            _chain_of(i).link_id: Decimal(str(i.qty))
+            for i in _items(_placements_on()(db, spo_allocation_ids=[str(spo.id)]))
+        }
+
+    assert item_qtys(a) == {str(p1.id): Decimal("50"), str(p2.id): Decimal("10")}
+    assert item_qtys(b) == {str(p2.id): Decimal("40")}
+
+    # And the SO covered quantities the SPO document page prints for A.
+    from app.services.procurement_service import SPOAllocationService
+
+    doc = SPOAllocationService(db).get_document(a.spo_number)
+    via = sorted(
+        Decimal(str(c.qty))
+        for line in doc.lines for c in (line.so_covered or [])
+        if getattr(c, "via_po", None) == po.po_number
+    )
+    assert via == [Decimal("10"), Decimal("50")]
+
 
 def test_k8_an_spo_line_closed_with_nothing_landed_shows_on_the_po_line_as_withdrawn(scm_app):
     db = scm_app[1]
