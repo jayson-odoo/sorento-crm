@@ -109,6 +109,12 @@ Reconciliation (Q4 a)
   `spo_dtl_keys` take exactly that form. A bare DtlKey (no source DB) and a key that matches more
   than one candidate are REFUSED: reported as such, nothing released for them; other valid keys
   in the same run still apply.
+- AC-RL-47 Claims that name a REMOVED SO line (`so_line_id` -> an SO line AC-RL-41 would select,
+  minus the live-row condition) are LEFT in place by ingest and script (crew ruling 26 Oct, owner
+  Q3: the live PO line's own AutoCount book still names that SO line, so the next PO push would
+  re-write the claim; the fix belongs in AutoCount). The dry run (and apply) report lists them for
+  the owner to correct in AutoCount: PO number, PO line (DtlKey), SO number + SO line (DtlKey),
+  claim qty; no customer or contact names. Dev copy, 26 Oct: 12 claims on 10 removed SO lines.
 - AC-RL-44 The reconciliation sends nothing: `--apply` retires SO rows (AC-RL-20) but queues no
   purchasing handover email or other notification (owner: minimum change management; these
   removals are weeks old). The ingest path keeps its AC-RL-20 handover.
