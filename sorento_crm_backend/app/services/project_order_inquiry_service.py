@@ -50,7 +50,7 @@ from types import SimpleNamespace
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 from zoneinfo import ZoneInfo
 
-from sqlalchemy import and_, event, func, or_, tuple_
+from sqlalchemy import event, func, or_, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.base import company_scope, get_company_scope
@@ -118,7 +118,7 @@ from app.models.projects import (
 )
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
-from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm import goods_chain, order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.pool_predicate import is_project_reserve, is_site_pool
 from app.services.scm.supply_assignment import (
@@ -3346,68 +3346,57 @@ class ProjectOrderInquiryService:
     def _received_documents_for(
         self, links: Sequence[OrderInquiryLink]
     ) -> Dict[str, Optional[date]]:
-        """Which of `links` name a FULLY RECEIVED document (AC-RL-10): a PO line whose
-        `qty_received >= qty_ordered` or `line_status == 'closed'`, or an SPO allocation
-        that fails `spo_supply.open_incoming_clauses()`. Same rule `links_for_rows`
-        states on the wire (S1) - kept as a separate small query here rather than reused
-        wholesale, because this caller has at most a couple of links and no page of rows
-        to batch over.
+        """Which of `links` are FULLY RECEIVED placements (AC-RL-10): every unit has landed
+        in a bin by the goods chain (`goods_chain.is_received`, LINKAGE-UNIFY U2, Q3) - a
+        PO link once the goods land on the SPO it was transferred onto, or straight into a
+        bin when no SPO names the line; never on the transfer, never on a dead document.
+        The same rule `links_for_rows` states on the wire (S1).
 
-        Keyed by link id, mapping to the date the book states for the receipt (an SPO's
-        landed shipment date) or `None` when it states none - `_redirect_row_if_
-        received`'s own note reads it, and 'None' there means "in full", not "unknown".
+        Keyed by link id, mapping to the date the book states for the receipt (the landed
+        shipment date of an SPO the goods came in on, the latest when several) or `None`
+        when it states none - `_redirect_row_if_received`'s own note reads it, and 'None'
+        there means "in full", not "unknown".
         """
-        out: Dict[str, Optional[date]] = {}
-        po_line_ids = {str(link.po_line_id) for link in links if link.po_line_id}
-        spo_ids = {str(link.spo_allocation_id) for link in links if link.spo_allocation_id}
-        po_lines: Dict[str, bool] = {}
-        if po_line_ids:
-            for line_id, qty_ordered, qty_received, line_status in self.db.query(
-                PurchaseOrderLine.id,
-                PurchaseOrderLine.qty_ordered,
-                PurchaseOrderLine.qty_received,
-                PurchaseOrderLine.line_status,
-            ).filter(PurchaseOrderLine.id.in_(po_line_ids)):
-                # REV nit (17 Sep): `qty_ordered` null or zero must never read as
-                # received just because `_dec(None)` and `_dec(0)` are both zero -
-                # `0 >= 0` would otherwise flag a line nobody has ordered anything
-                # against yet.
-                po_lines[str(line_id)] = bool(
-                    line_status == "closed"
-                    or (_dec(qty_ordered) > _ZERO and _dec(qty_received) >= _dec(qty_ordered))
-                )
-        spo_allocations: Dict[str, Optional[date]] = {}
+        chains = goods_chain.chains_for_links(self.db, [link.id for link in links])
+        received = {
+            link_id: chain
+            for link_id, chain in chains.items()
+            if goods_chain.is_received(chain)
+        }
+        spo_ids = {
+            hop.spo_allocation_id
+            for chain in received.values()
+            for hop in chain.hops
+            if hop.kind == goods_chain.KIND_SPO and hop.spo_allocation_id
+        }
+        arrivals: Dict[str, date] = {}
         if spo_ids:
-            rows = (
-                self.db.query(
-                    SPOAllocation.id,
-                    SPOAllocation.line_status,
-                    SPOAllocation.receipt_status,
-                    InboundShipment.actual_arrival_date,
+            arrivals = {
+                str(alloc_id): arrived
+                for alloc_id, arrived in self.db.query(
+                    SPOAllocation.id, InboundShipment.actual_arrival_date
                 )
-                .outerjoin(
+                .join(
                     InboundShipment,
                     InboundShipment.id == SPOAllocation.inbound_shipment_id,
                 )
-                .filter(SPOAllocation.id.in_(spo_ids))
-                .all()
-            )
-            for alloc_id, line_status, receipt_status, arrival_date in rows:
-                is_open = (
-                    (line_status is None or line_status == "open")
-                    and (
-                        receipt_status is None
-                        or receipt_status not in spo_supply.RECEIVED_RECEIPT_STATUSES
-                    )
-                    and arrival_date is None
+                .filter(
+                    SPOAllocation.id.in_(sorted(spo_ids)),
+                    InboundShipment.actual_arrival_date.isnot(None),
                 )
-                if not is_open:
-                    spo_allocations[str(alloc_id)] = arrival_date
+                .all()
+            }
+        out: Dict[str, Optional[date]] = {}
         for link in links:
-            if link.po_line_id and po_lines.get(str(link.po_line_id)):
-                out[str(link.id)] = None
-            elif link.spo_allocation_id and str(link.spo_allocation_id) in spo_allocations:
-                out[str(link.id)] = spo_allocations[str(link.spo_allocation_id)]
+            chain = received.get(str(link.id))
+            if chain is None:
+                continue
+            dates = [
+                arrivals[hop.spo_allocation_id]
+                for hop in chain.hops
+                if hop.spo_allocation_id in arrivals
+            ]
+            out[str(link.id)] = max(dates) if dates else None
         return out
 
     # -------------------------------------------------------- S5: link follows the book
@@ -8137,16 +8126,6 @@ class ProjectOrderInquiryService:
                 # `purchase_order_id` never reached the wire despite the L4 review item
                 # believing it already worked.
                 SPOAllocation.po_line_id,
-                # S1 (`PLAN-oi-replan-received-links.md`, AC-RL-17): the receipt figure
-                # every link states, and the fields the "fully received" test reads for
-                # whichever book this link names.
-                PurchaseOrderLine.qty_ordered,
-                PurchaseOrderLine.qty_received,
-                PurchaseOrderLine.line_status,
-                SPOAllocation.quantity_received,
-                SPOAllocation.receipt_status,
-                SPOAllocation.line_status,
-                InboundShipment.actual_arrival_date,
             )
             .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
             .outerjoin(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
@@ -8162,10 +8141,6 @@ class ProjectOrderInquiryService:
                 == func.coalesce(
                     PurchaseOrderLine.warehouse_id, SPOAllocation.warehouse_id
                 ),
-            )
-            .outerjoin(
-                InboundShipment,
-                InboundShipment.id == SPOAllocation.inbound_shipment_id,
             )
             .filter(
                 OrderInquiryLink.row_id.in_(wanted),
@@ -8194,6 +8169,12 @@ class ProjectOrderInquiryService:
         names = resolve_user_names(
             self.db, [link.linked_by for link, *_rest in rows if link.linked_by]
         )
+        # LINKAGE-UNIFY U2 (Q3): where each placement's goods are, one read for the page.
+        chains = {
+            chain.link_id: chain
+            for row_chains in goods_chain.chains_for_rows(self.db, wanted).values()
+            for chain in row_chains
+        }
         out: Dict[str, List[Dict[str, Any]]] = {}
         # S5, R-D: every PO-kind link's own (po_number, PO line source_ref, product_id) -
         # what a derived SPO allocation has to match (OI-SPO-EXACT: the LINE, not only the
@@ -8226,13 +8207,6 @@ class ProjectOrderInquiryService:
             spo_location_code,
             spo_from_po_number,
             spo_supply_po_line_id,
-            po_qty_ordered,
-            po_qty_received,
-            po_line_status,
-            spo_quantity_received,
-            spo_receipt_status,
-            spo_line_status,
-            spo_actual_arrival_date,
         ) in rows:
             is_spo = link.spo_allocation_id is not None
             po_line_ref = (po_source_ref or "").strip()
@@ -8251,36 +8225,17 @@ class ProjectOrderInquiryService:
             # HOW late, in whole days (AC-D17). `None` rather than 0 when it is not late,
             # so the column has nothing to print instead of a zero that reads as on time.
             late_days = (arrives - row_needed_by).days if late else None
-            # S1 (AC-RL-17, `PLAN-oi-replan-received-links.md`): the document is FULLY
-            # received - a PO line whose `qty_received >= qty_ordered` or `line_status =
-            # 'closed'`, or an SPO allocation that fails `spo_supply.
-            # open_incoming_clauses()`. `bool(po_number)`/`bool(spo_number)` guard the
-            # rare row whose target line was itself deleted (SET NULL) - nothing joined,
-            # so there is no document to call received. `received_qty` states the
-            # figure regardless of `received` - a partly received document says so too.
-            if is_spo:
-                spo_open = (
-                    (spo_line_status is None or spo_line_status == "open")
-                    and (
-                        spo_receipt_status is None
-                        or spo_receipt_status not in spo_supply.RECEIVED_RECEIPT_STATUSES
-                    )
-                    and spo_actual_arrival_date is None
-                )
-                received = bool(spo_number) and not spo_open
-                received_qty = _qty_str(_dec(spo_quantity_received))
-            else:
-                # REV nit (17 Sep): same guard as `_received_documents_for` / `_is_
-                # target_received` - a null or zero `qty_ordered` line is not
-                # "received".
-                received = bool(po_number) and (
-                    po_line_status == "closed"
-                    or (
-                        _dec(po_qty_ordered) > _ZERO
-                        and _dec(po_qty_received) >= _dec(po_qty_ordered)
-                    )
-                )
-                received_qty = _qty_str(_dec(po_qty_received))
+            # S1 (AC-RL-17), LINKAGE-UNIFY U2 (Q3): the placement is FULLY received when
+            # every unit of it has landed in a bin (`goods_chain.is_received`): a PO link
+            # once the goods land on the SPO it was transferred onto, or straight into a
+            # bin when no SPO names it; never on the transfer, never on a dead document.
+            # `received_qty` is the placement's own landed share, stated regardless of
+            # `received` - a partly landed placement says so too.
+            chain = chains.get(str(link.id))
+            received = chain is not None and goods_chain.is_received(chain)
+            received_qty = _qty_str(
+                goods_chain.received_qty(chain) if chain is not None else _ZERO
+            )
             entry = {
                     "id": link.id,
                     "kind": "spo" if is_spo else "po",
@@ -13452,55 +13407,48 @@ class ProjectOrderInquiryService:
 
     def po_lines_with_open_chained_spo(self, po_line_ids: Sequence[str]) -> set:
         """OI-RESERVE-RECEIVED (AC-RR-6, lane-local): of these PO lines, the ids that still
-        have an OPEN shipping order chaining from them (`from_po_number` AND
-        `from_po_line_ref` name the line): the line reads closed but its goods have not
-        landed. One query for the whole set."""
+        have a shipping order chained from them in transit: the line reads closed but its
+        goods have not landed. The goods chain's own key and in-transit test
+        (`goods_chain.transferred_allocations`, `is_in_transit`; LINKAGE-UNIFY AC-R8), so
+        a space-padded `from_po_line_ref` answers here as it does there. One read for the
+        lines, one for their SPOs."""
         wanted = [str(i) for i in po_line_ids if i]
         if not wanted:
             return set()
-        rows = (
-            self.db.query(PurchaseOrderLine.id)
+        lines = (
+            self.db.query(
+                PurchaseOrderLine.id.label("po_line_id"),
+                PurchaseOrder.po_number,
+                func.btrim(PurchaseOrderLine.source_ref).label("po_line_ref"),
+                PurchaseOrderLine.product_id.label("po_product_id"),
+                PurchaseOrderLine.company_id.label("po_company_id"),
+            )
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .join(
-                SPOAllocation,
-                and_(
-                    SPOAllocation.from_po_number == PurchaseOrder.po_number,
-                    SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref,
-                    SPOAllocation.company_id == PurchaseOrderLine.company_id,
-                ),
-            )
-            .outerjoin(
-                InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
-            )
-            .filter(
-                PurchaseOrderLine.id.in_(wanted),
-                PurchaseOrderLine.source_ref.isnot(None),
-                PurchaseOrderLine.source_ref != "",
-                *spo_supply.open_incoming_clauses(),
-                *spo_supply.visible_line_clauses(),
-            )
-            .distinct()
+            .filter(PurchaseOrderLine.id.in_(wanted))
             .all()
         )
-        return {str(line_id) for (line_id,) in rows}
+        transferred_to = goods_chain.transferred_allocations(self.db, lines)
+        return {
+            str(line.po_line_id)
+            for line in lines
+            if any(
+                goods_chain.is_in_transit(spo)
+                for spo in transferred_to.get(goods_chain.transfer_key(line), ())
+            )
+        }
 
     def received_links_of(self, row_id: str) -> List[OrderInquiryLink]:
-        """The row's PO/SPO links that name a FULLY RECEIVED document - the one "received"
-        test (`_received_documents_for`) the worklist's received pill also states."""
+        """The row's PO/SPO links that are FULLY RECEIVED placements - the one "received"
+        test (`_received_documents_for`, the goods chain) the worklist's received pill also
+        states. A PO link whose goods are still on an SPO in transit is not received there,
+        so no separate chained-SPO check is needed (LINKAGE-UNIFY U2)."""
         links = [
             link
             for link in self._links_of(row_id)
             if link.reserve_request_row_id is None
         ]
         received = self._received_documents_for(links)
-        blocked = self.po_lines_with_open_chained_spo(
-            [link.po_line_id for link in links if link.po_line_id]
-        )
-        return [
-            link
-            for link in links
-            if str(link.id) in received and str(link.po_line_id or "") not in blocked
-        ]
+        return [link for link in links if str(link.id) in received]
 
     def release_received_links(
         self,

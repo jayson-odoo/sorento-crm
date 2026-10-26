@@ -1656,7 +1656,11 @@ class StockDebtService:
         **The split is `goods_chain.chains_for_links`, not a copy of it** (LINKAGE-UNIFY):
         every screen that asks where a placement's goods are reads the same hops, shared
         over every live placement on the PO line. This maps them to holds: `in_transit` an
-        SPO hold, `received` an on-hand hold at its bin, `on_order` a PO hold.
+        SPO hold, `received` an on-hand hold at its bin, `on_order` a PO hold. U2 (owner
+        rulings Q4 to Q6, 26 Oct 2026): a `received` hop sits at the bin the Goods Received
+        put the goods in, one hop (so one hold) per bin; a PO line received with no SPO
+        under the key (`received_direct`) pins the on hand the same way; a `dead` document
+        holds nothing.
 
         **An allocation hold is a promise about stock too, and walks the same rule**
         (STOCK-DEBT-STALE-PIN, owner 14 Oct 2026: SO424555's 126 pinned at BRW-IB read
@@ -1784,7 +1788,7 @@ class StockDebtService:
             """One hop of the placement `row` as the hold it makes on the line."""
             line_key = str(row.core_sales_order_line_id)
             qty = float(hop.qty)
-            if hop.state == goods_chain.RECEIVED:
+            if hop.state in goods_chain.RECEIVED_STATES:
                 # SPO-RECEIVED-PIN (see the docstring): the document is not supply any
                 # more, so the placement holds what it brought INTO THE BIN, and only
                 # that. An on-hand hold is a decision on stock, never a placement, so it
@@ -1899,6 +1903,7 @@ class StockDebtService:
                 PurchaseOrder.po_number,
                 func.btrim(PurchaseOrderLine.source_ref).label("po_line_ref"),
                 PurchaseOrderLine.product_id.label("po_product_id"),
+                PurchaseOrderLine.company_id.label("po_company_id"),
             )
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .filter(or_(*wanted))
@@ -1923,9 +1928,7 @@ class StockDebtService:
         capacity: Dict[str, float] = {}
         claims: Dict[str, float] = {}
         for line in lines:
-            spos = transferred_to.get(
-                (line.po_number, line.po_line_ref, str(line.po_product_id)), ()
-            )
+            spos = transferred_to.get(goods_chain.transfer_key(line), ())
             capacity[str(line.po_line_id)] = sum(
                 goods_chain.follow_capacity(spo) for spo in spos
             )

@@ -1738,15 +1738,6 @@ class OrderInquiryWorklistService:
         split_views = ProjectOrderInquiryService(self.db).split_views_for_lines(
             [row.so_line_id for row in rows]
         )
-        # AC-RR-6: one query for every PO line on the page that has an open SPO chained from it.
-        blocked = ProjectOrderInquiryService(self.db).po_lines_with_open_chained_spo(
-            [
-                link.get("po_line_id")
-                for row_links in links.values()
-                for link in row_links
-                if link.get("received") and link.get("po_line_id")
-            ]
-        )
         return {
             "data": [
                 self._serialize(
@@ -1760,7 +1751,6 @@ class OrderInquiryWorklistService:
                     host_changes_by_row_id,
                     suggested_links,
                     raise_events_by_row,
-                    blocked,
                     splits_by_line,
                     split_views,
                 )
@@ -2384,7 +2374,6 @@ class OrderInquiryWorklistService:
         host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         suggested_links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
-        blocked: Optional[set] = None,
         splits_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         split_views: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
@@ -2400,14 +2389,15 @@ class OrderInquiryWorklistService:
         )
         # OI-RESERVE-RECEIVED (AC-RR-5): what a reserve request may still ask for -
         # `order_inquiry_reserve_service._requestable`, worked off the links already
-        # loaded: qty less the OPEN links, the reserve links and the bundle (a link on a
-        # fully received document does not count against it).
+        # loaded: qty less the OPEN links, the reserve links and the bundle (a fully
+        # received placement does not count against it). AC-RR-6's chained-SPO block is
+        # gone: `received` is the goods chain's (LINKAGE-UNIFY U2), so a PO link whose
+        # goods are still on an SPO in transit is not received in the first place.
         open_linked = sum(
             (
                 _dec(link["qty"])
                 for link in row_links
-                if not link.get("derived")
-                and (not link.get("received") or link.get("po_line_id") in (blocked or ()))
+                if not link.get("derived") and not link.get("received")
             ),
             _ZERO,
         )
