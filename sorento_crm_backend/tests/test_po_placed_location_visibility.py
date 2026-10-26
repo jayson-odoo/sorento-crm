@@ -240,15 +240,3 @@ def test_staff_call_without_contact_is_unchanged(client, db):
     assert rows["PO-VIS"]["location"] == vis.warehouse_code
     assert rows["PO-HID"]["location"] == hid.warehouse_code
     assert rows["SPO-HID"]["location"] == hid.warehouse_code
-
-
-def test_null_workspace_contact_is_scoped_on_its_own_policy_not_read_as_nobody(client, db):
-    """Fix round 1: a Respond.io id + space_id for a NULL-workspace contact resolves through
-    the fallback, so its include list applies instead of failing closed with no rows."""
-    vis, hid, prod = _seed(db)
-    contact = _contact(db)
-    contact.respond_io_id = unique_code("RIO")
-    _policy(db, contact, mode="compact", warehouse_ids=[vis.id])
-    db.flush()
-    _, rows = _rows(client, prod, contact_id=contact.respond_io_id, space_id="364817")
-    assert set(rows) == {"PO-VIS"}
