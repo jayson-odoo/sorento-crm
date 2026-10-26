@@ -1,6 +1,6 @@
 # PLAN: upload a dealer-contact sheet, bulk-configure each contact's access (BULK-CONTACT-ACCESS)
 
-Status: Phase 1 - behaviour card in progress (no code yet). Track: L (new upload flow, bulk writes to contact
+Status: Phase 1 - behaviour card filed to crew 26 Oct (CARD-bulk-contact-access-26oct.md), waiting on owner answers; mock next. No code yet. Track: L (new upload flow, bulk writes to contact
 access settings, customer linking). LEAD pattern. UAC: `bulk-contact-access-26oct-acceptance-criteria.md`
 (written after the owner answers the card).
 
