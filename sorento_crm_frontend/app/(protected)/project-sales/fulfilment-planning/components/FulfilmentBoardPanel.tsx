@@ -82,6 +82,7 @@ import {
   excludedFromPress,
   splitEditsToConfirm,
   contributionMatchesSearch,
+  autocountChangeLinesByOrder,
   confirmLinesByOrder,
   isChangeLine,
   remarkFor,
@@ -2242,8 +2243,11 @@ export function FulfilmentBoardPanel({
       pendingBatchSalesOrderIds,
       { unadoptedSalesOrderIds, batchNamedKeys },
     );
+    // FULFIL-SO-REMARK-CHANGES (R3): an order whose press only applies an AutoCount change gets
+    // its page too (its retired lines), so every Confirm asks for the change's Remark.
+    const retired = autocountChangeLinesByOrder(allContributions, draftWithoutPreMark);
     return (board.data?.orders ?? []).flatMap((order) => {
-      const lines = covered.get(order.sales_order_id);
+      const lines = covered.get(order.sales_order_id) ?? retired.get(order.sales_order_id);
       if (!lines) return [];
       return [
         {
@@ -2253,14 +2257,16 @@ export function FulfilmentBoardPanel({
           soDate: order.so_date ?? null,
           remarkType: order.remark_type ?? null,
           // FULFIL-SO-REMARK-CHANGES (R1): a change on any line makes this order's Remark required.
-          hasChange: lines.some((line) =>
-            isChangeLine(
-              line,
-              draftWithoutPreMark,
-              pendingBatchSalesOrderIds.has(line.sales_order_id),
-              batchNamedKeys,
+          hasChange:
+            retired.has(order.sales_order_id) ||
+            lines.some((line) =>
+              isChangeLine(
+                line,
+                draftWithoutPreMark,
+                pendingBatchSalesOrderIds.has(line.sales_order_id),
+                batchNamedKeys,
+              ),
             ),
-          ),
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);

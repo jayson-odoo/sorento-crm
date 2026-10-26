@@ -966,6 +966,27 @@ export function autocountChangeNotes(
   return [...byOrder.values()].map((note) => ({ ...note, itemCodes: [...note.itemCodes].sort() }));
 }
 
+/**
+ * FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R3): per sales order, the lines a pending
+ * AutoCount change retires (role `cancelled`), the same population `autocountChangeNotes` counts.
+ * The Confirm guide gives such an order its page, a change, so the press asks for its Remark too.
+ */
+export function autocountChangeLinesByOrder(
+  contributions: BoardContribution[],
+  draft: BoardDraft,
+  excludeKeys?: ReadonlySet<string>,
+): Map<string, BoardContribution[]> {
+  const out = new Map<string, BoardContribution[]>();
+  for (const contribution of contributions) {
+    if (excludedFromPress(contribution, excludeKeys)) continue;
+    if (pressRoleFor(contribution, draft[contribution.key], false).kind !== 'cancelled') continue;
+    const lines = out.get(contribution.sales_order_id) ?? [];
+    lines.push(contribution);
+    out.set(contribution.sales_order_id, lines);
+  }
+  return out;
+}
+
 /** Malaysia is UTC+8 all year (no daylight saving). */
 const MYT_OFFSET_MS = 8 * 60 * 60 * 1000;
 

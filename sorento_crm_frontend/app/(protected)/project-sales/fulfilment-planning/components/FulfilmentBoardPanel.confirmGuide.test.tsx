@@ -572,9 +572,10 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
   });
 
   // PLAN-BATCH-COUNT-DISPLAY (owner ruling 21 Oct 2026 ~16:15): a line the book cancelled is not a
-  // decision, so the guide's pages (the lines Confirm (N) counts) leave it out; the board's
-  // AutoCount change note names it instead.
-  it('B2: a covered book-cancelled line with no draft is not a guide row; it is the AutoCount note', async () => {
+  // decision, so Confirm (N) does not count it; the board's AutoCount change note names it.
+  // FULFIL-SO-REMARK-CHANGES (owner R3, 26 Oct 2026): the popup still shows it, on its order's
+  // page, since every Confirm opens the same popup and the email tells that line.
+  it('B2: a covered book-cancelled line with no draft is the AutoCount note and a row on its page', async () => {
     const board = mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
       entry.project_line_id === 'pl-1-2'
         ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
@@ -584,10 +585,10 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
     expect(await screen.findByTestId('board-autocount-change-note')).toHaveTextContent(
       '1 old line',
     );
-    // Nothing else is decided, so the button applies the change and the guide has no line page.
+    // Nothing else is decided, so the button applies the change; the popup has its order's page.
     expect(screen.getByTestId('board-confirm')).toHaveTextContent('Apply AutoCount change');
     await openConfirmGuide();
-    expect(screen.queryByTestId('split-line-2')).toBeNull();
+    expect(await screen.findByTestId('split-line-2')).toBeInTheDocument();
   });
 
   it('B2: the header count equals the rows shown', async () => {
@@ -2039,3 +2040,32 @@ async function walkConfirmGuideFromHere() {
   }
   throw new Error('the guide never reached its Confirm step');
 }
+
+// ---------------------------------------------------------------------------
+// FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R3): every Confirm opens the same popup with its
+// order pages. A press that only applies an AutoCount change gets its order's page (the lines it
+// retires), a change, so its Remark is required.
+// ---------------------------------------------------------------------------
+
+describe('FULFIL-SO-REMARK-CHANGES: an AutoCount-change-only press gets its page and Remark', () => {
+  // SO000001's line 2 was cancelled in the book and nothing is decided: the press applies the
+  // AutoCount change only.
+  const changeOnly = () =>
+    mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
+      entry.project_line_id === 'pl-1-2'
+        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+        : entry,
+    );
+
+  it('R3: the popup opens on SO000001 with the retired line and an empty, required Remark', async () => {
+    await mountWith(changeOnly(), ['SO000001']);
+    await openGuideRaw();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    expect(page).toHaveAttribute('data-so', 'SO000001');
+    expect(await within(page).findByTestId('split-line-2')).toBeInTheDocument();
+    const remark = within(page).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
+    expect(remark).toHaveValue('');
+    expect(remark).toBeRequired();
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeDisabled());
+  });
+});
