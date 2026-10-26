@@ -53,8 +53,8 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
 ## Link
 - WU12 Merge: if Respond.io has a contact for that phone (lookup by phone) and it is not the turn's contact, the
   CRM calls `POST /v2/contact/merge` with `contactIds` [phone contact id, turn contact id]. Respond.io keeps the
-  OLDER contact whatever the order, so the survivor is read, never assumed: the merge response's `contactId`; if
-  the response carries none, a fresh lookup by phone; if that fails too, WU16 (no CRM write; the scheduled sync
+  OLDER contact whatever the order, so the survivor is read, never assumed: the merge response's `contactId`, used
+  only when it is one of the two merged ids; if the response carries none (or another id), a fresh lookup by phone; if that fails too, WU16 (no CRM write; the scheduled sync
   re-points by phone later, `respond_sync_handler.py:241-257`). A CRM row with that phone keeps its row and access
   and its `respond_io_id` becomes the survivor id; with no CRM row for that phone, one is created with the phone,
   the survivor id and the default workspace, and the default agents (as any new contact). The verified line goes
@@ -80,7 +80,8 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
   failed link inside the window writes no second comment.
 
 ## Safety
-- WU18 Logs never carry a full phone number (masked as the phone sign-in does); the staff comment may.
+- WU18 Logs and the turn row's stored error never carry a full phone number (masked as the phone sign-in does,
+  or scrubbed to `[phone]`); the staff comment may.
 - WU19 Every Respond.io call in this flow (ask, lookup, merge, phone update, verified line, staff comment) goes
   through `RespondClient` for the default workspace, called by the CRM itself; the turn hands the sender no actions
   (after a merge the turn's contact id no longer exists). Tests stub the client.
@@ -97,12 +98,15 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
 
 - WU24 Every customer-facing Respond.io send of this flow (the ask template, the verified line) writes a Respond
   outbox row (`integration_logs`) on success and on failure, as every other Respond.io send does (precedent
-  `stock_ask_service`); the phone is masked there.
+  `stock_ask_service`); the phone is masked there. An ask skipped because no template is mapped writes a
+  `skipped` row (precedent `stock_ask_service._log_not_allowed`).
 - WU25 Ordering on the inbox drain: the turn claims its place (`inbox_queue.checkpoint`) BEFORE any Respond.io call,
   so a yielded or lost claim never repeats a merge or a send. An unexpected error inside the phone flow closes the
-  turn `failed` (never left `processing`), like every other turn.
-- WU26 When the merge succeeded but a later CRM step failed, the staff comment goes to the surviving Respond.io
-  contact (the merged-away id no longer exists).
+  turn `failed` (never left `processing`), like every other turn, and hands the sender NO actions (no generic error
+  reply: a contact the CRM does not know sees nothing, owner ruling 5 Oct; WU19).
+- WU26 When the merge succeeded but a later step failed, the staff comment goes to the surviving Respond.io
+  contact (the merged-away id no longer exists); when the survivor could not be read at all, to the phone contact
+  (the older contact Respond.io keeps).
 - WU27 Every branch-kind list outside the engine knows the four phone kinds: chat analytics outcome
   (`app/services/chatbot/analytics/outcome.py`) counts them as not answered (the bucket `ai_not_allowed` uses), and
   the chat asks words (`chat_asks.py` `BRANCH_WORDS`) use the WU23 words.
