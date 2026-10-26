@@ -1,6 +1,6 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: S1 review round 1 fixed (28ad4c2882), re-review pending; PR #1876 (draft). Phase 1 done; owner design OK
+Status: S1 re-review fixes in (9e915a9aab), final reviewer check pending; PR #1876 (draft). Phase 1 done; owner design OK
 26 Oct ~16:15. S2 starts after S1 is READY.
 Track: L overall (chatbot architecture), lead pattern; S1 itself is M (library + eval, no migration, no behaviour change).
 UAC: `documentation/plans/chatbot/entity-extract-match-acceptance-criteria.md`.
@@ -301,19 +301,19 @@ S1 as built (fad8b63b0a, then review round 1 up to 28ad4c2882), where it departs
   A word is common only when 2+ texts of the list carry it. A flat 0.8 one-edit weight was measured and lost.
 - Common-word rule: a span made only of words common in a list (IDF below `DISTINCTIVE_IDF = 0.5` of an unseen
   word's) does not resolve in that list unless it equals a whole text (AC-S1-4).
-- Floors: exactly the phase-1 calibration (`floors_partial.json`, calibrated on the calib half) except category spell
-  0.4 -> 0.45, which the synthetic meaning test needs. Hand-fits to single gold phrases were removed (captain ruling);
-  a fresh coordinate-descent calibration on the calib half scored lower on the test half (80.3%) and broke 3 tests.
+- Floors: exactly the phase-1 calibration (`floors_partial.json`, calibrated on the calib half), 9e915a9aab. Hand-fits
+  to single gold phrases were removed (captain ruling) and the meaning test fixture no longer leans on a floor
+  (fdd5358b72); a fresh coordinate-descent calibration on the calib half scored lower on the test half (80.3%).
 - Counting: the CLI's `oracle` / `right` lines count an ambiguous result whose candidates include a gold row as right
   (gold `row_ids` lists every acceptable row, e.g. "wc" -> WC / Water Closet / SRT-WC); it also prints resolved-only.
 
-Gate at 28ad4c2882 (phase-1 data; AC-S1-13 as amended):
+Gate at 9e915a9aab (phase-1 data; AC-S1-13 as amended):
 
 | Half | Oracle | B1 right row | Resolved right | Resolved wrong | Ambiguous, all gold | Ambiguous, gold + wrong | Ambiguous, no gold | Unresolved / missed |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| Oracle ALL (271) | 265 | - | 185 | 1 | 71 | 9 | 0 | 5 |
+| Oracle ALL (271) | 266 | - | 186 | 1 | 71 | 9 | 0 | 4 |
 | Oracle TEST (132) | 130 | - | 89 | 1 | 39 | 2 | 0 | 1 |
-| B1 spans ALL (271) | - | 226 (83.4%) | 150 | 13 | 57 | 19 | 8 | 24 |
+| B1 spans ALL (271) | - | 227 (83.8%) | 151 | 13 | 57 | 19 | 8 | 23 |
 | B1 spans TEST (132) | - | 107 (81.1%) | 71 | 9 | 32 | 4 | 6 | 10 |
 
 Ambiguous results carry 4.5 candidates on average (max 16 oracle, 58 on B1 spans). Open for S2 (not S1 behaviour):
@@ -322,6 +322,9 @@ Ambiguous results carry 4.5 candidates on average (max 16 oracle, 58 on B1 spans
   "names nothing", decided by the S2 eval.
 - Typo mentions lost when the one-phrase floor fits were removed: a misspelled "technical drawings", "drawing", one
   partial customer name, "booster pump". Re-calibrate floors on a larger labelled set in S2.
+- A plural or typo of a text made only of common words ("water pumps", "watr pump" vs a "Water Pump" row whose words
+  are both common in the list) no longer resolves since the OOV weight fix; 5 texts in the phase-1 lists are made only
+  of common words (1 category, 4 location). Measure and fix in S2.
 
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 
