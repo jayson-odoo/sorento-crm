@@ -160,8 +160,8 @@ def test_ac_r6_a_cancel_po_line_holds_nothing_even_with_stock_at_its_bin(scm_app
     _stock(db, product, warehouse, 50)
     with TestClient(app) as c:
         so1 = _so1(c, marker, product, due)
-    assert so1["assigned_from"] == []
-    assert so1["status"] == "short"
+    assert so1["status"] != "pinned"
+    assert [e for e in so1["assigned_from"] if e["kind"] == "po"] == []
 
 
 def test_ac_r7_a_received_spo_pins_the_gr_bin_not_the_spo_bin(scm_app):

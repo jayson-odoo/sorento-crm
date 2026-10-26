@@ -250,10 +250,17 @@ def _closed_po_with_decoy(db, *, mutate):
     return w, a, link
 
 
-def _assert_not_followed(db, link):
+def _assert_not_followed(db, link, w):
+    """The wrong / invisible SPO is not followed (no `spo` hop). Q4 (owner, 26 Oct): the PO
+    line's transfer, with no SPO under the key, reads `received_direct` at its own bin."""
     chain = _chain(db, link)
-    assert chain.hops == ()
-    assert chain.unplaced_qty == Decimal("50")
+    assert [h for h in chain.hops if h.kind == "spo"] == []
+    [hop] = chain.hops
+    assert (hop.kind, hop.state, Decimal(str(hop.qty))) == (
+        "po", "received_direct", Decimal("50")
+    )
+    assert chain.hops[0].warehouse_code == w.b1.warehouse_code
+    assert chain.unplaced_qty == Decimal("0")
 
 
 def test_ac_c6_other_po_number_not_followed(scm_app):
@@ -262,8 +269,8 @@ def test_ac_c6_other_po_number_not_followed(scm_app):
     def spoil(w, a, po, po_line):
         a.from_po_number = f"{po.po_number}X"
 
-    _w, _a, link = _closed_po_with_decoy(db, mutate=spoil)
-    _assert_not_followed(db, link)
+    w, _a, link = _closed_po_with_decoy(db, mutate=spoil)
+    _assert_not_followed(db, link, w)
 
 
 def test_ac_c6_other_product_not_followed(scm_app):
@@ -272,8 +279,8 @@ def test_ac_c6_other_product_not_followed(scm_app):
     def spoil(w, a, po, po_line):
         a.product_id = _product(db, f"{w.marker}-OTHER").id
 
-    _w, _a, link = _closed_po_with_decoy(db, mutate=spoil)
-    _assert_not_followed(db, link)
+    w, _a, link = _closed_po_with_decoy(db, mutate=spoil)
+    _assert_not_followed(db, link, w)
 
 
 def test_ac_c6_other_company_not_followed(scm_app):
@@ -289,9 +296,9 @@ def test_ac_c6_other_company_not_followed(scm_app):
     def spoil(w, a, po, po_line):
         a.company_id = other
 
-    _w, _a, link = _closed_po_with_decoy(db, mutate=spoil)
+    w, _a, link = _closed_po_with_decoy(db, mutate=spoil)
     set_company_scope(db, frozenset({SORENTO_COMPANY_ID}))
-    _assert_not_followed(db, link)
+    _assert_not_followed(db, link, w)
 
 
 def test_ac_c6_space_padded_ref_is_followed(scm_app):
@@ -312,8 +319,8 @@ def test_ac_c6_retired_spo_with_nothing_received_not_followed(scm_app):
     def spoil(w, a, po, po_line):
         a.retired_at = datetime.utcnow()
 
-    _w, _a, link = _closed_po_with_decoy(db, mutate=spoil)
-    _assert_not_followed(db, link)
+    w, _a, link = _closed_po_with_decoy(db, mutate=spoil)
+    _assert_not_followed(db, link, w)
 
 
 # ---------------------------------------------------------------------------- AC-C7
