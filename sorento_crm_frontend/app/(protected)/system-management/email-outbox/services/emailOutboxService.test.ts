@@ -63,7 +63,7 @@ describe('email-outbox attachment download (OUTBOX-ATTACHMENT)', () => {
   });
 
   it('GETs the attachment route and returns the bytes', async () => {
-    mockFetch.mockResolvedValueOnce(new Response(new Blob(['PK']), { status: 200 }));
+    mockFetch.mockResolvedValueOnce(new Response('PK', { status: 200 }));
     const blob = await downloadEmailOutboxAttachment('row-1', 1);
     expect(mockFetch.mock.calls[0][0]).toBe('/api/v1/system/email-outbox/row-1/attachments/1');
     expect(await blob.text()).toBe('PK');
