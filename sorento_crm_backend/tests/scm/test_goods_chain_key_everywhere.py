@@ -266,14 +266,21 @@ def test_k6_an_spo_naming_the_po_line_by_fk_is_counted_as_landed(scm_app):
     assert _landed_batch(db, w, so_ref) == Decimal("50")
 
 
-def test_the_followed_cache_resets_when_a_link_is_removed_on_the_same_service(scm_app):
-    """One service instance walks row 2's candidates (A reads 0: row 1's PO placement follows
-    onto it), row 1's link is removed through the normal unplace path (which invalidates the
-    link cache), and the SAME instance walks again: A now shows the freed 486."""
+def test_the_followed_cache_resets_when_a_followed_claim_is_added_on_the_same_service(scm_app):
+    """PO line 972 (486 transferred onto SPO A, 486 still on order), no placements yet. One
+    service instance walks row 2's candidates (A reads 486), row 1 is placed on the PO line
+    through the normal write path (adding a followed claim on A), and the SAME instance walks
+    again: A reads 0. A cache that kept the first walk's answer would still read 486."""
     from tests.scm.conftest import seed_user
 
     db = scm_app[1]
-    w, a, row1, row2 = _followed_world(db)
+    w = _World(db)
+    w.b2.pool_warehouse_id = w.b1.id
+    db.flush()
+    po, po_line = w.po(ordered=972, transferred=486)
+    a = w.onto(po, po_line, qty=486, warehouse=w.b1)
+    row1 = _unlinked_row(db, w, 486)
+    row2 = _unlinked_row(db, w, 486)
     svc = _service(db)
 
     def offered():
@@ -283,6 +290,6 @@ def test_the_followed_cache_resets_when_a_link_is_removed_on_the_same_service(sc
             if c["spo_allocation_id"] == str(a.id)
         ]
 
-    assert all(r == 0 for r in offered())
-    svc.unplace(str(row1.id), actor_user_id=seed_user(db, None))
     assert offered() == [Decimal("486")]
+    svc.place_on_po(str(row1.id), str(po_line.id), actor_user_id=seed_user(db, None))
+    assert all(r == 0 for r in offered())
