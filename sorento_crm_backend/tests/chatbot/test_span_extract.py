@@ -626,3 +626,106 @@ def test_review_cached_tokens_are_null_when_the_provider_reports_none(session_fa
     run(session_factory, stub_access, monkeypatch, text_body=f"{BRAND.lower()} stock", span=spans_json((BRAND, "brand")))
     rows = usage_rows(session_factory)
     assert len(rows) == 1 and rows[0].cached_tokens is None, [r.cached_tokens for r in rows]
+
+
+# ---------------------------------------------------------------------------------------------- S2 crew audit
+def test_audit_provider_sdk_is_imported_in_the_calling_thread_before_any_lookup_thread_starts():
+    """Cold start: the warm-up / prefetch thread and the span call (main thread) must not both import the provider
+    SDK lazily at the same time (KeyError 'openai.resources'). Deterministic: a fresh process, `Thread.start`
+    recorded, a fake embedder that imports nothing (so only the caller can have imported the SDK)."""
+    import subprocess
+    import sys
+
+    backend = Path(__file__).resolve().parents[2]
+    code = """
+import sys, threading
+sys.path.insert(0, %r)
+import app.main  # noqa
+from app.services.chatbot.head import lookup_lists as ll
+assert 'openai.resources' not in sys.modules, 'precondition: the SDK is not imported eagerly by the app'
+seen = {}
+real = threading.Thread.start
+def start(self):
+    if (self.name or '').startswith('lookup-lists'):
+        seen[self.name] = 'openai.resources' in sys.modules
+    return real(self)
+threading.Thread.start = start
+class E:
+    needs_warm = True
+    def pieces(self, texts): return [[0.0]] * len(texts)
+    def fill(self, texts): return None
+    def __call__(self, texts): return [[0.0]] * len(texts)
+    def is_cached(self, texts): return True
+rows = [ll.LookupRow('brand', 'b1', 'ZZBRAND', ('ZZBRAND',))]
+ll.prefetch('zz basin price', E())()
+ll.warm(rows, E())
+import time; time.sleep(0.3)
+print(repr(seen))
+""" % str(backend)
+    out = subprocess.run([sys.executable, "-I", "-c", code], cwd=backend, capture_output=True, text=True, timeout=120,
+                         env={**__import__("os").environ, "PYTHONPATH": str(backend)})
+    assert out.returncode == 0, out.stderr[-1500:]
+    seen = eval(out.stdout.strip().splitlines()[-1])  # noqa: S307 - our own repr of a dict of bools
+    assert set(seen) == {"lookup-lists-prefetch", "lookup-lists-warm"}, seen
+    assert all(seen.values()), seen
+
+
+def _sean_world(session_factory):
+    db = session_factory()
+    db.add_all([
+        SalesAgent(id=str(uuid.uuid4()), sales_agent=f"ZZSEAN {n}", person_label=f"ZZSEAN {n}", aliases="ZZSEAN", is_active=True)
+        for n in ("I", "III", "IV")
+    ] + [
+        SalesAgent(id=str(uuid.uuid4()), sales_agent=f"ZZROMEO {n}", person_label=f"ZZROMEO {n}", aliases="", is_active=True)
+        for n in ("I", "II", "III")
+    ] + [
+        Brand(id=str(uuid.uuid4()), brand_code="ZZSRT", brand_name="ZZSORENTO", is_active=True, company_id=DEFAULT_COMPANY_ID),
+        Brand(id=str(uuid.uuid4()), brand_code="ZZCAB", brand_name="ZZCABANA", is_active=True, company_id=DEFAULT_COMPANY_ID),
+    ])
+    db.commit()
+
+
+def test_audit_a_merged_name_span_yields_both_the_person_and_the_brand(session_factory, seeded, stub_access, monkeypatch):
+    _sean_world(session_factory)
+    monkeypatch.setattr(engine_mod, "_may_see_salespeople", lambda db_, resolved: True)
+    r = run(session_factory, stub_access, monkeypatch, text_body="Sales agent ZZSean ZZSorento top 10",
+            span=spans_json(("ZZSean ZZSorento", "salesperson")))
+    assert HDR["salesperson"] in r.lines, r.lines
+    for want in ("- ZZSEAN I", "- ZZSEAN III", "- ZZSEAN IV"):
+        assert want in r.lines, (want, r.lines)
+    assert HDR["brand"] in r.lines and any(ln.startswith("- ZZSORENTO") for ln in r.lines), r.lines
+
+
+def test_audit_a_fully_matched_span_gets_no_extra_rows(session_factory, seeded, stub_access, monkeypatch):
+    _sean_world(session_factory)
+    monkeypatch.setattr(engine_mod, "_may_see_salespeople", lambda db_, resolved: True)
+    r = run(session_factory, stub_access, monkeypatch, text_body="ZZSorento top 10", span=spans_json(("ZZSorento", "brand")))
+    assert any(ln.startswith("- ZZSORENTO") for ln in r.lines), r.lines
+    assert HDR["salesperson"] not in r.lines and not any(ln.startswith("- ZZSEAN") for ln in r.lines), r.lines
+
+
+@pytest.mark.parametrize("mode, reason", [
+    ("raises", "call_error"), ("timeout", "timeout"), ("invalid_json", "invalid_answer"),
+    ("wrong_shape", "invalid_answer"), ("resolver", "resolver_error"), ("no_config", "no_config"), ("ok", None),
+])
+def test_audit_the_trace_names_why_it_fell_back(session_factory, seeded, stub_access, monkeypatch, mode, reason):
+    from app.services.chatbot.head import list_resolver, span_extract
+
+    seed_world(session_factory)
+    answer = {
+        "raises": RuntimeError("zz down"), "timeout": llm_call.TimedOut("zz slow"), "invalid_json": "not json {",
+        "wrong_shape": json.dumps({"spans": "x"}),
+    }.get(mode, spans_json((BRAND, "brand")))
+
+    def boom(*a, **k):
+        raise RuntimeError("zz boom")
+
+    if mode == "resolver":
+        monkeypatch.setattr(list_resolver, "resolve", boom)
+    if mode == "no_config":
+        monkeypatch.setattr(span_extract, "resolve_config", boom)
+    r = run(session_factory, stub_access, monkeypatch, text_body=f"{BRAND.lower()} stock", span=answer)
+    ev = trace_events(session_factory, r)
+    assert len(ev) == 1 and "fallback_reason" in ev[0], ev
+    assert ev[0]["fallback_reason"] == reason, ev[0]
+    assert ev[0]["fallback"] is (reason is not None)
