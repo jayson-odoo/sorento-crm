@@ -14,13 +14,13 @@ Additive and idempotent (`IF NOT EXISTS`) so the shared dev DB, which converges 
 Plan: documentation/plans/forms/PLAN-forms-project-17oct.md.
 
 Revision ID: fp_0001_form_project_links
-Revises: prreg_0001_project_registrations
+Revises: lkp_0001_parser_lookup_lists
 """
 from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "fp_0001_form_project_links"
-down_revision = "prreg_0001_project_registrations"
+down_revision = "lkp_0001_parser_lookup_lists"
 branch_labels = None
 depends_on = None
 
