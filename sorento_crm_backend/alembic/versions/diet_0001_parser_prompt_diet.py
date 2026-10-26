@@ -9,7 +9,7 @@ Idempotent: a version already carrying this exact template publishes nothing. An
 found twice publishes nothing and logs why; the upgrade still succeeds.
 
 Revision ID: diet_0001_parser_prompt_diet
-Revises: lkp_0001_parser_lookup_lists
+Revises: stc_0003_opp_log_slug
 """
 import logging
 
@@ -18,7 +18,7 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 revision = "diet_0001_parser_prompt_diet"
-down_revision = "lkp_0001_parser_lookup_lists"
+down_revision = "stc_0003_opp_log_slug"
 branch_labels = None
 depends_on = None
 
