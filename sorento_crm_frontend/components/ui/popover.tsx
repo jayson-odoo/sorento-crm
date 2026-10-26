@@ -42,6 +42,12 @@ function PopoverTrigger({ ...props }: React.ComponentProps<typeof PopoverPrimiti
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />;
 }
 
+/** What the content positions against when it is opened from more than one control (the
+ * Trigger alone otherwise). */
+function PopoverAnchor({ ...props }: React.ComponentProps<typeof PopoverPrimitive.Anchor>) {
+  return <PopoverPrimitive.Anchor data-slot="popover-anchor" {...props} />;
+}
+
 function PopoverContent({
   className,
   align = 'center',
@@ -141,4 +147,4 @@ function PopoverPortal({
   return <PopoverPortalContext.Provider value={value}>{children}</PopoverPortalContext.Provider>;
 }
 
-export { Popover, PopoverContent, PopoverPortal, PopoverTrigger };
+export { Popover, PopoverAnchor, PopoverContent, PopoverPortal, PopoverTrigger };

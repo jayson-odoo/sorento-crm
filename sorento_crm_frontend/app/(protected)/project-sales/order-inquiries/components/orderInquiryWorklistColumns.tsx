@@ -384,16 +384,18 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
     setOpen(true);
   };
   return (
-    <span className="flex min-w-0 items-center gap-1">
+    // Round 5: a container, so the receipt pills hide behind one compact chip in a narrow
+    // cell while the number stays whole (`DocumentStatePills`).
+    <span className="@container flex w-full min-w-0 items-center gap-1">
       <DraftMark row={row} />
       <button
         type="button"
         data-testid={triggerId}
         title={first.document}
         aria-label={`Show documents backing ${what}`}
-        // LINKAGE-UNIFY U3 round 3: a width floor, so the number shortens beside its pills
-        // ("SPO-2026/...", the full number in `title`) but never collapses to nothing.
-        className="block min-w-[9ch] truncate rounded-sm text-xs font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        // LINKAGE-UNIFY U3 round 5 (owner): the number is the focus and never truncates;
+        // the receipt pills beside it give way first.
+        className="block shrink-0 whitespace-nowrap rounded-sm text-xs font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={open_}
       >
         {first.document}
@@ -421,6 +423,7 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
         testIdPrefix="backing-documents"
         testIdSuffix={kind === 'spo' ? `spo-${row.id}` : row.id}
         onOpen={open_}
+        onShowAll={open_}
       />
       {/* S1b, AC-RL-24: a reallocate/unlink instruction (a received link never carries
           a suggestion). */}
