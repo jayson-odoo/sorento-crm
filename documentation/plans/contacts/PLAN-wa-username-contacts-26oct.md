@@ -76,6 +76,13 @@ for this contact") and the customer gets nothing, as any not-allowed contact tod
   a `RespondClient` (tests pass a fake with `get_contact_by_phone`, `merge_contacts`, `update_contact`).
 - `RespondClient.merge_contacts(contact_ids: list[int | str]) -> dict`: `POST {base}/v2/contact/merge`
   `{"contactIds": [int, int]}`, primary first.
+- `respond_client(db) -> RespondClient`: the default-workspace client (the ONE seam engine tests monkeypatch to a fake).
+- `send_ask(db, *, contact_respond_id: str) -> bool`: calls
+  `respond_messaging_service.send_template_for_use_case(db, identifier=contact_respond_id, use_case="wa_phone_share",
+  context_vars={})` through the module attribute (so tests patch `respond_messaging_service.send_template_for_use_case`);
+  False on `TemplateSendSkipped`, any other error propagates to the gate as a failure (hand-off).
+- Risk for the coder: the template carries a static Share Contact Info button; check `build_template_request`
+  (`respond_messaging_service.py`) sends a template whose button has no parameter without error.
 
 Engine: a gate in `engine._run_turn` right after the scope (`:2891`) and BEFORE `_ai_allowed` (`:2900`), closing the
 turn with one of four new `BRANCH_KINDS` (`app/services/chatbot/contracts.py:354-372`): `phone_ask` (ask sent),
