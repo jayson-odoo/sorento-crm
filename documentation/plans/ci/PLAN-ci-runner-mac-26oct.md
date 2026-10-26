@@ -1,6 +1,6 @@
 # PLAN: CI-RUNNER-MAC (bring the Mac mini runner back for a private repo)
 
-Status: In progress (measure + rebuild + one test-only run). Track: small fix track (infra:
+Status: Measured; runner online; awaiting owner on var flip (crew). Proof run 40359349579 green on sorento-mac-1. Track: small fix track (infra:
 `scripts/ci-runner/`, no app code, no migration, no auth/RBAC, no ingest).
 
 ## Why
@@ -33,3 +33,64 @@ billed minutes (deploy.yml:60, release 38099410256).
 6. Report: what can move, wall time vs GitHub, billed minutes left, risks, the exact var flips.
 
 Crew flips repo vars after the owner OKs; this lane never sets RUNNER_* and never dispatches on main.
+
+## Findings (27 Oct 2026)
+
+Repo went private 27 Oct ~00:25 (`gh api` -> `"private":true`). VM `ci` rebuilt with `up.sh`
+at the same size, `sorento-mac-1` re-registered (`--replace`) and online, guard checked (runner
+user: Mac `192.168.5.2:5432` blocked, `api.github.com` 200).
+
+### Which jobs can run on sorento-mac
+
+| Job | deploy.yml | On the Mac? |
+| --- | --- | --- |
+| Single alembic head, PII guard, Changed areas, ci-full refusal, CI gate | 180, 220, 351, 2198, 2243 | yes, `RUNNER_FAST=mac` |
+| PR gate / Release tests (`lean-gate`), backend + SCM shards, vitest, type-check | 1431, 1152, 910, 1727, 1792 | yes, `RUNNER_TESTS=mac` |
+| Validate backend / MCP imports | 708, 798 | no (hard-coded; full runs only, 707/797) |
+| Build and push images | 1867 | no: amd64 only (1926/1941/1954) |
+| build-and-deploy | 1996 | no: hard-coded, and needs SSH/Docker Hub/SMTP secrets |
+
+Mac-routable jobs may hold no secret but the job token
+(`sorento_crm_backend/tests/test_ci_runner_routing.py:238`), so moving the deploy is a policy
+change, not a var flip.
+
+### Image build on arm64
+
+Prod is amd64: images are pushed `linux/amd64` only and the server runs them. On the arm64 VM
+an amd64 build is QEMU user emulation:
+
+- JS CPU proxy (node:20-alpine): 1.6 s native vs 12.4 s amd64 = 7.7x slower.
+- backend image amd64, no cache: 327 s (GitHub builds all three in 7-9 min).
+- frontend image amd64: `npm ci` 72 s, then `next build` OOM-killed at 424 s
+  (`dmesg`: node anon-rss 4.9 GB). Not buildable in a 6 GiB VM.
+
+### VM size and memory
+
+4 CPU / 6 GiB unchanged: the floor is tsc's pinned 4096 MB heap (deploy.yml:1688) plus the job's
+Postgres/Redis service containers; xdist stays 2 workers (PLAN-ci-mac-cap-18oct.md). One runner,
+one job at a time; a second runner would need another 6 GiB the Mac does not have.
+
+Mac swap (`sysctl vm.swapusage`, used): 6.08 GB VM off (00:06) -> 8.8-10.2 GB while the VM
+built images -> 8.9-10.5 GB during the proof run (VM peak 2.6 GB used; other lanes moved too).
+
+### Proof run
+
+Run 40359349579: `gh workflow run deploy.yml --ref crew/ci-runner-mac -f runner=mac`, success.
+Every job that ran was on `sorento-mac-1`: Single alembic head 0.7 min, Changed areas 0.5 min,
+Release tests 7.4 min (lean: core tier + the batch since release 36f571df3b). Wall 9 min
+(16:27:46-16:36:39Z). Zero GitHub-hosted jobs; build-images and build-and-deploy skipped (not main).
+
+Mac history (14-19 Oct, RUNNER_TESTS=mac): PR gate median 5 min, max 19 (257 runs); Release tests
+8-19 min (11 runs). GitHub-hosted public 4-vCPU (23-27 Oct): PR gate median 4, max 35 (52 runs);
+a lean release billed 41-46 min (Release tests 14-19, build 8-9, deploy 15-17).
+
+### What to flip
+
+- Tests + every fast gate to the Mac (no code change):
+  `gh variable set RUNNER_TESTS --body mac --repo jayson-odoo/sorento-crm` and
+  `gh variable set RUNNER_FAST --body mac --repo jayson-odoo/sorento-crm`.
+  A lean release then bills only build-images (~8-9) + build-and-deploy (~15-17).
+- `full_suite=true` must stop: on one runner its 26 jobs run in series (~3 h; run 39126899668).
+- build-images and build-and-deploy on the Mac need a workflow change, the routing pin tests
+  changed, and the owner's OK to put SSH/Docker Hub/SMTP secrets on the Mac; a release whose
+  frontend tree changed still cannot build its frontend image here (OOM above).
