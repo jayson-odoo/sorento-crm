@@ -1,6 +1,6 @@
 # PLAN: on-order (PO / SPO) lines shown to a contact respect its location scope (CHAT-PO-LOCATION-SCOPE)
 
-Status: in progress (small fix track, size S: no migration, no RBAC change, no new ingest surface)
+Status: in review, PR #1880 (small fix track, size S: no migration, no RBAC change, no new ingest surface)
 
 UAC: `chat-po-location-scope-acceptance-criteria.md` (beside this file).
 
@@ -55,18 +55,24 @@ see BRW-BB stock lines, and must not see BRW-BB PO lines either. No ask needed.
 4. Contacts whose policy names no location list (staff, the inert default) and calls without
    `contact_id` (n8n, staff UI): unchanged.
 
-## Other surfaces checked
+## Other surfaces checked (known gap, follow-up lane)
 
-See the lane report; each incoming / PO / SPO surface reachable with a `contact_id` is listed
-with its scope rule.
+Crew ruling (a), 26 Oct: this lane ships the PO / SPO on-order fix only. The incoming routes
+(`app/api/v1/incoming_stock.py:426-539`, `:230-332`, `:542-565`, whose `Warehouse Allocations`
+the MCP presenter prints, `sorento_crm_mcp/presenters.py:924-926`, `:970-972`) and the SPO
+last-in route (`app/api/v1/procurement/spo_allocations.py:34-120`, no `contact_id` at all) do not
+read the contact's location scope; a follow-up M lane takes them with a behaviour card. The stock
+answer's Total O/S (#1431) and the dealer-mode ETA have no gap.
 
 ## Tests (red first)
 
-`tests/test_po_placed_contact_scope.py` (throwaway DB): a contact scoped to BRW + MWH, a product
-with 0 stock and open PO lines at BRW, BRW-BB, BRW-NTC (+ one with no warehouse, + one SPO at
-BRW-BB): the placed route returns only the BRW line (with its location); summary counts it alone;
-exclusion policy; availability mode (scoped rows, no location); unresolvable contact (no rows);
-no contact (every row). Plus the rendered rung text for the owner's case.
+`tests/test_po_placed_location_visibility.py` (route level, throwaway DB; its old tests pinned
+"row stays, location blanked" and are rewritten): the owner's case (BRW + MWH contact, 0 stock,
+PO lines at BRW, BRW-BB, BRW-NTC: only the BRW lines, summary 40 / 2); include list, exclusion,
+merged access-type policy, empty include list, a named warehouse never widens; PO line with no
+warehouse; SPO by location code (hidden dropped, visible kept); availability (scoped, no
+location); unresolvable contact (no rows); every-location policy and no contact (unchanged).
+The rung's rendering is unchanged and already covered by `tests/chatbot/test_crossdomain_ladder.py`.
 
 ## Eval gate
 

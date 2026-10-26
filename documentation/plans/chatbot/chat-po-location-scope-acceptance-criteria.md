@@ -13,5 +13,7 @@
 - AC-7: A contact whose policy names no location list, and any call without `contact_id`, gets
   exactly today's rows.
 - AC-8: `summary` (when asked) counts exactly the rows returned.
-- AC-9: If every on-order line of a zero-stock product is outside the scope, the reply keeps the
-  plain "Stock is 0 at every location and no incoming" sentence (no PO header, no empty list).
+- AC-9: If every on-order line of a zero-stock product is outside the scope, the rung finds
+  nothing and the reply reads "Stock is 0 at every location, no incoming and nothing on order for
+  X." (no PO header, no empty list; existing wording, `answer.py:1575-1576`, pinned by
+  `tests/chatbot/test_crossdomain_ladder.py:1239`).
