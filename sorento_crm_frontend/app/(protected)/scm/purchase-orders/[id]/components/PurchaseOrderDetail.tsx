@@ -1381,7 +1381,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 <p className="text-sm text-muted-foreground">
                   {isDraftPurchaseOrder(po.status)
                     ? 'Nothing transferred yet. This order has not been placed.'
-                    : 'Nothing transferred yet. Receipts recorded against this order show here.'}
+                    : 'Nothing transferred yet. Transfers recorded against this order show here.'}
                 </p>
               )}
             </div>
