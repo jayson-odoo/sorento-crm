@@ -1,8 +1,25 @@
 # PLAN: OI purchasing email + Excel show only what purchasing must act on
 
-Status: Plan, behaviour card posted as crew-ask, waiting on owner answers. Track: small fix
-(expected diff under ~300 lines, no migration, no auth/RBAC, no new ingest), to confirm once the
-answers land.
+Status: Build (owner answered the card 26 Oct ~13:05; red tests landed). Track: small fix (no
+migration, no auth/RBAC, no new ingest).
+
+## 0. Owner rulings, 26 Oct 2026 ~13:05 MYT
+
+Verbatim: "Local buy dont need go purchasing, 1a, 2 same as now, 3 not sent, 4 same as now show
+use own location, if we say cancel order, the purchasing will think it is customer cancel order,
+so need to mention change from buy to use own location, 5a".
+
+- Rule 2 change: LOCAL BUY is NOT sent to purchasing.
+- Q1 (a): a mixed line reads only purchasing's part, `ORDER 4`; QTY stays the line's 10.
+- Q2: Cancel SO keeps today's behaviour: `record_cancelled_lines` (S:5058) queues ONE `CANCEL`
+  line for every line transferred to Cancel SO, whatever it held, so a line purchasing never
+  held anything for is still told. Unchanged.
+- Q3 (a): Use incoming (SPO no.) and Borrow incoming lines are not sent.
+- Q4: the line is still sent, but its REMARK states the change instead of today's
+  `USE <loc>, CANCEL ORDER n` (S:5193-5200, pinned by `test_a_buy_replaced_by_stock_says_to_
+  take_the_order_back`), which purchasing reads as a customer cancel. New wording:
+  `CHANGED: ORDER 10 -> USE BRW-BB 10` (each side's parts with their quantities).
+- Q5 (a): exactly rule 4's columns.
 
 Lane: OI-EMAIL-PURCHASING-FOCUS. Owner ask 26 Oct 2026 ~12:45 MYT. Supersedes the "every saved
 decision is listed" part of the 13 Oct 22:40 ruling (`saved_line_remark` docstring).
