@@ -85,3 +85,25 @@ def test_orders_list_end_to_end_sanitize():
     )
     _assert_no_uuid_values(out["data"])
     assert out["pagination"]["limit"] == 20
+
+
+def test_grouped_orders_list_group_rows_are_slimmed_like_the_flat_rows():
+    """CHAT-GROUPED-ORDER-STATUS: `group_by` buckets the route's raw rows into
+    `groups[i].rows`. Those rows must come out exactly like the flat `data` rows (Status
+    as text, no UUIDs): a raw `order_status` dict reached the presenter and crashed the
+    chat turn (`TypeError: unhashable type: 'dict'`)."""
+    row = {**_raw_order_row(), "debtor_name": "CUSTOMER A", "company_id": "99999999-9999-9999-9999-999999999999"}
+    raw = json.dumps(
+        {
+            "data": [row],
+            "groups": [{"key": "CUSTOMER A", "label": "CUSTOMER A", "rows": [row]}],
+            "pagination": {"total": 1, "page": 1, "limit": 20},
+        }
+    )
+    out = json.loads(_sanitize_tool_response("crm_order_management_orders_list", raw))
+    (group,) = out["groups"]
+    assert group["key"] == "CUSTOMER A" and group["label"] == "CUSTOMER A"
+    (grouped,) = group["rows"]
+    assert grouped["order_status"] == "Delivered"
+    assert grouped == out["data"][0]
+    _assert_no_uuid_values(out["groups"])
