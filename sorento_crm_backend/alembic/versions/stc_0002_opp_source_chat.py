@@ -8,7 +8,7 @@ those rows are moved to 'portal' first (the nearest existing source: the salespe
 self-service channel).
 
 Revision ID: stc_0002_opp_source_chat
-Revises: oihr_0010_so_remark_column
+Revises: lkp_0001_parser_lookup_lists
 Create Date: 2026-10-25
 """
 from __future__ import annotations
@@ -17,7 +17,7 @@ from alembic import op
 
 
 revision = "stc_0002_opp_source_chat"
-down_revision = "oihr_0010_so_remark_column"
+down_revision = "lkp_0001_parser_lookup_lists"
 branch_labels = None
 depends_on = None
 
