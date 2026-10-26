@@ -378,3 +378,27 @@ def test_a_first_confirm_that_moves_part_of_an_imported_order_to_own_stock(api, 
     assert [l["remark"] for l in emails[0]["lines"]] == [
         f"ORDER 4, CHANGED: ORDER 10 -> USE {own} 6"
     ]
+
+
+def test_a_first_confirm_over_two_imported_orders_reads_each_row_as_a_later_confirm(api, emails):
+    """Lane review nit: two raised rows (10 + 3) on an undecided line, first Confirmed as Buy 8,
+    read per row like the same fold on a later Confirm: CHANGED: ORDER 10 & ORDER 3 -> ORDER 8."""
+    from decimal import Decimal
+
+    from .test_oi_cancelled_line_used_confirm import _inquiry, _oi_row
+    from .test_oi_saved_line_email import _one_line_order
+
+    _client, world = api
+    order, line, core = _one_line_order(world, "13")
+    inquiry = _inquiry(world.db, world.company_id, order.id)
+    _oi_row(world.db, world.company_id, inquiry.id, line.id, world.product.product_code, "10")
+    _oi_row(world.db, world.company_id, inquiry.id, line.id, world.product.product_code, "3")
+    core.qty_ordered = Decimal("8")
+    line.qty = Decimal("8")
+    world.db.commit()
+    emails.clear()
+
+    _post(api, order, [_line_payload(line.id, buy_qty="8")])
+
+    assert len(emails) == 1, emails
+    assert [l["remark"] for l in emails[0]["lines"]] == ["CHANGED: ORDER 10 & ORDER 3 -> ORDER 8"]

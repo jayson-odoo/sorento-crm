@@ -5292,8 +5292,12 @@ class ProjectOrderInquiryService:
                     for words, _l, qty, key in _saved_line_parts(now, name_donors=True)
                     if key not in _PURCHASING_KEYS
                 )
-                held = sum((was_qty for was_qty, _now in taken_rows), _ZERO) or taken_back
-                change = f"CHANGED: ORDER {_qty_str(held)} -> {stock or _parts_with_qty(now)}"
+                # Each row held, as a later Confirm reads them ("ORDER 10 & ORDER 3").
+                held = " & ".join(
+                    f"ORDER {_qty_str(was_qty)}"
+                    for was_qty in ([w for w, _now in taken_rows] or [taken_back])
+                )
+                change = f"CHANGED: {held} -> {stock or _parts_with_qty(now)}"
                 remark = f"{remark}, {change}" if remark and stock else change
                 keys = keys + ["CHANGED"]
         if before is not None:
