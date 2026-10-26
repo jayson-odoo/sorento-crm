@@ -602,6 +602,43 @@ def purchasing_remark(snapshot: Mapping[str, Any]) -> str:
     return " & ".join(f"{words} {_qty_str(qty)}" for words, _location, qty, _key in theirs)
 
 
+def _purchasing_qty(snapshot: Mapping[str, Any]) -> Decimal:
+    """How much of a saved line purchasing holds (its Buy and Order back parts)."""
+    return sum(
+        (qty for _w, _l, qty, key in _saved_line_parts(snapshot) if key in _PURCHASING_KEYS),
+        _ZERO,
+    )
+
+
+def held_change_remark(before: Mapping[str, Any], now: Mapping[str, Any]) -> Optional[str]:
+    """THE rule for a change to something purchasing held, shared by the email
+    (`_queue_saved_line`) and the board's preview of it (`saved_draft_remark`), so the two can
+    never word one line differently (crew audit, 26 Oct 2026).
+
+    `CHANGED: <before parts> -> <now parts>` (owner Q4: never "CANCEL ORDER") when purchasing
+    held a part before and the decision is no longer that: another kind of decision (Buy to Use
+    own location, Buy to Order back, Order back to Use BRW), or the same kinds re-split over the
+    same quantity (Borrow 6 & Buy 4 to Borrow 4 & Buy 6). `None` otherwise, a customer cut or
+    growth of the same decision included: that reads its own CANCEL n / ORDER n."""
+    if _purchasing_qty(before) <= _ZERO or not _saved_line_parts(now):
+        return None
+
+    def total(snapshot: Mapping[str, Any]) -> Decimal:
+        return sum((qty for _w, _l, qty, _k in _saved_line_parts(snapshot)), _ZERO)
+
+    def theirs(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
+        return tuple(
+            (words, qty)
+            for words, _l, qty, key in _saved_line_parts(snapshot, name_donors=True)
+            if key in _PURCHASING_KEYS
+        )
+
+    resplit = total(before) == total(now) and theirs(before) != theirs(now)
+    if _decision_words(before) != _decision_words(now) or resplit:
+        return f"CHANGED: {_parts_with_qty(before)} -> {_parts_with_qty(now)}"
+    return None
+
+
 def _parts_with_qty(snapshot: Mapping[str, Any]) -> str:
     """Every part of a saved line with its quantity, `ORDER 10` / `USE BRW-BB 6 & ORDER 4`: one
     side of a `CHANGED: ... -> ...` REMARK."""
@@ -650,9 +687,11 @@ def saved_draft_remark(
         return handover_remark("cancelled", None, None) if withdraws_raised else None
     now = _draft_snapshot(decision, location, codes or {}, spo_numbers, buy_origin)
     if before:
-        held = _draft_snapshot(before, location, codes or {}, spo_numbers, buy_origin)
-        if _buy_qty(held) > _buy_qty(now) and _decision_words(held) != _decision_words(now):
-            return f"CHANGED: {_parts_with_qty(held)} -> {_parts_with_qty(now)}"
+        changed = held_change_remark(
+            _draft_snapshot(before, location, codes or {}, spo_numbers, buy_origin), now
+        )
+        if changed:
+            return changed
     return purchasing_remark(now) or None
 
 
@@ -5283,10 +5322,32 @@ class ProjectOrderInquiryService:
                     and (same_kinds or not _saved_line_parts(now))
                     and (raised is None or (raised <= _ZERO and qty_now < qty_before))
                 )
-                if taken_back > _ZERO and not customer_cut and _saved_line_parts(now):
+                changed = (
+                    held_change_remark(before, now)
+                    if taken_back > _ZERO and not customer_cut
+                    else None
+                )
+                if changed and raised is not None and (
+                    _purchasing_qty(before) - _purchasing_qty(now) != taken_back - raised
+                ):
+                    # Several row lines whose numbers the decision's sizes do not explain (a
+                    # redirect, two rows folded): the sizes are not what the rows held, so the
+                    # line says what the rows did (lane review B2).
+                    changed = None
+                if changed:
                     pieces = [piece for piece in pieces if piece in date_words]
-                    pieces.append(f"CHANGED: {_parts_with_qty(before)} -> {_parts_with_qty(now)}")
+                    pieces.append(changed)
                     keys = [key for key in keys if key in (IV_DELAY, IV_ADVANCE)] + ["CHANGED"]
+                elif taken_back > _ZERO and not customer_cut:
+                    # What the rows did, in numbers: the fresh order, then what is taken back,
+                    # marked as a change rather than a customer cancel (lane review B2).
+                    pieces = [piece for piece in pieces if piece in date_words]
+                    if raised is not None and raised > _ZERO:
+                        pieces.append(f"ORDER {_qty_str(raised)}")
+                    pieces.append(f"CHANGED: CANCEL {_qty_str(taken_back)}")
+                    keys = [key for key in keys if key in (IV_DELAY, IV_ADVANCE)] + (
+                        [IV_ORDER] if raised is not None and raised > _ZERO else []
+                    ) + ["CHANGED"]
                 elif (
                     # The decision's words when the KIND of decision moved (Buy to Use BRW,
                     # a new part) or nothing above says anything; a pure date or quantity

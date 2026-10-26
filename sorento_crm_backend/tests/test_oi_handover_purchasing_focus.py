@@ -295,3 +295,20 @@ def test_a_stock_only_saved_line_keeps_its_cancel_balance_notice_and_drops_its_d
 
         left = db.info[_HANDOVER_PENDING_KEY]
         assert [i["row_id"] for i in left] == [cut["row_id"], f"saved:{told}"], left
+
+
+def test_the_board_preview_says_what_the_email_says():
+    """Crew audit (4): the board's "email words" are the email's. `before` is the confirmed
+    decision, passed only while purchasing still holds an open OI row for the line."""
+    from app.services.project_order_inquiry_service import saved_draft_remark
+
+    use_own = {"verdict": "amended", "reserve": [{"location": "BRW-BB", "qty": "10"}],
+               "borrow": [], "buy_qty": "0"}
+    mixed = {**use_own, "reserve": [{"location": "BRW-BB", "qty": "6"}], "buy_qty": "4"}
+    held_buy = {"reserve": [], "borrow": [], "buy_qty": "10"}
+
+    assert saved_draft_remark(use_own, location="BRW-BB") is None
+    assert saved_draft_remark(mixed, location="BRW-BB") == "ORDER 4"
+    assert saved_draft_remark(use_own, location="BRW-BB", before=held_buy) == (
+        "CHANGED: ORDER 10 -> USE BRW-BB 10"
+    )

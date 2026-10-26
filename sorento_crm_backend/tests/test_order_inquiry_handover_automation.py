@@ -1240,11 +1240,12 @@ def test_named_two_live_rows_supersede(api, monkeypatch):
     matches = _handover_calls(calls)
     assert matches, "the reconfirm must dispatch the handover"
     lines = matches[-1]["context"]["handover"]["lines"]
-    # ORDERBACK-DELTA (owner, 13 Oct 2026): one line for the saved line. Both still-owed rows
-    # taken back and a fresh one raised read as the change of the decision (crew audit 26 Oct
-    # 2026: never "CANCEL ORDER").
+    # ORDERBACK-DELTA (owner, 13 Oct 2026): one line for the saved line, naming the fresh
+    # order and both still-owed rows taken back, as a change (crew audit 26 Oct 2026: never
+    # "CANCEL ORDER").
     assert len(lines) == 1, lines
-    assert lines[0]["remark"] == "CHANGED: ORDER 10 -> ORDER 8", f"AC-R2-12: got {lines}"
+    # The rows' own numbers (lane review B2): 10 + 3 held, a fresh 8.
+    assert lines[0]["remark"] == "ORDER 8, CHANGED: CANCEL 13", f"AC-R2-12: got {lines}"
 
 
 # --------------------------------------------------------------------------- #

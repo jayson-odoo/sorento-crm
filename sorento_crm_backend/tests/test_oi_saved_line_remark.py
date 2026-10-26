@@ -111,8 +111,8 @@ def test_a_bare_spo_number_ref_is_read_too():
 def test_several_row_lines_fold_by_their_numbers_not_their_words():
     """Review S1: the fold reads what each row line adds to the order as data. A fresh
     ORDER 50 whose REMARK also names a product change, a settle adding 3 after a date word,
-    and a withdrawn row of 5 read as the change of the decision, CHANGED: ORDER 40 -> ORDER 53
-    (it read ORDER 53, CANCEL ORDER 5 before the 26 Oct 2026 audit)."""
+    and a withdrawn row of 5 read ORDER 53, CHANGED: CANCEL 5 (it read ORDER 53, CANCEL ORDER 5
+    before the 26 Oct 2026 audit)."""
     from types import SimpleNamespace
     from uuid import uuid4
 
@@ -149,7 +149,7 @@ def test_several_row_lines_fold_by_their_numbers_not_their_words():
         (told,) = db.info[_HANDOVER_PENDING_KEY]
         # OI-EMAIL-PURCHASING-FOCUS (crew audit 26 Oct 2026, owner Q4 principle): never "CANCEL
         # ORDER" unless the customer cancelled; a take-back reads CHANGED: <old> -> <new>.
-        assert told["line"]["remark"] == "CHANGED: ORDER 40 -> ORDER 53", told["line"]
+        assert told["line"]["remark"] == "ORDER 53, CHANGED: CANCEL 5", told["line"]
 
 
 def test_a_newly_short_reserve_is_not_a_change_to_tell():

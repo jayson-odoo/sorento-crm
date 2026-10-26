@@ -2547,6 +2547,9 @@ class FulfilmentBoardService:
             "suspected_system_issue": bool(frozen.get("suspected_system_issue")),
             # OI-SPLIT-GUIDE (UAC F32): read by the contribution's `confirmed_remark`.
             "remark": frozen.get("remark"),
+            # Whether the Buy was an Order back, so the board's email words read it as the
+            # email does (OI-EMAIL-PURCHASING-FOCUS crew audit, 26 Oct 2026).
+            "order_back": bool(frozen.get("order_back")),
         }
 
     def _demand_pressure(
@@ -5425,7 +5428,13 @@ class FulfilmentBoardService:
                     ],
                     buy_origin=self._buy_origin.get(str(row.product_id)) if row.product_id else None,
                     withdraws_raised=_withdraws(row),
-                    before=row.decision,
+                    # The email tells a take-back only while purchasing still holds the
+                    # line's order: an open OI row. A Buy whose goods arrived holds nothing
+                    # (lane review S5), so it is read with no confirmed "before".
+                    before=row.decision
+                    if (row.order_inquiry or {}).get("state")
+                    in (INQUIRY_RAISED, INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
+                    else None,
                 )
             elif row.cancelled and not row.cancelled_at:
                 row.saved_remark = handover_remark("cancelled", row, None)

@@ -661,3 +661,52 @@ def test_f33_pin_an_empty_remark_clears_it_and_is_told_once_with_todays_words(ap
     start = len(emails)
     _confirm_with(s, 10)  # now nothing to keep: unchanged
     assert _sent(emails, start) == []
+
+
+# ------------------- OI-EMAIL-PURCHASING-FOCUS crew audit (26 Oct 2026): preview == email
+
+
+def _confirm_line(s, line):
+    r = s.client.post(f"{BASE}/sales-orders/{s.order.id}/confirm", json={"lines": [line]})
+    assert r.status_code == 200, f"premise: the confirm saves: {r.text}"
+    s.db.commit()
+    s.db.expire_all()
+
+
+@pytest.mark.parametrize("first, second", [
+    ("buy", "use_own"),
+    ("buy", "order_back"),
+    ("order_back", "use_own"),
+])
+def test_the_guides_words_for_a_changed_held_line_equal_the_emails(api, emails, first, second):
+    """A confirmed Buy / Order back re-decided: the board's email words before the Confirm are
+    the REMARK the Confirm's email then prints, CHANGED: <old> -> <new> (one rule,
+    `held_change_remark`)."""
+    from tests.test_planning_changes import _line_payload as payload
+    from tests.test_so_supply_confirmation import _stock
+
+    s = _seed(api)
+    _stock(s.db, s.world.product, s.world.own_wh, on_hand=50)
+    s.db.commit()
+    own = s.world.own_wh.warehouse_code
+    drafts = {
+        "buy": _amend(buy=10),
+        "order_back": _amend(buy=10, order_back=True),
+        "use_own": _amend([_own(s, 10)]),
+    }
+    lines = {
+        "buy": payload(s.line[10].id, buy_qty="10"),
+        "order_back": {**payload(s.line[10].id, buy_qty="10"), "order_back": True},
+        "use_own": _reserve_only_payload(s, 10),
+    }
+    words = {"buy": "ORDER 10", "order_back": "ORDER BACK 10", "use_own": f"USE {own} 10"}
+    _confirm_line(s, lines[first])
+    emails.clear()
+
+    _save_draft(s, 10, drafts[second])
+    guide = _words(s, 10)
+    _confirm_line(s, {**lines[second], "amend_reason": "Changed."})
+
+    [email] = emails
+    [told] = email["lines"]
+    assert guide == told["remark"] == f"CHANGED: {words[first]} -> {words[second]}", (guide, told)
