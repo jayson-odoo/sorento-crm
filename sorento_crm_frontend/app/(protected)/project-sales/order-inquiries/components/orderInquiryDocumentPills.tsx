@@ -167,15 +167,24 @@ export function DocumentStatePills({
         </span>
       ) : null}
       {receipts.length && onShowAll ? (
-        <button
-          type="button"
-          data-testid={`${testIdPrefix}-received-compact-${testIdSuffix}`}
-          aria-label={texts.join(', ')}
-          className={`hidden ${FALLBACK_SHOW} h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-transparent bg-secondary px-2 text-[0.6875rem] leading-[0.75rem] font-medium text-secondary-foreground dark:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
-          onClick={onShowAll}
+        // The "+N" pill's own Badge; `hidden` overrides its display until the container
+        // query shows it.
+        <Badge
+          asChild
+          size="sm"
+          variant="secondary"
+          appearance="light"
+          className={`hidden shrink-0 ${FALLBACK_SHOW}`}
         >
-          Received
-        </button>
+          <button
+            type="button"
+            data-testid={`${testIdPrefix}-received-compact-${testIdSuffix}`}
+            aria-label={texts.join(', ')}
+            onClick={onShowAll}
+          >
+            Received
+          </button>
+        </Badge>
       ) : null}
     </>
   );

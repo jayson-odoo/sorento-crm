@@ -1267,9 +1267,9 @@ export function useOrderInquiryWorklistColumns({
         id: 'spo_number',
         accessorFn: (row) => documentsOf(row, 'spo')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-        // LINKAGE-UNIFY U3 round 3: wide enough at 1280 for the number, "via PO",
-        // "Received 486 at BRW-BB" and "+1" side by side (and "awaiting shipment" in full).
-        size: 340,
+        // LINKAGE-UNIFY U3 round 3/7: wide enough at 1280 for the number, "via PO", the
+        // whole "Received 486 at BRW-BB" and "+1" side by side (and "awaiting shipment").
+        size: 360,
         // Round 4/6: a floor TanStack's `getSize()` clamps to (a saved or dragged width
         // included): the number (124px), "via PO" (52) and the compact Received chip (66)
         // with the draft mark, gaps and cell padding, so a narrow resize reaches the chip
