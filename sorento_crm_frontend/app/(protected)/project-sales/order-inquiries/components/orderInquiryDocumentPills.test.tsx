@@ -12,7 +12,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, renderHook, screen } from '@testing-library/react';
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 
 vi.mock('@/components/ui/tooltip', async () => {
@@ -29,6 +29,15 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+const getOrderInquirySpoDetail = vi.fn();
+vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../_shared/services/orderInquiryService')>();
+  return {
+    ...actual,
+    getOrderInquirySpoDetail: (...args: unknown[]) => getOrderInquirySpoDetail(...args),
+  };
+});
+
 import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
 import { useOrderInquiryHeaderLinesColumns } from '../[id]/components/orderInquiryHeaderLinesColumns';
 import { foldInquiryLines, toLineRows } from '../../_shared/lib/orderInquiryLineFold';
@@ -36,7 +45,7 @@ import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.t
 
 type Link = Record<string, unknown>;
 
-function rowWith(links: Link[]): OrderInquiryWorklistRow {
+function rowWith(links: Link[], over: Record<string, unknown> = {}): OrderInquiryWorklistRow {
   return {
     id: 'row-1',
     core_line_id: 'cl-1',
@@ -49,6 +58,7 @@ function rowWith(links: Link[]): OrderInquiryWorklistRow {
     bundled_qty: '0',
     item_code: 'SRTWT7202',
     links,
+    ...over,
   } as unknown as OrderInquiryWorklistRow;
 }
 
@@ -145,5 +155,95 @@ describe.each<Where>(['worklist', 'lines'])('document pills on the %s', (where) 
       ),
     );
     expect(screen.getByText('SPO withdrawn')).toBeTruthy();
+  });
+});
+
+
+// ---------------------------------------------------------------------------- round 2
+
+const SPO = 'SPO-2026/09-0107';
+const L12_RECEIVED: Link = {
+  id: 'l12', kind: 'spo', document: SPO, line_label: 'L12', spo_allocation_id: 'a-12',
+  qty: '60', received: true, received_qty: '60', receipts: [{ qty: '60', bin: 'BRW-BB' }],
+  dead_reason: null,
+};
+const L7_DEAD: Link = {
+  id: 'l7', kind: 'spo', document: SPO, line_label: 'L7', spo_allocation_id: 'a-7',
+  qty: '294', received: false, receipts: [], dead_reason: 'spo_withdrawn',
+};
+
+describe.each<Where>(['worklist', 'lines'])('F1 one chip per SPO line on the %s', (where) => {
+  it('the visible chip is the live line with its receipt; the withdrawn line waits under +1', async () => {
+    // The dead link is FIRST in the data: dead chips sort after live ones.
+    show(cellOf(where, 'spo_number', rowWith([L7_DEAD, L12_RECEIVED])));
+    expect(screen.getByText(SPO)).toBeTruthy();
+    expect(screen.getByText('Received 60 at BRW-BB')).toBeTruthy();
+    expect(screen.queryByText('SPO withdrawn')).toBeNull();
+
+    fireEvent.click(screen.getByText('+1'));
+    expect(await screen.findByText('SPO withdrawn')).toBeTruthy();
+    expect(screen.getAllByText(/L7/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('F2 the Lines tab sums one SPO line across the SO line\'s OI rows', () => {
+  it('L12 reads "Received 354 at BRW-BB" and L7 keeps its red pill under +1', async () => {
+    const poLink: Link = {
+      id: 'l-po', kind: 'po', document: '202607-S0100', po_id: 'po-1', po_line_id: 'pl-1',
+      qty: '294', received: false, receipts: [], dead_reason: null,
+    };
+    const derived: Link = {
+      id: 'derived-12', kind: 'spo', derived: true, document: SPO, line_label: 'L12',
+      source_po_number: '202607-S0100', qty: '294', received: true,
+      receipts: [{ qty: '294', bin: 'BRW-BB' }], dead_reason: null,
+    };
+    const rowA = rowWith([poLink, derived], { id: 'row-a' });
+    const rowB = rowWith([L7_DEAD, L12_RECEIVED], { id: 'row-b', qty: '354' });
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find(
+      (c) => (c as { id?: string }).id === 'spo_number',
+    ) as { cell: (ctx: unknown) => React.ReactNode };
+    const [lineRow] = toLineRows(foldInquiryLines([rowA, rowB]));
+    show(column.cell({ row: { original: lineRow } }));
+
+    expect(screen.getByText('Received 354 at BRW-BB')).toBeTruthy();
+    expect(screen.queryByText('SPO withdrawn')).toBeNull();
+    fireEvent.click(screen.getByText('+1'));
+    expect(await screen.findByText('SPO withdrawn')).toBeTruthy();
+  });
+});
+
+describe.each<Where>(['worklist', 'lines'])('F3 and F4 receipts on one chip, on the %s', (where) => {
+  it('F3: a real link and a derived entry on the same SPO line add up to one pill', () => {
+    const real: Link = { ...L12_RECEIVED, receipts: [{ qty: '194', bin: 'B1' }] };
+    const derived: Link = {
+      ...L12_RECEIVED, id: 'derived-x', derived: true, receipts: [{ qty: '194', bin: 'B1' }],
+    };
+    show(cellOf(where, 'spo_number', rowWith([real, derived])));
+    expect(screen.getByText('Received 388 at B1')).toBeTruthy();
+    expect(screen.queryByText('+1')).toBeNull();
+  });
+
+  it('F4: several bins are several visible pills, never a hover-only +N', () => {
+    const link: Link = {
+      ...L12_RECEIVED,
+      receipts: [{ qty: '30', bin: 'B1' }, { qty: '20', bin: 'B2' }],
+    };
+    show(cellOf(where, 'spo_number', rowWith([link])));
+    expect(screen.getByText('Received 30 at B1')).toBeTruthy();
+    expect(screen.getByText('Received 20 at B2')).toBeTruthy();
+    expect(screen.queryByText(/^\+\d+$/)).toBeNull();
+    expect(document.querySelector('[title*="Received 20"]')).toBeNull();
+  });
+});
+
+describe('F5 the Lines tab receipt pill is clickable like the worklist\'s', () => {
+  it('clicking "Received 60 at BRW-BB" opens the SPO document, as the document link does', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: SPO, supplier_name: 'S', lines: [], allocations: [],
+    });
+    show(cellOf('lines', 'spo_number', rowWith([L12_RECEIVED])));
+    fireEvent.click(screen.getByText('Received 60 at BRW-BB'));
+    await waitFor(() => expect(getOrderInquirySpoDetail).toHaveBeenCalled());
   });
 });

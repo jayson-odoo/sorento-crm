@@ -146,8 +146,8 @@ describe('AC-D3: the "Dead document" filter', () => {
     await screen.findByText('SO385126');
     openFilters();
 
-    const option = (await screen.findByRole('option', { name: 'PO cancelled' })) as HTMLOptionElement;
-    expect(screen.getByRole('option', { name: 'SPO withdrawn' })).toBeTruthy();
+    const option = (await screen.findByRole('option', { name: /^PO cancelled/ })) as HTMLOptionElement;
+    expect(screen.getByRole('option', { name: /^SPO withdrawn/ })).toBeTruthy();
     const select = option.parentElement as HTMLSelectElement;
     fireEvent.change(select, { target: { value: 'po_cancelled' } });
 
@@ -156,5 +156,37 @@ describe('AC-D3: the "Dead document" filter', () => {
         expect.objectContaining({ dead_document: 'po_cancelled' }),
       ),
     );
+  });
+});
+
+describe('F6: the "Dead document" select as the mock draws it', () => {
+  beforeEach(() => {
+    getOrderInquiryWorklistSummary.mockResolvedValue({
+      ...MOCK_WORKLIST_SUMMARY,
+      dead_documents: { po_cancelled: 29, spo_withdrawn: 5 },
+    });
+  });
+
+  it('reads "Every document", carries the counts, and clearing drops the param', async () => {
+    renderClient();
+    await screen.findByText('SO385126');
+    openFilters();
+
+    expect(await screen.findByRole('option', { name: 'Every document' })).toBeTruthy();
+    const option = await screen.findByRole('option', { name: 'PO cancelled (29)' });
+    expect(screen.getByRole('option', { name: 'SPO withdrawn (5)' })).toBeTruthy();
+
+    const select = option.parentElement as HTMLSelectElement;
+    fireEvent.change(select, { target: { value: 'spo_withdrawn' } });
+    await waitFor(() =>
+      expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
+        expect.objectContaining({ dead_document: 'spo_withdrawn' }),
+      ),
+    );
+    fireEvent.change(select, { target: { value: '' } });
+    await waitFor(() => {
+      const last = listOrderInquiryWorklist.mock.calls.at(-1)?.[0] as Record<string, unknown>;
+      expect(last.dead_document).toBeUndefined();
+    });
   });
 });
