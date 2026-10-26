@@ -391,7 +391,9 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
         data-testid={triggerId}
         title={first.document}
         aria-label={`Show documents backing ${what}`}
-        className="block min-w-0 truncate rounded-sm text-xs font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        // LINKAGE-UNIFY U3 round 3: a width floor, so the number shortens beside its pills
+        // ("SPO-2026/...", the full number in `title`) but never collapses to nothing.
+        className="block min-w-[9ch] truncate rounded-sm text-xs font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onClick={open_}
       >
         {first.document}
@@ -1262,9 +1264,9 @@ export function useOrderInquiryWorklistColumns({
         id: 'spo_number',
         accessorFn: (row) => documentsOf(row, 'spo')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-        // Same width as PO beside it, for the same reason - plus "awaiting shipment",
-        // which this column prints in full.
-        size: 200,
+        // LINKAGE-UNIFY U3 round 3: wide enough at 1280 for the number, "via PO",
+        // "Received 486 at BRW-BB" and "+1" side by side (and "awaiting shipment" in full).
+        size: 340,
         meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => {
           // A bundled row's documents are the anchor's, and the PO cell already says so

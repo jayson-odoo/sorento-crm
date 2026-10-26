@@ -782,7 +782,9 @@ export function useOrderInquiryHeaderLinesColumns({
         id: 'spo_number',
         accessorFn: (row) => lineDocumentsOf(lineOf(row), 'spo')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-        size: 200,
+        // LINKAGE-UNIFY U3 round 3: the worklist's own SPO width - number, "via PO",
+        // "Received <qty> at <bin>" and "+1" side by side at 1280.
+        size: 340,
         meta: { headerTitle: 'SPO' },
         cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="spo" />,
       },

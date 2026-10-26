@@ -264,7 +264,9 @@ export function OrderInquiryDocumentLink({
       <button
         type="button"
         data-testid={`document-detail-trigger-${document}`}
-        className="block max-w-full truncate rounded-sm font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        // LINKAGE-UNIFY U3 round 3: a width floor, so beside its pills the number shortens
+        // (full number in `title`) but never collapses to nothing.
+        className="block min-w-[9ch] max-w-full truncate rounded-sm font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
         title={document}
         onClick={(event) => {
           event.stopPropagation();
