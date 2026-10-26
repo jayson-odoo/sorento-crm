@@ -1,8 +1,8 @@
 # PLAN: incoming supply shown to a contact respects its location scope (CHAT-INCOMING-LOCATION-SCOPE)
 
-Status: Build (size M, chatbot, backend-only; behaviour card posted on PR #1882, built on the
-recommended answers until the owner says otherwise). Stacked on CHAT-PO-LOCATION-SCOPE (#1880)
-to reuse its `stock_visibility.scope_warehouse_ids`.
+Status: Build (size M, chatbot, backend-only, PR #1882). Card answered by crew from owner rulings
+(26 Oct): Q1a Q2b Q3a Q4a Q5a, plus the ETA ruling below. Branches from main after
+CHAT-PO-LOCATION-SCOPE (#1880) merged; reuses its `stock_visibility.scope_warehouse_ids`.
 
 UAC: `chat-incoming-location-scope-acceptance-criteria.md` (beside this file).
 
@@ -22,7 +22,7 @@ same scope as its stock lines. #1880 fixed the PO / SPO on-order rung only. Stil
 - The parser's LOCATION lookup list (`chatbot/head/lookup_lists.py:506`) offers every active
   warehouse of the session's companies.
 
-## Answers assumed (behaviour card Q1-Q5, recommendations)
+## Answers (behaviour card Q1-Q5, crew from owner rulings 26 Oct)
 
 - Q1 (a) a scoped contact's line `remaining_incoming_quantity` = min(line remainder, sum of the
   in-scope outstanding allocations).
@@ -32,6 +32,21 @@ same scope as its stock lines. #1880 fixed the PO / SPO on-order rung only. Stil
   is not returned.
 - Q4 (a) last-in rows outside scope are dropped, narrowing `warehouse_ids` before the pick.
 - Q5 (a) the LOCATION lookup rows are the scope's warehouses only.
+
+## ETA reads are location-free (owner 26 Oct ~22:20)
+
+"location scoping doesn't apply to ETA". An `availability` (dealer) contact's incoming answer is
+the dealer view (product + ETAs only, `eta_policy.dealer_view`) and is NOT location-scoped; the
+stock ask's ETA (`earliest_packing_list_shipment`, AC-SA307) stays location-free too, so the two
+agree (`test_stock_ask_and_incoming_agree_for_one_contact_and_product`). Location scope applies
+where quantities / allocations / warehouses are printed (compact / detailed contacts), to SPO
+last-in rows (all modes; `availability` also withholds `warehouse`) and to the parser LOCATION list.
+
+## Null-workspace contacts
+
+The policy is resolved from the internal contact id `eta_policy.resolve_request_contact` already
+found (NULL-workspace fallback), never from the raw Respond.io id + space_id, which reads such a
+contact as nobody and fails closed. Same fix ported to the placed route (#1880 carried the bug).
 
 ## Design (one scope function)
 
@@ -49,7 +64,8 @@ same scope as its stock lines. #1880 fixed the PO / SPO on-order rung only. Stil
    - `/shipments` `total_remaining_incoming_quantity` / `distinct_products_incoming` recomputed from
      the scoped lines.
 3. `_Contact` (`incoming_stock.py`) resolves the scope with the rest of the contact's rules and
-   hands it to the service on every route.
+   hands it to the service on every route (the packing-list attachment route included); an
+   `availability` policy gets no scope (ETA ruling).
 4. Last-receipt: `contact_id` / `space_id` declared; scope narrows `warehouse_ids` exactly as the
    placed route does (#1880); empty scope = no rows; `availability` withholds `warehouse`.
 5. Lookup list: `load_rows(..., warehouse_scope=...)`; `engine.py` passes the resolved contact's
