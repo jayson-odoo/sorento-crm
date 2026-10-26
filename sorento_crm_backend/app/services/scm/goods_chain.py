@@ -6,8 +6,9 @@ order keeps its links on the PO (F1), and the PO line's `qty_received` is that t
 receipt (F2). Every reader asking "where are this SO line's goods" has to bridge PO -> SPO
 itself, and four readers bridged it four ways (plan section 1, SO364824 line 880).
 
-**This is Stock Debt's split, lifted out unchanged** (SUPPLY-SPO-LINK, #1850; SPO-RECEIVED-PIN,
-#1388), so the next reader asks it instead of restating it:
+**The logic is Stock Debt's split, lifted out of `StockDebtService._holds`** (SUPPLY-SPO-LINK,
+#1850; SPO-RECEIVED-PIN, #1388), so the next reader asks it instead of restating it. One thing
+changed, below: the split now counts every live placement on the PO line.
 
 * a placement on a PO line takes what each SPO the line was transferred onto can still hold
   (`follow_capacity`, earliest expected first): an `in_transit` hop while the SPO is incoming,
@@ -17,9 +18,10 @@ itself, and four readers bridged it four ways (plan section 1, SO364824 line 880
   incoming (not capped: `assign()` caps), and `received` for what the line landed once it is
   not.
 
-**Screen-independent.** Each PO line and each transferred allocation is a pool the placements
-share in the order they were made (`linked_at, id`), over EVERY live placement on the PO line,
-whatever the caller asked for. Asking for one placement or for the whole book gives that
+**The one change: screen-independent.** Each PO line and each transferred allocation is a pool
+the placements share in the order they were made (`linked_at, id`), over EVERY live placement
+on the PO line, whatever the caller asked for; `_holds` shared it only among the placements on
+the SO lines it was reading. Asking for one placement or for the whole book now gives that
 placement the same hops.
 
 Out on purpose: whether the goods are still in the bin (Stock Debt's `found_empty` and the
