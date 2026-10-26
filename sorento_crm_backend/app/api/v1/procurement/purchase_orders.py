@@ -115,8 +115,9 @@ def get_purchase_orders_placed(
     contact_id: Optional[str] = Query(
         None,
         description=(
-            "The contact this is asked on behalf of. Its stock-visibility policy withholds "
-            "`location` on every row whose location that contact may not see."
+            "The contact this is asked on behalf of. Only rows on a location its "
+            "stock-visibility policy lets it see are returned (the same locations as its "
+            "stock lines); `availability` mode also withholds `location`."
         ),
     ),
     space_id: Optional[str] = Query(None, description="Respond.io workspace id for `contact_id`."),
@@ -163,7 +164,27 @@ def get_purchase_orders_placed(
         resolved_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
         _from = _parse_flex_date(expected_date_from)
         _to = _parse_flex_date(expected_date_to, end_of_day=True)
-        rows = purchase_orders_placed_rows(
+        # CHAT-PO-LOCATION-SCOPE: under a `contact_id` the on-order rows are scoped exactly
+        # like that contact's stock lines - the locations its stock-visibility policy
+        # allows narrow `warehouse_ids` before the query, so a row on any other location
+        # (or on none) is never returned and the summary counts the same rows. An
+        # unresolvable contact fails closed with no rows, as the stock list does.
+        policy = None
+        nothing_visible = False
+        if contact_id:
+            from app.services.stock_visibility import resolve_policy, scope_warehouse_ids
+
+            policy = resolve_policy(db, contact_id, space_id)
+            scope = scope_warehouse_ids(db, policy) if policy is not None else []
+            if scope is not None:
+                allowed = set(scope)
+                resolved_warehouse_ids = (
+                    [w for w in resolved_warehouse_ids if w in allowed]
+                    if resolved_warehouse_ids
+                    else scope
+                )
+                nothing_visible = not resolved_warehouse_ids
+        rows = [] if nothing_visible else purchase_orders_placed_rows(
             db,
             product_ids=resolved_product_ids,
             warehouse_ids=resolved_warehouse_ids,
@@ -173,18 +194,9 @@ def get_purchase_orders_placed(
             dir=dir or "asc",
             limit=limit,
         )
-        if contact_id:
-            # STOCK-TOTAL-OS-SCOPE: the chatbot's on-order note must never name a location
-            # the contact's stock-visibility policy hides. The row stays (what is on order
-            # is still the answer); only its location is withheld.
-            from app.services.stock_visibility import visible_location_codes
-
-            allowed = visible_location_codes(db, contact_id, space_id)
-            if allowed is not None:
-                rows = [
-                    {**r, "location": None} if r.get("location") not in allowed else r
-                    for r in rows
-                ]
+        if policy is not None and policy.mode == "availability":
+            # STOCK-TOTAL-OS-SCOPE: `availability` names no location at all.
+            rows = [{**r, "location": None} for r in rows]
         payload: dict = {
             "data": rows,
             "pagination": {"total": len(rows), "page": 1, "limit": len(rows)},
@@ -199,12 +211,16 @@ def get_purchase_orders_placed(
                 # The SAME filters the rows took, the date window included (review,
                 # should-fix 6): a summary that counts more than the list under it is
                 # worse than no summary.
-                **purchase_orders_placed_summary(
-                    db,
-                    product_ids=resolved_product_ids,
-                    warehouse_ids=resolved_warehouse_ids,
-                    expected_date_from=expected_date_from,
-                    expected_date_to=expected_date_to,
+                **(
+                    {"po_placed_qty": 0, "po_placed_count": 0}
+                    if nothing_visible
+                    else purchase_orders_placed_summary(
+                        db,
+                        product_ids=resolved_product_ids,
+                        warehouse_ids=resolved_warehouse_ids,
+                        expected_date_from=expected_date_from,
+                        expected_date_to=expected_date_to,
+                    )
                 ),
             }
         return JSONResponse(content=jsonable_encoder(payload))
