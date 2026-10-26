@@ -37,6 +37,8 @@ TOOL_REQUIRED_QUERY_HINTS: dict[str, tuple[str, ...]] = {
     "crm_sales_analysis": ("contact_id", "space_id"),
     # The report ask needs the contact pair and a period (422 period_required otherwise).
     "crm_report_ask": ("contact_id", "space_id", "date_from", "date_to"),
+    # SALES-TARGET-CHAT slice 2: the salesperson's own customers are per contact.
+    "crm_sales_opportunity_customer_options": ("contact_id", "space_id"),
 }
 
 # Parent-relation tools: meaningless without a parent entity UUID.
@@ -120,6 +122,8 @@ TOOL_OPTIONAL_BODY_PARAMS: dict[str, tuple[str, ...]] = {
     # existing n8n calls without them keep resolving across all companies
     # (required-first ordering keeps set_key/raw/locale ahead of these two).
     "crm_lookup_resolve": ("contact_id", "space_id"),
+    # SALES-TARGET-CHAT slice 2: a customer OR a prospect, and the dry run, may be omitted.
+    "crm_sales_opportunity_log": ("customer_id", "prospect_name", "dry_run"),
 }
 
 

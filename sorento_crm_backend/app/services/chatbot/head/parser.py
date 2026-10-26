@@ -129,6 +129,10 @@ class ParserConfig:
     # MODEL-PER-CONTACT: where provider/model came from (contact | tag | label | global |
     # fallback_no_key); goes on the `understood` trace.
     model_source: str = "global"
+    # SALES-TARGET-CHAT slice 2: the prompt in use carries the LOG OPPORTUNITY section
+    # (`OPPORTUNITY_LINE`), so the strict schema offers the `opportunity` key (`with_opportunity`).
+    # Production v63 carries no such line: its schema is unchanged. False for a bare config.
+    opportunity: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -864,6 +868,31 @@ def without_by_words(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: SALES-TARGET-CHAT slice 2: the raw template line that turns the `opportunity` key on (the
+#: `sales_channels` pattern: the schema follows the prompt, never the other way round).
+OPPORTUNITY_LINE = '== LOG OPPORTUNITY: order_status "log_opportunity", domain_hint "order" =='
+
+_OPPORTUNITY_SCHEMA: dict[str, Any] = {
+    "type": ["object", "null"],
+    "additionalProperties": False,
+    "properties": {
+        "title": {"type": ["string", "null"]},
+        "amount_rm": {"type": ["number", "null"]},
+        "close_date": {"type": ["string", "null"]},
+    },
+    "required": ["title", "amount_rm", "close_date"],
+}
+
+
+def with_opportunity(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` with the flag-gated `opportunity` object last in `properties` and
+    `required` (required and nullable, as strict mode needs): {title, amount_rm, close_date}."""
+    out = copy.deepcopy(schema)
+    out["properties"]["opportunity"] = copy.deepcopy(_OPPORTUNITY_SCHEMA)
+    out["required"] = [*[k for k in out["required"] if k != "opportunity"], "opportunity"]
+    return out
+
+
 def closed_lists_schema(
     items: list[str], *, state: bool = False, report_fields: bool = True, by_words: bool = True
 ) -> dict[str, Any]:
@@ -987,6 +1016,8 @@ def resolve_config(
         json_schema = closed_lists_schema(
             closed_list_enum(db), state=state_block, report_fields=report_fields, by_words=by_words
         )
+        if OPPORTUNITY_LINE in (raw_template or ""):
+            json_schema = with_opportunity(json_schema)
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -1001,6 +1032,7 @@ def resolve_config(
         report_fields=report_fields,
         by_words=by_words,
         sales_channels=sales_channels,
+        opportunity=OPPORTUNITY_LINE in (raw_template or ""),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         reasoning_effort=reasoning_effort_setting(db),
@@ -1264,7 +1296,8 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     """The production schema for `config`: with or without `state_changes`, with or without the report fields."""
     schema = PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA
     schema = schema if config.report_fields else without_report_fields(schema)
-    return schema if config.by_words else without_by_words(schema)
+    schema = schema if config.by_words else without_by_words(schema)
+    return with_opportunity(schema) if config.opportunity else schema
 
 
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:

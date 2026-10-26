@@ -1982,7 +1982,10 @@ def _report_status_means_order_domain(out: dict[str, Any]) -> None:
         return
     # SALES-TARGET-CHAT: `sales_target` is the sales domain's too, yet not a sales figure
     # status (its grant is its own), so it joins the domain mapping here and nowhere else.
-    sales_statuses = set(contracts.SALES_FIGURE_STATUSES) | {contracts.SALES_TARGET_STATUS}
+    # SALES-TARGET-CHAT slice 2: `log_opportunity` joins the same mapping, for the same reason.
+    sales_statuses = set(contracts.SALES_FIGURE_STATUSES) | {
+        contracts.SALES_TARGET_STATUS, contracts.LOG_OPPORTUNITY_STATUS,
+    }
     report_statuses = OUTSTANDING_ORDER_STATUS | sales_statuses
     status = jsc.js_string(out.get("status") or "").strip()
     # PROMPT-DYNAMIC reviewer pass 2: the parser can now name `sales` off the switch word

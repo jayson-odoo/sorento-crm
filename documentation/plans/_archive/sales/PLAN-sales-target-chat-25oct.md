@@ -1,10 +1,8 @@
 # PLAN: sales target achievement and sales opportunities over the chat (SALES-TARGET-CHAT)
 
-Status: **slice 1 built, PR #1861 ready (cff6a82501), ships DARK; waiting on the owner hand test
-(laneboard/scripts/1861.md) and the ci label. Reviewer READY, security-reviewer CLEAN. Parser candidate not shipped
-(crew decision a30290657, see "Parser gate record"); crew moves the TEST COPY label to B3 for the hand-test window
-only (a30577014). Slice 2 (log an opportunity, salespeople only) starts after the slice 1 hand test. Size L, full
-track.**
+Status: **merged** (#1861, main 3d59b5e716, 25 Oct 2026; owner hand test "1861 ok can merge"). Ships dark. The
+SALES TARGET prompt insert (section v3 below) is handed to CHAT-SLIM-INDEX-PLAN with the slice 2 insert (crew
+a37977616). Slice 2 continues in `documentation/plans/sales/PLAN-sales-opportunity-chat-25oct.md`.
 
 ## Owner ask (25 Oct ~19:17 MYT, verbatim)
 
