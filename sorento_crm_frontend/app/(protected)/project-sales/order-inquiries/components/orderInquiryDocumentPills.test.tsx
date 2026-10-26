@@ -301,21 +301,29 @@ describe('R3 the SPO column is wide enough on both tables', () => {
 });
 
 
-describe('R4 a saved narrow width cannot shrink the SPO column below 320', () => {
-  const tables: Array<[string, () => unknown[]]> = [
-    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[]],
-    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[]],
+/**
+ * R4, as amended by the round-6 ruling (lead, from the owner's "if I resize, I still need to
+ * see the number"): the SPO column may shrink to what still fits the full number + "via PO"
+ * + the compact chip, so the chip is reachable. Measured: worklist number 124 px, Lines tab
+ * number 143 px, "via PO" 52, chip 66, padding ~24. A saved narrower width clamps UP to that
+ * table's own minimum, not to the old 320.
+ */
+describe('R4 the SPO column floor keeps the number, "via PO" and the compact chip', () => {
+  const tables: Array<[string, () => unknown[], number, number]> = [
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 270, 300],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 290, 320],
   ];
 
-  it.each(tables)('(a) the %s SPO column def has minSize >= 320', (_name, build) => {
+  it.each(tables)('(a) the %s SPO column minSize is within its range', (_n, build, low, high) => {
     const { result } = renderHook(build);
     const column = result.current.find((c) => (c as { id?: string }).id === 'spo_number') as {
       minSize?: number;
     };
-    expect(column.minSize ?? 0).toBeGreaterThanOrEqual(320);
+    expect(column.minSize ?? 0).toBeGreaterThanOrEqual(low);
+    expect(column.minSize ?? 0).toBeLessThanOrEqual(high);
   });
 
-  it.each(tables)('(b) the %s table clamps a saved spo_number width of 170 to >= 320', (_name, build) => {
+  it.each(tables)('(b) the %s table clamps a saved width of 170 up to its own minSize', (_n, build, low, high) => {
     const { result } = renderHook(() => {
       const columns = build();
       return useReactTable({
@@ -325,10 +333,11 @@ describe('R4 a saved narrow width cannot shrink the SPO column below 320', () =>
         state: { columnSizing: { spo_number: 170 } },
       });
     });
-    expect(result.current.getColumn('spo_number')!.getSize()).toBeGreaterThanOrEqual(320);
+    const size = result.current.getColumn('spo_number')!.getSize();
+    expect(size).toBeGreaterThanOrEqual(low);
+    expect(size).toBeLessThanOrEqual(high);
   });
 });
-
 
 // ---------------------------------------------------------------------------- round 5
 
@@ -375,7 +384,7 @@ describe.each<Where>(['worklist', 'lines'])('R5 the number leads, the receipt gi
     let hider: HTMLElement | null = receiptPill();
     let hides = false;
     while (hider && !hides) {
-      hides = /(^|\s)@max-\S+:hidden(\s|$)/.test(hider.className);
+      hides = /(^|\s)@max-\[300px\]:hidden(\s|$)/.test(hider.className);
       hider = hider.parentElement;
     }
     expect(hides).toBe(true);
@@ -385,6 +394,23 @@ describe.each<Where>(['worklist', 'lines'])('R5 the number leads, the receipt gi
     ) as HTMLElement | null;
     expect(fallback).not.toBeNull();
     expect(fallback!.className).toMatch(/(^|\s)hidden(\s|$)/);
-    expect(fallback!.className).toMatch(/@max-\S+:(inline-flex|flex|inline-block|block)/);
+    expect(fallback!.className).toMatch(/@max-\[300px\]:(inline-flex|flex|inline-block|block)/);
+  });
+});
+
+// ---------------------------------------------------------------------------- round 7
+
+describe('R7 the default SPO column width shows the full receipt pill', () => {
+  // number + "via PO" + "Received 486 at BRW-BB" (147 px) + gaps/padding: worklist ~355,
+  // Lines tab (wider number) ~374; measured in the browser: full at 400 / 420, clipped at 360 / 380.
+  it.each([
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 400],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 420],
+  ] as Array<[string, () => unknown[], number]>)('the %s default size is >= %i', (_n, build, floor) => {
+    const { result } = renderHook(build);
+    const column = result.current.find((c) => (c as { id?: string }).id === 'spo_number') as {
+      size?: number;
+    };
+    expect(column.size ?? 0).toBeGreaterThanOrEqual(floor);
   });
 });

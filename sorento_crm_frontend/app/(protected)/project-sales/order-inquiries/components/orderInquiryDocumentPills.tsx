@@ -88,11 +88,13 @@ export function receiptsByBin(receipts: OrderInquiryLinkReceipt[]): OrderInquiry
 /**
  * Below this cell width the receipt pills give way to one compact chip (owner, #1870 hand
  * test: "the focus is on the SPO number; if I resize narrow I still need to see the
- * number"). The cell root carries `@container`; at 220px the number, a draft mark and a
- * "via PO" still fit, a readable receipt no longer does.
+ * number"). The cell root carries `@container`. Round 6: at 300px the number, "via PO" and
+ * a readable receipt no longer fit side by side, so the chip takes over from there down to
+ * the SPO column's own floor (`minSize`), which still fits the number, "via PO" and the
+ * chip.
  */
-const RECEIPTS_HIDE = '@max-[220px]:hidden';
-const FALLBACK_SHOW = '@max-[220px]:inline-flex';
+const RECEIPTS_HIDE = '@max-[300px]:hidden';
+const FALLBACK_SHOW = '@max-[300px]:inline-flex';
 
 /**
  * LINKAGE-UNIFY U3 (AC-D1, AC-D3, AC-D4): the state pills beside ONE document line chip,
@@ -165,15 +167,24 @@ export function DocumentStatePills({
         </span>
       ) : null}
       {receipts.length && onShowAll ? (
-        <button
-          type="button"
-          data-testid={`${testIdPrefix}-received-compact-${testIdSuffix}`}
-          aria-label={texts.join(', ')}
-          className={`hidden ${FALLBACK_SHOW} h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-transparent bg-secondary px-2 text-[0.6875rem] leading-[0.75rem] font-medium text-secondary-foreground dark:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
-          onClick={onShowAll}
+        // The "+N" pill's own Badge; `hidden` overrides its display until the container
+        // query shows it.
+        <Badge
+          asChild
+          size="sm"
+          variant="secondary"
+          appearance="light"
+          className={`hidden shrink-0 ${FALLBACK_SHOW}`}
         >
-          Received
-        </button>
+          <button
+            type="button"
+            data-testid={`${testIdPrefix}-received-compact-${testIdSuffix}`}
+            aria-label={texts.join(', ')}
+            onClick={onShowAll}
+          >
+            Received
+          </button>
+        </Badge>
       ) : null}
     </>
   );
