@@ -1,5 +1,5 @@
 """The slimmer parser prompt (PROMPT-RULES-DIET): exact-text edits that bring the list-free parser text from
-129,651 chars to 102,402 with the same behaviour.
+129,651 chars to 102,402, target under 103,000 (owner ruling 26 Oct: the gated s1c text), with the same behaviour.
 
 Applies to the text `chatbot_lookup_edits` produces (it ends in the `== LOOKUP LISTS ==` line). Rounds r01 to
 r04b were measured one by one on the crew eval ledger (documentation/plans/chatbot/PLAN-prompt-rules-diet-26oct.md);
@@ -17,7 +17,7 @@ from app.services import chatbot_lookup_edits
 from app.services.chatbot_lookup_edits import MARKER, Edit, _sha
 
 BASE_CHARS = 129_651
-TARGET_CHARS = 90_000
+TARGET_CHARS = 103_000
 
 logger = logging.getLogger("alembic.runtime.migration")
 
