@@ -462,3 +462,9 @@ Real cases: PO 202607-S0100 (L880 on SPO-2026/09-0107 L9 "Received 486 at BRW-BB
 PO on L12), SPO-2026/09-0107 (L7 withdrawn), PO 202607-S0083 (cancelled line, OI-2609-0194 L16).
 Tests (red first): backend wire for 1-4 incl. `placements_on`; vitest for the dialog headers,
 SPO cells and via-PO rows, and the SCM PO detail header + SPO column; browser 1280 / 375.
+
+Lead note on U4 (26 Oct): owner rule R13 (24 Sep, `OrderInquiryDocumentDialog.tsx` ~658: "the
+lines grid is the WHOLE answer now - no panel underneath states it a second way") stands. The U4
+mock drew "Allocated to" panels in the PO / SPO popups; that was a mock error, so U4 changes the
+popups' lines grids only (SPO column with pills, "Transferred"), and the via-PO placements show on
+the SPO document page's "SO covered" (a different screen, not under R13). Flagged to the owner.
