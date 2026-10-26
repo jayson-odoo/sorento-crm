@@ -9,7 +9,8 @@
 import { apiFetch } from '@/lib/api';
 import { extractApiError } from '@/lib/api-client';
 
-const URL = '/api/v1/user-management/contacts/access-sheet';
+// Staff requests run under one active company; the sheet spans Sorento and Mocha, so ask for every granted one.
+const URL = '/api/v1/user-management/contacts/access-sheet?company_scope=grants';
 
 export type AccessSheetAccount = {
   customer_id: string;

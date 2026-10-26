@@ -63,6 +63,7 @@ const FACET_TEXT: Record<string, string> = {
   companies: 'Companies',
   brands: 'Brands',
   stock_check_mode: 'Stock mode',
+  stock_mode: 'Stock mode',
   stock_locations: 'Locations',
   market_segments: 'Segments',
   media: 'Media',
@@ -84,6 +85,7 @@ function describeChange(change: AccessSheetChange): string {
     const added = after.filter((v) => !before.includes(v));
     return `${label}: + ${added.join(', ')}`;
   }
+  if (Array.isArray(after) && typeof before === 'string') return `${label}: ${before} -> ${after.join(', ')}`;
   if (typeof after === 'boolean') return `${label}: ${after ? 'on' : 'off'}`;
   return `${label}: ${String(after ?? '')}`;
 }
@@ -115,6 +117,8 @@ export default function AccessSheetImportDialog({
   const [preview, setPreview] = useState<AccessSheetResult | null>(null);
   const [result, setResult] = useState<AccessSheetResult | null>(null);
   const [selection, setSelection] = useState<AccessSheetSelection | null>(null);
+  // Labels of customers found by search, kept here so a collapsed block remembers its picks.
+  const [extraLabels, setExtraLabels] = useState<Record<string, string>>({});
   const previewMutation = usePreviewAccessSheet();
   const applyMutation = useApplyAccessSheet();
   const file = files[0] ?? null;
@@ -126,6 +130,7 @@ export default function AccessSheetImportDialog({
     setPreview(null);
     setResult(null);
     setSelection(null);
+    setExtraLabels({});
   };
   const close = (next: boolean) => {
     if (!next) reset();
@@ -197,7 +202,13 @@ export default function AccessSheetImportDialog({
             </div>
           ) : null}
           {step === 'preview' && preview && selection ? (
-            <PreviewStep preview={preview} selection={selection} onChange={setSelection} />
+            <PreviewStep
+              preview={preview}
+              selection={selection}
+              onChange={setSelection}
+              extraLabels={extraLabels}
+              onExtraLabels={(found) => setExtraLabels((prev) => ({ ...prev, ...found }))}
+            />
           ) : null}
           {step === 'result' && result ? <ResultStep result={result} /> : null}
         </DialogBody>
@@ -258,10 +269,14 @@ function PreviewStep({
   preview,
   selection,
   onChange,
+  extraLabels,
+  onExtraLabels,
 }: {
   preview: AccessSheetResult;
   selection: AccessSheetSelection;
   onChange: (next: AccessSheetSelection) => void;
+  extraLabels: Record<string, string>;
+  onExtraLabels: (found: Record<string, string>) => void;
 }) {
   const { counts } = preview;
   const allConfirmed = allExactConfirmed(preview, selection);
@@ -298,7 +313,13 @@ function PreviewStep({
           ))}
         </ul>
       ) : null}
-      <BlockList blocks={preview.blocks} selection={selection} onChange={onChange} />
+      <BlockList
+        blocks={preview.blocks}
+        selection={selection}
+        onChange={onChange}
+        extraLabels={extraLabels}
+        onExtraLabels={onExtraLabels}
+      />
     </div>
   );
 }
@@ -323,10 +344,14 @@ function BlockList({
   blocks,
   selection,
   onChange,
+  extraLabels = {},
+  onExtraLabels,
 }: {
   blocks: AccessSheetBlock[];
   selection?: AccessSheetSelection;
   onChange?: (next: AccessSheetSelection) => void;
+  extraLabels?: Record<string, string>;
+  onExtraLabels?: (found: Record<string, string>) => void;
 }) {
   const [openKeys, setOpenKeys] = useState<Record<string, boolean>>(() =>
     blocks[0] ? { [blocks[0].key]: true } : {},
@@ -378,7 +403,13 @@ function BlockList({
                   <AccountsTable block={block} selection={selection} onChange={onChange} />
                 ) : null}
                 {selection && onChange && block.status !== 'exact' ? (
-                  <ExtraCustomers block={block} selection={selection} onChange={onChange} />
+                  <ExtraCustomers
+                    block={block}
+                    selection={selection}
+                    onChange={onChange}
+                    labels={extraLabels}
+                    onLabels={onExtraLabels}
+                  />
                 ) : null}
                 <ContactsTable contacts={block.contacts} />
               </div>
@@ -447,23 +478,34 @@ function ExtraCustomers({
   block,
   selection,
   onChange,
+  labels,
+  onLabels,
 }: {
   block: AccessSheetBlock;
   selection: AccessSheetSelection;
   onChange: (next: AccessSheetSelection) => void;
+  labels: Record<string, string>;
+  onLabels?: (found: Record<string, string>) => void;
 }) {
   const picker = useCustomerMultiPicker(() => false, undefined, { allGrantedCompanies: true });
   const known = new Set(block.accounts.map((a) => a.customer_id));
-  const fromAccounts = (selection.ticked[block.key] ?? []).filter((id) => known.has(id));
+  const ticked = selection.ticked[block.key] ?? [];
+  const extra = ticked.filter((id) => !known.has(id));
+  const fetchOptions = async (query: string) => {
+    const options = await picker.fetchOptions(query);
+    onLabels?.(Object.fromEntries(options.map((o) => [o.value, o.label])));
+    return options;
+  };
   return (
     <SearchableMultiSelect
-      value={picker.selected}
+      value={extra}
       onChange={(ids) => {
-        picker.setSelected(ids);
-        onChange(setTicked(selection, block.key, [...fromAccounts, ...ids.filter((id) => !known.has(id))]));
+        const next = setTicked(selection, block.key, [...ticked.filter((id) => known.has(id)), ...ids]);
+        // Picking an account is the admin's say-so for this dealer.
+        onChange(ids.length ? setConfirmed(next, block.key, true) : next);
       }}
-      fetchOptions={picker.fetchOptions}
-      selectedOptions={picker.selectedOptions}
+      fetchOptions={fetchOptions}
+      selectedOptions={extra.map((id) => ({ value: id, label: labels[id] ?? 'Customer' }))}
       placeholder="Search customers"
       emptyMessage="No customers match."
       className="w-full"

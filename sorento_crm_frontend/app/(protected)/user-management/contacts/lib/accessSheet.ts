@@ -53,7 +53,7 @@ export function allExactConfirmed(preview: AccessSheetResult, sel: AccessSheetSe
 
 function cell(value: unknown): string {
   let text = value === null || value === undefined ? '' : String(value);
-  if (/^[=+\-@]/.test(text)) text = `'${text}`;
+  if (/^[=+\-@\t\r]/.test(text)) text = `'${text}`;
   return /[",\n\r]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
 }
 
