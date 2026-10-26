@@ -372,3 +372,48 @@ Tests (red first): chain level AC-R3..R7 in `tests/scm/test_goods_chain.py` (new
 ones untouched); Stock Debt cell AC-R3, R4, R6, R7; OI received AC-R1, R2, R6, R8 in the existing
 #973 / #1708 suites' style. Real-case seeds: L880 (GR-2026/10-0017 486 at BRW-BB) and
 OI-2609-0352 L1216 (GR-2026/08-0155 260 at MWH while the SPO says BRW-BB).
+
+## 9. U3 contract (OI display: Lines tab + worklist, as approved mock v2)
+
+Track: slice U3, own PR stacked on U2. No migration, no RBAC. UI: exactly mock v2
+(`documentation/mockups/LINKAGE-UNIFY/index.html`, approved 09:39) minus the card proposal
+(owner 09:45: stage cards unchanged).
+
+Wire (`links_for_rows` entries, `_shared/types/orderInquiry.types.ts` ~196):
+
+- Every entry (real link or derived SPO entry) gains `receipts: [{qty, bin}]`: the chain's
+  `received` hops on that SPO (SPO entries) or `received_direct` hops on that PO line (PO
+  entries), placement share, GR bin (Q1, Q4, Q6). Empty list when nothing landed.
+- Every real link gains `dead_reason`: `"po_cancelled"` | `"spo_withdrawn"` | `null` (Q5). A
+  direct link on a retired SPO line with nothing received is no longer dropped from the list
+  (`visible_line_clauses` filter at PS ~8186 lifted for links; the dead hop says why).
+- Derived SPO entries come from the chain's `spo` hops of the row's PO links, every state (not
+  `derived_spo_open_clauses` any more): in transit as today (qty = open balance), received with
+  `receipts`. Dead hops are not derived entries (they belong to the real link).
+- `received` / `received_qty` keep U2 meaning; the worklist reserve chip reads them unchanged.
+
+Worklist filter "Dead document" (Q5): query param `dead_document` = `po_cancelled` |
+`spo_withdrawn`; rows with a live link whose chain is dead for that reason. Candidates narrowed
+in SQL (PO line not open, SPO line not incoming), confirmed by the chain (one batched call),
+then `OrderInquiryRow.id IN (...)`. Option counts as in the mock ("PO cancelled (20)") come
+from the same read if the worklist already serves facet counts; otherwise plain options.
+
+FE (`app/(protected)/project-sales/order-inquiries/`):
+
+- One shared document-pill piece used by BOTH `components/orderInquiryWorklistColumns.tsx`
+  (`DocumentsCell` ~358-470, `WorklistPill` ~74) and `[id]/components/orderInquiryHeaderLinesColumns.tsx`
+  (`LineDocumentsCell` ~136-184, `DocumentCell` ~186-224): parity by construction.
+- PO chip: no "received" pill (owner note on mock v1). Exception: `receipts` on a PO entry
+  (class d, no SPO side) -> "Received <qty> at <bin>".
+- SPO chip: one "Received <qty> at <bin>" pill per receipt (Badge secondary light, the
+  existing pill style); several bins -> first pill + the existing "+N" pattern.
+- Dead: red "PO cancelled" / "SPO withdrawn" (Badge destructive light) on the chip.
+- "Dead document" select in the filters (`OrderInquiriesClient.tsx` ~1577), `SearchableSelect`,
+  clearable, same pattern as State.
+- State pill "On PO/SPO" untouched; stage cards untouched.
+
+Tests (red first): backend wire (receipts, dead_reason, derived entries for received SPOs,
+retired-0 link listed, `dead_document` filter) on the real cases L880 / L64 / L784 / OI-2609-0194
+L16 shapes; vitest for the shared pill piece (PO no received pill, SPO receipt pill wording,
+dead pills, class d PO receipt pill) and the filter select. Browser pass 1280 / 375 on the crew
+test copy, then hand test.
