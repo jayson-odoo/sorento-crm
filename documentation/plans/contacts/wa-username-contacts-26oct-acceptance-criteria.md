@@ -51,7 +51,7 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
   contact is the survivor: a CRM row with that phone keeps its row and access and its `respond_io_id` becomes the
   phone contact's id (unchanged in the normal case); with no CRM row for that phone, one is created with the phone,
   the phone contact's id and the default workspace, and the default agents (as any new contact).
-- WU13 Staff hand-off = one internal comment on the Respond.io conversation (`add_comment` action) naming the
+- WU13 Staff hand-off = one internal comment on the Respond.io conversation (posted by the CRM through `RespondClient.create_comment`) naming the
   reason (the phone shown only to staff). No assignment (an unknown contact has no routing) and no customer-facing
   line (no approved wording).
 - WU14 No merge needed: if Respond.io has no contact for that phone, the CRM sets the phone on the turn's
@@ -70,7 +70,9 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
 
 ## Safety
 - WU18 Logs never carry a full phone number (masked as the phone sign-in does); the staff comment may.
-- WU19 Every Respond.io call in this flow goes through `RespondClient` for the default workspace; tests stub it.
+- WU19 Every Respond.io call in this flow (ask, lookup, merge, phone update, verified line, staff comment) goes
+  through `RespondClient` for the default workspace, called by the CRM itself; the turn hands the sender no actions
+  (after a merge the turn's contact id no longer exists). Tests stub the client.
 
 ## Not in scope
 Typed numbers or one-time codes (Q1); re-pointing chat history rows of the merged-away Respond.io id; n8n; any UI.

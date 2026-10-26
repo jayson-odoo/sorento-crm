@@ -81,6 +81,12 @@ for this contact") and the customer gets nothing, as any not-allowed contact tod
   `respond_messaging_service.send_template_for_use_case(db, identifier=contact_respond_id, use_case="wa_phone_share",
   context_vars={})` through the module attribute (so tests patch `respond_messaging_service.send_template_for_use_case`);
   False on `TemplateSendSkipped`, any other error propagates to the gate as a failure (hand-off).
+- **Output channel (lead ruling, 27 Oct):** every Respond.io output of this flow goes through the client seam
+  directly: the ask (`send_ask`), the verified line (`client.send_message(<survivor id>, text)`,
+  `integration_service.py:409`) and the staff comment (`client.create_comment(<survivor or turn id>, text)`, `:472`).
+  The turn returns `actions == []` (its `reply` may carry the text for the trace). Reason: the sender addresses every
+  action to the turn's own contact id (`direct_ingress.send_outcome`, `:355-392`; `documentation/n8n/chatbot-sender.md`
+  table), and after a merge that id is the merged-away contact, so an action could not reach the survivor.
 - Risk for the coder: the template carries a static Share Contact Info button; check `build_template_request`
   (`respond_messaging_service.py`) sends a template whose button has no parameter without error.
 
