@@ -4050,43 +4050,37 @@ class ProjectOrderInquiryService:
             return bool(row and row[0] == ref)
         if spo_allocation_id:
             row = (
-                self.db.query(
-                    SPOAllocation.from_so_line_ref,
-                    SPOAllocation.from_po_line_ref,
-                    SPOAllocation.from_po_number,
-                )
+                self.db.query(SPOAllocation.from_so_line_ref)
                 .filter(SPOAllocation.id == spo_allocation_id)
                 .first()
             )
             if row is None:
                 return False
-            direct_ref, po_line_ref, po_number = row
-            if direct_ref:
-                return direct_ref == ref
-            if po_line_ref and po_number:
-                matches = (
-                    self.db.query(PurchaseOrderLine.from_so_line_ref)
-                    .join(
-                        PurchaseOrder,
-                        PurchaseOrder.id == PurchaseOrderLine.purchase_order_id,
-                    )
-                    .filter(
-                        PurchaseOrder.po_number == po_number,
-                        PurchaseOrderLine.source_ref == po_line_ref,
-                    )
-                    .limit(2)
-                    .all()
+            if row[0]:
+                return row[0] == ref
+            # LINKAGE-UNIFY U5: the PO line the allocation was transferred from, by the
+            # goods chain's own key (PO number, both line refs trimmed, same product,
+            # same company, or the allocation's own `po_line_id`).
+            matches = (
+                self.db.query(PurchaseOrderLine.from_so_line_ref)
+                .join(
+                    PurchaseOrder,
+                    PurchaseOrder.id == PurchaseOrderLine.purchase_order_id,
                 )
-                if len(matches) != 1:
-                    if len(matches) > 1:
-                        logger.warning(
-                            "_book_names_target_for_line: ambiguous "
-                            "(po_number=%r, source_ref=%r) resolves to more "
-                            "than one purchase_order_line; refused",
-                            po_number, po_line_ref,
-                        )
-                    return False
-                return matches[0][0] == ref
+                .join(SPOAllocation, goods_chain.po_spo_key_clause())
+                .filter(SPOAllocation.id == spo_allocation_id)
+                .limit(2)
+                .all()
+            )
+            if len(matches) != 1:
+                if len(matches) > 1:
+                    logger.warning(
+                        "_book_names_target_for_line: ambiguous allocation %r "
+                        "resolves to more than one purchase_order_line; refused",
+                        spo_allocation_id,
+                    )
+                return False
+            return matches[0][0] == ref
         return False
 
     def _displace_other_line_holders(
@@ -10013,8 +10007,37 @@ class ProjectOrderInquiryService:
             .all()
         ):
             by_spo[str(target_id)] = by_spo.get(str(target_id), _ZERO) + _dec(qty)
+        # LINKAGE-UNIFY U5 (A-R11): a placement on a PO line whose goods AutoCount moved
+        # onto an SPO holds that SPO's quantity as well - 486 placed on PO 202607-S0100
+        # leaves no free 486 on SPO-2026/09-0107 L9 for another row. The split is the goods
+        # chain's own, the one Stock Debt and the OI screens read.
+        for allocation_id, qty in self._followed_spo_claims().items():
+            by_spo[allocation_id] = by_spo.get(allocation_id, _ZERO) + qty
         self._linked_by_target_cache = (by_po, by_spo)
         return by_po, by_spo
+
+    def _followed_spo_claims(self) -> Dict[str, Decimal]:
+        """By SPO allocation id, what the live placements on PO lines hold there by the
+        goods chain (in transit or received). Only a line AutoCount has transferred from
+        (`qty_received > 0`) can have its placements on an SPO, so only those are read -
+        one batched chain read, no per-target query."""
+        link_ids = [
+            str(link_id)
+            for (link_id,) in self.db.query(OrderInquiryLink.id)
+            .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+            .filter(PurchaseOrderLine.qty_received > 0)
+            .all()
+        ]
+        out: Dict[str, Decimal] = {}
+        for chain in goods_chain.chains_for_links(self.db, link_ids, with_bins=False).values():
+            for hop in chain.hops:
+                if (
+                    hop.kind == goods_chain.KIND_SPO
+                    and hop.spo_allocation_id
+                    and hop.state in (goods_chain.IN_TRANSIT, goods_chain.RECEIVED)
+                ):
+                    out[hop.spo_allocation_id] = out.get(hop.spo_allocation_id, _ZERO) + hop.qty
+        return out
 
     def _invalidate_link_cache(self) -> None:
         """Every writer of a link calls this. A stale total is a double-claim.
