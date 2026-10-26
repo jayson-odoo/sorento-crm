@@ -93,6 +93,14 @@ USE_PROVIDER = _UseProvider()
 #: `None` means spelling only; tests set a callable or None.
 EMBED: Any = USE_PROVIDER
 
+#: CHAT-V66-REGRESSIONS: the State subject keys whose values a list holds (`chat_state._subject`), so a value the
+#: conversation already settled stays nameable on a turn whose own words do not repeat it (v63 listed every brand,
+#: location, salesperson and channel on every turn).
+HELD_SUBJECT_LISTS = {
+    "brand": "brand", "warehouse": "location", "customer": "customer", "channel": "sales_channel",
+    "category": "category", "salesperson": "salesperson", "attachment_type": "file_type",
+}
+
 _LINE_RE = re.compile(r"^[ \t]*" + re.escape(MARKER) + r"[ \t]*$", re.MULTILINE)
 _CUSTOMER_BLOCKERS = frozenset({"category", "brand", "sales_channel", "location"})
 _WORD_RE = re.compile(r"[^\W_]+")
@@ -185,6 +193,82 @@ def _prepare(texts: list[str]) -> dict[str, tuple[str, frozenset[str]]]:
         return built
 
 
+#: CHAT-V66-REGRESSIONS: only the rows a floor can be reached for go through the exact per-piece loop
+#: (`_rows_that_can_hit`); False sends every row (the reference the tests compare against).
+FILTER_ROWS = True
+#: Per row set: the trigram postings of its texts (text columns in `row_texts` order), kept like `_prepared`.
+_indexes: dict[str, tuple[dict[str, Any], Any, Any, dict[str, list[int]]]] = {}
+
+
+def _text_index(texts: list[str], prepared: dict[str, tuple[str, frozenset[str]]]):
+    """(trigram -> columns holding it, trigrams per text, words per text, folded text -> its columns) for `texts`
+    (folded, non-empty)."""
+    import numpy as np
+
+    key = hashlib.sha1("\0".join(texts).encode()).hexdigest()
+    with _store_lock:
+        built = _indexes.get(key)
+        if built is None:
+            postings: dict[str, list[int]] = {}
+            for col, t in enumerate(texts):
+                for g in prepared[t][1]:
+                    postings.setdefault(g, []).append(col)
+            same: dict[str, list[int]] = {}
+            for col, t in enumerate(texts):
+                same.setdefault(prepared[t][0], []).append(col)
+            built = (
+                {g: np.asarray(cols, dtype=np.int64) for g, cols in postings.items()},
+                np.asarray([len(prepared[t][1]) for t in texts], dtype=np.int64),
+                np.asarray([prepared[t][0].count(" ") + 1 for t in texts], dtype=np.int64),
+                same,
+            )
+            while len(_indexes) >= _PREPARED_SETS:
+                _indexes.pop(next(iter(_indexes)))
+            _indexes[key] = built
+        return built
+
+
+def _rows_that_can_hit(rows, by_list, prepared, texts, piece_grams, meaning) -> list[LookupRow]:
+    """The rows (in order) whose best spelling (`_spelling`: the same trigram Jaccard, from integer counts) or best
+    meaning (the same cosines) over their list's pieces reaches a floor. Every other row would score below both floors
+    in the exact loop, so leaving it out changes no hit."""
+    import numpy as np
+
+    pieces_all = list(piece_grams)
+    postings, sizes, nwords, same = _text_index(texts, prepared)
+    n = len(texts)
+    col = {t: i for i, t in enumerate(texts)}
+    jac = np.zeros((len(pieces_all), n), dtype=np.float64)
+    for i, p in enumerate(pieces_all):
+        parts = [postings[g] for g in piece_grams[p] if g in postings]
+        if parts:
+            inter = np.bincount(np.concatenate(parts), minlength=n)
+            jac[i] = inter / (len(piece_grams[p]) + sizes - inter)
+        jac[i, same.get(p, [])] = 1.0  # `_spelling`: the same folded text is 1.0 (a Chinese word has no ASCII trigrams)
+    pwords = np.asarray([p.count(" ") + 1 for p in pieces_all], dtype=np.int64)
+    sim = meaning[2].astype(np.float64) if meaning is not None else None
+    pos = {p: i for i, p in enumerate(pieces_all)}
+    keep: set[int] = set()
+    by_name: dict[str, list[tuple[int, LookupRow]]] = {}
+    for at, r in enumerate(rows):
+        by_name.setdefault(r.list_name, []).append((at, r))
+    for name, members in by_name.items():
+        allowed = [pos[p] for p in by_list.get(name) or [] if p in pos]
+        if not allowed:
+            continue
+        spell = jac[allowed]
+        if name == "spec":  # `_spelling(same_words=True)`: a near spelling has as many words as the text
+            spell = spell * (pwords[allowed][:, None] == nwords[None, :])
+        best = (spell.max(axis=0) >= FLOOR_SPELLING)
+        if sim is not None:
+            floor = FLOOR_MEANING_BY_LIST.get(name, _FLOOR_MEANING_OTHER)
+            best = best | (sim[allowed].max(axis=0) >= floor)
+        for at, r in members:
+            if any(best[col[t]] for t in r.texts if t in col):
+                keep.add(at)
+    return [r for at, r in enumerate(rows) if at in keep]
+
+
 def _unit_rows(mat):
     import numpy as np
 
@@ -214,17 +298,43 @@ def _meaning(embed: Embedder | None, usable: list[str], texts: list[str]):
         return None
 
 
+def held_values(subject: dict[str, Any]) -> dict[str, tuple[str, ...]]:
+    """List name -> the values the State subject holds for it (`HELD_SUBJECT_LISTS`); other subject keys are dropped."""
+    out: dict[str, tuple[str, ...]] = {}
+    for key, name in HELD_SUBJECT_LISTS.items():
+        value = subject.get(key)
+        values = tuple(str(v) for v in (value if isinstance(value, list) else [value]) if v and _fold(str(v)))
+        if values:
+            out[name] = values
+    return out
+
+
+def _held_hits(rows: list[LookupRow], held: dict[str, tuple[str, ...]]) -> dict[str, dict[str, Hit]]:
+    """Per list, the rows whose own text is a held value, case and punctuation aside (no near spelling, no meaning)."""
+    wanted = {name: {_fold(v) for v in values} for name, values in held.items()}
+    out: dict[str, dict[str, Hit]] = {}
+    for row in rows:
+        folded = wanted.get(row.list_name)
+        match = next((_fold(t) for t in row.texts if _fold(t) in folded), None) if folded else None
+        if match:
+            out.setdefault(row.list_name, {})[row.key] = Hit(row, match, 1.0, 0.0)
+    return out
+
+
 def shortlist(
     message: str,
     rows: list[LookupRow],
     embed: Embedder | None,
     *,
     brand_words: frozenset[str] = frozenset(),
+    held: dict[str, tuple[str, ...]] | None = None,
 ) -> dict[str, list[Hit]]:
-    """Per list, the rows the message spells or means near, best first, cut to `TOP_K`."""
+    """Per list, the rows the message spells or means near, and the rows `held` names (`held_values`), best first,
+    cut to `TOP_K`."""
+    best: dict[str, dict[str, Hit]] = _held_hits(rows, held) if held else {}
     usable = [p for p in pieces(message) if not _code_like(p)]
     if not usable or not rows:
-        return {}
+        return _ordered(best)
     # One-span-one-list: a piece that holds a brand word feeds no category row.
     by_list: dict[str, list[str]] = {}
     for name in {r.list_name for r in rows}:
@@ -239,9 +349,9 @@ def shortlist(
     row_texts = [t for t, (folded, _g) in prepared.items() if folded]
     meaning = _meaning(embed, usable, row_texts)
     piece_grams = {p: candidates.trigrams(p) for p in usable}
+    scan = _rows_that_can_hit(rows, by_list, prepared, row_texts, piece_grams, meaning) if FILTER_ROWS else rows
 
-    best: dict[str, dict[str, Hit]] = {}
-    for row in rows:
+    for row in scan:
         row_pieces = by_list.get(row.list_name) or []
         floor_meaning = FLOOR_MEANING_BY_LIST.get(row.list_name, _FLOOR_MEANING_OTHER)
         spell_best, mean_best, piece_best, score_best = 0.0, 0.0, "", -1.0
@@ -256,8 +366,12 @@ def shortlist(
                 score = max(s if s >= FLOOR_SPELLING else 0.0, m if m >= floor_meaning else 0.0)
                 if score > score_best:
                     piece_best, score_best = piece, score
-        if spell_best >= FLOOR_SPELLING or mean_best >= floor_meaning:
+        if (spell_best >= FLOOR_SPELLING or mean_best >= floor_meaning) and row.key not in best.get(row.list_name, {}):
             best.setdefault(row.list_name, {})[row.key] = Hit(row, piece_best, spell_best, mean_best)
+    return _ordered(best)
+
+
+def _ordered(best: dict[str, dict[str, Hit]]) -> dict[str, list[Hit]]:
     out: dict[str, list[Hit]] = {}
     for name, hits in best.items():
         ordered = sorted(hits.values(), key=lambda h: (-max(h.spelling, h.meaning), h.row.label))
@@ -660,18 +774,21 @@ def provider_embedder(api_key: str) -> Embedder:
     def pieces_matrix(texts: list[str]):
         import numpy as np
 
+        # The message's own vectors are read before the cache evicts: a cached piece at the front of the cache is
+        # still this message's piece (CHAT-V66-REGRESSIONS: it raised KeyError and the turn lost its meaning scores).
         with _store_lock:
-            todo = [t for t in dict.fromkeys(texts) if t not in _pieces]
+            got = {t: _pieces[t] for t in texts if t in _pieces}
+        todo = [t for t in dict.fromkeys(texts) if t not in got]
         if todo:
             resp = client().embeddings.create(model=EMBED_MODEL, input=todo)
             vectors = _unit_rows([item.embedding for item in resp.data])
+            got.update(zip(todo, vectors))
             with _store_lock:
                 for t, vec in zip(todo, vectors):
                     _pieces[t] = vec
                 while len(_pieces) > _PIECES_CAP:
                     _pieces.pop(next(iter(_pieces)))
-        with _store_lock:
-            return np.stack([_pieces[t] for t in texts])
+        return np.stack([got[t] for t in texts])
 
     embed.fill = fill  # type: ignore[attr-defined]
     embed.matrix = matrix  # type: ignore[attr-defined]
@@ -682,6 +799,33 @@ def provider_embedder(api_key: str) -> Embedder:
 
 
 _warm_lock = threading.Lock()
+
+
+def prefetch(message: str, embed: Embedder | None) -> Callable[[], bool]:
+    """CHAT-V66-REGRESSIONS: start the message pieces' embedding (the lookup's one network call per turn) on a thread,
+    so the round trip overlaps the turn's database work. The returned call waits for it, at most `EMBED_TIMEOUT`, and
+    says whether the pieces arrived; when they did not (late or failed) the turn reads spelling only rather than send
+    the request a second time. Only the provider embedder (`pieces`) is prefetched; anything else is ready at once."""
+    usable = [p for p in pieces(message) if not _code_like(p)]
+    if embed is None or not hasattr(embed, "pieces") or not usable:
+        return lambda: True
+    arrived: list[bool] = []
+
+    def run() -> None:
+        try:
+            embed.pieces(usable)  # type: ignore[attr-defined]
+            arrived.append(True)
+        except Exception:  # noqa: BLE001 - advisory: spelling only
+            pass
+
+    thread = threading.Thread(target=run, name="lookup-lists-prefetch", daemon=True)
+    thread.start()
+
+    def ready() -> bool:
+        thread.join(EMBED_TIMEOUT)
+        return bool(arrived)
+
+    return ready
 
 
 def row_texts(rows: list[LookupRow]) -> list[str]:
