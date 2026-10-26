@@ -41,6 +41,7 @@ import {
 } from '../../_shared/lib/orderInquiryWorklist';
 import type {
   OrderInquiryDeadReason,
+  OrderInquiryLink,
   OrderInquiryLinkReceipt,
   OrderInquiryLinkSuggestion,
   OrderInquiryWorklistRow,
@@ -50,6 +51,7 @@ import {
   type StagedReserveEntry,
 } from '../[id]/components/orderInquiryHeaderLinesColumns';
 import { OrderInquiryBackingDocumentsDialog } from './OrderInquiryBackingDocumentsDialog';
+import { DocumentStatePills, receiptsByBin, WorklistPill } from './orderInquiryDocumentPills';
 import { OrderInquiryDocumentLink } from './OrderInquiryDocumentDialog';
 import { OrderInquiryQtyAnnotationDialog } from './OrderInquiryQtyAnnotationDialog';
 import { sameDisplayText } from '@/lib/product-display';
@@ -64,57 +66,6 @@ function Muted({ children }: { children: React.ReactNode }) {
  * purchasing does not need it as a worklist column any more.
  */
 export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no', 'raise_event'];
-
-/**
- * REV design (17 Sep review round): the row's own one-word marks - `via PO`/`via SPO`,
- * `received`, `reallocate`/`unlink`, `used`, `note` - shared ONE pill from here on,
- * rather than four hand-rolled spellings of `text-2xs text-muted-foreground` (one of
- * them a literal `text-[var(--color-warning-accent,...)]` colour). The same `Badge`
- * idiom the `+N` pill beside them already used (`size="sm" appearance="light" asChild`);
- * `warning` is the design system's own token for the amber marks, never a literal one.
- */
-export function WorklistPill({
-  as = 'span',
-  warning = false,
-  destructive = false,
-  testId,
-  onClick,
-  ariaLabel,
-  title,
-  children,
-}: {
-  as?: 'span' | 'button';
-  warning?: boolean;
-  /** LINKAGE-UNIFY U3 (Q5): the red "PO cancelled" / "SPO withdrawn" marks. */
-  destructive?: boolean;
-  testId: string;
-  onClick?: (event: React.MouseEvent) => void;
-  ariaLabel?: string;
-  title?: string;
-  children: React.ReactNode;
-}) {
-  const variant = destructive ? 'destructive' : warning ? 'warning' : 'secondary';
-  return (
-    <Badge asChild size="sm" variant={variant} appearance="light">
-      {as === 'button' ? (
-        <button
-          type="button"
-          data-testid={testId}
-          aria-label={ariaLabel}
-          title={title}
-          className="shrink-0"
-          onClick={onClick}
-        >
-          {children}
-        </button>
-      ) : (
-        <span data-testid={testId} title={title} className="shrink-0">
-          {children}
-        </span>
-      )}
-    </Badge>
-  );
-}
 
 /**
  * Is what this row shows firm, or still a row nobody has acknowledged (S1: essentially
@@ -146,30 +97,18 @@ function DraftMark({ row }: { row: OrderInquiryWorklistRow }) {
 }
 
 /**
- * The distinct document NUMBERS this row is linked to, of one book, in link order.
- *
- * Distinct numbers rather than links: two containers of one shipping order are one
- * document to the person reading the list (AC-R-27), and the `+N` pill counts documents,
- * not placements. The lightbox behind the number still lists every link.
- *
- * The PO side also answers with the purchase order a SHIPMENT came from (7.2, owner 14 Sep
- * evening: "we definitely cannot double count, but by this linking it helps us to know the
- * PO and SPO corresponding to this order inquiry"). The importer stopped linking a purchase
- * order line for units already on its own ship, so a row whose whole quantity has sailed
- * holds no `po` link at all, and this column would go blank on exactly the rows purchasing
- * most wants to trace. A purchase order and its own shipment are ONE number here: the
- * partly shipped row carries both a `po` link and an `spo` link naming the same purchase
- * order, and the list must not read that as two.
- */
-/**
- * One document number for this cell's book, and whether it is DERIVED (S5, R-E) - the
- * PO column's number read off an SPO link's `source_po_number` (`via: 'spo'`), or the
- * SPO column's number that is really the linked PO's own open shipment (`via: 'po'`).
- * Written nowhere: no link is created for either, so `via` never appears outside these
- * two columns.
+ * One chip of this cell's book (LINKAGE-UNIFY U3: one per DOCUMENT LINE, owner round 2 -
+ * an SPO line, or a PO line), and whether it is DERIVED (S5, R-E) - the PO column's
+ * number read off an SPO link's `source_po_number` (`via: 'spo'`), or the SPO column's
+ * line that is really the linked PO's own shipment (`via: 'po'`). Written nowhere: no
+ * link is created for either, so `via` never appears outside these two columns.
  */
 export interface DocumentEntry {
+  /** The document line this chip stands for (`document|line`). */
+  key: string;
   document: string;
+  /** `L12` when the book numbered the line; the "+N" list names the line by it. */
+  lineLabel: string | null;
   via: 'po' | 'spo' | null;
   /**
    * R17 (owner rulings, 25 Sep 2026): addresses the PO lightbox for a `kind: 'po'`
@@ -181,10 +120,8 @@ export interface DocumentEntry {
    */
   poId: string | null;
   /**
-   * The FIRST link naming this document is fully received (S1,
-   * `PLAN-oi-replan-received-links.md`, AC-RL-02) - goods that have landed, not a promise
-   * still in transit. `receivedQty`/`qty` back the chip's own title; both are the LINK's
-   * own figures, never the row's.
+   * The FIRST link on this line is fully received (S1, `PLAN-oi-replan-received-links.md`,
+   * AC-RL-02). `receivedQty`/`qty` are the LINK's own figures, never the row's.
    */
   received: boolean;
   receivedQty: string | null;
@@ -193,134 +130,116 @@ export interface DocumentEntry {
    * row's own delivery date (AC-RL-24). */
   expectedDate: string | null;
   /**
-   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): the FIRST link
-   * naming this document carries a reallocate/unlink instruction. Never on a received
-   * link (S1's own `received` and S1b's `suggestion` are mutually exclusive by
-   * construction on the wire, but the chip reads whichever the link states).
+   * S1b (`PLAN-oi-replan-received-links.md`, AC-RL-20 to AC-RL-24): the FIRST link on
+   * this line carries a reallocate/unlink instruction.
    */
   suggestion: OrderInquiryLinkSuggestion | null;
   /**
-   * LINKAGE-UNIFY U3 (Q1, Q4, Q6): where this document's goods were received for the
-   * row, one per GR bin - every link of THIS book naming the document, added together. A
-   * PO number read off an SPO link (`via: 'spo'`) carries none: goods that went on
-   * through an SPO are that SPO's, never the PO's (owner note on mock v1).
+   * LINKAGE-UNIFY U3 (Q1, Q4, Q6): where this line's goods were received, one per GR bin
+   * - every link of THIS book on the line, added up per bin. A PO number read off an SPO
+   * link (`via: 'spo'`) carries none: goods that went on through an SPO are that SPO's,
+   * never the PO's (owner note on mock v1).
    */
   receipts: OrderInquiryLinkReceipt[];
-  /** Q5: a link of this book naming the document brings nothing, and why. */
+  /** Q5: the line brings nothing, and why. */
   deadReason: OrderInquiryDeadReason | null;
+  /** The first link of this book on the line (its ids open the document), and its row. */
+  link: OrderInquiryLink | null;
+  row: OrderInquiryWorklistRow;
 }
 
-export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
-  const entries: DocumentEntry[] = [];
-  const seen = new Map<string, DocumentEntry>();
-  for (const link of row.links ?? []) {
-    let named: string | null = null;
-    let via: 'po' | 'spo' | null = null;
-    let poId: string | null = null;
-    if (kind === 'po') {
-      if (link.kind === 'po') {
-        named = link.document;
-        poId = link.po_id ?? null;
-      } else if (link.kind === 'spo' && link.source_po_number) {
-        named = link.source_po_number;
-        via = link.derived_po ? 'spo' : null;
-        // R17: the source PO's OWN id, resolved through this SPO allocation's supply
-        // PO line - never guessed here, the Lines tab / worklist fall back to a
-        // number lookup only when this is null.
-        poId = link.purchase_order_id ?? null;
-      }
-    } else if (link.kind === 'spo') {
-      named = link.document;
-      via = link.derived ? 'po' : null;
-    }
-    const document = (named ?? '').trim();
-    if (!document) continue;
-    // LINKAGE-UNIFY U3: only a link of this cell's own book speaks for the document's
-    // receipts and dead state; one book's goods never read as the other's.
-    const ownBook = link.kind === kind;
-    const existing = seen.get(document);
-    if (existing) {
-      if (ownBook) {
-        existing.receipts.push(...(link.receipts ?? []));
-        existing.deadReason = existing.deadReason ?? link.dead_reason ?? null;
-      }
+/**
+ * The chips of one book over `sources` (every link of a row, or of every row of a sales
+ * order line on the Lines tab), one per document LINE (LINKAGE-UNIFY U3, owner round 2):
+ * an SPO line by its line label (else its allocation), a PO line by its own id. Several
+ * links on one line - two placements, a real link and the derived entry of the same line
+ * - are one chip, their receipts added up per bin. Live chips first, dead ones after, so
+ * a withdrawn line never hides a live one behind "+N".
+ *
+ * Distinct LINES rather than links: two containers of one shipping order line are one
+ * line to the person reading the list (AC-R-27). The PO side also answers with the
+ * purchase order a SHIPMENT came from (7.2): a row whose whole quantity has sailed holds
+ * no `po` link at all, and this column would go blank on exactly the rows purchasing most
+ * wants to trace. A purchase order and its own shipment are ONE number here, so that
+ * number is a chip only when no PO link of the row names it already.
+ */
+export function documentChipsOf(
+  sources: { row: OrderInquiryWorklistRow; link: OrderInquiryLink }[],
+  kind: 'po' | 'spo',
+): DocumentEntry[] {
+  const chips: DocumentEntry[] = [];
+  const byKey = new Map<string, DocumentEntry>();
+  const viaSources: { row: OrderInquiryWorklistRow; link: OrderInquiryLink }[] = [];
+  for (const source of sources) {
+    const { row, link } = source;
+    if (link.kind !== kind) {
+      if (kind === 'po' && link.kind === 'spo' && link.source_po_number) viaSources.push(source);
       continue;
     }
-    const entry: DocumentEntry = {
+    const document = (link.document ?? '').trim();
+    if (!document) continue;
+    const line =
+      kind === 'spo'
+        ? (link.line_label ?? link.spo_allocation_id ?? '')
+        : (link.po_line_id ?? link.line_label ?? '');
+    const key = `${document}|${line}`;
+    const existing = byKey.get(key);
+    if (existing) {
+      existing.receipts = receiptsByBin([...existing.receipts, ...(link.receipts ?? [])]);
+      existing.deadReason = existing.deadReason ?? link.dead_reason ?? null;
+      continue;
+    }
+    const chip: DocumentEntry = {
+      key,
       document,
-      via,
-      poId,
+      lineLabel: link.line_label ?? null,
+      via: kind === 'spo' && link.derived ? 'po' : null,
+      poId: kind === 'po' ? (link.po_id ?? null) : null,
       received: Boolean(link.received),
       receivedQty: link.received_qty ?? null,
       qty: link.qty ?? null,
       expectedDate: link.expected_date ?? null,
       suggestion: link.suggestion ?? null,
-      receipts: ownBook ? [...(link.receipts ?? [])] : [],
-      deadReason: ownBook ? (link.dead_reason ?? null) : null,
+      receipts: receiptsByBin(link.receipts ?? []),
+      deadReason: link.dead_reason ?? null,
+      link,
+      row,
     };
-    seen.set(document, entry);
-    entries.push(entry);
+    byKey.set(key, chip);
+    chips.push(chip);
   }
-  return entries;
+  const named = new Set(chips.map((chip) => chip.document));
+  for (const { row, link } of viaSources) {
+    const document = (link.source_po_number ?? '').trim();
+    if (!document || named.has(document)) continue;
+    named.add(document);
+    chips.push({
+      key: `${document}|via`,
+      document,
+      lineLabel: null,
+      via: link.derived_po ? 'spo' : null,
+      // R17: the source PO's OWN id, resolved through this SPO allocation's supply PO
+      // line - never guessed here, the Lines tab / worklist fall back to a number lookup
+      // only when this is null.
+      poId: link.purchase_order_id ?? null,
+      received: Boolean(link.received),
+      receivedQty: link.received_qty ?? null,
+      qty: link.qty ?? null,
+      expectedDate: link.expected_date ?? null,
+      suggestion: link.suggestion ?? null,
+      receipts: [],
+      deadReason: null,
+      link: null,
+      row,
+    });
+  }
+  return [...chips.filter((chip) => !chip.deadReason), ...chips.filter((chip) => chip.deadReason)];
 }
 
-const DEAD_LABEL: Record<OrderInquiryDeadReason, string> = {
-  po_cancelled: 'PO cancelled',
-  spo_withdrawn: 'SPO withdrawn',
-};
-
-function receiptText(receipt: OrderInquiryLinkReceipt): string {
-  const qty = formatInquiryQty(receipt.qty);
-  return receipt.bin ? `Received ${qty} at ${receipt.bin}` : `Received ${qty}`;
-}
-
-/**
- * LINKAGE-UNIFY U3 (AC-D1, AC-D3, AC-D4): the state pills beside ONE document chip, the
- * same piece on the worklist (`DocumentsCell`) and the Lines tab (`DocumentCell`), so
- * the two screens agree by construction. Red "PO cancelled" / "SPO withdrawn" for a
- * dead document (Q5); "Received <qty> at <bin>" for where the goods landed (Q1, Q6),
- * the first bin with a "+N" for the rest. No "received" pill on a PO chip unless the PO
- * line itself received the goods (Q4): `documentsOf` only gives a PO entry the PO
- * links' own receipts.
- */
-export function DocumentStatePills({
-  entry,
-  testIdPrefix,
-  testIdSuffix,
-  onOpen,
-}: {
-  entry: DocumentEntry;
-  /** Test ids read `<prefix>-received-<suffix>`, `<prefix>-dead-<suffix>`. */
-  testIdPrefix: string;
-  testIdSuffix: string;
-  onOpen?: (event: React.MouseEvent) => void;
-}) {
-  const [first, ...rest] = entry.receipts;
-  return (
-    <>
-      {entry.deadReason ? (
-        <WorklistPill destructive testId={`${testIdPrefix}-dead-${testIdSuffix}`}>
-          {DEAD_LABEL[entry.deadReason]}
-        </WorklistPill>
-      ) : null}
-      {first ? (
-        <WorklistPill
-          as={onOpen ? 'button' : 'span'}
-          testId={`${testIdPrefix}-received-${testIdSuffix}`}
-          onClick={onOpen}
-        >
-          {receiptText(first)}
-        </WorklistPill>
-      ) : null}
-      {rest.length ? (
-        <WorklistPill
-          testId={`${testIdPrefix}-received-more-${testIdSuffix}`}
-          title={rest.map(receiptText).join(', ')}
-        >
-          +{rest.length}
-        </WorklistPill>
-      ) : null}
-    </>
+export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
+  return documentChipsOf(
+    (row.links ?? []).map((link) => ({ row, link })),
+    kind,
   );
 }
 
@@ -495,7 +414,8 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
           draws. The receipt pill stays CLICKABLE like every other mark on this row and
           opens the SAME lightbox. */}
       <DocumentStatePills
-        entry={first}
+        receipts={first.receipts}
+        deadReason={first.deadReason}
         testIdPrefix="backing-documents"
         testIdSuffix={kind === 'spo' ? `spo-${row.id}` : row.id}
         onOpen={open_}

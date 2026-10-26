@@ -1619,7 +1619,7 @@ export function OrderInquiriesClient({
               label: count === undefined ? option.label : `${option.label} (${count})`,
             };
           })}
-          placeholder="Every row"
+          placeholder="Every document"
         />
       </div>
       <div className="space-y-1.5">

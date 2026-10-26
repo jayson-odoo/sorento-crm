@@ -1168,7 +1168,9 @@ class OrderInquiryWorklistService:
 
     # -------------------------------------------------------------- derived SPO
 
-    def _derived_spo_query(self, *columns: Any, extra_where: tuple = ()) -> Any:
+    def _derived_spo_query(
+        self, *columns: Any, extra_where: tuple = (), every_state: bool = False
+    ) -> Any:
         """S5 (R-D/R-E/R-F): every OPEN SPO allocation this row's own PO LINKS' LINES
         became - `from_po_number = po_number AND trim(from_po_line_ref) =
         trim(po_line.source_ref) AND product_id = po_line.product_id`, open per
@@ -1197,7 +1199,22 @@ class OrderInquiryWorklistService:
         session. Every reader wraps it - an `EXISTS` (`kind=spo`, `linked=spo`,
         `spo_number`) or a `SUM` (`_derived_cover_qty`) - so the filters and the cards
         can never disagree about what counts as incoming.
+
+        `every_state` (LINKAGE-UNIFY U3, the `spo_number` filter only): the SPOs the
+        row's placements reach by the goods chain's own key in every state that is not
+        dead - in transit, or landed (received, arrived, or a received status) - so a
+        row reads under the SPO its goods landed on, as its derived entry shows. The
+        chain's key adds the company and the allocation's own `po_line_id` (a
+        CRM-raised SPO) to the text key. The cards (`kind`, `linked`) keep the open-only
+        reading: they count what is still incoming (owner: cards unchanged).
         """
+        same_text_key = and_(
+            SPOAllocation.from_po_number == PurchaseOrder.po_number,
+            func.btrim(SPOAllocation.from_po_line_ref)
+            == func.btrim(PurchaseOrderLine.source_ref),
+            func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
+            SPOAllocation.product_id == PurchaseOrderLine.product_id,
+        )
         reached_by_a_po_link = (
             select(OrderInquiryLink.id)
             .select_from(OrderInquiryLink)
@@ -1205,14 +1222,34 @@ class OrderInquiryWorklistService:
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .where(
                 OrderInquiryLink.row_id == OrderInquiryRow.id,
-                SPOAllocation.from_po_number == PurchaseOrder.po_number,
-                func.btrim(SPOAllocation.from_po_line_ref)
-                == func.btrim(PurchaseOrderLine.source_ref),
-                func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
-                SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                *(
+                    (
+                        SPOAllocation.company_id == PurchaseOrderLine.company_id,
+                        or_(same_text_key, SPOAllocation.po_line_id == PurchaseOrderLine.id),
+                    )
+                    if every_state
+                    else (same_text_key,)
+                ),
             )
             .correlate(OrderInquiryRow, SPOAllocation)
             .exists()
+        )
+        state_clauses = (
+            (
+                *spo_supply.visible_line_clauses(),
+                or_(
+                    and_(
+                        *spo_supply.open_incoming_clauses(),
+                        SPOAllocation.allocated_quantity
+                        > func.coalesce(SPOAllocation.quantity_received, 0),
+                    ),
+                    func.coalesce(SPOAllocation.quantity_received, 0) > 0,
+                    InboundShipment.actual_arrival_date.isnot(None),
+                    SPOAllocation.receipt_status.in_(spo_supply.RECEIVED_RECEIPT_STATUSES),
+                ),
+            )
+            if every_state
+            else derived_spo_open_clauses()
         )
         company_predicate = build_company_predicate(
             SPOAllocation, get_company_scope(self.db)
@@ -1225,7 +1262,7 @@ class OrderInquiryWorklistService:
             )
             .where(
                 reached_by_a_po_link,
-                *derived_spo_open_clauses(),
+                *state_clauses,
                 *((company_predicate,) if company_predicate is not None else ()),
                 *extra_where,
             )
@@ -1615,13 +1652,14 @@ class OrderInquiryWorklistService:
                         OrderInquiryLink.document.ilike(like, escape=_LIKE_ESCAPE),
                     ),
                     # AC-F6b (round 2): the row's only REAL link is a PO, but that PO
-                    # carries a derived SPO cover (S5, R-E) whose own number starts
-                    # with the typed text - `_has_derived_spo()`'s own read, narrowed to
-                    # this prefix rather than "any open allocation at all".
+                    # carries a derived SPO (S5, R-E) whose own number starts with the
+                    # typed text. LINKAGE-UNIFY U3: in every state that is not dead, so
+                    # a row whose goods landed on that SPO still answers to its number.
                     self._derived_spo_query(
                         extra_where=(
                             SPOAllocation.spo_number.ilike(like, escape=_LIKE_ESCAPE),
-                        )
+                        ),
+                        every_state=True,
                     ).exists(),
                 )
             )

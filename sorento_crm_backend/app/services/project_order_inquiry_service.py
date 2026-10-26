@@ -8409,6 +8409,7 @@ class ProjectOrderInquiryService:
             for row in self.db.query(
                 SPOAllocation.id,
                 SPOAllocation.spo_number,
+                SPOAllocation.spo_line_number,
                 SPOAllocation.allocated_quantity,
                 SPOAllocation.quantity_received,
                 SPOAllocation.location_code,
@@ -8449,14 +8450,17 @@ class ProjectOrderInquiryService:
                         # returns, and reads `purchase_order_id` via `.get`. A synthetic
                         # entry carries the same shape as a real one - one reader, one
                         # contract - rather than making every consumer know an entry
-                        # might be missing keys because it is derived.
-                        "line_label": None,
+                        # might be missing keys because it is derived. U3 round 2: the
+                        # SPO line is named the way a real link names it (`L12`), so the
+                        # screens can show one chip per line.
+                        "line_label": self._line_label(allocation.spo_line_number),
                         "purchase_order_id": None,
                         "qty": _qty_str(open_qty if in_transit else landed),
                         "location": allocation.warehouse_code or allocation.location_code,
                         "expected_date": allocation.expected_date,
                         "late": False,
                         "late_days": None,
+                        # The placement's share on this line has landed (Q3).
                         "received": not in_transit and bool(receipts),
                         "received_qty": _qty_str(landed),
                         "receipts": receipts,
