@@ -1064,6 +1064,25 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     return bad;
   };
 
+  /** One pending scroll-to-field at a time, cleared on unmount: a timer left running
+   *  past the form (or past a test's jsdom teardown) must never reach `document`. */
+  const scrollTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(
+    () => () => {
+      if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    },
+    [],
+  );
+  const scrollToField = (name: string) => {
+    if (scrollTimerRef.current) clearTimeout(scrollTimerRef.current);
+    scrollTimerRef.current = setTimeout(() => {
+      scrollTimerRef.current = null;
+      if (typeof document === 'undefined') return;
+      const node = document.querySelector(`[data-field-name="${name}"]`) as HTMLElement | null;
+      node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
+    }, 50);
+  };
+
   const reportMissingRequired = (
     all: { name: string; label: string; badNumber?: boolean }[],
   ) => {
@@ -1080,12 +1099,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     if (badNumbers.length > 0) {
       toast.error(`Fix the number in: ${badNumbers.map((m) => m.label).join(', ')}`);
     }
-    setTimeout(() => {
-      const node = document.querySelector(
-        `[data-field-name="${all[0].name}"]`,
-      ) as HTMLElement | null;
-      node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-    }, 50);
+    scrollToField(all[0].name);
   };
 
   /** Same "does this row have anything in it" test `cleanLineItems` filters on - a
@@ -1236,12 +1250,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     const trimmed = reason.trim();
     if (!trimmed) {
       setReasonError(REASON_REQUIRED);
-      setTimeout(() => {
-        const node = document.querySelector(
-          '[data-field-name="revision_reason"]',
-        ) as HTMLElement | null;
-        node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });
-      }, 50);
+      scrollToField('revision_reason');
       return;
     }
     setReasonError(null);
