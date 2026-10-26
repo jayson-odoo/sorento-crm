@@ -83,6 +83,30 @@ messages per behaviour). No customer names in the repo.
 
 ## Findings
 
+### Labelled set (gold)
+
+338 real inbound messages from `chatbot.turns` on explore1020 (288 stratified by list + nonlatin + Malay + 60 random,
+then 50 added for thin types; parser-gold HIDDEN texts excluded). Two independent Claude labellers: identical mention
+sets on 275/288 messages, same row on 431/435 shared mentions; 21 messages adjudicated by the lead. 312 messages name
+something; 186 name a non-code entity. Mentions (messages): brand 54, category 57 (50), customer 40 (38), file_type 34
+(33), spec_value 40 (31), spec_key 21 (20), sales_channel 18 (17), salesperson 17, promotion_kind 11, location 8 (7),
+product_code 244 (200). Real messages almost never name a warehouse (8 in 7,048) or a salesperson (17).
+Data stays in crew/state/eval/eem/ (unmasked, outside git).
+
+### Run 1: small span extractor, no value lists (gpt-5.4-mini, 338 msgs per arm)
+
+| Arm | Span recall | Span precision | Type acc | Right row | Noise rows / msg | Tokens in/out | p50 ms |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Today's lookup (#1865) | n/a | n/a | n/a | 88.9% offered | 5.72 offered | - | - |
+| A1 untyped + slot | 87.7% | 77.2% | 77.9% | 74.5% | 0.39 | ~350 / 33 | ~1,000 |
+| B1 typed, schema only | 88.3% | 81.7% | 81.5% | 74.9% | 0.36 | 434 / 33 | 984 |
+
+Product codes: B1 recall 97.1%, precision 95.6%. "Right row" uses the resolver v1 (spelling + meaning, lookup floors).
+Oracle (gold span + gold type through the same resolver): 250/271 = 92.3%; failures are partial customer names
+(trigram Jaccard punishes long labels) and missing alias texts (drawing, picture, 高清图, color). B1 weak spots:
+promotion_kind over-labelled (generic "promotion"), spec_value typed as other types, customer row 51%.
+Cost: A1+B1 on 338 = 676 calls, USD 0.30.
+
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 
 | Place | What | Editable by |
