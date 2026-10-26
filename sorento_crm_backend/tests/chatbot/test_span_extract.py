@@ -576,8 +576,11 @@ def test_review_fallback_keeps_the_number_hits_of_todays_path(session_factory, s
     assert all(line in r.lines for line in expected), (expected, r.lines)
 
 
+# Changed on purpose per the AC-S2-3 amendment (27 Oct, crew ruling V2): a row the message spells near-exactly
+# (spelling >= 0.95) is offered even when the span call names nothing; a row only a LOOSE spelling (< 0.95) or
+# the meaning reaches is still not offered.
 @pytest.mark.parametrize("answer", [spans_json(), spans_json(("SRTWC8065", "product_code"))], ids=["no_spans", "product_code_only"])
-def test_review_a_successful_call_naming_nothing_offers_no_row_the_ngram_path_would(
+def test_review_a_successful_call_naming_nothing_offers_the_exactly_spelled_row(
     session_factory, seeded, stub_access, monkeypatch, answer
 ):
     seed_world(session_factory)
@@ -586,7 +589,43 @@ def test_review_a_successful_call_naming_nothing_offers_no_row_the_ngram_path_wo
     assert HDR["category"] in control and "- ZZ Basin" in control, ("the n-gram path must offer the row", control)
     r = run(session_factory, stub_access, monkeypatch, text_body=body, span=answer)
     assert r.provider.calls
-    assert HDR["category"] not in r.lines and "- ZZ Basin" not in r.lines, r.lines
+    assert HDR["category"] in r.lines and "- ZZ Basin" in r.lines, r.lines
+
+
+@pytest.mark.parametrize("answer", [spans_json(), spans_json(("SRTWC8065", "product_code"))], ids=["no_spans", "product_code_only"])
+def test_review_a_successful_call_naming_nothing_offers_no_loosely_spelled_row(
+    session_factory, seeded, stub_access, monkeypatch, answer
+):
+    seed_world(session_factory)
+    body = "zz basn price"  # "ZZ Basin" by spelling 0.545: the n-gram path offers it, the near-exact rule must not
+    control = _ngram_expected(session_factory, body)
+    assert "- ZZ Basin" in control, ("control: the n-gram path offers the loose-spelled row", control)
+    r = run(session_factory, stub_access, monkeypatch, text_body=body, span=answer)
+    assert r.provider.calls
+    assert "- ZZ Basin" not in r.lines, r.lines
+
+
+def test_review_near_exact_rows_join_the_span_rows_without_duplicates_and_top_k_caps_them(
+    session_factory, seeded, stub_access, monkeypatch
+):
+    db = session_factory()
+    db.add_all([Brand(id=str(uuid.uuid4()), brand_code=f"ZZ{n[2]}", brand_name=n, is_active=True, company_id=DEFAULT_COMPANY_ID)
+                for n in ("ZZALFA", "ZZBRAVO", "ZZCHARLIE", "ZZDELTA")])
+    db.commit()
+    body = "zzalfa zzbravo zzcharlie zzdelta stock"
+    control = _ngram_expected(session_factory, body)
+    assert sum(1 for ln in control if ln.startswith("- ZZ")) == 3, ("control: the n-gram path offers spelled brands up to TOP_K", control)
+    r = run(session_factory, stub_access, monkeypatch, text_body=body, span=spans_json(("ZZDELTA", "brand")))
+    block = r.lines[r.lines.index(HDR["brand"]) + 1:]
+    rows = []
+    for ln in block:
+        if not ln.startswith("- "):
+            break
+        rows.append(ln)
+    assert len(rows) == ll.TOP_K["brand"] == 3, rows
+    assert rows[0].startswith("- ZZDELTA"), ("the span row comes first", rows)
+    assert sum(1 for ln in rows if ln.startswith("- ZZDELTA")) == 1, rows
+    assert all(ln.startswith(("- ZZALFA", "- ZZBRAVO", "- ZZCHARLIE", "- ZZDELTA")) for ln in rows), rows
 
 
 def test_review_a_resolver_failure_falls_back_to_todays_ngram_lines(session_factory, seeded, stub_access, monkeypatch):
