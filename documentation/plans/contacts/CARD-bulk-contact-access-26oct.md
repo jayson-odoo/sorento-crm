@@ -1,5 +1,13 @@
 # Behaviour card - BULK-CONTACT-ACCESS: upload the Respond dealer-contact sheet, set each contact's access
 
+**Owner answers (26 Oct ~15:10):** Q1 (a) add only. Q2 (a) cabana_dealer too. Q3 brands = every brand of the
+contact's companies, from the data (`brands.company_id`, `app/models/product.py:99`), no list in code. Q4 (b) link
+every exact account, shown ticked. Q5 (a) skip. Mock v1 approved ("ok", 15:03).
+Data note on Q3 (20 Oct backup): all 12 brand rows belong to Sorento Sdn Bhd (MOCHA and IBORN included); Mocha Sdn
+Bhd has none and its 3481 products carry no brand. So Sorento only and S+M both get the 12; Mocha only stays NULL,
+which the per-company brand rule (`app/services/contact_brand_scope.py:1-9`) plus the contact's company scope
+(`app/services/company_scope_resolver.py:221`) turns into every Mocha product. Follow-up filed to the owner.
+
 Lane BULK-CONTACT-ACCESS, size L, 26 Oct 2026. Card before any code. Researched on main `f287cbe703`; data from
 `sorento_prod_1020` (20 Oct prod backup, read-only). Backend paths under `sorento_crm_backend/`. Dealer names
 masked as first 3 letters + `***`; no person names or phones.
