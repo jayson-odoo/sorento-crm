@@ -1,6 +1,6 @@
 # PLAN: WhatsApp username-only contacts get a verified phone and join the contact that holds their access (WA-USERNAME-CONTACTS)
 
-Status: Scout. Behaviour card pending; no code until the owner answers. Track: L (new chat flow, contact
+Status: Card filed (`CARD-wa-username-contacts-26oct.md`), Waiting:owner; no code until the owner answers. Track: L (new chat flow, contact
 merge across Respond.io and CRM, ownership proof = auth-adjacent, security-reviewer required). LEAD pattern.
 UAC: `wa-username-contacts-26oct-acceptance-criteria.md` (written after the card is answered).
 
@@ -21,7 +21,13 @@ A username-only user who types a phone could claim someone else's number (a deal
 access after a merge. Nothing links or merges until ownership of the number is proven.
 
 ## Scout findings
-(filled from the scout round; every claim cites file:line or an official doc URL)
+In `CARD-wa-username-contacts-26oct.md` sections 1-2 (file:line and doc URLs there). Short form:
+- Sync drops phoneless contacts silently (`sorento_crm_backend/app/services/respond_sync_handler.py:213-215`);
+  `respond_contacts.phone_number` is unique NOT NULL (`app/models/access.py:268`).
+- Unknown Respond.io id -> `access_denied` reply (`app/services/chatbot/engine.py:6352-6353`).
+- Sync already re-points a CRM row's `respond_io_id` by phone (`respond_sync_handler.py:241-257`).
+- Respond.io merge is UI-only (no documented API); survivor id UNVERIFIED.
+- n8n: no contact-create flow; the spine posts the whole Respond.io message to `/external/chat/turn`.
 
 ## Open questions (card)
-(filed via `crew report --ask`)
+Card section 6, Q1-Q5, filed via `crew report --ask` 26 Oct.
