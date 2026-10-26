@@ -294,3 +294,30 @@ def test_r4_d3_an_open_live_line_has_no_dead_reason_on_both(scm_app):
 
 def test_r4_d3_a_cancelled_line_with_an_spo_has_no_line_level_dead_reason(scm_app):
     assert _dead_both(scm_app[1], "has_spo") == (None, None)
+
+
+def test_r4b_a_cancelled_line_whose_only_spo_is_retired_is_dead_on_chain_and_both_screens(scm_app):
+    """The chain counts only visible SPO lines, so a retired-only key leaves the line dead; the
+    PO popup and the SCM PO detail must say the same thing."""
+    from datetime import datetime
+
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    db = scm_app[1]
+    w = _World(db)
+    po, line = w.po(ordered=100, transferred=0, open_line=True)
+    line.line_status = "cancelled"
+    line.qty_cancelled = Decimal("0")
+    spo = w.onto(po, line, qty=100)
+    spo.retired_at = datetime.utcnow()
+    db.flush()
+    _row, link = w.place_on_po(line, 10)
+
+    chain = _gc().chains_for_links(db, [str(link.id)])[str(link.id)]
+    assert [(h.kind, h.state, h.reason) for h in chain.hops] == [
+        ("po", "dead", "po_cancelled")
+    ]
+    popup = _line_of(_svc(db).get_po_detail(str(po.id)), line)
+    scm = _line_of(PurchaseOrderService(db).get_one(str(po.id)), line)
+    assert popup.get("dead_reason") == "po_cancelled"
+    assert scm.get("dead_reason") == "po_cancelled"

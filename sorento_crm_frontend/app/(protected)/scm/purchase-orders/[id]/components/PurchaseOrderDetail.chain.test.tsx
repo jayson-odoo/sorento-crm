@@ -293,3 +293,24 @@ describe('R4-D3 the SCM PO Lines tab marks a cancelled PO line red "PO cancelled
     expect(screen.queryByText('PO cancelled')).not.toBeInTheDocument();
   });
 });
+
+describe('R4b both pills when both apply (mock case 2)', () => {
+  it('a cancelled PO line with a withdrawn SPO draws red "PO cancelled" and red "SPO withdrawn"', () => {
+    const base = po();
+    const data = {
+      ...base,
+      lines: [{
+        ...base.lines![0], qty_received: 0, dead_reason: 'po_cancelled',
+        spos: [{ spo_number: 'SPO-2026/09-0138', line_label: 'L138', receipts: [], dead_reason: 'spo_withdrawn' }],
+      } as unknown as PurchaseOrderLine],
+    } as PurchaseOrder;
+    usePurchaseOrder.mockReturnValue({ data, isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+    expect(screen.getByText('SPO-2026/09-0138')).toBeInTheDocument();
+    for (const label of ['PO cancelled', 'SPO withdrawn']) {
+      const pill = screen.getByText(label).closest('[data-slot="badge"]') as HTMLElement;
+      expect(pill.className).toMatch(/destructive/);
+    }
+  });
+});

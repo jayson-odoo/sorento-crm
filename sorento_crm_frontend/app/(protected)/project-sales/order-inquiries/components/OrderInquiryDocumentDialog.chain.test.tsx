@@ -133,3 +133,22 @@ describe('R4-D3 the PO popup marks a cancelled PO line red "PO cancelled"', () =
     expect(screen.queryByText('PO cancelled')).not.toBeInTheDocument();
   });
 });
+
+describe('R4b both pills when both apply (mock case 2)', () => {
+  it('a cancelled PO line with a withdrawn SPO draws red "PO cancelled" and red "SPO withdrawn"', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue({
+      ...PO_DETAIL,
+      lines: [{
+        ...PO_DETAIL.lines[0], qty_received: '0', dead_reason: 'po_cancelled',
+        spos: [{ spo_number: 'SPO-2026/09-0138', line_label: 'L138', receipts: [], dead_reason: 'spo_withdrawn' }],
+      }],
+    });
+    renderNode(<OrderInquiryDocumentDialog kind="po" document="202607-S0100" poId="po-1" open onOpenChange={vi.fn()} />);
+    await screen.findByText('DAFUYUAN');
+    expect(screen.getByText('SPO-2026/09-0138')).toBeInTheDocument();
+    for (const label of ['PO cancelled', 'SPO withdrawn']) {
+      const pill = screen.getByText(label).closest('[data-slot="badge"]') as HTMLElement;
+      expect(pill.className).toMatch(/destructive/);
+    }
+  });
+});

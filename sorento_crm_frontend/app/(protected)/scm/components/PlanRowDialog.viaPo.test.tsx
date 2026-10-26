@@ -148,3 +148,25 @@ describe('P1 the via-PO row of the SO covered lightbox', () => {
     expect(cell.className).toContain('flex-wrap');
   });
 });
+
+describe('R4b the "Sales order" column fits the wrapped via-PO pill', () => {
+  function salesOrderTh() {
+    return screen.getByText('Sales order').closest('th') as HTMLElement;
+  }
+
+  it('the column is at least 170 px wide', () => {
+    show();
+    expect(parseFloat(salesOrderTh().style.width)).toBeGreaterThanOrEqual(170);
+  });
+
+  it('a drag resize below 170 px is refused (minSize 170)', () => {
+    show();
+    const th = salesOrderTh();
+    const handle = th.querySelector('[class*="cursor-col-resize"], [data-resizer], [class*="resizer"]');
+    expect(handle, 'resize handle on the Sales order header').not.toBeNull();
+    fireEvent.mouseDown(handle!, { clientX: 400 });
+    fireEvent.mouseMove(document, { clientX: 100 });
+    fireEvent.mouseUp(document, { clientX: 100 });
+    expect(parseFloat(salesOrderTh().style.width)).toBeGreaterThanOrEqual(170);
+  });
+});
