@@ -1,7 +1,7 @@
 # PLAN: one answer to "where are this SO line's goods now" (LINKAGE-UNIFY)
 
-Status: U1-U3 owner hand-test PASS (26 Oct ~15:20, "ok to merge"), merging as PR #1870 (supersedes #1866 / #1868).
-U4 #1874 and U5 #1873 open, retargeted to main after #1870 merges. Size L, lead pattern. UAC:
+Status: U1-U3 merged as #1870 (1aaeed54ae); U4 merged as #1874 (36f571df3b, owner PASS 26 Oct ~22:05).
+U5 #1873 on main, reviewer READY, waiting on CI + merge. Size L, lead pattern. UAC:
 `linkage-unify-26oct-acceptance-criteria.md`. The fix is cut into the slices of section 6.
 Lane LINKAGE-UNIFY, branch `crew/linkage-unify`, base origin/main 263643ae36.
 
