@@ -2,7 +2,7 @@
 documentation/plans/chatbot/PLAN-prompt-rules-diet-26oct.md).
 
 The production-labelled `chatbot_semantic_parser` text, list-free first when it is not yet, then the
-measured wording edits of `app/services/chatbot_prompt_diet_edits.py` (129,651 chars to under 90,000).
+measured wording edits of `app/services/chatbot_prompt_diet_edits.py` (129,651 chars to 102,402, owner ruling 26 Oct).
 The label never moves; promoting is one label move in the Chatbot Console.
 
 Idempotent: a version already carrying this exact template publishes nothing. An anchor missing or
@@ -26,8 +26,8 @@ logger = logging.getLogger("alembic.runtime.migration")
 
 PROMPT_NAME = "chatbot_semantic_parser"
 MESSAGE = (
-    "PROMPT-RULES-DIET: the production parser text list-free and trimmed by the measured wording edits "
-    "(under 90,000 chars). Unlabelled, promote from the Chatbot Console."
+    "PROMPT-RULES-DIET: the list-free production parser text trimmed by measured wording edits "
+    "(102,402 chars, owner ruling 26 Oct). Unlabelled, promote from the Chatbot Console."
 )
 
 
