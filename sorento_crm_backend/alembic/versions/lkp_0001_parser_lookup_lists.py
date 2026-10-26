@@ -12,7 +12,7 @@ Idempotent: a version already carrying this exact template publishes nothing. An
 found twice publishes nothing and logs why; the upgrade still succeeds.
 
 Revision ID: lkp_0001_parser_lookup_lists
-Revises: oihr_0010_so_remark_column
+Revises: prreg_0001_project_registrations
 """
 import logging
 
@@ -21,7 +21,7 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 revision = "lkp_0001_parser_lookup_lists"
-down_revision = "oihr_0010_so_remark_column"
+down_revision = "prreg_0001_project_registrations"
 branch_labels = None
 depends_on = None
 
