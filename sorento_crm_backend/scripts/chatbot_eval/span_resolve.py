@@ -15,7 +15,9 @@ extractor); `right` resolves the extractor's spans and counts a gold mention rig
 resolved to one of its rows. A gold mention's row_ids are the rows that are acceptable answers, so an
 `ambiguous` span whose candidates hold one of them counts right (as in the phase-1 numbers); the strict line
 counts `resolved` only.
-No DB, no network: this module imports only the stdlib, numpy (with --vectors) and the resolver.
+No DB, no network: this module imports only the stdlib, numpy (with --vectors) and the resolver. Importing the
+resolver loads the app package, which needs DATABASE_URL and JWT_SECRET set in the environment (any value
+will do, e.g. SORENTO_ENV_FILE=.env.ci-tests); it never opens a connection.
 """
 from __future__ import annotations
 

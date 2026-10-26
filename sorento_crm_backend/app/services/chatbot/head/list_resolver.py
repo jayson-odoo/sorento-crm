@@ -8,13 +8,16 @@ row, not a word in this file. Per (span, row) the best over the row's texts of
 - exact: the span equals a text after case/space folding (1.0);
 - spelling: trigram similarity (`candidates.similarity`, as the lookup lists);
 - partial: the IDF-weighted share of the span's words that a row word matches (equal, trigram >= 0.6, or one
-  edit for words of 4+ letters). IDF comes from the list's own texts, so "SDN" or "TRADING" weigh little and
-  "Kimlan" resolves "KIMLAN TRADING SDN BHD";
+  edit for words of 4+ letters; a fuzzy match counts for its similarity, an exact one for 1.0). IDF comes from
+  the list's own texts and a span word weighs what the row word it matches weighs, so "SDN", "TRADING" and
+  their typos weigh little and "Kimlan" resolves "KIMLAN TRADING SDN BHD";
 - meaning: cosine of the embeddings, when an embedder is given and answers (advisory, as `lookup_lists`).
 
 A row passes when any signal reaches its list's floor. The best passing row over ALL lists wins; rows within
-`AMBIGUITY_MARGIN` of it (different rows) make the span `ambiguous`. A typed span prefers its own list when that
-list's best row is within `TYPE_MARGIN` of the overall best, and never loses a row for want of one. Nothing on the turn path imports this module yet.
+`AMBIGUITY_MARGIN` of it on SCORE (different rows) make the span `ambiguous` and are all returned; word coverage
+only orders them. A typed span prefers its own list when that list's best row is within `TYPE_MARGIN` of the
+overall best, and never loses a row for want of one. Among close rows, those the span equals outright (signal
+`exact`) are the only ones kept. Nothing on the turn path imports this module yet.
 """
 from __future__ import annotations
 
@@ -40,25 +43,23 @@ TYPE_LIST = {t: t for t in SPAN_TYPES} | {"spec_value": "spec"}
 FLOORS: dict[str, dict[str, float]] = {
     "category": {"spell": 0.45, "partial": 0.8, "meaning": 0.55},
     "spec": {"spell": 0.55, "partial": 0.8, "meaning": 0.55},
-    "file_type": {"spell": 0.5, "partial": 0.5, "meaning": 0.59},
+    "file_type": {"spell": 0.5, "partial": 0.44, "meaning": 0.59},
     "brand": {"spell": 0.5, "partial": 0.8, "meaning": 0.58},
     "promotion_kind": {"spell": 0.5, "partial": 1.01, "meaning": 0.6},
     "location": {"spell": 0.5, "partial": 0.8, "meaning": 0.55},
     "salesperson": {"spell": 0.4, "partial": 0.8, "meaning": 0.6},
-    "customer": {"spell": 0.5, "partial": 0.6, "meaning": 0.6},
+    "customer": {"spell": 0.5, "partial": 0.55, "meaning": 0.6},
     "sales_channel": {"spell": 0.5, "partial": 0.8, "meaning": 0.55},
     "spec_key": {"spell": 0.5, "partial": 0.8, "meaning": 0.6},
 }
 _FLOORS_OTHER = {"spell": 0.5, "partial": 0.8, "meaning": 0.6}
-#: Rows whose scores (and word coverage) differ by no more than this are the same answer to the span.
+#: Rows whose scores differ by no more than this are the same answer to the span.
 AMBIGUITY_MARGIN = 0.03
-#: A span word is distinctive when its IDF is at least this share of the IDF of a word the list never saw;
-#: a span of only common words ("trading sdn bhd") names no single row of that list.
+#: A word is common in a list when it is in two or more of its texts and its IDF is below this share of the IDF
+#: of a word the list never saw; a span of only common words ("trading sdn bhd") names no single row of it.
 DISTINCTIVE_IDF = 0.5
 #: A typed span prefers its own list when that list's best row is within this of the overall best.
 TYPE_MARGIN = 0.15
-#: Rows kept per list before the lists are compared.
-PER_LIST_TOP = 3
 #: Words matching a span word by trigram similarity.
 TOKEN_SIMILARITY = 0.6
 #: One edit is allowed only in words at least this long.
@@ -93,22 +94,15 @@ class Resolution:
 
 def spec_key_rows(registry: Iterable[Any]) -> list[LookupRow]:
     """One row per active product spec key (`product_spec_registry.active_registry` entries): the label, the
-    key spelled with spaces, and the synonyms and user synonyms of its values, minus the suppressed ones."""
+    key spelled with spaces, and the words of its values (`merged_synonyms`: synonyms and user synonyms, minus
+    the suppressed ones)."""
+    from app.services.product_spec_registry import merged_synonyms
+
     out: list[LookupRow] = []
     for entry in registry:
         if not getattr(entry, "is_active", True):
             continue
-        suppressed_values = set(getattr(entry, "suppressed_values", None) or [])
-        suppressed = {
-            str(v): {str(w).casefold() for w in ws or []}
-            for v, ws in (getattr(entry, "suppressed_synonyms", None) or {}).items()
-        }
-        words: list[str] = []
-        for source in (getattr(entry, "synonyms", None) or {}, getattr(entry, "user_synonyms", None) or {}):
-            for value, ws in source.items():
-                if value in suppressed_values:
-                    continue
-                words.extend(w for w in ws or [] if str(w).casefold() not in suppressed.get(str(value), ()))
+        words = [w for ws in merged_synonyms(entry).values() for w in ws or []]
         key = str(entry.spec_key)
         label = str(getattr(entry, "label", "") or key)
         texts = tuple(dict.fromkeys(t for t in (label, key.replace("_", " "), *words) if t and _fold(t)))
@@ -135,6 +129,7 @@ class _ListIndex:
                 df[w] += 1
         n = len(distinct)
         self.unknown_idf = math.log(n + 1) + 0.1
+        self.df = dict(df)
         self.idf = {w: math.log((n + 1) / (c + 0.5)) + 0.1 for w, c in df.items()}
         self.inverted: dict[str, list[int]] = defaultdict(list)
         for ti, t in enumerate(self.texts):
@@ -150,22 +145,39 @@ class _ListIndex:
             if len(w) >= EDIT_MIN_LETTERS:
                 for k in range(len(w)):
                     self.deletions[w[:k] + w[k + 1 :]].add(w)
-        self._matches: dict[str, frozenset[str]] = {}
+        self._matches: dict[str, dict[str, float]] = {}
 
-    def matching_words(self, word: str) -> frozenset[str]:
-        """The vocabulary words a span word stands for: equal, trigram-similar, or one edit away."""
+    def matching_words(self, word: str) -> dict[str, float]:
+        """The vocabulary words a span word stands for, with how well: 1.0 equal, the trigram similarity when it
+        is at least `TOKEN_SIMILARITY`, `1 - 1/letters` for one edit."""
         hit = self._matches.get(word)
         if hit is None:
-            found = {word} if word in self.idf else set()
+            hit = {}
+            if word in self.idf:
+                hit[word] = 1.0
             grams = candidates.trigrams(word)
-            found |= {w for w in self.vocab if candidates.similarity(grams, self.vocab_grams[w]) >= TOKEN_SIMILARITY}
+            for w in self.vocab:
+                sim = candidates.similarity(grams, self.vocab_grams[w])
+                if sim >= TOKEN_SIMILARITY:
+                    hit[w] = max(hit.get(w, 0.0), sim)
             if len(word) >= EDIT_MIN_LETTERS:
                 near = set(self.deletions.get(word, ()))
                 for k in range(len(word)):
                     near |= self.deletions.get(word[:k] + word[k + 1 :], set())
-                found |= {w for w in near if len(w) >= EDIT_MIN_LETTERS and abs(len(w) - len(word)) <= 1}
-            hit = self._matches[word] = frozenset(found)
+                for w in near:
+                    if len(w) >= EDIT_MIN_LETTERS and abs(len(w) - len(word)) <= 1 and w != word:
+                        hit[w] = max(hit.get(w, 0.0), 1.0 - 1.0 / max(len(w), len(word)))
+            self._matches[word] = hit
         return hit
+
+    def weight(self, word: str) -> tuple[float, bool]:
+        """(IDF, common) of a span word: those of the row word it matches best, the unseen-word IDF when it
+        matches none."""
+        hit = self.matching_words(word)
+        if not hit:
+            return self.unknown_idf, False
+        best = max(hit, key=lambda w: (hit[w], self.idf[w]))
+        return self.idf[best], self.df[best] >= 2 and self.idf[best] < DISTINCTIVE_IDF * self.unknown_idf
 
 
 _prepared: dict[str, dict[str, _ListIndex]] = {}
@@ -209,8 +221,9 @@ def _score_list(index: _ListIndex, folded: str, grams: frozenset[str]) -> dict[i
             scores[i] = _RowScore(index.rows[i])
         return scores[i]
 
-    words = folded.split()
-    if all(w in index.idf and index.idf[w] < DISTINCTIVE_IDF * index.unknown_idf for w in words):
+    words = list(dict.fromkeys(folded.split()))
+    weights = {w: index.weight(w) for w in words}
+    if all(common for _idf, common in weights.values()):
         # only common words of this list: nothing short of the whole text names a row
         for i, _text, f, _g, _w in index.texts:
             if f == folded:
@@ -223,22 +236,21 @@ def _score_list(index: _ListIndex, folded: str, grams: frozenset[str]) -> dict[i
             row = of(i)
             row.spell = max(row.spell, s)
             row.exact = row.exact or f == folded
-    weights = {w: index.idf.get(w, index.unknown_idf) for w in words}
-    total = sum(weights.values())
+    total = sum(idf for idf, _c in weights.values())
     if total <= 0:
         return scores
-    mass: dict[int, float] = defaultdict(float)
+    #: text index -> span word -> best similarity of a text word to it
+    reach: dict[int, dict[str, float]] = defaultdict(dict)
     matched_words: set[str] = set()
-    for w in dict.fromkeys(words):
-        stands_for = index.matching_words(w)
-        if not stands_for:
-            continue
-        matched_words |= stands_for
-        for ti in {ti for sw in stands_for for ti in index.inverted.get(sw, ())}:
-            mass[ti] += weights[w]
-    for ti, m in mass.items():
+    for w in words:
+        for sw, sim in index.matching_words(w).items():
+            matched_words.add(sw)
+            for ti in index.inverted.get(sw, ()):
+                cell = reach[ti]
+                cell[w] = max(cell.get(w, 0.0), sim)
+    for ti, hit in reach.items():
         i, _text, _f, _g, tokens = index.texts[ti]
-        partial = m / total
+        partial = sum(weights[w][0] * sim for w, sim in hit.items()) / total
         coverage = sum(index.idf[w] for w in set(tokens) if w in matched_words) / max(index.text_idf[ti], 1e-9)
         row = of(i)
         if (partial, coverage) > (row.partial, row.coverage):
@@ -284,7 +296,6 @@ def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder
         pool: list[tuple[float, float, int, Candidate]] = []
         for name, index in indexes.items():
             floors = FLOORS.get(name, _FLOORS_OTHER)
-            kept: list[tuple[float, float, int, Candidate]] = []
             scored = _score_list(index, folded, grams)
             for i in set(scored) | {i for (n, i) in meaning if n == name and span.text in meaning[(n, i)]}:
                 row = scored.get(i) or _RowScore(index.rows[i])
@@ -297,8 +308,7 @@ def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder
                     ("meaning", row.meaning),
                 )
                 signal, score = max(signals, key=lambda s: s[1])
-                kept.append((-round(score, 2), -round(row.coverage, 2), row.length, Candidate(row.row, score, signal)))
-            pool.extend(sorted(kept, key=lambda k: k[:3])[:PER_LIST_TOP])
+                pool.append((-round(score, 2), -round(row.coverage, 2), row.length, Candidate(row.row, score, signal)))
         if not pool:
             out.append(Resolution(span, "unresolved"))
             continue
@@ -307,8 +317,10 @@ def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder
         typed = [k for k in pool if k[3].row.list_name == preferred]
         if typed and pool[0][3].score - typed[0][3].score <= TYPE_MARGIN:
             pool = typed
-        best, best_cover = pool[0][3].score, -pool[0][1]
-        near = [k[3] for k in pool if best - k[3].score <= AMBIGUITY_MARGIN and best_cover + k[1] <= AMBIGUITY_MARGIN]
+        best = pool[0][3].score
+        near = [k[3] for k in pool if best - k[3].score <= AMBIGUITY_MARGIN]
+        # a row whose whole text the span equals is not tied with rows that merely contain its words
+        near = [c for c in near if c.signal == "exact"] or near
         distinct = list(dict.fromkeys((c.row.list_name, c.row.key) for c in near))
         out.append(Resolution(span, "resolved" if len(distinct) == 1 else "ambiguous", tuple(near[:1] if len(distinct) == 1 else near)))
     return out
