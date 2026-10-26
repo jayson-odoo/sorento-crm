@@ -31,6 +31,9 @@ HEADER_NOUN = {
     "sales_channel": "Sales channel", "customer": "Customer",
 }
 FLOOR_SPELLING = 0.5
+#: ENTITY-EXTRACT-MATCH S2 V2: on the span path a row the message spells at least this well is offered even when no
+#: span named it (a misspelling the span model passed over); looser spellings and meaning-only hits are not.
+NEAR_EXACT_SPELLING = 0.95
 #: The base meaning floor (the measured 3-large config); `shortlist` reads `FLOOR_MEANING_BY_LIST`.
 FLOOR_MEANING = 0.5
 #: Per list for text-embedding-3-small (free re-score of 26 Oct); any other list uses `_FLOOR_MEANING_OTHER`.

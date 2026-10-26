@@ -1355,7 +1355,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
     event: dict[str, Any] = {
         "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
         "provider": config.provider if config else None, "model": config.model if config else None,
-        "model_source": config.model_source if config else None, "fallback": False, "fallback_reason": None,
+        "model_source": config.model_source if config else None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
     }
     if answer is not None and answer.usage and not dry_run:
@@ -1386,6 +1386,17 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 ]
                 extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
                 hits = _hits_of([*resolutions, *extra])
+                # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
+                # only: no embedder is passed, so this makes no network call after the session closed.
+                near_exact = 0
+                for name, spelled in lookup_lists.shortlist(
+                    prep.message, prep.rows, None, brand_words=prep.brand_words
+                ).items():
+                    have = {h.row.key for h in hits.get(name, [])}
+                    added = [h for h in spelled if h.spelling >= lookup_lists.NEAR_EXACT_SPELLING and h.row.key not in have]
+                    near_exact += len(added)
+                    hits[name] = [*hits.get(name, []), *added]
+                event["near_exact_rows"] = near_exact
                 for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
                     known = {h.row.key for h in held_hits}
                     hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
