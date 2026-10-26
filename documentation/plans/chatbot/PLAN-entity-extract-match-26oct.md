@@ -31,6 +31,9 @@ Can the parser find and roughly type mentions WITHOUT the value lists?
 Metrics per arm (at most 2 prompt variants each): span recall vs gold, type accuracy, resolution accuracy (right row),
 noise (rows offered the message never named), tokens + latency per turn. Model gpt-5.4-mini on the dev key; USD 6 cap.
 
+Budget (owner OK via crew a97110507, 26 Oct ~15:00): 1,500 live calls today, USD 6 hard total, runner stops at
+USD 5.5; ledger line per run; report before anything beyond. Labelling uses Claude subagents (no USD).
+
 ## Phase 1 steps
 
 1. Labelled set: >= 200 real inbound messages (masked) naming list entities; per-list counts. Sources: v66
@@ -80,4 +83,30 @@ messages per behaviour). No customer names in the repo.
 
 ## Findings
 
-(filled as Phase 1 runs)
+### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
+
+| Place | What | Editable by |
+| --- | --- | --- |
+| `head/lookup_lists.py:57-76` PROMPT_SYNONYMS | category 3 rows / 8 words (tandas, 马桶 ...), file_type 8 rows / 20 words; merged at :295 | code only |
+| `lanes/escalation.py:75-79` CO_ALIASES | sorento->srt, mocha->mch, cabana->cbn (escalation routing) | code only |
+| `product_spec_registry.synonyms` / `user_synonyms` (seed `product_spec_registry.py:472`) | 527 words on 50 of 53 keys; 54 user words on 5 keys | user_synonyms: Product Specifications page (`api/v1/master_data/spec_registry.py:144`) |
+| `product_categories.search_synonyms` (`models/product.py:57`) | 39 of 120 rows; copied from class synonyms by a job (`product_class_signal.py:181`) | no editor found |
+| `lookup_sets` brand_alias / attachment_type_alias (`chatbot_prompt_vars.py:341-359`) | SORENTO -> SRT (1 row); Product Photos -> 6 phrases | System > Lookup Sets page |
+| `sales_agents.aliases` (`models/sales_agent.py:67`) | 23 of 114 agents | Sales Agents page |
+| `customer_aliases` (`models/order.py:327-341`) | 1,076 rows / 383 customers, from customer merge; read by resolver trigram tier only (`entity_resolver.py:3389`), not by head lookup | UNVERIFIED |
+| `import_field_alias` supplier_inventory_word | 15 rows incl. SRT=SORENTO, WC=连体马桶 (SCM import only) | admin page |
+| parser prompt text (explore1020 production row) | "Sorento = SRT, Mocha = MCH, Cabana = CBN"; tandas/马桶 -> water closet; sinki dapur -> kitchen sink | prompt edit only |
+
+Brands have no alias column (`models/product.py:99-130`); "SRT" works only through lookup_sets brand_alias.
+
+### Alias mining signals (read-only SQL, explore1020)
+
+- Code prefix -> brand: 214 of 280 three-letter prefixes map to one brand; 97.1% purity over branded products (SRT 5,026
+  products 92.9% SORENTO; IDC 100% INFINITY; BRW 99.7% BRAVAT).
+- SRT code letters 4-5 -> class: 88.9% weighted purity (WC 545 -> Water Closet 92.1%; WB 437 -> Wash Basin 98.2%; KS 251
+  -> Kitchen Sink 89.6%). Mocha codes mostly have NULL class: not minable yet.
+- Did-you-mean: offer at `trace[stage=received].raw.session_vars.session_vars.open_question` (kind product_pick,
+  payload.did_you_mean); pick at `trace[kind=apply].verdict.reference_positions[0]`; 161 accepted picks, 47 distinct
+  typed->picked pairs (product codes, not list rows).
+- AutoCount text: `products.description` filled on all 14,935 active products (of 545 SRTWC products 224 say "WC");
+  Desc2 (`products.remark`) empty.
