@@ -195,8 +195,7 @@ def test_download_needs_email_outbox_view(setup):
 
 
 def test_malformed_extra_attachments_do_not_break_the_row(setup):
-    # A non-string key is skipped (it can never be fetched); a non-string filename is shown
-    # as text. Neither may 500 the list or the detail.
+    # A non-string key or filename is shown as text. Neither may 500 the list or the detail.
     setup["row"] = _row(
         metadata_json={
             "extra_attachments": [
@@ -207,7 +206,29 @@ def test_malformed_extra_attachments_do_not_break_the_row(setup):
     )
     r = setup["client"].get(f"{BASE}/{setup['row'].id}")
     assert r.status_code == 200, r.text
-    assert r.json()["attachments"] == [{"index": 0, "filename": "7"}]
+    assert r.json()["attachments"] == [
+        {"index": 0, "filename": "12345"},
+        {"index": 1, "filename": "7"},
+    ]
+
+
+def test_drainer_still_fails_the_send_for_a_malformed_required_extra(monkeypatch):
+    # The drainer's rule: an email that silently arrives without its document is worse than
+    # one that retries. Listing the row for the outbox screen must not change that.
+    import app.tasks.email_outbox_tasks as tasks
+
+    asked = []
+
+    class Backend:
+        def download_file(self, key):
+            asked.append(key)
+            raise Exception("bad key")
+
+    monkeypatch.setattr(storage_router, "get_backend", lambda provider: Backend())
+    row = _row(metadata_json={"extra_attachments": [{"storage_key": 12345, "storage_provider": "r2"}]})
+    with pytest.raises(Exception):
+        tasks._attachments_for(row)
+    assert asked == [12345]
 
 
 def test_download_is_never_sniffed_as_another_type(setup):
