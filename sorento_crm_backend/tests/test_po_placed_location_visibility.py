@@ -134,6 +134,50 @@ def test_exclusion_policy_drops_the_excluded_location(client, db):
     assert hid.warehouse_code not in resp.text
 
 
+def test_a_visible_spo_matched_by_location_code_alone_comes_back(client, db):
+    vis, _hid, prod = _seed(db)
+    _spo(db, product_id=prod.id, allocated=3, number="SPO-VIS", location_code=vis.warehouse_code)
+    contact = _contact(db)
+    _policy(db, contact, mode="compact", warehouse_ids=[vis.id])
+
+    _resp, rows = _rows(client, prod, contact_id=contact.id)
+
+    assert set(rows) == {"PO-VIS", "SPO-VIS"}
+    assert rows["SPO-VIS"]["location"] == vis.warehouse_code
+
+
+def test_merged_access_type_policy_scopes_like_the_stock_lines(client, db):
+    """Two access types: one includes VIS and HID, the other excludes HID. The merged
+    policy (`stock_visibility._merge_access_type_rows`) is VIS alone, and so are the rows."""
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    vis, hid, prod = _seed(db)
+    contact = _contact(db)
+    wide, narrow = unique_code("WIDE")[:50], unique_code("NARROW")[:50]
+    db.add_all([ContactAccessType(code=wide, name="ZZT wide"), ContactAccessType(code=narrow, name="ZZT narrow")])
+    db.flush()
+    db.execute(
+        respond_contact_access_types.insert(),
+        [{"contact_id": contact.id, "access_type_code": c} for c in (wide, narrow)],
+    )
+    db.add_all(
+        [
+            StockVisibilityPolicy(
+                id=str(uuid.uuid4()), access_type_code=wide, mode="compact", warehouse_ids=[vis.id, hid.id]
+            ),
+            StockVisibilityPolicy(
+                id=str(uuid.uuid4()), access_type_code=narrow, mode="compact", excluded_warehouse_ids=[hid.id]
+            ),
+        ]
+    )
+    db.flush()
+
+    resp, rows = _rows(client, prod, contact_id=contact.id)
+
+    assert set(rows) == {"PO-VIS"}
+    assert hid.warehouse_code not in resp.text
+
+
 def test_empty_include_list_returns_no_rows(client, db):
     _vis, _hid, prod = _seed(db)
     contact = _contact(db)
