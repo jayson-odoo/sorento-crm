@@ -68,8 +68,24 @@ the live embedder; gpt-5.4-mini; explore1020 read-only. Harness: `crew/state/eva
   Engine: `_lookup_lines(..., held=held_values(chat_state._subject(focus)))`. Measured: B 1/7 -> 7/7 Mocha Dealer.
 - F7 (case 7, db0c5fcd0d): `lookup_lists.prefetch` starts the pieces' embedding before the contact checks and
   `load_rows`. The engine keeps one provider embedder (and one HTTP client) per key. Mac: median 437 -> 320 ms.
-- F2 (case 2): meaning-noise options were filed to crew as one ask. Recommended: meaning only for category and file
-  type.
+- F7b (case 7, fb864e1875): `_rows_that_can_hit` pre-filters rows with numpy (trigram postings and bincount Jaccard,
+  exact equality, spec same-words, meaning max against the floor). Only rows that can reach a floor run the unchanged
+  exact loop. Real data: 1,200 messages x staff and dealer row sets, 0 differing outputs. Staff median 230 -> 9 ms.
+- Bug (5242b4056a): the piece-vector cache evicted the current message's own pieces, raised KeyError, and the turn
+  silently read spelling only.
+- Eval tooling: `parser_gold.py` builds a lookup version's user turn as the engine does and gains an `access_levels`
+  expect. New gold file `scripts/chatbot_eval/gold/parser_v66_regressions.jsonl` (27 rows).
+- F2 (case 2, meaning noise): STOPPED by the owner (26 Oct 14:40). The direction is "extract then match" in a
+  separate L lane. Data for that lane: `crew/state/eval/v66/noise.out`, `noise_pairs.json`, `feat.jsonl`,
+  `labels_a.jsonl` + `labels_b.jsonl` (1,231 labelled pairs), `calib.py`. Calibration commits reverted.
+
+## Left open (for the extract-then-match lane)
+
+- Tier answer over a held brand when the held subject also carries categories (real row v66-t-06, CABANA + water
+  closet): "Dealer" -> every brand's dealer level. v63 3/3, v185 0/3, with F1 0/9.
+- Spelling noise of a list's shared head word: "promo" spells near `pp (PP Promo)` (0.75); only "promotion" was meaning.
+- Cases 3-6 are not prompt-caused (same parse in both arms). They are downstream: brand-scoped not-found suggestions,
+  a dropped second product, the "-1UNIT" quantity, and a held product on a PO lookup.
 
 ## Budget
 
