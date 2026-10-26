@@ -39,9 +39,11 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
 ## Customer accounts
 - U8 [crew audit 26 Oct] Name key (sheet dealer text and every customer name alike): split the name into its
   bracket texts (`[..]`, `(..)`) and its ` - ` segments; a segment is an ACCOUNT TAG when its text (letters and
-  digits only, case-folded) appears on customers of at least 10 different base names in the caller's scope (data,
+  digits only, case-folded) appears on customers of at least 8 different base names in the caller's scope (data,
   not a list: measured on the 20 Oct copy, the smallest tag is MALAYSIA at 10 bases - A/C I-IV, CERAMIC, IBORN,
-  PROJECT(-CASH), SRT, BRAVAT, SHOWCASE, M - and the largest place is SEMENYIH at 5); tags are dropped, every
+  PROJECT(-CASH), SRT, BRAVAT, SHOWCASE, M - and the largest place is SEMENYIH at 5; 8 sits in that gap so one
+  merge or rename does not flip a tag); a segment made only of legal-suffix words (`(M)`, `(SDN BHD)`) is always
+  dropped; tags are dropped, every
   other segment stays in the name (a branch such as `(Jln Ipoh)`, `(JB)`, `(Klang)` is part of the company name).
   Then case-fold, `&` and punctuation become spaces (never a cut), a leading "the" and trailing legal suffixes
   (`normalise_name`'s list) are dropped. Block key = the dealer text's key; rows whose keys are equal share one
@@ -55,13 +57,17 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
 - U10 [Q4] Every exact account is proposed and ticked by default, including accounts of a company the rows do
   not tag; inactive exact accounts are listed but not ticked.
 - U11 Nothing is linked for a block the admin did not confirm; its contacts are skipped "dealer_not_confirmed".
-  "Confirm all exact" confirms every `exact` block with its ticked accounts. A confirmed block links EVERY
+  "Confirm all exact" confirms every `exact` block with its ticked accounts. In a `pick` / `none` block, ticking a
+  candidate or adding an account through the search confirms the block (its Confirm box shows ticked); unticking
+  the last account un-confirms it. A confirmed block links EVERY
   confirmed account to EVERY found contact of the block.
 - U12 Each account shows debtor code, name, company, active flag and its sales agent; the sheet's agent text for
   that company sits beside it. The sales agent is never written.
 
 ## Preview, apply, result
-- U13 Preview (`dry_run` true) writes nothing.
+- U13 Preview (`dry_run` true) writes nothing. `counts.already_configured` = found contacts that ALREADY hold any
+  access type or customer link before the upload (not the `no_change` count). Apply never ranks candidates (it
+  reports a non-exact block as `pick`, never `none` because ranking was skipped).
 - U14 Apply (`dry_run` false) REQUIRES `confirmed` (missing -> 422; `{}` = nothing confirmed, every contact
   skipped) and sends the same file + the confirmed account ids per block; the server re-plans and
   writes everything in ONE transaction. Any error rolls all of it back; nothing is half-applied.
@@ -88,7 +94,8 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
 ## Brand dealer group (owner 15:20)
 - U21 `brands.dealer_company_id` (nullable, FK companies): the company whose dealers get the brand. Migration seeds
   SORENTO, CABANA, ELLECI, WDI, NO LOGO -> Sorento Sdn Bhd; MOCHA, IBORN -> Mocha Sdn Bhd; the rest NULL. Brand
-  create / edit (master data dialog AND the brand detail page, view and edit) has a clearable "Dealer group" select of companies; the brand API accepts and returns
+  create / edit (master data dialog AND the brand detail page, view and edit) has a clearable "Dealer group" select of the companies the caller can see (granted companies for a non-superadmin, all for a
+  superadmin; never an empty list without a reason); the brand API accepts and returns
   `dealer_company_id` + `dealer_company_name`; an unknown or malformed company id is refused (422, no database text).
 
 - U19a [browser pass 26 Oct] The request runs under every company the caller is GRANTED (FE sends
