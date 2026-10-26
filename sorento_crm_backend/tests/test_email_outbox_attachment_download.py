@@ -208,3 +208,10 @@ def test_malformed_extra_attachments_do_not_break_the_row(setup):
     r = setup["client"].get(f"{BASE}/{setup['row'].id}")
     assert r.status_code == 200, r.text
     assert r.json()["attachments"] == [{"index": 0, "filename": "7"}]
+
+
+def test_download_is_never_sniffed_as_another_type(setup):
+    r = setup["client"].get(f"{BASE}/{setup['row'].id}/attachments/1")
+    assert r.status_code == 200, r.text
+    assert r.headers.get("x-content-type-options") == "nosniff"
+    assert r.headers["content-disposition"].startswith("attachment;")
