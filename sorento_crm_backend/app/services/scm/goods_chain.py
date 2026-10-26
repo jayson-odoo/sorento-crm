@@ -66,6 +66,8 @@ from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryLink, OrderInqu
 from app.services.company_scope import build_company_predicate
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import spo_supply
+from app.services.scm.container_request_service import OPEN_PO_STATUSES
+from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE_SYSTEM
 from app.services.scm.supply_assignment import EPSILON
 
 #: Hop states (plan section 4).
@@ -677,6 +679,48 @@ def _po_lines_feeding(db: Session, spo_rows: Sequence[Any]) -> Set[str]:
     }
 
 
+def po_line_on_order(
+    *, po_status: Any, line_status: Any, ordered: Any, received: Any, source_system: Any
+) -> bool:
+    """Python spelling of `ProjectSupplyService.open_po_line_clauses` for a PO line already
+    in hand (the PO screens' line builders), so `po_line_is_dead` reads the same `on_order`
+    the placement query's `po_open` column does."""
+    return (
+        po_status in OPEN_PO_STATUSES
+        and line_status == "open"
+        and _dec(ordered) > _dec(received)
+        and (source_system or "") != CRM_SPO_SOURCE_SYSTEM
+    )
+
+
+def po_line_is_dead(
+    *,
+    has_spo: bool,
+    ordered: Any,
+    received: Any,
+    cancelled: Any,
+    on_order: bool,
+    line_status: Any,
+    po_status: Any,
+) -> bool:
+    """Q5, the ONE dead-PO-line rule: no SPO under the PO->SPO key, nothing moved past what
+    a Cancel PO took, nothing left on order, and the line was closed or cancelled, its PO
+    cancelled, or a Cancel PO took it all. `qty_received` is the AutoCount transfer and
+    includes what a Cancel PO took. The chain and the PO screens' line builders share it."""
+    left = max(_dec(ordered) - _dec(received), _ZERO) if on_order else _ZERO
+    moved = max(_dec(received) - _dec(cancelled), _ZERO)
+    return (
+        not has_spo
+        and moved <= _EPSILON
+        and left <= _EPSILON
+        and (
+            line_status in ("closed", "cancelled")
+            or po_status == "cancelled"
+            or _dec(received) > _EPSILON
+        )
+    )
+
+
 def _po_split(db: Session, placements: Sequence[Any]) -> Dict[str, List[Hop]]:
     """By link id, the hops of each placement on a PO line (SUPPLY-SPO-LINK). `placements`
     is every live placement on the lines, made-first first: each transferred allocation,
@@ -703,15 +747,14 @@ def _po_split(db: Session, placements: Sequence[Any]) -> Dict[str, List[Hop]]:
         # `qty_received` is the AutoCount transfer and includes what a Cancel PO took.
         moved = max(_dec(row.po_received) - _dec(row.po_cancelled), _ZERO)
         direct_left[line_id] = _ZERO if spos_of(row) else moved
-        if (
-            not spos_of(row)
-            and moved <= _EPSILON
-            and po_left[line_id] <= _EPSILON
-            and (
-                row.po_line_status in ("closed", "cancelled")
-                or row.po_status == "cancelled"
-                or _dec(row.po_received) > _EPSILON
-            )
+        if po_line_is_dead(
+            has_spo=bool(spos_of(row)),
+            ordered=row.po_ordered,
+            received=row.po_received,
+            cancelled=row.po_cancelled,
+            on_order=bool(row.po_open),
+            line_status=row.po_line_status,
+            po_status=row.po_status,
         ):
             # Q5: nothing left on order, nothing moved past what a Cancel PO took, and no
             # SPO to follow: the line was closed or cancelled, or a Cancel PO took it all.

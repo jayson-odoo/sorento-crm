@@ -1312,6 +1312,8 @@ class OrderInquiryPoDetailLine(BaseModel):
     #: its goods landed (`receipts`) or why it brings nothing (`dead_reason`) - the popup's
     #: SPO column draws them with the document pills.
     spos: List[PoLineSpoOut] = []
+    #: `po_cancelled` when this PO line brings nothing (`goods_chain.po_line_is_dead`).
+    dead_reason: Optional[Literal["po_cancelled"]] = None
 
 
 class OrderInquiryDocumentAllocation(BaseModel):

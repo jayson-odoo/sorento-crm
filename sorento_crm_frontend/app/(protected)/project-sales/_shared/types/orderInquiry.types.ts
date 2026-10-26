@@ -1287,6 +1287,9 @@ export interface OrderInquiryPoDetailLine {
    * popup's SPO column draws them with the document pills.
    */
   spos?: OrderInquiryPoLineSpo[];
+  /** Owner Q5 (a): `po_cancelled` when the line itself brings nothing; the SPO cell draws
+   *  the red pill. */
+  dead_reason?: 'po_cancelled' | null;
 }
 
 /** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto. */

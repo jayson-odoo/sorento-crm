@@ -873,6 +873,7 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
         cell: ({ row }) => (
           <PoLineSpoCell
             spos={row.original.spos}
+            lineDeadReason={row.original.dead_reason}
             renderDocument={(spoNumber) => (
               <Link
                 href={spoDetailHref(spoNumber)}

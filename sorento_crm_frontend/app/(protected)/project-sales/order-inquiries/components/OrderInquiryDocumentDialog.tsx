@@ -449,6 +449,7 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
     cell: ({ row }) => (
       <PoLineSpoCell
+        lineDeadReason={row.original.dead_reason}
         // `spo_numbers` (numbers only) still rides the wire beside `spos`; read only when
         // `spos` is absent.
         spos={

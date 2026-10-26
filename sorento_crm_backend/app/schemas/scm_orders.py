@@ -633,6 +633,9 @@ class PurchaseOrderLine(BaseModel):
     #: goods landed or why it brings nothing. Filled on the detail and update routes; the
     #: list leaves it empty.
     spos: List[PoLineSpoOut] = []
+    #: `po_cancelled` when this PO line brings nothing (`goods_chain.po_line_is_dead`), so a
+    #: placement on it reads "PO cancelled". Filled with `spos` (detail and update routes).
+    dead_reason: Optional[Literal["po_cancelled"]] = None
 
 
 class PurchaseOrderSpoLanding(BaseModel):

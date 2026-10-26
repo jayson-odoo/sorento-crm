@@ -173,6 +173,7 @@ class PurchaseOrderService:
         # line's `qty_cancelled`, and how each was matched. One read for the order.
         from app.models.autocount_cancel import AutocountCancelLine
         from app.services.autocount_cancel_ingest_service import cancel_sources
+        from app.services.scm import goods_chain
 
         cancels = cancel_sources(
             self.db, AutocountCancelLine.purchase_order_line_id,
@@ -262,6 +263,28 @@ class PurchaseOrderService:
                 # where its goods landed or why it brings nothing (`goods_chain`). Only the
                 # detail and update routes pass it; the list leaves the column empty.
                 "spos": (spos_by_line or {}).get(str(ln.id), []),
+                # Owner Q5 (a): the chain's own dead-PO-line rule, so a placement on this
+                # line reads "PO cancelled" here as on the popup. None on the list, which
+                # does not resolve `spos`.
+                "dead_reason": (
+                    "po_cancelled"
+                    if spos_by_line is not None and goods_chain.po_line_is_dead(
+                        has_spo=bool(spos_by_line.get(str(ln.id))),
+                        ordered=ln.qty_ordered,
+                        received=ln.qty_received,
+                        cancelled=ln.qty_cancelled,
+                        on_order=goods_chain.po_line_on_order(
+                            po_status=po.status,
+                            line_status=ln.line_status,
+                            ordered=ln.qty_ordered,
+                            received=ln.qty_received,
+                            source_system=po.source_system,
+                        ),
+                        line_status=ln.line_status,
+                        po_status=po.status,
+                    )
+                    else None
+                ),
             })
         return {
             "id": po.id,

@@ -1805,16 +1805,16 @@ export function SoCoveragePicker({
         id: 'document',
         accessorFn: (c) => c.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
-        // LINKAGE-UNIFY U4 round 2: the SO number never truncates; "via PO <number>" is
-        // the order inquiry's own shared pill and gives way first (full text in its title).
+        // LINKAGE-UNIFY U4 round 4: neither the SO number nor "via PO <number>" (the order
+        // inquiry's own shared pill) ever truncates; in a narrow column the pill wraps
+        // under the SO number instead (full text kept in its title).
         cell: ({ row }) =>
           row.original.via_po ? (
-            <span className="flex min-w-0 items-center gap-1">
+            <span className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
               <span className="shrink-0 whitespace-nowrap">
                 {textCell(row.original.document)}
               </span>
               <WorklistPill
-                truncate
                 testId={`so-covered-via-po-${row.original.key}`}
                 title={`via PO ${row.original.via_po}`}
               >

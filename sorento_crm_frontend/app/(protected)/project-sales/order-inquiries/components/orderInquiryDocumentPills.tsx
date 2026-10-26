@@ -42,7 +42,9 @@ export function WorklistPill({
   truncate?: boolean;
   children: React.ReactNode;
 }) {
-  const className = truncate ? 'min-w-0 max-w-full shrink-0' : 'shrink-0';
+  const className = truncate
+    ? 'min-w-0 max-w-full shrink-0 whitespace-nowrap'
+    : 'shrink-0 whitespace-nowrap';
   const body = truncate ? <span className="truncate">{children}</span> : children;
   const variant = destructive ? 'destructive' : warning ? 'warning' : 'secondary';
   return (
@@ -167,12 +169,27 @@ export interface DocumentSpoLine {
  */
 export function PoLineSpoCell({
   spos,
+  lineDeadReason,
   renderDocument,
 }: {
   spos: DocumentSpoLine[] | undefined;
+  /** Owner Q5 (a): the PO line itself brings nothing (`po_cancelled`), so with no SPO line
+   * to carry the mark the cell draws the same red pill. */
+  lineDeadReason?: OrderInquiryDeadReason | null;
   renderDocument: (spoNumber: string) => React.ReactNode;
 }) {
-  if (!spos?.length) return <span className="text-muted-foreground">-</span>;
+  if (!spos?.length) {
+    return lineDeadReason ? (
+      <DocumentStatePills
+        receipts={[]}
+        deadReason={lineDeadReason}
+        testIdPrefix="po-line"
+        testIdSuffix="cancelled"
+      />
+    ) : (
+      <span className="text-muted-foreground">-</span>
+    );
+  }
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
       {spos.map((spo, index) => (

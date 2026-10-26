@@ -730,6 +730,8 @@ export interface PurchaseOrderLine {
   /** LINKAGE-UNIFY U4: every SPO line this line was transferred onto, with where its goods
    *  landed or why it brings nothing. Filled on the detail read; the list leaves it empty. */
   spos?: PurchaseOrderLineSpo[];
+  /** `po_cancelled` when the line itself brings nothing; the SPO cell draws the red pill. */
+  dead_reason?: 'po_cancelled' | null;
 }
 
 /** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto (same shape as the order
