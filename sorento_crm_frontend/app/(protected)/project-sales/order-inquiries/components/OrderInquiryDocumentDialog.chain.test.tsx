@@ -110,3 +110,26 @@ describe('P2 the PO popup SPO cell uses the one shared pill', () => {
     expect(number.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis|(^|\s)max-w-/);
   });
 });
+
+describe('R4-D3 the PO popup marks a cancelled PO line red "PO cancelled"', () => {
+  const withLine = (dead_reason: string | null) => ({
+    ...PO_DETAIL,
+    lines: [{ ...PO_DETAIL.lines[0], qty_received: '0', remaining: '728', spos: [], dead_reason }],
+  });
+
+  it('a line whose dead_reason is po_cancelled draws the shared red pill', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(withLine('po_cancelled'));
+    renderNode(<OrderInquiryDocumentDialog kind="po" document="202607-S0100" poId="po-1" open onOpenChange={vi.fn()} />);
+    await screen.findByText('DAFUYUAN');
+    const pill = screen.getByText('PO cancelled').closest('[data-slot="badge"]') as HTMLElement;
+    expect(pill).not.toBeNull();
+    expect(pill.className).toMatch(/destructive/);
+  });
+
+  it('a line whose dead_reason is null draws no such pill', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(withLine(null));
+    renderNode(<OrderInquiryDocumentDialog kind="po" document="202607-S0100" poId="po-1" open onOpenChange={vi.fn()} />);
+    await screen.findByText('DAFUYUAN');
+    expect(screen.queryByText('PO cancelled')).not.toBeInTheDocument();
+  });
+});

@@ -130,15 +130,21 @@ describe('P1 the via-PO row of the SO covered lightbox', () => {
     expect(number.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis/);
   });
 
-  it('"via PO <number>" is the shared Badge pill, truncating, with the full text as title', () => {
+  it('"via PO <number>" is the shared Badge pill, never truncating, full text as title, cell wraps', () => {
     show();
     const text = screen.getByText('via PO 202607-S0100');
     const badge = text.closest('[data-slot="badge"]') as HTMLElement | null;
     expect(badge).not.toBeNull();
-    expect(text.className).toContain('truncate');
-    expect(badge!.className).toContain('min-w-0');
+    for (const el of [text, badge!]) {
+      expect(el.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis/);
+    }
+    expect(`${text.className} ${badge!.className}`).toContain('whitespace-nowrap');
+    expect(badge!.className).toContain('shrink-0');
     expect((text.closest('[title]') as HTMLElement).getAttribute('title')).toBe(
       'via PO 202607-S0100',
     );
+    // The cell container wraps so the pill drops under the SO number instead of being cut.
+    const cell = screen.getByText('SO396349').parentElement as HTMLElement;
+    expect(cell.className).toContain('flex-wrap');
   });
 });

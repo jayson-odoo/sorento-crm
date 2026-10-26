@@ -234,3 +234,60 @@ def test_k8_an_spo_line_closed_with_nothing_landed_shows_on_the_po_line_as_withd
     assert [(e["spo_number"], e["dead_reason"]) for e in line.get("spos", [])] == [
         (a.spo_number, "spo_withdrawn")
     ]
+
+
+# ---------------------------------------------------------------------------- U4 round 4
+# Owner Q5 (a): a placement on a dead PO line stays placed WITH a red "PO cancelled". Each PO
+# line in both PO responses carries `dead_reason` ("po_cancelled" | None), decided by the U2
+# dead-PO-line rule in goods_chain (one fact, one way).
+
+
+def _dead_seed(db, case):
+    w = _World(db)
+    if case == "s0083":  # cancelled line, PO active, ordered 728, nothing transferred, no SPO
+        po, line = w.po(ordered=728, transferred=0, open_line=True)
+        line.line_status = "cancelled"
+    elif case == "cancel_po":  # a Cancel PO took everything: received 5, cancelled 5, no SPO
+        po, line = w.po(ordered=5, transferred=5)
+        line.qty_cancelled = Decimal("5")
+    elif case == "live":  # open line, nothing transferred
+        po, line = w.po(ordered=100, transferred=0)
+    else:  # "has_spo": cancelled-status line that HAS an SPO under the key
+        po, line = w.po(ordered=100, transferred=100)
+        line.line_status = "cancelled"
+        w.onto(po, line, qty=100)
+    db.flush()
+    w.place_on_po(line, 10 if case != "s0083" else 728)
+    return po, line
+
+
+def _line_of(detail, line):
+    [ln] = [ln for ln in detail["lines"] if str(ln["id"]) == str(line.id)]
+    return ln
+
+
+def _dead_both(db, case):
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    po, line = _dead_seed(db, case)
+    popup = _line_of(_svc(db).get_po_detail(str(po.id)), line)
+    scm = _line_of(PurchaseOrderService(db).get_one(str(po.id)), line)
+    assert "dead_reason" in popup, ("PO popup line", sorted(popup))
+    assert "dead_reason" in scm, ("SCM PO detail line", sorted(scm))
+    return popup["dead_reason"], scm["dead_reason"]
+
+
+def test_r4_d3_s0083_cancelled_line_nothing_transferred_is_po_cancelled_on_both(scm_app):
+    assert _dead_both(scm_app[1], "s0083") == ("po_cancelled", "po_cancelled")
+
+
+def test_r4_d3_a_cancel_po_line_is_po_cancelled_on_both(scm_app):
+    assert _dead_both(scm_app[1], "cancel_po") == ("po_cancelled", "po_cancelled")
+
+
+def test_r4_d3_an_open_live_line_has_no_dead_reason_on_both(scm_app):
+    assert _dead_both(scm_app[1], "live") == (None, None)
+
+
+def test_r4_d3_a_cancelled_line_with_an_spo_has_no_line_level_dead_reason(scm_app):
+    assert _dead_both(scm_app[1], "has_spo") == (None, None)

@@ -267,3 +267,29 @@ describe('P3 the Goods receipt card says "transferred" for the AutoCount figure 
     expect(screen.queryByText(/of [\d,.]+ received/)).not.toBeInTheDocument();
   });
 });
+
+describe('R4-D3 the SCM PO Lines tab marks a cancelled PO line red "PO cancelled"', () => {
+  const withDead = (dead_reason: string | null) => {
+    const base = po();
+    return {
+      ...base,
+      lines: [{ ...base.lines![0], qty_received: 0, spos: [], dead_reason } as unknown as PurchaseOrderLine],
+    } as PurchaseOrder;
+  };
+
+  it('a line whose dead_reason is po_cancelled draws the shared red pill', () => {
+    usePurchaseOrder.mockReturnValue({ data: withDead('po_cancelled'), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+    const pill = screen.getByText('PO cancelled').closest('[data-slot="badge"]') as HTMLElement;
+    expect(pill).not.toBeNull();
+    expect(pill.className).toMatch(/destructive/);
+  });
+
+  it('a line whose dead_reason is null draws no such pill', () => {
+    usePurchaseOrder.mockReturnValue({ data: withDead(null), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+    expect(screen.queryByText('PO cancelled')).not.toBeInTheDocument();
+  });
+});
