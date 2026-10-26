@@ -133,7 +133,7 @@ class Brand(Base, CompanyScopedMixin):
     dealer_company_id = Column(
         UUID(as_uuid=False), ForeignKey("companies.id", ondelete="SET NULL"), nullable=True
     )
-    dealer_company = relationship("Company", foreign_keys=[dealer_company_id], lazy="joined")
+    dealer_company = relationship("Company", foreign_keys=[dealer_company_id], lazy="select")
 
     @property
     def dealer_company_name(self):

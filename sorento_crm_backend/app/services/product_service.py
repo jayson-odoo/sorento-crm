@@ -2552,6 +2552,14 @@ class BrandService:
             .all()
         )
         count_by_brand = {str(bid): c for bid, c in counts}
+        from app.models.company import Company
+
+        dealer_ids = {b.dealer_company_id for b in brands if b.dealer_company_id}
+        dealer_names = (
+            {str(i): n for i, n in self.db.query(Company.id, Company.name).filter(Company.id.in_(dealer_ids))}
+            if dealer_ids
+            else {}
+        )
         data = []
         for b in brands:
             row = {
@@ -2570,7 +2578,7 @@ class BrandService:
                 "chatbot_weight": float(b.chatbot_weight or 0),
                 "is_searchable": b.is_searchable,
                 "dealer_company_id": b.dealer_company_id,
-                "dealer_company_name": b.dealer_company_name,
+                "dealer_company_name": dealer_names.get(str(b.dealer_company_id)) if b.dealer_company_id else None,
                 "created_at": b.created_at,
                 "updated_at": b.updated_at,
                 "created_by": str(b.created_by) if b.created_by else None,
@@ -2630,7 +2638,10 @@ class BrandService:
             return
         from app.models.company import Company
         from app.services.error_handler import handle_unprocessable
+        from app.services.identifier_resolver import is_uuid
 
+        if not is_uuid(company_id):
+            raise handle_unprocessable("Dealer group company not found.")
         if self.db.query(Company.id).filter(Company.id == company_id).first() is None:
             raise handle_unprocessable("Dealer group company not found.")
 

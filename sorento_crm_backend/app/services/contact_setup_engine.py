@@ -164,7 +164,7 @@ def _plan_contact(
     hide = cur.hide_zero if cur else False
     mode_changed = cur is None or cur.mode != rules["stock_mode"]
     loc_changed = cur is None or (not keep_all and cur.include != tuple(include_ids)) or cur.exclude is not None
-    out.append(_change(contact, d, "stock_mode", cur.mode if cur else None, rules["stock_mode"],
+    out.append(_change(contact, d, rules.get("stock_mode_facet", "stock_mode"), cur.mode if cur else None, rules["stock_mode"],
                        "set" if mode_changed else "already", mode_changed))
     out.append(_change(contact, d, "stock_locations", locations_text(cur, shown),
                        locations_text(StockOverride(rules["stock_mode"], None if keep_all else tuple(include_ids), None, hide), shown),
@@ -179,12 +179,13 @@ def _plan_contact(
         add_brands = sorted(set(want_brands) - set(held_brands)) if want_brands else []
         if add_brands:
             after_brands = sorted({*held_brands, *want_brands})
-            out.append(_change(contact, d, "brands", sorted(label.get(b, "other brand") for b in held_brands),
+            out.append(_change(contact, d, "brands",
+                               sorted(label.get(b, "other brand") for b in held_brands) if held_brands else "every brand",
                                sorted(label.get(b, "other brand") for b in after_brands), "add", True))
             todo["brands"] = after_brands
         else:
-            out.append(_change(contact, d, "brands", sorted(label.get(b, "other brand") for b in held_brands),
-                               sorted(label.get(b, "other brand") for b in held_brands), "already", False))
+            shown_brands = sorted(label.get(b, "other brand") for b in held_brands) if held_brands else "every brand"
+            out.append(_change(contact, d, "brands", shown_brands, shown_brands, "already", False))
 
     # market segment
     seg = rules["segment"]
@@ -236,7 +237,7 @@ def _plan_contact(
                 r["changed"], r["status"] = False, "not_applied"
         if "companies" in skip:
             todo["companies"] = []
-        if skip & {"stock_check_mode", "stock_locations"}:
+        if skip & {rules.get("stock_mode_facet", "stock_mode"), "stock_locations"}:
             todo["stock"] = (False, include_ids, hide)
         if "agent_access" in skip:
             todo["agents"] = []

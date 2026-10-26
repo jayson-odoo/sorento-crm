@@ -28,7 +28,7 @@ from app.schemas.contact_customer import (
     ContactCustomersResponse,
 )
 from app.services import contact_customer_service
-from app.services.company_scope_resolver import company_name_map, grants_scope
+from app.services.company_scope_resolver import company_name_map, grants_scope, widen_if_requested
 from app.services.error_handler import handle_internal_error, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -259,6 +259,8 @@ def import_contact_access_sheet(
     file: UploadFile = File(...),
     dry_run: bool = Form(True),
     confirmed: Optional[str] = Form(None),
+    company_scope: Optional[str] = Query(None),
+    request: Request = None,
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
@@ -270,20 +272,23 @@ def import_contact_access_sheet(
 
     try:
         data = file.file.read(sheet.MAX_BYTES + 1)
-        return sheet.run(
-            db,
-            data,
-            dry_run=dry_run,
-            confirmed_raw=confirmed,
-            actor_id=str(current_user.get("id") or "") or None,
-            skip=contact_access_copy_service.facets_to_skip(db, current_user["id"]),
-        )
+        # Under every company the caller is granted when the dialog asks (`?company_scope=grants`):
+        # a staff request runs under ONE active company, and the sheet spans Sorento and Mocha.
+        with widen_if_requested(db, request, current_user, company_scope):
+            return sheet.run(
+                db,
+                data,
+                dry_run=dry_run,
+                confirmed_raw=confirmed,
+                actor_id=str(current_user.get("id") or "") or None,
+                skip=contact_access_copy_service.facets_to_skip(db, current_user["id"]),
+            )
     except HTTPException:
         raise
     except Exception as e:
         db.rollback()
         logger.error(f"Error in import_contact_access_sheet: {e}", exc_info=True)
-        raise handle_internal_error(str(e))
+        raise handle_internal_error()
 
 
 @router.post("/bulk-sync", status_code=status.HTTP_200_OK)
