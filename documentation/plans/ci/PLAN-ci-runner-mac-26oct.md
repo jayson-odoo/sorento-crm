@@ -28,7 +28,7 @@ billed minutes (deploy.yml:60, release 38099410256).
 3. Size the VM against the Mac's measured memory; record `sysctl vm.swapusage` before/after.
 4. Rebuild the VM with `up.sh` at that size; register once the repo is private (the guard stays).
 5. One test-only run: `gh workflow run deploy.yml --ref crew/ci-runner-mac -f runner=mac`
-   (build-images deploy.yml:1866 and build-and-deploy deploy.yml:1990 both require
+   (build-images deploy.yml:1866 and build-and-deploy deploy.yml:1991 both require
    `refs/heads/main`, so a branch dispatch runs tests only).
 6. Report: what can move, wall time vs GitHub, billed minutes left, risks, the exact var flips.
 
@@ -90,7 +90,15 @@ a lean release billed 41-46 min (Release tests 14-19, build 8-9, deploy 15-17).
   `gh variable set RUNNER_TESTS --body mac --repo jayson-odoo/sorento-crm` and
   `gh variable set RUNNER_FAST --body mac --repo jayson-odoo/sorento-crm`.
   A lean release then bills only build-images (~8-9) + build-and-deploy (~15-17).
-- `full_suite=true` must stop: on one runner its 26 jobs run in series (~3 h; run 39126899668).
+- A full-suite release puts 22 jobs on the Mac (2 fast gates, 3 SCM shards, 11 backend shards,
+  5 vitest shards, the type-check; matrices at deploy.yml:917, 1182, 1748), run in series on one
+  runner (~3 h; run 39126899668), and puts validate-backend/validate-mcp (708/798) back on
+  GitHub-hosted. A release goes full on its own, without `full_suite=true`, when there is no
+  earlier release or the lookup fails (504-505), the batch reaches the 300-file compare cap
+  (557-560), or it touches tests/conftest.py or tests/_pg_fixture.py (564-566). Stop passing
+  `full_suite=true`; for a full run, dispatch with `-f runner=github` (overrides both vars for
+  that run: 406, 413-414, 418 and the fast-gate `runs-on` at 180/220/351/2198/2243; pinned by
+  tests/test_ci_runner_routing.py:125, :164).
 - build-images and build-and-deploy on the Mac need a workflow change, the routing pin tests
   changed, and the owner's OK to put SSH/Docker Hub/SMTP secrets on the Mac; a release whose
   frontend tree changed still cannot build its frontend image here (OOM above).

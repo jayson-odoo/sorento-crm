@@ -28,7 +28,7 @@ Image builds and the deploy always stay on GitHub-hosted (prod is amd64).
   not two.
 - No image builds here: an amd64 build on this arm64 VM is QEMU emulation
   (measured 27 Oct 2026: backend image 5.5 min, frontend `next build`
-  OOM-killed at 6 GB). See `documentation/plans/ci/PLAN-ci-runner-mac-26oct.md`.
+  OOM-killed in the 6 GB VM). See `documentation/plans/ci/PLAN-ci-runner-mac-26oct.md`.
 
 ## Commands (on the Mac)
 
