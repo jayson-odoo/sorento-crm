@@ -710,3 +710,31 @@ def test_the_guides_words_for_a_changed_held_line_equal_the_emails(api, emails, 
     [email] = emails
     [told] = email["lines"]
     assert guide == told["remark"] == f"CHANGED: {words[first]} -> {words[second]}", (guide, told)
+
+
+def test_the_guides_words_for_a_first_confirm_over_a_raised_order_equal_the_emails(api, emails):
+    """Crew audit: through the board's own query (the raised rows it reads for the preview),
+    hand-test step 4's shape previews exactly the REMARK the Confirm's email then prints."""
+    from tests.test_oi_cancelled_line_used_confirm import _inquiry, _oi_row
+    from tests.test_planning_changes import _line_payload as payload
+    from tests.test_so_supply_confirmation import _stock
+
+    s = _seed(api)
+    _stock(s.db, s.world.product, s.world.own_wh, on_hand=50)
+    inquiry = _inquiry(s.db, s.world.company_id, s.order.id)
+    _oi_row(s.db, s.world.company_id, inquiry.id, s.line[10].id, s.world.product.product_code, "10")
+    s.db.commit()
+    own = s.world.own_wh.warehouse_code
+    emails.clear()
+
+    _save_draft(s, 10, _amend([_own(s, 6)], buy=4))
+    guide = _words(s, 10)
+    _confirm_line(s, {
+        **payload(s.line[10].id, reserve=[{"warehouse_id": str(s.world.own_wh.id), "qty": "6"}],
+                  buy_qty="4"),
+        "amend_reason": "Part from stock.",
+    })
+
+    [email] = emails
+    [told] = email["lines"]
+    assert guide == told["remark"] == f"ORDER 4, CHANGED: ORDER 10 -> USE {own} 6", (guide, told)

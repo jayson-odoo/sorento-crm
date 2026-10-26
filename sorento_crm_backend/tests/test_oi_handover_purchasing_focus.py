@@ -535,3 +535,117 @@ def test_a_first_confirm_over_an_imported_order_back_names_it_order_back(api, em
     assert [l["remark"] for l in emails[0]["lines"]] == [
         f"CHANGED: ORDER BACK 10 -> USE {own} 10"
     ]
+
+
+# ------------------------------- crew audit (26 Oct, c19f2486): SPO refs once, own kinds
+
+
+def test_each_spo_prints_once_by_arrival_then_number():
+    """One ref per SPO ALLOCATION row: SPO-B twice (17 Oct), SPO-A once (16 Oct) read
+    "SPO-A, SPO-B", never "SPO-B, SPO-A, SPO-B" (SO399381 printed one SPO 31 times)."""
+    from app.services.project_order_inquiry_service import saved_line_remark
+
+    refs = [
+        {"spo_number": "ZZT-SPO-B", "arrival_date": "2026-10-17"},
+        {"spo_number": "ZZT-SPO-A", "arrival_date": "2026-10-16"},
+        {"spo_number": "ZZT-SPO-B", "arrival_date": "2026-10-17"},
+    ]
+    snap = _snap({"kind": "timely_spo", "qty": "10"}, timely_spo_refs=refs)
+    assert saved_line_remark(snap)[0] == "ZZT-SPO-A, ZZT-SPO-B"
+    # Bare numbers (older frozen snapshots): once each, in their own order.
+    bare = _snap({"kind": "timely_spo", "qty": "10"}, timely_spo_refs=["S2", "S1", "S2"])
+    assert saved_line_remark(bare)[0] == "S2, S1"
+
+
+def test_a_first_confirm_to_incoming_names_each_spo_once_by_arrival(api, emails):
+    """Hand-test step 8's shape with two allocation rows of one SPO beside a second SPO."""
+    import uuid
+    from datetime import date
+
+    from app.models.procurement import InboundShipment, SPOAllocation
+
+    _client, world = api
+    tag = uuid.uuid4().hex[:6]
+    early, late = f"ZZT-SPO-{tag}-A", f"ZZT-SPO-{tag}-B"
+    for spo, eta, rows in ((late, date(2026, 10, 17), 2), (early, date(2026, 10, 16), 1)):
+        shipment = InboundShipment(
+            id=str(uuid.uuid4()), shipment_number=f"ZZT-SHIP-{uuid.uuid4().hex[:8]}",
+            shipment_date=date(2026, 9, 1), estimated_arrival_date=eta,
+        )
+        world.db.add(shipment)
+        world.db.flush()
+        for line_no in range(1, rows + 1):
+            world.db.add(SPOAllocation(
+                id=str(uuid.uuid4()), spo_number=spo, spo_line_number=line_no,
+                inbound_shipment_id=shipment.id, warehouse_id=world.own_wh.id,
+                product_id=world.product.id, allocated_quantity=5, quantity_received=0,
+                receipt_status="pending", company_id=world.company_id,
+            ))
+    world.db.commit()
+    order, line = _imported_raised_order(api)
+    emails.clear()
+
+    _post(api, order, [_line_payload(line.id, timely_spo_qty="10")])
+
+    assert len(emails) == 1, emails
+    assert [l["remark"] for l in emails[0]["lines"]] == [
+        f"CHANGED: ORDER 10 -> {early}, {late} 10"
+    ]
+
+
+def _fold(db, before, now, items):
+    """`record_saved_lines` over hand-built queued row lines of one saved line."""
+    from types import SimpleNamespace
+    from uuid import uuid4
+
+    from app.services.project_order_inquiry_service import (
+        _HANDOVER_PENDING_KEY,
+        ProjectOrderInquiryService,
+    )
+
+    pso_id = str(uuid4())
+    line = SimpleNamespace(
+        id=str(uuid4()), line_no=10, core_sales_order_line_id=None, delivery_date=None,
+    )
+    db.info[_HANDOVER_PENDING_KEY] = [
+        {"row_id": str(uuid4()), "so_line_id": line.id, "pso_id": pso_id, **item}
+        for item in items
+    ]
+    ProjectOrderInquiryService(db).record_saved_lines(pso_id=pso_id, saved=[(line, now, before)])
+    (told,) = db.info[_HANDOVER_PENDING_KEY]
+    return told["line"]["remark"]
+
+
+def test_order_back_rows_taken_back_read_order_back_on_both_sides():
+    """c19f2486: the right side names the rows' own kind too (an Order back folded into a
+    fresh, smaller Order back), never plain ORDER."""
+    from ._pg_fixture import blank_session
+
+    before = _snap(_buy("10"), order_back=True, open_qty="10")
+    now = _snap(_buy("8"), order_back=True, open_qty="8")
+    with blank_session() as db:
+        remark = _fold(db, before, now, [
+            {"kind": "cancelled", "verb": "ORDER_BACK", "verb_keys": ["CANCEL_BALANCE"],
+             "adds_order": "0", "line": {"qty": "0", "was": {"qty": "10"}}},
+            {"kind": "raised", "verb": "ORDER_BACK", "verb_keys": ["ORDER_BACK"],
+             "adds_order": "8", "line": {"qty": "8", "was": None}},
+        ])
+    assert remark == "CHANGED: ORDER BACK 10 -> ORDER BACK 8", remark
+
+
+def test_a_borrow_hole_only_take_back_reads_order_back_not_order():
+    """Crew audit: two Borrow holes cut from 6 + 4 to 4 + 4 with the line's own qty unchanged
+    take back 2 at the donors: the rows' numbers read ORDER BACK, not a plain ORDER."""
+    from ._pg_fixture import blank_session
+
+    before = _snap(_borrow("6", "BRW-X"), _borrow("4", "BRW-Y"), open_qty="10")
+    now = _snap(_borrow("4", "BRW-X"), _borrow("4", "BRW-Y"), open_qty="10")
+    hole = {"kind": "settled", "verb": "ORDER_BACK", "verb_keys": ["CANCEL_BALANCE"],
+            "adds_order": "0", "borrow_hole": True}
+    with blank_session() as db:
+        remark = _fold(db, before, now, [
+            {**hole, "line": {"qty": "4", "was": {"qty": "6"}}},
+            {**hole, "line": {"qty": "4", "was": {"qty": "4"}}},
+        ])
+    assert remark == "CHANGED: ORDER BACK 10 -> ORDER BACK 8", remark
+    assert "ORDER 0" not in remark

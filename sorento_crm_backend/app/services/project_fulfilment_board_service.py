@@ -5442,9 +5442,14 @@ class FulfilmentBoardService:
                     decision,
                     location=row.location,
                     codes=codes,
+                    # By arrival then number, as the email orders them (`_spo_numbers`, which
+                    # also prints each SPO once however many allocation rows it has).
                     spo_numbers=[
                         ref.spo_number
-                        for ref in spo.get(key, [])
+                        for ref in sorted(
+                            spo.get(key, []),
+                            key=lambda r: (r.arrival_date or date.max, r.spo_number),
+                        )
                         if row.required_date is None
                         or (ref.arrival_date is not None and ref.arrival_date <= row.required_date)
                     ],

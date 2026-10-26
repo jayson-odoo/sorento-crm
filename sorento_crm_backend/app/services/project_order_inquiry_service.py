@@ -791,6 +791,27 @@ def _draft_snapshot(
     }
 
 
+def _spo_numbers(refs: Sequence[Any]) -> List[str]:
+    """Each SPO number of a line's incoming refs ONCE, by arrival date then number.
+
+    A ref is `{"spo_number": ..., "arrival_date": ...}` as `_snapshot` writes it (one per SPO
+    ALLOCATION row, so one SPO repeats once per row it has at the location), or the bare number
+    some frozen snapshots carry. Joined per row, a REMARK listed one SPO 31 times (crew audit,
+    26 Oct 2026, SO399381). A ref with no date keeps its given order, after the dated ones."""
+    entries = []
+    for index, ref in enumerate(refs):
+        number = ref.get("spo_number") if isinstance(ref, Mapping) else ref
+        if not number:
+            continue
+        arrival = str(ref.get("arrival_date") or "") if isinstance(ref, Mapping) else ""
+        entries.append((not arrival, arrival, number if arrival else "", index, number))
+    out: List[str] = []
+    for *_key, number in sorted(entries):
+        if number not in out:
+            out.append(number)
+    return out
+
+
 def _saved_line_parts(
     snapshot: Mapping[str, Any],
     *,
@@ -803,16 +824,7 @@ def _saved_line_parts(
     prints. Off for every comparison (`_decision_words`, `_saved_decision_key`), so a donor
     move stays the same KIND of decision, told as `_borrow_donors` says."""
     own = snapshot.get("location") or None
-    # A ref is `{"spo_number": ...}` as `_snapshot` writes it, or the bare number some
-    # frozen snapshots carry.
-    spo_numbers = ", ".join(
-        number
-        for number in (
-            ref.get("spo_number") if isinstance(ref, Mapping) else ref
-            for ref in snapshot.get("timely_spo_refs") or []
-        )
-        if number
-    )
+    spo_numbers = ", ".join(_spo_numbers(snapshot.get("timely_spo_refs") or []))
     parts: List[Tuple[str, Optional[str], Decimal, str]] = []
     for component in snapshot.get("components") or []:
         qty = _dec(component.get("qty"))
@@ -4845,6 +4857,9 @@ class ProjectOrderInquiryService:
             # Each row that took back part of an order purchasing held: (what it held, what it
             # holds now). The email's CHANGED reads these (crew final audit, 26 Oct 2026).
             taken_rows: List[Tuple[Decimal, Decimal, str]] = []
+            if held > holds:
+                # The netted Borrow holes read as one ORDER BACK held, and what it holds now.
+                taken_rows.append((held, holds, "ORDER BACK"))
             for item in row_lines:
                 if id(item) in netted:
                     continue
