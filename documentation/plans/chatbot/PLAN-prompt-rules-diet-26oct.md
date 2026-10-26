@@ -1,6 +1,7 @@
 # PLAN: PROMPT-RULES-DIET (parser prompt 130k -> under 90k chars, measured round by round)
 
-Status: Build (size M, prompt-only). Behaviour card answered by crew a74970758 (26 Oct): Q1 (a) pay a round-0 baseline on
+Status: Merge-ready (PR #1867; owner hand test PASS 26 Oct ~14:27 on v186 = gated s1c, 102,402 chars; reviewer READY).
+Size M, prompt-only. Behaviour card answered by crew a74970758 (26 Oct): Q1 (a) pay a round-0 baseline on
 v185; Q2 TRAIN x3 while it fits, x2 from the round that would pass USD 30, stop and report before any spend past 30; Q3 harness
 runs the slim-index worktree read-only until #1865 merges, product module + migration on a branch from main after; Q4 (a);
 Q5 hand test = diet version alone. Track: M (crew brief), not the small fix track: the text change is large and gated on
