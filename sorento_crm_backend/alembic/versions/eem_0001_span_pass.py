@@ -13,7 +13,7 @@ SQL does) publishes nothing, and an existing span prompt is kept.
 Downgrade removes only the rows this migration made.
 
 Revision ID: eem_0001_span_pass
-Revises: diet_0001_parser_prompt_diet
+Revises: bca_0001_brand_dealer_company
 """
 import logging
 
@@ -22,7 +22,7 @@ from alembic import op
 from sqlalchemy.orm import Session
 
 revision = "eem_0001_span_pass"
-down_revision = "diet_0001_parser_prompt_diet"
+down_revision = "bca_0001_brand_dealer_company"
 branch_labels = None
 depends_on = None
 
