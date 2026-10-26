@@ -1,7 +1,13 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: Phase 1 measured, report + recommendation filed, waiting on owner OK of design (no product code yet). Track: L (chatbot architecture), lead pattern.
-Owner OK on the design from the numbers is required before any product code.
+Status: S1 in progress (Phase 2, tester red tests first). Phase 1 done; owner design OK 26 Oct ~16:15.
+Track: L overall (chatbot architecture), lead pattern; S1 itself is M (library + eval, no migration, no behaviour change).
+UAC: `documentation/plans/chatbot/entity-extract-match-acceptance-criteria.md`.
+
+Owner rulings (26 Oct ~16:15, via crew): Q1 (a) two-pass + union, slices S1 -> S2 -> S3 -> S4, S1 its own PR
+(red-first, reviewer), then S2; Q2 +~1.0 s per turn OK; Q3 (a) no new alias table: PROMPT_SYNONYMS into lookup_sets,
+drop prompt alias lines, mining + approval queue only when >= 8 real mentions need it; Q4 (a) keep the in-process
+vector cache. Spend: report before going past the USD 6 already approved.
 
 ## Owner ask (26 Oct ~14:40)
 
@@ -216,6 +222,64 @@ Not now, with named triggers:
 | 2 | Span pass prompt row (migration, unlabelled) + `head/span_extract.py` + engine wiring behind a parser_config flag replacing pieces/shortlist; blocks from resolved rows; ships dark | L, ~700 lines + migration | parser-level eval: C2 >= L on this set, parser gold TRAIN + R5 no regression, p50 +<= 1.2 s |
 | 3 | Union merge vs stronger header, measured (~400 calls, ~USD 2), then build the winner | M, ~300 lines | eval CI clears zero; owner hand test |
 | 4 | `PROMPT_SYNONYMS` -> lookup_sets rows (migration seed); drop prompt alias lines in next version | S, ~150 lines + migration | label-only ablation unchanged; eval no loss |
+
+Tickets: this table is the queue (crew lane; one PR per slice per owner ruling); no GitHub issues are opened.
+
+## S1 design: `app/services/chatbot/head/list_resolver.py` (UAC AC-S1-1..14)
+
+Reuses, does not fork: `lookup_lists.LookupRow` (list_name, key, label, texts) as the row type, `lookup_lists.Embedder`
+and the provider embedder's cached `matrix()` / `pieces()` the same way `lookup_lists._meaning` does (`:197-215`), and
+`candidates.similarity` (`head/candidates.py:104`) for trigram spelling. Rows come from the caller (S2 passes
+`lookup_lists.load_rows(...)`, which already applies visibility); S1 loads nothing on the turn path.
+
+Contract:
+
+```python
+SPAN_TYPES = ("brand", "customer", "salesperson", "location", "category", "spec_key", "spec_value",
+              "file_type", "promotion_kind", "sales_channel", "product_code")
+# span type -> the LookupRow.list_name it prefers on a tie (spec_value -> "spec")
+
+@dataclass(frozen=True)
+class Span:
+    text: str
+    type: str | None = None          # one of SPAN_TYPES, or None (untyped)
+
+@dataclass(frozen=True)
+class Candidate:
+    row: LookupRow
+    score: float                      # 0..1, best signal for this row
+    signal: str                       # "exact" | "spell" | "partial" | "meaning"
+
+@dataclass(frozen=True)
+class Resolution:
+    span: Span
+    status: str                       # "resolved" | "ambiguous" | "unresolved" | "skipped"
+    candidates: tuple[Candidate, ...] # best first; resolved -> the row; ambiguous -> every close row
+
+def spec_key_rows(registry: Iterable[...]) -> list[LookupRow]   # from product_spec_registry.active_registry entries
+def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder | None = None) -> list[Resolution]
+```
+
+Scoring per (span, row), the best over the row's texts: exact folded match = 1.0; spelling = trigram similarity;
+partial = IDF-weighted share of span tokens matched by a row token (exact, trigram >= 0.6, or one edit for tokens
+>= 4 chars), IDF per list over that list's texts; meaning = cosine when an embedder is given and works. A row passes
+a list's floors when spell >= spell floor, or partial >= partial floor, or meaning >= meaning floor. The best passing
+row over ALL lists wins; the span type only breaks ties (within the margin, prefer the typed list). Rows within
+`AMBIGUITY_MARGIN = 0.03` of the best (different rows) -> ambiguous. `product_code` -> skipped.
+
+Floors: one module constant table, values from the phase-1 calibration on the calib half
+(`crew/state/eval/eem/floors_partial.json`, reported on the test half): spell 0.4-0.55, partial 0.5-0.8 (1.01 = partial off,
+e.g. promotion_kind), meaning 0.55-0.65 per list. The module carries no word lists.
+
+Eval CLI `scripts/chatbot_eval/span_resolve.py`: `--lists` (jsonl {list,row_id,label,texts}), `--gold` (LABEL-GUIDE
+format), optional `--spans` (extractor run jsonl), optional `--vectors` (eem vec store dir: vecs.npy + index.json
+keyed sha1(model + "\x00" + text); offline embedder, no network), `--half calib|test|all`. Prints oracle (gold span +
+gold type) and right-row tables per type. Committed fixture: synthetic lists/gold/spans under
+`tests/chatbot/fixtures/span_resolve/`.
+
+Tests (tester writes first, red): `tests/chatbot/test_list_resolver.py` (AC-S1-1..11, pure, no DB),
+`tests/chatbot_eval/test_span_resolve_cli.py` (AC-S1-12), plus an import guard for AC-S1-14. Existing
+`tests/chatbot/test_lookup_lists_*.py` must stay green.
 
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 
