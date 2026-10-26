@@ -1,7 +1,7 @@
 # PLAN: upload a dealer-contact sheet, bulk-configure each contact's access (BULK-CONTACT-ACCESS)
 
 Status: Phase 2 - owner answered the card (26 Oct ~15:10: Q1 a, Q2 a, Q3 brands by dealer group (15:20: new
-`brands.dealer_company_id`, seeded), Q4 b every exact account ticked, Q5 a) and approved mock v1 (15:03); red tests next. Track: L
+`brands.dealer_company_id`, seeded), Q4 b every exact account ticked, Q5 a) and approved mock v1 (15:03). Red tests eae045a807 (PR #1875 draft); backend slice with the coder. Track: L
 (new upload flow, bulk writes to contact access settings, customer linking). LEAD pattern. UAC:
 `bulk-contact-access-26oct-acceptance-criteria.md`. Test DB: `sorento_bca_throwaway` via `.env.ci-tests`.
 

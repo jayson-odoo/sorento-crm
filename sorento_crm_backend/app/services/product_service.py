@@ -2569,6 +2569,8 @@ class BrandService:
                 "flows_to_purchasing": b.flows_to_purchasing,
                 "chatbot_weight": float(b.chatbot_weight or 0),
                 "is_searchable": b.is_searchable,
+                "dealer_company_id": b.dealer_company_id,
+                "dealer_company_name": b.dealer_company_name,
                 "created_at": b.created_at,
                 "updated_at": b.updated_at,
                 "created_by": str(b.created_by) if b.created_by else None,
@@ -2602,6 +2604,7 @@ class BrandService:
         if existing:
             raise handle_conflict("Brand code already exists.")
         
+        self._assert_dealer_company(brand_data.dealer_company_id)
         brand = Brand(**brand_data.model_dump())
         self.db.add(brand)
         self.db.commit()
@@ -2613,12 +2616,23 @@ class BrandService:
         brand = self.get_brand(brand_id)
         
         update_data = brand_data.model_dump(exclude_unset=True)
+        self._assert_dealer_company(update_data.get("dealer_company_id"))
         for key, value in update_data.items():
             setattr(brand, key, value)
         
         self.db.commit()
         self.db.refresh(brand)
         return brand
+
+    def _assert_dealer_company(self, company_id):
+        """An unknown dealer group is a 422 (a missing or null one is fine)."""
+        if company_id is None:
+            return
+        from app.models.company import Company
+        from app.services.error_handler import handle_unprocessable
+
+        if self.db.query(Company.id).filter(Company.id == company_id).first() is None:
+            raise handle_unprocessable("Dealer group company not found.")
 
     def delete_brand(self, brand_id: str):
         """Delete a brand. Products using this brand have their brand_id set to null (brand is optional)."""
