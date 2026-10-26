@@ -419,6 +419,12 @@ function BlockList({
   );
 }
 
+/** An admin CHOICE: a ticked account that is not a pre-ticked exact one (a candidate or a searched account). */
+function hasChoice(block: AccessSheetBlock, sel: AccessSheetSelection): boolean {
+  const exact = new Set(block.accounts.filter((a) => a.match === 'exact').map((a) => a.customer_id));
+  return (sel.ticked[block.key] ?? []).some((id) => !exact.has(id));
+}
+
 function AccountsTable({
   block,
   selection,
@@ -457,7 +463,7 @@ function AccountsTable({
                     onChange(
                       block.status === 'exact'
                         ? next
-                        : setConfirmed(next, block.key, (next.ticked[block.key] ?? []).length > 0),
+                        : setConfirmed(next, block.key, hasChoice(block, next)),
                     );
                   }}
                 />
@@ -508,7 +514,7 @@ function ExtraCustomers({
       onChange={(ids) => {
         const next = setTicked(selection, block.key, [...ticked.filter((id) => known.has(id)), ...ids]);
         // Picking an account is the admin's say-so for this dealer; none ticked = not confirmed.
-        onChange(setConfirmed(next, block.key, (next.ticked[block.key] ?? []).length > 0));
+        onChange(setConfirmed(next, block.key, hasChoice(block, next)));
       }}
       fetchOptions={fetchOptions}
       selectedOptions={extra.map((id) => ({ value: id, label: labels[id] ?? 'Customer' }))}
