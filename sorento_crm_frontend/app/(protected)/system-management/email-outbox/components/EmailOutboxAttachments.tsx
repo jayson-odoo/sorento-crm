@@ -64,8 +64,9 @@ export default function EmailOutboxAttachments({
       <div className="text-muted-foreground text-sm mb-1">Attachments</div>
       <ul className="rounded border divide-y">
         {attachments.map((a) => (
-          <li key={a.index} className="flex items-center gap-2 px-3 py-2 text-sm">
-            <span className="min-w-0 flex-1 truncate" title={a.filename}>
+          <li key={a.index} className="flex flex-wrap items-center gap-2 px-3 py-2 text-sm">
+            {/* Own line on a phone, so the whole name (the OI number) stays readable. */}
+            <span className="min-w-0 basis-full truncate sm:basis-0 sm:flex-1" title={a.filename}>
               {a.filename}
             </span>
             {PREVIEWABLE.test(a.filename) && (

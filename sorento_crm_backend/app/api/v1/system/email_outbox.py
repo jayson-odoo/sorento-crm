@@ -144,7 +144,10 @@ def download_email_outbox_attachment(
     return Response(
         content=data,
         media_type=mime,
-        headers={"Content-Disposition": content_disposition(name)},
+        headers={
+            "Content-Disposition": content_disposition(name),
+            "X-Content-Type-Options": "nosniff",
+        },
     )
 
 

@@ -6,7 +6,8 @@ from pydantic import BaseModel
 
 
 class EmailOutboxAttachment(BaseModel):
-    """One file the email carries, addressed by its position (no storage key leaves the API)."""
+    """One file the email carries, addressed by its position: the download route takes no
+    storage key from the caller."""
 
     index: int
     filename: str
