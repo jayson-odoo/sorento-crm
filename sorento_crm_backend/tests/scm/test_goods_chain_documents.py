@@ -253,8 +253,11 @@ def _dead_seed(db, case):
     elif case == "live":  # open line, nothing transferred
         po, line = w.po(ordered=100, transferred=0)
     else:  # "has_spo": cancelled-status line that HAS an SPO under the key
-        po, line = w.po(ordered=100, transferred=100)
+        # Only the SPO keeps it alive: moved = 0 (received 0, cancelled 0), nothing on order
+        # (line cancelled), PO active. Drop the SPO and the dead rule fires.
+        po, line = w.po(ordered=100, transferred=0, open_line=True)
         line.line_status = "cancelled"
+        line.qty_cancelled = Decimal("0")
         w.onto(po, line, qty=100)
     db.flush()
     w.place_on_po(line, 10 if case != "s0083" else 728)
