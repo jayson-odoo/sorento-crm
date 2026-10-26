@@ -48,6 +48,8 @@ EXPECT_KEYS = frozenset({
     "self_reference",
     # REPORT-SMART-L R6: the parse's `by_words` (any string: the message names an axis; null: it names none; graded only when the parse carries the key).
     "by_words",
+    # CHAT-V66-REGRESSIONS: the access levels the message selects, compared as a set, case aside.
+    "access_levels",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
@@ -55,6 +57,7 @@ _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "s
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
+    "access_levels": (list,),
     "entities_none": (bool,),
     "self_reference": (bool,),
     "by_words": (str, type(None)),
@@ -205,6 +208,10 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         has = any(e.get("hint") == "customer" for e in entities)
         if has != bool(expect["customer"]):
             reasons.append("customer entity " + ("missing" if expect["customer"] else "present"))
+    if "access_levels" in expect:
+        got = {_fold(a) for a in verdict.get("access_levels") or []}
+        if got != {_fold(a) for a in expect["access_levels"]}:
+            reasons.append(f"access_levels {verdict.get('access_levels')!r} != {expect['access_levels']!r}")
     if "promotion_kind" in expect and _fold(verdict.get("promotion_kind")) != _fold(expect["promotion_kind"]):
         reasons.append(f"promotion_kind {verdict.get('promotion_kind')!r} != {expect['promotion_kind']!r}")
     if "is_active" in expect and verdict.get("is_active") is not expect["is_active"]:
