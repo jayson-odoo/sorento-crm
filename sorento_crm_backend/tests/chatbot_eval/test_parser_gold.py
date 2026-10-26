@@ -1442,3 +1442,16 @@ def test_parse_one_keeps_the_per_turn_lists_and_no_lookup_for_a_version_without_
     lines = seen["block"].splitlines()
     assert any(ln.startswith("Known brands:") for ln in lines), seen["block"]
     assert BLOCK[0] not in lines
+
+
+def test_access_levels_expect_compares_the_set_case_blind(tmp_path):
+    row = json.dumps({"id": "t", "message": "dealer", "expect": {"access_levels": ["Mocha Dealer"]}})
+    assert pg.load_gold(_write(tmp_path, [row]))[0]["expect"] == {"access_levels": ["Mocha Dealer"]}
+    assert pg.grade_parse({"access_levels": ["mocha dealer"]}, {"access_levels": ["Mocha Dealer"]}) == (True, [])
+    ok, reasons = pg.grade_parse({"access_levels": ["Sorento Dealer", "Mocha Dealer", "Cabana Dealer"]},
+                                 {"access_levels": ["Mocha Dealer"]})
+    assert not ok and reasons and "access_levels" in reasons[0], reasons
+    assert pg.grade_parse({}, {"access_levels": []}) == (True, [])
+    bad = json.dumps({"id": "t", "message": "dealer", "expect": {"access_levels": "Mocha Dealer"}})
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [bad]))
