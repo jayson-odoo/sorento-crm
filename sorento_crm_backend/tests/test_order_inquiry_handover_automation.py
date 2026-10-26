@@ -1187,8 +1187,9 @@ def test_named_verb_switch_supersedes(api, monkeypatch):
     assert matches, "the reconfirm must dispatch the handover"
     lines = matches[-1]["context"]["handover"]["lines"]
     # ORDERBACK-DELTA (owner, 13 Oct 2026): one line - order back instead, the order
-    # purchasing held taken back.
-    assert [l["remark"] for l in lines] == ["ORDER BACK, CANCEL ORDER 10"], lines
+    # purchasing held taken back, told as the change (crew audit 26 Oct 2026: never "CANCEL
+    # ORDER", which purchasing reads as a customer cancel).
+    assert [l["remark"] for l in lines] == ["CHANGED: ORDER 10 -> ORDER BACK 10"], lines
 
 
 def test_named_two_live_rows_supersede(api, monkeypatch):
@@ -1240,9 +1241,11 @@ def test_named_two_live_rows_supersede(api, monkeypatch):
     assert matches, "the reconfirm must dispatch the handover"
     lines = matches[-1]["context"]["handover"]["lines"]
     # ORDERBACK-DELTA (owner, 13 Oct 2026): one line for the saved line, naming the fresh
-    # order and both still-owed rows taken back.
+    # order and both still-owed rows taken back, as a change (crew audit 26 Oct 2026: never
+    # "CANCEL ORDER").
     assert len(lines) == 1, lines
-    assert "CANCEL ORDER 13" in lines[0]["remark"], f"AC-R2-12: both rows taken back, got {lines}"
+    # The rows' own numbers (lane review B2): 10 + 3 held, a fresh 8 (crew final audit wording).
+    assert lines[0]["remark"] == "CHANGED: ORDER 10 & ORDER 3 -> ORDER 8", f"AC-R2-12: got {lines}"
 
 
 # --------------------------------------------------------------------------- #

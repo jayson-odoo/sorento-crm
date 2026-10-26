@@ -331,14 +331,12 @@ class OrderInquiryHandoverResend:
 
         automation, sendable, skipped = self._plan(inquiry_ids, actor_user_id, row_ids)
         sent = 0
-        for inquiry, context, _line_count, _recipients, open_rows, picked in sendable:
+        for inquiry, context, _line_count, _recipients, _open_rows, _picked in sendable:
             try:
                 # Stored only now, for an OI that has someone to send to (review S2). The
-                # workbook carries exactly the open lines this email names, ticked or all
-                # (crew ruling (b), 16 Oct): never a cancelled or placed row purchasing could
-                # read as something to order. The confirm email keeps the whole-OI workbook.
-                emailed = picked if picked is not None else [str(r.id) for r in open_rows]
-                store_handover_excel(self.db, context, [str(inquiry.id)], row_ids=emailed)
+                # workbook is this email's own lines (OI-EMAIL-PURCHASING-FOCUS, 26 Oct 2026),
+                # ticked or all, the same rule as the Confirm's.
+                store_handover_excel(self.db, context, [str(inquiry.id)])
                 match = automation_triggers.TriggerMatch(
                     context=context, source_kind=SOURCE_KIND, source_id=str(inquiry.id)
                 )
