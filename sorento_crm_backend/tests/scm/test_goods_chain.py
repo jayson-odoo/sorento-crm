@@ -15,8 +15,6 @@ import importlib
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 
-import pytest
-
 from tests.scm.conftest import SORENTO_COMPANY_ID, requires_pg
 from tests.scm.test_stock_debt_po_transferred import _po_line, _transferred_onto
 from tests.scm.test_stock_debt_routes import (
@@ -150,7 +148,23 @@ def test_ac_c1_on_order(scm_app):
     assert _hops(chain) == [("po", "on_order", Decimal("50"), po.po_number, None)]
     assert chain.hops[0].po_line_id == str(po_line.id)
     assert chain.hops[0].purchase_order_id == str(po.id)
+    assert isinstance(chain.hops[0].qty, Decimal)
     assert chain.unplaced_qty == Decimal("0")
+
+
+def test_two_placements_share_the_po_lines_on_order_rest(scm_app):
+    """PO line 100 open, nothing transferred; P1 60 (first), P2 60: P1 holds 60 on order,
+    P2 only the 40 left and reads 20 unplaced."""
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=0)
+    _r1, p1 = w.place_on_po(po_line, 60, minute=1)
+    _r2, p2 = w.place_on_po(po_line, 60, minute=2)
+    out = _gc().chains_for_links(db, [str(p1.id), str(p2.id)])
+    assert _hops(out[str(p1.id)]) == [("po", "on_order", Decimal("60"), po.po_number, None)]
+    assert _hops(out[str(p2.id)]) == [("po", "on_order", Decimal("40"), po.po_number, None)]
+    assert out[str(p1.id)].unplaced_qty == Decimal("0")
+    assert out[str(p2.id)].unplaced_qty == Decimal("20")
 
 
 def test_ac_c2_in_transit(scm_app):

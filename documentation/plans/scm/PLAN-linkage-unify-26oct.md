@@ -303,8 +303,12 @@ Rules (each already in `_holds` SDS:1614-1952; U1 lifts them, it does not invent
 
 - Live placement: `order_inquiry_links` row whose OI row is not cancelled, passing
   `spo_supply.visible_line_clauses()` on its SPO side (SDS:1797-1808). Placements on delivered or
-  closed SO lines count too: the split is screen-independent. Measured: 0 PO lines on dev where
-  that differs from Stock Debt's in-span split (`sql/v-split-scope.sql`).
+  closed SO lines count too: the split is screen-independent. Measured on dev: closed-SO
+  placements never change a split (`sql/v-split-scope.sql`, 0 PO lines); more generally the order
+  only matters on a PO line whose live placements exceed what it can supply with more than one
+  placement: 4 of 1,312 PO lines (`sql/v-split-contested.sql`). On those a FILTERED Stock Debt
+  read (date, group, bins) can now differ from before, always towards the unfiltered answer
+  (reviewer, PR #1866). Accepted: that is the point of one chain.
 - PO placement: in `linked_at, id` order over ALL live placements on that PO line, take each
   transferred SPO (key and order of `transferred_allocations`) up to its remaining
   `follow_capacity`; still incoming -> `spo` hop `in_transit`; not incoming -> `spo` hop
