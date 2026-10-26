@@ -175,6 +175,11 @@ class PurchaseOrderService:
         from app.services.autocount_cancel_ingest_service import cancel_sources
         from app.services.scm import goods_chain
 
+        dead_ids = (
+            goods_chain.dead_po_line_ids(self.db, [ln.id for ln in po.lines])
+            if spos_by_line is not None
+            else set()
+        )
         cancels = cancel_sources(
             self.db, AutocountCancelLine.purchase_order_line_id,
             [ln.id for ln in po.lines if getattr(ln, "qty_cancelled", None)],
@@ -266,25 +271,7 @@ class PurchaseOrderService:
                 # Owner Q5 (a): the chain's own dead-PO-line rule, so a placement on this
                 # line reads "PO cancelled" here as on the popup. None on the list, which
                 # does not resolve `spos`.
-                "dead_reason": (
-                    "po_cancelled"
-                    if spos_by_line is not None and goods_chain.po_line_is_dead(
-                        has_spo=bool(spos_by_line.get(str(ln.id))),
-                        ordered=ln.qty_ordered,
-                        received=ln.qty_received,
-                        cancelled=ln.qty_cancelled,
-                        on_order=goods_chain.po_line_on_order(
-                            po_status=po.status,
-                            line_status=ln.line_status,
-                            ordered=ln.qty_ordered,
-                            received=ln.qty_received,
-                            source_system=po.source_system,
-                        ),
-                        line_status=ln.line_status,
-                        po_status=po.status,
-                    )
-                    else None
-                ),
+                "dead_reason": "po_cancelled" if str(ln.id) in dead_ids else None,
             })
         return {
             "id": po.id,

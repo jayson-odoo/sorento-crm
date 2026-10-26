@@ -66,8 +66,6 @@ from app.models.project_so import INQUIRY_CANCELLED, OrderInquiryLink, OrderInqu
 from app.services.company_scope import build_company_predicate
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.scm import spo_supply
-from app.services.scm.container_request_service import OPEN_PO_STATUSES
-from app.services.scm.spo_conversion_service import SOURCE_SYSTEM as CRM_SPO_SOURCE_SYSTEM
 from app.services.scm.supply_assignment import EPSILON
 
 #: Hop states (plan section 4).
@@ -679,18 +677,47 @@ def _po_lines_feeding(db: Session, spo_rows: Sequence[Any]) -> Set[str]:
     }
 
 
-def po_line_on_order(
-    *, po_status: Any, line_status: Any, ordered: Any, received: Any, source_system: Any
-) -> bool:
-    """Python spelling of `ProjectSupplyService.open_po_line_clauses` for a PO line already
-    in hand (the PO screens' line builders), so `po_line_is_dead` reads the same `on_order`
-    the placement query's `po_open` column does."""
-    return (
-        po_status in OPEN_PO_STATUSES
-        and line_status == "open"
-        and _dec(ordered) > _dec(received)
-        and (source_system or "") != CRM_SPO_SOURCE_SYSTEM
+def dead_po_line_ids(db: Session, po_line_ids: Iterable[str]) -> Set[str]:
+    """Of these PO lines, the ids that are dead (`po_line_is_dead`), read from the SAME
+    inputs the chain's placement query uses: `po_open` through `open_po_line_clauses`, the
+    line's and PO's own status and quantities, and SPO presence through the visible-only
+    `transferred_allocations`. The PO screens' `dead_reason` is this set, so they cannot
+    disagree with the chain."""
+    ids = sorted({str(i) for i in po_line_ids if i})
+    if not ids:
+        return set()
+    rows = (
+        db.query(
+            PurchaseOrderLine.id.label("po_line_id"),
+            and_(*ProjectSupplyService.open_po_line_clauses()).label("po_open"),
+            PurchaseOrderLine.qty_ordered.label("po_ordered"),
+            PurchaseOrderLine.qty_received.label("po_received"),
+            PurchaseOrderLine.qty_cancelled.label("po_cancelled"),
+            PurchaseOrderLine.line_status.label("po_line_status"),
+            func.btrim(PurchaseOrderLine.source_ref).label("po_line_ref"),
+            PurchaseOrderLine.product_id.label("po_product_id"),
+            PurchaseOrderLine.company_id.label("po_company_id"),
+            PurchaseOrder.po_number,
+            PurchaseOrder.status.label("po_status"),
+        )
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(PurchaseOrderLine.id.in_(ids))
+        .all()
     )
+    transferred = transferred_allocations(db, rows)
+    return {
+        str(row.po_line_id)
+        for row in rows
+        if po_line_is_dead(
+            has_spo=bool(transferred.get(str(row.po_line_id))),
+            ordered=row.po_ordered,
+            received=row.po_received,
+            cancelled=row.po_cancelled,
+            on_order=bool(row.po_open),
+            line_status=row.po_line_status,
+            po_status=row.po_status,
+        )
+    }
 
 
 def po_line_is_dead(

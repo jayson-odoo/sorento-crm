@@ -2736,8 +2736,6 @@ class OrderInquiryWorklistService:
                 PurchaseOrderLine.qty_received,
                 Warehouse.warehouse_code,
                 PurchaseOrderLine.from_so_line_ref,
-                PurchaseOrderLine.qty_cancelled,
-                PurchaseOrderLine.line_status,
             )
             .select_from(PurchaseOrderLine)
             .outerjoin(Product, Product.id == PurchaseOrderLine.product_id)
@@ -2751,11 +2749,12 @@ class OrderInquiryWorklistService:
         # LINKAGE-UNIFY U4: each line's SPO lines with where their goods landed (GR bins)
         # or why they bring nothing - one read for the document, the goods chain's own.
         spos_by_line = goods_chain.spo_lines_of(self.db, line_ids)
+        dead_ids = goods_chain.dead_po_line_ids(self.db, line_ids)
         # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
         # per line - the same reader the SCM purchase-order detail's Lines tab already
         # calls, so the book's linkage reads identically wherever a line is shown.
         book_so_by_ref = order_link_service.book_so_numbers_by_ref(
-            self.db, [line[6] for line in lines if line[6]]
+            self.db, [line[-1] for line in lines if line[-1]]
         )
         # Issue #1215 point 2: which LINE an order inquiry's placement sits on, not only
         # which document - a PO with two lines of the same item made the "Allocated to"
@@ -2813,25 +2812,7 @@ class OrderInquiryWorklistService:
                     "spos": spos_by_line.get(str(line_id), []),
                     # Owner Q5 (a): a placement on a dead PO line reads "PO cancelled", by
                     # the chain's own rule (`goods_chain.po_line_is_dead`).
-                    "dead_reason": (
-                        "po_cancelled"
-                        if goods_chain.po_line_is_dead(
-                            has_spo=bool(spos_by_line.get(str(line_id))),
-                            ordered=qty_ordered,
-                            received=qty_received,
-                            cancelled=qty_cancelled,
-                            on_order=goods_chain.po_line_on_order(
-                                po_status=po.status,
-                                line_status=line_status,
-                                ordered=qty_ordered,
-                                received=qty_received,
-                                source_system=po.source_system,
-                            ),
-                            line_status=line_status,
-                            po_status=po.status,
-                        )
-                        else None
-                    ),
+                    "dead_reason": "po_cancelled" if str(line_id) in dead_ids else None,
                 }
                 for (
                     line_id,
@@ -2841,8 +2822,6 @@ class OrderInquiryWorklistService:
                     qty_received,
                     warehouse_code,
                     from_so_line_ref,
-                    qty_cancelled,
-                    line_status,
                 ) in lines
             ],
             # WHO is holding this document's quantity (AC-D18). Drafts included and marked

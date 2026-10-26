@@ -1825,7 +1825,9 @@ export function SoCoveragePicker({
             textCell(row.original.document)
           ),
         footer: () => TOTAL_LABEL,
-        size: 130,
+        // Wide enough for "SO396349" + "via PO 202607-S0083" in the grid's truncating td.
+        size: 170,
+        minSize: 170,
         meta: { skeleton: SKELETON_CELL },
       },
       {

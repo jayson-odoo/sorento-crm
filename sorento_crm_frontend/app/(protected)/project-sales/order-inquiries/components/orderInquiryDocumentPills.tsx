@@ -174,25 +174,22 @@ export function PoLineSpoCell({
 }: {
   spos: DocumentSpoLine[] | undefined;
   /** Owner Q5 (a): the PO line itself brings nothing (`po_cancelled`), so with no SPO line
-   * to carry the mark the cell draws the same red pill. */
+   * to carry the mark the cell draws the same red pill, beside any SPO entries. */
   lineDeadReason?: OrderInquiryDeadReason | null;
   renderDocument: (spoNumber: string) => React.ReactNode;
 }) {
-  if (!spos?.length) {
-    return lineDeadReason ? (
-      <DocumentStatePills
-        receipts={[]}
-        deadReason={lineDeadReason}
-        testIdPrefix="po-line"
-        testIdSuffix="cancelled"
-      />
-    ) : (
-      <span className="text-muted-foreground">-</span>
-    );
-  }
+  if (!spos?.length && !lineDeadReason) return <span className="text-muted-foreground">-</span>;
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
-      {spos.map((spo, index) => (
+      {lineDeadReason ? (
+        <DocumentStatePills
+          receipts={[]}
+          deadReason={lineDeadReason}
+          testIdPrefix="po-line"
+          testIdSuffix="cancelled"
+        />
+      ) : null}
+      {(spos ?? []).map((spo, index) => (
         <span
           key={`${spo.spo_number ?? ''}-${spo.line_label ?? ''}-${index}`}
           className="flex min-w-0 items-center gap-1"
