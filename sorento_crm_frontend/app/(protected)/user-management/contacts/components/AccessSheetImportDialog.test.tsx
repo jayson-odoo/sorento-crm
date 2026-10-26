@@ -263,4 +263,64 @@ describe('AccessSheetImportDialog', () => {
     await waitFor(() => expect(svc.applyAccessSheet).toHaveBeenCalledTimes(1));
     expect(svc.applyAccessSheet).toHaveBeenLastCalledWith(file, {});
   });
+
+  // Round 4: a pick block can carry pre-ticked EXACT accounts of another company (U10).
+  const MIXED = {
+    ...PREVIEW,
+    blocks: [
+      PREVIEW.blocks[0],
+      {
+        ...PREVIEW.blocks[1],
+        accounts: [
+          acct('x1', { company_code: 'ZZX', customer_code: '300-x1' }),
+          acct('x2', { company_code: 'ZZX', customer_code: '300-x2' }),
+          acct('c1', { match: 'candidate', score: 0.9, proposed: false, customer_code: '300-c1' }),
+          acct('c2', { match: 'candidate', score: 0.8, proposed: false, customer_code: '300-c2' }),
+        ],
+      },
+    ],
+  };
+
+  async function openMixed() {
+    svc.previewAccessSheet.mockResolvedValueOnce(MIXED);
+    renderDialog();
+    await toPreview();
+    if (!screen.queryByRole('checkbox', { name: /link 300-x1/i })) fireEvent.click(screen.getAllByText('BETA TILES SDN BHD')[0]);
+    await screen.findByRole('checkbox', { name: /link 300-x1/i });
+  }
+  const confirmBox = () => screen.getByRole('checkbox', { name: /confirm beta tiles/i });
+  const apply = async () => {
+    fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
+    await waitFor(() => expect(svc.applyAccessSheet).toHaveBeenCalledTimes(1));
+    return svc.applyAccessSheet.mock.calls[0][1] as Record<string, string[]>;
+  };
+
+  it('R4a: unticking a pre-ticked exact account never confirms a pick block', async () => {
+    await openMixed();
+    fireEvent.click(screen.getByRole('checkbox', { name: /link 300-x1/i }));
+    expect(confirmBox()).toHaveAttribute('aria-checked', 'false');
+    expect(await apply()).not.toHaveProperty('beta tiles');
+  });
+
+  it('R4b: ticking a candidate confirms with candidate + still-ticked exact; unticking it un-confirms', async () => {
+    await openMixed();
+    fireEvent.click(screen.getByRole('checkbox', { name: /link 300-c1/i }));
+    await waitFor(() => expect(confirmBox()).toHaveAttribute('aria-checked', 'true'));
+    fireEvent.click(screen.getByRole('checkbox', { name: /link 300-c1/i }));
+    await waitFor(() => expect(confirmBox()).toHaveAttribute('aria-checked', 'false'));
+    expect(await apply()).not.toHaveProperty('beta tiles');
+  });
+
+  it('R4b2: the confirmed payload holds the candidate and the exact accounts', async () => {
+    await openMixed();
+    fireEvent.click(screen.getByRole('checkbox', { name: /link 300-c1/i }));
+    await waitFor(() => expect(confirmBox()).toHaveAttribute('aria-checked', 'true'));
+    expect([...(await apply())['beta tiles']].sort()).toEqual(['c1', 'x1', 'x2']);
+  });
+
+  it('R4c: the explicit Confirm box on a pick block sends its pre-ticked exact accounts', async () => {
+    await openMixed();
+    fireEvent.click(confirmBox());
+    expect([...(await apply())['beta tiles']].sort()).toEqual(['x1', 'x2']);
+  });
 });
