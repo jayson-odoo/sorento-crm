@@ -1455,3 +1455,20 @@ def test_access_levels_expect_compares_the_set_case_blind(tmp_path):
     bad = json.dumps({"id": "t", "message": "dealer", "expect": {"access_levels": "Mocha Dealer"}})
     with pytest.raises(ValueError):
         pg.load_gold(_write(tmp_path, [bad]))
+
+
+V66_GOLD = "scripts/chatbot_eval/gold/parser_v66_regressions.jsonl"
+
+
+def test_v66_regressions_gold_file():
+    # CHAT-V66-REGRESSIONS: the prod cases of 26 Oct (masked) and 16 real answers to the promotion access-level question
+    # over a held brand (the case-1 behaviour, >= 8 real messages), for the parser gate of any later lookup version.
+    rows = pg.load_gold(V66_GOLD)
+    ids = [r["id"] for r in rows]
+    assert len(ids) == len(set(ids)) and all(i.startswith("v66-") for i in ids)
+    tier = [r for r in rows if r["id"].startswith("v66-t-")]
+    assert len(tier) >= 8 and all("brand " in r["context"]["subject"] for r in tier)
+    assert {r["id"] for r in rows if "access_levels" in r["expect"]} >= {"v66-c1-02", "v66-t-01", "v66-t-06"}
+    for r in rows:
+        text = json.dumps(r, ensure_ascii=False).upper()
+        assert "SDN BHD" not in text and "ENTERPRISE" not in text, r["id"]  # no customer names in a public repo
