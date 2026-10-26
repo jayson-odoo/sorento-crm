@@ -19,6 +19,7 @@ import { Input } from '@/components/ui/input';
 import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
+import { DealerGroupSelect } from './DealerGroupSelect';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { useCreateBrand, useUpdateBrand, useBrand } from '../hooks/useBrands';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
@@ -51,6 +52,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
       access_levels: [],
       flows_to_purchasing: true,
       is_searchable: true,
+      dealer_company_id: null,
     },
     mode: 'onTouched',
   });
@@ -69,6 +71,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         access_levels: brand.access_levels ?? [],
         flows_to_purchasing: brand.flows_to_purchasing,
         is_searchable: brand.is_searchable ?? true,
+        dealer_company_id: brand.dealer_company_id ?? null,
       });
     }
   }, [brand, isEditMode, form]);
@@ -87,6 +90,7 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
         access_levels: data.access_levels ?? [],
         flows_to_purchasing: data.flows_to_purchasing,
         is_searchable: data.is_searchable,
+        dealer_company_id: data.dealer_company_id || null,
       };
       
       if (isEditMode && brandId) {
@@ -290,6 +294,24 @@ export default function BrandForm({ brandId, onSuccess }: BrandFormProps) {
                       {...field}
                       value={field.value || ''}
                       onChange={(e) => field.onChange(e.target.value || null)}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="dealer_company_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Dealer group</FormLabel>
+                  <FormControl>
+                    <DealerGroupSelect
+                      value={field.value}
+                      storedName={brand?.dealer_company_name}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormMessage />

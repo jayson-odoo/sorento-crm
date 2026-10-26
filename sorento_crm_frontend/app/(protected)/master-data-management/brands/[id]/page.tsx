@@ -21,6 +21,7 @@ import DetailActions from '@/components/common/DetailActions';
 import type { RecordAction } from '@/components/common/recordActions';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
 import { useBrand, useUpdateBrand } from '../hooks/useBrands';
+import { DealerGroupSelect } from '../components/DealerGroupSelect';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { formatDate } from '@/lib/helpers';
 
@@ -45,6 +46,7 @@ interface Draft {
   flows_to_purchasing: boolean;
   chatbot_weight: string;
   is_searchable: boolean;
+  dealer_company_id: string | null;
 }
 
 const Empty = ({ children = 'Not set' }: { children?: string }) => (
@@ -146,6 +148,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
       flows_to_purchasing: brand.flows_to_purchasing,
       chatbot_weight: String(brand.chatbot_weight ?? 0),
       is_searchable: brand.is_searchable ?? true,
+      dealer_company_id: brand.dealer_company_id ?? null,
     });
     setEditing(true);
   };
@@ -171,6 +174,7 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
         flows_to_purchasing: draft.flows_to_purchasing,
         chatbot_weight: parseNumberDraft(draft.chatbot_weight) as number,
         is_searchable: draft.is_searchable,
+        dealer_company_id: draft.dealer_company_id,
       },
     });
     cancelEdit();
@@ -317,6 +321,20 @@ export default function BrandDetailPage({ params }: { params: Promise<{ id: stri
                     <Badge variant={brand.is_active ? 'success' : 'secondary'}>
                       {brand.is_active ? 'Active' : 'Inactive'}
                     </Badge>
+                  )}
+                </Field>
+
+                <Field label="Dealer group" htmlFor="brand-dealer-group">
+                  {editing && draft ? (
+                    <DealerGroupSelect
+                      value={draft.dealer_company_id}
+                      storedName={brand.dealer_company_name}
+                      onChange={(value) => setDraft({ ...draft, dealer_company_id: value })}
+                    />
+                  ) : brand.dealer_company_name ? (
+                    brand.dealer_company_name
+                  ) : (
+                    <Empty>No dealer group</Empty>
                   )}
                 </Field>
 

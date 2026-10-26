@@ -467,8 +467,12 @@ class TestAcE8ListShipmentsSpoCountHidesRetired:
 # =================================================================================== #
 
 
-class TestAcE9LinksForRowsHidesRetired:
-    def test_the_linked_to_reader_omits_a_retired_lines_number(self):
+class TestAcE9LinksForRowsListsRetiredAsWithdrawn:
+    """AC-E9 as amended by LINKAGE-UNIFY Q5 (owner, 26 Oct 2026): a placement on a withdrawn
+    SPO (retired, nothing received) stays visible on the row, flagged `dead_reason`
+    "spo_withdrawn" and never received; a live link beside it carries no dead reason."""
+
+    def test_the_linked_to_reader_lists_a_retired_lines_link_as_withdrawn(self):
         from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
         with blank_session() as db:
@@ -513,7 +517,12 @@ class TestAcE9LinksForRowsHidesRetired:
             visible_docs = {link["document"] for link in out.get(row.id, [])}
             hidden_docs = {link["document"] for link in out.get(hidden_row.id, [])}
             assert visible.spo_number in visible_docs, visible_docs
-            assert hidden.spo_number not in hidden_docs, hidden_docs
+            assert hidden.spo_number in hidden_docs, hidden_docs
+            [dead] = [l for l in out[hidden_row.id] if l["document"] == hidden.spo_number]
+            assert dead["dead_reason"] == "spo_withdrawn"
+            assert dead["received"] is False
+            [live] = [l for l in out[row.id] if l["document"] == visible.spo_number]
+            assert live["dead_reason"] is None
 
 
 class TestAcE9ProjectCoverageHidesRetired:
