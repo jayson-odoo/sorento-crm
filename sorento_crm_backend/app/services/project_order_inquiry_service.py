@@ -651,18 +651,11 @@ def first_take_back_remark(
     (raised rows, e.g. from the sheet import): `held` is `(ORDER / ORDER BACK, qty)` per row.
     Shared by the email (`_queue_saved_line`) and the board's preview (`saved_draft_remark`).
 
-    The new side is what is no longer theirs (stock, incoming, LOCAL BUY), and purchasing's own
-    remaining part leads: "ORDER 4, CHANGED: ORDER 10 -> USE BRW-BB 6". With no stock part (a
-    Borrow) the new side is the whole decision."""
-    stock = " & ".join(
-        f"{words} {_qty_str(qty)}"
-        for words, _l, qty, key in _saved_line_parts(now, name_donors=True)
-        if key not in _PURCHASING_KEYS
-    )
+    One form with every other change (owner rule, crew audit 26 Oct 2026): "CHANGED: <what they
+    held> -> <the whole new decision>", e.g. "CHANGED: ORDER 52 -> USE BRW-BB 48 & ORDER 4". A
+    leading "ORDER 4, " read as 4 more on top of the 52."""
     olds = " & ".join(f"{word} {_qty_str(qty)}" for word, qty in held)
-    change = f"CHANGED: {olds} -> {stock or _parts_with_qty(now)}"
-    theirs = purchasing_remark(now)
-    return f"{theirs}, {change}" if theirs and stock else change
+    return f"CHANGED: {olds} -> {_parts_with_qty(now)}"
 
 
 def _parts_with_qty(snapshot: Mapping[str, Any]) -> str:

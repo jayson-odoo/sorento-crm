@@ -737,4 +737,4 @@ def test_the_guides_words_for_a_first_confirm_over_a_raised_order_equal_the_emai
 
     [email] = emails
     [told] = email["lines"]
-    assert guide == told["remark"] == f"ORDER 4, CHANGED: ORDER 10 -> USE {own} 6", (guide, told)
+    assert guide == told["remark"] == f"CHANGED: ORDER 10 -> USE {own} 6 & ORDER 4", (guide, told)

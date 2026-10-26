@@ -376,7 +376,7 @@ def test_a_first_confirm_that_moves_part_of_an_imported_order_to_own_stock(api, 
 
     assert len(emails) == 1, emails
     assert [l["remark"] for l in emails[0]["lines"]] == [
-        f"ORDER 4, CHANGED: ORDER 10 -> USE {own} 6"
+        f"CHANGED: ORDER 10 -> USE {own} 6 & ORDER 4"
     ]
 
 
@@ -499,7 +499,7 @@ def test_the_board_preview_of_a_first_confirm_take_back_equals_the_email():
              "borrow": [], "buy_qty": "4"}
     assert saved_draft_remark(
         draft, location="BRW-BB", held_rows=[("ORDER", Decimal("52"))]
-    ) == "ORDER 4, CHANGED: ORDER 52 -> USE BRW-BB 48"
+    ) == "CHANGED: ORDER 52 -> USE BRW-BB 48 & ORDER 4"
     # A whole Buy over its own raised row takes nothing back: plain ORDER.
     whole = {"verdict": "amended", "reserve": [], "borrow": [], "buy_qty": "52"}
     assert saved_draft_remark(whole, location="BRW-BB", held_rows=[("ORDER", Decimal("52"))]) == (
