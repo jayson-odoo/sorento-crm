@@ -299,3 +299,84 @@ def test_ambiguity_margin_separates_close_from_clear_gap():
     far = [R("customer", "a", "HARBOUR GLASSWORKS SUPPLY"), R("customer", "b", "HARBOUR GLASS SUPPLIES")]
     res = _one(span, "customer", far + filler)
     assert res.status == "resolved" and res.candidates[0].row.key == "a"
+
+
+# ---- S1 review round -------------------------------------------------------------------------------------
+# AC-S1-4: a typo of a common word is not a rare word
+@pytest.mark.parametrize("text", ["tradng sdn bhd", "traiding sdn bhd"])
+def test_typo_of_common_word_is_not_a_rare_word(text):
+    res = _one(text, "customer", CUSTOMERS)
+    assert res.status != "resolved", [(c.row.label, c.score) for c in res.candidates]
+
+
+# AC-S1-5 "never a filter": a typed list wins only within the margin
+def test_type_never_filters_exact_row_of_other_list_beats_weak_typed_row():
+    rows = [R("brand", "b1", "KITCHEN KING"), R("category", "c1", "Kitchen Sink"), R("brand", "b2", "ZEPHYR")]
+    res = _one("kitchen sink", "brand", rows)
+    assert res.status == "resolved"
+    assert res.candidates[0].row.list_name == "category" and res.candidates[0].row.key == "c1"
+
+
+# AC-S1-6: equal scores are ambiguous, never a silent pick
+def test_equal_score_category_rows_are_ambiguous():
+    rows = [r for r in BASE if r.list_name == "category"] + [
+        R("category", "c4", "Floor Tile"), R("category", "c5", "Door Handle"), R("category", "c6", "Wall Paint"),
+        R("category", "c7", "Booster Pump"), R("category", "c8", "Sump Pump"),
+    ]
+    res = _one("water", None, rows)
+    assert res.status == "ambiguous"
+    assert {c.row.key for c in res.candidates} == {"c1", "c2"}
+
+
+def test_customer_name_prefix_of_two_rows_is_ambiguous():
+    rows = [
+        R("customer", "n1", "NORTHMOOR WEST HARDWARE"), R("customer", "n2", "NORTHMOOR EAST HARDWARE"),
+        R("customer", "n3", "KESTREL HARDWARE"), R("customer", "n4", "LOTUS HARDWARE"),
+        R("customer", "n5", "QUARTZ TILES"), R("customer", "n6", "WEST COAST TILES"), R("customer", "n7", "WEST BAY PAINTS"),
+    ]
+    res = _one("Northmoor", "customer", rows)
+    assert res.status == "ambiguous"
+    assert {c.row.key for c in res.candidates} == {"n1", "n2"}
+
+
+# AC-S1-6 "every close row": no per-list cap
+def test_five_close_rows_all_returned_ambiguous():
+    rows = [R("salesperson", f"s{i}", f"LEE - {n}", f"LEE - {n}", "LEE") for i, n in enumerate(["I", "II", "III", "IV", "V"])]
+    rows += [R("salesperson", "x1", "TANGO - I"), R("salesperson", "x2", "ROMEO - I")]
+    res = _one("Lee", "salesperson", rows)
+    assert res.status == "ambiguous"
+    assert {c.row.key for c in res.candidates} == {f"s{i}" for i in range(5)}
+
+
+# AC-S1-3/5: one edit must not score like an exact match
+def test_exact_other_list_beats_one_edit_typed_row():
+    rows = [R("brand", "b1", "MOCHA"), R("category", "c1", "Mochi Tray"), R("category", "c2", "Floor Tile")]
+    res = _one("Mocha", "category", rows)
+    assert res.status == "resolved"
+    assert res.candidates[0].row.list_name == "brand" and res.candidates[0].row.key == "b1"
+
+
+# AC-S1-14 widened: nothing under app/ imports it
+def test_nothing_in_app_references_list_resolver():
+    root = Path(__file__).resolve().parents[2] / "app"
+    offenders = [
+        str(p.relative_to(root)) for p in root.rglob("*.py")
+        if p.name != "list_resolver.py" and "list_resolver" in p.read_text(encoding="utf-8", errors="ignore")
+    ]
+    assert offenders == []
+
+
+# nit: a one-row list is not all-common
+def test_single_row_list_word_is_not_common():
+    res = _one("riverside", "location", [R("location", "l1", "Riverside Depot")])
+    assert res.status == "resolved" and res.candidates[0].row.key == "l1"
+
+
+# AC-S1-5 guard: the type margin itself (a zero margin must fail this)
+def test_typed_list_wins_when_slightly_below_other_list():
+    rows = [
+        R("brand", "b1", "HARBOUR GLASSWARE"), R("customer", "c1", "HARBOUR GLASSES"),
+        R("brand", "b2", "ZEPHYR"), R("customer", "c2", "KESTREL"),
+    ]
+    res = _one("harbour glass", "brand", rows)  # brand 0.684 vs customer 0.765
+    assert res.status == "resolved" and res.candidates[0].row.key == "b1"
