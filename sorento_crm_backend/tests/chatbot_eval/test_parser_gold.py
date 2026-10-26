@@ -1499,3 +1499,53 @@ def test_parse_one_gives_a_spans_version_the_span_pass_lines_not_the_ngram_ones(
     assert ngram == [], "a spans version must not use the n-gram lookup"
     lines = seen["block"].splitlines()
     assert HDR["brand"] in lines and f"- {_brand_label(session_factory)}" in lines, seen["block"]
+
+
+# ENTITY-EXTRACT-MATCH S2 review: a gold row says whether its span call fell back to the n-gram lines.
+def _run_live_spans(session_factory, monkeypatch, span, *, lookup_spans: bool):
+    from app.services import llm_provider
+    from app.services.chatbot.head import lookup_lists as ll
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot.test_span_extract import BASE, BRAND, SPANS_LINE, FakeProvider, seed_prompts, seed_world
+
+    seed_world(session_factory)
+    seed_prompts(session_factory, template=BASE + (SPANS_LINE + "\n" if lookup_spans else ""))
+    monkeypatch.setattr(ll, "EMBED", None, raising=False)
+    provider = FakeProvider([], span)
+    monkeypatch.setattr("app.services.llm_provider.get_provider", lambda name, key, model: provider)
+
+    class _Keyed:
+        api_key = "sk-synthetic-not-a-real-key-WXYZ"
+
+    def fake_parse(cfg, block):
+        llm_provider.OpenAIProvider.chat(_Keyed(), [{"role": "user", "content": "x"}], model="gpt-5.4-mini")
+        return {"status": "ok", "entities": [], "requested_attributes": []}
+
+    monkeypatch.setattr(llm_provider.OpenAIProvider, "chat", lambda self, messages, **kw: llm_provider.ChatResult(
+        content="{}", prompt_tokens=10, completion_tokens=1, total_tokens=11, cached_tokens=0))
+    config = parser_mod.ParserConfig(system_prompt="x", prompt_version=1, provider="openai", model="gpt-5.4-mini",
+                                     api_key="k", lookup_spans=lookup_spans)
+    monkeypatch.setattr(parser_mod, "parse", fake_parse)
+    monkeypatch.setattr(parser_mod, "resolve_config", lambda db, **kw: config)
+    out = pg.run_live([{"id": "s1", "message": f"{BRAND.lower()} stock", "expect": {}}], session_factory=session_factory,
+                      version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
+    assert len(out) == 1
+    return out[0]
+
+
+def test_run_live_row_records_a_span_fallback_with_its_reason(session_factory, monkeypatch):
+    row = _run_live_spans(session_factory, monkeypatch, RuntimeError("zz span down"), lookup_spans=True)
+    assert row["span_fallback"] is True and row["span_fallback_reason"] == "call_error", row
+
+
+def test_run_live_row_records_a_span_pass_that_ran(session_factory, monkeypatch):
+    from tests.chatbot.test_span_extract import BRAND, spans_json
+
+    row = _run_live_spans(session_factory, monkeypatch, spans_json((BRAND, "brand")), lookup_spans=True)
+    assert row["span_fallback"] is False and row["span_fallback_reason"] is None, row
+
+
+def test_run_live_row_of_a_non_span_version_carries_no_span_fallback(session_factory, monkeypatch):
+    row = _run_live_spans(session_factory, monkeypatch, "{}", lookup_spans=False)
+    assert row.get("span_fallback") in (None, False) and row.get("span_fallback_reason") is None, row
+    assert row.get("span_fallback") is None, "a non-span template writes neither key (or null)"
