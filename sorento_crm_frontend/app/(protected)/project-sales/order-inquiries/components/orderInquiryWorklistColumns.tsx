@@ -1268,9 +1268,8 @@ export function useOrderInquiryWorklistColumns({
         // whole "Received 486 at BRW-BB" and "+1" side by side (and "awaiting shipment").
         // Round 7b: measured in the browser.
         size: 400,
-        // Round 8: a floor TanStack's `getSize()` clamps to: the number (124px), "via PO" (52)
-        // and a truncated receipt pill, with the draft mark, gaps and cell padding.
-        minSize: 290,
+        // Round 9 (owner): no `minSize`, so the column shrinks like the PO column; the pill
+        // ellipsizes and the number stays whole.
         meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => {
           // A bundled row's documents are the anchor's, and the PO cell already says so

@@ -792,10 +792,8 @@ export function useOrderInquiryHeaderLinesColumns({
         // and "+1" side by side at 1280 (this table's number is wider than the worklist's).
         // Round 7b: measured in the browser.
         size: 420,
-        // Round 8: a floor TanStack's `getSize()` clamps to (the old 170 default is saved in
-        // some users' column preferences and lifts to this): the number (143px), "via PO" (52)
-        // and a truncated receipt pill, with gaps and cell padding.
-        minSize: 290,
+        // Round 9 (owner): no `minSize`, so the column shrinks like the PO column; the pill
+        // ellipsizes and the number stays whole.
         meta: { headerTitle: 'SPO' },
         cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="spo" />,
       },
