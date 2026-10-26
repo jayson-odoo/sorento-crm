@@ -69,5 +69,14 @@ CONFIDENCE 3,399 (L419); ENTITY OPERATIONS 3,235 (L366); COMPANY-NAME REPLY 3,12
 - PR (crew-lane: PROMPT-RULES-DIET), reviewer, owner hand test on a crew copy (crew moves the copy label for the window).
   The prod label moves only by the owner after release. No customer data in the repo: placeholders.
 
+## Round log (crew eval, gpt-5.4-mini, dev key ..bG4A; rows + LEDGER in crew/state/eval/prompt-diet)
+| round | sections | chars after | R5 e2e maj B vs A | TRAIN maj B vs A | hard rows B | cat wrong msgs B vs A | USD | verdict |
+|---|---|---|---|---|---|---|---|---|
+| 0 (A = v185) | none | 129,651 | 22/22/23 per run | 95/93/96 per run | dealer 3/3, a3 3/3 | 22 | 3.73 | baseline |
+| 1 | escalation, decisive terms, requested attrs, message type, entity conf/ops, superseded dups | 120,208 | 22 vs 22 | 97 vs 96 | 3/3, 3/3 | 20 vs 22 | 3.62 | PASS |
+Drafted, not yet gated: r02 (continuations, broaden, numbered answers, spec entity, low stock) 114,053; r03a+r03b (order
+/ output / PO / quantity / access / self reference) 103,559; r04 (ranking, top selling, sales report / channel / analysis)
+98,339; r05 (second pass outside r04's sections) 88,588.
+
 ## Trigger to stop early
 A round that cannot pass the bar after one shrink: stop, report the accepted size and the section that resists.
