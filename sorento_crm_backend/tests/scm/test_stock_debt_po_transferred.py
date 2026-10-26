@@ -362,11 +362,14 @@ def test_an_spo_line_closed_with_nothing_landed_lets_the_placement_fall_to_the_p
     assert [(entry["kind"], entry["qty"]) for entry in so1["assigned_from"]] == [("po", 50)]
 
 
-def test_a_po_line_outside_the_span_is_held_only_for_what_it_still_has_on_order(scm_app):
-    """The PO line's bin is outside the read span (not in fulfilment planning), so the
-    placement is honoured off a stand-in event, which nothing but the hold itself caps.
-    100 ordered, 70 already moved off the line, 30 on order: SO1's placement of 50 holds
-    30, and SO1 reads 20 short, never 50 covered off a PO that can bring 30."""
+def test_a_po_line_outside_the_span_transferred_part_with_no_spo_is_received_not_a_po_event(
+    scm_app,
+):
+    """The PO line's bin is outside the read span (not in fulfilment planning).
+    100 ordered, 70 transferred with no SPO under the key: under Q4 (owner, 26 Oct) that 70
+    is received_direct at the PO bin, taken BEFORE the 30 still on order. The bin is outside
+    the span and holds nothing, so SO1's placement of 50 pins nothing: no PO event is stood
+    up for the transferred part (#1850's purpose), and SO1 does not read pinned on PO 30."""
     app, db = _client(scm_app)
     marker = f"ZZTSPL{_u()[:6]}".upper()
     warehouse = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -383,9 +386,10 @@ def test_a_po_line_outside_the_span_is_held_only_for_what_it_still_has_on_order(
     with TestClient(app) as c:
         cell = c.get(f"{BASE}/{product.id}/cell", params={"month": month_key(due)}).json()
     [so1] = cell["demand"]
-    assert so1["assigned_qty"] == 30
-    assert so1["short_qty"] == 20
-    assert [(entry["kind"], entry["qty"]) for entry in so1["assigned_from"]] == [("po", 30)]
+    assert [e for e in so1["assigned_from"] if e["kind"] == "po"] == []
+    assert [row for row in cell["supply"] if row["kind"] == "po"] == []
+    assert so1["status"] != "pinned"
+    assert so1["assigned_qty"] == 0
 
 
 def test_two_placements_share_what_the_transferred_spo_landed_not_the_whole_bin(scm_app):

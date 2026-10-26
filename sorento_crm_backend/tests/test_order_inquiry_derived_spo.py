@@ -276,19 +276,47 @@ def _product_for_other(db):
     return _product(db, f"ZZT-DSPO-OTHER-{_uid()[:6]}", f"{MARKER} other product")
 
 
-def test_no_derived_entry_when_the_allocation_is_received(world):
+def _bin_for(db, company_id, allocation):
+    """The SPO's own warehouse (no GR is seeded): the bin a received derived entry names."""
+    from app.models.inventory import Warehouse
+
+    warehouse = Warehouse(
+        id=_uid(), warehouse_code=f"ZZTD{_uid()[:6]}".upper(), warehouse_name="ZZT bin",
+        location="ZZT", is_active=True, company_id=company_id,
+    )
+    db.add(warehouse)
+    db.flush()
+    allocation.warehouse_id = warehouse.id
+    db.flush()
+    return warehouse.warehouse_code
+
+
+def _assert_one_derived_with_receipt(links, allocation, bin_code, qty=5):
+    """Q1 (owner, 26 Oct): a received SPO stays on the OI line as ONE derived entry that
+    carries `receipts` = [{qty: the placement's landed share, bin}]."""
+    from decimal import Decimal
+
+    derived = [link for link in links if link.get("derived")]
+    assert [link["document"] for link in derived] == [allocation.spo_number], links
+    assert [(Decimal(str(r["qty"])), r["bin"]) for r in derived[0]["receipts"]] == [
+        (Decimal(str(qty)), bin_code)
+    ]
+
+
+def test_derived_entry_carries_receipts_when_the_allocation_is_received(world):
     db, company_id, _raiser, project, supplier = world
     product, po, row = _po_linked_row(db, company_id, project, supplier, po_number_suffix="C")
-    _spo(
+    allocation = _spo(
         db, company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}", product_id=product.id,
         from_po_number=po.po_number, allocated_quantity=5, quantity_received=5,
         receipt_status="received",
     )
+    bin_code = _bin_for(db, company_id, allocation)
     db.commit()
 
     links = ProjectOrderInquiryService(db).links_for_rows([row.id])[row.id]
 
-    assert not any(link.get("derived") for link in links)
+    _assert_one_derived_with_receipt(links, allocation, bin_code)
 
 
 def test_no_derived_entry_when_the_allocation_is_retired(world):
@@ -308,35 +336,37 @@ def test_no_derived_entry_when_the_allocation_is_retired(world):
     assert not any(link.get("derived") for link in links)
 
 
-def test_no_derived_entry_when_the_shipment_has_landed(world):
+def test_derived_entry_carries_receipts_when_the_shipment_has_landed(world):
     db, company_id, _raiser, project, supplier = world
     product, po, row = _po_linked_row(db, company_id, project, supplier, po_number_suffix="E")
-    _spo(
+    allocation = _spo(
         db, company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}", product_id=product.id,
         from_po_number=po.po_number, allocated_quantity=5, landed=True,
     )
+    bin_code = _bin_for(db, company_id, allocation)
     db.commit()
 
     links = ProjectOrderInquiryService(db).links_for_rows([row.id])[row.id]
 
-    assert not any(link.get("derived") for link in links)
+    _assert_one_derived_with_receipt(links, allocation, bin_code)
 
 
-def test_no_derived_entry_when_the_allocation_is_fully_received_by_quantity(world):
+def test_derived_entry_carries_receipts_when_the_allocation_is_fully_received_by_quantity(world):
     """The addendum's own quantity test, distinct from `receipt_status`: an allocation
     that never had its status flipped but is fully covered by `quantity_received` is not
     incoming either."""
     db, company_id, _raiser, project, supplier = world
     product, po, row = _po_linked_row(db, company_id, project, supplier, po_number_suffix="F")
-    _spo(
+    allocation = _spo(
         db, company_id, spo_number=f"ZZT-SPO-{_uid()[:6]}", product_id=product.id,
         from_po_number=po.po_number, allocated_quantity=5, quantity_received=5,
     )
+    bin_code = _bin_for(db, company_id, allocation)
     db.commit()
 
     links = ProjectOrderInquiryService(db).links_for_rows([row.id])[row.id]
 
-    assert not any(link.get("derived") for link in links)
+    _assert_one_derived_with_receipt(links, allocation, bin_code)
 
 
 def test_two_open_allocations_on_the_same_po_and_product_both_appear_as_derived(world):

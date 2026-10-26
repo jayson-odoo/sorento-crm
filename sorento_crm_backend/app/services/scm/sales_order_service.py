@@ -893,6 +893,10 @@ class SalesOrderService:
         for core_id, row_id in rows:
             entries = out.setdefault(str(core_id), [])
             for link in links_by_row.get(row_id, []):
+                # LINKAGE-UNIFY U3: a dead document (`dead_reason`) brings nothing, so
+                # "Linked to" leaves it out, as it did before the link was listed.
+                if link.get("dead_reason"):
+                    continue
                 entries.append(
                     {
                         "kind": link["kind"],
