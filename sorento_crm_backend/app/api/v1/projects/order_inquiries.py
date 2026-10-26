@@ -210,6 +210,8 @@ def _worklist_filters(
     inquiry_id: Optional[str] = None,
     # OI-BULK-RESERVE v4: the Lines page's Reserve facet, one request row's own status.
     reserve: Optional[str] = None,
+    # LINKAGE-UNIFY U3 (Q5): the "Dead document" filter.
+    dead_document: Optional[str] = None,
 ) -> dict:
     filters = {
         "query": query,
@@ -233,6 +235,7 @@ def _worklist_filters(
         "delivery_to": delivery_to,
         "inquiry_id": inquiry_id,
         "reserve": reserve,
+        "dead_document": dead_document,
     }
     _validate_worklist_filter_uuids(filters)
     # `axis_key` is NOT validated here: it is compared against a UUID column on every
@@ -401,6 +404,15 @@ def list_order_inquiry_worklist(
             "this status (the Documents view's four statuses)."
         ),
     ),
+    dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(
+        None,
+        description=(
+            "LINKAGE-UNIFY U3 (Q5): keep a row holding a link whose document is dead for "
+            "this reason - a PO line cancelled or closed with nothing transferred "
+            "(`po_cancelled`), or an SPO line withdrawn with nothing received "
+            "(`spo_withdrawn`)."
+        ),
+    ),
     include_history: bool = Query(
         False,
         description=(
@@ -452,6 +464,7 @@ def list_order_inquiry_worklist(
                 inquiry_id=inquiry_id,
                 project=project,
                 reserve=reserve,
+                dead_document=dead_document,
             ),
         )
     except Exception as exc:
@@ -494,6 +507,7 @@ def order_inquiry_worklist_summary(
     delivery_from: Optional[str] = Query(None),
     delivery_to: Optional[str] = Query(None),
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
+    dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -520,6 +534,7 @@ def order_inquiry_worklist_summary(
                 delivery_to,
                 project=project,
                 reserve=reserve,
+                dead_document=dead_document,
             ),
         )
     except Exception as exc:
@@ -554,6 +569,7 @@ def export_order_inquiry_worklist(
         ),
     ),
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
+    dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -586,6 +602,7 @@ def export_order_inquiry_worklist(
                 project=project,
                 inquiry_id=inquiry_id,
                 reserve=reserve,
+                dead_document=dead_document,
             )
         )
         return Response(
@@ -796,6 +813,7 @@ def order_inquiry_worklist_matrix(
     delivery_from: Optional[str] = Query(None),
     delivery_to: Optional[str] = Query(None),
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = Query(None),
+    dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = Query(None),
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -831,6 +849,7 @@ def order_inquiry_worklist_matrix(
                 delivery_to,
                 project=project,
                 reserve=reserve,
+                dead_document=dead_document,
             ),
         )
         return {"data": cells}

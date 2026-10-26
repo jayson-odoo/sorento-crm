@@ -496,7 +496,7 @@ function lineErrorToast(fields: string[], message: string): void {
 /** Bring the first complaint into view, after the render that drew it. */
 function scrollToFirstProblem(): void {
   setTimeout(() => {
-    // The page (or a test's DOM) can be gone by the time this fires.
+    // A test can tear jsdom down inside these 50 ms; never reach a document that is gone.
     if (typeof document === 'undefined') return;
     const node = document.querySelector('[data-error-anchor]');
     node?.scrollIntoView?.({ behavior: 'smooth', block: 'center' });

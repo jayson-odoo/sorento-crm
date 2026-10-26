@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Bulk contact access mock v1</title>
+<style>
+:root{--foreground:#09090b;--primary:#3b82f6;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--radius:.5rem}
+*{box-sizing:border-box}
+body{margin:0;background:#fafafa;color:var(--foreground);font:14px/1.5 Inter,system-ui,sans-serif}
+.mocknav{position:sticky;top:0;z-index:50;background:#18181b;display:flex;gap:4px;padding:8px 16px;overflow-x:auto;font-size:13px;align-items:center}
+.mocknav span{color:#71717a;padding:6px 8px 6px 0;white-space:nowrap}
+.mocknav button{background:transparent;border:0;color:#a1a1aa;font:inherit;padding:6px 10px;border-radius:6px;cursor:pointer;white-space:nowrap}
+.mocknav button.on{background:#3f3f46;color:#fff}
+.container{max-width:1280px;margin:0 auto;padding:20px 16px 60px}
+.crumb{font-size:12px;font-weight:500;text-transform:uppercase;letter-spacing:.04em;color:var(--muted-fg)}
+h1{font-size:20px;font-weight:600;margin:4px 0 16px}
+.card{border:1px solid var(--border);border-radius:12px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.05)}
+.toolbar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:12px 16px;border-bottom:1px solid var(--border);position:relative}
+.input{height:32px;border:1px solid var(--input);border-radius:var(--radius);padding:0 10px;font:inherit;font-size:13px;background:#fff;min-width:0}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn.ghost{border-color:transparent;background:transparent;color:var(--muted-fg)}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.menu{position:absolute;right:16px;top:50px;z-index:5;background:#fff;border:1px solid var(--border);border-radius:8px;box-shadow:0 8px 24px rgba(0,0,0,.12);min-width:200px;padding:4px;display:none}
+.menu.open{display:block}
+.menu div{padding:7px 10px;border-radius:6px;font-size:13px;cursor:pointer}
+.menu div:hover{background:var(--muted)}
+.tablewrap{overflow-x:auto}
+table{border-collapse:collapse;width:100%;table-layout:fixed;font-size:13px}
+th{font-weight:500;color:var(--muted-fg);text-align:left;padding:8px 10px;border-bottom:1px solid var(--border);background:#fafafa;white-space:nowrap}
+td{padding:8px 10px;border-bottom:1px solid var(--border);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--muted);margin-right:4px;white-space:nowrap}
+.pill.ok{background:#dcfce7;color:#166534}.pill.warn{background:#fef3c7;color:#92400e}.pill.err{background:#fee2e2;color:#991b1b}.pill.pri{background:#dbeafe;color:#1d4ed8}.pill.sec{background:var(--muted);color:#52525b}
+.dash{color:var(--muted-fg)}
+.foot{padding:10px 16px;font-size:13px;color:var(--muted-fg)}
+.overlay{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-start;justify-content:center;padding:40px 12px;z-index:40;overflow:auto}
+.dialog{background:#fff;border-radius:12px;width:100%;max-width:980px;box-shadow:0 20px 40px rgba(0,0,0,.2)}
+.dh{padding:18px 20px 6px}.dh h2{margin:0;font-size:17px;font-weight:600}
+.db{padding:12px 20px}
+.df{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px 18px;flex-wrap:wrap}
+.drop{border:1.5px dashed var(--input);border-radius:10px;padding:28px 16px;text-align:center;color:var(--muted-fg)}
+.drop.has{border-style:solid;border-color:#bfdbfe;background:#f8fbff;color:var(--foreground);display:flex;justify-content:space-between;align-items:center;text-align:left;gap:8px;flex-wrap:wrap;padding:14px 16px}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.scroll{max-height:62vh;overflow:auto}
+.dealer{border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
+.dealer .th{display:flex;gap:8px;align-items:center;padding:9px 12px;cursor:pointer;flex-wrap:wrap}
+.dealer .th b{font-weight:600;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;max-width:100%}
+.dealer .th .sp{flex:1}
+.dealer .tb{display:none;border-top:1px solid var(--border);padding:10px 12px}
+.dealer.open .tb{display:block}
+.sub{font-size:12px;font-weight:500;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.04em;margin:8px 0 4px}
+.inner{border:1px solid var(--border);border-radius:8px;overflow-x:auto;margin-bottom:8px}
+.inner table{min-width:720px}
+.add{background:#f0fdf4;color:#166534;border-radius:4px;padding:0 4px;margin-right:4px;display:inline-block}
+.keep{background:#eff6ff;color:#1d4ed8;border-radius:4px;padding:0 4px}
+.search{display:flex;gap:6px;align-items:center;border:1px solid var(--input);border-radius:var(--radius);padding:4px 8px;min-height:32px;flex-wrap:wrap;max-width:420px;font-size:13px;color:var(--muted-fg)}
+.res{list-style:none;margin:0;padding:0}
+.res li{display:flex;justify-content:space-between;gap:8px;padding:9px 0;border-bottom:1px solid var(--border);flex-wrap:wrap}
+.res li:last-child{border:0}
+.sep{margin:56px 0 0;padding-top:16px;border-top:4px solid #18181b}
+.reuse td{white-space:normal}
+code{overflow-wrap:anywhere;font-size:12px;background:var(--muted);padding:1px 4px;border-radius:4px}
+@media (max-width:640px){.dh,.db,.df{padding-left:12px;padding-right:12px}.menu{right:8px}}
+</style>
+</head>
+<body>
+<nav class="mocknav">
+  <span>Bulk contact access v1</span>
+  <button data-v="list" class="on">1 List + entry</button>
+  <button data-v="upload">2 Upload</button>
+  <button data-v="preview">3 Preview</button>
+  <button data-v="result">4 Result</button>
+</nav>
+
+<div class="container">
+  <div class="crumb">User management</div>
+  <h1>Contacts</h1>
+  <div class="card">
+    <div class="toolbar">
+      <input class="input" style="width:240px;max-width:100%" placeholder="Search contacts...">
+      <span style="flex:1"></span>
+      <button class="btn ghost" id="actBtn">Actions &#9662;</button>
+      <button class="btn primary">+ Create Contact</button>
+      <div class="menu" id="actMenu"><div>Export</div><div id="importItem">Import access sheet</div></div>
+    </div>
+    <div class="tablewrap">
+      <table>
+        <colgroup><col style="width:200px"><col style="width:150px"><col style="width:170px"><col style="width:220px"></colgroup>
+        <thead><tr><th>Name</th><th>Phone</th><th>Customers</th><th>Access types</th></tr></thead>
+        <tbody>
+          <tr><td>Wo***</td><td>+60 12-xxx xx67</td><td>300-A091 +5</td><td><span class="pill">Dealer</span><span class="pill">End user</span></td></tr>
+          <tr><td>Sa***</td><td>+60 16-xxx xx21</td><td>300-A091 +5</td><td><span class="pill">End user</span></td></tr>
+          <tr><td>Li***</td><td>+60 11-xxx xx05</td><td><span class="dash">-</span></td><td><span class="dash">-</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="foot">313 contacts</div>
+  </div>
+</div>
+
+<div id="dlg"></div>
+
+<div class="container sep">
+  <h2 style="font-size:16px;margin:0 0 8px">Reuses (not part of the screen)</h2>
+  <div class="card" style="overflow-x:auto"><table class="reuse" style="table-layout:auto">
+    <tr><th>Element</th><th>Reuses</th></tr>
+    <tr><td>Entry: Actions menu item "Import access sheet"</td><td><code>components/ui/data-grid-list-toolbar.tsx</code> <code>secondaryActions</code> + <code>secondaryActionsAsMenu</code>, opened like <code>app/(protected)/sales/targets/components/SalesTargetsView.tsx</code> (Import from Excel)</td></tr>
+    <tr><td>Dialog shell, steps upload / preview / result, footer buttons</td><td><code>app/(protected)/user-management/contacts/components/BulkCopyAccessDialog.tsx</code>, <code>components/ui/dialog.tsx</code></td></tr>
+    <tr><td>Drop zone + file chosen</td><td><code>components/common/FileDropzone.tsx</code> as used in <code>app/(protected)/sales/targets/components/DealerTargetImportDialog.tsx</code></td></tr>
+    <tr><td>Per-dealer customer picks, count tiles, report</td><td><code>DealerTargetImportDialog.tsx</code> (CountTile, needs-a-pick rows)</td></tr>
+    <tr><td>Status pills and summary chips</td><td><code>components/ui/badge.tsx</code> (appearance light)</td></tr>
+    <tr><td>Customer search on a dealer block</td><td><code>components/common/SearchableMultiSelect.tsx</code></td></tr>
+    <tr><td>Inner tables (accounts, contacts)</td><td>plain table with truncate + title inside the dialog, as in BulkCopyAccessDialog.tsx preview rows (no DataGrid: not a listing)</td></tr>
+    <tr><td>Contacts list, Actions menu host</td><td><code>app/(protected)/user-management/contacts/components/ContactsList.tsx</code> (the bulk strip builder <code>contacts/lib/contactBulkActions.ts</code> is selection-only, so the entry is not there)</td></tr>
+  </table></div>
+</div>
+
+<script>
+const $=s=>document.querySelector(s);
+const P=(c,t)=>`<span class="pill ${c}">${t}</span>`;
+let view='list',open={aba:true},ticked={aba:6,kbo:0,hen:0},confirmedAll=false;
+const T=(rows,head)=>`<div class="inner"><table><thead><tr>${head.map(h=>`<th style="width:${h[1]}px">${h[0]}</th>`).join('')}</tr></thead><tbody>${rows}</tbody></table></div>`;
+const td=(t,x='')=>`<td title="${t.replace(/<[^>]+>/g,'')}" ${x}>${t}</td>`;
+const acc=(chk,code,name,ag,sh)=>`<tr>${td(`<input type="checkbox" ${chk?'checked':''}>`)}${td(code)}${td(name)}${td(ag)}${td(sh)}</tr>`;
+const accHead=[['',40],['Debtor code',120],['Account name',260],['Account agent',140],['Sheet agent',120]];
+const conHead=[['Name',90],['Phone',130],['In CRM',70],['Role',120],['Template',190],['Changes',360],['Warnings',200]];
+const con=(n,p,inCrm,role,tpl,chg,warn)=>`<tr>${td(n)}${td(p)}${td(inCrm)}${td(role)}${td(tpl)}${td(chg)}${td(warn)}</tr>`;
+const yes=P('ok','Yes'),no=P('warn','No');
+function search(){return `<div class="sub">Customers</div><div class="search">Search customers... &#9662;</div>`}
+function dealer(id,name,brands,status,body){
+  return `<div class="dealer ${open[id]?'open':''}" data-id="${id}"><div class="th"><b title="${name}">${name}</b>${brands.map(b=>P('sec',b)).join('')}${status}<span class="sp"></span><span class="dash">${open[id]?'&#9652;':'&#9662;'}</span></div><div class="tb">${body}</div></div>`;
+}
+function preview(){
+  const aba=dealer('aba','ABA*** SDN BHD',['Sorento','Mocha'],P('ok','Exact'),
+   `<div class="sub">Accounts</div>`+T(
+     acc(1,'300-A091','ABA*** SDN BHD [A/C I]','Sa***','Sa***')+acc(1,'300-A092','ABA*** SDN BHD [A/C III]','Sa***','Sa***')+acc(1,'300-A093','ABA*** SDN BHD [A/C IV]','Sa***','Sa***')+
+     acc(1,'300-A025','ABA*** SDN BHD [A/C I]','Wi***','Wi***')+acc(1,'300-A026','ABA*** SDN BHD [CERAMIC]','Wi***','Wi***')+acc(1,'300-A027','ABA*** SDN BHD [IBORN]','Wi***','Wi***'),accHead)+
+   `<div class="sub">Contacts</div>`+T(
+     con('Wo***','+60 12-xxx xx67',yes,'Business Owner','Sorento + Mocha, Business Owner','<span class="add">+ 6 accounts</span><span class="add">+ Sorento Dealer</span><span class="add">+ Cabana Dealer</span><span class="add">+ Mocha Dealer</span><span class="add">+ End User</span><span class="add">+ locations BRW, MWH, HQ, MOCHA-WH</span><span class="add">packing list off</span>','')+
+     con('Ra***','+60 17-xxx xx48',yes,'Employee','Sorento + Mocha, Employee','<span class="add">+ 6 accounts</span><span class="add">+ End User</span><span class="add">+ locations BRW, MWH, HQ, MOCHA-WH</span><span class="add">packing list off</span>',''),conHead));
+  const kbo=dealer('kbo','KBO*** LOGISTIC & SUPPLY',['Sorento','Mocha'],P('warn','Needs a pick'),
+   `<div class="sub">Candidates</div>`+T(
+     acc(0,'300-K124','KBO*** LOGISTICS & SUPPLY [A/C I]','Sa***','Sa***')+acc(0,'300-K126','KBO*** LOGISTICS & SUPPLY [A/C IV]','Sa***','Sa***')+acc(0,'300-K139','KBO*** LOGISTICS & SUPPLY [A/C II]','Sa***','Sa***')+
+     acc(0,'300-K163','KBO*** LOGISTICS & SUPPLY [A/C I]','Wi***','Wi***')+acc(0,'300-K164','KBO*** LOGISTICS & SUPPLY [CERAMIC]','Wi***','Wi***')+acc(0,'300-K165','KBO*** LOGISTICS & SUPPLY [IBORN]','Wi***','Wi***'),accHead)+
+   `<div>Score ${P('pri','0.96')}</div>`+search()+
+   `<div class="sub">Contacts</div>`+T(con('Ke***','+60 13-xxx xx12',yes,'Business Owner','Sorento + Mocha, Business Owner','<span class="dash">Skipped unless confirmed</span>',''),conHead));
+  const hen=dealer('hen','HEN*** SENG SPG HARDWARE',['Sorento'],P('err','No match'),
+   `<div class="sub">Best candidate</div>`+T(acc(0,'300-H201','HEN*** SENG TSM HARDWARE','Sa***','Sa***'),accHead)+`<div>Score ${P('pri','0.91')}</div>`+search()+
+   `<div class="sub">Contacts</div>`+T(con('He***','+60 19-xxx xx30',yes,'Business Owner','Sorento, Business Owner','<span class="dash">Skipped unless confirmed</span>','')+con('Ch***','+60 18-xxx xx77',yes,'Employee','Sorento, Employee','<span class="dash">Skipped unless confirmed</span>',''),conHead));
+  const yoo=dealer('yoo','YOO*** LIVING HOUSE',['Sorento','Mocha'],P('ok','Exact')+P('warn','Rows disagree on brands'),
+   `<div class="sub">Contacts</div>`+T(
+     con('Yo***','+60 12-xxx xx01',yes,'Business Owner','Sorento + Mocha, Business Owner','<span class="add">+ 4 accounts</span><span class="add">+ Mocha Dealer</span><span class="add">+ Sorento Dealer</span>','Rows disagree on brands')+
+     con('Ko***','+60 12-xxx xx02',yes,'Business Owner','Sorento, Business Owner','<span class="add">+ 4 accounts</span><span class="add">+ Sorento Dealer</span>','Rows disagree on brands')+
+     con('Ta***','+60 12-xxx xx03',yes,'Business Owner','Sorento, Business Owner','<span class="add">+ 4 accounts</span><span class="add">+ Sorento Dealer</span>','Rows disagree on brands')+
+     con('Mu***','+60 12-xxx xx04',yes,'Employee','Sorento + Mocha, Employee','<span class="add">+ End User</span>','Rows disagree on brands'),conHead));
+  const misc=dealer('misc','Other contacts',[],P('sec','2 contacts'),
+   `<div class="sub">Contacts</div>`+T(
+     con('Za***','+60 14-xxx xx90',no,'Employee','-','<span class="dash">No changes</span>',P('warn','Not in CRM yet')+' will be skipped')+
+     con('Fa***','+60 12-xxx xx55',yes,'Business Owner','Sorento, Business Owner','<span class="keep">+ adds only, keeps WH3</span><span class="add">+ Cabana Dealer</span>',P('sec','Already has access')),conHead));
+  return `<div class="chips">${P('pri','313 contacts in sheet')}${P('ok','228 found in CRM')}${P('warn','85 not in CRM yet')}${P('sec','114 dealers: 101 exact / 13 need a pick')}${P('sec','205 already have access')}<span style="flex:1"></span><button class="btn" id="confAll">${confirmedAll?'All exact confirmed':'Confirm all exact'}</button></div><div class="scroll">${aba+kbo+hen+yoo+misc}</div>`;
+}
+function dialog(){
+  if(view==='list'||!view){return ''}
+  let title,body,foot;
+  if(view==='upload'){title='Import access sheet';
+    body=`<div class="drop has"><span title="dealer_contacts_respond_import_261026.csv">dealer_contacts_respond_import_261026.csv</span><button class="btn ghost">Change</button></div>`;
+    foot=`<button class="btn" data-x>Cancel</button><button class="btn primary" data-go="preview">Preview</button>`;}
+  if(view==='upload0'){}
+  if(view==='preview'){title='Preview: dealer_contacts_respond_import_261026.csv';body=preview();
+    foot=`<button class="btn" data-go="upload">Back</button><button class="btn primary" data-go="result">Apply access</button>`;}
+  if(view==='result'){title='Import finished';
+    body=`<div class="chips">${P('ok','Applied 196 contacts')}${P('sec','Skipped 117')}</div>
+    <ul class="res"><li><span>Not in CRM yet</span><b>85</b></li><li><span>Dealer not confirmed</span><b>32</b></li></ul>`;
+    foot=`<button class="btn">Download result</button><button class="btn primary" data-x>Done</button>`;}
+  return `<div class="overlay"><div class="dialog"><div class="dh"><h2>${title}</h2></div><div class="db">${body}</div><div class="df">${foot}</div></div></div>`;
+}
+function dropOnly(){return `<div class="drop">Drop the Respond CSV export here (.csv)</div>`}
+function render(){
+  document.querySelectorAll('.mocknav button').forEach(b=>b.classList.toggle('on',b.dataset.v===view));
+  $('#dlg').innerHTML=dialog();
+  document.querySelectorAll('[data-go]').forEach(b=>b.onclick=()=>go(b.dataset.go));
+  document.querySelectorAll('[data-x]').forEach(b=>b.onclick=()=>go('list'));
+  document.querySelectorAll('.dealer .th').forEach(h=>h.onclick=()=>{const i=h.parentNode.dataset.id;open[i]=!open[i];render();});
+  const c=$('#confAll');if(c)c.onclick=()=>{confirmedAll=true;render();};
+}
+function go(v){view=v;$('#actMenu').classList.remove('open');render();}
+document.querySelectorAll('.mocknav button').forEach(b=>b.onclick=()=>{go(b.dataset.v);if(b.dataset.v==='list')$('#actMenu').classList.add('open');});
+$('#actBtn').onclick=()=>$('#actMenu').classList.toggle('open');
+$('#importItem').onclick=()=>go('upload');
+$('#actMenu').classList.add('open');
+render();
+</script>
+</body>
+</html>

@@ -483,7 +483,8 @@ def test_spo_number_prefix_also_matches_a_derived_spo_on_the_rows_po(api):
     """AC-F6b: the row's only REAL link is a purchase order, but that PO carries an
     open SPO allocation for the same product (S5's derived SPO) - `spo_number` has to
     reach it, the same way `po_number` reaches an SPO link's `source_po_number`
-    (AC-F5b). Not when the allocation's shipment has already landed."""
+    (AC-F5b). LINKAGE-UNIFY Q1 (owner, 26 Oct): also when the allocation's shipment has
+    already landed - the row shows its received SPO, so the filter finds it."""
     client, db, company_id, seeded = api
 
     product = seeded["product"]
@@ -518,7 +519,7 @@ def test_spo_number_prefix_also_matches_a_derived_spo_on_the_rows_po(api):
 
     ids = {row["id"] for row in body["data"]}
     assert row_po_only.id in ids
-    assert row_landed.id not in ids
+    assert row_landed.id in ids
 
 
 # ------------------------------------------------------------------------ AC-F7 query

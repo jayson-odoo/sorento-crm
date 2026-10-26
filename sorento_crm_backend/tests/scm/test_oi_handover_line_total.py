@@ -427,8 +427,9 @@ def test_redirected_row_falls_back_to_todays_per_row_lines(api, monkeypatch):
     (two live rows); the netting's own PARTLY_LINKED branch then redirects A to the
     pool (no own-arrival credit), so `placed` is 0 and the fresh row is ORDER 50 - not
     the 5 a totals line (45 -> 50) would have said. The email prints today's lines
-    instead: ADVANCE (date only), CANCEL ALL for B, and the fresh ORDER 50 - since
-    ORDERBACK-DELTA all three on the saved line's one line."""
+    instead: ADVANCE (date only), the fresh ORDER 50 and B's 5 taken back - since
+    ORDERBACK-DELTA all on the saved line's one line, as "CHANGED: ORDER 5 -> ORDER 50" since the
+    26 Oct 2026 crew audit."""
     from app.models.project_so import OrderInquiryLink
     from app.services.project_order_inquiry_service import ProjectOrderInquiryService
     from tests.scm._own_arrival_fixture import spo_allocation_fully_received
@@ -478,10 +479,11 @@ def test_redirected_row_falls_back_to_todays_per_row_lines(api, monkeypatch):
 
     entries = _line_entries(calls, row_a.item_code)
     # ORDERBACK-DELTA (owner, 13 Oct 2026): ONE line for the saved line, saying what the
-    # rows did - the date moved, the fresh row's own 50 to buy (never need - held), B's 5
-    # to take back.
+    # rows did - the date moved, B's 5 taken back for the fresh row's own 50 (never need -
+    # held), as a change with no cancel word (crew final audit + lane review B2, 26 Oct 2026:
+    # the numbers are the rows', not the decision's 40 -> 50).
     assert [entry["remark"] for entry in entries] == [
-        "ADVANCE, ORDER 50, CANCEL ORDER 5"
+        "ADVANCE, CHANGED: ORDER 5 -> ORDER 50"
     ], entries
     assert entries[0]["qty"] == "50", entries[0]
     # OI-EMAIL-PRINT (AC-P2): AC-OH-40..42's wording stays on the fresh row, not in the email.
@@ -568,7 +570,7 @@ def test_refused_row_alone_never_prints_a_five_to_five_line(api, monkeypatch):
 
     entries = _line_entries(calls, row_a.item_code)
     # ORDERBACK-DELTA (owner, 13 Oct 2026): one line per saved line; the refused row's
-    # withdrawal rides on it ("ADVANCE, CANCEL ORDER 3").
+    # withdrawal rides on it (as a CHANGED since the crew audit of 26 Oct 2026).
     settled = [e for e in entries if e["remark"].startswith("ADVANCE")]
     assert len(settled) == 1 and settled[0]["was"] == {"delivery_date": WAS_FMT}, entries
     assert not any((e["was"] or {}).get("qty") == "5" for e in entries), entries

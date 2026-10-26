@@ -1554,17 +1554,18 @@ def _placed_links(db: Session, project_line_id: Optional[str]) -> dict:
 
     `qty` is the SUM of every link, unchanged (arrival/late maths still reads the whole of
     it). `po_qty` (D1, R1) is what a suggestion may still reallocate: link qty on a link
-    that CARRIES a `po_line_id` and whose PO line is not yet fully received
+    that CARRIES a `po_line_id` and is not a fully received placement
     (`_received_documents_for`'s own test, `project_order_inquiry_service.py`). Both halves
     of that are load-bearing (AC-S2-4, review round SF12): `_document_links_by_row` filters
     `OrderInquiryLink.po_line_id.isnot(None)`, so an SPO-allocation link is something
     Confirm can never re-deal no matter how OPEN it is, and counting it here would offer a
     planner a move the apply would then refuse. `received_qty` is the landed part: link qty
-    on a received PO line, or on an SPO allocation judged received (the negation of
-    `scm.spo_supply.open_incoming_clauses`, reused via `_received_documents_for` rather
-    than restated a second time). A received link is stock in hand for this line (R1) - it
-    is never offered back to `reallocate_to`. An OPEN SPO-allocation link is in `qty`
-    alone, and in neither of the other two.
+    on a placement the goods chain reads as fully received (LINKAGE-UNIFY U2, Q3: a PO
+    link once its goods land on the SPO the line was transferred onto, or straight into a
+    bin when no SPO names the line; never on the transfer itself), reused via
+    `_received_documents_for` rather than restated a second time. A received link is
+    stock in hand for this line (R1) - it is never offered back to `reallocate_to`. An
+    OPEN SPO-allocation link is in `qty` alone, and in neither of the other two.
 
     `arrival_date` is when that supply is expected: the purchase order LINE's own date,
     else the order's, else the date the inquiry row was raised against - the date the

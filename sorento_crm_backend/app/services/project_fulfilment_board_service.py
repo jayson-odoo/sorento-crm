@@ -71,6 +71,8 @@ from app.models.project_so import (
     INQUIRY_PARTLY_LINKED,
     INQUIRY_PLACED,
     INQUIRY_RAISED,
+    IV_ORDER,
+    IV_ORDER_BACK,
     OrderInquiry,
     OrderInquiryRow,
     ProjectSalesOrder,
@@ -2319,6 +2321,9 @@ class FulfilmentBoardService:
                     "received": bool(link.get("received")),
                 }
                 for link in links_by_row.get(row_id, [])
+                # LINKAGE-UNIFY U3: a dead document brings nothing to the line, so the
+                # board lists it no more than it did before the link was listed.
+                if not link.get("dead_reason")
             ]
         return out
 
@@ -2547,6 +2552,9 @@ class FulfilmentBoardService:
             "suspected_system_issue": bool(frozen.get("suspected_system_issue")),
             # OI-SPLIT-GUIDE (UAC F32): read by the contribution's `confirmed_remark`.
             "remark": frozen.get("remark"),
+            # Whether the Buy was an Order back, so the board's email words read it as the
+            # email does (OI-EMAIL-PURCHASING-FOCUS crew audit, 26 Oct 2026).
+            "order_back": bool(frozen.get("order_back")),
         }
 
     def _demand_pressure(
@@ -5397,6 +5405,26 @@ class FulfilmentBoardService:
         }
         inquiries = ProjectOrderInquiryService(self.db)
         links = inquiries._links_by_row(sorted(held)) if held else {}
+        # A line's FIRST Confirm takes back the raised orders purchasing holds on it (a sheet
+        # import's rows): their kind and qty, so the guide words them as the email will
+        # (`first_take_back_remark`, crew final audit, 26 Oct 2026). One read.
+        first = [
+            str(row.project_line_id)
+            for row in rows
+            if decisions.get(id(row)) and not row.decision and row.project_line_id
+        ]
+        raised_rows: Dict[str, List[Tuple[str, Decimal]]] = {}
+        if first:
+            for line_id, verb, qty in self.db.query(
+                OrderInquiryRow.so_line_id, OrderInquiryRow.verb, OrderInquiryRow.qty
+            ).filter(
+                OrderInquiryRow.so_line_id.in_(first),
+                OrderInquiryRow.state == INQUIRY_RAISED,
+                OrderInquiryRow.verb.in_((IV_ORDER, IV_ORDER_BACK)),
+            ).order_by(OrderInquiryRow.created_at.asc(), OrderInquiryRow.id.asc()):
+                raised_rows.setdefault(str(line_id), []).append(
+                    ("ORDER BACK" if verb == IV_ORDER_BACK else "ORDER", _dec(qty))
+                )
 
         def _withdraws(row: _Row) -> bool:
             if not _rejecting(row):
@@ -5417,14 +5445,27 @@ class FulfilmentBoardService:
                     decision,
                     location=row.location,
                     codes=codes,
+                    # By arrival then number, as the email orders them (`_spo_numbers`, which
+                    # also prints each SPO once however many allocation rows it has).
                     spo_numbers=[
                         ref.spo_number
-                        for ref in spo.get(key, [])
+                        for ref in sorted(
+                            spo.get(key, []),
+                            key=lambda r: (r.arrival_date or date.max, r.spo_number or ""),
+                        )
                         if row.required_date is None
                         or (ref.arrival_date is not None and ref.arrival_date <= row.required_date)
                     ],
                     buy_origin=self._buy_origin.get(str(row.product_id)) if row.product_id else None,
                     withdraws_raised=_withdraws(row),
+                    # The email tells a take-back only while purchasing still holds the
+                    # line's order: an open OI row. A Buy whose goods arrived holds nothing
+                    # (lane review S5), so it is read with no confirmed "before".
+                    before=row.decision
+                    if (row.order_inquiry or {}).get("state")
+                    in (INQUIRY_RAISED, INQUIRY_PLACED, INQUIRY_PARTLY_LINKED)
+                    else None,
+                    held_rows=raised_rows.get(str(row.project_line_id or ""), ()),
                 )
             elif row.cancelled and not row.cancelled_at:
                 row.saved_remark = handover_remark("cancelled", row, None)
