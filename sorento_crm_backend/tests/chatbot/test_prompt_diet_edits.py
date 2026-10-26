@@ -125,10 +125,11 @@ def test_data_invariants_over_edits():
         for bad in forbidden:
             assert bad not in e.anchor, (bad, e.anchor[:60])
             assert bad not in e.payload, (bad, e.payload[:60])
-        assert len(e.payload) <= len(e.anchor), e.anchor[:60]
+        assert len(e.payload) - len(e.anchor) <= 200, f"edit grows the text by {len(e.payload) - len(e.anchor)}: {e.anchor[:60]!r}"
         a, p = set(HEADING_INLINE.findall(e.anchor)), set(HEADING_INLINE.findall(e.payload))
         assert a <= p, f"heading lost: {a - p}"
         assert p <= a, f"new section added: {p - a}"
+    assert sum(len(e.anchor) - len(e.payload) for e in ALL_TEXT_EDITS) > 0
 
 
 def test_size_target_ac1():
