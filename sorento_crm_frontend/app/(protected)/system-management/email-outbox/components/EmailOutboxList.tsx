@@ -56,6 +56,7 @@ import {
   useRetryEmailOutboxRow,
 } from '../hooks/useEmailOutbox';
 import type { EmailOutboxRow } from '../types/emailOutbox.types';
+import EmailOutboxAttachments from './EmailOutboxAttachments';
 
 export default function EmailOutboxList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
@@ -421,6 +422,7 @@ export default function EmailOutboxList() {
                   )}
                 </div>
               </div>
+              <EmailOutboxAttachments rowId={detail.id} attachments={detail.attachments ?? []} />
               {detail.metadata && (
                 <div>
                   <div className="text-muted-foreground text-sm mb-1">Metadata</div>

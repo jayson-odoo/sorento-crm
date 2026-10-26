@@ -65,6 +65,15 @@ def _srtwb246_shape(api):
     return fixture
 
 
+def _told(calls, item_code: str) -> list:
+    """Every handover line naming this item, across every dispatch of the test."""
+    return [
+        line
+        for call in _handover_calls(calls)
+        for line in call["context"]["handover"]["lines"]
+        if line["item_code"] == item_code
+    ]
+
 def test_redirected_line_prints_its_date_move_as_was_now(api, monkeypatch):
     """SO400236 / SRTWB246: a date-only move on a line whose one row was used elsewhere
     prints DELIVERY = the old date and NEW DATE = the new one, on the fresh ORDER line."""
@@ -224,10 +233,12 @@ def _so400236_dev_shape(api):
     return fixture
 
 
-def test_dev_shape_date_move_prints_delay_never_a_cancel_to_zero(api, monkeypatch):
-    """Crew audit of 6872c888 (preview on dev): SO400236 SRTWB246 rendered CANCEL BALANCE,
-    `1 | 0 | 01/10/2026`, no NEW DATE. The book moved only the date; the email must say
-    DELIVERY old -> NEW DATE new with DELAY, the quantity unchanged."""
+def test_dev_shape_date_move_on_a_line_met_from_own_stock_tells_purchasing_nothing(
+    api, monkeypatch
+):
+    """SO400236 SRTWB246: the Buy's goods arrived and the line reads Use own location. The book
+    moved only the date. Owner, 26 Oct 2026 ~13:52: "not if the decision stay at use own
+    location" - no line (before that ruling: DELAY, never a cancel to 0)."""
     _client, world = api
     _register(world)
     calls = _captured_dispatches(monkeypatch)
@@ -241,20 +252,17 @@ def test_dev_shape_date_move_prints_delay_never_a_cancel_to_zero(api, monkeypatc
         old_date=WAS_1, new_date=later, qty="1",
     )
 
-    entries = _line_entries(calls, row.item_code)
-    assert len(entries) == 1, entries
-    assert entries[0]["qty"] == "1", f"never a cancel to 0: {entries[0]}"
-    assert entries[0]["delivery_date"] == later.strftime("%d/%m/%Y"), entries[0]
-    assert entries[0]["was"] == {"delivery_date": WAS_FMT}, entries[0]
-    headline = _handover_calls(calls)[-1]["context"]["handover"]["headline"]
-    assert "DELAY" in headline and "CANCEL" not in headline, headline
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, supersedes the 12 Oct rule for this
+    # shape): the line is met from its own location's stock, so purchasing holds nothing for
+    # it and is told nothing.
+    assert _told(calls, row.item_code) == []
 
 
-def test_redirected_and_met_from_stock_delay_notice_carries_its_was(api, monkeypatch):
+def test_redirected_and_met_from_stock_delay_notice_is_not_told(api, monkeypatch):
     """The other stock-met shape: the row's received link is NOT the line's own arrival
-    (redirected to the pool) and free stock meets the line, so no buy row is raised and
-    the apply's DELAY notice row is the line's only email line. It prints DELIVERY old ->
-    NEW DATE new off the batch row's own from date."""
+    (redirected to the pool) and free stock meets the line, so no buy row is raised. The
+    line stays Use own location, so neither it nor the apply's DELAY notice row is told
+    (owner, 26 Oct 2026 ~13:52)."""
     from ..test_planning_changes import _stock
 
     _client, world = api
@@ -271,24 +279,18 @@ def test_redirected_and_met_from_stock_delay_notice_carries_its_was(api, monkeyp
         old_date=WAS_1, new_date=later, qty="1",
     )
 
-    # Every line of the mail: the notice row carries the batch row's own item code (the
-    # harness's `_change` names "ZZT-ITEM"), not the product's.
-    entries = _handover_calls(calls)[-1]["context"]["handover"]["lines"]
-    dated = [e for e in entries if (e["was"] or {}).get("delivery_date")]
-    assert dated, f"the date move must reach the email: {entries}"
-    # ORDERBACK-DELTA review B1: the apply's own DELAY notice does not tell the saved line
-    # a second time - ONE line in the whole email.
-    every_line = _handover_calls(calls)[-1]["context"]["handover"]["lines"]
-    assert len(every_line) == 1, every_line
-    assert dated[0]["was"]["delivery_date"] == WAS_FMT, dated[0]
-    assert dated[0]["delivery_date"] == later.strftime("%d/%m/%Y"), dated[0]
-    assert not any(e["qty"] == "0" for e in entries), entries
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, supersedes the 12 Oct rule for this
+    # shape): the line is met from its own location's stock, so purchasing holds nothing for
+    # it and is told nothing.
+    # The apply's own DELAY notice row is not told either (ORDERBACK-DELTA review B1: it
+    # never tells a saved line a second time).
+    assert [line for c in _handover_calls(calls) for line in c["context"]["handover"]["lines"]] == []
 
 
-def test_qty_up_met_from_stock_prints_its_numbers_but_never_order(api, monkeypatch):
-    """Reviewer B1 (dev-shape round): the book moves the line 1 -> 2 and later, landed
-    stock meets all of it, so nothing is bought. The email prints QTY 1 / NEW QTY 2 and
-    the date move, with DELAY in the headline and never ORDER."""
+def test_qty_up_met_from_stock_tells_purchasing_nothing(api, monkeypatch):
+    """The book moves the line 1 -> 2 and later, landed stock meets all of it, so nothing is
+    bought and the line stays Use own location: no line (owner, 26 Oct 2026 ~13:52; before
+    that ruling it printed QTY 1 / NEW QTY 2 with DELAY)."""
     from app.models.inventory import Stock
 
     _client, world = api
@@ -310,12 +312,10 @@ def test_qty_up_met_from_stock_prints_its_numbers_but_never_order(api, monkeypat
 
     live = [r for r in _rows_of(world, fixture["line"]) if r.state != INQUIRY_CANCELLED]
     assert not [r for r in live if r.verb == IV_ORDER], "sanity: stock meets it, no buy"
-    entries = _line_entries(calls, fixture["row"].item_code)
-    assert len(entries) == 1, entries
-    assert entries[0]["qty"] == "2", entries[0]
-    assert entries[0]["was"] == {"qty": "1", "delivery_date": WAS_FMT}, entries[0]
-    headline = _handover_calls(calls)[-1]["context"]["handover"]["headline"]
-    assert "DELAY" in headline and "ORDER" not in headline, headline
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, supersedes the 12 Oct rule for this
+    # shape): the line is met from its own location's stock, so purchasing holds nothing for
+    # it and is told nothing.
+    assert _told(calls, fixture["row"].item_code) == []
 
 
 def test_product_swap_met_from_landed_stock_prints_item_code_and_new_item_code(
@@ -363,10 +363,10 @@ def test_product_swap_met_from_landed_stock_prints_item_code_and_new_item_code(
     assert lines[0]["qty"] == "1", lines[0]
 
 
-def test_qty_rise_met_from_stock_alone_names_qty_change_in_the_headline(api, monkeypatch):
-    """Crew decision (12 Oct): the headline is never empty. A qty change that needs no
-    purchase action (1 -> 2, same date, landed stock meets it) as the mail's only line
-    reads QTY CHANGE."""
+def test_qty_rise_met_from_stock_alone_sends_no_line(api, monkeypatch):
+    """A qty change that needs no purchase action (1 -> 2, same date, landed stock meets it)
+    on a line that stays Use own location tells purchasing nothing (owner, 26 Oct 2026
+    ~13:52; it used to read QTY CHANGE)."""
     from app.models.inventory import Stock
 
     _client, world = api
@@ -385,9 +385,39 @@ def test_qty_rise_met_from_stock_alone_names_qty_change_in_the_headline(api, mon
         old_date=WAS_1, new_date=WAS_1, qty="1", new_qty="2",
     )
 
-    entries = _line_entries(calls, fixture["row"].item_code)
-    assert len(entries) == 1 and entries[0]["was"] == {"qty": "1"}, entries
-    headline = _handover_calls(calls)[-1]["context"]["handover"]["headline"]
-    # ORDERBACK-DELTA (owner, 13 Oct 2026): the headline names the decision the line now
-    # carries (met from own stock), never empty.
-    assert headline == "USE OWN LOCATION", headline
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, supersedes the 12 Oct rule for this
+    # shape): the line is met from its own location's stock, so purchasing holds nothing for
+    # it and is told nothing.
+    assert _told(calls, fixture["row"].item_code) == []
+
+
+def test_a_line_met_from_own_stock_that_turns_back_to_buy_reads_order(api, monkeypatch):
+    """Owner, 26 Oct 2026 ~13:52: "if it changes to buy then yeah purchasing need to know". The
+    SO400236 shape stays Use own location through a date move (nothing told), then CS decides
+    Buy: purchasing gets it as a normal Buy line, ORDER."""
+    from ..test_planning_change_apply_on_board import _confirm
+    from ..test_planning_changes import _line_payload
+
+    client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    fixture = _so400236_dev_shape(api)
+    later = WAS_1.replace(month=WAS_1.month + 2)
+    calls.clear()
+    _apply_change(
+        world, fixture["core"], fixture["order"], fixture["core_so"], fixture["line"],
+        old_date=WAS_1, new_date=later, qty="1",
+    )
+    assert _told(calls, fixture["row"].item_code) == []
+    calls.clear()
+
+    response = _confirm(client, fixture["order"].id, [_line_payload(
+        fixture["line"].id, buy_qty="1", buy_reason="Stock is promised elsewhere.",
+        amend_reason="Buy it after all.",
+    )])
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    [entry] = _told(calls, fixture["row"].item_code)
+    assert entry["remark"] == "ORDER", entry
+    assert entry["qty"] == "1", entry

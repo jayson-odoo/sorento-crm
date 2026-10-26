@@ -212,10 +212,14 @@ def _transfer_key(row: Any) -> Tuple[str, str, str, str]:
     )
 
 
-def transferred_allocations(db: Session, po_lines: Sequence[Any]) -> Dict[str, List[Any]]:
+def transferred_allocations(
+    db: Session, po_lines: Sequence[Any], *, include_withdrawn: bool = False
+) -> Dict[str, List[Any]]:
     """SUPPLY-SPO-LINK: by PO line id, the SPO allocations each line in `po_lines` (rows
     carrying `po_line_id` and the `_transfer_key` columns) was transferred onto, earliest
-    arrival first. One read for every line.
+    arrival first. One read for every line. `include_withdrawn` (LINKAGE-UNIFY U4, the PO
+    screens' SPO column) keeps a retired line with nothing received too, so the screen can
+    say it was withdrawn; `spo_visible` on each row tells the two apart.
 
     Two routes, one answer, an allocation reached both ways listed once:
 
@@ -276,6 +280,7 @@ def transferred_allocations(db: Session, po_lines: Sequence[Any]) -> Dict[str, L
             SPOAllocation.warehouse_id.label("spo_warehouse_id"),
             Warehouse.warehouse_code.label("spo_warehouse_code"),
             InboundShipment.actual_arrival_date.label("spo_arrived"),
+            and_(*spo_supply.visible_line_clauses()).label("spo_visible"),
         )
         .outerjoin(
             InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
@@ -283,7 +288,7 @@ def transferred_allocations(db: Session, po_lines: Sequence[Any]) -> Dict[str, L
         .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
         .filter(
             or_(*routes),
-            *spo_supply.visible_line_clauses(),
+            *(() if include_withdrawn else spo_supply.visible_line_clauses()),
             *((company_predicate,) if company_predicate is not None else ()),
         )
         .order_by(
@@ -312,6 +317,167 @@ def transferred_allocations(db: Session, po_lines: Sequence[Any]) -> Dict[str, L
             lines.add(named)
         for line_id in lines:
             out.setdefault(line_id, []).append(row)
+    return out
+
+
+@dataclass(frozen=True)
+class Placement:
+    """LINKAGE-UNIFY U4: one live placement whose goods pass through a document asked about
+    (`placements_on`)."""
+
+    chain: LinkChain
+    #: The PO line or SPO allocation id it is reported for.
+    document_id: str
+    #: What of the placement sits on that document: all of it on the line it names; for an
+    #: SPO reached through a PO line, the chain's hops on that SPO.
+    qty: Decimal
+    #: The PO number a placement reached an SPO through (it follows its PO line onto it);
+    #: None on the document the placement names itself.
+    via_po: Optional[str] = None
+
+
+def placements_on(
+    db: Session,
+    po_line_ids: Iterable[str] = (),
+    spo_allocation_ids: Iterable[str] = (),
+    *,
+    with_bins: bool = True,
+) -> List[Placement]:
+    """LINKAGE-UNIFY U4: every live placement whose chain passes through these documents,
+    each with its chain (the same split, GR bins and dead rules as every other reader). A
+    placement on a PO line is reported for the PO line; for an SPO it is reported when it
+    names the SPO itself, and, marked `via_po`, when its PO line's goods follow onto it."""
+    po_ids = sorted({str(i) for i in po_line_ids if i})
+    spo_ids = sorted({str(i) for i in spo_allocation_ids if i})
+    out: List[Placement] = []
+    if po_ids:
+        rows = _placements(db, OrderInquiryLink.po_line_id.in_(po_ids))
+        chains = _chains(db, rows, with_bins=with_bins)
+        out.extend(
+            Placement(
+                chain=chains[str(row.link_id)],
+                document_id=str(row.po_line_id),
+                qty=_dec(row.qty),
+            )
+            for row in rows
+        )
+    if spo_ids:
+        direct = _placements(db, OrderInquiryLink.spo_allocation_id.in_(spo_ids))
+        sources = (
+            db.query(
+                SPOAllocation.from_po_number.label("spo_from_po_number"),
+                func.btrim(SPOAllocation.from_po_line_ref).label("spo_from_ref"),
+                SPOAllocation.po_line_id.label("spo_po_line_id"),
+                SPOAllocation.product_id.label("spo_product_id"),
+                SPOAllocation.company_id.label("spo_company_id"),
+            )
+            .filter(SPOAllocation.id.in_(spo_ids))
+            .all()
+        )
+        feeding = _po_lines_feeding(db, sources)
+        followers = (
+            _placements(db, OrderInquiryLink.po_line_id.in_(sorted(feeding))) if feeding else []
+        )
+        chains = _chains(db, [*direct, *followers], with_bins=with_bins)
+        out.extend(
+            Placement(
+                chain=chains[str(row.link_id)],
+                document_id=str(row.spo_allocation_id),
+                qty=_dec(row.qty),
+            )
+            for row in direct
+        )
+        wanted = set(spo_ids)
+        for row in followers:
+            chain = chains[str(row.link_id)]
+            on: Dict[str, Decimal] = {}
+            for hop in chain.hops:
+                if (
+                    hop.kind == KIND_SPO
+                    and hop.spo_allocation_id in wanted
+                    and hop.state in (IN_TRANSIT, RECEIVED)
+                ):
+                    on[hop.spo_allocation_id] = on.get(hop.spo_allocation_id, _ZERO) + hop.qty
+            out.extend(
+                Placement(chain=chain, document_id=allocation_id, qty=qty, via_po=row.po_number)
+                for allocation_id, qty in on.items()
+            )
+    return out
+
+
+def spo_lines_of(db: Session, po_line_ids: Iterable[str]) -> Dict[str, List[Dict[str, Any]]]:
+    """LINKAGE-UNIFY U4: by PO line id, every SPO line it was transferred onto (either
+    route, a withdrawn one included), for the PO screens' SPO column - `spo_number`,
+    `line_label`, `receipts` (where the SPO line's landed goods sit, per GR bin: the whole
+    line's, not one placement's share) and `dead_reason` (`spo_withdrawn`: retired with
+    nothing received, or closed with nothing landed). A line in transit has neither."""
+    ids = sorted({str(i) for i in po_line_ids if i})
+    if not ids:
+        return {}
+    lines = (
+        db.query(
+            PurchaseOrderLine.id.label("po_line_id"),
+            PurchaseOrder.po_number,
+            func.btrim(PurchaseOrderLine.source_ref).label("po_line_ref"),
+            PurchaseOrderLine.product_id.label("po_product_id"),
+            PurchaseOrderLine.company_id.label("po_company_id"),
+        )
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(PurchaseOrderLine.id.in_(ids))
+        .all()
+    )
+    transferred = transferred_allocations(db, lines, include_withdrawn=True)
+    landed: Dict[str, Decimal] = {}
+    for spos in transferred.values():
+        for spo in spos:
+            if spo.spo_visible and not is_in_transit(spo):
+                landed[str(spo.spo_allocation_id)] = _dec(
+                    landed_qty(
+                        _float(spo.spo_allocated),
+                        _float(spo.spo_received),
+                        arrived=spo.spo_arrived is not None,
+                        receipt_status=spo.spo_receipt_status,
+                    )
+                )
+    grs, codes = _gr_lines(
+        db, {allocation for allocation, qty in landed.items() if qty > _EPSILON}, {}
+    )
+    out: Dict[str, List[Dict[str, Any]]] = {}
+    for line_id, spos in transferred.items():
+        entries: List[Dict[str, Any]] = []
+        for spo in spos:
+            allocation_id = str(spo.spo_allocation_id)
+            qty = landed.get(allocation_id, _ZERO)
+            receipts: List[Dict[str, Any]] = []
+            dead_reason = None
+            if not spo.spo_visible or (not is_in_transit(spo) and qty <= _EPSILON):
+                dead_reason = SPO_WITHDRAWN
+            elif qty > _EPSILON:
+                own = str(spo.spo_warehouse_id) if spo.spo_warehouse_id else None
+                pieces = _take_from_pool(
+                    [[bin_id, left] for bin_id, left in grs.get((KIND_SPO, allocation_id), ())],
+                    qty,
+                    own,
+                )
+                receipts = [
+                    {
+                        "qty": format(piece.normalize(), "f"),
+                        "bin": codes.get(bin_id or "")
+                        or (spo.spo_warehouse_code if bin_id == own else None),
+                    }
+                    for bin_id, piece in pieces.items()
+                ]
+            entries.append(
+                {
+                    "spo_number": spo.spo_number,
+                    "line_label": f"L{spo.spo_line_number}"
+                    if spo.spo_line_number is not None
+                    else None,
+                    "receipts": receipts,
+                    "dead_reason": dead_reason,
+                }
+            )
+        out[line_id] = entries
     return out
 
 
@@ -511,6 +677,77 @@ def _po_lines_feeding(db: Session, spo_rows: Sequence[Any]) -> Set[str]:
     }
 
 
+def dead_po_line_ids(db: Session, po_line_ids: Iterable[str]) -> Set[str]:
+    """Of these PO lines, the ids that are dead (`po_line_is_dead`), read from the SAME
+    inputs the chain's placement query uses: `po_open` through `open_po_line_clauses`, the
+    line's and PO's own status and quantities, and SPO presence through the visible-only
+    `transferred_allocations`. The PO screens' `dead_reason` is this set, so they cannot
+    disagree with the chain."""
+    ids = sorted({str(i) for i in po_line_ids if i})
+    if not ids:
+        return set()
+    rows = (
+        db.query(
+            PurchaseOrderLine.id.label("po_line_id"),
+            and_(*ProjectSupplyService.open_po_line_clauses()).label("po_open"),
+            PurchaseOrderLine.qty_ordered.label("po_ordered"),
+            PurchaseOrderLine.qty_received.label("po_received"),
+            PurchaseOrderLine.qty_cancelled.label("po_cancelled"),
+            PurchaseOrderLine.line_status.label("po_line_status"),
+            func.btrim(PurchaseOrderLine.source_ref).label("po_line_ref"),
+            PurchaseOrderLine.product_id.label("po_product_id"),
+            PurchaseOrderLine.company_id.label("po_company_id"),
+            PurchaseOrder.po_number,
+            PurchaseOrder.status.label("po_status"),
+        )
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .filter(PurchaseOrderLine.id.in_(ids))
+        .all()
+    )
+    transferred = transferred_allocations(db, rows)
+    return {
+        str(row.po_line_id)
+        for row in rows
+        if po_line_is_dead(
+            has_spo=bool(transferred.get(str(row.po_line_id))),
+            ordered=row.po_ordered,
+            received=row.po_received,
+            cancelled=row.po_cancelled,
+            on_order=bool(row.po_open),
+            line_status=row.po_line_status,
+            po_status=row.po_status,
+        )
+    }
+
+
+def po_line_is_dead(
+    *,
+    has_spo: bool,
+    ordered: Any,
+    received: Any,
+    cancelled: Any,
+    on_order: bool,
+    line_status: Any,
+    po_status: Any,
+) -> bool:
+    """Q5, the ONE dead-PO-line rule: no SPO under the PO->SPO key, nothing moved past what
+    a Cancel PO took, nothing left on order, and the line was closed or cancelled, its PO
+    cancelled, or a Cancel PO took it all. `qty_received` is the AutoCount transfer and
+    includes what a Cancel PO took. The chain and the PO screens' line builders share it."""
+    left = max(_dec(ordered) - _dec(received), _ZERO) if on_order else _ZERO
+    moved = max(_dec(received) - _dec(cancelled), _ZERO)
+    return (
+        not has_spo
+        and moved <= _EPSILON
+        and left <= _EPSILON
+        and (
+            line_status in ("closed", "cancelled")
+            or po_status == "cancelled"
+            or _dec(received) > _EPSILON
+        )
+    )
+
+
 def _po_split(db: Session, placements: Sequence[Any]) -> Dict[str, List[Hop]]:
     """By link id, the hops of each placement on a PO line (SUPPLY-SPO-LINK). `placements`
     is every live placement on the lines, made-first first: each transferred allocation,
@@ -537,15 +774,14 @@ def _po_split(db: Session, placements: Sequence[Any]) -> Dict[str, List[Hop]]:
         # `qty_received` is the AutoCount transfer and includes what a Cancel PO took.
         moved = max(_dec(row.po_received) - _dec(row.po_cancelled), _ZERO)
         direct_left[line_id] = _ZERO if spos_of(row) else moved
-        if (
-            not spos_of(row)
-            and moved <= _EPSILON
-            and po_left[line_id] <= _EPSILON
-            and (
-                row.po_line_status in ("closed", "cancelled")
-                or row.po_status == "cancelled"
-                or _dec(row.po_received) > _EPSILON
-            )
+        if po_line_is_dead(
+            has_spo=bool(spos_of(row)),
+            ordered=row.po_ordered,
+            received=row.po_received,
+            cancelled=row.po_cancelled,
+            on_order=bool(row.po_open),
+            line_status=row.po_line_status,
+            po_status=row.po_status,
         ):
             # Q5: nothing left on order, nothing moved past what a Cancel PO took, and no
             # SPO to follow: the line was closed or cancelled, or a Cancel PO took it all.
@@ -709,20 +945,7 @@ def _bin_by_gr(db: Session, hops: Dict[str, List[Hop]], rows: Dict[str, Any]) ->
         pool = [[bin_id, qty] for bin_id, qty in grs.get(document, ())]
         for _order, link_id, index in sorted(claimants):
             hop = hops[link_id][index]
-            pieces: Dict[Optional[str], Decimal] = {}
-            amount = hop.qty
-            for line in pool:
-                if amount <= _EPSILON:
-                    break
-                take = min(amount, line[1])
-                if take <= _EPSILON:
-                    continue
-                line[1] -= take
-                amount -= take
-                bin_id = line[0] or hop.warehouse_id
-                pieces[bin_id] = pieces.get(bin_id, _ZERO) + take
-            if amount > _EPSILON:
-                pieces[hop.warehouse_id] = pieces.get(hop.warehouse_id, _ZERO) + amount
+            pieces = _take_from_pool(pool, hop.qty, hop.warehouse_id)
             split[(link_id, index)] = [
                 replace(
                     hop,
@@ -740,6 +963,28 @@ def _bin_by_gr(db: Session, hops: Dict[str, List[Hop]], rows: Dict[str, Any]) ->
                 for index, hop in enumerate(legs)
                 for piece in split.get((link_id, index), [hop])
             ]
+
+
+def _take_from_pool(
+    pool: List[List[Any]], amount: Decimal, own_bin: Optional[str]
+) -> Dict[Optional[str], Decimal]:
+    """`amount` taken off a document's GR lines (`[[bin id, qty left], ...]`, earliest
+    first, spent in place), as `{bin id: qty}`; what no GR line covers, and a GR line with
+    no bin, sits at `own_bin`, the document's own."""
+    pieces: Dict[Optional[str], Decimal] = {}
+    for line in pool:
+        if amount <= _EPSILON:
+            break
+        take = min(amount, line[1])
+        if take <= _EPSILON:
+            continue
+        line[1] -= take
+        amount -= take
+        bin_id = line[0] or own_bin
+        pieces[bin_id] = pieces.get(bin_id, _ZERO) + take
+    if amount > _EPSILON:
+        pieces[own_bin] = pieces.get(own_bin, _ZERO) + amount
+    return pieces
 
 
 def _gr_lines(

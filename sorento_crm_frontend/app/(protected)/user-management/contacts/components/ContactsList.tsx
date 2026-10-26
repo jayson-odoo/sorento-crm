@@ -13,7 +13,7 @@ import {
   useReactTable,
   getCoreRowModel,
 } from '@tanstack/react-table';
-import { Plus, RefreshCw } from 'lucide-react';
+import { FileSpreadsheet, Plus, RefreshCw } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -43,6 +43,7 @@ import ContactCreateDialog from './ContactCreateDialog';
 import ContactDeleteDialog from './ContactDeleteDialog';
 import ContactBulkDeleteDialog from './ContactBulkDeleteDialog';
 import BulkCopyAccessDialog from './BulkCopyAccessDialog';
+import AccessSheetImportDialog from './AccessSheetImportDialog';
 import ApplyTagSettingsDialog from './ApplyTagSettingsDialog';
 import BulkTagDialog from './BulkTagDialog';
 import ContactTagFilters from './ContactTagFilters';
@@ -186,6 +187,7 @@ export default function ContactsList() {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkCopyDialogOpen, setBulkCopyDialogOpen] = useState(false);
   const [bulkLinkOpen, setBulkLinkOpen] = useState(false);
+  const [accessSheetOpen, setAccessSheetOpen] = useState(false);
   const [bulkTagMode, setBulkTagMode] = useState<'add' | 'remove' | null>(null);
   // Apply tag settings: the selection, or the one row whose menu opened it.
   const [applyIds, setApplyIds] = useState<string[] | null>(null);
@@ -853,6 +855,20 @@ export default function ContactsList() {
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
+            secondaryActions={
+              // Not while rows are ticked: the bulk strip owns the one Actions menu then.
+              canEditContacts && selectedContactIds.length === 0
+                ? [
+                    {
+                      key: 'import-access-sheet',
+                      label: 'Import access sheet',
+                      icon: FileSpreadsheet,
+                      onClick: () => setAccessSheetOpen(true),
+                    },
+                  ]
+                : undefined
+            }
+            secondaryActionsAsMenu
             filters={filtersToolbar}
             leftActions={
               <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
@@ -945,6 +961,8 @@ export default function ContactsList() {
           runOutboundBulk(false);
         }}
       />
+
+      <AccessSheetImportDialog open={accessSheetOpen} onOpenChange={setAccessSheetOpen} />
 
       <BulkCopyAccessDialog
         open={bulkCopyDialogOpen}

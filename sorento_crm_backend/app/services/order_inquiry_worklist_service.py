@@ -2746,6 +2746,10 @@ class OrderInquiryWorklistService:
         )
         line_ids = [str(line[0]) for line in lines]
         spo_numbers_by_line = self._spo_numbers_by_po_line(po)
+        # LINKAGE-UNIFY U4: each line's SPO lines with where their goods landed (GR bins)
+        # or why they bring nothing - one read for the document, the goods chain's own.
+        spos_by_line = goods_chain.spo_lines_of(self.db, line_ids)
+        dead_ids = goods_chain.dead_po_line_ids(self.db, line_ids)
         # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
         # per line - the same reader the SCM purchase-order detail's Lines tab already
         # calls, so the book's linkage reads identically wherever a line is shown.
@@ -2805,6 +2809,10 @@ class OrderInquiryWorklistService:
                     # than a second copy of the derivation.
                     **order_link_service.book_so_fields(from_so_line_ref, book_so_by_ref),
                     "spo_numbers": spo_numbers_by_line.get(str(line_id), []),
+                    "spos": spos_by_line.get(str(line_id), []),
+                    # Owner Q5 (a): a placement on a dead PO line reads "PO cancelled", by
+                    # the chain's own rule (`goods_chain.po_line_is_dead`).
+                    "dead_reason": "po_cancelled" if str(line_id) in dead_ids else None,
                 }
                 for (
                     line_id,
@@ -3620,10 +3628,10 @@ class OrderInquiryWorklistService:
         """The filtered set as their own workbook, on ONE sheet.
 
         Owner, 16 Oct 2026: "our OI excel cannot split by month, this applies to all
-        places where OI excel is printed" - the list export, the export tasks and the
-        handover attachment (Confirm and resend, `store_handover_excel`) all print
-        through here, so every delivery month and the undated rows share one
-        sheet.
+        places where OI excel is printed" - the list export and the export tasks print
+        through here, so every delivery month and the undated rows share one sheet. The
+        handover attachment is one sheet too, written from the email's own lines instead
+        (`handover_xlsx`, OI-EMAIL-PURCHASING-FOCUS).
         A row with no date is still an instruction and is never dropped from the file.
 
         Within the sheet the rows go SUPPLIER then ITEM CODE then delivery date, which is
@@ -3938,6 +3946,97 @@ class OrderInquiryWorklistService:
         return out
 
 
+#: OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, Q5 (a)): the handover Excel's columns, the
+#: email's own line table plus the S/O facts each row needs on a sheet, in the owner's words for
+#: the change columns (QTY CHANGE TO / DELIVERY DATE CHANGE TO, ruled with Q5 (a)). The three
+#: change columns print only when a line in this email has one, as the email's own do.
+HANDOVER_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "NEW ITEM CODE",
+    "QTY",
+    "QTY CHANGE TO",
+    "DELIVERY DATE",
+    "DELIVERY DATE CHANGE TO",
+    "PROJECT/CUSTOMER",
+    "LOCATION",
+    "REMARK",
+)
+_HANDOVER_CHANGE_KEYS = {
+    "NEW ITEM CODE": "item_code",
+    "QTY CHANGE TO": "qty",
+    "DELIVERY DATE CHANGE TO": "delivery_date",
+}
+
+
+def _sheet_date(value: Any) -> Any:
+    """A handover line's `21/07/2026` as a date, so the sheet formats it like every other."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%d/%m/%Y").date()
+    except ValueError:
+        return value
+
+
+def _sheet_qty(value: Any) -> Optional[float]:
+    return float(_dec(value)) if value not in (None, "") else None
+
+
+def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
+    """The OI Excel a handover email attaches, written from that email's OWN lines
+    (`handover.lines`, `_build_handover_context`), so its rows are the email's rows: the same
+    lines, in the same order, with the same values (owner, 26 Oct 2026: "the rows in OI must be
+    truthful to the rows in the email"). One sheet, the house style."""
+    import openpyxl
+
+    from app.services.project_order_inquiry_service import project_customer_label
+
+    def was(line: Dict[str, Any], key: str) -> Any:
+        return (line.get("was") or {}).get(key)
+
+    columns = [
+        heading
+        for heading in HANDOVER_HEADINGS
+        if heading not in _HANDOVER_CHANGE_KEYS
+        or any(was(line, _HANDOVER_CHANGE_KEYS[heading]) for line in lines)
+    ]
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = EXPORT_TITLE
+    sheet.append([EXPORT_TITLE])
+    sheet.append(columns)
+    for line in lines:
+        # As the email prints a changed line: the old value, then the new one beside it.
+        values = {
+            "SO DATE": _sheet_date(line.get("so_date")),
+            "S/O NO": line.get("so_number") or "",
+            "ITEM CODE": was(line, "item_code") or line.get("item_code") or "",
+            "NEW ITEM CODE": line.get("item_code") if was(line, "item_code") else None,
+            "QTY": _sheet_qty(was(line, "qty") or line.get("qty")),
+            "QTY CHANGE TO": _sheet_qty(line.get("qty")) if was(line, "qty") else None,
+            "DELIVERY DATE": _sheet_date(was(line, "delivery_date") or line.get("delivery_date")),
+            "DELIVERY DATE CHANGE TO": _sheet_date(line.get("delivery_date"))
+            if was(line, "delivery_date")
+            else None,
+            "PROJECT/CUSTOMER": project_customer_label(line.get("customer"), line.get("project"))
+            or "",
+            "LOCATION": line.get("location") or "",
+            "REMARK": line.get("remark") or "",
+        }
+        if line.get("continued"):
+            # A split line's later rows, as the email prints them (`oihr_0009`, AC-G6):
+            # LOCATION, ITEM CODE, QTY and DELIVERY on the line's first row only.
+            for heading in ("LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE"):
+                values[heading] = None
+        sheet.append([values[heading] for heading in columns])
+    _style_sheet(sheet, columns)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 #: OI-DOWNLOAD (owner, 21 Oct: "nicer, like the LOW STOCK REPORT"): each heading's width, by
 #: NAME so a cut column list (the 10-column worksheet) or a heading added later keeps its own;
 #: a heading not listed takes `_EXPORT_DEFAULT_WIDTH`.
@@ -3960,10 +4059,15 @@ _EXPORT_WIDTHS = {
     "SUGGESTED": 20,
     "CHANGE QUANTITY": 12,
     "CHANGE DATE": 13,
+    "NEW ITEM CODE": 18,
+    "QTY CHANGE TO": 11,
+    "DELIVERY DATE CHANGE TO": 14,
     "REMARK": 30,
 }
 _EXPORT_DEFAULT_WIDTH = 14
-_EXPORT_DATE_HEADINGS = frozenset({"SO DATE", "DELIVERY DATE", "CHANGE DATE"})
+_EXPORT_DATE_HEADINGS = frozenset(
+    {"SO DATE", "DELIVERY DATE", "CHANGE DATE", "DELIVERY DATE CHANGE TO"}
+)
 
 
 def _style_sheet(sheet, columns: Sequence[str]) -> None:
