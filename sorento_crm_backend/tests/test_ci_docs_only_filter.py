@@ -2041,7 +2041,6 @@ def test_the_pr_gate_tests_the_head_merged_into_main_now():
     assert names.index(MERGE_STEP) == names.index("Checkout") + 1, "before every gate"
     assert re.search(r"^        if: github\.event_name == 'pull_request'$", merge, re.M)
     assert re.search(r"^        id: merge$", merge, re.M)
-    assert "bash scripts/ci_merge_main.sh" in merge
     assert names.index(MERGE_STEP) < names.index("Single alembic head") < names.index("Mark this tree as validated")
     assert "git rev-parse 'HEAD^{tree}'" in steps["Mark this tree as validated"], "the marker is the live merge's tree"
 
@@ -2065,16 +2064,25 @@ def test_the_selection_reads_the_same_live_merge():
     depth = _with(checkout, "fetch-depth")
     assert str(_gh_eval(depth, PR_CTX)) == "0", "the merge needs the history"
     assert str(_gh_eval(depth, RELEASE_CTX)) == "1", "a release fetches as before"
-    assert re.search(r"^            scripts$", checkout, re.M), "the merge script is in the sparse checkout"
     merge = steps[MERGE_STEP]
     assert names.index("Checkout backend sources for test selection") < names.index(MERGE_STEP) < names.index("Select backend tests by import")
     cond = re.search(r"^        if: (.*)$", merge, re.M).group(1)
     assert cond == ("github.event_name == 'pull_request' && "
                     "(steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true')"), cond
-    assert "bash scripts/ci_merge_main.sh" in merge
 
 
-MERGE_SCRIPT = REPO / "scripts" / "ci_merge_main.sh"
+def test_both_merge_steps_run_the_same_inline_shell():
+    """On a PR the workflow comes from GitHub's merge commit, but this step runs on
+    the PR head before main is in it: a head that branched before this change holds
+    no helper script, and `bash scripts/...` died with exit 127 on every such PR
+    (reviewer, CI-STALE-MERGE-REF). So the shell is inline and reads nothing from
+    the checkout."""
+    body = lambda step: step.split("run: |\n", 1)[1]
+    lean, changes = _lean_gate_steps()[MERGE_STEP], _changes_steps()[MERGE_STEP]
+    assert body(lean) == body(changes)
+    assert not re.search(r"\bscripts/", body(lean))
+
+
 # No user identity anywhere: the runner has none either.
 GIT_ENV = {"GIT_CONFIG_NOSYSTEM": "1", "GIT_CONFIG_GLOBAL": os.devnull, "GIT_TERMINAL_PROMPT": "0"}
 
@@ -2094,14 +2102,19 @@ def _commit(work: Path, path: str, text: str) -> str:
 
 
 def _merge_repo(tmp_path: Path, *, conflict: bool = False, head_has_main: bool = False) -> tuple[Path, str, str]:
-    """An origin whose main moved after the PR branched; a runner checkout at the PR head."""
+    """An origin whose main moved after the PR branched; a runner checkout at the PR head.
+
+    The runner clones before main moves, so its origin/main is stale and only the
+    step's own fetch brings main's head (reviewer kill test K5)."""
     origin = tmp_path / "origin.git"
     work = tmp_path / "work"
+    runner = tmp_path / "runner"
     _git(tmp_path, "init", "-q", "--bare", "-b", "main", str(origin))
     _git(tmp_path, "clone", "-q", str(origin), str(work))
     _git(work, "checkout", "-q", "-b", "main")
     _commit(work, "shared.txt", "base\n")
     _git(work, "push", "-q", "origin", "main")
+    _git(tmp_path, "clone", "-q", str(origin), str(runner))
     _git(work, "checkout", "-q", "-b", "pr")
     head = _commit(work, "shared.txt" if conflict else "pr.txt", "from the pr\n")
     _git(work, "checkout", "-q", "main")
@@ -2111,18 +2124,17 @@ def _merge_repo(tmp_path: Path, *, conflict: bool = False, head_has_main: bool =
         _git(work, "checkout", "-q", "pr")
         _git(work, "merge", "-q", "--no-edit", "main")
         head = _git(work, "rev-parse", "HEAD")
-    runner = tmp_path / "runner"
-    _git(tmp_path, "clone", "-q", str(origin), str(runner))
     _git(runner, "fetch", "-q", str(work), head)
     _git(runner, "checkout", "-q", "--detach", head)
     return runner, head, main
 
 
-def _run_merge_script(runner: Path, tmp_path: Path) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
+def _run_merge_step(runner: Path, tmp_path: Path) -> tuple[subprocess.CompletedProcess, dict[str, str]]:
+    """The step's shell as it ships, in a checkout that holds no scripts/ at all."""
     output = tmp_path / "merge-output.txt"
     output.write_text("")
     result = subprocess.run(
-        ["bash", "--noprofile", "--norc", "-eo", "pipefail", str(MERGE_SCRIPT)],
+        ["bash", "--noprofile", "--norc", "-eo", "pipefail", "-c", _step_script(MERGE_STEP)],
         cwd=runner,
         env={"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(tmp_path), **GIT_ENV,
              "GITHUB_OUTPUT": str(output)},
@@ -2132,9 +2144,9 @@ def _run_merge_script(runner: Path, tmp_path: Path) -> tuple[subprocess.Complete
     return result, dict(line.split("=", 1) for line in output.read_text().splitlines() if "=" in line)
 
 
-def test_the_merge_script_tests_the_head_merged_into_mains_head(tmp_path):
+def test_the_merge_step_tests_the_head_merged_into_mains_head(tmp_path):
     runner, head, main = _merge_repo(tmp_path)
-    result, outputs = _run_merge_script(runner, tmp_path)
+    result, outputs = _run_merge_step(runner, tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert _git(runner, "rev-parse", "HEAD^1") == head and _git(runner, "rev-parse", "HEAD^2") == main
     assert (runner / "pr.txt").exists() and (runner / "main.txt").exists()
@@ -2142,17 +2154,17 @@ def test_the_merge_script_tests_the_head_merged_into_mains_head(tmp_path):
     assert head in result.stdout and main in result.stdout
 
 
-def test_the_merge_script_fails_loudly_on_a_conflict(tmp_path):
+def test_the_merge_step_fails_loudly_on_a_conflict(tmp_path):
     runner, head, main = _merge_repo(tmp_path, conflict=True)
-    result, outputs = _run_merge_script(runner, tmp_path)
+    result, outputs = _run_merge_step(runner, tmp_path)
     assert result.returncode != 0
     assert "::error" in result.stdout and "shared.txt" in result.stdout and main in result.stdout
     assert outputs == {}
 
 
-def test_the_merge_script_leaves_a_head_that_already_holds_main(tmp_path):
+def test_the_merge_step_leaves_a_head_that_already_holds_main(tmp_path):
     runner, head, main = _merge_repo(tmp_path, head_has_main=True)
-    result, outputs = _run_merge_script(runner, tmp_path)
+    result, outputs = _run_merge_step(runner, tmp_path)
     assert result.returncode == 0, result.stdout + result.stderr
     assert _git(runner, "rev-parse", "HEAD") == head
     assert outputs == {"main": main}
