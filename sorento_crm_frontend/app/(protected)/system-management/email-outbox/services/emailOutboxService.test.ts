@@ -3,7 +3,12 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
-import { bulkRetryEmailOutbox, bulkCancelEmailOutbox } from './emailOutboxService';
+import {
+  bulkRetryEmailOutbox,
+  bulkCancelEmailOutbox,
+  downloadEmailOutboxAttachment,
+  emailOutboxAttachmentUrl,
+} from './emailOutboxService';
 import { apiFetch } from '@/lib/api';
 
 vi.mock('@/lib/api', () => ({ apiFetch: vi.fn() }));
@@ -45,5 +50,34 @@ describe('email-outbox bulk service', () => {
   it('throws an extracted error on non-ok', async () => {
     mockFetch.mockResolvedValueOnce(fail(403, { detail: 'nope' }));
     await expect(bulkRetryEmailOutbox(['a'])).rejects.toThrow();
+  });
+});
+
+describe('email-outbox attachment download (OUTBOX-ATTACHMENT)', () => {
+  beforeEach(() => mockFetch.mockReset());
+
+  it('addresses one attachment by row id and position', () => {
+    expect(emailOutboxAttachmentUrl('row-1', 2)).toBe(
+      '/api/v1/system/email-outbox/row-1/attachments/2',
+    );
+  });
+
+  it('GETs the attachment route and returns the bytes', async () => {
+    mockFetch.mockResolvedValueOnce(new Response('PK', { status: 200 }));
+    const blob = await downloadEmailOutboxAttachment('row-1', 1);
+    expect(mockFetch.mock.calls[0][0]).toBe('/api/v1/system/email-outbox/row-1/attachments/1');
+    expect(await blob.text()).toBe('PK');
+  });
+
+  it('throws the server message when the file is missing', async () => {
+    mockFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ detail: 'Attachment file not found in storage' }), {
+        status: 404,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    await expect(downloadEmailOutboxAttachment('row-1', 1)).rejects.toThrow(
+      'Attachment file not found in storage',
+    );
   });
 });

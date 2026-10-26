@@ -25,6 +25,17 @@ export async function getEmailOutboxRow(id: string): Promise<EmailOutboxRow> {
   return response.json();
 }
 
+/** One file the row's email carries, addressed by its position in `row.attachments`. */
+export function emailOutboxAttachmentUrl(rowId: string, index: number): string {
+  return `/api/v1/system/email-outbox/${rowId}/attachments/${index}`;
+}
+
+export async function downloadEmailOutboxAttachment(rowId: string, index: number): Promise<Blob> {
+  const response = await apiFetch(emailOutboxAttachmentUrl(rowId, index));
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to download attachment'));
+  return response.blob();
+}
+
 export async function retryEmailOutboxRow(id: string): Promise<EmailOutboxRow> {
   const response = await apiFetch(`/api/v1/system/email-outbox/${id}/retry`, { method: 'POST' });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to retry outbox row'));

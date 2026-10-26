@@ -7,6 +7,11 @@ export type EmailOutboxStatus =
   | 'deferred'
   | string;
 
+export interface EmailOutboxAttachment {
+  index: number;
+  filename: string;
+}
+
 export interface EmailOutboxRow {
   id: string;
   event_key: string;
@@ -26,6 +31,7 @@ export interface EmailOutboxRow {
   error_message?: string | null;
   cancel_reason?: string | null;
   coalesce_key?: string | null;
+  attachments?: EmailOutboxAttachment[];
   created_at: string;
   updated_at: string;
 }
