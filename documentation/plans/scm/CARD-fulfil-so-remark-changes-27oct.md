@@ -32,6 +32,22 @@ they can split in the popup, then the email and excel must tally to it".
   and the Excel's rows always match, all built from the saved lines, including splits made in the
   popup.
 
+### Built
+
+- **R1, R2 (board):** a change page's Remark starts empty and is required. Next and Confirm stay
+  held until it is keyed in. A new-only page keeps its prefill and stays optional.
+- **R3 (board):** a press that only applies an AutoCount change gets a page, with the retired
+  lines listed and the Remark required.
+- **R3, R4 (planning sheet):** "Confirm Project SO" opens the same Confirm popup, one page for the
+  order. It posts the Remark as `so_remark` on `POST /sales-orders/{id}/confirm`. The old
+  "Confirm the sales order" dialog is retired.
+  - A re-confirm, where the order already has a revision, is a change, so the Remark is required.
+  - A first Confirm prefills the words the email would print. The supply read now states them in
+    a new `default_so_remark` field, worked out by the same rule the board uses.
+- **R5:** the email and the Excel are both written from the email's own lines (#1871). Parity
+  tests cover new-only, change-only, cancel-all, mixed, split, AutoCount-only and the per-order
+  route.
+
 "A change" (R1): a line withdrawn, transferred to Cancel SO or split-edited; an Amend of a
 confirmed line; a line posted over a live imported OI row; a book-cancelled line; the lines an
 AutoCount change applies. A re-approve with nothing changed and a brand-new line are not.
