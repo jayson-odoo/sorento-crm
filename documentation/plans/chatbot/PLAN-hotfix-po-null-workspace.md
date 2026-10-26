@@ -1,6 +1,6 @@
 # PLAN: HOTFIX-PO-NULL-WORKSPACE
 
-Status: Build. Track: small fix (size S, hotfix for #1880). No migration, no RBAC change, no new
+Status: Review (red e1fdf9c733, fix c28a5cc5da, kill-proof done). Track: small fix (size S, hotfix for #1880). No migration, no RBAC change, no new
 ingest surface, no prompt change. UAC: `hotfix-po-null-workspace-acceptance-criteria.md`.
 
 ## Problem
@@ -55,4 +55,18 @@ Kill test: revert the route hunk, 1 and 2 fail again.
 
 ## Data (read-only, shared dev DB `sorento_prod_1020`)
 
-Count of `respond_contacts` with `workspace_id IS NULL` (count only): filled in by the lane.
+Measured 26 Oct 2026, read-only transaction (`default_transaction_read_only=on`):
+
+| measure | count |
+| --- | --- |
+| `respond_contacts` total (newest `created_at` 2026-10-14) | 405 |
+| `workspace_id IS NULL` | 0 |
+| contacts whose workspace has a `space_id` | 405 |
+
+So on this copy no contact is affected today. NULL can still arise: `create_contact` falls back to
+the default workspace only when one exists (`app/services/contact_service.py:415-419`, update
+path `:946-950`), and `respond_contacts.workspace_id` is `ondelete="SET NULL"`
+(`app/models/access.py:276`), so deleting a workspace drops its contacts into this case. The
+7 Sep measurement of 16 (`field_access.py:284`) was on an older copy; why those 16 later gained a
+workspace is UNVERIFIED (the create fallback dates from 5f38c67f2f, 2 May, so it is not the
+reason). Live prod is not measured (lane rule: never touch prod), UNVERIFIED.
