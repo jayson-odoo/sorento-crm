@@ -1,0 +1,404 @@
+"""WA-USERNAME-CONTACTS engine gate (red first). UAC WU1-WU10, WU15-WU17; plan test list 5-13.
+
+The gate sits in `engine.run_turn` before the AI-allowed gate. Respond.io is a recording fake
+(`wa_phone_link.respond_client` is the one seam) and the template send is patched at
+`respond_messaging_service.send_template_for_use_case`. Nothing reaches the network, an LLM or MCP.
+"""
+from __future__ import annotations
+
+import copy
+import itertools
+import json
+from datetime import datetime, timedelta, timezone
+from typing import Any
+
+import httpx
+import pytest
+from sqlalchemy import text
+
+from app.models.chatbot_turn import ChatbotTurn
+from app.services.chatbot import engine as engine_mod
+
+from tests.chatbot.test_engine import CONTACT_ID, _envelope, seeded, stub_access, stub_parser  # noqa: F401
+
+pytestmark = pytest.mark.usefixtures("_no_real_mcp_calls", "_stub_casual_llm")
+
+PHONE_ID = 900000003
+E164 = "60100000001"
+PHONE_KINDS = {"phone_ask", "phone_linked", "phone_ignored", "phone_handoff"}
+_mid = itertools.count(1)
+
+TAP = {
+    "event_type": "message.received",
+    "contact": {"id": CONTACT_ID, "phone": None, "firstName": "CONTACT B"},
+    "message": {
+        "messageId": 1700000000000001,
+        "contactId": CONTACT_ID,
+        "traffic": "incoming",
+        "timestamp": 1700000000000,
+        "sender": {"source": "contact"},
+        "message": {
+            "type": "contact",
+            "contact": {
+                "cId": 1,
+                "phone": "+60100000001",
+                "origin": "contact_request",
+                "payload": None,
+                "firstName": "CONTACT A",
+            },
+        },
+    },
+    "channel": {"source": "whatsapp", "meta": {"wa_id": "60100000001", "user_id": "MY.0000000000000001"}},
+}
+
+
+def _body(kind: str = "tap", text_: str = "hello", mid: str | None = None) -> dict[str, Any]:
+    body = copy.deepcopy(TAP)
+    body["message"]["messageId"] = mid or f"WU-msg-{next(_mid)}"
+    inner = body["message"]["message"]
+    if kind == "text":
+        body["message"]["message"] = {"type": "text", "text": text_}
+    elif kind == "shared":
+        inner["contact"].update({"phone": "+60100000002", "origin": "other"})
+    elif kind == "bare":
+        inner["contact"]["phone"] = "60100000001"
+    return body
+
+
+def _env(kind: str = "tap", *, text_: str = "hello", mid: str | None = None, contact: dict | None = None, **kw):
+    body = _body(kind, text_, mid)
+    return _envelope(
+        message=body,
+        contact=contact or {"id": CONTACT_ID, "phone": None, "firstName": "CONTACT B", "custom_fields": []},
+        **kw,
+    )
+
+
+class World:
+    def __init__(self):
+        self.calls: list[tuple] = []
+        self.sends: list[tuple[str, str]] = []
+        self.template = "ok"  # or "skipped"
+        self.phone_contact_id: int | None = PHONE_ID
+        self.merge_error: Exception | None = None
+
+    def client(self):
+        world = self
+
+        class _C:
+            def get_contact_by_phone(self, phone):
+                world.calls.append(("lookup", phone))
+                if world.phone_contact_id is None:
+                    req = httpx.Request("GET", "https://api.example.test/x")
+                    raise httpx.HTTPStatusError("nf", request=req, response=httpx.Response(404, request=req))
+                return {"id": world.phone_contact_id}
+
+            def merge_contacts(self, ids):
+                world.calls.append(("merge", [int(i) for i in ids]))
+                if world.merge_error:
+                    raise world.merge_error
+                return {}
+
+            def update_contact(self, ident, payload):
+                world.calls.append(("put", str(ident), payload))
+                return {}
+
+        return _C()
+
+    def merges(self):
+        return [c for c in self.calls if c[0] == "merge"]
+
+
+@pytest.fixture()
+def world(monkeypatch):
+    """Installed inside the test's own setup path; the imports are lazy so a missing module fails per test."""
+    return World()
+
+
+def _install(world: World, monkeypatch):
+    from app.services import respond_messaging_service, wa_phone_link
+
+    monkeypatch.setattr(wa_phone_link, "respond_client", lambda db: world.client())
+
+    def fake_send(db, *, identifier, use_case, context_vars):
+        if world.template == "skipped":
+            raise respond_messaging_service.TemplateSendSkipped(use_case, "not mapped")
+        world.sends.append((str(identifier), use_case))
+        return {}
+
+    monkeypatch.setattr(respond_messaging_service, "send_template_for_use_case", fake_send)
+
+
+@pytest.fixture()
+def parser_calls(stub_parser, stub_access):
+    calls: list[Any] = []
+    stub_parser(on_call=calls.append)
+    stub_access()
+    return calls
+
+
+def _run(session_factory, envelope):
+    return engine_mod.run_turn(envelope, session_factory=session_factory)
+
+
+def _kinds(actions) -> list[str]:
+    return [a.get("kind") for a in (actions or [])]
+
+
+def _seed_turn(session_factory, branch_kind: str, *, hours_ago: float = 1.0, is_test: bool = False) -> None:
+    db = session_factory()
+    db.add(
+        ChatbotTurn(
+            contact_respond_id=str(CONTACT_ID),
+            message_id=f"seed-{next(_mid)}",
+            envelope={},
+            is_test=is_test,
+            status="done",
+            stage="received",
+            branch_kind=branch_kind,
+            created_at=datetime.now(timezone.utc) - timedelta(hours=hours_ago),
+        )
+    )
+    db.commit()
+
+
+def _seed_phone_row(session_factory, *, allowed: bool) -> None:
+    db = session_factory()
+    db.execute(
+        text(
+            "INSERT INTO respond_contacts (id, respond_io_id, phone_number, session_vars, chatbot_allowed) "
+            "VALUES (gen_random_uuid()::text, :cid, :phone, CAST(:sv AS jsonb), :a)"
+        ),
+        {"cid": str(PHONE_ID), "phone": f"+{E164}", "sv": json.dumps({"variables": {}}), "a": allowed},
+    )
+    db.commit()
+
+
+def _row(session_factory, result) -> ChatbotTurn:
+    return session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == result.turn_id).first()
+
+
+# ---------------------------------------------------------------- 5. card from a linked contact
+
+
+@pytest.mark.parametrize("kind", ["tap", "shared", "bare"])
+def test_wu2_card_from_linked_contact_is_ignored(session_factory, seeded, parser_calls, world, monkeypatch, kind):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env(kind))
+    assert result.branch_kind == "phone_ignored"
+    assert result.actions == []
+    assert parser_calls == []
+    assert world.calls == [] and world.sends == []
+    assert _row(session_factory, result).branch_kind == "phone_ignored"
+
+
+def test_wu2_card_from_linked_contact_with_ai_off_is_still_ignored(
+    session_factory, seeded, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    session_factory().execute(text("UPDATE respond_contacts SET chatbot_allowed = false"))
+    session_factory().commit()
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_ignored"
+    assert world.calls == [] and world.sends == []
+
+
+# ---------------------------------------------------------------- 6. ask
+
+
+def test_wu6_text_from_unknown_phoneless_gets_the_ask(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env("text", text_="price for SRTWC8517"))
+    assert result.branch_kind == "phone_ask"
+    assert world.sends == [(str(CONTACT_ID), "wa_phone_share")]
+    assert parser_calls == []
+    assert world.calls == []
+    row = _row(session_factory, result)
+    assert row.status == "done" and row.branch_kind == "phone_ask"
+
+
+def test_wu9_typed_phone_number_is_never_accepted(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env("text", text_="+60100000001"))
+    assert result.branch_kind == "phone_ask"
+    assert world.sends == [(str(CONTACT_ID), "wa_phone_share")]
+    assert world.calls == []
+    assert parser_calls == []
+
+
+def test_wu3_the_ask_turn_never_reaches_a_business_answer(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env("text", text_="price for SRTWC8517"))
+    assert result.branch_kind in PHONE_KINDS
+    assert "business" not in str(result.branch_kind)
+    assert not any(k == "send_message" for k in _kinds(result.actions))
+
+
+# ---------------------------------------------------------------- 7. cap
+
+
+def test_wu7_fourth_ask_becomes_a_handoff_then_silence(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    for h in (3, 2, 1):
+        _seed_turn(session_factory, "phone_ask", hours_ago=h)
+    fourth = _run(session_factory, _env("text"))
+    assert fourth.branch_kind == "phone_handoff"
+    assert _kinds(fourth.actions).count("add_comment") == 1
+    assert "assign_conversation" not in _kinds(fourth.actions)
+    assert "send_message" not in _kinds(fourth.actions)
+    assert world.sends == []
+    fifth = _run(session_factory, _env("text"))
+    assert fifth.branch_kind == "phone_ignored"
+    assert fifth.actions == [] and world.sends == []
+    assert parser_calls == []
+
+
+def test_wu7_asks_older_than_24h_do_not_count(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    for h in (30, 28, 26):
+        _seed_turn(session_factory, "phone_ask", hours_ago=h)
+    result = _run(session_factory, _env("text"))
+    assert result.branch_kind == "phone_ask"
+    assert world.sends == [(str(CONTACT_ID), "wa_phone_share")]
+
+
+def test_wu7_test_turns_do_not_count_toward_the_cap(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    for h in (3, 2, 1):
+        _seed_turn(session_factory, "phone_ask", hours_ago=h, is_test=True)
+    result = _run(session_factory, _env("text"))
+    assert result.branch_kind == "phone_ask"
+
+
+# ---------------------------------------------------------------- 8. not mapped
+
+
+def test_wu8_unmapped_template_hands_off_once(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    world.template = "skipped"
+    first = _run(session_factory, _env("text"))
+    assert first.branch_kind == "phone_handoff"
+    assert _kinds(first.actions).count("add_comment") == 1
+    assert "send_message" not in _kinds(first.actions)
+    second = _run(session_factory, _env("text"))
+    assert second.branch_kind == "phone_ignored"
+    assert second.actions == []
+    assert parser_calls == []
+
+
+# ---------------------------------------------------------------- 9. hand-shared card
+
+
+def test_wu10_hand_shared_card_from_unknown_is_answered_by_the_ask(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env("shared"))
+    assert result.branch_kind == "phone_ask"
+    assert world.sends == [(str(CONTACT_ID), "wa_phone_share")]
+    assert world.calls == []
+    assert world.merges() == []
+    assert parser_calls == []
+
+
+# ---------------------------------------------------------------- 10. accepted tap
+
+
+@pytest.mark.parametrize("kind", ["tap", "bare"])
+def test_wu15_link_ok_and_ai_allowed_sends_the_verified_line(
+    session_factory, parser_calls, world, monkeypatch, kind
+):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env(kind))
+    assert result.branch_kind == "phone_linked"
+    assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
+    sends = [a for a in result.actions if a.get("kind") == "send_message"]
+    assert len(sends) == 1
+    assert "Phone number verified, you may start using the AI" in sends[0]["text"]
+    assert parser_calls == []
+
+
+def test_wu15_link_ok_and_ai_off_tells_staff_only(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=False)
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_linked"
+    assert "send_message" not in _kinds(result.actions)
+    assert _kinds(result.actions).count("add_comment") == 1
+    assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
+
+
+def test_wu16_link_failure_hands_off_without_a_customer_line(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    req = httpx.Request("POST", "https://api.example.test/v2/contact/merge")
+    world.merge_error = httpx.HTTPStatusError("boom", request=req, response=httpx.Response(500, request=req))
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_handoff"
+    assert "send_message" not in _kinds(result.actions)
+    assert _kinds(result.actions).count("add_comment") == 1
+    row = session_factory().execute(
+        text("SELECT respond_io_id FROM respond_contacts WHERE phone_number = :p"), {"p": f"+{E164}"}
+    ).scalar()
+    assert row == str(PHONE_ID)
+
+
+# ---------------------------------------------------------------- 11. phone in the envelope
+
+
+def test_wu4_unknown_with_phone_in_envelope_is_not_this_flow(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    contact = {"id": CONTACT_ID, "phone": "+60100000005", "firstName": "CONTACT C", "custom_fields": []}
+    for kind in ("text", "tap"):
+        result = _run(session_factory, _env(kind, contact=contact))
+        assert result.branch_kind not in PHONE_KINDS
+        assert result.branch_kind == "ai_not_allowed"
+    assert world.calls == [] and world.sends == []
+    assert parser_calls == []
+
+
+# ---------------------------------------------------------------- 12. duplicate delivery
+
+
+def test_wu17_the_same_webhook_twice_merges_once(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    first = _run(session_factory, _env("tap", mid="WU-dup-1"))
+    second = _run(session_factory, _env("tap", mid="WU-dup-1", ingress="poller"))
+    assert first.branch_kind == "phone_linked"
+    assert second.duplicate is True
+    assert len(world.merges()) == 1
+
+
+# ---------------------------------------------------------------- 13. dry run
+
+
+@pytest.mark.parametrize("kind", ["text", "shared", "tap"])
+def test_wu5_a_test_turn_makes_no_respond_call(session_factory, parser_calls, world, monkeypatch, kind):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env(kind, is_test=True))
+    assert result.is_test is True
+    assert result.branch_kind in PHONE_KINDS
+    assert world.calls == []
+    assert world.sends == []
+    assert parser_calls == []
+
+
+def test_wu5_a_test_turn_takes_the_same_decision_as_live(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env("text", is_test=True))
+    assert result.branch_kind == "phone_ask"
+    assert all(a.get("dry_run") is True for a in (result.actions or []))
+
+
+# ---------------------------------------------------------------- 1. never the parser
+
+
+def test_wu1_no_card_reaches_the_parser_whoever_sends_it(session_factory, seeded, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    for kind in ("tap", "shared"):
+        result = _run(session_factory, _env(kind))
+        assert result.branch_kind in PHONE_KINDS
+    assert parser_calls == []
