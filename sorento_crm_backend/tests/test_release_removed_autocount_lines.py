@@ -485,12 +485,30 @@ def test_ac_rl_45_apply_releases_only_the_listed_spo_line(db):
 
     w = _world(db)
 
-    run(db, w.company, dry_run=False, spo_dtl_keys=[K_SPO_RETIRED])
+    preview = run(db, w.company, dry_run=True)
+
+    report = run(db, w.company, dry_run=False, spo_dtl_keys=[K_SPO_RETIRED])
 
     live = _link_ids(db)
     assert str(w.link_spo_retired.id) not in live, "A is listed: released"
     assert str(w.link_spo_retired_b.id) in live, "B is not listed: keeps its links"
     assert _row_state(db, w.row_spo_retired_b) == INQUIRY_PLACED
+
+    # AC-RL-45: each SPO entry says whether it was released, and the summary counts cover
+    # only the released lines (the owner reads these numbers).
+    def _entry(rep, dtl):
+        return next(l for l in rep["lines"] if dtl in _flat(l))
+
+    def _released(entry):
+        keys = [k for k in entry if "released" in str(k).lower()]
+        assert keys, f"an apply entry must say whether it was released: {entry}"
+        return bool(entry[keys[0]])
+
+    assert _released(_entry(report, K_SPO_RETIRED)) is True
+    assert _released(_entry(report, K_SPO_RETIRED_B)) is False
+    assert report["spo_lines"] == 1, report
+    b_rows = _entry(preview, K_SPO_RETIRED_B)["rows_affected"]
+    assert report["rows_affected"] == preview["rows_affected"] - b_rows, report
 
 
 def test_ac_rl_45_a_listed_key_that_is_not_a_candidate_is_reported_and_ignored(db):
