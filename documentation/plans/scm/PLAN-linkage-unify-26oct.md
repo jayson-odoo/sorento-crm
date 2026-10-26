@@ -1,7 +1,7 @@
 # PLAN: one answer to "where are this SO line's goods now" (LINKAGE-UNIFY)
 
 Status: U1-U3 merged as #1870 (1aaeed54ae); U4 merged as #1874 (36f571df3b, owner PASS 26 Oct ~22:05).
-U5 #1873 on main, reviewer READY, waiting on CI + merge. Size L, lead pattern. UAC:
+U5 #1873 on main, reviewer READY; owner hand test, then CI + merge. Double placements: ruling (a), section 13. Size L, lead pattern. UAC:
 `linkage-unify-26oct-acceptance-criteria.md`. The fix is cut into the slices of section 6.
 Lane LINKAGE-UNIFY, branch `crew/linkage-unify`, base origin/main 263643ae36.
 
@@ -498,3 +498,22 @@ lines grid is the WHOLE answer now - no panel underneath states it a second way"
 mock drew "Allocated to" panels in the PO / SPO popups; that was a mock error, so U4 changes the
 popups' lines grids only (SPO column with pills, "Transferred"), and the via-PO placements show on
 the SPO document page's "SO covered" (a different screen, not under R13). Flagged to the owner.
+
+## 13. Owner ruling on double placements (ask a12763574, 27 Oct)
+
+The same goods placed twice: on a PO line AND directly on the SPO line that PO line was
+transferred onto (crew audit of #1874: SPO-2026/09-0107 L3 "2 SOs 180" on 116, L5 22 on 11,
+L6 600 on 300, header "SO covered 12 . 2,192" on 2,016). Not a double: L12 294 via PO + 60
+direct = 354, a real split.
+
+Ruling (a): stored placements stay as they are. Every stored placement shows (U4's SPO page
+"SO covered" and its header sum them); the U4 / U5 hand-test scripts warn the owner. Stock
+Debt coverage already counts the pair once (`supply_assignment.py:730`, `:759` cap each hold);
+only `_book_so_holds` adds followed + direct (`stock_debt_service.py:2552-2558`), which can only
+make an SPO's S/O pin less. The OI worklist "taken" counts both (`order_inquiry_worklist_service.py`
+`:2507-2509`, `:2186-2198`). U5 stops NEW doubles (the candidate walk nets followed placements).
+
+Follow-up lane (not built here): release the redundant links on the over-placed SPO allocations,
+like AC-REMOVED-LINES #1878. Measured: 24 SPO allocations carry more live placed qty (direct +
+followed) than allocated, 923 excess units (`sql/d-14.sql`, `data-D-divergence-dev.md:51`);
+row list `sql/d-14-list.sql` (read-only, for crew / the owner to run; not run from this lane).
