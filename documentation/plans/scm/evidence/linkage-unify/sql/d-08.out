@@ -1,0 +1,404 @@
+-[ RECORD 1 ]---+-----------------------------------
+cls             | b_transferred_spo_incoming
+inquiry_no      | OI-2609-0194
+psl_line        | 3
+so_number       | SO396348
+core_line_no    | 32
+item_code       | SRTWT162
+qty             | 728.0000
+so_qty          | 728.0000
+row_state       | placed
+po_number       | 202607-S0083
+po_ref_tail     | :45522211
+po_status       | active
+po_line_status  | closed
+po_ordered      | 728.0000
+po_received     | 728.0000
+spo_number      | SPO-2026/10-0046
+spo_line_number | 128
+spo_alloc       | 728
+spo_rcv         | 0
+receipt_status  | pending
+spo_line_status | open
+retired         | f
+shipment_number | PL-2609-041
+shipment_status | in_transit
+arr             | 
+wh_arr          | 
+bin             | BRW-BB
+bin_onhand      | 1636
+n_spo_match     | 1
+rn              | 1
+-[ RECORD 2 ]---+-----------------------------------
+cls             | b_transferred_spo_incoming
+inquiry_no      | OI-2609-0684
+psl_line        | 9
+so_number       | SO389394
+core_line_no    | 224
+item_code       | SRTWB7132
+qty             | 197.0000
+so_qty          | 197.0000
+row_state       | placed
+po_number       | 202609-S0007
+po_ref_tail     | :45708414
+po_status       | active
+po_line_status  | closed
+po_ordered      | 192.0000
+po_received     | 192.0000
+spo_number      | SPO-2026/10-0057
+spo_line_number | 3
+spo_alloc       | 192
+spo_rcv         | 0
+receipt_status  | pending
+spo_line_status | open
+retired         | f
+shipment_number | PL-2610-009
+shipment_status | in_transit
+arr             | 
+wh_arr          | 
+bin             | BRW-BB
+bin_onhand      | 0
+n_spo_match     | 1
+rn              | 1
+-[ RECORD 3 ]---+-----------------------------------
+cls             | c_transferred_spo_landed_or_closed
+inquiry_no      | OI-2609-0116
+psl_line        | 3
+so_number       | SO345263
+core_line_no    | 196
+item_code       | C-FH12
+qty             | 728.0000
+so_qty          | 744.0000
+row_state       | placed
+po_number       | 202607-S0031
+po_ref_tail     | :45716062
+po_status       | closed
+po_line_status  | closed
+po_ordered      | 728.0000
+po_received     | 728.0000
+spo_number      | SPO-2026/09-0091
+spo_line_number | 7
+spo_alloc       | 728
+spo_rcv         | 728
+receipt_status  | fully_received
+spo_line_status | closed
+retired         | f
+shipment_number | PL-2609-010
+shipment_status | in_transit
+arr             | 
+wh_arr          | 2026-09-24
+bin             | BRW-IR
+bin_onhand      | 3794
+n_spo_match     | 1
+rn              | 1
+-[ RECORD 4 ]---+-----------------------------------
+cls             | c_transferred_spo_landed_or_closed
+inquiry_no      | OI-2609-0549
+psl_line        | 62
+so_number       | SO398090
+core_line_no    | 1408
+item_code       | CGB762
+qty             | 303.0000
+so_qty          | 395.0000
+row_state       | placed
+po_number       | 202606-S0019
+po_ref_tail     | :45073889
+po_status       | active
+po_line_status  | closed
+po_ordered      | 395.0000
+po_received     | 395.0000
+spo_number      | SPO-2026/10-0015
+spo_line_number | 19
+spo_alloc       | 395
+spo_rcv         | 395
+receipt_status  | fully_received
+spo_line_status | closed
+retired         | f
+shipment_number | 
+shipment_status | fully_received
+arr             | 
+wh_arr          | 2026-10-07
+bin             | BRW-BB
+bin_onhand      | 0
+n_spo_match     | 1
+rn              | 1
+-[ RECORD 5 ]---+-----------------------------------
+cls             | c_transferred_spo_landed_or_closed
+inquiry_no      | OI-2609-0053
+psl_line        | 38
+so_number       | SO403889
+core_line_no    | 816
+item_code       | SRTUB206
+qty             | 14.0000
+so_qty          | 22.0000
+row_state       | placed
+po_number       | 202608-S0049
+po_ref_tail     | :45568285
+po_status       | active
+po_line_status  | closed
+po_ordered      | 10.0000
+po_received     | 10.0000
+spo_number      | SPO-2026/10-0032
+spo_line_number | 6
+spo_alloc       | 10
+spo_rcv         | 10
+receipt_status  | fully_received
+spo_line_status | closed
+retired         | f
+shipment_number | PL-2609-037
+shipment_status | fully_received
+arr             | 
+wh_arr          | 2026-10-08
+bin             | BRW
+bin_onhand      | 4
+n_spo_match     | 1
+rn              | 1
+-[ RECORD 6 ]---+-----------------------------------
+cls             | d_po_transferred_no_spo_match
+inquiry_no      | OI-2609-0013
+psl_line        | 14
+so_number       | SO314592
+core_line_no    | 80
+item_code       | WESERP10B
+qty             | 182.0000
+so_qty          | 220.0000
+row_state       | placed
+po_number       | PO-2026/03-0024
+po_ref_tail     | :44243732
+po_status       | closed
+po_line_status  | closed
+po_ordered      | 30000.0000
+po_received     | 30000.0000
+spo_number      | 
+spo_line_number | 
+spo_alloc       | 
+spo_rcv         | 
+receipt_status  | 
+spo_line_status | 
+retired         | f
+shipment_number | 
+shipment_status | 
+arr             | 
+wh_arr          | 
+bin             | 
+bin_onhand      | 
+n_spo_match     | 0
+rn              | 1
+-[ RECORD 7 ]---+-----------------------------------
+cls             | e_direct_spo_incoming
+inquiry_no      | OI-2609-0194
+psl_line        | 2
+so_number       | SO396348
+core_line_no    | 64
+item_code       | SRTA8046
+qty             | 194.0000
+so_qty          | 1092.0000
+row_state       | placed
+po_number       | 
+po_ref_tail     | 
+po_status       | 
+po_line_status  | 
+po_ordered      | 
+po_received     | 
+spo_number      | SPO-2026/10-0008
+spo_line_number | 76
+spo_alloc       | 1092
+spo_rcv         | 0
+receipt_status  | pending
+spo_line_status | open
+retired         | f
+shipment_number | PL-2609-042
+shipment_status | in_transit
+arr             | 
+wh_arr          | 
+bin             | BRW-BB
+bin_onhand      | 590
+n_spo_match     | 0
+rn              | 1
+-[ RECORD 8 ]---+-----------------------------------
+cls             | e_direct_spo_incoming
+inquiry_no      | OI-2609-0318
+psl_line        | 56
+so_number       | SO396174
+core_line_no    | 1264
+item_code       | SRTWC286-SH-PP
+qty             | 36.0000
+so_qty          | 36.0000
+row_state       | placed
+po_number       | 
+po_ref_tail     | 
+po_status       | 
+po_line_status  | 
+po_ordered      | 
+po_received     | 
+spo_number      | SPO-2026/10-0022
+spo_line_number | 1
+spo_alloc       | 36
+spo_rcv         | 0
+receipt_status  | pending
+spo_line_status | open
+retired         | f
+shipment_number | 
+shipment_status | 
+arr             | 
+wh_arr          | 
+bin             | BRW-BB
+bin_onhand      | 
+n_spo_match     | 0
+rn              | 1
+-[ RECORD 9 ]---+-----------------------------------
+cls             | f_direct_spo_received_or_landed
+inquiry_no      | OI-2609-0289
+psl_line        | 3
+so_number       | SO313699
+core_line_no    | 304
+item_code       | B2154-NL
+qty             | 1092.0000
+so_qty          | 1092.0000
+row_state       | placed
+po_number       | 
+po_ref_tail     | 
+po_status       | 
+po_line_status  | 
+po_ordered      | 
+po_received     | 
+spo_number      | SPO-2026/01-0143
+spo_line_number | 307
+spo_alloc       | 1092
+spo_rcv         | 1092
+receipt_status  | fully_received
+spo_line_status | closed
+retired         | f
+shipment_number | 
+shipment_status | 
+arr             | 
+wh_arr          | 
+bin             | BRW-IR
+bin_onhand      | 934
+n_spo_match     | 0
+rn              | 1
+-[ RECORD 10 ]--+-----------------------------------
+cls             | f_direct_spo_received_or_landed
+inquiry_no      | OI-2609-0289
+psl_line        | 19
+so_number       | SO313699
+core_line_no    | 464
+item_code       | SRT6638
+qty             | 1260.0000
+so_qty          | 1260.0000
+row_state       | placed
+po_number       | 
+po_ref_tail     | 
+po_status       | 
+po_line_status  | 
+po_ordered      | 
+po_received     | 
+spo_number      | SPO-2026/01-0005
+spo_line_number | 328
+spo_alloc       | 1260
+spo_rcv         | 1260
+receipt_status  | fully_received
+spo_line_status | closed
+retired         | f
+shipment_number | 
+shipment_status | 
+arr             | 
+wh_arr          | 
+bin             | BRW-IR
+bin_onhand      | 0
+n_spo_match     | 0
+rn              | 1
+-[ RECORD 11 ]--+-----------------------------------
+cls             | x_direct_spo_hidden_retired
+inquiry_no      | OI-2609-0252
+psl_line        | 36
+so_number       | SO396349
+core_line_no    | 784
+item_code       | SRTSS3170
+qty             | 294.0000
+so_qty          | 354.0000
+row_state       | placed
+po_number       | 
+po_ref_tail     | 
+po_status       | 
+po_line_status  | 
+po_ordered      | 
+po_received     | 
+spo_number      | SPO-2026/09-0107
+spo_line_number | 7
+spo_alloc       | 294
+spo_rcv         | 0
+receipt_status  | pending
+spo_line_status | closed
+retired         | t
+shipment_number | PL-2609-060
+shipment_status | in_transit
+arr             | 
+wh_arr          | 2026-09-28
+bin             | BRW-BB
+bin_onhand      | 841
+n_spo_match     | 0
+rn              | 1
+-[ RECORD 12 ]--+-----------------------------------
+cls             | x_direct_spo_hidden_retired
+inquiry_no      | OI-2609-0764
+psl_line        | 16
+so_number       | SO422492
+core_line_no    | 224
+item_code       | C-FH14
+qty             | 139.0000
+so_qty          | 22.0000
+row_state       | placed
+po_number       | 
+po_ref_tail     | 
+po_status       | 
+po_line_status  | 
+po_ordered      | 
+po_received     | 
+spo_number      | SPO-2026/09-0091
+spo_line_number | 404
+spo_alloc       | 208
+spo_rcv         | 0
+receipt_status  | pending
+spo_line_status | closed
+retired         | t
+shipment_number | PL-2609-010
+shipment_status | in_transit
+arr             | 
+wh_arr          | 2026-09-24
+bin             | BRW
+bin_onhand      | 0
+n_spo_match     | 0
+rn              | 1
+-[ RECORD 13 ]--+-----------------------------------
+cls             | z_po_not_open_no_transfer
+inquiry_no      | OI-2609-0194
+psl_line        | 4
+so_number       | SO396348
+core_line_no    | 16
+item_code       | SRTWT165
+qty             | 728.0000
+so_qty          | 728.0000
+row_state       | placed
+po_number       | 202607-S0083
+po_ref_tail     | :45522177
+po_status       | active
+po_line_status  | cancelled
+po_ordered      | 728.0000
+po_received     | 0.0000
+spo_number      | 
+spo_line_number | 
+spo_alloc       | 
+spo_rcv         | 
+receipt_status  | 
+spo_line_status | 
+retired         | f
+shipment_number | 
+shipment_status | 
+arr             | 
+wh_arr          | 
+bin             | 
+bin_onhand      | 
+n_spo_match     | 1
+rn              | 1
+
