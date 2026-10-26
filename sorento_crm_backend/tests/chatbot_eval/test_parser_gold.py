@@ -1394,3 +1394,81 @@ def test_run_live_rows_record_document_and_order_status(session_factory, monkeyp
                       version_id="1", repeats=1, max_usd=5.0, require_key_last4="WXYZ")
     assert out[0]["passed"] is True, out
     assert out[0]["document"] == ["DO"] and out[0]["order_status"] == "delivered", out
+
+
+# CHAT-V66-REGRESSIONS: a lookup version (`ParserConfig.lookup_lists`) is parsed with the user turn the engine builds for
+# it: the lookup blocks for the message's own text and the values the row's State subject holds, and none of the
+# per-turn lists the engine drops for such a version. Before, the gold runner sent a lookup version no blocks at all.
+LOOKUP_CTX = {"previous_reply": "Which access level do you need for ZZ BRAND?\n1. Dealer\n2. End user",
+              "subject": "domain promotion (answered); brand ZZ BRAND; warehouse ZZW1", "open_question": None}
+BLOCK = ["Brand candidates (pick one only if the message means it):", "- ZZ BRAND (ZZBR)"]
+
+
+def _capture_lookup(monkeypatch, session_factory, config, context):
+    from app.services.chatbot import engine, turn_runtime
+    from app.services.chatbot.head import parser as parser_mod
+
+    seen: dict = {}
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: seen.setdefault("block", block) or {})
+    monkeypatch.setattr(turn_runtime, "active_brands", lambda db: [{"brand_name": "ZZ BRAND", "brand_code": "ZZBR"}])
+    monkeypatch.setattr(turn_runtime, "promotion_kind_rows", lambda db: [{"type_code": "zzpk", "type_name": "ZZ Kind"}])
+    monkeypatch.setattr(turn_runtime, "product_type_names", lambda db: ["ZZ Type"])
+    monkeypatch.setattr(turn_runtime, "product_detail_values", lambda db: None)
+
+    def lookup(db, message, cfg, hidden, contact, space, brands=None, held=None):
+        seen["lookup"] = (message, held)
+        return list(BLOCK), {"pieces": [], "hits": []}
+
+    monkeypatch.setattr(engine, "_lookup_lines", lookup)
+    pg._parse_one("dealer", config, session_factory, context)
+    return seen
+
+
+def test_parse_one_gives_a_lookup_version_the_engines_lookup_blocks_and_held_values(session_factory, monkeypatch):
+    seen = _capture_lookup(monkeypatch, session_factory, _config(state_block=True, lookup_lists=True), LOOKUP_CTX)
+    message, held = seen["lookup"]
+    assert message == "dealer"
+    assert held == {"brand": ("ZZ BRAND",), "location": ("ZZW1",)}, held
+    lines = seen["block"].splitlines()
+    for ln in BLOCK:
+        assert ln in lines, seen["block"]
+    for prefix in ("Known brands:", "Promotion kinds:", "Sales channels:", "Product types:", "Product details:"):
+        assert not any(ln.startswith(prefix) for ln in lines), (prefix, seen["block"])
+
+
+def test_parse_one_keeps_the_per_turn_lists_and_no_lookup_for_a_version_without_it(session_factory, monkeypatch):
+    seen = _capture_lookup(monkeypatch, session_factory, _config(state_block=True), LOOKUP_CTX)
+    assert "lookup" not in seen
+    lines = seen["block"].splitlines()
+    assert any(ln.startswith("Known brands:") for ln in lines), seen["block"]
+    assert BLOCK[0] not in lines
+
+
+def test_access_levels_expect_compares_the_set_case_blind(tmp_path):
+    row = json.dumps({"id": "t", "message": "dealer", "expect": {"access_levels": ["Mocha Dealer"]}})
+    assert pg.load_gold(_write(tmp_path, [row]))[0]["expect"] == {"access_levels": ["Mocha Dealer"]}
+    assert pg.grade_parse({"access_levels": ["mocha dealer"]}, {"access_levels": ["Mocha Dealer"]}) == (True, [])
+    ok, reasons = pg.grade_parse({"access_levels": ["Sorento Dealer", "Mocha Dealer", "Cabana Dealer"]},
+                                 {"access_levels": ["Mocha Dealer"]})
+    assert not ok and reasons and "access_levels" in reasons[0], reasons
+    assert pg.grade_parse({}, {"access_levels": []}) == (True, [])
+    bad = json.dumps({"id": "t", "message": "dealer", "expect": {"access_levels": "Mocha Dealer"}})
+    with pytest.raises(ValueError):
+        pg.load_gold(_write(tmp_path, [bad]))
+
+
+V66_GOLD = "scripts/chatbot_eval/gold/parser_v66_regressions.jsonl"
+
+
+def test_v66_regressions_gold_file():
+    # CHAT-V66-REGRESSIONS: the prod cases of 26 Oct (masked) and 16 real answers to the promotion access-level question
+    # over a held brand (the case-1 behaviour, >= 8 real messages), for the parser gate of any later lookup version.
+    rows = pg.load_gold(V66_GOLD)
+    ids = [r["id"] for r in rows]
+    assert len(ids) == len(set(ids)) and all(i.startswith("v66-") for i in ids)
+    tier = [r for r in rows if r["id"].startswith("v66-t-")]
+    assert len(tier) >= 8 and all("brand " in r["context"]["subject"] for r in tier)
+    assert {r["id"] for r in rows if "access_levels" in r["expect"]} >= {"v66-c1-02", "v66-t-01", "v66-t-06"}
+    for r in rows:
+        text = json.dumps(r, ensure_ascii=False).upper()
+        assert "SDN BHD" not in text and "ENTERPRISE" not in text, r["id"]  # no customer names in a public repo

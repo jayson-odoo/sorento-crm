@@ -2319,6 +2319,9 @@ class FulfilmentBoardService:
                     "received": bool(link.get("received")),
                 }
                 for link in links_by_row.get(row_id, [])
+                # LINKAGE-UNIFY U3: a dead document brings nothing to the line, so the
+                # board lists it no more than it did before the link was listed.
+                if not link.get("dead_reason")
             ]
         return out
 
