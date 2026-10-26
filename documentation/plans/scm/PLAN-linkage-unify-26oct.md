@@ -1,7 +1,8 @@
 # PLAN: one answer to "where are this SO line's goods now" (LINKAGE-UNIFY)
 
-Status: RULED 26 Oct 2026 (owner, card a76592390, section 5). Size L, lead pattern. UAC: `linkage-unify-26oct-acceptance-criteria.md`. Mock v2 APPROVED (owner 09:39); Q6 (a) and NO Received card (owner 09:45). Building U1.
- The fix is cut into the slices of section 6.
+Status: U1-U3 owner hand-test PASS (26 Oct ~15:20, "ok to merge"), merging as PR #1870 (supersedes #1866 / #1868).
+U4 #1874 and U5 #1873 open, retargeted to main after #1870 merges. Size L, lead pattern. UAC:
+`linkage-unify-26oct-acceptance-criteria.md`. The fix is cut into the slices of section 6.
 Lane LINKAGE-UNIFY, branch `crew/linkage-unify`, base origin/main 263643ae36.
 
 Evidence (committed beside this plan, `evidence/linkage-unify/`):
