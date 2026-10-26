@@ -77,6 +77,9 @@ interface Props {
    * would be a second copy.
    */
   initialFiles?: File[];
+  /** False for a form that takes no attachments (project registration): the files are read
+   *  for their values and never offered for attaching. Default true. */
+  canAttach?: boolean;
 }
 
 type Stage = 'upload' | 'review';
@@ -97,6 +100,7 @@ export function AIExtractDialog({
   onExtracted,
   renderRowStatus,
   initialFiles,
+  canAttach = true,
 }: Props) {
   const isPerFileMode = Boolean(initialFiles && initialFiles.length > 0);
   const [stage, setStage] = useState<Stage>('upload');
@@ -352,7 +356,7 @@ export function AIExtractDialog({
     onApply({
       values: out,
       files,
-      alsoAttach,
+      alsoAttach: canAttach && alsoAttach,
       productLines: hasApplicableProductLines ? remainingProducts : [],
     });
     const parts: string[] = [];
@@ -663,7 +667,7 @@ export function AIExtractDialog({
               {/* D-P3: files in per-file mode are already attached (the
                   caller's dropzone put them there) - re-attaching would be a
                   second copy, so the checkbox has nothing to offer here. */}
-              {!isPerFileMode && (
+              {!isPerFileMode && canAttach && (
                 <div className="flex items-center gap-2 pt-1">
                   <Checkbox
                     id="ai-extract-also-attach"

@@ -237,9 +237,12 @@ def test_the_project_numbering_rule_yields_the_agreed_shape():
 
         from app.services.numbering_service import NumberingService
 
+        from datetime import date
+
+        # UAC C3: PPF{yy}{mm}, 3 digits, monthly reset.
         assert (
             NumberingService(db).get_next_number("project", commit_rule=False)
-            == "PRJ-000001"
+            == f"PPF{date.today():%y%m}001"
         )
 
 

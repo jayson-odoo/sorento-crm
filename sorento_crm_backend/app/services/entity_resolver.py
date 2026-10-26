@@ -4827,22 +4827,24 @@ def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
     norm_to_token = {_strip_all_ws(t.lower()): t for t in tokens}
     keys = list(norm_to_token.keys())
 
-    rows = (
+    from app.services.project_service import approved_projects
+
+    # A portal registration waiting for approval is not a project to answer about yet
+    # (PROJECT-REG-PORTAL R4): it has no code to hand back.
+    rows = approved_projects(
         db.query(
             Project.id,
             Project.project_code,
             Project.title,
             Project.outcome,
             Project.owner_user_id,
-        )
-        .filter(
+        ).filter(
             or_(
                 _ws_insensitive_lower(Project.project_code).in_(keys),
                 _ws_insensitive_lower(Project.title).in_(keys),
             )
         )
-        .all()
-    )
+    ).all()
     for pid, code, title, outcome, owner_user_id in rows:
         by_code = _strip_all_ws(str(code or "").lower())
         by_title = _strip_all_ws(str(title or "").lower())

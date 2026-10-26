@@ -47,6 +47,7 @@ import { GROUPING_ORIGIN_LABEL, SalesOrderStatusPill } from './SalesOrderStatusP
 import { FINDING_SEVERITY_BADGE_VARIANT, FINDING_SEVERITY_LABEL } from '../../_shared/lib/findings';
 import { SalesOrderBuildDialog } from './SalesOrderBuildDialog';
 import { projectTabOriginHref, withReviewOrigin } from '../../_shared/lib/reviewOrigin';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /**
  * Why one drafted sales order cannot be deleted, or undefined when it can.
@@ -143,7 +144,7 @@ export function SalesOrdersPanel({
       // The shared selection column, never a hand-rolled Set: it binds to react-table's own
       // `rowSelection` so the ids read out of it here are the ids the grid thinks are ticked.
       // Only for someone who may edit - a reader has nothing to do with a selection.
-      ...(project.can_edit
+      ...(canWorkOnProject(project)
         ? [
             buildSelectColumn<ProjectSalesOrderRow>({
               enableRow: (row) => salesOrderDeleteRefusal(row.original) === undefined,
@@ -325,7 +326,7 @@ export function SalesOrdersPanel({
       // (PO version, schedule version), so a draft that came out wrong is removed here and
       // built again from the toolbar. Only on a draft - a published order is in AutoCount and
       // is amended, never deleted - and the button says so rather than vanishing.
-      ...(project.can_edit
+      ...(canWorkOnProject(project)
         ? [
             {
               id: 'actions',
@@ -393,7 +394,7 @@ export function SalesOrdersPanel({
           ]
         : []),
     ],
-    [project.can_edit, project.id, router],
+    [project.can_edit, project.approval_state, project.id, router],
   );
 
   const table = useReactTable({
@@ -464,7 +465,7 @@ export function SalesOrdersPanel({
                     Order inquiry
                   </Link>
                 </Button>
-                {project.can_edit && !purchaseOrderId && !withoutPurchaseOrder && (
+                {canWorkOnProject(project) && !purchaseOrderId && !withoutPurchaseOrder && (
                   <Button type="button" size="sm" onClick={() => setBuilding(true)}>
                     <Hammer className="size-4" aria-hidden />
                     Build drafts

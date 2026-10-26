@@ -32,6 +32,7 @@ import {
 } from '../../_shared/services/projectDocumentService';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import type { Project } from '../../_shared/types/project.types';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /**
  * Tender documents and drawings on this project.
@@ -211,7 +212,7 @@ export function ProjectDocumentsPanel({ project }: { project: Project }) {
       <PanelDataGrid
         title="Documents"
         toolbar={
-          project.can_edit ? (
+          canWorkOnProject(project) ? (
             <Button type="button" size="sm" onClick={() => setUploading(true)}>
               <Upload className="size-4" aria-hidden />
               Upload documents

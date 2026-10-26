@@ -90,7 +90,7 @@ def _assert_can_act_on(db: Session, order, current_user: dict) -> None:
     if not order.project_id:
         return
     project = projects.get_project_or_404(db, order.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
 
@@ -166,7 +166,7 @@ async def build_sales_orders(
         validate_uuid_path(payload.schedule_version_id, resource="Delivery schedule version")
         po = po_svc.get_po(db, po_id)
         project = projects.get_project_or_404(db, po.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = ProjectSODraftService(db).build(
@@ -231,7 +231,7 @@ async def acknowledge_schedule_finding(
         validate_uuid_path(finding_id, resource="Finding")
         po = po_svc.get_po(db, po_id)
         project = projects.get_project_or_404(db, po.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         finding = (
@@ -711,7 +711,7 @@ async def build_sponsorship_sales_order(
             form_id, actor_user_id=current_user["id"]
         )
         project = projects.get_project_or_404(db, order.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = service.serialize_detail(
@@ -883,7 +883,7 @@ async def publish_amendment(
             detail["project_sales_order_id"]
         ).project_id
         project = projects.get_project_or_404(db, project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = service.publish_amendment(amendment_id, actor_user_id=current_user["id"])
@@ -910,7 +910,7 @@ async def update_amendment_row_decisions(
             detail["project_sales_order_id"]
         ).project_id
         project = projects.get_project_or_404(db, project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = service.update_row_decisions(

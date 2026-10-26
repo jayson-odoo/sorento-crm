@@ -50,6 +50,7 @@ const TYPE_LABELS: Record<string, string> = {
   stock_inquiry: 'stock inquiry',
   purchase_request: 'purchase request',
   sponsorship_form: 'sponsorship form',
+  project_registration: 'project registration',
 };
 
 // One prefill for both WhatsApp CTAs (escape hatch + link request) so the

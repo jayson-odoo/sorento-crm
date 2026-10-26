@@ -108,9 +108,35 @@ export interface ProjectTemplateBody {
   role_names?: string[];
 }
 
+/**
+ * A portal registration's approval state (PROJECT-REG-PORTAL R1). Null is a staff-registered
+ * project. A draft is never listed; pending and rejected ones have no code yet.
+ */
+export type ProjectApprovalState = 'draft' | 'pending' | 'rejected' | 'approved';
+
+/** An approved project a pending registration may repeat (D8): a link, never a block. */
+export interface ProjectPossibleDuplicate {
+  project_id: string;
+  project_code: string | null;
+  title: string;
+}
+
+/** What the sales agent typed on the portal that has no home on a project (R7). */
+export interface ProjectRegistrationInfo {
+  sales_agent_name: string | null;
+  distributor_name: string | null;
+  customer_name: string | null;
+  your_ref: string | null;
+  type_of_building: string | null;
+  developer_name: string | null;
+  main_contractor_name: string | null;
+  architect_name: string | null;
+}
+
 export interface Project {
   id: string;
-  project_code: string;
+  /** Null until a portal registration is approved: render it with `projectCodeLabel`. */
+  project_code: string | null;
   title: string;
   outcome: ProjectOutcome;
   loss_reason?: string | null;
@@ -141,6 +167,9 @@ export interface Project {
   registered_company_name?: string | null;
   location?: string | null;
   address?: string | null;
+  /** Malaysian state (lookup set my_state) and mukim; both optional (PROJECT-REG-PORTAL D12). */
+  state?: string | null;
+  mukim?: string | null;
   architect_party_id?: string | null;
   architect_name?: string | null;
   main_contractor_party_id?: string | null;
@@ -189,6 +218,15 @@ export interface Project {
   is_unattended: boolean;
   can_edit: boolean;
 
+  /** Portal registration (R1, R7). All null / empty on a staff-registered project. */
+  approval_state?: ProjectApprovalState | null;
+  reject_reason?: string | null;
+  submitted_at?: string | null;
+  decided_at?: string | null;
+  registration?: ProjectRegistrationInfo | null;
+  /** Filled on a pending project's detail only. */
+  possible_duplicates?: ProjectPossibleDuplicate[];
+
   created_at?: string | null;
   updated_at?: string | null;
 }
@@ -202,6 +240,8 @@ export interface ProjectRegisterBody {
   registered_company_name?: string | null;
   location?: string | null;
   address?: string | null;
+  state?: string | null;
+  mukim?: string | null;
   /** Filing reference, e.g. PS26-0143 (D7). Settable on create too, not edit-only. */
   admin_ref?: string | null;
   architect_party_id?: string | null;
@@ -305,6 +345,10 @@ export interface ProjectListParams {
   type_id?: string[];
   brand_id?: string[];
   only_critical?: boolean;
+  /** Portal registrations by approval state (pending, rejected, approved). */
+  approval_state?: Exclude<ProjectApprovalState, 'draft'>;
+  /** Pickers: staff-registered and approved projects only. */
+  approved_only?: boolean;
   page?: number;
   limit?: number;
   sort?: string;

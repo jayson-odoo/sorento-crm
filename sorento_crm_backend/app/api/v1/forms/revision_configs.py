@@ -52,6 +52,8 @@ REVISABLE_PORTAL_FORM_TYPES = tuple(
         "sales_opportunity",
         "sample_request",
         "new_product_application",
+        # PROJECT-REG-PORTAL: no RevisionAdapter either; a rejected one is simply edited and resent.
+        "project_registration",
         "customer_asks",
         "conversation",
     )
