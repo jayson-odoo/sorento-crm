@@ -64,10 +64,12 @@ class SpanConfig:
 
 @dataclass(frozen=True)
 class SpanAnswer:
-    #: None when the model answered but the answer was unreadable (still billed, so the usage stays).
+    #: None when there are no spans to use: the call failed or the answer was unreadable (`failure` says which).
     spans: list[Span] | None
     usage: dict[str, Any]
     ms: int
+    #: "timeout" | "call_error" | "invalid_answer" | None. An unreadable answer was still billed, so its usage stays.
+    failure: str | None = None
 
 
 def resolve_config(db: Session, *, llm_choice=None) -> SpanConfig:
@@ -107,7 +109,7 @@ def _read(content: str | None) -> list[Span]:
 
 
 def extract(config: SpanConfig, message: str) -> SpanAnswer | None:
-    """The model's answer to `message`, or None when the call fails or times out. Never raises."""
+    """The model's answer to `message`; a failed or late call comes back as an answer with `failure` set. Never raises."""
     started = time.perf_counter()
     try:
         result = llm_call.chat(
@@ -122,9 +124,10 @@ def extract(config: SpanConfig, message: str) -> SpanAnswer | None:
             json_schema_name=SCHEMA_NAME,
             timeout=SPAN_TIMEOUT_SECONDS,
         )
-    except Exception:  # noqa: BLE001 - advisory: the n-gram lines take over
+    except Exception as exc:  # noqa: BLE001 - advisory: the n-gram lines take over
         logger.warning("chatbot: span call failed; using the n-gram lookup", exc_info=True)
-        return None
+        timed_out = isinstance(exc, llm_call.TimedOut)
+        return SpanAnswer(None, {}, int((time.perf_counter() - started) * 1000), "timeout" if timed_out else "call_error")
     ms = int((time.perf_counter() - started) * 1000)
     usage = {
         "provider": config.provider,
@@ -140,4 +143,4 @@ def extract(config: SpanConfig, message: str) -> SpanAnswer | None:
     except Exception:  # noqa: BLE001 - billed, but unreadable
         logger.warning("chatbot: span answer unreadable; using the n-gram lookup")
         spans = None
-    return SpanAnswer(spans, usage, ms)
+    return SpanAnswer(spans, usage, ms, None if spans is not None else "invalid_answer")

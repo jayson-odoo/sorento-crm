@@ -1351,16 +1351,14 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
     """The span call, then the lookup blocks. Runs with no DB session open. Returns (lines, `lookup_lists` event,
     `span_extract` event). A call that fails or answers unreadably leaves today's n-gram lines (`fallback`)."""
     config = prep.config
-    started = time.perf_counter()
     answer = span_extract.extract(config, prep.message) if config is not None else None
-    elapsed_ms = int((time.perf_counter() - started) * 1000) if config is not None else 0
     event: dict[str, Any] = {
-        "spans": [], "rows_rendered": 0, "ms": elapsed_ms,
+        "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
         "provider": config.provider if config else None, "model": config.model if config else None,
-        "model_source": config.model_source if config else None, "fallback": False,
+        "model_source": config.model_source if config else None, "fallback": False, "fallback_reason": None,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
     }
-    if answer is not None and not dry_run:
+    if answer is not None and answer.usage and not dry_run:
         try:
             with _session(session_factory) as db:
                 record_turn_llm_usage(
@@ -1369,13 +1367,25 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 )
         except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
             logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
+    reason = "no_config" if answer is None else answer.failure
     try:
         hits: dict[str, list[lookup_lists.Hit]] | None = None
         if answer is not None and answer.spans is not None:
             try:
                 all_rows = [*prep.rows, *prep.spec_key_rows]
-                resolutions = list_resolver.resolve(answer.spans, all_rows, embed=lookup_lists.usable_embedder(all_rows, prep.embed))
-                hits = _hits_of(resolutions)
+                embed = lookup_lists.usable_embedder(all_rows, prep.embed)
+                resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
+                # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
+                # resolved as their own untyped span, one level only.
+                rest = [
+                    list_resolver.Span(left)
+                    for r in resolutions
+                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code"
+                    for left in [list_resolver.unmatched_words(r.span.text, r.candidates[0].row, all_rows)]
+                    if left
+                ]
+                extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
+                hits = _hits_of([*resolutions, *extra])
                 for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
                     known = {h.row.key for h in held_hits}
                     hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
@@ -1383,13 +1393,16 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 event["spans"] = [
                     {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates)}
                     for r in resolutions
+                ] + [
+                    {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True}
+                    for r in extra
                 ]
-                lookup_event: dict[str, Any] = {"spans": [r.span.text for r in resolutions]}
+                lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}
             except Exception:  # noqa: BLE001 - the resolver or the adapter failed: today's n-gram lines take over
                 logger.warning("chatbot: span matching failed; using the n-gram lookup", exc_info=True)
-                hits = None
+                hits, reason = None, "resolver_error"
         if hits is None:
-            event["fallback"] = True
+            event["fallback"], event["fallback_reason"] = True, reason
             hits = lookup_lists.shortlist(
                 prep.message, prep.rows, lookup_lists.usable_embedder(prep.rows, prep.embed),
                 brand_words=prep.brand_words, held=prep.held,
@@ -1408,7 +1421,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
         return lines, lookup_event, event
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span lookup failed; parsing without lookup lists", exc_info=True)
-        event["fallback"] = True
+        event["fallback"], event["fallback_reason"] = True, "resolver_error"
         return [], {"pieces": [], "hits": [], "failed": True}, event
 
 

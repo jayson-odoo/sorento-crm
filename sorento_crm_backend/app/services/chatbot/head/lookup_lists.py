@@ -807,6 +807,17 @@ def provider_embedder(api_key: str) -> Embedder:
 _warm_lock = threading.Lock()
 
 
+def _import_sdk() -> None:
+    """Import the provider SDK modules a lookup thread will use, in the CALLING thread: two threads importing the
+    SDK lazily at once (the warm-up or prefetch thread and the span call) raced to `KeyError: 'openai.resources'`
+    on a fresh process. Not done at app import: the SDK stays lazy."""
+    try:
+        import openai  # noqa: F401
+        import openai.resources.embeddings  # noqa: F401
+    except Exception:  # noqa: BLE001 - no SDK, no provider embedder: nothing to race
+        pass
+
+
 def prefetch(message: str, embed: Embedder | None) -> Callable[[], bool]:
     """CHAT-V66-REGRESSIONS: start the message pieces' embedding (the lookup's one network call per turn) on a thread,
     so the round trip overlaps the turn's database work. The returned call waits for it, at most `EMBED_TIMEOUT`, and
@@ -825,6 +836,7 @@ def prefetch(message: str, embed: Embedder | None) -> Callable[[], bool]:
             pass
 
     thread = threading.Thread(target=run, name="lookup-lists-prefetch", daemon=True)
+    _import_sdk()
     thread.start()
 
     def ready() -> bool:
@@ -853,6 +865,7 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
         finally:
             _warm_lock.release()
 
+    _import_sdk()
     threading.Thread(target=run, name="lookup-lists-warm", daemon=True).start()
 
 

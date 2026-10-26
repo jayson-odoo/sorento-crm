@@ -277,6 +277,18 @@ def _meaning_scores(spans: list[str], indexes: dict[str, _ListIndex], embed: Emb
     return out
 
 
+def unmatched_words(span_text: str, row: LookupRow, rows: Sequence[LookupRow]) -> str:
+    """The words of `span_text` that no word of `row`'s texts stands for (same token matching as the partial score),
+    folded and in order; "" when `row` matched every word or the span has none. A merged mention ("zzsean zzsorento")
+    resolved to one row leaves the other name here, to be resolved on its own."""
+    index = _prepare(rows).get(row.list_name)
+    if index is None:
+        return ""
+    own = {w for text in row.texts for w in _fold(text).split()}
+    left = [w for w in _fold(span_text).split() if not (index.matching_words(w).keys() & own)]
+    return " ".join(left)
+
+
 def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder | None = None) -> list[Resolution]:
     """One `Resolution` per span, in input order. Never raises on an embedder failure (spelling and partial
     names still resolve); a `product_code` span is `skipped` and a span naming nothing is `unresolved`."""
