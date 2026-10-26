@@ -79,8 +79,12 @@ def _mod():
 class FakeClient:
     """Records every call. `phone_contact_id` None = Respond.io has no contact for the phone (404)."""
 
-    def __init__(self, phone_contact_id=PHONE_ID, *, lookup_error=None, merge_error=None, put_error=None, wrapped=False):
+    def __init__(self, phone_contact_id=PHONE_ID, *, lookup_error=None, merge_error=None, put_error=None, wrapped=False,
+                 merge_result="phone", after_merge_id=None, lookup_fail_after_merge=False):
         self.wrapped = wrapped
+        self.merge_result = merge_result  # "phone" | "turn" | "none"
+        self.after_merge_id = after_merge_id
+        self.lookup_fail_after_merge = lookup_fail_after_merge
         self.phone_contact_id = phone_contact_id
         self.lookup_error = lookup_error
         self.merge_error = merge_error
@@ -88,20 +92,28 @@ class FakeClient:
         self.calls: list[tuple] = []
 
     def get_contact_by_phone(self, phone):
+        merged = "merge" in self.kinds()
         self.calls.append(("lookup", phone))
+        if merged and self.lookup_fail_after_merge:
+            raise _http_error(500)
         if self.lookup_error is not None:
             raise self.lookup_error
         if self.phone_contact_id is None:
             req = httpx.Request("GET", "https://api.example.test/v2/contact/phone")
             raise httpx.HTTPStatusError("not found", request=req, response=httpx.Response(404, request=req))
-        record = {"id": self.phone_contact_id, "phone": f"+{E164}"}
+        pid = self.after_merge_id if (merged and self.after_merge_id) else self.phone_contact_id
+        record = {"id": pid, "phone": f"+{E164}"}
         return {"data": record} if self.wrapped else record
 
     def merge_contacts(self, contact_ids):
         self.calls.append(("merge", [int(x) for x in contact_ids]))
         if self.merge_error is not None:
             raise self.merge_error
-        return {"id": contact_ids[0]}
+        if self.merge_result == "phone":
+            return {"contactId": self.phone_contact_id}
+        if self.merge_result == "turn":
+            return {"contactId": TURN_ID}
+        return {}
 
     def update_contact(self, identifier, payload):
         self.calls.append(("put", str(identifier).replace("id:", ""), payload))
@@ -198,13 +210,19 @@ def test_wu10_wa_id_different_is_not_accepted():
     assert _mod().accepted_card_phone(body) is None
 
 
-def test_wu11_wa_id_absent_with_good_origin_is_accepted():
+def test_wu11_missing_wa_id_is_not_accepted():
     body = _tap()
     del body["channel"]["meta"]["wa_id"]
-    assert _mod().accepted_card_phone(body) == E164
-    body2 = _tap()
-    del body2["channel"]
-    assert _mod().accepted_card_phone(body2) == E164
+    assert _mod().accepted_card_phone(body) is None
+    no_channel = _tap()
+    del no_channel["channel"]
+    assert _mod().accepted_card_phone(no_channel) is None
+    no_meta = _tap()
+    del no_meta["channel"]["meta"]
+    assert _mod().accepted_card_phone(no_meta) is None
+    empty = _tap()
+    empty["channel"]["meta"]["wa_id"] = ""
+    assert _mod().accepted_card_phone(empty) is None
 
 
 @pytest.mark.parametrize("empty", ["", None, "   "])
@@ -463,3 +481,74 @@ def test_wu6_wa_phone_share_is_a_template_default_use_case():
     from app.models.respond_template import TEMPLATE_DEFAULT_USE_CASES
 
     assert "wa_phone_share" in TEMPLATE_DEFAULT_USE_CASES
+
+
+# ---------------------------------------------------------------- survivor read from the merge response
+
+
+@pytest.mark.parametrize(
+    "result,after,expected",
+    [("phone", None, PHONE_ID), ("turn", None, TURN_ID), ("none", 900000009, 900000009)],
+    ids=["phone_survives", "turn_survives", "no_contactId_second_lookup"],
+)
+def test_wu12_survivor_is_read_from_the_merge_response_row_exists(result, after, expected):
+    m = _mod()
+    with blank_session() as db:
+        ws = _workspace(db)
+        row = _row(db, f"+{E164}", respond_io_id="900000077", workspace_id=str(ws.id))
+        pk = str(row.id)
+        client = FakeClient(merge_result=result, after_merge_id=after)
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged"
+        assert out.survivor_respond_id == str(expected)
+        rows = _rows(db)
+        assert len(rows) == 1 and str(rows[0].id) == pk and rows[0].respond_io_id == str(expected)
+        lookups = client.kinds().count("lookup")
+        assert lookups == (2 if result == "none" else 1)
+
+
+def test_wu12_turn_survivor_creates_the_row_on_the_turn_id():
+    m = _mod()
+    with blank_session() as db:
+        _workspace(db)
+        out = m.link_phone(db, FakeClient(merge_result="turn"), contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "merged" and out.survivor_respond_id == str(TURN_ID)
+        rows = _rows(db)
+        assert len(rows) == 1 and rows[0].respond_io_id == str(TURN_ID)
+
+
+def test_wu16_second_lookup_failing_after_a_bare_merge_response_is_a_failure():
+    m = _mod()
+    with blank_session() as db:
+        ws = _workspace(db)
+        _row(db, f"+{E164}", respond_io_id="900000077", workspace_id=str(ws.id))
+        client = FakeClient(merge_result="none", lookup_fail_after_merge=True)
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "failed"
+        assert [r.respond_io_id for r in _rows(db)] == ["900000077"]
+
+
+def test_wu16_second_lookup_failing_with_no_row_creates_none():
+    m = _mod()
+    with blank_session() as db:
+        _workspace(db)
+        client = FakeClient(merge_result="none", lookup_fail_after_merge=True)
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "failed"
+        assert _rows(db) == []
+
+
+def test_wu16_row_with_a_workspace_while_no_default_workspace_exists_fails():
+    from app.models.respond_workspace import RespondWorkspace
+
+    m = _mod()
+    with blank_session() as db:
+        other = RespondWorkspace(space_id="other2", api_key_ciphertext="x", is_default=False)
+        db.add(other)
+        db.commit()
+        _row(db, f"+{E164}", respond_io_id="900000077", workspace_id=str(other.id))
+        client = FakeClient()
+        out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
+        assert out.status == "failed"
+        assert "merge" not in client.kinds() and "put" not in client.kinds()
+        assert [r.respond_io_id for r in _rows(db)] == ["900000077"]

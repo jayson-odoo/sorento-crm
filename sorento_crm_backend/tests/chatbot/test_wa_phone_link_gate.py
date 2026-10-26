@@ -78,6 +78,8 @@ def _env(
     **kw,
 ):
     body = _body(kind, text_, mid)
+    if kind in ("tap", "bare") and "ingress" not in kw:
+        kw["ingress"] = "respond_webhook"  # the CRM's own signed webhook (contracts.DIRECT_INGRESS)
     if source is None:
         body["channel"].pop("source", None)
     elif source is not _KEEP:
@@ -96,6 +98,7 @@ class World:
         self.template = "ok"  # or "skipped"
         self.phone_contact_id: int | None = PHONE_ID
         self.merge_error: Exception | None = None
+        self.merge_survivor = "phone"  # "phone" | "turn"
         self.messages: list[tuple[str, str]] = []
         self.comments: list[tuple[str, str]] = []
 
@@ -114,7 +117,7 @@ class World:
                 world.calls.append(("merge", [int(i) for i in ids]))
                 if world.merge_error:
                     raise world.merge_error
-                return {}
+                return {"contactId": PHONE_ID if world.merge_survivor == "phone" else CONTACT_ID}
 
             def send_message(self, identifier, text_):
                 world.calls.append(("send_message", str(identifier), text_))
@@ -409,7 +412,7 @@ def test_wu17_the_same_webhook_twice_merges_once(session_factory, parser_calls, 
     _install(world, monkeypatch)
     _seed_phone_row(session_factory, allowed=True)
     first = _run(session_factory, _env("tap", mid="WU-dup-1"))
-    second = _run(session_factory, _env("tap", mid="WU-dup-1", ingress="poller"))
+    second = _run(session_factory, _env("tap", mid="WU-dup-1"))
     assert first.branch_kind == "phone_linked"
     assert second.duplicate is True
     assert len(world.merges()) == 1
@@ -508,3 +511,54 @@ def test_wu21_a_second_failed_link_in_the_window_writes_no_second_comment(
     assert len(world.merges()) == 2
     assert len(world.comments) == 1
     assert world.messages == []
+
+
+# ---------------------------------------------------------------- WU10/WU22 signed ingress only
+
+
+@pytest.mark.parametrize("ingress", ["webhook", "poller", "retry"])
+@pytest.mark.parametrize("kind", ["tap", "bare"])
+def test_wu22_a_tap_that_did_not_arrive_signed_is_never_linked(
+    session_factory, parser_calls, world, monkeypatch, ingress, kind
+):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env(kind, ingress=ingress))
+    assert result.branch_kind == "phone_ask"
+    assert world.calls == []
+    assert world.sends == [(str(CONTACT_ID), "wa_phone_share")]
+    assert parser_calls == []
+
+
+def test_wu22_the_same_tap_over_the_signed_webhook_is_linked(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env("tap", ingress="respond_webhook"))
+    assert result.branch_kind == "phone_linked"
+
+
+def test_wu10_a_signed_card_without_wa_id_is_not_accepted(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    env = _env("tap", ingress="respond_webhook")
+    del env.message["channel"]["meta"]["wa_id"]
+    result = _run(session_factory, env)
+    assert result.branch_kind == "phone_ask"
+    assert world.calls == []
+
+
+# ---------------------------------------------------------------- survivor named by the merge response
+
+
+def test_wu12_verified_line_goes_to_the_survivor_the_merge_response_names(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    world.merge_survivor = "turn"
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_linked"
+    assert world.messages == [(str(CONTACT_ID), VERIFIED)]
+    rid = session_factory().execute(
+        text("SELECT respond_io_id FROM respond_contacts WHERE phone_number = :p"), {"p": f"+{E164}"}
+    ).scalar()
+    assert rid == str(CONTACT_ID)
