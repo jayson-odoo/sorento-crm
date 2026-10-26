@@ -314,34 +314,36 @@ describe('R3 the SPO column is wide enough on both tables', () => {
  * ROUND 8b: browser measure (a 2 px sliver at 250, "R..." at 270) moves both floors to
  * 285-300, so a pill still shows "Rec..." (about 40 px).
  */
-describe('R4 the SPO column floor keeps the number, "via PO" and the compact chip', () => {
-  const tables: Array<[string, () => unknown[], number, number]> = [
-    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 285, 300],
-    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 285, 300],
+describe('R4 the SPO column resizes exactly like the PO column (round 9)', () => {
+  // ROUND 9 (owner hand test 3, #1870: "my PO can shrink until the number just fits ... my
+  // SPO also should be able, but it has a min width") SUPERSEDES the round-4/6/8/8b floors
+  // above: the SPO column carries no floor of its own, the same as the PO column.
+  const tables: Array<[string, () => unknown[]]> = [
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[]],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[]],
   ];
 
-  it.each(tables)('(a) the %s SPO column minSize is within its range', (_n, build, low, high) => {
+  function def(columns: unknown[], id: string) {
+    return columns.find((c) => (c as { id?: string }).id === id) as { minSize?: number };
+  }
+
+  it.each(tables)('(a) the %s SPO column minSize equals the PO column minSize', (_n, build) => {
     const { result } = renderHook(build);
-    const column = result.current.find((c) => (c as { id?: string }).id === 'spo_number') as {
-      minSize?: number;
-    };
-    expect(column.minSize ?? 0).toBeGreaterThanOrEqual(low);
-    expect(column.minSize ?? 0).toBeLessThanOrEqual(high);
+    expect(def(result.current, 'spo_number').minSize).toBe(def(result.current, 'po_number').minSize);
   });
 
-  it.each(tables)('(b) the %s table clamps a saved width of 170 up to its own minSize', (_n, build, low, high) => {
+  it.each(tables)('(b) the %s table keeps a saved width of 170 for spo_number, as it does for po_number', (_n, build) => {
     const { result } = renderHook(() => {
       const columns = build();
       return useReactTable({
         data: [] as unknown[],
         columns: columns as never,
         getCoreRowModel: getCoreRowModel(),
-        state: { columnSizing: { spo_number: 170 } },
+        state: { columnSizing: { spo_number: 170, po_number: 170 } },
       });
     });
-    const size = result.current.getColumn('spo_number')!.getSize();
-    expect(size).toBeGreaterThanOrEqual(low);
-    expect(size).toBeLessThanOrEqual(high);
+    expect(result.current.getColumn('po_number')!.getSize()).toBe(170);
+    expect(result.current.getColumn('spo_number')!.getSize()).toBe(170);
   });
 });
 
