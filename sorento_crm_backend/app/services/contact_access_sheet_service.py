@@ -66,7 +66,7 @@ CONTACT_COLUMNS = engine.CONTACT_COLUMNS + (
 MAX_TAGS_CHARS = 1000
 MAX_ALTS = 5
 MAX_RANKED_BLOCKS = 300
-TAG_MIN_BASES = 10
+TAG_MIN_BASES = 8
 
 
 def _unprocessable(message: str, code: str = "INVALID_SHEET") -> AppException:
@@ -258,6 +258,12 @@ def _split_name(name: str) -> tuple[str, list[str]]:
     return main, [*parts[1:], *brackets]
 
 
+def _suffix_only(segment: str) -> bool:
+    """A bracket such as `(M)` that holds only legal-suffix words is never part of the name."""
+    words = _words(segment).split()
+    return bool(words) and all(w in engine._NAME_SUFFIXES for w in words)
+
+
 def _base_key(main: str) -> str:
     words = _words(main).split()
     if words and words[0] == "the":
@@ -283,7 +289,10 @@ def _account_tags(names: list[str]) -> frozenset:
 def _name_key(name: Optional[str], tags: frozenset) -> str:
     """The key a sheet dealer text and a customer name are matched on (UAC U8)."""
     main, segments = _split_name(name or "")
-    keep = [_words(sg) for sg in segments if _tag_form(sg) not in tags]
+    keep = [
+        _words(sg) for sg in segments
+        if _tag_form(sg) not in tags and not _suffix_only(sg)
+    ]
     key = " ".join(p for p in (_base_key(main), *keep) if p)
     return key or _words(name or "")
 
@@ -394,7 +403,12 @@ def _build_blocks(db: Session, rows: list[dict], rank: bool) -> list[dict]:
                 for score, c in scored[:MAX_CANDIDATES]:
                     accounts.append(_account(c, "candidate", round(score, 3), False, block["agents"].get(code)))
         block["accounts"] = accounts
-        block["status"] = "exact" if not missing else ("pick" if any(a["match"] == "candidate" for a in accounts) else "none")
+        if not missing:
+            block["status"] = "exact"
+        elif not rank:  # an apply never ranks; the preview already showed the candidates
+            block["status"] = "pick"
+        else:
+            block["status"] = "pick" if any(a["match"] == "candidate" for a in accounts) else "none"
     return list(blocks.values())
 
 
@@ -524,7 +538,9 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
         "contacts_found": sum(1 for c in contacts if c["in_crm"]),
         "not_in_crm": sum(1 for c in contacts if c["skip_reason"] == "not_in_crm"),
         "ambiguous": sum(1 for c in contacts if c["skip_reason"] == "ambiguous_phone"),
-        "already_configured": sum(1 for c in contacts if c["status"] == "no_change"),
+        "already_configured": sum(
+            1 for c in found.values() if snaps[str(c.id)].access_types or links.get(str(c.id))
+        ),
         "blocks": len(out_blocks),
         "blocks_exact": sum(1 for b in out_blocks if b["status"] == "exact"),
         "blocks_pick": sum(1 for b in out_blocks if b["status"] == "pick"),
