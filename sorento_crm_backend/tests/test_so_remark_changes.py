@@ -58,3 +58,40 @@ def test_the_per_order_remark_is_capped_at_100_characters(api):
     )
 
     assert response.status_code == 422, response.text
+
+
+# R5 (owner, 26 Oct ~21:45: "the email, popup ... must always match"): the planning sheet's
+# popup prefills a new-only order's Remark with the words the email would print, so the supply
+# read states them (`so_remark_rules.default_remark` over the order's lines).
+
+
+def _supply(api, order):
+    client, _world = api
+    response = client.get(f"{BASE}/sales-orders/{order.id}/supply")
+    assert response.status_code == 200, response.text
+    return response.json()
+
+
+def test_the_supply_read_states_an_ordinary_orders_default_remark_as_blank(api):
+    _client, world = api
+    order, _line, _core = _one_line_order(world, "10")
+
+    assert _supply(api, order)["default_so_remark"] == ""
+
+
+def test_the_supply_read_states_sponsorship_from_the_ship_info(api):
+    _client, world = api
+    order, _line, core = _one_line_order(world, "10")
+    core.sales_order.ship_info = "SPONSORSHIP - ZZT"
+    world.db.commit()
+
+    assert _supply(api, order)["default_so_remark"] == "Sponsorship"
+
+
+def test_the_supply_read_states_mockup_when_a_line_reads_mock(api):
+    _client, world = api
+    order, _line, core = _one_line_order(world, "10")
+    core.line_remark = "MOCKUP UNIT"
+    world.db.commit()
+
+    assert _supply(api, order)["default_so_remark"] == "Mockup"

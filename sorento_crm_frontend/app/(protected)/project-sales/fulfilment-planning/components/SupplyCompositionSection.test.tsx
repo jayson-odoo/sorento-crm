@@ -42,6 +42,14 @@ vi.mock('../../_shared/services/fulfilmentPlanningService', async (importOrigina
   };
 });
 
+// FULFIL-SO-REMARK-CHANGES R3: the sheet's Confirm opens the board's Confirm popup, whose page
+// reads the order's line splits.
+const getLineSplits = vi.fn();
+vi.mock('../../_shared/services/lineSplitService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../_shared/services/lineSplitService')>();
+  return { ...actual, getLineSplits: (...args: unknown[]) => getLineSplits(...args) };
+});
+
 const toastSuccess = vi.fn();
 const toastError = vi.fn();
 vi.mock('@/lib/toast', () => ({
@@ -177,9 +185,50 @@ const UNPLANNABLE = line({
 
 const confirmButton = () => screen.getByRole('button', { name: 'Confirm Project SO' });
 
+/** Opens the Confirm popup from the sheet's Confirm and returns the popup. */
+async function openPopup() {
+  fireEvent.click(confirmButton());
+  return screen.findByTestId('confirm-guide');
+}
+
+/** Walks the popup's page to its Confirm step, keying a required Remark in on the way. */
+async function walkPopupToConfirm(remark = 'ZZT change remark') {
+  for (let i = 0; i < 6; i += 1) {
+    const field = screen.queryByTestId('confirm-guide-so-remark') as HTMLInputElement | null;
+    if (field?.required && field.value.trim() === '') {
+      fireEvent.change(field, { target: { value: remark } });
+    }
+    const confirm = screen.queryByTestId('confirm-guide-confirm');
+    if (confirm) {
+      await waitFor(() => expect(confirm).toBeEnabled());
+      fireEvent.click(confirm);
+      return;
+    }
+    const next = await screen.findByTestId('confirm-guide-next');
+    await waitFor(() => expect(next).toBeEnabled());
+    fireEvent.click(next);
+  }
+  throw new Error('the popup never reached its Confirm step');
+}
+
+/** The sheet's Confirm, through the popup, as staff press it. */
+async function confirmViaPopup(remark?: string) {
+  await openPopup();
+  await walkPopupToConfirm(remark);
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   getSupply.mockResolvedValue(proposal());
+  getLineSplits.mockResolvedValue({
+    pso_id: PSO_ID,
+    so_number: 'SO376201',
+    so_date: null,
+    customer: null,
+    project: null,
+    confirmed_at: null,
+    lines: [],
+  });
   confirmSupply.mockResolvedValue({
     revision_no: 1,
     confirmed_at: '2026-08-18T02:00:00',
@@ -281,12 +330,7 @@ describe('SupplyCompositionSection', () => {
     await refetchSupply(client);
     await waitFor(() => expect(screen.queryByText('Line 1 · CB6633')).not.toBeInTheDocument());
 
-    fireEvent.click(confirmButton());
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Confirm the sales order',
-      }),
-    );
+    await confirmViaPopup();
 
     await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
     const body = confirmSupply.mock.calls[0][1] as { lines: { project_line_id: string }[] };
@@ -307,10 +351,11 @@ describe('SupplyCompositionSection', () => {
     expect(screen.queryByText(/Line 3, SRT770-BK/)).not.toBeInTheDocument();
     expect(confirmButton()).toBeEnabled();
 
-    fireEvent.click(confirmButton());
-    const dialog = within(await screen.findByRole('alertdialog'));
-    expect(dialog.getByText('All 1 line are confirmed together.')).toBeInTheDocument();
-    fireEvent.click(dialog.getByRole('button', { name: 'Confirm the sales order' }));
+    const popup = within(await openPopup());
+    // Only the plannable line is on the popup's page.
+    expect((await popup.findAllByText(/CB6633/)).length).toBeGreaterThan(0);
+    expect(popup.queryByText(/SRT770-BK/)).not.toBeInTheDocument();
+    await walkPopupToConfirm();
 
     await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
     const body = confirmSupply.mock.calls[0][1] as { lines: { project_line_id: string }[] };
@@ -412,28 +457,80 @@ describe('SupplyCompositionSection', () => {
   });
 
   // --------------------------------------------------------------- confirming
-  it('asks before it confirms, naming the sales order and its line count (AC-G03)', async () => {
+  it('asks before it confirms, in the same Confirm popup as the board (AC-G03, FULFIL-SO-REMARK-CHANGES R3)', async () => {
     renderSection();
     await screen.findByText('Line 1 · CB6633');
 
-    fireEvent.click(confirmButton());
-
-    const dialog = within(await screen.findByRole('alertdialog'));
-    expect(dialog.getByText('Confirm SO376201?')).toBeInTheDocument();
-    expect(dialog.getByText('All 1 line are confirmed together.')).toBeInTheDocument();
+    const popup = within(await openPopup());
+    expect(popup.getAllByText(/SO376201/).length).toBeGreaterThan(0);
+    expect(popup.getByTestId('confirm-guide-so-remark')).toBeInTheDocument();
+    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
     expect(confirmSupply).not.toHaveBeenCalled();
+  });
+
+  it('R1: a first Confirm keeps the Remark optional, and posts what was keyed in', async () => {
+    renderSection();
+    await screen.findByText('Line 1 · CB6633');
+
+    await openPopup();
+    const field = (await screen.findByTestId('confirm-guide-so-remark')) as HTMLInputElement;
+    expect(field.required).toBe(false);
+    fireEvent.change(field, { target: { value: 'ZZT first remark' } });
+    await walkPopupToConfirm();
+
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    expect(confirmSupply.mock.calls[0][1]).toMatchObject({ so_remark: 'ZZT first remark' });
+  });
+
+  it('R5: a first Confirm prefills the words the email would print, and posts them', async () => {
+    getSupply.mockResolvedValue(proposal({ default_so_remark: 'Purchase Request' }));
+    renderSection();
+    await screen.findByText('Line 1 · CB6633');
+
+    await openPopup();
+    const field = (await screen.findByTestId('confirm-guide-so-remark')) as HTMLInputElement;
+    expect(field.value).toBe('Purchase Request');
+    await walkPopupToConfirm();
+
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    expect(confirmSupply.mock.calls[0][1]).toMatchObject({ so_remark: 'Purchase Request' });
+  });
+
+  it('R2: a re-confirm does not prefill the default words', async () => {
+    getSupply.mockResolvedValue({ ...CONFIRMED, default_so_remark: 'Purchase Request' });
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: 'Compose again' }));
+
+    await openPopup();
+    expect(
+      ((await screen.findByTestId('confirm-guide-so-remark')) as HTMLInputElement).value,
+    ).toBe('');
+  });
+
+  it('R1 R2: a re-confirm is a change, so its Remark starts empty and must be keyed in', async () => {
+    getSupply.mockResolvedValue(CONFIRMED);
+    renderSection();
+    fireEvent.click(await screen.findByRole('button', { name: 'Compose again' }));
+
+    await openPopup();
+    const field = (await screen.findByTestId('confirm-guide-so-remark')) as HTMLInputElement;
+    expect(field.value).toBe('');
+    expect(field.required).toBe(true);
+    expect(screen.getByTestId('confirm-guide-next')).toBeDisabled();
+    expect(screen.getByTestId('confirm-guide-so-remark-needed')).toBeInTheDocument();
+
+    fireEvent.change(field, { target: { value: 'ZZT revised qty' } });
+    await walkPopupToConfirm();
+
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    expect(confirmSupply.mock.calls[0][1]).toMatchObject({ so_remark: 'ZZT revised qty' });
   });
 
   it('sends every line in one call, in the payload the backend takes (AC-C01)', async () => {
     renderSection();
     await screen.findByText('Line 1 · CB6633');
 
-    fireEvent.click(confirmButton());
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Confirm the sales order',
-      }),
-    );
+    await confirmViaPopup();
 
     await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
     expect(confirmSupply).toHaveBeenCalledWith(PSO_ID, {
@@ -447,6 +544,7 @@ describe('SupplyCompositionSection', () => {
           buy_reason: null,
         },
       ],
+      so_remark: '',
     });
   });
 
@@ -454,12 +552,7 @@ describe('SupplyCompositionSection', () => {
     renderSection();
     await screen.findByText('Line 1 · CB6633');
 
-    fireEvent.click(confirmButton());
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Confirm the sales order',
-      }),
-    );
+    await confirmViaPopup();
 
     await waitFor(() =>
       expect(toastSuccess).toHaveBeenCalledWith(
@@ -488,12 +581,7 @@ describe('SupplyCompositionSection', () => {
     renderSection();
     await screen.findByText('Line 1 · CB6633');
 
-    fireEvent.click(confirmButton());
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Confirm the sales order',
-      }),
-    );
+    await confirmViaPopup();
 
     expect(await screen.findByText('Nothing was written')).toBeInTheDocument();
     expect(screen.getByText('Line 1, CB6633:')).toBeInTheDocument();
@@ -515,12 +603,7 @@ describe('SupplyCompositionSection', () => {
     renderSection();
     await screen.findByText('Line 1 · CB6633');
 
-    fireEvent.click(confirmButton());
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Confirm the sales order',
-      }),
-    );
+    await confirmViaPopup();
 
     expect(await screen.findByText('This sales order:')).toBeInTheDocument();
   });
@@ -535,20 +618,10 @@ describe('SupplyCompositionSection', () => {
     renderSection();
     await screen.findByText('Line 1 · CB6633');
 
-    fireEvent.click(confirmButton());
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Confirm the sales order',
-      }),
-    );
+    await confirmViaPopup();
     expect(await screen.findByText('Nothing was written')).toBeInTheDocument();
 
-    fireEvent.click(confirmButton());
-    fireEvent.click(
-      within(await screen.findByRole('alertdialog')).getByRole('button', {
-        name: 'Confirm the sales order',
-      }),
-    );
+    await confirmViaPopup();
 
     await waitFor(() => expect(screen.queryByText('Nothing was written')).not.toBeInTheDocument());
   });
@@ -581,12 +654,11 @@ describe('SupplyCompositionSection', () => {
     expect(screen.getByLabelText('Buy on line 1')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Keep revision 2' })).toBeInTheDocument();
 
-    fireEvent.click(confirmButton());
-
-    const dialog = within(await screen.findByRole('alertdialog'));
+    // A re-confirm opens the same popup; its Remark is the change's, so it is required.
+    await openPopup();
     expect(
-      dialog.getByText('All 1 line are confirmed together and supersede revision 2.'),
-    ).toBeInTheDocument();
+      ((await screen.findByTestId('confirm-guide-so-remark')) as HTMLInputElement).required,
+    ).toBe(true);
   });
 
   it('goes back to the frozen view when the revision is kept', async () => {
@@ -754,7 +826,7 @@ describe('SupplyCompositionSection bad number input (S3)', () => {
     typeBadInput(screen.getByLabelText('Buy on line 1'));
     const confirm = confirmButton();
     if (!(confirm as HTMLButtonElement).disabled) fireEvent.click(confirm);
-    expect(screen.queryByRole('alertdialog')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('confirm-guide')).not.toBeInTheDocument();
     expect(confirmSupply).not.toHaveBeenCalled();
     expect(screen.getByText(/Enter a number/)).toBeInTheDocument();
   });

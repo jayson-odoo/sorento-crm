@@ -551,6 +551,8 @@ export interface SupplyProposal {
   decision?: SupplyDecision | null;
   lines: SupplyLine[];
   failing_lines?: SupplyFailingLine[];
+  /** FULFIL-SO-REMARK-CHANGES (R5): the words the email's SO table prints with no Remark. */
+  default_so_remark?: string;
 }
 
 export interface ConfirmReserveComponent {
@@ -664,6 +666,11 @@ export interface ConfirmSupplyBody {
   rejected_line_ids?: string[];
   /** Whole lines CS transferred to Cancel SO (SO-CANCEL-LINE). May not travel with `batch_id`. */
   cancelled_lines?: CancelledLineBody[];
+  /**
+   * FULFIL-SO-REMARK-CHANGES (R4): the planner's SO remark for the purchasing email's SO table;
+   * absent = the default words.
+   */
+  so_remark?: string;
 }
 
 /** One whole line transferred to Cancel SO, with the mandatory reason. */

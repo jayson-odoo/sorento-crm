@@ -316,6 +316,8 @@ class SupplyProposal(BaseModel):
     lines_decided: int = 0
     lines: List[SupplyLine] = []
     failing_lines: Optional[List[SupplyFailingLine]] = None
+    #: FULFIL-SO-REMARK-CHANGES (R5): the email's default SO remark for this order.
+    default_so_remark: str = ""
 
 
 # ------------------------------------------------------------------- the confirmation
