@@ -82,6 +82,13 @@ Crew a83045112 (b): from here A = v185 fixed, the rest gated in two steps (S1 = 
 | diags (7 variants, 3-6 rows x3) | | | | | | | 0.62 | or5-5-01 <- NARROWING A TOP SELLING ASK edit; top_selling flips <- ORDER_STATUS FILTER / TOPIC RESET / OUTPUT / GROUP_BY / TOP_N group |
 | S1 retry s1c (r01, r02c, r03c, r03b, r04b) | both culprits dropped | 102,402 | 22 vs 22 | 95 vs 96 (per-run means 94.67 = 94.67) | 3/3, 3/3 | not run | 2.52 | EARLY STOP by one TRAIN item; decision with crew |
 Full chain on the s1c base (r05d, r06c, r07): 91,663, not gated; the last ~4k sits in the sections the diags tied to flips.
+| s1c category set x1 | | 102,402 | | | | 21 vs 22 | 1.03 | bar met except TRAIN by one item |
+Owner ruling (crew relay, 26 Oct): (b) s1c is the ship candidate if the category set holds (it did); 90k is no longer the
+bar; size target 103,000. G014 ("<code> 配什么马桶盖", gold product_info / find_kind seat_cover): v185 4/8 right, s1c 0/8;
+root cause = round-1 edit in ENTITY OPERATIONS (v185 L376-392) that dropped "(the File type candidates block names the
+kinds)" from the attachment_type hint; with it restored 7/8 (diag, crew LEDGER flips section). Root fix candidate outside
+this lane: the lookup row "toilet seat" has no Chinese text (head/lookup_lists.py PROMPT_SYNONYMS maps 马桶 to water closet
+only), so 马桶盖 gets no Category candidate line.
 
 ## Trigger to stop early
 A round that cannot pass the bar after one shrink: stop, report the accepted size and the section that resists.
