@@ -1,6 +1,6 @@
 # UAC: Outbox row attachments (OUTBOX-ATTACHMENT)
 
-Plan: `documentation/plans/email/PLAN-outbox-attachment-26oct.md`
+Plan: `documentation/plans/_archive/email/PLAN-outbox-attachment-26oct.md`
 
 - AC-1: Opening an Email Outbox row that carries files shows an Attachments block listing every
   file the email sends (the row's own attachment, then each `extra_attachments` entry), by
