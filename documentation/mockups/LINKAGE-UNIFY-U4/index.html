@@ -1,0 +1,431 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LINKAGE-UNIFY U4 mockup</title>
+<style>
+  :root {
+    --bg: #f3f4f6; --card: #fff; --border: #e5e7eb; --muted: #6b7280; --fg: #111827;
+    --primary: #1b84ff; --head: #f9fafb; --new: #fff7d6; --newb: #f5c518;
+    --sec-bg: #f1f5f9; --sec-fg: #334155;
+    --red-bg: #fef2f2; --red-fg: #b91c1c; --red-bd: #fee2e2;
+    --blue-bg: #dbeafe; --blue-fg: #1e40af; --amber-bg: #fef3c7; --amber-fg: #92400e;
+    --note-bg: #1f2937; --note-fg: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 36px 0 8px; }
+  .lead { color: var(--muted); margin: 0 0 12px; max-width: 920px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
+  .seg button { border: 0; background: #fff; padding: 6px 14px; font: inherit; cursor: pointer; color: var(--fg); }
+  .seg button[aria-pressed="true"] { background: var(--primary); color: #fff; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  @media (min-width: 1100px) { .grid { grid-template-columns: minmax(0, 1fr) 300px; align-items: start; } }
+
+  /* the mocked app surface */
+  .frame { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+  .phead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .phead .t { font-size: 20px; font-weight: 600; }
+  .phead .s { color: var(--muted); font-size: 13px; }
+  .tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }
+  .tabs span { padding: 8px 0; color: var(--muted); white-space: nowrap; }
+  .tabs span.on { color: var(--fg); font-weight: 600; border-bottom: 2px solid var(--primary); }
+  .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  th { background: var(--head); font-weight: 500; color: #374151; font-size: 13px; }
+  tr:last-child td { border-bottom: 0; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  td.chg { background: var(--new); }
+  .muted { color: var(--muted); }
+  .cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  a.doc { color: var(--primary); font-weight: 500; font-size: 12px; text-decoration: none; font-variant-numeric: tabular-nums; cursor: pointer; }
+  a.doc:hover { text-decoration: underline; }
+  .pill { display: inline-flex; align-items: center; border-radius: 9999px; padding: 1px 8px; font-size: 11px; font-weight: 500; line-height: 16px; background: var(--sec-bg); color: var(--sec-fg); white-space: nowrap; flex: none; border: 1px solid transparent; }
+  .pill.red { background: var(--red-bg); color: var(--red-fg); border-color: var(--red-bd); }
+  .plus { display: inline-flex; align-items: center; border-radius: 9999px; padding: 0 6px; font-size: 11px; background: var(--sec-bg); color: var(--sec-fg); flex: none; cursor: pointer; border: 0; font-family: inherit; }
+  .state { display: inline-flex; border-radius: 9999px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
+  .state.placed { background: var(--blue-bg); color: var(--blue-fg); }
+  .state.raised { background: var(--amber-bg); color: var(--amber-fg); }
+
+  /* strip cards */
+  .strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 560px; margin-bottom: 12px; }
+  .strip.four { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 560px; }
+  @media (min-width: 640px) { .strip.four { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 760px; } }
+  .kc { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: #fff; }
+  .kc .l { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+  .kc .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .kc .q { display: block; margin-top: 6px; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; background: #d97706; color: #fff; border-radius: 4px; padding: 1px 5px; margin-bottom: 4px; }
+  .rose { background: #f43f5e; } .sky { background: #0ea5e9; } .violet { background: #8b5cf6; } .emerald { background: #10b981; }
+  .t-rose { color: #be123c; } .t-sky { color: #0369a1; } .t-violet { color: #6d28d9; } .t-emerald { color: #047857; }
+
+  /* filter */
+  .filters { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .filters label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .sel { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; display: flex; justify-content: space-between; color: var(--muted); background: #fff; }
+  .sel.on { color: var(--fg); border-color: var(--primary); }
+  .opts { border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; box-shadow: 0 6px 16px rgba(0,0,0,.12); background: #fff; }
+  .opts div { padding: 6px 10px; }
+  .opts div.sel1 { background: #eff6ff; }
+  .pop { border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 16px rgba(0,0,0,.12); padding: 8px; display: inline-grid; gap: 6px; margin-top: 10px; background: #fff; }
+
+  /* annotation panel: never part of the mocked UI */
+  .notes { background: var(--note-bg); color: var(--note-fg); border-radius: 12px; padding: 14px 16px; font-size: 13px; }
+  .notes h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #fbbf24; }
+  .notes ul { margin: 0 0 10px; padding-left: 18px; }
+  .notes li { margin: 4px 0; }
+  .notes code { background: #374151; color: #fde68a; }
+  code { font-size: 12px; background: #eef0f3; padding: 1px 4px; border-radius: 4px; }
+  .map { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-top: 8px; overflow-x: auto; }
+  .map table { min-width: 900px; table-layout: auto; }
+  .map td, .map th { white-space: normal; overflow: visible; vertical-align: top; }
+  .legend { display: inline-block; width: 12px; height: 12px; background: var(--new); border: 1px solid var(--newb); vertical-align: middle; margin-right: 4px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 640px) {
+    .wrap { padding: 16px; }
+    .frame { padding: 10px; }
+    .phead .t { font-size: 17px; }
+  }
+  /* U4 additions (same tokens as the approved mock) */
+  .stack { display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
+  td.wrap { white-space: normal; }
+  th.chg { background: var(--new); box-shadow: inset 0 3px 0 var(--newb); }
+  .sub { font-size: 13px; font-weight: 600; margin: 14px 0 6px; }
+  .sub small { font-weight: 400; color: var(--muted); }
+  .hl td { background: #eef5ff; }
+  .hl td.chg { background: #fff1b8; }
+  .meta { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 8px 16px; margin-bottom: 12px; }
+  .meta .k { color: var(--muted); font-size: 12px; }
+  .panel-t { font-weight: 600; margin: 14px 0 6px; }
+  .lb { border: 1px solid var(--border); border-radius: 10px; box-shadow: 0 6px 16px rgba(0,0,0,.12); padding: 10px; margin-top: 12px; background: #fff; }
+  .lb .scroll { margin-top: 6px; }
+  .via { color: var(--muted); font-size: 12px; }
+  .cases { margin: 0 0 8px; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LINKAGE-UNIFY U4: PO popup, SPO popup, SPO document, SCM PO detail</h1>
+  <p class="lead">Real dev rows (customers shown as Customer A, bins and quantities as stored). <span class="legend"></span>marks a cell or column that changes. Toggle each screen between Before, After or both stacked. Same chip and pill styles as the approved order inquiry mock (v2).</p>
+
+  <h2>1. Purchase order popup (PO 202607-S0100, and PO 202607-S0083 for in transit and cancelled)</h2>
+  <div class="bar"><div class="seg" role="group" aria-label="View screen 1" data-target="s1">
+    <button type="button" data-v="before" aria-pressed="false">Before</button><button type="button" data-v="after" aria-pressed="true">After</button><button type="button" data-v="both" aria-pressed="false">Both</button></div></div>
+  <div class="grid">
+    <div id="s1" data-view="after"><div class="frame" data-pane="before"></div><div class="frame" data-pane="after"></div></div>
+    <aside class="notes"><h3>Notes (not part of the UI)</h3><ul>
+      <li>SPO column: one chip per SPO line, each with its state pill. Before: only the SPO number, once per line, no state.</li>
+      <li>PO 202607-S0100 line 486 (the highlighted row, OI-2609-0128 SO line 880): SPO-2026/09-0107 L9, 486 of 486 received, GR-2026/10-0017 puts it at BRW-BB (Q6). PO chip carries no "received" (owner ruling); the SPO side carries it.</li>
+      <li>The 354 line moved onto L12 (received 354 at BRW-BB) and an earlier L7 that was withdrawn (retired 5 Oct, 0 received). Same for the 167 line: L11 received, L1 withdrawn.</li>
+      <li>"Allocated to" gains two columns: S/O line (so the SO line is quoted) and "Where now", from the chain (<code>placements_on</code>, plan section 4). Qty is the placement's share, not the SPO line total.</li>
+      <li>Case 2 (PO 202607-S0083, subset of lines): in transit SPO lines show an "In transit" pill (popup only; the order inquiry chip draws no pill for in transit, per v2). The cancelled PO line (SO line 16, 728) reads red "PO cancelled", its SPO L138 reads "SPO withdrawn".</li>
+      <li>The popup's "Received" header keeps today's meaning (units transferred); the relabel in this slice is on the SCM PO detail only (screen 4). Raise if the owner wants it here too.</li>
+      <li>Unverified: Remaining for the cancelled line (shown 0); the Before SPO cell for lines with a withdrawn sibling (inferred as one number); the row order of "Allocated to" (linked_at, id).</li>
+    </ul></aside>
+  </div>
+
+  <h2>2. SPO popup (SPO-2026/09-0107)</h2>
+  <div class="bar"><div class="seg" role="group" aria-label="View screen 2" data-target="s2">
+    <button type="button" data-v="before" aria-pressed="false">Before</button><button type="button" data-v="after" aria-pressed="true">After</button><button type="button" data-v="both" aria-pressed="false">Both</button></div></div>
+  <div class="grid">
+    <div id="s2" data-view="after"><div class="frame" data-pane="before"></div><div class="frame" data-pane="after"></div></div>
+    <aside class="notes"><h3>Notes (not part of the UI)</h3><ul>
+      <li>Today "Allocated to" lists only links made on an SPO line directly (5 rows). After: also the placements that reached an SPO line through their PO line, marked "via PO 202607-S0100" (8 more rows), and direct links on a withdrawn line stay listed with a red "SPO withdrawn" (L7, 294).</li>
+      <li>SPO line 12 (SO line 784): 294 via PO + 60 direct = 354, the line total. SPO line 9 (SO line 880): 486 via PO.</li>
+      <li>Over-placed lines are real and shown as stored: L3 (116 via PO + 64 direct on 116), L5 (11 + 11 on 11), L6 (300 + 300 on 300). Direct placements are not netted against followed ones (plan section 4); the over-placement clean-up is a separate follow-up.</li>
+      <li>Lines grid above is unchanged. L1 and L7 are retired with 0 received so the grid hides them (assumed from the visibility rule, not run through the screen).</li>
+      <li>New columns: S/O line, SPO line, Reached via. No ids on screen.</li>
+    </ul></aside>
+  </div>
+
+  <h2>3. SPO document page (Procurement, SPO Allocations, SPO-2026/09-0107)</h2>
+  <div class="bar"><div class="seg" role="group" aria-label="View screen 3" data-target="s3">
+    <button type="button" data-v="before" aria-pressed="false">Before</button><button type="button" data-v="after" aria-pressed="true">After</button><button type="button" data-v="both" aria-pressed="false">Both</button></div></div>
+  <div class="grid">
+    <div id="s3" data-view="after"><div class="frame" data-pane="before"></div><div class="frame" data-pane="after"></div></div>
+    <aside class="notes"><h3>Notes (not part of the UI)</h3><ul>
+      <li>"SO covered" counts and sums the same rows as screen 2 (direct links plus via-PO placements) on each visible SPO line. Today only direct links count, so 6 of the 10 visible lines read "-" before and 2 after.</li>
+      <li>The chip text keeps today's rule (one entry per link). L3, L5, L6 and L12 hold two entries for one sales order (a via-PO and a direct one), so "2 SOs" there counts links, not distinct sales orders. Open point: merge per sales order, or leave as today.</li>
+      <li>Lightbox shown for L12: the existing columns plus one new "Reached via" column. Customer is masked here.</li>
+      <li>The withdrawn L7 is not a line on this page, so its 294 does not appear here (assumed; it does appear on the popup, screen 2).</li>
+    </ul></aside>
+  </div>
+
+  <h2>4. SCM purchase order detail, Lines tab (PO 202607-S0100 and 202607-S0083)</h2>
+  <div class="bar"><div class="seg" role="group" aria-label="View screen 4" data-target="s4">
+    <button type="button" data-v="before" aria-pressed="false">Before</button><button type="button" data-v="after" aria-pressed="true">After</button><button type="button" data-v="both" aria-pressed="false">Both</button></div></div>
+  <div class="grid">
+    <div id="s4" data-view="after"><div class="frame" data-pane="before"></div><div class="frame" data-pane="after"></div></div>
+    <aside class="notes"><h3>Notes (not part of the UI)</h3><ul>
+      <li>"Qty received" becomes "Transferred": the figure is AutoCount's TransferedQty onto a shipping order, not a goods receipt. Values and footer total unchanged (all 10 lines of the first PO read fully transferred).</li>
+      <li>The actual receipt lives on the SPO chip (Received qty at bin, from the Goods Received document), which is why every transferred line now says whether it landed.</li>
+      <li>Outstanding qty is the page's own formula (ordered minus received minus cancelled, floored at 0); the cancelled line of PO 202607-S0083 therefore reads 728 because its Qty cancelled is 0 on dev. Existing behaviour, not changed here.</li>
+      <li>Neighbouring columns not touched (Placed, Qty cancelled flags, row actions) are left out of the mock.</li>
+    </ul></aside>
+  </div>
+
+  <h2>Element map</h2>
+  <div class="map"><table>
+    <thead><tr><th>Changed element</th><th>Reuses (path:line)</th><th>Ruling</th></tr></thead>
+    <tbody>
+      <tr><td>PO popup SPO column: one chip per SPO line with state pill (In transit / Received qty at bin / SPO withdrawn)</td><td><code>order-inquiries/components/OrderInquiryDocumentDialog.tsx:438</code> (SPO column in <code>PO_LINE_COLUMNS</code> :346, today a number list); wire <code>spo_numbers</code> <code>_shared/types/orderInquiry.types.ts:1285</code>; backend <code>order_inquiry_worklist_service.py:2705</code> (get_po_detail); pill = <code>WorklistPill</code> <code>orderInquiryWorklistColumns.tsx:74</code> (Badge secondary light, destructive light for red); SUPPLY-SPO-LINK mock column</td><td>Q1, Q5, Q6, one chip per SPO line</td></tr>
+      <tr><td>PO chip never carries "received"; received lives on the SPO side</td><td>Same pill piece as U3 (<code>orderInquiryWorklistColumns.tsx:405-419</code>); this screen has no PO chip, only the SPO column</td><td>Owner note on mock v1</td></tr>
+      <tr><td>"Allocated to" lists every placement on the PO line with "Where now"; S/O line column</td><td><code>_allocations_on</code> <code>order_inquiry_worklist_service.py:3003</code> (called from get_po_detail :2823); type <code>OrderInquiryDocumentAllocation</code> <code>orderInquiry.types.ts:1287</code>; where-now text from <code>goods_chain.placements_on</code> (plan section 4, new)</td><td>Q1, Q3, Q5</td></tr>
+      <tr><td>Dead document pills on a placement (red "PO cancelled" / "SPO withdrawn")</td><td>Badge destructive light, <code>components/ui/badge.tsx:94</code>, same as U3</td><td>Q5</td></tr>
+      <tr><td>SPO popup "Allocated to" also lists via-PO placements, "Reached via", SPO line column</td><td>get_spo_detail <code>order_inquiry_worklist_service.py:2869</code> and its allocations call :2996 (same <code>_allocations_on</code>, now passed the via-PO set from <code>placements_on</code>)</td><td>Plan section 4 item 4</td></tr>
+      <tr><td>SPO document "SO covered" includes via-PO placements; lightbox gains "Reached via"</td><td>backend <code>procurement_service.py:3060-3136</code> (so_covered_by_alloc), schema <code>SPODocumentLineSOCovered</code> <code>schemas/procurement.py:703</code>; FE column <code>spo-allocations/components/SPODocumentDetail.tsx:830</code>; lightbox <code>scm/components/PlanRowDialog.tsx:117</code> ('SO covered')</td><td>Plan section 4 item 4</td></tr>
+      <tr><td>PO popup: the PO line column "Received" reads "Transferred" (same AutoCount figure, same word on every screen)</td><td><code>order-inquiries/components/OrderInquiryDocumentDialog.tsx</code> PO_LINE_COLUMNS ~369-376</td><td>Consistency with the SCM PO detail rename</td></tr>
+      <tr><td>SCM PO detail: header "Qty received" reads "Transferred"</td><td><code>scm/purchase-orders/[id]/components/PurchaseOrderDetail.tsx:592-607</code> (<code>qty_received</code> column, header and <code>meta.headerTitle</code>); data key stays <code>qty_received</code> (<code>scm/purchase_order_service.py:145</code>)</td><td>Plan section 4 item 4</td></tr>
+      <tr><td>SCM PO detail: new SPO column with state chips</td><td>Same chip piece as the PO popup column; per-line SPO hops added to the line wire in <code>scm/purchase_order_service.py:145</code>, rendered beside the <code>placed</code> column pattern <code>PurchaseOrderDetail.tsx:642</code></td><td>Q1, Q5, Q6</td></tr>
+    </tbody></table></div>
+</div>
+
+<script>
+(function () {
+  // every figure below was read from the dev DB, see data.sql
+  var BIN = 'BRW-BB';
+  function pill(t, red) { return '<span class="pill' + (red ? ' red' : '') + '">' + t + '</span>'; }
+  var RCV = function (q, b) { return pill('Received ' + q + ' at ' + (b || BIN)); };
+  var TRANSIT = pill('In transit');
+  var WD = pill('SPO withdrawn', true);
+  var PC = pill('PO cancelled', true);
+  function chip(label, pills) { return '<span class="cell"><a class="doc">' + label + '</a>' + (pills || '') + '</span>'; }
+  function stack(items) { return '<div class="stack">' + items.join('') + '</div>'; }
+  function spoCol(a, nums, items) { return a ? { h: stack(items), c: true, w: true } : { h: nums.map(function (n) { return '<a class="doc">' + n + '</a>'; }).join(', ') }; }
+
+  function table(cols, rows, after) {
+    var min = cols.reduce(function (s, c) { return s + c.w; }, 0);
+    var h = '<div class="scroll"><table style="min-width:' + min + 'px"><colgroup>' + cols.map(function (c) { return '<col style="width:' + c.w + 'px">'; }).join('') + '</colgroup><thead><tr>' +
+      cols.map(function (c) { return '<th class="' + (c.n ? 'n ' : '') + (after && c.chg ? 'chg' : '') + '">' + c.h + '</th>'; }).join('') + '</tr></thead><tbody>';
+    rows.forEach(function (r) {
+      h += '<tr' + (r.hl ? ' class="hl"' : '') + '>' + r.cells.map(function (v, i) {
+        var o = (typeof v === 'object') ? v : { h: v };
+        var cls = (cols[i].n ? 'n ' : '') + (after && (o.c || cols[i].chg) ? 'chg ' : '') + (o.w ? 'wrap' : '');
+        return '<td class="' + cls + '">' + o.h + '</td>';
+      }).join('') + '</tr>';
+    });
+    return h + '</tbody></table></div>';
+  }
+  function head(t, s, meta) {
+    return '<div class="phead"><div><div class="t">' + t + '</div><div class="s">' + s + '</div></div></div>' +
+      '<div class="meta">' + meta.map(function (m) { return '<div><div class="k">' + m[0] + '</div><div>' + m[1] + '</div></div>'; }).join('') + '</div>';
+  }
+  var D = '<span class="muted">-</span>';
+  var CONF = pill('Confirmed'), PROP = pill('Proposed');
+
+  // ---------------- PO 202607-S0100 data ----------------
+  // sku, ordered, spo lines [ln, bin or null, state], allocated, loc, so
+  var po1 = [
+    ['SRTSS4210', 32, [[8, 'BRW', 'r', 32]], 0, 'BRW', null],
+    ['SRTSS3170', 167, [[11, 'BRW', 'r', 167], [1, null, 'w']], 0, 'BRW', null],
+    ['SRTSS4210', 490, [[10, BIN, 'r', 490]], 490, BIN, 'SO364922'],
+    ['SRTSS4210', 486, [[9, BIN, 'r', 486]], 486, BIN, 'SO364824', true],
+    ['SRTSS3170', 30, [[2, BIN, 'r', 30]], 30, BIN, 'SO387741'],
+    ['SRTSS3170', 116, [[3, BIN, 'r', 116]], 116, BIN, 'SO394876'],
+    ['SRTSS3170', 30, [[4, BIN, 'r', 30]], 30, BIN, 'SO387741'],
+    ['SRTSS3170', 11, [[5, BIN, 'r', 11]], 11, BIN, 'SO394880'],
+    ['SRTSS3170', 300, [[6, BIN, 'r', 300]], 300, BIN, 'SO396349'],
+    ['SRTSS3170', 354, [[12, BIN, 'r', 354], [7, null, 'w']], 294, BIN, 'SO396349']
+  ];
+  var po2 = [
+    ['SRTWT7202', 405, [[176, 'BRW', 't'], [170, null, 'w']], 0, 'BRW', null, 405],
+    ['SRTWT165', 728, [[138, null, 'w']], 728, BIN, 'SO396348', 0, true],
+    ['SRTWT7202', 9, [[174, BIN, 't']], 9, BIN, 'SO386276', 9],
+    ['SRTWT7202', 46, [[172, BIN, 't']], 46, BIN, 'SO364824', 46]
+  ];
+  function spoItems(lines, num) {
+    return lines.map(function (l) {
+      var p = l[2] === 'r' ? RCV(l[3], l[1]) : (l[2] === 't' ? TRANSIT : WD);
+      return chip(num + ' L' + l[0], p);
+    });
+  }
+  var N1 = 'SPO-2026/09-0107', N2 = 'SPO-2026/10-0046';
+  // fix highlight: row flagged with trailing true
+  function mark(data) { data.forEach(function (d) { d.hl = d[d.length - 1] === true; }); }
+  mark(po1); mark(po2);
+  function poRowsFixed(data, num, after) {
+    var cols = [{ h: 'SKU', w: 120 }, { h: 'Ordered', w: 80, n: 1 }, { h: after ? 'Transferred' : 'Received', w: 100, n: 1, chg: true }, { h: 'Remaining', w: 90, n: 1 }, { h: 'Allocated', w: 90, n: 1 }, { h: 'Location', w: 90 }, { h: 'S/O', w: 100 }, { h: 'SPO', w: 300, chg: true }];
+    var rows = data.map(function (d) {
+      var cancelled = d[0] === 'SRTWT165' && d[1] === 728;
+      var rc = cancelled ? 0 : d[1];
+      return { hl: d.hl, cells: [d[0], String(d[1]), String(rc), '0', String(d[3]), d[4], d[5] || D, spoCol(after, [num], spoItems(d[2], num))] };
+    });
+    return table(cols, rows, after);
+  }
+
+  // Allocated to, PO side. [inq, so, soLine, item, qty, ack, spoLine, bin, state]
+  var allocPo1 = [
+    ['OI-2609-0047', 'SO364922', 464, 'SRTSS4210', 490, 'a', 10, BIN, 'r'],
+    ['OI-2609-0128', 'SO364824', 880, 'SRTSS4210', 486, 'a', 9, BIN, 'r'],
+    ['OI-2609-0217', 'SO394880', 368, 'SRTSS3170', 11, 'c', 5, BIN, 'r'],
+    ['OI-2609-0252', 'SO396349', 512, 'SRTSS3170', 300, 'c', 6, BIN, 'r'],
+    ['OI-2609-0252', 'SO396349', 784, 'SRTSS3170', 294, 'c', 12, BIN, 'r'],
+    ['OI-2609-0275', 'SO394876', 384, 'SRTSS3170', 116, 'c', 3, BIN, 'r'],
+    ['OI-2609-0527', 'SO387741', 448, 'SRTSS3170', 30, 'a', 2, BIN, 'r'],
+    ['OI-2609-0527', 'SO387741', 720, 'SRTSS3170', 30, 'a', 4, BIN, 'r']
+  ];
+  var allocPo2 = [
+    ['OI-2609-0194', 'SO396348', 16, 'SRTWT165', 728, 'a', null, null, 'pc'],
+    ['OI-2609-0091', 'SO386276', 176, 'SRTWT7202', 9, 'a', 174, BIN, 't'],
+    ['OI-2609-0128', 'SO364824', 832, 'SRTWT7202', 46, 'a', 172, BIN, 't']
+  ];
+  function ack(a) { return a === 'a' ? CONF : PROP; }
+  function whereNow(r, num) {
+    if (r[8] === 'pc') return { h: chip('PO line cancelled', PC), c: true };
+    return { h: chip(num + ' L' + r[6], r[8] === 'r' ? RCV(r[4], r[7]) : TRANSIT), c: true };
+  }
+  function allocPoTable(list, num, after) {
+    var cols = [{ h: 'Inquiry', w: 120 }, { h: 'S/O', w: 100 }];
+    if (after) cols.push({ h: 'S/O line', w: 80, chg: true });
+    cols = cols.concat([{ h: 'Item', w: 110 }, { h: 'Qty', w: 70, n: 1 }, { h: 'State', w: 100 }]);
+    if (after) cols.push({ h: 'Where now', w: 380, chg: true });
+    var rows = list.map(function (r) {
+      var c = [r[0], r[1]];
+      if (after) c.push(String(r[2]));
+      c = c.concat([r[3], String(r[4]), ack(r[5])]);
+      if (after) c.push(whereNow(r, num));
+      return { cells: c };
+    });
+    return table(cols, rows, after);
+  }
+
+  function screen1(after) {
+    var h = head('202607-S0100', 'Purchase order', [['Supplier', '********'], ['Status', pill('Closed')], ['Expected', '29/07/2026']]);
+    h += '<div class="scroll-wrap">' + poRowsFixed(po1, N1.replace('SPO-', 'SPO-'), after) + '</div>';
+    h += '<div class="panel-t">Allocated to</div>' + allocPoTable(allocPo1, N1, after);
+    h += '<div class="sub">Second case: PO 202607-S0083 <small>(four lines shown: in transit, withdrawn, cancelled)</small></div>';
+    h += head('202607-S0083', 'Purchase order', [['Supplier', '********'], ['Status', pill('Closed')]]);
+    h += poRowsFixed(po2, N2, after);
+    h += '<div class="panel-t">Allocated to</div>' + allocPoTable(allocPo2, N2, after);
+    return h;
+  }
+
+  // ---------------- screen 2: SPO popup ----------------
+  var spoLines = [[2, 30, BIN], [3, 116, BIN], [4, 30, BIN], [5, 11, BIN], [6, 300, BIN], [8, 32, 'BRW'], [9, 486, BIN], [10, 490, BIN], [11, 167, 'BRW'], [12, 354, BIN]];
+  var skuOf = { 2: 'SRTSS3170', 3: 'SRTSS3170', 4: 'SRTSS3170', 5: 'SRTSS3170', 6: 'SRTSS3170', 8: 'SRTSS4210', 9: 'SRTSS4210', 10: 'SRTSS4210', 11: 'SRTSS3170', 12: 'SRTSS3170' };
+  // [inq, so, soLine, item, qty, ack, spoLine, via(bool), withdrawn(bool)] in linked_at, id order
+  var allocSpo = [
+    ['OI-2609-0047', 'SO364922', 464, 'SRTSS4210', 490, 'a', 10, true],
+    ['OI-2609-0128', 'SO364824', 880, 'SRTSS4210', 486, 'a', 9, true],
+    ['OI-2609-0217', 'SO394880', 368, 'SRTSS3170', 11, 'c', 5, true],
+    ['OI-2609-0252', 'SO396349', 512, 'SRTSS3170', 300, 'c', 6, true],
+    ['OI-2609-0252', 'SO396349', 784, 'SRTSS3170', 294, 'c', 12, true],
+    ['OI-2609-0275', 'SO394876', 384, 'SRTSS3170', 116, 'c', 3, true],
+    ['OI-2609-0527', 'SO387741', 448, 'SRTSS3170', 30, 'a', 2, true],
+    ['OI-2609-0527', 'SO387741', 720, 'SRTSS3170', 30, 'a', 4, true],
+    ['OI-2609-0217', 'SO394880', 368, 'SRTSS3170', 11, 'c', 5, false],
+    ['OI-2609-0275', 'SO394876', 384, 'SRTSS3170', 64, 'c', 3, false],
+    ['OI-2609-0252', 'SO396349', 512, 'SRTSS3170', 300, 'c', 6, false],
+    ['OI-2609-0252', 'SO396349', 784, 'SRTSS3170', 294, 'c', 7, false, true],
+    ['OI-2609-0252', 'SO396349', 784, 'SRTSS3170', 60, 'c', 12, false]
+  ];
+  function screen2(after) {
+    var h = head(N1, 'Shipping purchase order', [['Status', pill('Open')], ['Lines', '12 (2 withdrawn, hidden below)']]);
+    var lc = [{ h: 'SKU', w: 120 }, { h: 'Allocated', w: 90, n: 1 }, { h: 'Received', w: 90, n: 1 }, { h: 'Remaining', w: 100, n: 1 }, { h: 'Location', w: 100 }, { h: 'Source PO', w: 140 }];
+    h += table(lc, spoLines.map(function (l) { return { cells: [skuOf[l[0]], String(l[1]), String(l[1]), '0', l[2], '202607-S0100'] }; }), false);
+    h += '<div class="panel-t">Allocated to</div>';
+    var cols = [{ h: 'Inquiry', w: 120 }, { h: 'S/O', w: 100 }];
+    if (after) cols.push({ h: 'S/O line', w: 80, chg: true });
+    cols = cols.concat([{ h: 'Item', w: 110 }, { h: 'Qty', w: 70, n: 1 }, { h: 'State', w: 100 }]);
+    if (after) cols.push({ h: 'SPO line', w: 80, chg: true }, { h: 'Reached via', w: 260, chg: true });
+    var list = after ? allocSpo : allocSpo.filter(function (r) { return !r[7]; });
+    // before: direct links only, and the withdrawn L7 link is listed as today (plain)
+    var rows = list.map(function (r) {
+      var c = [r[0], r[1]];
+      if (after) c.push(String(r[2]));
+      c = c.concat([r[3], String(r[4]), ack(r[5])]);
+      if (after) {
+        c.push('L' + r[6]);
+        c.push({ h: '<span class="cell">' + (r[7] ? '<span class="via">via PO 202607-S0100</span>' : '<span class="via">direct</span>') + (r[8] ? WD : '') + '</span>', c: true });
+      }
+      return { cells: c };
+    });
+    h += table(cols, rows, after);
+    return h;
+  }
+
+  // ---------------- screen 3: SPO document page ----------------
+  var docLines = [
+    [2, 'SRTSS3170', 30, 1, 30, 0, 0], [3, 'SRTSS3170', 116, 2, 180, 1, 64], [4, 'SRTSS3170', 30, 1, 30, 0, 0], [5, 'SRTSS3170', 11, 2, 22, 1, 11],
+    [6, 'SRTSS3170', 300, 2, 600, 1, 300], [8, 'SRTSS4210', 32, 0, 0, 0, 0], [9, 'SRTSS4210', 486, 1, 486, 0, 0], [10, 'SRTSS4210', 490, 1, 490, 0, 0],
+    [11, 'SRTSS3170', 167, 0, 0, 0, 0], [12, 'SRTSS3170', 354, 2, 354, 1, 60]
+  ];
+  function soChip(n, q) { return n ? '<button type="button" class="plus" style="padding:2px 8px;font-size:12px;background:none;color:var(--primary)">' + n + ' SO' + (n === 1 ? '' : 's') + ' &middot; ' + q + '</button>' : D; }
+  function screen3(after) {
+    var h = head(N1, 'SPO allocation document', [['Status', pill('Open')], ['Lines', '10 shown']]);
+    var cols = [{ h: 'Line', w: 60 }, { h: 'SKU', w: 120 }, { h: 'Allocated', w: 90, n: 1 }, { h: 'Received', w: 90, n: 1 }, { h: 'Status', w: 130 }, { h: 'SO covered', w: 150, chg: true }];
+    var rows = docLines.map(function (l) {
+      var cell = after ? { h: soChip(l[3], l[4]), c: l[3] !== l[5] || l[4] !== l[6] } : { h: soChip(l[5], l[6]) };
+      return { cells: ['L' + l[0], l[1], String(l[2]), String(l[2]), pill('Fully received'), cell] };
+    });
+    h += table(cols, rows, after);
+    h += '<div class="lb"><b>SO covered, line 12</b>';
+    var lc = [{ h: 'Document', w: 120 }, { h: 'Customer', w: 130 }, { h: 'Class', w: 90 }, { h: 'Qty', w: 70, n: 1 }];
+    if (after) lc.push({ h: 'Reached via', w: 200, chg: true });
+    var rr = [];
+    if (after) rr.push({ cells: ['SO396349', 'Customer A', 'project', '294', { h: '<span class="via">via PO 202607-S0100</span>', c: true }] });
+    rr.push({ cells: ['SO396349', 'Customer A', 'project', '60'].concat(after ? [{ h: '<span class="via">direct</span>', c: true }] : []) });
+    h += table(lc, rr, after) + '</div>';
+    return h;
+  }
+
+  // ---------------- screen 4: SCM PO detail ----------------
+  var scm1 = po1, scm2 = po2;
+  function screen4(after) {
+    var h = head('202607-S0100', 'Purchase order', [['Supplier', '********'], ['Status', pill('Closed')]]);
+    h += '<div class="tabs"><span>Overview</span><span class="on">Lines</span><span>Documents</span><span>History</span></div>';
+    function tbl(data, num) {
+      var cols = [{ h: 'SKU', w: 120 }, { h: 'Qty ordered', w: 110, n: 1 }, { h: after ? 'Transferred' : 'Qty received', w: 120, n: 1, chg: true }, { h: 'Qty cancelled', w: 110, n: 1 }, { h: 'Outstanding qty', w: 130, n: 1 }];
+      if (after) cols.push({ h: 'SPO', w: 300, chg: true });
+      var tot = 0;
+      var rows = data.map(function (d) {
+        var cancelled = d[0] === 'SRTWT165' && d[1] === 728;
+        var rc = cancelled ? 0 : d[1]; tot += rc;
+        var c = [d[0], String(d[1]), String(rc), '0', String(Math.max(d[1] - rc, 0))];
+        if (after) c.push({ h: stack(spoItems(d[2], num)), c: true, w: true });
+        return { cells: c };
+      });
+      rows.push({ cells: ['<b>Total</b>', String(data.reduce(function (s, d) { return s + d[1]; }, 0)), String(tot), '0', String(data.reduce(function (s, d) { return s + d[1]; }, 0) - tot)].concat(after ? [''] : []) });
+      return table(cols, rows, after);
+    }
+    h += tbl(scm1, N1);
+    h += '<div class="sub">PO 202607-S0083 <small>(four lines shown)</small></div>' + tbl(scm2, N2);
+    return h;
+  }
+
+  var builders = { s1: screen1, s2: screen2, s3: screen3, s4: screen4 };
+  Object.keys(builders).forEach(function (id) {
+    var root = document.getElementById(id);
+    root.querySelectorAll('[data-pane]').forEach(function (p) {
+      p.innerHTML = builders[id](p.getAttribute('data-pane') === 'after');
+    });
+  });
+
+  // ---- toggles ----
+  function apply(id, v) {
+    var root = document.getElementById(id);
+    root.setAttribute('data-view', v);
+    root.querySelectorAll('[data-pane]').forEach(function (p) {
+      p.hidden = !(v === 'both' || p.getAttribute('data-pane') === v);
+      p.style.marginTop = (v === 'both' && p.getAttribute('data-pane') === 'after') ? '16px' : '0';
+    });
+    document.querySelectorAll('.seg[data-target="' + id + '"] button').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-v') === v ? 'true' : 'false');
+    });
+  }
+  document.querySelectorAll('.seg').forEach(function (seg) {
+    seg.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      apply(seg.getAttribute('data-target'), b.getAttribute('data-v'));
+    });
+  });
+  ['s1', 's2', 's3', 's4'].forEach(function (id) { apply(id, 'after'); });
+})();
+</script>
+</body>
+</html>
