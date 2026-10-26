@@ -1,62 +1,73 @@
 # UAC - BULK-CONTACT-ACCESS (upload the Respond dealer-contact sheet, set each contact's access)
 
-Status: DRAFT - written against the card's recommended answers (Q1 a, Q2 a, Q3 a, Q4 a, Q5 a); rows marked
-[Qn] change if the owner answers otherwise. Card: `CARD-bulk-contact-access-26oct.md`. Plan:
-`PLAN-bulk-contact-access-26oct.md`.
+Status: APPROVED rules. Owner rulings 26 Oct ~15:10: Q1 (a) add only, Q2 (a) cabana_dealer for Sorento owners,
+Q3 brands = every brand of the contact's companies (data-driven), Q4 (b) link EVERY exact account, ticked,
+Q5 (a) skip phones not in the CRM. Mock v1 approved 15:03. Card: `CARD-bulk-contact-access-26oct.md`. Plan +
+API contract: `PLAN-bulk-contact-access-26oct.md`.
 
 Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +60100000001.
 
 ## Parse
 - U1 The upload takes the Respond contact export CSV (columns First Name, Phone Number, Tags; extra columns
-  ignored). A file without a Phone Number or Tags column is refused with a message naming the missing column.
-- U2 Tags parse: first token = dealer text; `Sorento Sdn Bhd` / `Mocha Sdn Bhd` = brand companies; the token after
-  a brand company is that company's agent unless it is another brand company or a role word; `Business Owner` /
-  `Employee` = role; any other token = alt dealer text. A row with no brand company or no role is a row error.
-- U3 Phone matched to a CRM contact on digits only. Not found = "Not in CRM yet" [Q5]; two contacts with the same
-  digits = "Ambiguous phone". Both are skipped, never created.
+  ignored; UTF-8 with or without BOM). A file without a Phone Number or Tags column is refused (422) naming the
+  missing column. Over 2 MB or over 2000 data rows is refused (422).
+- U2 Tags parse (comma list, tokens trimmed): first token = dealer text; `Sorento Sdn Bhd` -> SRT, `Mocha Sdn Bhd`
+  -> MCH (case-insensitive); the token right after a brand company is that company's agent unless it is another
+  brand company or a role word; `Business Owner` -> owner, `Employee` -> employee; any other token = alt dealer
+  text. A row with no brand company, no role, or no phone is a row error (listed, not applied).
+- U3 Phone matched to a CRM contact on digits only (`+60 12-345 6789` = `60123456789`). Not found = skipped
+  "not_in_crm" [Q5]; two contacts with the same digits = skipped "ambiguous_phone". Never created.
 
 ## Template (per contact, from its own row)
-- U4 Access types: Business Owner gets `dealer` + `cabana_dealer` [Q2] for Sorento, `mocha_dealer` for Mocha,
-  plus `end_user`; Employee gets `end_user` only.
-- U5 Companies = the row's brand companies. Brands: Sorento SORENTO, WDI, CABANA, NO LOGO, ELLECI; Mocha MOCHA,
-  IBORN [Q3]; both = union. Locations (stock visibility, mode availability, hide-zero off): Sorento BRW, MWH;
-  Mocha HQ, MOCHA-WH; both = union.
-- U6 Every contact: packing list OFF, ETA buffer ON, stock ON, AI ON, escalation OFF, segment retail, image
-  media allowed, agent grants general / order / incoming stock enquiries (1 Jan - 31 Dec 2026).
+- U4 Access types: owner gets `dealer` + `cabana_dealer` for SRT, `mocha_dealer` for MCH, plus `end_user`;
+  employee gets `end_user` only.
+- U5 Companies = the row's companies. Brands [Q3] = every ACTIVE brand whose `brands.company_id` is one of the
+  row's companies (no brand list in code). Contact brands NULL -> set to that list; already a list -> union. No
+  brand found for the row's companies -> brands untouched. Locations (stock visibility, mode `availability`,
+  hide-zero off, no exclusions): SRT -> warehouses BRW, MWH of company SRT; MCH -> HQ, MOCHA-WH of company MCH;
+  both = union.
+- U6 Every contact: packing list OFF, ETA buffer ON, stock ON, AI replies ON, escalation OFF, segment `retail`,
+  image media allowed, agent grants `general_enquiries`, `order_enquiries`, `incoming_stock_enquiries` allowed
+  1 Jan 2026 00:00 - 31 Dec 2026 00:00.
 - U7 [Q1] Add only: a type, company, brand, location, segment, grant the contact already holds is kept; nothing is
-  removed. Switches (packing, ETA, stock, AI, escalation) are set to the template value. A contact holding MORE
-  than its template (e.g. a dealer type on an Employee row, WH3) shows a warning "Holds more than the sheet".
+  removed. Switches (packing, ETA, stock, AI, escalation) are set to the template value. A contact holding more
+  than its template (types, companies or locations outside it) gets warning `holds_more`.
 
 ## Customer accounts
-- U8 Per dealer and brand company: every customer of that company whose normalised name equals the dealer text
-  (or an alt text), merge survivor and not held, is an exact match. A dealer with an exact match for every
-  brand company of its rows is "Exact".
-- U9 Otherwise "Needs a pick" (ranked candidates, none ticked, plus a customer search) or "No match" (search
-  only). Nothing is linked for a dealer the admin did not confirm, and that dealer's contacts are skipped whole
-  ("Dealer not confirmed").
-- U10 [Q4] Only accounts of the brand companies the row tags are proposed; exact accounts in an untagged brand
-  company are listed unticked.
-- U11 "Confirm all exact" ticks every Exact dealer; the admin can untick an account or a dealer before applying.
-- U12 Each proposed account shows debtor code, name, active/inactive and its sales agent, next to the sheet's
-  agent text. Inactive accounts are shown unticked. The sales agent is never written.
+- U8 Dealer block key = `normalise_name(dealer text)` (`scripts/contact_bulk_setup.py:563`); rows whose dealer
+  texts normalise equal share one block. Exact account = a customer of ANY company whose normalised name equals the
+  block's dealer text or an alt text, merge survivor and not held (`_merge_flags`, line 582).
+- U9 Block status: `exact` when every company the block's rows tag has at least one exact account; otherwise
+  `pick` with up to 5 ranked candidates per tagged company (similarity score, not ticked) when any exist, else
+  `none`. Rows of one block that tag different companies get warning `rows_disagree`.
+- U10 [Q4] Every exact account is proposed and ticked by default, including accounts of a company the rows do
+  not tag; inactive exact accounts are listed but not ticked.
+- U11 Nothing is linked for a block the admin did not confirm; its contacts are skipped "dealer_not_confirmed".
+  "Confirm all exact" confirms every `exact` block with its ticked accounts. A confirmed block links EVERY
+  confirmed account to EVERY found contact of the block.
+- U12 Each account shows debtor code, name, company, active flag and its sales agent; the sheet's agent text for
+  that company sits beside it. The sales agent is never written.
 
 ## Preview, apply, result
-- U13 Preview writes nothing (dry run). Counts: rows, contacts found, not in CRM, ambiguous, row errors, dealers
-  Exact / Needs a pick / No match, contacts already holding access.
-- U14 Apply sends the same file + the confirmed account ids; the server re-plans and writes everything in ONE
-  transaction. An error rolls back all of it and the admin sees the message; nothing is half-applied.
-- U15 Result: applied contacts (with what changed) and skipped contacts with reason (not in CRM yet, ambiguous
-  phone, dealer not confirmed, row error).
-- U16 One audit row per changed contact (`contact.access_sheet`, before/after per facet, actor = the admin).
-- U17 Uploading the same sheet with the same confirmations again changes nothing (0 applied, all "No change").
+- U13 Preview (`dry_run` true) writes nothing.
+- U14 Apply (`dry_run` false) sends the same file + the confirmed account ids per block; the server re-plans and
+  writes everything in ONE transaction. Any error rolls all of it back; nothing is half-applied.
+- U15 Result per contact: `applied` (with its changes), `no_change`, or `skipped` with reason (`not_in_crm`,
+  `ambiguous_phone`, `dealer_not_confirmed`, `row_error`).
+- U16 One audit row per changed contact (event `contact.access_sheet`, before/after per facet, actor = the
+  admin). No audit row for an unchanged contact.
+- U17 The same sheet with the same confirmations again: 0 applied, every found contact `no_change`.
 
 ## Permission and scope
-- U18 Needs `user_management.contacts.edit`. Facets the caller could not set directly are not written and are
-  listed as "Not applied: needs permission" (companies = superadmin; locations = `inventory.stock.edit`; agent
-  grants = `user_management.access_agents.edit`), exactly as the bulk copy.
-- U19 Only customers inside the caller's company scope are proposed or linkable; a confirmed id outside it is
-  refused (422) and nothing is written.
+- U18 Needs `user_management.contacts.edit` (403 otherwise). Facets the caller could not set directly are not
+  written and are listed per contact in `not_applied` (companies = superadmin; locations =
+  `inventory.stock.edit`; agent grants = `user_management.access_agents.edit`), via
+  `contact_access_copy_service.facets_to_skip`.
+- U19 Only customers inside the caller's company scope are proposed; a confirmed id that is unknown or outside
+  the caller's scope is refused (422) and nothing is written.
 
 ## Screen
-- U20 Contacts list > Import access sheet opens a dialog: Upload > Preview > Result (steps as Copy access).
-  Usable at 375 px and 1280 px; no UUIDs shown; dealer blocks collapsible; long names truncate with title.
+- U20 Contacts list > Actions > Import access sheet (shown with `user_management.contacts.edit`) opens a dialog:
+  Upload > Preview > Result, as mock v1 (`documentation/mockups/BULK-CONTACT-ACCESS/index.html`). Usable at
+  375 px and 1280 px; no UUIDs shown; dealer blocks collapsible; long names truncate with title. Result has
+  "Download result" (CSV built in the browser; cells starting with = + - @ are prefixed with ').

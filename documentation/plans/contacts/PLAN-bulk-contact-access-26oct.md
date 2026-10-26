@@ -1,8 +1,9 @@
 # PLAN: upload a dealer-contact sheet, bulk-configure each contact's access (BULK-CONTACT-ACCESS)
 
-Status: Phase 1 - card + mock v1 filed to crew 26 Oct, waiting on owner answers (Q1-Q5) and mock approval. No code yet. Track: L (new upload flow, bulk writes to contact
-access settings, customer linking). LEAD pattern. UAC: `bulk-contact-access-26oct-acceptance-criteria.md`
-(written after the owner answers the card).
+Status: Phase 2 - owner answered the card (26 Oct ~15:10: Q1 a, Q2 a, Q3 brands data-driven from
+`brands.company_id`, Q4 b every exact account ticked, Q5 a) and approved mock v1 (15:03); red tests next. Track: L
+(new upload flow, bulk writes to contact access settings, customer linking). LEAD pattern. UAC:
+`bulk-contact-access-26oct-acceptance-criteria.md`. Test DB: `sorento_bca_throwaway` via `.env.ci-tests`.
 
 ## Owner's words (26 Oct ~14:55, trimmed)
 "I have this CSV which are list of contacts and their corresponding companies, linked customer, sales agent. I
@@ -57,6 +58,31 @@ Shared mechanism (one copy, no second matcher, no second planner):
   (cells starting with = + - @ escaped).
 Classes fixed (not one shape): any brand-company combination of the row; any role word; dealer text and alt texts;
 any number of accounts per company; any prior access on the contact (add-only).
+
+## API contract (tester and coder both build to this)
+`POST /api/v1/user-management/contacts/access-sheet`, multipart: `file` (CSV), `dry_run` ("true" default),
+`confirmed` (JSON string `{"<block key>": ["<customer id>", ...]}`, only on apply). Response 200:
+```
+{ "dry_run": bool,
+  "counts": { "rows", "row_errors", "contacts_found", "not_in_crm", "ambiguous", "already_configured",
+              "blocks", "blocks_exact", "blocks_pick", "blocks_none", "applied", "no_change", "skipped" },
+  "errors": [ { "line", "reason" } ],
+  "blocks": [ { "key", "dealer", "alt_dealers": [], "companies": ["SRT","MCH"], "status": "exact|pick|none",
+      "warnings": ["rows_disagree"],
+      "accounts": [ { "customer_id", "customer_code", "customer_name", "company_code", "is_active",
+                      "sales_agent", "sheet_agent", "match": "exact|candidate", "score", "proposed": bool } ],
+      "contacts": [ { "line", "name", "phone", "in_crm", "contact_id", "role": "owner|employee",
+                      "companies": [], "template": "SRT+MCH owner", "status": "applied|no_change|skipped",
+                      "skip_reason": null|"not_in_crm"|"ambiguous_phone"|"dealer_not_confirmed"|"row_error",
+                      "changes": [ { "facet", "before", "after" } ], "warnings": ["holds_more"],
+                      "not_applied": ["companies", ...] } ] } ] }
+```
+In a dry run `status` says what apply WOULD do with the proposed accounts confirmed (`applied` = would change).
+`counts.applied` etc. follow the same rule. Errors: 403 without `user_management.contacts.edit`; 422 for a missing
+column, file over 2 MB / 2000 rows, malformed `confirmed`, or a confirmed id unknown / outside the caller's scope.
+FE pure helpers in `user-management/contacts/lib/accessSheet.ts`: `initialSelection(preview)` (proposed accounts
+ticked, no block confirmed), `confirmAllExact(preview, sel)`, `toConfirmedPayload(sel)` (confirmed blocks only,
+ticked ids only), `resultCsv(result)` (formula cells prefixed with ').
 
 ## Tests (tester writes first; fake names/phones)
 Backend `tests/test_contact_access_sheet.py` on `tests/_pg_fixture.py`: U1-U3 parse + phone, U4-U6 template x 6,
