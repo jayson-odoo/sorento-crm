@@ -307,11 +307,15 @@ describe('R3 the SPO column is wide enough on both tables', () => {
  * + the compact chip, so the chip is reachable. Measured: worklist number 124 px, Lines tab
  * number 143 px, "via PO" 52, chip 66, padding ~24. A saved narrower width clamps UP to that
  * table's own minimum, not to the old 320.
+ *
+ * ROUND 8 (owner, #1870 hand test: one pill at every width, truncating like other components)
+ * SUPERSEDES the compact chip: the floor is number + "via PO" + a TRUNCATED pill, so the
+ * ranges become worklist 240-270 and Lines tab 260-290.
  */
 describe('R4 the SPO column floor keeps the number, "via PO" and the compact chip', () => {
   const tables: Array<[string, () => unknown[], number, number]> = [
-    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 270, 300],
-    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 290, 320],
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 240, 270],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 260, 290],
   ];
 
   it.each(tables)('(a) the %s SPO column minSize is within its range', (_n, build, low, high) => {
@@ -354,47 +358,54 @@ describe.each<Where>(['worklist', 'lines'])('R5 the number leads, the receipt gi
     expect(button.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis|(^|\s)max-w-/);
   });
 
-  it('T2 the receipt pill is quiet and gives way first', () => {
-    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
-    const pill = receiptPill();
-    const classes = pill.className;
-    expect(classes).toContain('truncate');
-    expect(classes).toContain('min-w-0');
-    expect(classes).toContain('text-2xs');
-    expect(classes).toMatch(/(^|\s)px-1(\s|$)/);
-    expect(classes).toContain('text-muted-foreground');
-    expect(pill.getAttribute('title')).toBe('Received 60 at BRW-BB');
-  });
+  // ROUND 8 (owner, #1870 hand test, 26 Oct): "reuse our pill component ... when I shrink it
+  // should truncate like 'Rec..'". SUPERSEDES round-5 T2 (quiet text-2xs pill), T3 (compact
+  // "Received" fallback chip) and T4 (container queries): one pill, at every width.
 
-  it('T3 a compact clickable fallback names the receipt and opens the same view as +N', async () => {
+  it('R1 the receipt tag is the SAME pill component as "via PO" (the app Badge, same variant)', () => {
     show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
-    const fallback = document.querySelector(
-      'button[aria-label*="Received 60 at BRW-BB"]',
-    ) as HTMLElement | null;
-    expect(fallback).not.toBeNull();
-    fireEvent.click(fallback!);
-    expect(await screen.findByRole('dialog')).toBeTruthy();
-  });
-
-  it('T4 container queries pick which one shows', () => {
-    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
-    const number = screen.getByText(SPO).closest('button') as HTMLElement;
-    expect(number.closest('[class~="@container"]')).not.toBeNull();
-
-    let hider: HTMLElement | null = receiptPill();
-    let hides = false;
-    while (hider && !hides) {
-      hides = /(^|\s)@max-\[300px\]:hidden(\s|$)/.test(hider.className);
-      hider = hider.parentElement;
+    const via = screen.getByText('via PO').closest('[data-slot="badge"]') as HTMLElement | null;
+    const receipt = receiptPill().closest('[data-slot="badge"]') as HTMLElement | null;
+    expect(via).not.toBeNull();
+    expect(receipt).not.toBeNull();
+    const receiptClasses = new Set(receipt!.className.split(/\s+/));
+    for (const cls of via!.className.split(/\s+/).filter(Boolean)) {
+      expect(receiptClasses.has(cls), `receipt pill lacks "${cls}"`).toBe(true);
     }
-    expect(hides).toBe(true);
+  });
 
-    const fallback = document.querySelector(
-      'button[aria-label*="Received 60 at BRW-BB"]',
-    ) as HTMLElement | null;
-    expect(fallback).not.toBeNull();
-    expect(fallback!.className).toMatch(/(^|\s)hidden(\s|$)/);
-    expect(fallback!.className).toMatch(/@max-\[300px\]:(inline-flex|flex|inline-block|block)/);
+  it('R2 one pill at every width: no compact "Received" chip, no container queries', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    expect(screen.queryByText(/^Received$/)).toBeNull();
+    expect(document.querySelector('button[aria-label*="Received 60"]')).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/@container|@max-/);
+  });
+
+  it('R3 the pill truncates: ellipsis on its text, shrinkable, title holds the full text', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    const text = receiptPill();
+    const badge = text.closest('[data-slot="badge"]') as HTMLElement;
+    expect(badge).not.toBeNull();
+    expect(text.className).toContain('truncate');
+    expect(badge.className).toContain('min-w-0');
+    const titled = text.closest('[title]') as HTMLElement;
+    expect(titled.getAttribute('title')).toBe('Received 60 at BRW-BB');
+  });
+
+  it('R4 "+N" only counts extra document lines: one SPO line with receipts shows none', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    expect(screen.queryByText(/^\+\d+$/)).toBeNull();
+  });
+
+  it('R4 two bins on one line are two pills and still no "+N"', () => {
+    const link: Link = {
+      ...SPO_VIA_RECEIVED,
+      receipts: [{ qty: '30', bin: 'B1' }, { qty: '20', bin: 'B2' }],
+    };
+    show(cellOf(where, 'spo_number', rowWith([link])));
+    expect(screen.getByText('Received 30 at B1')).toBeTruthy();
+    expect(screen.getByText('Received 20 at B2')).toBeTruthy();
+    expect(screen.queryByText(/^\+\d+$/)).toBeNull();
   });
 });
 
