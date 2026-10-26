@@ -824,7 +824,10 @@ def _slim_orders_list_row(row: Any, product_query: str | None = None) -> Any:
     out: dict[str, Any] = {}
     for key, value in row.items():
         if key in _ORDERS_LIST_DROP_ROW_KEYS:
-            continue
+            # `customer` is dropped as the DO row's embedded customer OBJECT; an
+            # SO-outstanding row's `customer` is the plain-text name the presenter prints.
+            if not (key == "customer" and isinstance(value, str)):
+                continue
         # TCK-2026-000023: accept stale callers still sending delivery_time.
         if key == "delivery_time":
             if "pickup_time" not in row:

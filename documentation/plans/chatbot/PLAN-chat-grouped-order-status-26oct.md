@@ -1,7 +1,8 @@
 # PLAN: CHAT-GROUPED-ORDER-STATUS - grouped delivery-order list crashed the chat turn
 
-Status: in progress, fix committed, PR next (small fix track, crew lane CHAT-GROUPED-ORDER-STATUS, branch
-`crew/chat-grouped-order-status`). No migration, no auth/RBAC change, no prompt change.
+Status: in progress, PR #1869 open, reviewer READY, CI next (small fix track, crew lane
+CHAT-GROUPED-ORDER-STATUS, branch `crew/chat-grouped-order-status`). No migration, no auth/RBAC
+change, no prompt change.
 
 UAC: `chat-grouped-order-status-26oct-acceptance-criteria.md` (this folder).
 
@@ -40,9 +41,9 @@ confirmed from the repo.
 
 ## Other sanitizers checked (brief: same top-level-only pattern with `groups`)
 
-Only these backend routes emit `groups` of rows: orders list (`orders.py:562`, `:643`) and PO
-placed (`purchase_orders.py:194`). The PO placed tool has no MCP row slim at all, so its group
-rows are the same shape as its flat rows. `_slim_grn_response`, `_slim_rows` (projects,
+Only these backend routes emit `groups` of rows: orders list (`orders.py:562`, `:643`), PO
+placed (`purchase_orders.py:194`) and product find (`product_find.py:598`). Neither of the last
+two tools has an MCP row slim at all, so their group rows are the same shape as their flat rows. `_slim_grn_response`, `_slim_rows` (projects,
 quotations) and `_slim_promotion_products_response` are top-level-only too, but their routes emit
 no `groups`, so nothing to fix there today.
 
@@ -51,6 +52,11 @@ no `groups`, so nothing to fix there today.
 1. MCP `server.py`: `_slim_orders_list_response` also maps `_slim_orders_list_row` over every
    `groups[i]["rows"]`; `_strip_row_company_ids` walks the same group rows. A grouped answer's
    rows are then the same shape as the flat list (Status is text, no UUIDs).
+   Reviewer should-fix folded in: `_ORDERS_LIST_DROP_ROW_KEYS` drops `customer` for the DO row's
+   embedded customer object, but it also dropped the SO-outstanding row's plain-text `customer`
+   (`order_service.py:375`, printed by the presenter at `presenters.py:506`). Walking group rows
+   would have spread that loss to grouped SO answers, so `customer` is now dropped only when it is
+   not a string; flat SO-outstanding rows print Customer again too.
 2. Backend `compose.py::_row_key`: a dict/list field value becomes a stable string
    (`json.dumps(sort_keys=True, default=str)`), so no answer row shape can crash a turn. Dedupe
    semantics otherwise unchanged.
@@ -67,5 +73,6 @@ no `groups`, so nothing to fix there today.
 
 ## Track
 
-Small fix: diff well under 300 lines, no migration, no auth change, no new ingest surface. One
+Small fix: about 45 lines of product code (the rest of the ~380-line diff is tests and this
+plan), no migration, no auth change, no new ingest surface. One
 reviewer, no browser pass (no screen changed).

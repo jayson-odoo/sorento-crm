@@ -10,3 +10,4 @@ Plan: `PLAN-chat-grouped-order-status-26oct.md`.
   the same way as the flat rows.
 - AC-4: Any answer row whose field value is an object or a list no longer crashes the reply
   composer; two identical rows are still shown once.
+- AC-5: An outstanding sales order list prints each row's Customer, flat or grouped.
