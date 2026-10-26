@@ -78,9 +78,13 @@ version that carries the span marker. Every other version behaves exactly as tod
 - **AC-S2-2 [BE]** With the marker (`== LOOKUP SPANS ==` on its own line), exactly one span call runs before the
   parser, with no DB session open, and its spans go through `list_resolver.resolve` over the rows the contact may see
   (a dealer: its own customers only; salespeople only when the contact may see them), the same visibility as today.
-- **AC-S2-3 [BE]** The lookup blocks then hold only rows the resolver matched (resolved or ambiguous), plus held
-  values and number hits as today. A row the message never names is not offered: "check stock", "any promotion?" and
-  "basin price" offer no customer, promotion kind or yes/no spec row unless a span names one.
+- **AC-S2-3 [BE]** The lookup blocks then hold the rows the resolver matched (resolved or ambiguous), plus the rows
+  the message spells near-exactly (today's lookup spelling score >= 0.95; never a meaning-only or looser spelled hit),
+  plus held values and number hits as today. A row the message never names is not offered: "check stock", "any
+  promotion?" and "basin price" offer no customer, promotion kind or yes/no spec row unless a span names one or the
+  message spells the row near-exactly. Amended 27 Oct (crew ruling (b) V2, inside the owner's 26 Oct "two-pass +
+  union"): offline on the 198 recorded span answers, spans-only offered the gold row for 79.0% of mentions with 0.77
+  unnamed rows per message; adding near-exact spelled rows gives 85.0% with 1.02 (today's lookup: 4.57).
 - **AC-S2-4 [BE]** An ambiguous span renders at most `lookup_lists.TOP_K[list]` rows of a list, best first; the trace
   records how many rows were close.
 - **AC-S2-5 [BE]** A span call that fails, times out or returns invalid JSON leaves the turn on today's n-gram lookup
