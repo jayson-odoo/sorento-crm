@@ -41,14 +41,14 @@ TYPE_LIST = {t: t for t in SPAN_TYPES} | {"spec_value": "spec"}
 #: Per list: the floor each signal must reach. From the phase-1 calibration on the calibration half
 #: (reported on the test half); 1.01 turns a signal off for that list.
 FLOORS: dict[str, dict[str, float]] = {
-    "category": {"spell": 0.45, "partial": 0.8, "meaning": 0.55},
+    "category": {"spell": 0.45, "partial": 0.8, "meaning": 0.6},
     "spec": {"spell": 0.55, "partial": 0.8, "meaning": 0.55},
-    "file_type": {"spell": 0.5, "partial": 0.44, "meaning": 0.59},
+    "file_type": {"spell": 0.5, "partial": 0.5, "meaning": 0.59},
     "brand": {"spell": 0.5, "partial": 0.8, "meaning": 0.58},
     "promotion_kind": {"spell": 0.5, "partial": 1.01, "meaning": 0.6},
     "location": {"spell": 0.5, "partial": 0.8, "meaning": 0.55},
     "salesperson": {"spell": 0.4, "partial": 0.8, "meaning": 0.6},
-    "customer": {"spell": 0.5, "partial": 0.55, "meaning": 0.6},
+    "customer": {"spell": 0.5, "partial": 0.6, "meaning": 0.6},
     "sales_channel": {"spell": 0.5, "partial": 0.8, "meaning": 0.55},
     "spec_key": {"spell": 0.5, "partial": 0.8, "meaning": 0.6},
 }
