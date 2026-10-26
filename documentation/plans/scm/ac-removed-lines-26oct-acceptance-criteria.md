@@ -89,6 +89,14 @@ Reconciliation (Q4 a)
   and a second run finds nothing.
 - AC-RL-43 A CLI entry (`python -m scripts.release_removed_autocount_lines --company <id>
   [--apply]`) prints the dry-run report; it writes only with `--apply`.
+- AC-RL-45 SPO lines need an explicit allow-list (owner via crew, 26 Oct: the data cannot tell a
+  removed SPO line from one dropped by a cancelled SPO push or a superseded DocKey, and a
+  placement on a cancelled SPO stays placed, LINKAGE Q5). The dry run lists each SPO candidate:
+  SPO number, DtlKey, item code, placed qty, the SO numbers / order inquiry refs of its links.
+  `run(..., spo_dtl_keys=())` / CLI `--only <DtlKey>` (repeatable or comma separated): `--apply`
+  releases an SPO line ONLY when its DtlKey is listed; without `--only` it releases no SPO line
+  at all (PO and SO lines unaffected). A listed DtlKey that is not a candidate is reported and
+  ignored.
 - AC-RL-44 The reconciliation sends nothing: `--apply` retires SO rows (AC-RL-20) but queues no
   purchasing handover email or other notification (owner: minimum change management; these
   removals are weeks old). The ingest path keeps its AC-RL-20 handover.
