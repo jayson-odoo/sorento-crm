@@ -96,7 +96,8 @@ Reconciliation (Q4 a)
   `run(..., spo_dtl_keys=())` / CLI `--only <DtlKey>` (repeatable or comma separated): `--apply`
   releases an SPO line ONLY when its DtlKey is listed; without `--only` it releases no SPO line
   at all (PO and SO lines unaffected). A listed DtlKey that is not a candidate is reported and
-  ignored.
+  ignored. On `--apply` each SPO entry says whether it was released, and the summary's SPO line
+  and affected-row counts cover only the released lines (the owner reads these numbers).
 - AC-RL-44 The reconciliation sends nothing: `--apply` retires SO rows (AC-RL-20) but queues no
   purchasing handover email or other notification (owner: minimum change management; these
   removals are weeks old). The ingest path keeps its AC-RL-20 handover.
