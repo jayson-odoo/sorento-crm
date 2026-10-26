@@ -89,6 +89,9 @@ class ParserConfig:
     # CHAT-CLOSED-LISTS: the version carries the CLOSED LISTS section, so the user turn
     # carries the candidate block and grounding validates picks against the lists.
     closed_lists: bool = False
+    # CHAT-SLIM-INDEX: the version carries the LOOKUP LISTS line, so the user turn carries the
+    # lookup blocks and none of the per-turn list lines they replace.
+    lookup_lists: bool = False
     # CHAT-CODE-LOOKUP: the version also carries the CODE LOOKUP section (near codes are
     # listed and a product pick is checked against the block). Only with closed_lists.
     code_lookup: bool = False
@@ -971,6 +974,7 @@ def resolve_config(
 
     # ONE registry read: the gate reads the RAW template, the prompt is that same text rendered.
     from app.services.chatbot.head import closed_lists_index
+    from app.services.chatbot.head import lookup_lists as lookup_lists_mod
     from app.services.chatbot.head.chat_state_prompt import HEADING
     from app.services.chatbot.head.closed_lists_prompt import gate_on
 
@@ -1021,6 +1025,7 @@ def resolve_config(
         model=model,
         api_key=api_key,
         closed_lists=closed_lists,
+        lookup_lists=lookup_lists_mod.gate_on(raw_template),
         code_lookup=closed_lists and code_lookup_prompt.gate_on(raw_template),
         json_schema=json_schema,
         state_block=state_block,

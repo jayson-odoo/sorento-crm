@@ -16,7 +16,8 @@ export type PortalSubmissionKind =
   | 'complaint'
   | 'stock_inquiry'
   | 'purchase_request'
-  | 'sponsorship_form';
+  | 'sponsorship_form'
+  | 'project_registration';
 
 /** Canonical kind list - single source for route guards, tab lists, labels. */
 export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
@@ -24,6 +25,7 @@ export const SUBMISSION_KINDS: readonly PortalSubmissionKind[] = [
   'stock_inquiry',
   'purchase_request',
   'sponsorship_form',
+  'project_registration',
 ] as const;
 
 export function isSubmissionKind(
@@ -114,7 +116,7 @@ export const LANDING_KINDS: readonly PortalLandingKind[] = [
  * opt-in kind joins `LANDING_KINDS` above and appears here automatically.
  */
 export const ADDITIONAL_LANDING_KINDS: readonly PortalLandingKind[] = LANDING_KINDS.filter(
-  (k) => !isSubmissionKind(k),
+  (k) => !isSubmissionKind(k) || k === 'project_registration',
 );
 
 export function isLandingKind(
@@ -128,6 +130,7 @@ export const SUBMISSION_LABELS: Record<PortalSubmissionKind, string> = {
   stock_inquiry: 'Stock Inquiry',
   purchase_request: 'Purchase Request',
   sponsorship_form: 'Sponsorship Form',
+  project_registration: 'Project Registration',
 };
 
 /** Every kind the landing can list, legacy or gated (D45). */

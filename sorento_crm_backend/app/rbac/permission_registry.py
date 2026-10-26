@@ -668,6 +668,14 @@ PERMISSION_REGISTRY.extend([
         ),
     },
     {
+        "slug": "projects.registrations.approve",
+        "name": "Approve Project Registrations",
+        "description": (
+            "Review, approve or reject project registrations raised from the portal. "
+            "Approving creates the project and draws its PPF code."
+        ),
+    },
+    {
         "slug": "projects.stock_debt.view",
         "name": "View Stock Debt",
         "description": (

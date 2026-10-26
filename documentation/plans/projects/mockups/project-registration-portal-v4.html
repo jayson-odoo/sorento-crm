@@ -1,0 +1,240 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Project registration v4</title>
+<!-- PROJECT-REG-PORTAL mock v4 (25 Oct, owner notes on v3: existing screens only; no chat data in this file). Static, existing components only; every callout names its component and repo path (FE = sorento_crm_frontend/). Every name, lot, code and number is invented (public repo). -->
+<!-- NEW-PRODUCT-APP mock v4 (18 Oct): the owner kept the flow ("the flow is ok already") and asked the application to LOOK LIKE the company's paper NPA form. Layout follows crew's masked layout spec (18 Oct). The case is the invented sandbox case (SI26-0412 / XY-1234); every name, number and code is invented (public repo). No value from the owner's uploaded form is used. D1-D4 are drawn with crew's recommended answers as defaults; each is tagged on the frames so the owner can correct them in one pass. Built only from existing components; every callout names its component and repo path. FE = sorento_crm_frontend/. -->
+<style>
+:root{--fg:#09090b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;--primary:#1b84ff;--destructive:#dc2626;--callout:#e11d74;--dec:#7c3aed;--decbg:#f5f3ff;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 8px;max-width:980px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%}
+.frame{background:#fff;border:1px solid var(--border);border-radius:12px;position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:620px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:22px;height:22px;padding:0 3px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5;right:-8px;top:-8px}.rel{position:relative}
+.dtag{display:inline-flex;align-items:center;gap:4px;border:1px dashed var(--dec);background:var(--decbg);color:var(--dec);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap}
+.muted{color:var(--muted)}.xs{font-size:12px}.b{font-weight:600}
+.shell{display:flex}.side{width:232px;flex:none;border-right:1px solid var(--border);padding:16px 12px;background:#fcfcfd;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 18px}.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;margin:14px 8px 6px}
+.side .it{padding:6px 8px;border-radius:6px}.side .it.on{background:#e9f3ff;color:var(--primary);font-weight:600}
+.main{flex:1;min-width:0}.topbar{height:52px;border-bottom:1px solid var(--border)}.content{padding:20px 28px 28px}
+.phdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:8px}.phdr h1{font-size:20px;font-weight:600;margin:0}
+.crumb{font-size:12px;color:var(--muted)}
+.banner{border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:14px}
+.banner.ok{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:6px;padding:7px 14px;font:500 13px var(--font);white-space:nowrap}
+.btn.out{background:#fff;color:var(--fg);border-color:var(--border)}.btn.sm{padding:4px 10px;font-size:12px}
+.pill{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155}
+.pill.ok{background:#dcfce7;color:#166534}.pill.blue{background:#dbeafe;color:#1e40af}
+.badge2{display:inline-flex;border-radius:6px;background:var(--muted-bg);padding:1px 8px;font-size:12px;font-weight:500}
+.inp{border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:34px;display:flex;justify-content:space-between;align-items:center;gap:6px;background:#fff;font-size:14px;width:100%}
+.inp.ph{color:var(--muted)}.inp.ta{min-height:56px;align-items:flex-start}
+.req{color:var(--destructive)}
+.dd{border:1px solid var(--border);border-radius:6px;margin-top:4px;box-shadow:0 2px 6px rgba(0,0,0,.08);font-size:13px;background:#fff}
+.dd div{padding:6px 10px}.dd div.hl{background:var(--muted-bg)}
+
+/* the paper form: a bordered 2-column label:value sheet */
+.paper{max-width:860px;margin:0 auto;border:1px solid var(--border);border-radius:12px;background:#fff;padding:22px 26px 26px}
+.paper .ttl{text-align:center;font-size:20px;font-weight:700;text-decoration:underline;text-underline-offset:4px;letter-spacing:.02em;margin:4px 0 18px}
+.paper .sec{text-align:center;font-size:16px;font-weight:700;letter-spacing:.02em;margin:22px 0 10px}
+table.sheet{border-collapse:collapse;width:100%;table-layout:fixed}
+table.sheet th{width:200px;text-align:right;font-weight:700;font-size:13px;letter-spacing:.02em;padding:8px 12px;border:1px solid #d4d4d8;background:#fafafa;vertical-align:top}
+table.sheet td{padding:6px 10px;border:1px solid #d4d4d8;vertical-align:top;font-size:14px}
+table.sheet td .inp{border-color:transparent;padding:4px 2px;min-height:28px}
+table.sheet td.edit .inp{border-color:var(--border);padding:5px 8px}
+table.sheet tr.app th{color:var(--muted);font-weight:600}
+.prodhdr{display:flex;justify-content:space-between;align-items:center;background:var(--muted-bg);border:1px solid #d4d4d8;border-bottom:none;padding:6px 10px;font-weight:600;font-size:13px;margin-top:14px}
+.img{display:flex;gap:10px;flex-wrap:wrap}
+.ph-img{width:150px;height:110px;border:1px dashed #a1a1aa;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;text-align:center;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 8px,#f4f4f5 8px,#f4f4f5 16px)}
+.ph-add{width:150px;height:110px;border:1px dashed var(--primary);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:12px;text-align:center}
+.ro{color:var(--muted)}
+.opened{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:6px;padding:6px 10px;font-size:13px}
+.audit{max-width:860px;margin:16px auto 0;border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px 18px}
+
+/* phone */
+.w375 .content{padding:14px 12px}
+.w375 .paper{padding:14px 10px;border-radius:10px}
+.w375 table.sheet th,.w375 table.sheet td{display:block;width:auto;border:none;text-align:left;padding:2px 2px}
+.w375 table.sheet tr{display:block;border-bottom:1px solid #e4e4e7;padding:6px 0}
+.w375 table.sheet th{background:none;font-size:11px;color:var(--muted)}
+.w375 .ph-img,.w375 .ph-add{width:100px;height:80px}
+
+/* excel preview */
+.xl{background:#fff;border:1px solid #c7c7c7;width:640px;font:12px Calibri,Arial,sans-serif;margin:0 auto}
+.xl .bar{background:#217346;color:#fff;padding:6px 10px;font:12px var(--font)}
+.xl table{border-collapse:collapse;width:100%}
+.xl td{border:1px solid #9ca3af;padding:5px 8px;vertical-align:top}
+.xl td.l{width:150px;text-align:right;font-weight:700}
+.xl td.h{text-align:center;font-weight:700;font-size:16px}
+.dec{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0}
+.dec table{border-collapse:collapse;width:100%;font-size:13px}
+.dec th,.dec td{border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;vertical-align:top}
+.dec th{color:var(--muted);font-weight:500}
+.warn{border:1px solid #fde68a;background:#fffbeb;color:#78350f;border-radius:8px;padding:8px 12px;font-size:13px;margin:6px 0}
+.pill.red{background:#fee2e2;color:#991b1b}.pill.amber{background:#fef3c7;color:#92400e}
+table.grid{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed}
+table.grid th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border);padding:8px}
+table.grid td{border-bottom:1px solid var(--border);padding:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.portalbar{height:52px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;font-weight:700}
+.fld{margin-bottom:12px}.fld label{display:block;font-size:13px;font-weight:500;margin-bottom:4px}
+.form1{max-width:720px}
+.sect{border:1px solid var(--border);border-radius:10px;margin-bottom:12px}
+.sect .sh{padding:10px 14px;border-bottom:1px solid var(--border);font-weight:600;font-size:14px;display:flex;justify-content:space-between}
+.sect .sb{padding:14px;display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.sect .sb .full{grid-column:1/3}
+.meta{display:flex;gap:18px;flex-wrap:wrap;font-size:13px;color:var(--muted);margin:-6px 0 12px}
+.meta b{color:var(--fg);font-weight:500}
+.dup{font-size:13px;margin-bottom:12px}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Project registration from the portal, mock v4 (existing screens only)</h1>
+<p class="sub"><b>v4 = the owner's notes on v3 (12:45):</b> only the legacy AutoCount form's fields; the existing AI Extract; Possible duplicate just names the project; the CRM review is the existing project registration screen with Approve / Reject; the existing portal form and list. Card: <code>documentation/plans/projects/CARD-project-registration-portal-25oct.md</code> (v4). Open questions tagged <span class="dtag">Q1</span> to <span class="dtag">Q4</span>. Every name, lot and number is invented.</p>
+
+<!-- ============================================================ FRAME 1 -->
+<h2 class="ft">1. Portal form: the existing submission form, legacy fields only (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="portalbar">Sorento portal</div>
+ <div class="content">
+  <div class="phdr rel"><div style="display:flex;gap:10px;align-items:center"><span class="btn out sm">&larr; Back</span><span class="btn out sm">&#10022; AI Extract</span></div><div style="display:flex;gap:8px"><span class="btn out">Save draft</span><span class="btn">Submit</span></div><span class="co pin">1</span></div>
+  <h1 style="font-size:20px;margin:0 0 14px">New project registration</h1>
+  <div class="form1">
+   <div class="fld rel"><label>Project title <span class="req">*</span></label><div class="inp ta">CADANGAN MEMBINA KILANG 2 TINGKAT DI ATAS LOT 9001, MUKIM TEBRAU, DAERAH JOHOR BAHRU, JOHOR. UNTUK TETUAN ALPHA PACKAGING SDN BHD</div><span class="co pin">2</span></div>
+   <div class="warn dup rel">Possible duplicate: PPF2609023 Kilang Alpha Tebrau <span class="dtag">Q3</span><span class="co pin">3</span></div>
+   <div class="fld"><label>Distributor name</label><div class="inp">300-D021 Distributor D Sdn Bhd<span>&times;</span></div> <span class="dtag">Q1</span></div>
+   <div class="fld"><label>Sales agent</label><div class="inp ro" style="background:var(--muted-bg)">SA-007</div></div>
+   <div class="fld"><label>Customer name</label><div class="inp">Contractor C Sdn Bhd</div></div>
+   <div class="fld"><label>Type of building</label><div class="inp">Factory<span>&times;</span></div></div>
+   <div class="fld"><label>State <span class="req">*</span></label><div class="inp">Johor<span>&times;</span></div></div>
+   <div class="fld"><label>Mukim</label><div class="inp">Tebrau</div></div>
+   <div class="fld"><label>Your ref</label><div class="inp ph">-</div></div>
+   <div class="fld"><label>Developer <span class="req">*</span></label><div class="inp">Alpha Packaging Sdn Bhd</div></div>
+   <div class="fld"><label>Main contractor</label><div class="inp ph">-</div></div>
+   <div class="fld"><label>Architect</label><div class="inp ph">-</div></div>
+  </div>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>The existing portal submission form</b>One more kind in its FIELDS map; Back, AI Extract, Save draft / Submit as on every kind. Status, PPF No. and Date appear in the existing header reference line once submitted.<span class="ref">FE app/(auth)/portal/components/SubmissionForm.tsx:193 (FIELDS), :2225-2243 (header + AI Extract)</span></div></li>
+ <li><span class="co">2</span><div><b>The legacy fields, existing widgets</b>textarea, debtor-async, text, lookup-select. Nothing else on the form.<span class="ref">FE SubmissionForm.tsx:135-150 (WidgetKind)</span></div></li>
+ <li><span class="co">3</span><div><b>Possible duplicate</b>One line naming the project(s): PPF + title. No scores.<span class="ref">existing warning style of the form</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 2 -->
+<h2 class="ft">2. The existing AI Extract dialog on this kind</h2>
+<div class="layout">
+<div class="frame" style="width:520px;flex:none;padding:16px">
+ <div class="b" style="margin-bottom:8px">AI Extract <span class="co">4</span></div>
+ <div class="ph-img" style="width:100%;height:90px;margin-bottom:10px">drop a photo, or paste the title</div>
+ <table class="grid" style="font-size:12px">
+  <tr><th style="width:140px">Field</th><th>Value found</th></tr>
+  <tr><td>Project title</td><td>CADANGAN MEMBINA KILANG 2 TINGKAT ...</td></tr>
+  <tr><td>Developer</td><td>Alpha Packaging Sdn Bhd</td></tr>
+  <tr><td>State</td><td>Johor</td></tr>
+  <tr><td>Mukim</td><td>Tebrau</td></tr>
+  <tr><td>Type of building</td><td>Factory</td></tr>
+ </table>
+ <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><span class="btn out">Cancel</span><span class="btn">Confirm and prefill</span></div>
+</div>
+<div class="notes"><ol>
+ <li><span class="co">4</span><div><b>Reused as is</b>The same dialog every portal kind opens; only a new form key on the server lists the legacy fields.<span class="ref">FE app/(auth)/portal/components/AIExtractDialog.tsx:91; BE services/ai_extract/form_schema_registry.py:400 (+ portal.project_registration)</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 3 -->
+<h2 class="ft">3. Portal landing: the existing list (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="portalbar">Sorento portal</div>
+ <div class="content">
+  <div class="phdr rel"><div><h1>My submissions</h1></div><div style="display:flex;gap:8px"><div class="inp" style="width:240px">Project registration &#9662;</div><span class="btn">New</span></div><span class="co pin">5</span></div>
+  <table class="grid">
+   <tr><th style="width:120px">PPF No.</th><th style="width:100px">Date</th><th>Project title</th><th style="width:200px">Developer</th><th style="width:110px">Status</th></tr>
+   <tr><td class="muted">-</td><td>25/10/2026</td><td>CADANGAN MEMBINA KILANG 2 TINGKAT DI ATAS LOT 9001...</td><td>Alpha Packaging Sdn Bhd</td><td><span class="pill amber">Pending</span></td></tr>
+   <tr><td>PPF2610064</td><td>23/10/2026</td><td>TAMAN DELTA FASA 5</td><td>Developer X Sdn Bhd</td><td><span class="pill ok">Approved</span></td></tr>
+   <tr><td class="muted">-</td><td>20/10/2026</td><td>Setia Alam Ph 3B</td><td>Developer Y Bhd</td><td><span class="pill red">Rejected</span></td></tr>
+  </table>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">5</span><div><b>Existing landing</b>One more kind in the selector; the list, search and New button are the landing's own.<span class="ref">FE app/(auth)/portal/components/PortalLanding.tsx; lib/portal-form-kinds.ts; app/(auth)/portal/lib/landing-fields.ts</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 4 -->
+<h2 class="ft">4. CRM, Project Sales &gt; Registrations (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="shell">
+  <div class="side"><div class="brand">Sorento</div><div class="grp">Project sales</div><div class="it">Pipeline</div><div class="it on">Registrations</div><div class="it">Sample requests</div></div>
+  <div class="main"><div class="topbar"></div><div class="content">
+   <div class="phdr rel"><div><h1>Registrations</h1></div><span class="co pin">6</span></div>
+   <table class="grid">
+    <tr><th style="width:95px">Date</th><th>Project title</th><th style="width:170px">Developer</th><th style="width:90px">State</th><th style="width:80px">Agent</th><th style="width:230px">Possible duplicate</th><th style="width:90px">Status</th></tr>
+    <tr><td>25/10/2026</td><td>CADANGAN MEMBINA KILANG 2 TINGKAT DI ATAS LOT 9001...</td><td>Alpha Packaging Sdn Bhd</td><td>Johor</td><td>SA-007</td><td title="PPF2609023 Kilang Alpha Tebrau">PPF2609023 Kilang Alpha Tebrau</td><td><span class="pill amber">Pending</span></td></tr>
+    <tr><td>24/10/2026</td><td>Setia Alam Ph 3B</td><td>Developer Y Bhd</td><td>Selangor</td><td>SA-012</td><td>PPF2608041 Setia Alam Phase 3B</td><td><span class="pill amber">Pending</span></td></tr>
+    <tr><td>23/10/2026</td><td>Gamma D'Residence</td><td>Gamma Land Sdn Bhd</td><td>Selangor</td><td>SA-007</td><td class="muted">-</td><td><span class="pill amber">Pending</span></td></tr>
+   </table>
+  </div></div>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">6</span><div><b>Existing DataGrid listing</b>Possible duplicate = PPF + title only.<span class="ref">FE components/ui/data-grid.tsx; menu: config/menu.config.tsx (project-sales group), gated on projects.registrations.approve</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 5 -->
+<h2 class="ft">5. CRM review: the existing project registration form with Approve / Reject (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="shell">
+  <div class="side"><div class="brand">Sorento</div><div class="grp">Project sales</div><div class="it">Pipeline</div><div class="it on">Registrations</div></div>
+  <div class="main"><div class="topbar"></div><div class="content">
+   <div class="phdr rel"><div><h1>Register project <span class="pill amber">Pending</span></h1></div><div style="display:flex;gap:8px"><span class="btn out">Reject</span><span class="btn">Approve</span></div><span class="co pin">7</span></div>
+   <div class="meta rel"><span>Date <b>25/10/2026</b></span><span>Sales agent <b>SA-007</b></span><span>Distributor <b>300-D021 Distributor D Sdn Bhd</b></span><span>Customer <b>Contractor C Sdn Bhd</b></span><span>Your ref <b>-</b></span><span class="co">8</span></div>
+   <div class="warn dup">Possible duplicate: PPF2609023 Kilang Alpha Tebrau</div>
+   <div class="sect rel"><div class="sh">Who and what<span class="co">9</span></div><div class="sb">
+     <div><label class="xs b">Developer</label><div class="inp ph">Search developers <span class="xs" style="color:var(--fg)">(typed: Alpha Packaging Sdn Bhd)</span></div></div>
+     <div><label class="xs b">Project type</label><div class="inp">Factory<span>&times;</span></div></div>
+     <div class="full"><label class="xs b">Project title *</label><div class="inp">CADANGAN MEMBINA KILANG 2 TINGKAT DI ATAS LOT 9001, MUKIM TEBRAU, DAERAH JOHOR BAHRU, JOHOR. UNTUK TETUAN ALPHA PACKAGING SDN BHD</div></div>
+   </div></div>
+   <div class="sect rel"><div class="sh">Details<span class="co">10</span></div><div class="sb">
+     <div><label class="xs b">State</label><div class="inp">Johor<span>&times;</span></div></div>
+     <div><label class="xs b">Mukim</label><div class="inp">Tebrau</div></div>
+     <div><label class="xs b">Architect</label><div class="inp ph">Search architects</div></div>
+     <div><label class="xs b">Main contractor</label><div class="inp ph">Search contractors</div></div>
+     <div class="full muted xs">The form's other optional fields (location, value, brands, dates) stay as they are, empty unless the admin fills them.</div>
+   </div></div>
+   <div class="sect"><div class="sh">Salesperson and lead</div><div class="sb">
+     <div><label class="xs b">Salesperson</label><div class="inp">Salesperson A<span>&times;</span></div></div>
+   </div></div>
+  </div></div>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">7</span><div><b>Approve / Reject replace Save</b>Approve = the form's own register call: PPF number (Q2), stage Registered, template tasks; the existing lock refuses a hard duplicate. Reject asks a reason.<span class="ref">FE app/(protected)/project-sales/_shared/components/ProjectForm.tsx; BE services/project_service.py:70-195</span></div></li>
+ <li><span class="co">8</span><div><b>Read-only metadata under the header</b>The legacy fields the project form does not carry.<span class="ref">documentation/reference/DESIGN-LANGUAGE.md (metadata under the header)</span></div></li>
+ <li><span class="co">9</span><div><b>Existing sections, prefilled</b>A typed developer is picked as a party here before Approve, as staff do today.<span class="ref">ProjectForm.tsx:281 "Who and what"</span></div></li>
+ <li><span class="co">10</span><div><b>State + Mukim</b>The only two fields added to the project (Q2 answered: State + Mukim only).<span class="ref">ProjectForm.tsx:405 "Details"; BE models/projects.py:328 ProjectSalesProfile</span></div></li>
+</ol></div>
+</div>
+
+<div class="dec"><b>Questions left on card v4</b> <span class="muted">Q1 distributor = debtor pick, customer = typed; Q2 PPF drawn on Approve as the project code; Q3 possible duplicate named only, never blocks; Q4 "whose project" via the existing project picker for now. The frames draw these.</span></div>
+</div>
+</body>
+</html>

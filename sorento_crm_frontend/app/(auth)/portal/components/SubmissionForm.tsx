@@ -1,5 +1,6 @@
 'use client';
 
+import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useEffect,
   useLayoutEffect,
@@ -117,6 +118,7 @@ import {
   InquiryFormTableRow,
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
+import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
 
 type ProductLine = {
   item_code?: string;
@@ -146,6 +148,8 @@ type WidgetKind =
   | 'pill-text'
   | 'product-quantities'
   | 'contact-select'
+  /** A value the server owns (the sales agent's name): shown disabled from `displayFromDetail`, never saved. */
+  | 'readonly'
   /** Carries a value in the saved payload (the picked customer's id) but draws no control. */
   | 'hidden';
 
@@ -188,6 +192,14 @@ interface FieldDef {
    * ineligible contact still renders its name instead of a blank / UUID.
    */
   legacyLabelField?: string;
+  /** `debtor-async` only: the form asking, so the server offers only that form's debtors. */
+  lookupKind?: string;
+  /** `debtor-async` only: a pick or nothing; typed free text is discarded. */
+  pickOnly?: boolean;
+  /** `readonly` only: how the detail value reads (`date` = DD/MM/YYYY). */
+  displayFormat?: 'date';
+  /** Render only when the loaded record satisfies this (the submitted Date needs a submission). */
+  showWhenDetail?: (detail: PortalSubmissionDetail | null) => boolean;
 }
 
 const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
@@ -216,6 +228,52 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       label: 'Additional remark',
       widget: 'textarea',
     },
+  ],
+  // Legacy paper form order (PROJECT-REG-PORTAL D3). The sales agent is the contact's own
+  // agent, set by the server on create; required on submit: title, state, developer.
+  project_registration: [
+    { name: 'title', label: 'Project title', widget: 'textarea', required: true },
+    { name: 'distributor_name', label: 'Distributor name' },
+    {
+      name: 'sales_agent_name',
+      label: 'Sales agent',
+      widget: 'readonly',
+      displayFromDetail: 'sales_agent_name',
+    },
+    {
+      name: 'submitted_at_display',
+      label: 'Date',
+      widget: 'readonly',
+      displayFromDetail: 'submitted_at',
+      displayFormat: 'date',
+      showWhenDetail: (d) => Boolean(d?.submitted_at),
+    },
+    {
+      name: 'customer_name',
+      label: 'Customer name',
+      widget: 'debtor-async',
+      lookupKind: 'project_registration',
+      pickOnly: true,
+    },
+    { name: 'customer_id', label: 'Customer', widget: 'hidden' },
+    {
+      name: 'type_of_building',
+      label: 'Type of building',
+      widget: 'lookup-select',
+      setKey: 'project_building_type',
+    },
+    {
+      name: 'state',
+      label: 'State',
+      widget: 'lookup-select',
+      setKey: 'my_state',
+      required: true,
+    },
+    { name: 'mukim', label: 'Mukim' },
+    { name: 'your_ref', label: 'Your ref' },
+    { name: 'developer_name', label: 'Developer', required: true },
+    { name: 'main_contractor_name', label: 'Main contractor' },
+    { name: 'architect_name', label: 'Architect' },
   ],
   complaint: [
     {
@@ -391,6 +449,7 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
   stock_inquiry: ['salesperson_contact_id', 'salesperson'],
   purchase_request: ['requested_by_contact_id', 'requested_by'],
   sponsorship_form: ['requested_by_contact_id', 'requested_by'],
+  project_registration: [],
   complaint: [],
 };
 
@@ -409,6 +468,12 @@ function formatDraftSavedAt(iso: string): string {
   } catch {
     return iso;
   }
+}
+
+/** A stored (naive UTC) timestamp as DD/MM/YYYY in Malaysia time; anything else as it came. */
+function formatDisplay(value: string | undefined, format?: 'date'): string | undefined {
+  if (!value || format !== 'date') return value;
+  return formatDateInMalaysia(value) || value;
 }
 
 function fieldSpansFullWidth(f: FieldDef): boolean {
@@ -493,7 +558,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // The id to save/flush against: the route param when one exists, else
   // whatever a create call in THIS session already answered with (#482).
   const effectiveId = submissionId ?? createdSubmissionId ?? undefined;
-  const commentsTabbed = Boolean(effectiveId && detail && !detail.is_draft);
+  // A project registration is exactly its legacy fields: no comments thread, no attachments.
+  const takesExtras = kind !== 'project_registration';
+  const commentsTabbed = Boolean(takesExtras && effectiveId && detail && !detail.is_draft);
   const commentsThread = usePortalSubmissionComments(
     kind,
     effectiveId ?? '',
@@ -847,6 +914,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const cleanedFields = useMemo(() => {
     const out: Record<string, unknown> = {};
     for (const f of fieldDefs) {
+      if (f.widget === 'readonly') continue;
       const raw = fields[f.name];
       if (f.widget === 'do-multi-filter') {
         const arr = Array.isArray(raw) ? raw : [];
@@ -1342,7 +1410,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       if ('customer_name' in aiValues && 'customer_id' in next) next.customer_id = '';
       return next;
     });
-    if (payload.alsoAttach && payload.files.length > 0) {
+    if (takesExtras && payload.alsoAttach && payload.files.length > 0) {
       setPendingFiles((prev) => [...prev, ...payload.files]);
     }
 
@@ -1602,7 +1670,19 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // to "Draft", because the list row shows the same real status and the two
   // must never disagree. The "nothing sent yet" message lives in the
   // revising banner below, not in the pill.
-  const statusBadge = detail?.is_draft
+  // Project registration only: the server names existing projects that look the same (no links
+  // in the portal, and no ids).
+  const possibleDuplicates = Array.isArray(detail?.possible_duplicates)
+    ? (detail.possible_duplicates as { project_code: string | null; title: string }[])
+    : [];
+  const duplicateLine =
+    possibleDuplicates.length > 0
+      ? `Possible duplicate: ${possibleDuplicates
+          .map((d) => `${projectCodeLabel(d)} ${d.title}`)
+          .join(', ')}`
+      : null;
+
+  const statusBadge = detail?.is_draft && detail.status !== 'rejected'
     ? { label: 'Draft', variant: 'warning' as const }
     : detail?.status
       ? {
@@ -1728,11 +1808,14 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           </AlertContent>
         </Alert>
       )}
-      {detail?.rejection_reason && (
+      {(detail?.rejection_reason || detail?.reject_reason) && (
         <div className="rounded-md border border-destructive/40 bg-destructive/5 p-3 text-sm text-destructive">
           <p className="font-medium">Rejection reason</p>
-          <p>{detail.rejection_reason}</p>
+          <p>{detail.rejection_reason ?? String(detail.reject_reason)}</p>
         </div>
+      )}
+      {duplicateLine && (
+        <p className="text-sm text-muted-foreground">{duplicateLine}</p>
       )}
 
       {responseInfo && (
@@ -2082,6 +2165,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         </Card>
       )}
 
+      {takesExtras && (
       <Card>
         <CardHeader>
           <CardTitle className="text-base">Attachments</CardTitle>
@@ -2099,6 +2183,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           />
         </CardContent>
       </Card>
+      )}
 
       {reviseMode && (
         <Card>
@@ -2164,7 +2249,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         </div>
       ) : (
         <div className="flex flex-wrap gap-2 justify-end pt-2">
-          {submissionId && detail?.is_draft && (
+          {/* A rejected registration is editable but the server deletes drafts only. */}
+          {submissionId && detail?.is_draft && detail.status !== 'rejected' && (
             <Button
               variant="outline"
               className="text-destructive border-destructive/50 hover:bg-destructive/10 mr-auto"
@@ -2411,7 +2497,8 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         open={aiExtractOpen}
         onOpenChange={setAiExtractOpen}
         kind={kind}
-        fieldDefs={fieldDefs.filter((f) => f.widget !== 'hidden')}
+        canAttach={takesExtras}
+        fieldDefs={fieldDefs.filter((f) => f.widget !== 'hidden' && f.widget !== 'readonly')}
         onApply={handleAIExtractApply}
       />
 
@@ -2888,7 +2975,9 @@ function PurchaseRequestFormSection({
   const heading =
     kind === 'sponsorship_form'
       ? 'Project Sales Sponsorship Form'
-      : 'Purchase Request';
+      : kind === 'project_registration'
+        ? 'Project Registration'
+        : 'Purchase Request';
   return (
     <div className="w-full">
       <Card className="border-2 shadow-sm">
@@ -2908,6 +2997,7 @@ function PurchaseRequestFormSection({
             {fieldDefs
               .filter((f) => f.widget !== 'hidden')
               .filter((f) => (f.showWhen ? f.showWhen(fields) : true))
+              .filter((f) => (f.showWhenDetail ? f.showWhenDetail(detail) : true))
               .map((f) => (
                 <div
                   key={f.name}
@@ -2924,9 +3014,16 @@ function PurchaseRequestFormSection({
                     contactOption={resolveContactOption?.(f)}
                     displayValue={
                       f.displayFromDetail
-                        ? (((detail as Record<string, unknown> | null)?.[
-                            f.displayFromDetail
-                          ] as string | undefined) ?? undefined)
+                        ? (formatDisplay(
+                            ((detail as Record<string, unknown> | null)?.[
+                              f.displayFromDetail
+                            ] as string | undefined) ?? undefined,
+                            f.displayFormat,
+                          ) ??
+                          // A new form has no detail yet: the read-only agent name comes from /me.
+                          (f.widget === 'readonly'
+                            ? (contact?.sales_agent_name ?? undefined)
+                            : undefined))
                         : undefined
                     }
                   />
@@ -3048,6 +3145,8 @@ function FieldControl({
   const arrayValue = Array.isArray(value) ? value : [];
 
   switch (widget) {
+    case 'readonly':
+      return <Input id={field.name} value={displayValue ?? ''} disabled readOnly />;
     case 'textarea':
       return (
         <Textarea
@@ -3120,7 +3219,8 @@ function FieldControl({
             onChange(v);
             onDebtorChange?.(item);
           }}
-          fetchOptions={(q) => lookupDebtors(q)}
+          fetchOptions={(q) => lookupDebtors(q, 20, field.lookupKind)}
+          allowFreeText={!field.pickOnly}
           optionValue={(o) => o.debtor_name}
           optionLabel={(o) => o.debtor_name}
           optionMeta={(o) => o.customer_code}
@@ -3136,7 +3236,7 @@ function FieldControl({
           onChange={(v) => onChange(v)}
           fetchOptions={(q) => lookupProjects(q)}
           optionValue={(o) => o.id}
-          optionLabel={(o) => `${o.project_code} - ${o.title}`}
+          optionLabel={(o) => `${projectCodeLabel(o)} - ${o.title}`}
           // A registered project is picked, never typed: the column is a UUID FK, so
           // free text would reach the server as an id and fail there instead of here.
           allowFreeText={false}

@@ -61,7 +61,7 @@ from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
-from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, scheme_index
+from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, lookup_lists, scheme_index
 from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
@@ -1184,6 +1184,87 @@ def _candidate_lines(
         if failed_out is not None:
             failed_out.append(True)
     return (indexed or lines), codes, picks
+
+
+def _may_see_salespeople(db: Session, resolved: str) -> bool:
+    """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
+    `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
+    the rule the report route shares). Raises on a lookup error; `_lookup_lines` runs it in a savepoint
+    and a failure means no block."""
+    from app.services import contact_asker, contact_field_reveal_service
+
+    granted = "sales_orders.sales_report" in contact_field_reveal_service.granted_keys(db, resolved)
+    return contact_asker.may_ask_sales_ranking(db, str(resolved), granted=granted)[0] != "not_granted"
+
+
+def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[str] | None]:
+    """(include, ids) for the Customer block: office staff see every active customer; a dealer (linked
+    customers, no office access type, `ContactCustomerScope.enforced`) only its own links; a contact with
+    neither gets no Customer block. Raises on a lookup error (run in a savepoint by `_lookup_lines`)."""
+    from app.services import contact_customer_scope
+
+    scope = contact_customer_scope.contact_customer_scope(db, str(resolved))
+    if scope.staff:
+        return True, None
+    if scope.enforced:
+        return True, frozenset(scope.customer_ids)
+    return False, None
+
+
+def _lookup_lines(
+    db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line, plus the trace event
+    (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
+    leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
+    resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
+    database error in one drops only that block (fail closed)."""
+
+    def guarded(fn, default):
+        try:
+            with db.begin_nested():
+                return fn()
+        except Exception:  # noqa: BLE001 - fail closed
+            logger.warning("chatbot: lookup list visibility check failed", exc_info=True)
+            return default
+
+    try:
+        from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+        resolved = guarded(
+            lambda: resolve_contact_with_null_workspace_fallback(
+                db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
+            ),
+            None,
+        )
+        include_salespeople = bool(resolved) and guarded(lambda: _may_see_salespeople(db, str(resolved)), False)
+        include_customers, customer_ids = guarded(lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
+        with db.begin_nested():
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+            )
+            brand_words = lookup_lists.brand_words(db, brands)
+            embed = lookup_lists.embedder(db)
+            lookup_lists.warm(rows, embed)
+            hits = lookup_lists.shortlist(message, rows, lookup_lists.usable_embedder(rows, embed), brand_words=brand_words)
+            # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
+            if numbers:
+                hits["spec"] = [*numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+        event = {
+            "pieces": lookup_lists.pieces(message),
+            "hits": [
+                {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
+                for name in hits
+                for h in hits[name]
+            ],
+        }
+        return lookup_lists.render(hits), event
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
+        return [], {"pieces": [], "hits": [], "failed": True}
 
 
 def _scoped_factory(
@@ -4536,16 +4617,24 @@ def _run_stages_body(  # noqa: PLR0915
         # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
         # candidate lines name the product types and spec values the words say; the index
         # lines the held products' own values), so index mode reads neither.
-        product_types = None if parser_config.closed_lists_index else turn_runtime.product_type_names(db)
-        product_details = None if parser_config.closed_lists_index else turn_runtime.product_detail_values(db)
+        # CHAT-SLIM-INDEX: a version with the LOOKUP LISTS line gets the blocks instead of the five lists.
+        lists_free = parser_config.closed_lists_index or parser_config.lookup_lists
+        product_types = None if lists_free else turn_runtime.product_type_names(db)
+        product_details = None if lists_free else turn_runtime.product_detail_values(db)
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
         # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
         # applied at the parser's two entries (the block it is shown, the spec entities it emits).
         hidden_spec = (
             frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
-            if parser_config.closed_lists
+            if parser_config.closed_lists or parser_config.lookup_lists
             else frozenset()
+        )
+        lookup_lines, lookup_event = (
+            _lookup_lines(
+                db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+            )
+            if parser_config.lookup_lists else (None, None)
         )
         index_matches: list[dict] = []
         index_failed: list[bool] = []
@@ -4605,15 +4694,18 @@ def _run_stages_body(  # noqa: PLR0915
         media_line=None,
         task_lines=parser.open_task_lines(state_in.focus, open_question),
         open_question_line=parser.open_question_line(open_question),
-        brands=brands,
-        promotion_kinds=promotion_kinds,
+        brands=None if parser_config.lookup_lists else brands,
+        promotion_kinds=None if parser_config.lookup_lists else promotion_kinds,
         # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
         # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
-        sales_channels=list(SALES_CHANNELS) if parser_config.sales_channels else None,
+        sales_channels=(
+            list(SALES_CHANNELS) if parser_config.sales_channels and not parser_config.lookup_lists else None
+        ),
         product_types=product_types,
         product_details=product_details,
         recent_exchanges=recent,
         candidate_lines=candidate_lines,
+        lookup_lines=lookup_lines,
         state_block=state_block,
     )
     user_block, context_report = context_mod.assemble(context_layers)
@@ -4786,6 +4878,8 @@ def _run_stages_body(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    if lookup_event is not None:
+        turn_trace.add("lookup_lists", lookup_event)
     if parser_config.closed_lists_index:
         turn_trace.add(
             "closed_lists_index",

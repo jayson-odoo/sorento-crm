@@ -9,6 +9,21 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { cn } from '@/lib/utils';
 import type { Status } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 import type { Project } from '../../_shared/types/project.types';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
+
+/**
+ * Portal registrations waiting for a decision (PROJECT-REG-PORTAL R6). They have no stage by
+ * design, so they get their own lanes before the funnel instead of the "no stage" warning,
+ * and nothing is dragged into or out of them: only Approve gives a project its first stage.
+ */
+const WAITING_LANES = [
+  { state: 'pending', label: 'Awaiting approval', empty: 'Nothing waiting for approval' },
+  { state: 'rejected', label: 'Rejected', empty: 'Nothing rejected' },
+] as const;
+
+function isWaiting(project: Project): boolean {
+  return project.approval_state === 'pending' || project.approval_state === 'rejected';
+}
 
 /**
  * The pipeline as columns of configured statuses (AC-G3).
@@ -37,15 +52,20 @@ export function PipelineBoard({
   const columns = React.useMemo(() => {
     const grouped = new Map<string, Project[]>();
     statuses.forEach((status) => grouped.set(status.id, []));
+    const waiting = new Map<string, Project[]>(WAITING_LANES.map((lane) => [lane.state, []]));
+    const waitingIds = new Set<string>();
     const unplaced: Project[] = [];
     projects.forEach((project) => {
-      if (project.status_id && grouped.has(project.status_id)) {
+      if (isWaiting(project)) {
+        waiting.get(project.approval_state as string)!.push(project);
+        waitingIds.add(project.id);
+      } else if (project.status_id && grouped.has(project.status_id)) {
         grouped.get(project.status_id)!.push(project);
       } else {
         unplaced.push(project);
       }
     });
-    return { grouped, unplaced };
+    return { grouped, waiting, waitingIds, unplaced };
   }, [statuses, projects]);
 
   if (isLoading) {
@@ -92,7 +112,7 @@ export function PipelineBoard({
                   className="inline-flex items-center gap-1.5 rounded-md border border-border bg-background px-2 py-1 text-xs hover:bg-accent"
                 >
                   <span className="text-muted-foreground">
-                    {project.project_code}
+                    {projectCodeLabel(project)}
                   </span>
                   <span className="max-w-[16rem] truncate" title={project.title}>
                     {project.title}
@@ -105,6 +125,42 @@ export function PipelineBoard({
       )}
 
       <div className="flex gap-4 overflow-x-auto pb-3">
+        {WAITING_LANES.map((lane) => {
+          const cards = columns.waiting.get(lane.state) ?? [];
+          return (
+            // No drop target: a drop here is ignored, so nothing moves in.
+            <section
+              key={lane.state}
+              className="flex w-72 shrink-0 flex-col rounded-lg border border-dashed border-border bg-muted/20"
+            >
+              <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+                <h3 className="truncate text-sm font-semibold" title={lane.label}>
+                  {lane.label}
+                </h3>
+                <Badge variant="secondary" className="shrink-0">
+                  {cards.length}
+                </Badge>
+              </header>
+              <ul className="flex min-h-24 flex-col gap-2 p-2">
+                {cards.length === 0 ? (
+                  <li className="rounded-md border border-dashed border-border px-3 py-6 text-center text-xs text-muted-foreground">
+                    {lane.empty}
+                  </li>
+                ) : (
+                  cards.map((project) => (
+                    <ProjectCard
+                      key={project.id}
+                      project={project}
+                      locked
+                      onDragStart={() => undefined}
+                      onDragEnd={() => undefined}
+                    />
+                  ))
+                )}
+              </ul>
+            </section>
+          );
+        })}
         {statuses.map((status) => {
           const cards = columns.grouped.get(status.id) ?? [];
           const isTarget = hoverStatusId === status.id && dragProjectId !== null;
@@ -125,7 +181,8 @@ export function PipelineBoard({
                 setHoverStatusId(null);
                 const projectId = event.dataTransfer.getData('text/plain') || dragProjectId;
                 setDragProjectId(null);
-                if (projectId) onMove(projectId, status.id);
+                // A project waiting for approval never moves out of its lane.
+                if (projectId && !columns.waitingIds.has(projectId)) onMove(projectId, status.id);
               }}
             >
               <header className="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
@@ -172,17 +229,20 @@ export function PipelineBoard({
 function ProjectCard({
   project,
   isMoving,
+  locked,
   onDragStart,
   onDragEnd,
 }: {
   project: Project;
   isMoving?: boolean;
+  /** A card in a waiting lane: never dragged, whatever the user may edit. */
+  locked?: boolean;
   onDragStart: (event: React.DragEvent) => void;
   onDragEnd: () => void;
 }) {
   // Only a project the user may edit is draggable. A card that moves and then snaps
   // back with a 403 is worse than one that never moved.
-  const draggable = project.can_edit;
+  const draggable = project.can_edit && !locked;
   // The server stamps the rung per status threshold (AC-H4/H6). This card used to guess
   // with a flat 30 days, which was wrong in both directions: 30 days is fine at Registered
   // and far too long at Tendering.
@@ -213,7 +273,7 @@ function ProjectCard({
             className="block space-y-0.5 hover:underline"
           >
             <span className="text-xs text-muted-foreground">
-              {project.project_code}
+              {projectCodeLabel(project)}
             </span>
             <p className="line-clamp-2 text-sm font-medium leading-snug" title={project.title}>
               {project.title}

@@ -1088,6 +1088,11 @@ def set_project_lead(
 
     lead = None
     if new:
+        # A lead turns into a project here, and a portal registration waiting for approval
+        # is not one yet (PROJECT-REG-PORTAL R4).
+        from app.services.project_service import assert_project_approved, project_label
+
+        assert_project_approved(project)
         # Locked, so two saves racing to link the same lead cannot both pass the
         # already-linked check below.
         lead = (
@@ -1110,7 +1115,7 @@ def set_project_lead(
             raise AppException(
                 status_code=409,
                 message=(
-                    f"{lead.lead_code} is already linked to {other.project_code} "
+                    f"{lead.lead_code} is already linked to {project_label(other)} "
                     f'"{other.title}". Unlink it there first, or pick another lead.'
                 ),
                 code="lead_already_linked",

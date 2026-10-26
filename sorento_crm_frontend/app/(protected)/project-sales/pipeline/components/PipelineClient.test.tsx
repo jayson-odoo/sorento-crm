@@ -395,3 +395,34 @@ describe('PipelineClient, Start menu (S2)', () => {
     expect(within(row).queryByRole('button', { name: /^start/i })).toBeNull();
   });
 });
+
+describe('PipelineClient: the approval filter (R6, review round 3)', () => {
+  it.each([
+    ['Awaiting approval', 'pending'],
+    ['Rejected', 'rejected'],
+  ])('narrows the grid to %s registrations through the Filters popover', async (label, state) => {
+    renderClient();
+    switchToGrid();
+    await screen.findByPlaceholderText(/Search title or code/i);
+
+    openFilters();
+    const select = (await screen.findByLabelText('Any approval state')) as HTMLSelectElement;
+    expect(Array.from(select.options).map((o) => o.textContent)).toEqual(
+      expect.arrayContaining(['Awaiting approval', 'Rejected']),
+    );
+    fireEvent.change(select, { target: { value: state } });
+
+    await waitFor(() =>
+      expect(listProjects).toHaveBeenCalledWith(expect.objectContaining({ approval_state: state })),
+    );
+    expect(label).toBeTruthy();
+  });
+
+  it('asks for no approval state until one is picked', async () => {
+    renderClient();
+    await waitFor(() => expect(listProjects).toHaveBeenCalled());
+    for (const call of listProjects.mock.calls) {
+      expect(call[0].approval_state).toBeUndefined();
+    }
+  });
+});

@@ -82,7 +82,7 @@ def _assert_can_resolve(db: Session, divergence_id: str, current_user: dict):
     service = ProjectSODivergenceService(db)
     detail = service.get_divergence(divergence_id)
     project = projects.get_project_or_404(db, detail["project_id"])
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return service

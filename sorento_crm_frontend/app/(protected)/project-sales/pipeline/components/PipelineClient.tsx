@@ -4,6 +4,7 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Filter, KanbanSquare, Table2 } from 'lucide-react';
 import type { PaginationState, SortingState } from '@tanstack/react-table';
+import type { ProjectListParams } from '../../_shared/types/project.types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import {
@@ -66,6 +67,8 @@ export function PipelineClient() {
   const [developerFilter, setDeveloperFilter] = React.useState('');
   const [typeFilter, setTypeFilter] = React.useState('');
   const [onlyCritical, setOnlyCritical] = React.useState(false);
+  // A portal registration waiting for a decision, or refused (R6): '' is every project.
+  const [approvalFilter, setApprovalFilter] = React.useState('');
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -85,6 +88,7 @@ export function PipelineClient() {
     setOwnerFilter(urlState.filters.owner_user_id ?? '');
     setTypeFilter(urlState.filters.type_id ?? '');
     setOnlyCritical(urlState.filters.only_critical === 'true');
+    setApprovalFilter(urlState.filters.approval_state ?? '');
   });
 
   React.useEffect(() => {
@@ -101,6 +105,7 @@ export function PipelineClient() {
     developerFilter,
     typeFilter,
     onlyCritical,
+    approvalFilter,
   ]);
 
   const graph = useProjectStatusGraph('project');
@@ -115,6 +120,7 @@ export function PipelineClient() {
       owner_user_id: ownerFilter ? [ownerFilter] : undefined,
       type_id: typeFilter ? [typeFilter] : undefined,
       only_critical: onlyCritical || undefined,
+      approval_state: (approvalFilter || undefined) as ProjectListParams['approval_state'],
       page: view === 'board' ? 1 : pagination.pageIndex + 1,
       limit: view === 'board' ? 200 : pagination.pageSize,
       sort: sorting[0]?.id ?? 'created_at',
@@ -126,6 +132,7 @@ export function PipelineClient() {
       ownerFilter,
       typeFilter,
       onlyCritical,
+      approvalFilter,
       view,
       pagination,
       sorting,
@@ -154,9 +161,11 @@ export function PipelineClient() {
           owner_user_id: ownerFilter,
           type_id: typeFilter,
           only_critical: onlyCritical ? 'true' : '',
+          approval_state: approvalFilter,
         },
       ),
     [
+      approvalFilter,
       debouncedSearch,
       developerFilter,
       onlyCritical,
@@ -176,7 +185,7 @@ export function PipelineClient() {
   );
 
   const hasFilters = Boolean(
-    debouncedSearch || developerFilter || ownerFilter || typeFilter || onlyCritical,
+    debouncedSearch || developerFilter || ownerFilter || typeFilter || onlyCritical || approvalFilter,
   );
   const total = projects.data?.pagination.total ?? 0;
   const rows = projects.data?.data ?? [];
@@ -198,7 +207,10 @@ export function PipelineClient() {
   );
 
   const activeFilterCount =
-    (developerFilter ? 1 : 0) + (typeFilter ? 1 : 0) + (onlyCritical ? 1 : 0);
+    (developerFilter ? 1 : 0) +
+    (typeFilter ? 1 : 0) +
+    (onlyCritical ? 1 : 0) +
+    (approvalFilter ? 1 : 0);
 
   function clearFilters() {
     setSearch('');
@@ -206,6 +218,7 @@ export function PipelineClient() {
     setOwnerFilter('');
     setTypeFilter('');
     setOnlyCritical(false);
+    setApprovalFilter('');
   }
 
   // One definition of "the pipeline filters", fed to the grid toolbar in Grid view and
@@ -243,6 +256,22 @@ export function PipelineClient() {
             label: type.name,
           }))}
           placeholder="All types"
+        />
+      </div>
+      <div className="space-y-1.5">
+        <Label htmlFor="filter-approval" className="text-xs text-muted-foreground">
+          Approval
+        </Label>
+        <SearchableSelect
+          id="filter-approval"
+          value={approvalFilter}
+          onChange={setApprovalFilter}
+          clearable
+          options={[
+            { value: 'pending', label: 'Awaiting approval' },
+            { value: 'rejected', label: 'Rejected' },
+          ]}
+          placeholder="Any approval state"
         />
       </div>
       <div className="flex items-center gap-2">

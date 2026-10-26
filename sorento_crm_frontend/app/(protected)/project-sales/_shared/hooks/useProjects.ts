@@ -6,9 +6,12 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
+import { projectCodeLabel } from '../lib/projectCode';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
   addStakeholder,
+  approveProject,
+  rejectProject,
   changeProjectStatus,
   changeTaskStatus,
   createProjectTask,
@@ -170,6 +173,7 @@ export function projectsListParamsFromUrl(params: ListPagerParams): ProjectListP
       : undefined,
     type_id: params.filters.type_id ? [params.filters.type_id] : undefined,
     only_critical: params.filters.only_critical === 'true' || undefined,
+    approval_state: (params.filters.approval_state || undefined) as ProjectListParams['approval_state'],
     page: params.pageIndex + 1,
     limit: params.pageSize,
     sort: params.sorting[0]?.id ?? 'created_at',
@@ -335,12 +339,42 @@ export function useChangeProjectStatus() {
       changeProjectStatus(projectId, toStatusId),
     onSuccess: (project) => {
       invalidate(project.id);
-      toast.success(`${project.project_code} moved to ${project.status_label ?? 'a new stage'}`);
+      toast.success(`${projectCodeLabel(project)} moved to ${project.status_label ?? 'a new stage'}`);
     },
     onError: (error: Error, variables) => {
       invalidate(variables.projectId);
       toast.error(error.message);
     },
+  });
+}
+
+/**
+ * Approve a pending portal registration (PROJECT-REG-PORTAL R9). A refusal toasts the server's
+ * message and still rejects, so the header can link the project an exact duplicate names
+ * (`ProjectApprovalError.existingProject`).
+ */
+export function useApproveProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: (body?: Partial<ProjectRegisterBody>) => approveProject(projectId, body),
+    onSuccess: (project) => {
+      invalidate(projectId);
+      toast.success(`Approved as ${projectCodeLabel(project)}`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/** Reject a pending portal registration with a reason (R10). */
+export function useRejectProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: (reason: string) => rejectProject(projectId, reason),
+    onSuccess: () => {
+      invalidate(projectId);
+      toast.success('Registration rejected');
+    },
+    onError: (error: Error) => toast.error(error.message),
   });
 }
 
