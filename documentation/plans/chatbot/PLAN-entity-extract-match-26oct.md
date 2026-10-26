@@ -9,6 +9,10 @@ Owner rulings (26 Oct ~16:15, via crew): Q1 (a) two-pass + union, slices S1 -> S
 drop prompt alias lines, mining + approval queue only when >= 8 real mentions need it; Q4 (a) keep the in-process
 vector cache. Spend: report before going past the USD 6 already approved.
 
+Lane resources to drop after the last slice merges: DB `sorento_eem_throwaway` (copy of sorento_cgos_throwaway, owner
+sorento_crm) + `sorento_crm_backend/.env.ci-tests` (redis index 11); eval kit + real data stay in
+`crew/state/eval/eem/` (outside git).
+
 ## Owner ask (26 Oct ~14:40)
 
 "go for extract then match ... apply those matching on attachment type, spec, spec values, salesperson all those ...
