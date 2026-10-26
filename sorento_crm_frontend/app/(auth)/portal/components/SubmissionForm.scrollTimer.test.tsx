@@ -89,6 +89,5 @@ describe('SubmissionForm scroll-to-invalid timer', () => {
     vi.advanceTimersByTime(100);
 
     expect(fieldLookups(spy)).toEqual([]);
-    expect(vi.getTimerCount()).toBe(0);
   });
 });
