@@ -428,11 +428,11 @@ describe('PurchaseOrderDetail - the goods-receipt tab', () => {
     renderDetail();
     openTab('Goods receipt');
 
-    expect(screen.getByText(/Nothing received yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/Nothing transferred yet/i)).toBeInTheDocument();
     expect(screen.queryByText(/from the purchase orders list/i)).toBeNull();
   });
 
-  it('reports a part-received order as part-received', () => {
+  it('reports a part-transferred order as part-transferred (owner ruling c, 26 Oct)', () => {
     usePurchaseOrder.mockReturnValue({
       data: po({
         lines: [{ ...po().lines[0], qty_received: 120 }],
@@ -443,7 +443,7 @@ describe('PurchaseOrderDetail - the goods-receipt tab', () => {
     renderDetail();
     openTab('Goods receipt');
 
-    expect(screen.getByText(/120 of 320 received/i)).toBeInTheDocument();
+    expect(screen.getByText(/120 of 320 transferred/i)).toBeInTheDocument();
     expect(screen.getByText(/200 still to arrive/i)).toBeInTheDocument();
   });
 });
