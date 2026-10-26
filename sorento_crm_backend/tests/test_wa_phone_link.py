@@ -79,7 +79,8 @@ def _mod():
 class FakeClient:
     """Records every call. `phone_contact_id` None = Respond.io has no contact for the phone (404)."""
 
-    def __init__(self, phone_contact_id=PHONE_ID, *, lookup_error=None, merge_error=None, put_error=None):
+    def __init__(self, phone_contact_id=PHONE_ID, *, lookup_error=None, merge_error=None, put_error=None, wrapped=False):
+        self.wrapped = wrapped
         self.phone_contact_id = phone_contact_id
         self.lookup_error = lookup_error
         self.merge_error = merge_error
@@ -93,7 +94,8 @@ class FakeClient:
         if self.phone_contact_id is None:
             req = httpx.Request("GET", "https://api.example.test/v2/contact/phone")
             raise httpx.HTTPStatusError("not found", request=req, response=httpx.Response(404, request=req))
-        return {"id": self.phone_contact_id, "phone": f"+{E164}"}
+        record = {"id": self.phone_contact_id, "phone": f"+{E164}"}
+        return {"data": record} if self.wrapped else record
 
     def merge_contacts(self, contact_ids):
         self.calls.append(("merge", [int(x) for x in contact_ids]))
@@ -231,13 +233,14 @@ def test_wu11_bare_wa_id_matches_plus_phone_and_reverse():
 # ---------------------------------------------------------------- 2. link_phone
 
 
-def test_wu12_phone_contact_with_crm_row_merges_and_row_unchanged():
+@pytest.mark.parametrize("wrapped", [False, True], ids=["bare", "data_wrapped"])
+def test_wu12_phone_contact_with_crm_row_merges_and_row_unchanged(wrapped):
     m = _mod()
     with blank_session() as db:
         ws = _workspace(db)
         row = _row(db, f"+{E164}", allowed=True, workspace_id=str(ws.id))
         pk = str(row.id)
-        client = FakeClient()
+        client = FakeClient(wrapped=wrapped)
         out = m.link_phone(db, client, contact_respond_id=str(TURN_ID), phone=E164)
         assert out.status == "merged"
         assert ("merge", [PHONE_ID, TURN_ID]) in client.calls

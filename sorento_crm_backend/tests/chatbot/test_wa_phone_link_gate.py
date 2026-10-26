@@ -65,8 +65,23 @@ def _body(kind: str = "tap", text_: str = "hello", mid: str | None = None) -> di
     return body
 
 
-def _env(kind: str = "tap", *, text_: str = "hello", mid: str | None = None, contact: dict | None = None, **kw):
+_KEEP = object()
+
+
+def _env(
+    kind: str = "tap",
+    *,
+    text_: str = "hello",
+    mid: str | None = None,
+    contact: dict | None = None,
+    source: Any = _KEEP,
+    **kw,
+):
     body = _body(kind, text_, mid)
+    if source is None:
+        body["channel"].pop("source", None)
+    elif source is not _KEEP:
+        body["channel"]["source"] = source
     return _envelope(
         message=body,
         contact=contact or {"id": CONTACT_ID, "phone": None, "firstName": "CONTACT B", "custom_fields": []},
@@ -434,3 +449,62 @@ def test_wu1_no_card_reaches_the_parser_whoever_sends_it(session_factory, seeded
         result = _run(session_factory, _env(kind))
         assert result.branch_kind in PHONE_KINDS
     assert parser_calls == []
+
+
+# ---------------------------------------------------------------- WU20 WhatsApp only
+
+
+@pytest.mark.parametrize("source", ["wechat", "facebook"])
+@pytest.mark.parametrize("kind", ["text", "tap"])
+def test_wu20_non_whatsapp_unknown_phoneless_closes_as_today(
+    session_factory, parser_calls, world, monkeypatch, source, kind
+):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env(kind, source=source))
+    assert result.branch_kind == "ai_not_allowed"
+    assert result.actions == []
+    assert world.sends == []
+    assert world.calls == []
+    assert parser_calls == []
+
+
+@pytest.mark.parametrize("source", ["whatsapp_cloud", None])
+def test_wu20_whatsapp_cloud_and_absent_source_take_the_phone_flow(
+    session_factory, parser_calls, world, monkeypatch, source
+):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env("text", source=source))
+    assert result.branch_kind == "phone_ask"
+    assert world.sends == [(str(CONTACT_ID), "wa_phone_share")]
+
+
+# ---------------------------------------------------------------- WU21 accepted tap always retries
+
+
+def test_wu21_accepted_tap_links_even_with_a_handoff_in_the_window(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    _seed_turn(session_factory, "phone_handoff", hours_ago=1)
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_linked"
+    assert [k for k in world.calls if k[0] == "lookup"]
+    assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
+    assert world.messages == [(str(PHONE_ID), VERIFIED)]
+
+
+def test_wu21_a_second_failed_link_in_the_window_writes_no_second_comment(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    req = httpx.Request("POST", "https://api.example.test/v2/contact/merge")
+    world.merge_error = httpx.HTTPStatusError("boom", request=req, response=httpx.Response(500, request=req))
+    first = _run(session_factory, _env("tap"))
+    second = _run(session_factory, _env("tap"))
+    assert first.branch_kind == "phone_handoff"
+    assert second.branch_kind in {"phone_handoff", "phone_ignored"}
+    assert len(world.merges()) == 2
+    assert len(world.comments) == 1
+    assert world.messages == []
