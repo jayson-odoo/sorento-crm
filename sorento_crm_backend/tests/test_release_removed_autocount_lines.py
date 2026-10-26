@@ -55,11 +55,12 @@ from .test_order_inquiry_kinds import _link, _product, _sorento, _uid
 DB = "ZZT_DB"
 # DtlKeys are distinctive 5-digit numbers so the report can be searched as text.
 K_PO_REMOVED, K_PO_CLAIM_ONLY = "81001", "81002"
+K_PO_RESOLVED_ONLY, K_PO_LINK_AND_RESOLVED, K_PO_LIVE = "81007", "81008", "81009"
 K_PO_CANCEL_DOC, K_PO_REFLESS, K_PO_OPEN, K_PO_HDR_CANCELLED = "81003", "81004", "81005", "81006"
 K_SO_REMOVED, K_SO_CS_BOARD, K_SO_NO_ROWS = "82001", "82002", "82003"
 K_SO_CANCEL_DOC, K_SO_HDR_CANCELLED, K_SO_ACTIONED_ONLY = "82004", "82005", "82006"
 K_SPO_RETIRED, K_SPO_NOT_RETIRED, K_SPO_RETIRED_B = "83001", "83002", "83003"
-SELECTED = (K_PO_REMOVED, K_PO_CLAIM_ONLY, K_SO_REMOVED, K_SPO_RETIRED, K_SPO_RETIRED_B)
+SELECTED = (K_PO_REMOVED, K_PO_CLAIM_ONLY, K_PO_RESOLVED_ONLY, K_PO_LINK_AND_RESOLVED, K_SO_REMOVED, K_SPO_RETIRED, K_SPO_RETIRED_B)
 def _key(dtl: str) -> str:
     """The allow-list key (AC-RL-46): `<source DB>:<DtlKey>`."""
     return f"{DB}:{dtl}"
@@ -166,6 +167,23 @@ def _world(db) -> World:
     )
     w.po_claim_only = _po_line(db, c, po, w.product, K_PO_CLAIM_ONLY)
     w.claim_only = _claim(db, c, w.product, w.po_number, po_line=w.po_claim_only)
+    # --- a removed line holding ONLY a RESOLVED claim (no OI link), and one with a link AND a
+    # resolved claim: both selected, both lose every claim.
+    w.po_resolved_only = _po_line(db, c, po, w.product, K_PO_RESOLVED_ONLY)
+    w.resolved_only_claim = _claim(db, c, w.product, w.po_number, po_line=w.po_resolved_only)
+    w.resolved_only_claim.source = "autocount"
+    w.resolved_only_claim.resolved_at = datetime(2026, 10, 1)
+    w.po_link_resolved = _po_line(db, c, po, w.product, K_PO_LINK_AND_RESOLVED)
+    w.row_link_resolved, w.link_link_resolved = _row_linked(
+        db, c, w.product, po_line=w.po_link_resolved, doc=w.po_number
+    )
+    w.link_resolved_claim = _claim(db, c, w.product, w.po_number, po_line=w.po_link_resolved)
+    w.link_resolved_claim.source = "autocount"
+    w.link_resolved_claim.resolved_at = datetime(2026, 10, 1)
+    # --- AC-RL-47: a resolved claim from a LIVE PO line naming a REMOVED SO line. Left in
+    # place by the script, but listed in the report for the owner to correct in AutoCount.
+    w.po_live = _po_line(db, c, po, w.product, K_PO_LIVE, status="open")
+    w.claim_to_removed_so_number = None  # set once the SO chains exist, below
     # --- PO lines that must NOT be selected, each with a live link.
     unselected = {
         "cancel_doc": _po_line(db, c, po, w.product, K_PO_CANCEL_DOC, cancel_doc=True),
@@ -201,6 +219,14 @@ def _world(db) -> World:
         return so, core, row
 
     w.so_removed, w.so_core_removed, w.so_row_removed = _so_chain(K_SO_REMOVED)
+    w.claim_to_removed_so = OrderLinkClaim(
+        so_number=w.so_removed.so_number, po_number=w.po_number,
+        item_code=w.product.product_code, source="autocount", po_line_id=w.po_live.id,
+        so_line_id=w.so_core_removed.id, resolved_at=datetime(2026, 10, 1),
+        qty=Decimal("6.5"), company_id=c,
+    )
+    db.add(w.claim_to_removed_so)
+    db.flush()
     _so, _core, w.so_row_cs_board = _so_chain(K_SO_CS_BOARD, cs_board=True)
     _so, _core, w.so_row_no_live = _so_chain(K_SO_NO_ROWS, row_state=INQUIRY_CANCELLED)
 
@@ -359,6 +385,11 @@ def test_ac_rl_42_apply_releases_exactly_what_the_ingest_releases_and_leaves_the
     assert db.get(OrderInquiryRow, w.row_po_removed.id).ack_state == ACK_ACKNOWLEDGED
     # open claim on a removed line is DELETED, not stamped resolved (AC-RL-04).
     assert db.get(OrderLinkClaim, w.claim_only.id) is None
+    # AC-RL-04 / 41: a claim-only line (resolved claim, no link) is selected and its claim
+    # goes; a line with a link AND a resolved claim loses both.
+    assert db.get(OrderLinkClaim, w.resolved_only_claim.id) is None
+    assert db.get(OrderLinkClaim, w.link_resolved_claim.id) is None
+    assert str(w.link_link_resolved.id) not in live_links
     # SPO line retired: link gone (AC-RL-10).
     assert str(w.link_spo_retired.id) not in live_links
     assert _row_state(db, w.row_spo_retired) == INQUIRY_RAISED
@@ -550,7 +581,9 @@ def test_ac_rl_45_a_listed_key_that_is_not_a_candidate_is_reported_and_ignored(d
     live = _link_ids(db)
     assert w.kept_links["spo_not_retired"] in live, "a non-candidate is never touched"
     assert str(w.link_spo_retired.id) in live and str(w.link_spo_retired_b.id) in live
-    assert before["links"] - live <= {str(w.link_po_removed.id)}, "only PO/SO work was done"
+    assert before["links"] - live <= {
+        str(w.link_po_removed.id), str(w.link_link_resolved.id)
+    }, "only PO/SO work was done"
 
 
 def test_ac_rl_45_cli_only_releases_that_spo_line_and_apply_alone_releases_none(
@@ -641,3 +674,29 @@ def test_ac_rl_46_cli_refuses_a_bare_key_and_says_so(db, monkeypatch, capsys):
     live = _link_ids(db)
     assert str(w.twin["sorento"][2].id) in live and str(w.twin["mocha"][2].id) in live
     assert any(word in out for word in ("refus", "invalid", "ambig")), out
+
+
+# ====================================================================== AC-RL-47
+def test_ac_rl_47_a_claim_naming_a_removed_so_line_is_listed_and_left_in_place(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+
+    preview = run(db, w.company, dry_run=True)
+
+    text_ = _flat(preview)
+    assert w.po_number.lower() in text_, "PO number"
+    assert K_PO_LIVE in text_, "the PO line's DtlKey"
+    assert w.so_removed.so_number.lower() in text_, "SO number"
+    assert K_SO_REMOVED in text_, "the SO line's DtlKey"
+    assert "6.5" in text_, "claim qty"
+    assert "customer" not in text_ and "contact" not in text_
+
+    applied = run(db, w.company, dry_run=False, spo_dtl_keys=ALL_SPO)
+
+    db.expire_all()
+    assert db.get(OrderLinkClaim, w.claim_to_removed_so.id) is not None, "left in place"
+    # it is a report entry only: it adds nothing to the line counts.
+    assert (applied["po_lines"], applied["so_lines"]) == (4, 1), applied
+    assert preview["spo_lines"] == 6, preview
+    assert _flat(applied).count(w.so_removed.so_number.lower()) >= 1, "still reported on apply"

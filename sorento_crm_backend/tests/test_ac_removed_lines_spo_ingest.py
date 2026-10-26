@@ -288,3 +288,25 @@ def test_ac_rl_07_a_zero_line_spo_push_releases_nothing(env):
         text("SELECT count(*) FROM order_link_claim WHERE id = :i AND resolved_at IS NULL"),
         {"i": str(claim.id)},
     ).scalar() == 1
+
+
+def test_ac_rl_10_a_resolved_claim_on_the_retired_spo_line_is_deleted(env):
+    from datetime import datetime
+
+    w = _push_spo(env)
+    _row_on_spo(env, w, links=[(w.alloc_a, QTY)])
+    claim = OrderLinkClaim(
+        so_number=f"ZZT-SO-{uuid.uuid4().hex[:6]}", po_number=w.spo_number,
+        item_code=w.product_code, source="autocount", spo_allocation_id=w.alloc_a,
+        resolved_at=datetime(2026, 10, 1), company_id=env.company_a,
+    )
+    env.db.add(claim)
+    env.db.flush()
+    env.db.commit()
+
+    _repush(env, w, lines=[w.payload_b])
+
+    assert env.db.execute(
+        text("SELECT count(*) FROM order_link_claim WHERE spo_allocation_id = :i"),
+        {"i": w.alloc_a},
+    ).scalar() == 0, "a resolved claim on a retired SPO line goes too"

@@ -25,7 +25,7 @@ No real customer names anywhere in this file.
 from __future__ import annotations
 
 import uuid
-from datetime import date
+from datetime import date, datetime
 from decimal import Decimal
 
 import pytest
@@ -34,6 +34,7 @@ from sqlalchemy import text
 from app.models.audit import AuditLog
 from app.models.order import SalesOrderLine
 from app.models.procurement import PurchaseOrder
+from app.models.product import Product
 from app.models.project_so import (
     ACK_ACKNOWLEDGED,
     ACK_AWAITING,
@@ -715,3 +716,91 @@ def test_ac_rl_07_a_zero_line_so_push_retires_no_row(env):
     assert snap["link_ids"] == set(links), snap
     assert snap["state"] == INQUIRY_PLACED, snap
     assert _row_snapshot(env, raised)["state"] == INQUIRY_RAISED
+
+
+# ============================================== AC-RL-04 / 06: every claim, resolved too
+def _claim_on(env, w, line_id, *, source, resolved):
+    """A claim on `line_id` naming a REAL sales-order line with need left, so it reserves
+    (a dedication in PO detail Placed) while it stands. `resolved` stamps `resolved_at`."""
+    product = env.db.get(Product, w.product_id)
+    so, core, _pso, _mirror = _line_chain(env.db, env.company_a, product, qty="10")
+    claim = OrderLinkClaim(
+        so_number=so.so_number, po_number=w.po_number, item_code=w.product_code,
+        source=source, po_line_id=line_id, so_line_id=core.id,
+        resolved_at=datetime(2026, 10, 1) if resolved else None,
+        company_id=env.company_a,
+    )
+    env.db.add(claim)
+    env.db.flush()
+    env.db.commit()
+    return str(claim.id)
+
+
+def _claims_on_line(env, line_id) -> int:
+    env.db.expire_all()
+    return env.db.execute(
+        text("SELECT count(*) FROM order_link_claim WHERE po_line_id = :i"), {"i": line_id}
+    ).scalar()
+
+
+def _placed_blocks(env, w, line_id):
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    env.db.expire_all()
+    po = env.db.get(PurchaseOrder, w.header_id)
+    return [
+        b for b in PurchaseOrderService(env.db)._allocations_for(po)
+        if b["line_id"] == line_id
+        and (b["allocated"] or b["placements"] or b["dedicated_to"])
+    ]
+
+
+def test_ac_rl_04_06_a_resolved_and_an_open_claim_both_go_and_placed_reads_zero(env):
+    w = _push_po(env)
+    _oi_row_on(env, w)
+    _claim_on(env, w, w.line_a, source="autocount", resolved=True)
+    _claim_on(env, w, w.line_a, source="manual", resolved=False)
+    live_b = _claim_on(env, w, w.line_b, source="autocount", resolved=True)
+    assert _placed_blocks(env, w, w.line_a), "fixture: the line carries Placed before the push"
+
+    _repush_without_a(env, w)
+
+    assert _claims_on_line(env, w.line_a) == 0, "every claim on the removed line is deleted"
+    assert _placed_blocks(env, w, w.line_a) == [], "PO detail Placed reads 0"
+    assert _claims_on_line(env, w.line_b) == 1, "the live line's claim stays"
+
+
+def test_ac_rl_04_06_a_claim_only_removed_line_loses_the_claim_and_placed_reads_zero(env):
+    w = _push_po(env)  # no OI link at all on line A
+    _claim_on(env, w, w.line_a, source="autocount", resolved=True)
+    assert _placed_blocks(env, w, w.line_a), "fixture: the claim alone dedicates the line"
+
+    _repush_without_a(env, w)
+
+    assert _claims_on_line(env, w.line_a) == 0
+    assert _placed_blocks(env, w, w.line_a) == []
+
+
+def test_ac_rl_47_guard_a_claim_naming_a_removed_so_line_is_left_in_place(env):
+    # guard: the live PO line's own book still names the SO line, so deleting the claim
+    # would only be undone by the next PO push (owner Q3); the script reports it instead.
+    po = _push_po(env)
+    record, header, line_x, y = _push_so(env)
+    so_number = header["so_number"]
+    claim = OrderLinkClaim(
+        so_number=so_number, po_number=po.po_number, item_code=po.product_code,
+        source="autocount", po_line_id=po.line_b, so_line_id=str(line_x["id"]),
+        resolved_at=datetime(2026, 10, 1), company_id=env.company_a,
+    )
+    env.db.add(claim)
+    env.db.flush()
+    env.db.commit()
+
+    _remove_so_line_x(env, record, y)
+
+    row = env.db.execute(
+        text("SELECT so_line_id, po_line_id FROM order_link_claim WHERE id = :i"),
+        {"i": str(claim.id)},
+    ).mappings().first()
+    assert row is not None, "the claim must stay"
+    assert str(row["so_line_id"]) == str(line_x["id"]) and str(row["po_line_id"]) == po.line_b
