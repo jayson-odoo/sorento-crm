@@ -247,3 +247,52 @@ describe('F5 the Lines tab receipt pill is clickable like the worklist\'s', () =
     await waitFor(() => expect(getOrderInquirySpoDetail).toHaveBeenCalled());
   });
 });
+
+// ---------------------------------------------------------------------------- round 3 (layout)
+// jsdom has no layout, so these pin the structure that keeps the SPO number readable: a width
+// floor on the number, pills that never shrink or truncate, and a column wide enough for
+// number + "via PO" + "Received <qty> at <bin>" side by side.
+
+const SPO_VIA_RECEIVED: Link = {
+  id: 'derived-9', kind: 'spo', derived: true, document: SPO, line_label: 'L12',
+  qty: '60', received: true, receipts: [{ qty: '60', bin: 'BRW-BB' }], dead_reason: null,
+};
+
+describe.each<Where>(['worklist', 'lines'])('R3 layout of the SPO cell on the %s', (where) => {
+  it('(1) the SPO number button has a non-zero min-width floor and a title with the full number', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    const button = screen.getByText(SPO).closest('button') as HTMLElement;
+    expect(button.getAttribute('title')).toContain(SPO);
+    expect(button.className).toMatch(/(^|\s)min-w-(?!0(\s|$))\S+/);
+    expect(button.className).not.toMatch(/(^|\s)w-0(\s|$)/);
+  });
+
+  it('(2) the pills keep their full text: shrink-0 and no truncation class', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    for (const text of ['via PO', 'Received 60 at BRW-BB']) {
+      const pill = screen.getByText(text);
+      expect(pill.className).toContain('shrink-0');
+      expect(pill.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis/);
+    }
+  });
+});
+
+describe('R3 the SPO column is wide enough on both tables', () => {
+  function sizeOf(columns: unknown[]) {
+    const column = columns.find((c) => (c as { id?: string }).id === 'spo_number') as
+      | { size?: number }
+      | undefined;
+    expect(column).toBeDefined();
+    return column!.size ?? 0;
+  }
+
+  it('(3) the worklist SPO column is at least 320 wide', () => {
+    const { result } = renderHook(() => useOrderInquiryWorklistColumns());
+    expect(sizeOf(result.current)).toBeGreaterThanOrEqual(320);
+  });
+
+  it('(3) the Lines tab SPO column is at least 320 wide', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    expect(sizeOf(result.current)).toBeGreaterThanOrEqual(320);
+  });
+});
