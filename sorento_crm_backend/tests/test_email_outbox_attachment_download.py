@@ -192,3 +192,19 @@ def test_download_needs_email_outbox_view(setup):
     assert r.status_code == 403, r.text
     assert "system.email_outbox.view" in setup["slugs"]
     assert setup["backend"].asked == []
+
+
+def test_malformed_extra_attachments_do_not_break_the_row(setup):
+    # A non-string key is skipped (it can never be fetched); a non-string filename is shown
+    # as text. Neither may 500 the list or the detail.
+    setup["row"] = _row(
+        metadata_json={
+            "extra_attachments": [
+                {"storage_key": 12345, "storage_provider": "r2"},
+                {"filename": 7, "storage_provider": "r2", "storage_key": "uploads/lines/photo-7.png"},
+            ]
+        }
+    )
+    r = setup["client"].get(f"{BASE}/{setup['row'].id}")
+    assert r.status_code == 200, r.text
+    assert r.json()["attachments"] == [{"index": 0, "filename": "7"}]
