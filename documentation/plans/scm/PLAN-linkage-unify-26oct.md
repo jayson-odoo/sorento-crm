@@ -1,6 +1,6 @@
 # PLAN: one answer to "where are this SO line's goods now" (LINKAGE-UNIFY)
 
-Status: RULED 26 Oct 2026 (owner, card a76592390, section 5). Size L, lead pattern. Now: Q4 GR
+Status: RULED 26 Oct 2026 (owner, card a76592390, section 5). Size L, lead pattern. UAC: `linkage-unify-26oct-acceptance-criteria.md`. Mock v1 filed (1b863a9f54), Q6 filed. Now: Q4 GR
 check + Lavish mock v1 (OI Lines tab + worklist, OI-2609-0128); build only after the owner
 approves the mock. The fix is cut into the slices of section 6.
 Lane LINKAGE-UNIFY, branch `crew/linkage-unify`, base origin/main 263643ae36.
