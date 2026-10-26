@@ -86,12 +86,26 @@ export function receiptsByBin(receipts: OrderInquiryLinkReceipt[]): OrderInquiry
 }
 
 /**
+ * Below this cell width the receipt pills give way to one compact chip (owner, #1870 hand
+ * test: "the focus is on the SPO number; if I resize narrow I still need to see the
+ * number"). The cell root carries `@container`; at 220px the number, a draft mark and a
+ * "via PO" still fit, a readable receipt no longer does.
+ */
+const RECEIPTS_HIDE = '@max-[220px]:hidden';
+const FALLBACK_SHOW = '@max-[220px]:inline-flex';
+
+/**
  * LINKAGE-UNIFY U3 (AC-D1, AC-D3, AC-D4): the state pills beside ONE document line chip,
  * the same piece on the worklist (`DocumentsCell`), the Lines tab (`DocumentCell`) and
  * the backing-documents dialog, so the screens agree by construction. Red "PO cancelled"
  * / "SPO withdrawn" for a dead document (Q5); one "Received <qty> at <bin>" pill per bin
- * the goods landed at (Q1, Q6), every one visible. A PO chip only ever carries the PO
- * line's own receipts (Q4); goods that went on through an SPO are on the SPO's chip.
+ * the goods landed at (Q1, Q6). A PO chip only ever carries the PO line's own receipts
+ * (Q4); goods that went on through an SPO are on the SPO's chip.
+ *
+ * Round 5 (owner): the receipt pills are quieter than the number and give way FIRST - they
+ * ellipsize (full wording in `title`), and in a narrow cell they hide behind one compact
+ * "Received" chip whose label names every receipt and which opens the same view as the
+ * cell's "+N" (`onShowAll`). The number itself never truncates.
  */
 export function DocumentStatePills({
   receipts,
@@ -99,6 +113,7 @@ export function DocumentStatePills({
   testIdPrefix,
   testIdSuffix,
   onOpen,
+  onShowAll,
 }: {
   receipts: OrderInquiryLinkReceipt[];
   deadReason: OrderInquiryDeadReason | null;
@@ -108,7 +123,10 @@ export function DocumentStatePills({
   testIdSuffix: string;
   /** Makes each receipt pill a button that opens the document, as the chip does. */
   onOpen?: (event: React.MouseEvent) => void;
+  /** The narrow-cell chip opens what the cell's "+N" opens. No chip without it. */
+  onShowAll?: (event: React.MouseEvent) => void;
 }) {
+  const texts = receipts.map(receiptText);
   return (
     <>
       {deadReason ? (
@@ -116,16 +134,47 @@ export function DocumentStatePills({
           {DEAD_LABEL[deadReason]}
         </WorklistPill>
       ) : null}
-      {receipts.map((receipt, index) => (
-        <WorklistPill
-          key={`${receipt.bin ?? ''}-${index}`}
-          as={onOpen ? 'button' : 'span'}
-          testId={`${testIdPrefix}-received-${testIdSuffix}${index ? `-${index}` : ''}`}
-          onClick={onOpen}
+      {receipts.length ? (
+        <span className={`flex min-w-0 items-center gap-1 overflow-hidden ${RECEIPTS_HIDE}`}>
+          {receipts.map((receipt, index) => {
+            const testId = `${testIdPrefix}-received-${testIdSuffix}${index ? `-${index}` : ''}`;
+            const className =
+              'min-w-0 truncate rounded-sm px-1 text-2xs leading-4 text-muted-foreground ring-1 ring-inset ring-border';
+            return onOpen ? (
+              <button
+                key={`${receipt.bin ?? ''}-${index}`}
+                type="button"
+                data-testid={testId}
+                title={texts[index]}
+                className={`${className} hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+                onClick={onOpen}
+              >
+                {texts[index]}
+              </button>
+            ) : (
+              <span
+                key={`${receipt.bin ?? ''}-${index}`}
+                data-testid={testId}
+                title={texts[index]}
+                className={className}
+              >
+                {texts[index]}
+              </span>
+            );
+          })}
+        </span>
+      ) : null}
+      {receipts.length && onShowAll ? (
+        <button
+          type="button"
+          data-testid={`${testIdPrefix}-received-compact-${testIdSuffix}`}
+          aria-label={texts.join(', ')}
+          className={`hidden ${FALLBACK_SHOW} h-5 min-w-5 shrink-0 items-center justify-center rounded-full border border-transparent bg-secondary px-2 text-[0.6875rem] leading-[0.75rem] font-medium text-secondary-foreground dark:bg-secondary/50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
+          onClick={onShowAll}
         >
-          {receiptText(receipt)}
-        </WorklistPill>
-      ))}
+          Received
+        </button>
+      ) : null}
     </>
   );
 }

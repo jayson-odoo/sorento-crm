@@ -248,6 +248,7 @@ export function OrderInquiryDocumentLink({
   spoLineId,
   suggestedLineId,
   highlightLines,
+  whole = false,
 }: {
   kind: 'po' | 'spo';
   document: string;
@@ -257,6 +258,9 @@ export function OrderInquiryDocumentLink({
   spoLineId?: string | null;
   suggestedLineId?: string | null;
   highlightLines?: number[];
+  /** LINKAGE-UNIFY U3 round 5 (owner): the number never truncates - the PO/SPO cells,
+   * where the pills beside it give way first. Off, it truncates with its `title`. */
+  whole?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -264,9 +268,9 @@ export function OrderInquiryDocumentLink({
       <button
         type="button"
         data-testid={`document-detail-trigger-${document}`}
-        // LINKAGE-UNIFY U3 round 3: a width floor, so beside its pills the number shortens
-        // (full number in `title`) but never collapses to nothing.
-        className="block min-w-[9ch] max-w-full truncate rounded-sm font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={`block rounded-sm font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          whole ? 'shrink-0 whitespace-nowrap' : 'min-w-[9ch] max-w-full truncate'
+        }`}
         title={document}
         onClick={(event) => {
           event.stopPropagation();
@@ -825,11 +829,21 @@ function SpoBody({
 export function ViaSpoPoNumber({
   poNumber,
   purchaseOrderId,
+  whole = false,
 }: {
   poNumber: string;
   purchaseOrderId?: string | null;
+  /** As `OrderInquiryDocumentLink`'s own. */
+  whole?: boolean;
 }) {
-  return <OrderInquiryDocumentLink kind="po" document={poNumber} poId={purchaseOrderId ?? null} />;
+  return (
+    <OrderInquiryDocumentLink
+      kind="po"
+      document={poNumber}
+      poId={purchaseOrderId ?? null}
+      whole={whole}
+    />
+  );
 }
 
 export default OrderInquiryDocumentDialog;

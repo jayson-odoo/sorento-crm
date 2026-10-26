@@ -440,3 +440,14 @@ Tests (red first): the candidate walk offers no free SPO quantity a followed pla
 holds; a space-padded `from_po_line_ref` is followed by the own-arrival readers; an SPO with the
 same line ref under ANOTHER PO number is not; the ingest hook and `_book_names_target_for_line`
 follow the same key (trim, product).
+## 11. Owner rulings after the U3 hand test and the U4 mock (26 Oct, ~13:40-13:50)
+
+- #1870 hand test: the document number (SPO and PO) never truncates at any column width; the
+  "Received <qty> at <bin>" tag is a smaller, quieter pill (`text-2xs`, muted) that gives way
+  first: it ellipsizes, then (cell under 220 px, Tailwind container query) collapses into a
+  compact "Received" chip that opens the backing-documents dialog / Lines tab popover. Wording
+  kept; a shorter form may be proposed in the next hand-test note (owner decides).
+- U4 mock: (a) NO "In transit" tag in the popups; (c) "Qty received" / "Received" on both PO
+  screens renamed "Transferred"; (b) "SPO withdrawn" explained on #1870 (`retired_at`, L784
+  example); the red pill stays until the owner picks a name ("SPO line removed" /
+  "Dropped from SPO" offered). Build U4 after the #1870 round-5 pill fix.

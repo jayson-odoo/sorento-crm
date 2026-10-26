@@ -19,6 +19,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
   PopoverPortal,
   PopoverTrigger,
@@ -126,45 +127,55 @@ function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo'): DocumentEn
 }
 
 function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
+  // Round 5: the popover opens from "+N" or from the narrow-cell receipt chip, so it is
+  // positioned against the whole cell rather than one trigger.
+  const [open, setOpen] = React.useState(false);
   const chips = lineDocumentsOf(line, kind);
   if (chips.length === 0) return <span className="text-muted-foreground">-</span>;
   const [first, ...rest] = chips;
   return (
-    <span className="flex min-w-0 items-center gap-1">
-      <DocumentCell chip={first} kind={kind} />
-      {rest.length > 0 ? (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
-              aria-label={`${rest.length} more ${kind.toUpperCase()}`}
-            >
-              +{rest.length}
-            </Button>
-          </PopoverTrigger>
-          {/* Portalled (owner, 29 Sep 2026): unportalled, the content painted inside the
-              table and the next row's own "+N" chip showed through it. At the document
-              root it sits above every row, and `collisionPadding` keeps it inside the
-              viewport the way the shared `PillOverflow` popover does. */}
-          <PopoverPortal>
-            <PopoverContent
-              align="start"
-              collisionPadding={8}
-              className="w-auto max-w-xs space-y-1 p-2"
-            >
-              {chips.map((chip) => (
-                <div key={chip.key}>
-                  <DocumentCell chip={chip} kind={kind} showLine />
-                </div>
-              ))}
-            </PopoverContent>
-          </PopoverPortal>
-        </Popover>
-      ) : null}
-    </span>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        {/* A container, so the receipt pills hide behind one compact chip in a narrow
+            cell while the number stays whole (`DocumentStatePills`). */}
+        <span className="@container flex w-full min-w-0 items-center gap-1">
+          <DocumentCell
+            chip={first}
+            kind={kind}
+            onShowAll={(event) => {
+              event.stopPropagation();
+              setOpen(true);
+            }}
+          />
+          {rest.length > 0 ? (
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
+                aria-label={`${rest.length} more ${kind.toUpperCase()}`}
+              >
+                +{rest.length}
+              </Button>
+            </PopoverTrigger>
+          ) : null}
+        </span>
+      </PopoverAnchor>
+      {/* Portalled (owner, 29 Sep 2026): unportalled, the content painted inside the
+          table and the next row's own "+N" chip showed through it. At the document
+          root it sits above every row, and `collisionPadding` keeps it inside the
+          viewport the way the shared `PillOverflow` popover does. */}
+      <PopoverPortal>
+        <PopoverContent align="start" collisionPadding={8} className="w-auto max-w-xs space-y-1 p-2">
+          {chips.map((chip) => (
+            <div key={chip.key}>
+              <DocumentCell chip={chip} kind={kind} showLine />
+            </div>
+          ))}
+        </PopoverContent>
+      </PopoverPortal>
+    </Popover>
   );
 }
 
@@ -172,12 +183,15 @@ function DocumentCell({
   chip,
   kind,
   showLine = false,
+  onShowAll,
 }: {
   chip: DocumentEntry;
   kind: 'po' | 'spo';
   /** Name the line (`L7`) beside the number - the "+N" list, where lines of one
    * document sit side by side. */
   showLine?: boolean;
+  /** What the narrow-cell receipt chip opens: the cell's own "+N" list. */
+  onShowAll?: (event: React.MouseEvent) => void;
 }) {
   // LINKAGE-UNIFY U3 round 2: the receipt pill opens the same document the number does,
   // as the worklist's own receipt pill opens its lightbox.
@@ -193,7 +207,7 @@ function DocumentCell({
   return (
     <span className="flex min-w-0 items-center gap-1">
       {derived ? (
-        <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} />
+        <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} whole />
       ) : (
         <OrderInquiryDocumentLink
           kind={kind}
@@ -201,6 +215,7 @@ function DocumentCell({
           poId={link?.po_id}
           poLineId={link?.po_line_id}
           spoLineId={link?.spo_allocation_id}
+          whole
         />
       )}
       {showLine && chip.lineLabel ? (
@@ -221,6 +236,7 @@ function DocumentCell({
           event.stopPropagation();
           setDocumentOpen(true);
         }}
+        onShowAll={onShowAll}
       />
       {documentOpen ? (
         <OrderInquiryDocumentDialog
