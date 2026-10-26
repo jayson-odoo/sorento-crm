@@ -801,9 +801,11 @@ export function useOrderInquiryHeaderLinesColumns({
         // LINKAGE-UNIFY U3 round 3: the worklist's own SPO width - number, "via PO",
         // "Received <qty> at <bin>" and "+1" side by side at 1280.
         size: 340,
-        // Round 4: a floor TanStack's `getSize()` clamps to. The old 170 default is saved
-        // in some users' column preferences for this listing key; it lifts to this.
-        minSize: 320,
+        // Round 4/6: a floor TanStack's `getSize()` clamps to. The old 170 default is saved
+        // in some users' column preferences for this listing key; it lifts to this. Fits
+        // the number (143px), "via PO" (52) and the compact Received chip (66) with gaps
+        // and cell padding, so a narrow resize reaches the chip.
+        minSize: 300,
         meta: { headerTitle: 'SPO' },
         cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="spo" />,
       },

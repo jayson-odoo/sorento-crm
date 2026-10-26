@@ -88,11 +88,13 @@ export function receiptsByBin(receipts: OrderInquiryLinkReceipt[]): OrderInquiry
 /**
  * Below this cell width the receipt pills give way to one compact chip (owner, #1870 hand
  * test: "the focus is on the SPO number; if I resize narrow I still need to see the
- * number"). The cell root carries `@container`; at 220px the number, a draft mark and a
- * "via PO" still fit, a readable receipt no longer does.
+ * number"). The cell root carries `@container`. Round 6: at 300px the number, "via PO" and
+ * a readable receipt no longer fit side by side, so the chip takes over from there down to
+ * the SPO column's own floor (`minSize`), which still fits the number, "via PO" and the
+ * chip.
  */
-const RECEIPTS_HIDE = '@max-[220px]:hidden';
-const FALLBACK_SHOW = '@max-[220px]:inline-flex';
+const RECEIPTS_HIDE = '@max-[300px]:hidden';
+const FALLBACK_SHOW = '@max-[300px]:inline-flex';
 
 /**
  * LINKAGE-UNIFY U3 (AC-D1, AC-D3, AC-D4): the state pills beside ONE document line chip,
