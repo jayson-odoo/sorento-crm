@@ -439,6 +439,9 @@ jobs:
           # job does not run on any other label).
           LABEL: ${{ github.event.label.name }}
           PR: ${{ github.event.pull_request.number }}
+          # pull_request: the PR head now (the PR gate tests it merged into
+          # main's head now, scripts/ci_merge_main.sh).
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # Release inputs (workflow_dispatch only; empty on every other event).
           SKIP_TESTS: ${{ inputs.skip_tests }}
           FULL_SUITE: ${{ inputs.full_suite }}
@@ -467,11 +470,24 @@ jobs:
               # A merge tree whose PR gate already passed (a re-label with no
               # new commit on either side) tests nothing (CI-COST round 2:
               # 1.15 runs per head, 4-11 Oct; the PR gate still runs its
-              # secret scan). `PUSH_AFTER` is the merge
-              # commit here. The marker's own prefix keeps a release, which
-              # looks up `validated-tree-`, running its own tests. A failed
-              # lookup tests.
-              tree=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$PUSH_AFTER" --jq '.tree.sha') || tree=""
+              # secret scan). `PUSH_AFTER` is GitHub's merge commit here,
+              # built when the head was pushed and NOT rebuilt when main
+              # moves (CI-STALE-MERGE-REF: run 40354117904 took the marker
+              # for a merge on 1aaeed54 while main was seven merges on). The
+              # PR gate tests the head merged into main's head at job time
+              # and marks that tree, so the marker counts only when this
+              # merge commit is that merge: parent 1 is main's head now and
+              # parent 2 is the PR head. The marker's own prefix keeps a
+              # release, which looks up `validated-tree-`, running its own
+              # tests. A failed lookup tests.
+              merge=$(gh api "repos/$GITHUB_REPOSITORY/git/commits/$PUSH_AFTER" \
+                        --jq '"\(.tree.sha) \(.parents[0].sha) \(.parents[1].sha)"') || merge=""
+              main=$(gh api "repos/$GITHUB_REPOSITORY/git/ref/heads/main" --jq '.object.sha') || main=""
+              read -r tree merged_main merged_head <<< "$merge"
+              if [ -n "$tree" ] && [ "$merged_main $merged_head" != "$main $HEAD_SHA" ]; then
+                echo "merge commit $PUSH_AFTER holds main $merged_main and head $merged_head; now main is ${main:-unknown} and the head $HEAD_SHA: testing"
+                tree=""
+              fi
               if [ -n "$tree" ] \
                   && n=$(gh api "repos/$GITHUB_REPOSITORY/actions/artifacts?name=pr-validated-tree-$tree&per_page=5" \
                            --jq '[.artifacts[] | select(.expired | not)] | length') \
@@ -671,15 +687,27 @@ jobs:
 
       # Only on a PR that changes backend code: the selection reads the
       # backend sources, and nothing else in this job needs a checkout.
-      # Sparse: app/, scripts/ and tests/ are all the script parses.
+      # Sparse: app/, scripts/ and tests/ are all the script parses (plus
+      # the root scripts/ for the merge below). On a PR the PR head with its
+      # history (sparse means blob:none, so commits and trees only), merged
+      # with main's head in the next step: the selection reads the tree the
+      # PR gate tests, not GitHub's merge commit (CI-STALE-MERGE-REF). The
+      # `ref` is empty off a PR, so a release checks out as before.
       - name: Checkout backend sources for test selection
         if: steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true'
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           sparse-checkout: |
+            scripts
             sorento_crm_backend/app
             sorento_crm_backend/scripts
             sorento_crm_backend/tests
+
+      - name: Merge main's current head into the PR head
+        if: github.event_name == 'pull_request' && (steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true')
+        run: bash scripts/ci_merge_main.sh
 
       # Point 5 of the job comment. Stdlib-only script on the runner's own
       # python3; it prints the selection, so the job log shows what runs.
@@ -1500,10 +1528,23 @@ jobs:
       # changed (`vitest --changed` diffs against the base commit). '0' is
       # quoted: a bare 0 is falsy in an expression, so the unquoted form was
       # always 1 (run 38124709009: gitleaks "Invalid revision range").
+      # On a PR the PR head, not GitHub's merge commit (the default), which
+      # is built when the head is pushed and not rebuilt when main moves; the
+      # next step merges main's head now (CI-STALE-MERGE-REF). The `ref` is
+      # empty off a PR, so a release checks out as before.
       - name: Checkout
         uses: actions/checkout@v4
         with:
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: ${{ (github.event_name == 'pull_request' || needs.changes.outputs.frontend == 'true') && '0' || '1' }}
+
+      # Before every gate, so the alembic head check, the tests, tsc, vitest
+      # and the validated-tree marker all see what would land now. A
+      # conflict fails the PR gate here.
+      - name: Merge main's current head into the PR head
+        id: merge
+        if: github.event_name == 'pull_request'
+        run: bash scripts/ci_merge_main.sh
 
       # The four fast gates, folded into this job on a PR (CI-COST round 2):
       # as separate jobs each billed a whole minute for 16-54 s of work (run
@@ -1694,7 +1735,9 @@ jobs:
         if: needs.changes.outputs.frontend == 'true'
         working-directory: sorento_crm_frontend
         env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || needs.changes.outputs.base_sha }}
+          # On a PR the main it merged: the PR's own change, not main's moves
+          # since the payload's base.sha.
+          BASE_SHA: ${{ steps.merge.outputs.main || github.event.pull_request.base.sha || needs.changes.outputs.base_sha }}
         run: npx vitest run --changed "$BASE_SHA" --passWithNoTests
 
       # A release whose tests passed leaves a marker for its tree, so a

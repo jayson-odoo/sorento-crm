@@ -1,6 +1,6 @@
 # PLAN: the PR gate tests the PR head merged into main's CURRENT head (CI-STALE-MERGE-REF)
 
-Status: in progress (small fix track: CI workflow + one CI script, no migration, no product code)
+Status: fix committed, PR next (small fix track: CI workflow + one CI script, no migration, no product code)
 
 UAC: `ci-stale-merge-ref-27oct-acceptance-criteria.md` (alongside).
 
