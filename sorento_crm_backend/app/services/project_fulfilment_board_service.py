@@ -5448,7 +5448,7 @@ class FulfilmentBoardService:
                         ref.spo_number
                         for ref in sorted(
                             spo.get(key, []),
-                            key=lambda r: (r.arrival_date or date.max, r.spo_number),
+                            key=lambda r: (r.arrival_date or date.max, r.spo_number or ""),
                         )
                         if row.required_date is None
                         or (ref.arrival_date is not None and ref.arrival_date <= row.required_date)
