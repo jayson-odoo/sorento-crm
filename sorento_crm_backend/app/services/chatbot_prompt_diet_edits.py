@@ -1,5 +1,6 @@
 """The slimmer parser prompt (PROMPT-RULES-DIET): exact-text edits that bring the list-free parser text from
 129,651 chars to 102,402, target under 103,000 (owner ruling 26 Oct: the gated s1c text), with the same behaviour.
+Prod v66 (that text less the owner's 12-char edit) takes the same edits: 129,639 chars to 102,390 (PROMPT-DIET-V66).
 
 Applies to the text `chatbot_lookup_edits` produces (it ends in the `== LOOKUP LISTS ==` line). Rounds r01 to
 r04b were measured one by one on the crew eval ledger (documentation/plans/chatbot/PLAN-prompt-rules-diet-26oct.md);
