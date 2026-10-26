@@ -49,8 +49,14 @@ def _production(db, template: str, version: int = 80) -> AIPromptVersion:
 
 def test_revision_ids():
     m = _migration()
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
     assert m.revision == "diet_0001_parser_prompt_diet" and len(m.revision) <= 32
-    assert m.down_revision == "lkp_0001_parser_lookup_lists"
+    script = ScriptDirectory.from_config(Config(str(VERSIONS.parents[1] / "alembic.ini")))
+    assert script.get_revision(m.down_revision) is not None, m.down_revision
+    ancestors = {r.revision for r in script.iterate_revisions(m.revision, "base")}
+    assert "lkp_0001_parser_lookup_lists" in ancestors
 
 
 def test_publishes_one_unlabelled_version_with_built_template():
