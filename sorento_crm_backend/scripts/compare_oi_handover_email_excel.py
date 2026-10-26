@@ -4,10 +4,18 @@ Read-only. Finds the newest `order_inquiry_handover` email on record (a Notifica
 `automation_email`) whose body names the given S/O number, and its Email Outbox row (the email
 System Management > Email Outbox shows). Reads the outbox row's line table, fetches the attached
 OI Excel from storage and prints both side by side, then PASS when every email line is an Excel
-row and nothing else is. `--after` is when the Confirm (or resend) was pressed: an outbox row
-from before it is an older email, so that is a FAIL, never a pass on stale evidence.
+row and nothing else is.
 
-    venv/bin/python scripts/compare_oi_handover_email_excel.py SO394881 --after "2026-10-26 14:05"
+`--after` is when the Confirm (or resend) was pressed, in UTC: `EmailOutbox.created_at` is stored
+as naive UTC (`server_default=func.now()` on a UTC database). A time with an offset
+("2026-10-26 14:05+08:00") is converted. An outbox row from before it is an older email, so that
+is a FAIL, never a pass on stale evidence. `--expect-none` (with `--after`) checks the opposite: a
+Confirm that only saved Use own location / Use BRW decisions wrote NO handover email for that S/O.
+`--save-excel PATH` writes the attached OI Excel to PATH, to hand to the owner.
+
+    venv/bin/python scripts/compare_oi_handover_email_excel.py SO394881 --after "2026-10-26 06:05" \
+        --save-excel /tmp/SO394881.xlsx
+    venv/bin/python scripts/compare_oi_handover_email_excel.py SO380097 --after "..." --expect-none
     venv/bin/python scripts/compare_oi_handover_email_excel.py --latest
 """
 from __future__ import annotations
@@ -15,7 +23,7 @@ from __future__ import annotations
 import argparse
 import io
 import sys
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
@@ -119,17 +127,33 @@ def excel_rows(data: bytes, email_head: Sequence[str]) -> Tuple[List[str], List[
     return head, out
 
 
+def _utc(text: str) -> datetime:
+    """`--after` as the naive UTC datetime `EmailOutbox.created_at` is stored in."""
+    moment = datetime.fromisoformat(text)
+    if moment.tzinfo is not None:
+        moment = moment.astimezone(timezone.utc).replace(tzinfo=None)
+    return moment
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("so_number", nargs="?")
     parser.add_argument("--latest", action="store_true", help="the newest handover email")
     parser.add_argument(
         "--after",
-        help="when the Confirm was pressed, server time (YYYY-MM-DD HH:MM); older email = FAIL",
+        help="when the Confirm was pressed, UTC (YYYY-MM-DD HH:MM, or with +08:00); older = FAIL",
     )
+    parser.add_argument(
+        "--expect-none", action="store_true",
+        help="PASS only if NO handover email for the S/O was written after --after",
+    )
+    parser.add_argument("--save-excel", metavar="PATH", help="write the attached OI Excel here")
     args = parser.parse_args(argv)
     if not args.so_number and not args.latest:
         parser.error("give an S/O number or --latest")
+    if args.expect_none and not (args.after and args.so_number):
+        parser.error("--expect-none needs an S/O number and --after")
+    after = _utc(args.after) if args.after else None
 
     from app.database import SessionLocal
     from app.models.email_outbox import EmailOutbox
@@ -144,6 +168,25 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         )
         if args.so_number:
             query = query.filter(Notification.data["body_html"].astext.contains(args.so_number))
+        if args.expect_none:
+            notes = [n.id for n in query.all()]
+            written = (
+                db.query(EmailOutbox)
+                .filter(
+                    EmailOutbox.metadata_json["notification_id"].astext.in_(
+                        [str(i) for i in notes]
+                    ),
+                    EmailOutbox.created_at > after,
+                )
+                .count()
+                if notes
+                else 0
+            )
+            if written:
+                print(f"FAIL: {written} handover Email Outbox row(s) for it after {args.after}.")
+                return 1
+            print(f"PASS: no handover email for {args.so_number} after {args.after} UTC.")
+            return 0
         note = query.order_by(Notification.created_at.desc()).first()
         if note is None:
             print("No handover email on record for that.")
@@ -159,7 +202,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print(f"FAIL: the email of {note.created_at} has no Email Outbox row yet.")
             return 1
         print(f"Email Outbox row of {outbox.created_at} ({outbox.status}): {outbox.subject}")
-        if args.after and outbox.created_at <= datetime.fromisoformat(args.after):
+        if after is not None and outbox.created_at <= after:
             print(f"FAIL: that email is older than the Confirm at {args.after}.")
             return 1
         head, emailed = email_rows(outbox.body_html or data.get("body_html") or "")
@@ -173,6 +216,9 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             excel[0]["storage_key"]
         )
         sheet_head, sheet = excel_rows(workbook, head)
+        if args.save_excel:
+            Path(args.save_excel).write_bytes(workbook)
+            print(f"Saved the attached Excel to {args.save_excel}")
     finally:
         db.close()
 

@@ -277,3 +277,70 @@ def test_the_compare_script_reads_the_rendered_email_and_the_excel_as_the_same_r
     assert {"NEW ITEM CODE", "QTY CHANGE TO", "DELIVERY DATE CHANGE TO"} <= set(sheet_head), sheet_head
     assert len(emailed) == 6, emailed
     assert emailed == sheet
+
+
+def test_the_compare_script_checks_the_outbox_row_its_time_and_saves_the_excel(
+    monkeypatch, tmp_path
+):
+    """The hand-test check end to end, off one seeded handover email and its outbox row: PASS
+    after the press, FAIL on an outbox row older than the press (stale evidence), the Excel
+    saved for the owner, and `--expect-none` failing while that email exists after the time."""
+    from datetime import datetime, timedelta
+    from uuid import uuid4
+
+    from sqlalchemy.orm import Session
+
+    from app.models.email_outbox import EmailOutbox
+    from app.models.notification import Notification
+    from app.services.order_inquiry_worklist_service import handover_xlsx
+    from scripts import compare_oi_handover_email_excel as script
+
+    from ._pg_fixture import blank_session
+    from .test_oi_saved_line_email import _line
+
+    lines = [_line(so_number="ZZT-SO-CMP", remark="ORDER")]
+    rendered = _render_current(lines)
+    workbook = handover_xlsx(lines)
+
+    class _Backend:
+        def download_file(self, key):
+            assert key == "zzt/key.xlsx"
+            return workbook
+
+    monkeypatch.setattr("app.services.storage_router.get_backend", lambda provider=None: _Backend())
+
+    with blank_session() as db:
+        note = Notification(
+            id=str(uuid4()), user_id=str(uuid4()), type="automation_email", title="OI",
+            data={
+                "trigger_type": "order_inquiry_handover",
+                "body_html": rendered["body_html"] + " ZZT-SO-CMP",
+                "extra_attachments": [{
+                    "filename": "OI-ZZT.xlsx", "storage_provider": "s3",
+                    "storage_key": "zzt/key.xlsx",
+                }],
+            },
+        )
+        db.add(note)
+        db.flush()
+        db.add(EmailOutbox(
+            event_key="automation_email", recipient_email="buyer@example.com", subject="OI",
+            body_html=rendered["body_html"], metadata_json={"notification_id": note.id},
+            created_at=datetime(2026, 10, 26, 6, 10),
+        ))
+        db.flush()
+        connection = db.connection()
+        monkeypatch.setattr(
+            "app.database.SessionLocal",
+            lambda: Session(bind=connection, join_transaction_mode="create_savepoint"),
+        )
+        saved = tmp_path / "oi.xlsx"
+
+        assert script.main(["ZZT-SO-CMP", "--after", "2026-10-26 06:05",
+                            "--save-excel", str(saved)]) == 0
+        assert saved.read_bytes() == workbook
+        # 14:15 MYT is 06:15 UTC: the outbox row (06:10 UTC) is older than that press.
+        assert script.main(["ZZT-SO-CMP", "--after", "2026-10-26 14:15+08:00"]) == 1
+        assert script.main(["ZZT-SO-CMP", "--after", "2026-10-26 06:05", "--expect-none"]) == 1
+        later = (datetime(2026, 10, 26, 6, 10) + timedelta(minutes=1)).isoformat(" ")
+        assert script.main(["ZZT-SO-CMP", "--after", later, "--expect-none"]) == 0
