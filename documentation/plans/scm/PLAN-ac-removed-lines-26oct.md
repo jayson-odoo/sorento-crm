@@ -1,9 +1,9 @@
 # PLAN - lines removed in AutoCount release their links (PO, SPO, SO)
 
-Status: PLANNING, 26 Oct 2026. Lane AC-REMOVED-LINES, branch `crew/ac-removed-lines`. Size L
-(migration + ingest behaviour + prod reconciliation), lead pattern. Behaviour card filed to the
-owner before any code: `ac-removed-lines-behaviour-card.md`. UAC:
-`ac-removed-lines-26oct-acceptance-criteria.md` (written after the card's answers).
+Status: BUILD, 26 Oct 2026. Lane AC-REMOVED-LINES, branch `crew/ac-removed-lines`. Size L by
+brief (ingest behaviour + prod reconciliation), lead pattern; the owner's rulings removed the
+migration, the UI and the mock. Card: `ac-removed-lines-behaviour-card.md` (answered). UAC:
+`ac-removed-lines-26oct-acceptance-criteria.md` (final).
 
 ## 0. What the owner saw (prod, 26 Oct 2026)
 
@@ -53,10 +53,42 @@ Data (20 Oct copy, crew's scale queries rerun): PO 91 removed AutoCount lines, 5
 link (30 OI placements 4,015 qty); SPO 6 retired lines with placements (659); SO 380 removed lines,
 73 live OI rows, 2 with placements. Examples and edge cases: the card.
 
-## 2. Design
+## 2. Owner rulings (26 Oct, on the card)
 
-To be completed after the card's answers.
+Q1 (a) a removed SO line's rows are retired like a Transfer to Cancel SO. Q2 a removed PO/SPO
+line's links are simply removed: no To confirm flip, no row note, no email. Q3 no suggestion:
+AutoCount's linkage is the source of truth. Q4 (a) reconciliation over AutoCount-era lines only,
+dry run -> owner OK -> apply. Q5 no UI change: lines keep showing Cancelled, Placed drops because
+the links are gone. Minimum change management.
 
-## 3. Tickets / slices
+## 3. Design - no new column, no new state
 
-To be completed after the card's answers.
+- **Where.** The release runs at the point the ingest already knows a line was removed, on the
+  transition only:
+  - PO/SO: the `_sync_lines` sweep (`document_ingest_service.py:1639`), for a `by_ref` leftover
+    (an AutoCount DtlKey the payload no longer carries) whose prior status was not `cancelled`,
+    on a header the push does not cancel. Pool (xlsx-era), `dup_ref` and `already_cancelled` rows
+    are not removed AutoCount lines and are left alone.
+  - SPO: the `retired_refs` loop (`shipping_order_ingest_service.py:573-579`), where `retired_at`
+    goes from NULL to set.
+- **PO / SPO line.** The existing unlink path `_remove_links`
+  (`project_order_inquiry_service.py:13556`) without its row note (a keyword, default unchanged
+  for every existing caller), over every link on the line, then `refresh_link_state` /
+  `_refresh_inquiry_states` as that path already does. Open claims on the line are resolved.
+- **SO line.** The same calls `ProjectSupplyService.cancel_lines` makes after writing the core
+  line (`project_supply_service.py:1427-1443`), minus the CS-board fields; the ingest already
+  calls `flag_rows_for_cancelled_lines` for these lines.
+- **Why no `removed_at`.** The ingest knows "removed" at the sweep, so it needs no marker; once
+  the links are released LINKAGE-UNIFY's chain (#1870) never meets a removed line, so its dead
+  rule needs none; the one-off reconciliation selects by existing columns (UAC AC-RL-41).
+  Trigger to add one: a reader that must tell removed from Cancel-doc on a line with no link.
+- **Reconciliation.** `scripts/release_removed_autocount_lines.py`, `run(db, company_id,
+  dry_run=True)`, calls the same release functions. Owner runs the dry run on prod, approves,
+  runs `--apply`. Crew never runs it on prod.
+
+## 4. Slices (one PR)
+
+1. `test(red):` pytest for AC-RL-01..43 (tester, from the UAC only).
+2. Ingest release: PO/SO sweep + SPO sweep + `_remove_links` keyword (coder).
+3. Reconciliation script (coder).
+4. Kill-proof, reviewer + security-reviewer (data release), PR.

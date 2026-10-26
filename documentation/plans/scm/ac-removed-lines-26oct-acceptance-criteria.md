@@ -1,66 +1,79 @@
 # UAC - AC-REMOVED-LINES: a line removed in AutoCount releases its links
 
-Status: DRAFT, written to the card's recommendations; final once the owner answers Q1-Q5
-(`ac-removed-lines-behaviour-card.md`). Plan: `PLAN-ac-removed-lines-26oct.md`.
+Status: FINAL, 26 Oct 2026, from the owner's rulings on `ac-removed-lines-behaviour-card.md`
+(Q1 a, Q2 just remove the links, Q3 no suggestion, Q4 a, Q5 no UI change, minimum change
+management). Plan: `PLAN-ac-removed-lines-26oct.md`.
 
 ## Journey
 
-Purchasing deletes a PO line in AutoCount (or moves its qty onto another line of the same PO).
-The next AutoCount push reaches the CRM. The line shows as Removed, nothing is placed on it any
-more, and every sales order row that was placed on it is back in purchasing's To confirm with a
-note saying why, plus a suggested link to the line the qty went to. The same happens for an SPO
-line AutoCount drops, and a sales order line AutoCount deletes gives its placements back.
+Purchasing deletes a PO line in AutoCount. The next AutoCount push reaches the CRM. The line
+still shows Cancelled, exactly as today, but nothing is placed on it any more: the sales order
+rows that were placed on it simply lose that link and show whatever state the normal rules give
+them. An SPO line AutoCount drops behaves the same. A sales order line AutoCount deletes has its
+order inquiry rows retired exactly as CS's Transfer to Cancel SO retires them. Lines that
+AutoCount CANCELS (Cancel PO / Cancel SO documents, a cancelled header) keep their links, as
+today. A one-off script applies the same release to lines removed before this shipped: a dry run
+lists them, the owner approves, then it applies.
+
+## Terms
+
+- Removed PO/SO line: a line with an AutoCount DtlKey (`source_ref`) that a push of its document
+  no longer carries (not a dropped-unresolved line), on a header the push does not cancel. In
+  `DocumentIngestService._sync_lines` this is a `by_ref` leftover at the sweep
+  (`document_ingest_service.py:1639`).
+- Removed SPO line: a `retired_refs` row of the shipping-order sweep
+  (`shipping_order_ingest_service.py:557-579`) whose `retired_at` this push sets.
 
 ## Criteria
 
-Marker (R1)
-- AC-RL-01 A PO line whose DtlKey a push of its (not cancelled) PO no longer carries, and that
-  something references, ends `line_status = cancelled` AND `removed_at` set. Same for an SO line.
-- AC-RL-02 A line cancelled by a Cancel PO / Cancel SO document, by a header cancel, or on the CS
-  Cancel SO board never gets `removed_at`, and its links are untouched (regression guard for
-  LINKAGE-UNIFY Q5).
-- AC-RL-03 A ref-less (xlsx-era) line swept at adoption gets no `removed_at` and keeps its links.
-- AC-RL-04 A removed line whose DtlKey comes back in a later push loses `removed_at`; the links
-  released earlier are not restored.
-- AC-RL-05 Re-pushing the same reduced document again changes nothing more (idempotent: no second
-  note, no second To confirm flip on a row purchasing already confirmed).
+PO line removed (Q2)
+- AC-RL-01 When a push removes a PO line that OI links point at, every `order_inquiry_links` row
+  with that `po_line_id` is deleted, whatever the row state (draft, placed, actioned).
+- AC-RL-02 The affected rows' state is recomputed by the normal rules (placed -> raised when no
+  link remains, partly linked when another link remains; actioned stays actioned), and the
+  inquiry header state is refreshed.
+- AC-RL-03 Nothing else changes on the row: `ack_state` unchanged (no To confirm flip), `note`
+  unchanged (no "Unlinked from" text), no notification or email is queued.
+- AC-RL-04 Open `scm.order_link_claim` rows on that `po_line_id` are resolved.
+- AC-RL-05 The PO line itself is written exactly as today: `line_status = cancelled`, quantities,
+  `from_so_line_ref` and received qty untouched; no new column.
+- AC-RL-06 PO detail Placed for that line reads 0 after the push
+  (`scm/purchase_order_service.py` `_allocations_for`).
 
-PO / SPO line removed (R2)
-- AC-RL-10 Every OI link on the removed PO line is deleted; the row's state recomputes from what
-  is left (placed -> raised, or partly linked when another link remains); an `actioned` row keeps
-  `actioned`.
-- AC-RL-11 Each affected row has `ack_state = changed` (To confirm) and its note ends
-  "Unlinked from <PO number>: line removed in AutoCount".
-- AC-RL-12 Open `order_link_claim` rows and suggested links on the removed line are resolved /
-  dropped.
-- AC-RL-13 PO detail Placed for the removed line reads 0 after the push.
-- AC-RL-14 An SPO line retired by a push (`retired_at` newly set) gets AC-RL-10..12 for links
-  on `spo_allocation_id`, note "Unlinked from <SPO number>: line removed in AutoCount".
-- AC-RL-15 A reserve (stock) link on the row is untouched.
+SPO line removed (Q2)
+- AC-RL-10 When a push retires an SPO line (its `retired_at` newly set), every OI link with that
+  `spo_allocation_id` is deleted and open claims on it resolved, with AC-RL-02 and AC-RL-03.
 
-SO line removed (R3, Q1 rec a)
-- AC-RL-20 The removed SO line's live raised / partly linked / placed rows are cancelled with
-  their links released, an `OI_ROW_CANCELLED` audit row and a purchasing handover entry, the way
-  `retire_rows_for_cancelled_lines` does for Transfer to Cancel SO; `actioned` rows are only
-  flagged to To confirm.
-- AC-RL-21 Stock holds (`so_line_allocations`) on the removed SO line are released.
+SO line removed (Q1 a)
+- AC-RL-20 When a push removes an SO line, its live raised / partly linked / placed rows are
+  retired the way Transfer to Cancel SO retires them (`ProjectSupplyService.cancel_lines`,
+  `project_supply_service.py:1405-1443`, via `retire_rows_for_cancelled_lines`): links back,
+  row `cancelled`, the same audit and purchasing handover that path produces. Actioned rows are
+  only flagged, as today. The core line is NOT given `cancelled_at` / `cancelled_by_id` (those
+  mean the CS board).
 
-Moved qty (R4, Q3 rec a)
-- AC-RL-30 When the same push leaves another line of the same PO with the same product and room
-  for the released qty, the released row carries a suggested link to that line (trigger
-  `ac_removed`), and no real link is created.
-- AC-RL-31 With no such line, no suggested link is written.
+Unchanged (regression guards)
+- AC-RL-30 A line cancelled by a Cancel PO / Cancel SO document, a line on a header the push
+  cancels, and a CS-board cancelled SO line keep every link.
+- AC-RL-31 An SPO document pushed as cancelled (`force_closed`, no `retired_at`) keeps its links.
+- AC-RL-32 A ref-less (xlsx-era) line or a duplicate-ref row swept by the push keeps its links.
+- AC-RL-33 A line that was already cancelled before this push and is again absent changes
+  nothing (release runs only on the transition, never as a backlog sweep on a later push).
+- AC-RL-34 A line the push still carries (matched by DtlKey) keeps its links whatever its status.
 
-Reconciliation (R6, Q4 rec a)
-- AC-RL-40 `scripts/release_removed_autocount_lines.py` `run(db, company_id, dry_run=True)`
-  returns counts and a per-line list (document number, DtlKey, product code, qty, placed qty,
-  rows affected; no customer names) and writes nothing.
-- AC-RL-41 With `dry_run=False` it sets `removed_at` on existing removed AutoCount lines (line
-  cancelled, AutoCount source, header not cancelled, not by a Cancel document, not CS-cancelled)
-  and applies AC-RL-10..21 through the same code the ingest uses; a second run changes nothing.
+Reconciliation (Q4 a)
+- AC-RL-40 `scripts/release_removed_autocount_lines.py` exposes
+  `run(db, company_id, dry_run=True) -> dict` (precedent `scripts/backfill_retired_spo_lines.py`).
+  Dry run writes nothing and returns counts plus a per-line list: document number, DtlKey, product
+  code, line qty, linked qty, OI rows affected; no customer or contact names.
+- AC-RL-41 It selects only: PO lines `cancelled`, AutoCount source with a DtlKey, header not
+  cancelled, not `cancelled_by_cancel_doc`, with a live OI link or open claim; SO lines the same
+  plus `cancelled_at IS NULL`, with live OI rows; SPO lines with `retired_at` set and a live OI
+  link or open claim.
+- AC-RL-42 `dry_run=False` applies exactly the ingest's release (same functions, AC-RL-01..20)
+  and a second run finds nothing.
+- AC-RL-43 A CLI entry (`python -m scripts.release_removed_autocount_lines --company <id>
+  [--apply]`) prints the dry-run report; it writes only with `--apply`.
 
-Display (R5, Q5 rec a; mock first)
-- AC-RL-50 PO and SO detail show a removed line's status as a grey "Removed" pill, distinct from
-  red Cancelled, at 1280 and 375.
-- AC-RL-51 LINKAGE-UNIFY's goods chain reads a removed PO line / retired SPO line as dead, reason
-  "PO line removed" / "SPO line removed" (lands in whichever of this PR and #1870 merges second).
+No UI change (Q5)
+- AC-RL-50 No frontend file changes; removed lines keep showing Cancelled.
