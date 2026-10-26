@@ -1869,24 +1869,23 @@ class StockDebtService:
         `_holds` hands them out. Four reads, none when nothing is asked.
         """
         triples: List[Tuple[str, str, str]] = []
+        # LINKAGE-UNIFY: the PO line a CRM-raised allocation names by its own FK, the
+        # second of `goods_chain.transferred_allocations`' two routes.
+        named: List[str] = []
         if spo_ids:
-            triples = [
-                (po_number, ref, str(product_id))
-                for po_number, ref, product_id in self.db.query(
-                    SPOAllocation.from_po_number,
-                    func.btrim(SPOAllocation.from_po_line_ref),
-                    SPOAllocation.product_id,
-                )
-                .filter(
-                    SPOAllocation.id.in_(list(spo_ids)),
-                    SPOAllocation.from_po_number.isnot(None),
-                    func.coalesce(func.btrim(SPOAllocation.from_po_line_ref), "") != "",
-                )
-                .all()
-            ]
+            for po_number, ref, product_id, po_line_id in self.db.query(
+                SPOAllocation.from_po_number,
+                func.btrim(SPOAllocation.from_po_line_ref),
+                SPOAllocation.product_id,
+                SPOAllocation.po_line_id,
+            ).filter(SPOAllocation.id.in_(list(spo_ids))):
+                if po_number and ref:
+                    triples.append((po_number, ref, str(product_id)))
+                if po_line_id:
+                    named.append(str(po_line_id))
         wanted = []
-        if po_line_ids:
-            wanted.append(PurchaseOrderLine.id.in_(list(po_line_ids)))
+        if po_line_ids or named:
+            wanted.append(PurchaseOrderLine.id.in_(sorted({*po_line_ids, *named})))
         if triples:
             wanted.append(
                 tuple_(
@@ -1928,7 +1927,7 @@ class StockDebtService:
         capacity: Dict[str, float] = {}
         claims: Dict[str, float] = {}
         for line in lines:
-            spos = transferred_to.get(goods_chain.transfer_key(line), ())
+            spos = transferred_to.get(str(line.po_line_id), ())
             capacity[str(line.po_line_id)] = sum(
                 goods_chain.follow_capacity(spo) for spo in spos
             )

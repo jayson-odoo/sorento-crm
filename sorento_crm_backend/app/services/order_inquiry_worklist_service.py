@@ -1800,8 +1800,8 @@ class OrderInquiryWorklistService:
         open need (never a row on the SAME SO line), delivery date ascending then open
         need descending - the first candidate is the suggested target (ruling 17 Sep:
         list all, earliest first) - `{"kind": "unlink"}` when there is none, or `None`
-        on a received link, one still inside the window, or one of the two S3
-        exemptions below.
+        on a received link, a PO link with nothing left on order (LINKAGE-UNIFY U2), one
+        still inside the window, or one of the two S3 exemptions below.
 
         S3 (review round 1, `PLAN-oi-cascade-skip-early-arrival.md`): a link the
         automatic pass was TOLD to honour regardless of the window earns no pill
@@ -1842,6 +1842,11 @@ class OrderInquiryWorklistService:
             for link in row_links:
                 link["suggestion"] = None
                 if link.get("received"):
+                    continue
+                # LINKAGE-UNIFY U2: a PO link with nothing left on order (all of it moved
+                # onto an SPO still in transit) is not judged by the PO's date - the goods
+                # are no longer on it. Read off `links_for_rows`' own chain, no new query.
+                if link.get("kind") == "po" and link.get("on_order") is False:
                     continue
                 expected_date = link.get("expected_date")
                 if not product_id or not delivery_date or not expected_date:

@@ -3357,7 +3357,11 @@ class ProjectOrderInquiryService:
         when it states none - `_redirect_row_if_received`'s own note reads it, and 'None'
         there means "in full", not "unknown".
         """
-        chains = goods_chain.chains_for_links(self.db, [link.id for link in links])
+        # Received-ness only: no Goods Received bin split (`with_bins=False`), the callers
+        # here run per row.
+        chains = goods_chain.chains_for_links(
+            self.db, [link.id for link in links], with_bins=False
+        )
         received = {
             link_id: chain
             for link_id, chain in chains.items()
@@ -8236,6 +8240,9 @@ class ProjectOrderInquiryService:
             received_qty = _qty_str(
                 goods_chain.received_qty(chain) if chain is not None else _ZERO
             )
+            on_order = chain is not None and any(
+                hop.state == goods_chain.ON_ORDER for hop in chain.hops
+            )
             entry = {
                     "id": link.id,
                     "kind": "spo" if is_spo else "po",
@@ -8262,6 +8269,12 @@ class ProjectOrderInquiryService:
                     # (S2) and the PO/SPO chip's `received` mark both read this.
                     "received": received,
                     "received_qty": received_qty,
+                    # LINKAGE-UNIFY U2: whether any of the placement still sits on its
+                    # document's own order (an `on_order` hop). Server-side only, never
+                    # declared on `OrderInquiryLinkOut`: the worklist's window pill reads
+                    # it, so a PO link whose goods all moved onto an SPO is not judged by
+                    # the PO's date (`_attach_link_suggestions`).
+                    "on_order": on_order,
                     "auto": bool(link.auto),
                     "linked_at": link.linked_at,
                     # WHO linked it, by name. Null on a cascade link, which nobody did.
@@ -13408,10 +13421,15 @@ class ProjectOrderInquiryService:
     def po_lines_with_open_chained_spo(self, po_line_ids: Sequence[str]) -> set:
         """OI-RESERVE-RECEIVED (AC-RR-6, lane-local): of these PO lines, the ids that still
         have a shipping order chained from them in transit: the line reads closed but its
-        goods have not landed. The goods chain's own key and in-transit test
+        goods have not landed. The goods chain's own routes and in-transit test
         (`goods_chain.transferred_allocations`, `is_in_transit`; LINKAGE-UNIFY AC-R8), so
         a space-padded `from_po_line_ref` answers here as it does there. One read for the
-        lines, one for their SPOs."""
+        lines, one for their SPOs.
+
+        TEST-ONLY since LINKAGE-UNIFY U2: `received_links_of` and the worklist no longer
+        call it (the chain's `received` already leaves out a placement whose goods are in
+        transit). Kept because `tests/scm/test_oi_received_follows_chain.py` (AC-R8) reads
+        it; remove both together."""
         wanted = [str(i) for i in po_line_ids if i]
         if not wanted:
             return set()
@@ -13433,7 +13451,7 @@ class ProjectOrderInquiryService:
             for line in lines
             if any(
                 goods_chain.is_in_transit(spo)
-                for spo in transferred_to.get(goods_chain.transfer_key(line), ())
+                for spo in transferred_to.get(str(line.po_line_id), ())
             )
         }
 

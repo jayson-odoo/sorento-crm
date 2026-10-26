@@ -563,14 +563,15 @@ export async function unplaceAllOrderInquiryRows(
  *
  * `PLAN-oi-replan-received-links.md`, S1/S3 (Phase 1, mocked - no backend yet):
  *
- *   - Every link in `links[]` gains two fields, both read off the document line
- *     `links_for_rows` already joins (`PurchaseOrderLine.qty_received` /
- *     `SPOAllocation.quantity_received`, plus `open_incoming_clauses()` for an SPO):
- *       received      : boolean  - the document is FULLY received (PO: `qty_received >=
- *                        qty_ordered` or `line_status = 'closed'`; SPO: fails
- *                        `open_incoming_clauses()`). Absent/false on an open document.
- *       received_qty  : string | null - how much of THIS link's line has been received,
- *                        stated even on a link that is only PARTLY received.
+ *   - Every link in `links[]` gains two fields, both read off the goods chain
+ *     (`app/services/scm/goods_chain.py`, LINKAGE-UNIFY U2, owner ruling Q3):
+ *       received      : boolean  - the placement is FULLY received: every unit landed in
+ *                        a bin (a PO link once its goods land on the SPO the line was
+ *                        transferred onto, or straight into a bin when no SPO names the
+ *                        line; never on the transfer, never on a dead document).
+ *       received_qty  : string | null - how much of THIS placement has landed (its own
+ *                        share, not the document's receipt), stated even when it is only
+ *                        PARTLY received.
  *     The PO/SPO chip (`DocumentsCell`) reads the first entry's `received` for a muted,
  *     CLICKABLE `received` pill beside the number (17 Sep rulings: words, never icons,
  *     never a hover-only tooltip) - clicking it opens the SAME backing-documents dialog

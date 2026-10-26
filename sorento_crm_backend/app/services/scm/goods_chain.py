@@ -201,10 +201,9 @@ def follow_capacity(spo: Any) -> float:
     )
 
 
-def transfer_key(row: Any) -> Tuple[str, str, str, str]:
-    """The key a PO line is transferred onto SPO allocations by, off a row carrying
-    `po_number`, `po_line_ref` (trimmed), `po_product_id` and `po_company_id`: the key
-    `transferred_allocations` answers by."""
+def _transfer_key(row: Any) -> Tuple[str, str, str, str]:
+    """OI-SPO-EXACT plus company, off a PO line row carrying `po_number`, `po_line_ref`
+    (trimmed), `po_product_id` and `po_company_id`."""
     return (
         row.po_number,
         row.po_line_ref,
@@ -213,33 +212,54 @@ def transfer_key(row: Any) -> Tuple[str, str, str, str]:
     )
 
 
-def transferred_allocations(
-    db: Session, po_lines: Sequence[Any]
-) -> Dict[Tuple[str, str, str, str], List[Any]]:
-    """SUPPLY-SPO-LINK: by `transfer_key` (`po_number`, trimmed `source_ref`, product,
-    company), the SPO allocations each PO line in `po_lines` was transferred onto -
-    OI-SPO-EXACT, the key `project_order_inquiry_service._append_derived_spo_entries`
-    resolves a PO link's SPOs by - earliest arrival first. One read for every line.
+def transferred_allocations(db: Session, po_lines: Sequence[Any]) -> Dict[str, List[Any]]:
+    """SUPPLY-SPO-LINK: by PO line id, the SPO allocations each line in `po_lines` (rows
+    carrying `po_line_id` and the `_transfer_key` columns) was transferred onto, earliest
+    arrival first. One read for every line.
+
+    Two routes, one answer, an allocation reached both ways listed once:
+
+    * OI-SPO-EXACT, the key `project_order_inquiry_service._append_derived_spo_entries`
+      resolves a PO link's SPOs by: `from_po_number`, trimmed `from_po_line_ref`, product
+      and company, for an allocation off the AutoCount feed. A PO line with no `source_ref`
+      reaches nothing this way;
+    * the allocation's own `po_line_id`, for one this system raised off the line
+      (`allocation_suggestion_service.approve`, `spo_conversion_service.create`), in the
+      line's company.
 
     Every visible allocation, not only the open ones: a landed allocation is where the
-    goods ARE, and the split turns it into a `received` hop. A PO line with no `source_ref`
-    reaches nothing. The company is part of the key (LINKAGE-UNIFY AC-R8): the join is on
-    plain text off the AutoCount feed, so another company's SPO naming the same strings is
-    not this line's, whatever the session's scope. The scope predicate is stated by hand
-    too, as the OI reader states it.
+    goods ARE, and the split turns it into a `received` hop. The company is part of both
+    routes (LINKAGE-UNIFY AC-R8): the text key is plain text off the AutoCount feed, so
+    another company's SPO naming the same strings is not this line's, whatever the
+    session's scope. The scope predicate is stated by hand too, as the OI reader states it.
     """
-    keys = {
-        transfer_key(row)
-        for row in po_lines
-        if row.po_number and row.po_line_ref and row.po_product_id and row.po_company_id
-    }
-    if not keys:
+    company_of: Dict[str, str] = {}
+    lines_by_key: Dict[Tuple[str, str, str, str], Set[str]] = {}
+    for row in po_lines:
+        if not row.po_line_id:
+            continue
+        line_id = str(row.po_line_id)
+        company_of[line_id] = str(row.po_company_id)
+        if row.po_number and row.po_line_ref and row.po_product_id and row.po_company_id:
+            lines_by_key.setdefault(_transfer_key(row), set()).add(line_id)
+    if not company_of:
         return {}
+    routes = [SPOAllocation.po_line_id.in_(sorted(company_of))]
+    if lines_by_key:
+        routes.append(
+            tuple_(
+                SPOAllocation.from_po_number,
+                func.btrim(SPOAllocation.from_po_line_ref),
+                SPOAllocation.product_id,
+                SPOAllocation.company_id,
+            ).in_(sorted(lines_by_key))
+        )
     company_predicate = build_company_predicate(SPOAllocation, get_company_scope(db))
     rows = (
         db.query(
             SPOAllocation.from_po_number,
             func.btrim(SPOAllocation.from_po_line_ref).label("from_ref"),
+            SPOAllocation.po_line_id.label("spo_po_line_id"),
             SPOAllocation.id.label("spo_allocation_id"),
             SPOAllocation.spo_number,
             SPOAllocation.spo_line_number,
@@ -258,12 +278,7 @@ def transferred_allocations(
         )
         .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
         .filter(
-            tuple_(
-                SPOAllocation.from_po_number,
-                func.btrim(SPOAllocation.from_po_line_ref),
-                SPOAllocation.product_id,
-                SPOAllocation.company_id,
-            ).in_(sorted(keys)),
+            or_(*routes),
             *spo_supply.visible_line_clauses(),
             *((company_predicate,) if company_predicate is not None else ()),
         )
@@ -275,38 +290,54 @@ def transferred_allocations(
         )
         .all()
     )
-    out: Dict[Tuple[str, str, str, str], List[Any]] = {}
+    out: Dict[str, List[Any]] = {}
     for row in rows:
-        out.setdefault(
-            (
-                row.from_po_number,
-                row.from_ref,
-                str(row.spo_product_id),
-                str(row.spo_company_id),
-            ),
-            [],
-        ).append(row)
+        lines = set(
+            lines_by_key.get(
+                (
+                    row.from_po_number,
+                    row.from_ref,
+                    str(row.spo_product_id),
+                    str(row.spo_company_id),
+                ),
+                (),
+            )
+        )
+        named = str(row.spo_po_line_id) if row.spo_po_line_id else None
+        if named in company_of and company_of[named] == str(row.spo_company_id):
+            lines.add(named)
+        for line_id in lines:
+            out.setdefault(line_id, []).append(row)
     return out
 
 
-
-def chains_for_links(db: Session, link_ids: Iterable[str]) -> Dict[str, LinkChain]:
+def chains_for_links(
+    db: Session, link_ids: Iterable[str], *, with_bins: bool = True
+) -> Dict[str, LinkChain]:
     """By link id, the chain of each live placement in `link_ids`. A link on a cancelled
-    order inquiry row, or a reserve link (no document line), is absent."""
+    order inquiry row, or a reserve link (no document line), is absent.
+
+    `with_bins=False` skips the Goods Received bin split (and the reads only it needs): a
+    landed hop then sits whole at its document's own bin. For a caller that only asks
+    whether, or how much, is received (`is_received`, `received_qty`), which bins do not
+    change."""
     ids = sorted({str(link_id) for link_id in link_ids if link_id})
     if not ids:
         return {}
-    return _chains(db, _placements(db, OrderInquiryLink.id.in_(ids)))
+    return _chains(db, _placements(db, OrderInquiryLink.id.in_(ids)), with_bins=with_bins)
 
 
-def chains_for_rows(db: Session, row_ids: Iterable[str]) -> Dict[str, List[LinkChain]]:
+def chains_for_rows(
+    db: Session, row_ids: Iterable[str], *, with_bins: bool = True
+) -> Dict[str, List[LinkChain]]:
     """By order inquiry row id, the chains of the row's live placements in `linked_at, id`
-    order. A row with none (cancelled, or nothing placed) is absent."""
+    order. A row with none (cancelled, or nothing placed) is absent. `with_bins` as
+    `chains_for_links`."""
     ids = sorted({str(row_id) for row_id in row_ids if row_id})
     if not ids:
         return {}
     wanted = _placements(db, OrderInquiryLink.row_id.in_(ids))
-    chains = _chains(db, wanted)
+    chains = _chains(db, wanted, with_bins=with_bins)
     out: Dict[str, List[LinkChain]] = {}
     for row in wanted:
         out.setdefault(str(row.row_id), []).append(chains[str(row.link_id)])
@@ -343,6 +374,7 @@ def _placements(db: Session, *criteria: Any) -> List[Any]:
             # placement on the SPO can find the placements that follow onto it.
             SPOAllocation.from_po_number.label("spo_from_po_number"),
             func.btrim(SPOAllocation.from_po_line_ref).label("spo_from_ref"),
+            SPOAllocation.po_line_id.label("spo_po_line_id"),
             SPOAllocation.product_id.label("spo_product_id"),
             SPOAllocation.company_id.label("spo_company_id"),
             # Is the placed PO line still on order (`_po_rows`'s own test), and what did it
@@ -380,14 +412,17 @@ def _placements(db: Session, *criteria: Any) -> List[Any]:
     )
 
 
-def _chains(db: Session, wanted: Sequence[Any]) -> Dict[str, LinkChain]:
+def _chains(
+    db: Session, wanted: Sequence[Any], *, with_bins: bool
+) -> Dict[str, LinkChain]:
     """The chain of each placement in `wanted` (rows of `_placements`).
 
     The answer for one placement can depend on others that share its documents, so they
     are read too, whatever the caller asked for: every live placement on each PO line asked
     about (the split), and, for a document whose goods landed, every placement holding some
-    of them (who takes which GR bin first). A placement on an SPO that landed brings in the
-    PO lines that SPO names, since placements on those follow onto it."""
+    of them (who takes which GR bin first; only `with_bins`). A placement on an SPO that
+    landed brings in the PO lines that SPO names, since placements on those follow onto
+    it."""
     rows: Dict[str, Any] = {str(row.link_id): row for row in wanted}
     hops: Dict[str, List[Hop]] = {
         str(row.link_id): _direct_hops(row) for row in wanted if row.spo_allocation_id
@@ -396,26 +431,28 @@ def _chains(db: Session, wanted: Sequence[Any]) -> Dict[str, LinkChain]:
     po_line_ids = {
         str(row.po_line_id) for row in wanted if not row.spo_allocation_id and row.po_line_id
     }
-    po_line_ids |= _po_lines_feeding(
-        db,
-        [
-            row for row in wanted
-            if row.spo_allocation_id and str(row.spo_allocation_id) in landed_spos
-        ],
-    )
+    if with_bins:
+        po_line_ids |= _po_lines_feeding(
+            db,
+            [
+                row for row in wanted
+                if row.spo_allocation_id and str(row.spo_allocation_id) in landed_spos
+            ],
+        )
     if po_line_ids:
         everyone = _placements(db, OrderInquiryLink.po_line_id.in_(sorted(po_line_ids)))
         rows.update((str(row.link_id), row) for row in everyone)
         hops.update(_po_split(db, everyone))
         landed_spos |= _landed_spo_ids(hops.values())
-    if landed_spos:
-        for row in _placements(
-            db, OrderInquiryLink.spo_allocation_id.in_(sorted(landed_spos))
-        ):
-            if str(row.link_id) not in hops:
-                rows[str(row.link_id)] = row
-                hops[str(row.link_id)] = _direct_hops(row)
-    _bin_by_gr(db, hops, rows)
+    if with_bins:
+        if landed_spos:
+            for row in _placements(
+                db, OrderInquiryLink.spo_allocation_id.in_(sorted(landed_spos))
+            ):
+                if str(row.link_id) not in hops:
+                    rows[str(row.link_id)] = row
+                    hops[str(row.link_id)] = _direct_hops(row)
+        _bin_by_gr(db, hops, rows)
     return {
         str(row.link_id): LinkChain(
             link_id=str(row.link_id),
@@ -438,7 +475,8 @@ def _landed_spo_ids(legs: Iterable[List[Hop]]) -> Set[str]:
 
 def _po_lines_feeding(db: Session, spo_rows: Sequence[Any]) -> Set[str]:
     """The ids of the PO lines the SPO lines of `spo_rows` were transferred from, by the
-    same key `transferred_allocations` reads forwards."""
+    same two routes `transferred_allocations` reads forwards."""
+    named = {str(row.spo_po_line_id) for row in spo_rows if row.spo_po_line_id}
     keys = {
         (
             row.spo_from_po_number,
@@ -450,9 +488,9 @@ def _po_lines_feeding(db: Session, spo_rows: Sequence[Any]) -> Set[str]:
         if row.spo_from_po_number and row.spo_from_ref and row.spo_product_id
     }
     if not keys:
-        return set()
+        return named
     company_predicate = build_company_predicate(PurchaseOrderLine, get_company_scope(db))
-    return {
+    return named | {
         str(line_id)
         for (line_id,) in db.query(PurchaseOrderLine.id)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
@@ -482,7 +520,7 @@ def _po_split(db: Session, placements: Sequence[Any]) -> Dict[str, List[Hop]]:
     transferred_to = transferred_allocations(db, placements)
 
     def spos_of(row: Any) -> List[Any]:
-        return transferred_to.get(transfer_key(row), [])
+        return transferred_to.get(str(row.po_line_id), [])
 
     po_left: Dict[str, Decimal] = {}
     direct_left: Dict[str, Decimal] = {}
@@ -495,12 +533,18 @@ def _po_split(db: Session, placements: Sequence[Any]) -> Dict[str, List[Hop]]:
         # `qty_received` is the AutoCount transfer and includes what a Cancel PO took.
         moved = max(_dec(row.po_received) - _dec(row.po_cancelled), _ZERO)
         direct_left[line_id] = _ZERO if spos_of(row) else moved
-        if not spos_of(row) and moved <= _EPSILON and (
-            row.po_line_status in ("closed", "cancelled")
-            or row.po_status == "cancelled"
-            or _dec(row.po_received) > _EPSILON
+        if (
+            not spos_of(row)
+            and moved <= _EPSILON
+            and po_left[line_id] <= _EPSILON
+            and (
+                row.po_line_status in ("closed", "cancelled")
+                or row.po_status == "cancelled"
+                or _dec(row.po_received) > _EPSILON
+            )
         ):
-            # Q5: finished with nothing moved, or a Cancel PO took all it moved.
+            # Q5: nothing left on order, nothing moved past what a Cancel PO took, and no
+            # SPO to follow: the line was closed or cancelled, or a Cancel PO took it all.
             dead.add(line_id)
     spo_left: Dict[str, Decimal] = {
         str(spo.spo_allocation_id): _dec(follow_capacity(spo))
@@ -700,8 +744,9 @@ def _gr_lines(
     """The Goods Received lines naming each document, earliest first, as `(bin id, qty)`
     (bin None when it cannot be resolved), and the warehouse code of every bin involved.
 
-    An AutoCount GR (`doc_key` set) names its PO or SPO line itself and states its bin as a
-    location code (resolved in the line's company) and its quantity as `qty`. An Excel GR
+    An AutoCount GR (`doc_key` set) names its PO or SPO line itself; its bin is
+    `destination_warehouse_id` (the ingest resolves the GR's location there,
+    `autocount_doc_ingest_service._apply_grn`) and its quantity `qty`. An Excel GR
     (`doc_key` NULL) names an SPO line by `spo_allocation_id`, but a PO line only through its
     header `spo_number` (where it holds the PO number) and the product, which says which
     line only when the PO has one line of that product; its bin is `source_warehouse_id`
@@ -718,7 +763,7 @@ def _gr_lines(
         PickingLine.po_line_id,
         PickingLine.qty,
         PickingLine.quantity_picked,
-        PickingLine.location_code,
+        PickingLine.destination_warehouse_id,
         PickingLine.source_warehouse_id,
         PickingLine.company_id,
     )
@@ -764,30 +809,27 @@ def _gr_lines(
             if line_id:
                 found.append(((KIND_PO, line_id), line))
 
-    bin_ids = {str(line.source_warehouse_id) for _doc, line in found if line.source_warehouse_id}
-    bin_ids |= {str(row.po_warehouse_id) for row in po_rows.values() if row.po_warehouse_id}
-    bin_codes = {line.location_code for _doc, line in found if line.location_code}
-    codes: Dict[str, str] = {}
-    by_code: Dict[Tuple[str, str], str] = {}
-    if bin_ids or bin_codes:
-        for warehouse_id, code, company_id in db.query(
-            Warehouse.id, Warehouse.warehouse_code, Warehouse.company_id
-        ).filter(
-            or_(Warehouse.id.in_(sorted(bin_ids)), Warehouse.warehouse_code.in_(sorted(bin_codes)))
-        ):
-            codes[str(warehouse_id)] = code
-            by_code[(str(company_id), code)] = str(warehouse_id)
-
     out: Dict[Tuple[str, str], List[Tuple[Optional[str], Decimal]]] = {}
     for document, line in sorted(found, key=lambda item: (item[1].picking_date, str(item[1].id))):
         if line.doc_key is not None:
             qty = _dec(line.qty if line.qty is not None else line.quantity_picked)
-            bin_id = by_code.get((str(line.company_id), line.location_code or ""))
+            bin_id = line.destination_warehouse_id
         else:
             qty = _dec(line.quantity_picked)
-            bin_id = str(line.source_warehouse_id) if line.source_warehouse_id else None
+            bin_id = line.source_warehouse_id
         if qty > _EPSILON:
-            out.setdefault(document, []).append((bin_id, qty))
+            out.setdefault(document, []).append((str(bin_id) if bin_id else None, qty))
+
+    bin_ids = {bin_id for lines in out.values() for bin_id, _qty in lines if bin_id}
+    bin_ids |= {str(row.po_warehouse_id) for row in po_rows.values() if row.po_warehouse_id}
+    codes: Dict[str, str] = {}
+    if bin_ids:
+        codes = {
+            str(warehouse_id): code
+            for warehouse_id, code in db.query(Warehouse.id, Warehouse.warehouse_code).filter(
+                Warehouse.id.in_(sorted(bin_ids))
+            )
+        }
     return out, codes
 
 
