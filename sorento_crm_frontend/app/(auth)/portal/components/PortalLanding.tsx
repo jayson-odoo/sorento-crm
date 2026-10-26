@@ -91,6 +91,7 @@ import {
   applyLandingFilters,
   landingFieldValue,
   landingFieldsFor,
+  isShownAsDraft,
   sortLandingItems,
   submissionStatusLabel,
   type LandingField,
@@ -128,6 +129,7 @@ const EMPTY_LISTS: Record<PortalLandingKind, PortalSubmissionSummary[]> = {
   stock_inquiry: [],
   purchase_request: [],
   sponsorship_form: [],
+  project_registration: [],
   price_tag_request: [],
   sample_request: [],
   new_product_application: [],
@@ -148,7 +150,7 @@ type BadgeVariant =
 // reads as "not yet meaningful". The other states map to a unique colour so
 // users can scan a list without reading labels.
 function statusVariant(row: PortalSubmissionSummary): BadgeVariant {
-  if (row.is_draft) return 'secondary';
+  if (isShownAsDraft(row)) return 'secondary';
   const s = (row.status || '').toLowerCase();
   if (s === 'rejected' || s === 'cancelled' || s === 'lost') return 'destructive';
   if (
@@ -168,7 +170,7 @@ function statusVariant(row: PortalSubmissionSummary): BadgeVariant {
 // Tailwind classes that tint the card background + border by status. Kept
 // subtle so text stays legible.
 function statusCardClass(row: PortalSubmissionSummary): string {
-  if (row.is_draft) {
+  if (isShownAsDraft(row)) {
     return 'bg-card border-border';
   }
   const s = (row.status || '').toLowerCase();
@@ -495,6 +497,7 @@ export function PortalLanding({ slug }: { slug?: string }) {
       stock_inquiry: 0,
       purchase_request: 0,
       sponsorship_form: 0,
+      project_registration: 0,
       price_tag_request: 0,
       sample_request: 0,
       new_product_application: 0,

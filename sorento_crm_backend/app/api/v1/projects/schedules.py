@@ -74,7 +74,7 @@ def _schedule_for_edit(db: Session, schedule_id: str, current_user: dict):
     service = _service(db)
     schedule = service.get_schedule(schedule_id)
     project = projects.get_project_or_404(db, schedule.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return schedule
@@ -88,7 +88,7 @@ def _version_for_edit(db: Session, version_id: str, current_user: dict):
     version = service.get_version(version_id)
     schedule = service.schedule_for(version)
     project = projects.get_project_or_404(db, schedule.project_id)
-    projects.assert_can_edit_project(
+    projects.assert_can_write_project(
         db, project, current_user["id"], permission_slugs(db, current_user["id"])
     )
     return version
@@ -162,7 +162,7 @@ async def upload_delivery_schedule(
         validate_uuid_path(po_id, resource="Purchase order")
         po = po_svc.get_po(db, po_id)
         project = projects.get_project_or_404(db, po.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
 
@@ -547,7 +547,7 @@ async def change_delivery_area_date(
             )
         phase = progress_svc.get_phase(db, phase_id)
         project = projects.get_project_or_404(db, phase.project_id)
-        projects.assert_can_edit_project(
+        projects.assert_can_write_project(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
         body = progress_svc.change_area_date(

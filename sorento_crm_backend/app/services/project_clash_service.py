@@ -242,8 +242,14 @@ def find_clashes(
 
     score = _score_expression(key)
 
-    query = db.query(Project, score.label("score")).filter(
-        Project.company_id == company_id, score >= surface
+    from app.services.project_service import approved_projects
+
+    # A portal registration still waiting for approval (or refused) is not a project yet:
+    # it neither blocks nor shows as a clash (PROJECT-REG-PORTAL R4).
+    query = approved_projects(
+        db.query(Project, score.label("score")).filter(
+            Project.company_id == company_id, score >= surface
+        )
     )
     # An UNSTATED developer must not narrow the search to other developer-less projects.
     # It used to, and that was a hole straight through the exclusivity lock: registering

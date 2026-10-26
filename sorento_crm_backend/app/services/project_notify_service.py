@@ -25,6 +25,7 @@ from typing import Any, Callable, Dict, List, Optional
 from sqlalchemy.orm import Session
 
 from app.models.projects import Project
+from app.services.project_service import project_label
 
 logger = logging.getLogger(__name__)
 
@@ -228,7 +229,7 @@ def notify_floor_breach(
         db,
         user_ids=management_user_ids(db),
         notif_type="project_price_floor_breach",
-        title=f"{project.project_code} priced below floor",
+        title=f"{project_label(project)} priced below floor",
         body=body,
         data={
             "project_id": str(project.id),
@@ -300,14 +301,14 @@ def notify_quotation_approval_requested(
     """A quotation was sent for approval: tell every approver but the sender. One per press."""
     lines = f"{below} line{'' if below == 1 else 's'} below the price floor"
     text = (
-        f"{requester_name} sent quotation {document.document_no} ({project.project_code}) "
+        f"{requester_name} sent quotation {document.document_no} ({project_label(project)}) "
         f"for approval: {lines}."
     )
     return _send(
         db,
         user_ids=approver_user_ids(db, document.company_id, {requester_id}),
         notif_type="project_quotation_approval_requested",
-        title=f"{project.project_code}: approval needed on {document.document_no}",
+        title=f"{project_label(project)}: approval needed on {document.document_no}",
         body=text,
         data=_approval_data(project, document),
         project_id=str(project.id),
@@ -343,7 +344,7 @@ def notify_quotation_approval_decided(
             if approved
             else "project_quotation_approval_rejected"
         ),
-        title=f"{project.project_code}: {document.document_no} {verb}",
+        title=f"{project_label(project)}: {document.document_no} {verb}",
         body=body,
         data=_approval_data(project, document),
         project_id=str(project.id),
@@ -363,14 +364,14 @@ def notify_quotation_approval_withdrawn(
 ) -> int:
     """The creator pulled a pending quotation back to change it: tell the approvers."""
     text = (
-        f"{actor_name} took quotation {document.document_no} ({project.project_code}) back "
+        f"{actor_name} took quotation {document.document_no} ({project_label(project)}) back "
         f"for changes: {reason or ''}"
     ).strip()
     return _send(
         db,
         user_ids=approver_user_ids(db, document.company_id, {actor_id}),
         notif_type="project_quotation_approval_withdrawn",
-        title=f"{project.project_code}: {document.document_no} withdrawn",
+        title=f"{project_label(project)}: {document.document_no} withdrawn",
         body=text,
         data=_approval_data(project, document),
         project_id=str(project.id),
@@ -425,7 +426,7 @@ def notify_quotation_changes_requested(
         db,
         user_ids=recipients,
         notif_type="project_quotation_changes_requested",
-        title=f"{project.project_code}: changes requested on {reference}",
+        title=f"{project_label(project)}: changes requested on {reference}",
         body=f'{who} asked for changes to {reference}: "{excerpt}"',
         data={
             "project_id": str(project.id),
@@ -477,7 +478,7 @@ def notify_po_mismatch(
         db,
         user_ids=recipients,
         notif_type="project_po_mismatch",
-        title=f"{project.project_code}: PO {po.po_number} does not match the quotation",
+        title=f"{project_label(project)}: PO {po.po_number} does not match the quotation",
         body=(
             f"{len(mismatches)} line(s) show a {what}: {lines}{more}. "
             "Reconcile with the contractor before delivery."

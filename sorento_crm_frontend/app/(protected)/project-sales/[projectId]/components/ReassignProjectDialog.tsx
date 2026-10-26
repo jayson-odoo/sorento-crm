@@ -17,6 +17,7 @@ import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { getUserLookup } from '@/services/userSelectService';
 import { useUpdateProject } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
 
 /**
  * Hand the project to another salesperson (owner, 13 Oct: "how do I reassign the project").
@@ -45,7 +46,7 @@ export function ReassignProjectDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="w-full max-w-md" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>Reassign {project.project_code}</DialogTitle>
+          <DialogTitle>Reassign {projectCodeLabel(project)}</DialogTitle>
         </DialogHeader>
         <form
           onSubmit={async (event) => {

@@ -115,6 +115,10 @@ def ai_extract(
     bytes as they arrive. Sibling fix: PR #164.
     """
     _require_form_key_visible(db, token, form_key)
+    if form_key == "portal.project_registration":
+        from app.services import portal_rate_limit
+
+        portal_rate_limit.project_registration_extract(token.contact_id)
     if not files:
         raise handle_validation_error("Upload at least one file.")
     if len(files) > _MAX_FILES:
