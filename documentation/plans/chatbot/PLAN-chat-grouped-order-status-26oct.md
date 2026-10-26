@@ -1,6 +1,6 @@
 # PLAN: CHAT-GROUPED-ORDER-STATUS - grouped delivery-order list crashed the chat turn
 
-Status: in progress (small fix track, crew lane CHAT-GROUPED-ORDER-STATUS, branch
+Status: in progress, fix committed, PR next (small fix track, crew lane CHAT-GROUPED-ORDER-STATUS, branch
 `crew/chat-grouped-order-status`). No migration, no auth/RBAC change, no prompt change.
 
 UAC: `chat-grouped-order-status-26oct-acceptance-criteria.md` (this folder).
@@ -27,8 +27,8 @@ delivery-order check grouped by customer failed at the "Looked up" step with
    `("order_status", "Status", o.get("order_status"))`), so a grouped answer's Status field value
    is the dict.
 4. The business lane takes the grouped items as the answer rows
-   (`sorento_crm_backend/app/services/chatbot/lanes/business/fetch.py:4054-4059`
-   `_rendered_answers(e) if groups_render`), `turn_runtime.py:6087-6088` turns them into figures,
+   (`sorento_crm_backend/app/services/chatbot/lanes/business/fetch.py:4115-4121` `answers`,
+   `_rendered_answers` at `:1746`), `turn_runtime.py:6087-6088` turns them into figures,
    and compose dedupes them with a set keyed by `_row_key`
    (`sorento_crm_backend/app/services/chatbot/turn/compose.py:148-149`, set membership at `:593`):
    a tuple holding a dict is unhashable.

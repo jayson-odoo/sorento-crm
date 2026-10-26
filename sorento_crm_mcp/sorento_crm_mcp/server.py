@@ -862,14 +862,33 @@ def _slim_orders_list_row(row: Any, product_query: str | None = None) -> Any:
     return out
 
 
+def _map_group_rows(data: dict[str, Any], fn: Any) -> dict[str, Any]:
+    """Apply a row function to every `groups[i]["rows"]` of a `group_by` payload.
+
+    The route buckets the SAME raw rows it returns in `data` (`order_service.group_rows`),
+    so a per-row trim that only walks `data` leaves the grouped copies untouched
+    (CHAT-GROUPED-ORDER-STATUS: a raw `order_status` object crashed a grouped chat answer).
+    """
+    groups = data.get("groups")
+    if not isinstance(groups, list):
+        return data
+    return {
+        **data,
+        "groups": [
+            {**g, "rows": [fn(r) for r in g["rows"]]} if isinstance(g, dict) and isinstance(g.get("rows"), list) else g
+            for g in groups
+        ],
+    }
+
+
 def _slim_orders_list_response(data: Any, product_query: str | None = None) -> Any:
-    """Apply order-row slimming to list / dict payload shapes."""
+    """Apply order-row slimming to list / dict payload shapes, `group_by` group rows included."""
     if isinstance(data, list):
         return [_slim_orders_list_row(item, product_query) for item in data]
     if isinstance(data, dict):
         if isinstance(data.get("data"), list):
             data = {**data, "data": [_slim_orders_list_row(r, product_query) for r in data["data"]]}
-            return data
+            return _map_group_rows(data, lambda r: _slim_orders_list_row(r, product_query))
         return _slim_orders_list_row(data, product_query)
     return data
 
@@ -1355,7 +1374,7 @@ def _strip_row_company_ids(tool_name: str, data: Any) -> Any:
     rows = data.get("data")
     if not isinstance(rows, list):
         return data
-    return {**data, "data": [_drop_company_id(row) for row in rows]}
+    return _map_group_rows({**data, "data": [_drop_company_id(row) for row in rows]}, _drop_company_id)
 
 
 # --- project sales -------------------------------------------------------------
