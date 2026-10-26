@@ -19,7 +19,9 @@ Contact C's stock-visibility policy names BRW and MWH (include list).
 - AC-8: An unresolvable contact gets no incoming rows and no last-in rows.
 - AC-9: No `contact_id` (staff, n8n), or a policy naming no location list: today's output exactly,
   allocations and unallocated quantity included.
-- AC-11: A NULL-workspace contact (Respond.io id + space_id) is scoped by its own policy, never read
-  as nobody (incoming, last-in, PO placed).
-- AC-12: C cannot fetch the packing list of a shipment with no in-scope line.
+- AC-11: On the incoming routes and last-in, the location policy is read for the same contact the
+  ETA rules and field reveals resolved (NULL-workspace fallback included), never the raw id. The PO
+  placed route is out of this lane (crew, 26 Oct; hotfix lane closed).
+- AC-12: C cannot fetch the packing list of a shipment with no in-scope line (`/attachment` and
+  `/shipments/{id}/products`, every mode, dealers included).
 - AC-10: The parser's LOCATION lookup list offers C only BRW and MWH.

@@ -46,7 +46,9 @@ last-in rows (all modes; `availability` also withholds `warehouse`) and to the p
 
 The policy is resolved from the internal contact id `eta_policy.resolve_request_contact` already
 found (NULL-workspace fallback), never from the raw Respond.io id + space_id, which reads such a
-contact as nobody and fails closed. Same fix ported to the placed route (#1880 carried the bug).
+contact as nobody and fails closed. The placed route keeps main's code (crew ruling: out of scope;
+the company scope resolver has no NULL-workspace fallback either, so such a contact sees no company
+rows end to end).
 
 ## Design (one scope function)
 
@@ -64,8 +66,9 @@ contact as nobody and fails closed. Same fix ported to the placed route (#1880 c
    - `/shipments` `total_remaining_incoming_quantity` / `distinct_products_incoming` recomputed from
      the scoped lines.
 3. `_Contact` (`incoming_stock.py`) resolves the scope with the rest of the contact's rules and
-   hands it to the service on every route (the packing-list attachment route included); an
-   `availability` policy gets no scope (ETA ruling).
+   hands it to the service on every route; an `availability` policy gets no scope on the
+   list-shaped routes (ETA ruling), but the single-shipment routes (`/shipments/{id}/products`,
+   `/attachment`) print quantities and the packing list, so they take the scope in every mode.
 4. Last-receipt: `contact_id` / `space_id` declared; scope narrows `warehouse_ids` exactly as the
    placed route does (#1880); empty scope = no rows; `availability` withholds `warehouse`.
 5. Lookup list: `load_rows(..., warehouse_scope=...)`; `engine.py` passes the resolved contact's
