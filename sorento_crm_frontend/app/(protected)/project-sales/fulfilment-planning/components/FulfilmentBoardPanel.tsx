@@ -83,6 +83,7 @@ import {
   splitEditsToConfirm,
   contributionMatchesSearch,
   confirmLinesByOrder,
+  isChangeLine,
   remarkFor,
   autocountBoardNote,
   autocountChangeNotes,
@@ -2251,6 +2252,15 @@ export function FulfilmentBoardPanel({
           soNumber: order.so_number,
           soDate: order.so_date ?? null,
           remarkType: order.remark_type ?? null,
+          // FULFIL-SO-REMARK-CHANGES (R1): a change on any line makes this order's Remark required.
+          hasChange: lines.some((line) =>
+            isChangeLine(
+              line,
+              draftWithoutPreMark,
+              pendingBatchSalesOrderIds.has(line.sales_order_id),
+              batchNamedKeys,
+            ),
+          ),
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);

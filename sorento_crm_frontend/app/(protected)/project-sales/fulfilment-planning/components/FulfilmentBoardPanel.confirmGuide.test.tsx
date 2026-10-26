@@ -167,7 +167,28 @@ vi.mock('@/services/pendingActionService', () => ({
 import { FulfilmentBoardPanel } from './FulfilmentBoardPanel';
 import { buildBoard, type BoardDemandLine } from '../../_shared/lib/__testsupport__/boardFixture';
 import { addBtn, qty, splitLine, typeDate, typeQty, wireLine, wireSplit } from '@/test-mocks/lineSplitSheetKit';
-import { openConfirmGuide, walkConfirmGuide, walkToConfirmStep } from '@/test-mocks/confirmGuide';
+import {
+  fillRequiredRemark,
+  openConfirmGuide as openGuideRaw,
+  walkConfirmGuide,
+  walkToConfirmStep,
+} from '@/test-mocks/confirmGuide';
+
+/**
+ * FULFIL-SO-REMARK-CHANGES (R1): most pages here carry a split edit, a change, so their Remark
+ * is required. Specs about the split pages key one in as the guide opens; the Remark specs
+ * themselves open with `openGuideRaw`.
+ */
+async function openConfirmGuide() {
+  const guide = await openGuideRaw();
+  await waitFor(() => {
+    if (screen.queryAllByTestId('confirm-guide-split-page').length > 0) {
+      expect(screen.queryAllByTestId('confirm-guide-so-remark').length).toBeGreaterThan(0);
+    }
+  }).catch(() => undefined);
+  fillRequiredRemark();
+  return guide;
+}
 import { toast } from '@/lib/toast';
 import userEvent from '@testing-library/user-event';
 
@@ -387,7 +408,12 @@ async function mountWith(board: Board, soNumbers?: string[]) {
 }
 
 const pages = () => screen.queryAllByTestId('confirm-guide-split-page');
-const click = (id: string) => fireEvent.click(screen.getByTestId(id));
+const click = (id: string) => {
+  // R1: the next page may be a change page too; its Remark is keyed in before moving on.
+  if (id === 'confirm-guide-next') fillRequiredRemark();
+  fireEvent.click(screen.getByTestId(id));
+  if (id === 'confirm-guide-next' || id === 'confirm-guide-back') fillRequiredRemark();
+};
 const pageOf = (so: string) =>
   screen.getAllByTestId('confirm-guide-split-page').find((el) => el.getAttribute('data-so') === so)!;
 
@@ -1829,13 +1855,14 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
   const remarkInput = (so: string) =>
     within(pageOf(so)).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
 
-  // SO000001: line 1 split-edited + line 3 saved draft are covered, line 2 is not.
+  // SO000001: lines 1 and 3 re-approved (saved drafts, no change), line 2 is not in the press.
+  // FULFIL-SO-REMARK-CHANGES (R2): only a no-change order is prefilled, so no split edit here.
   const base = () =>
-    withDraft(withSplitEdited(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1]), ['pl-1-1']), ['pl-1-3', 'pl-2-1']);
+    withDraft(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1]), ['pl-1-1', 'pl-1-3', 'pl-2-1']);
 
   async function openAt(board: Board) {
     await mountWith(board);
-    await openConfirmGuide();
+    await openGuideRaw();
     await screen.findAllByTestId('confirm-guide-split-page');
   }
 
@@ -1924,3 +1951,91 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
     expect(body.orders.find((o: { pso_id: string }) => o.pso_id === 'pso-so-2').so_remark).toBe('');
   });
 });
+
+// ---------------------------------------------------------------------------
+// FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R1/R2): the Remark is REQUIRED on an SO whose
+// press carries a change, and starts EMPTY there; a new-only / re-approve-only SO keeps today's
+// optional, prefilled Remark.
+// ---------------------------------------------------------------------------
+
+describe('FULFIL-SO-REMARK-CHANGES: a change SO needs its Remark keyed in', () => {
+  function withRemarkType(board: Board, types: Record<string, string | null>) {
+    return {
+      ...board,
+      orders: board.orders.map((o) =>
+        o.sales_order_id in types ? { ...o, remark_type: types[o.sales_order_id] } : o,
+      ),
+    } as unknown as Board;
+  }
+  const remarkInput = (so: string) =>
+    within(pageOf(so)).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
+  const next = () => screen.getByTestId('confirm-guide-next') as HTMLButtonElement;
+
+  // SO000001: line 1 split-edited (a change). SO000002: line 1 re-approved as it was (no change).
+  const board = () =>
+    withRemarkType(
+      withDraft(withSplitEdited(boardOf([SO1_L1, SO1_L2, SO2_L1]), ['pl-1-1']), ['pl-2-1']),
+      { 'so-1': 'Sponsorship', 'so-2': 'Purchase Request' },
+    );
+
+  async function open() {
+    await mountWith(board());
+    await openGuideRaw();
+    await screen.findAllByTestId('confirm-guide-split-page');
+  }
+
+  it('R2: a change SO starts with an EMPTY Remark, never the Sponsorship prefill', async () => {
+    await open();
+    expect(remarkInput('SO000001')).toHaveValue('');
+  });
+
+  it('R1: a change SO marks its Remark required and holds Next until it is keyed in', async () => {
+    await open();
+    expect(remarkInput('SO000001')).toBeRequired();
+    await waitFor(() => expect(next()).toBeDisabled());
+    fireEvent.change(remarkInput('SO000001'), { target: { value: '   ' } });
+    expect(next()).toBeDisabled();
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'Site asked to split' } });
+    await waitFor(() => expect(next()).toBeEnabled());
+  });
+
+  it('R1/R2: a re-approve-only SO keeps its prefill and stays optional', async () => {
+    await open();
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'Site asked to split' } });
+    await waitFor(() => expect(next()).toBeEnabled());
+    click('confirm-guide-next');
+    expect(remarkInput('SO000002')).toHaveValue('Purchase Request');
+    expect(remarkInput('SO000002')).not.toBeRequired();
+    fireEvent.click(within(pageOf('SO000002')).getByRole('button', { name: 'Clear remark' }));
+    expect(next()).toBeEnabled();
+  });
+
+  it('R1: the keyed-in change Remark is what Confirm posts for that SO', async () => {
+    await open();
+    fireEvent.change(remarkInput('SO000001'), { target: { value: 'Site asked to split' } });
+    await waitFor(() => expect(next()).toBeEnabled());
+    click('confirm-guide-next');
+    await walkConfirmGuideFromHere();
+    await waitFor(() => expect(confirmMany).toHaveBeenCalledTimes(1));
+    const [body] = confirmMany.mock.calls[0];
+    const byPso = Object.fromEntries(
+      body.orders.map((o: { pso_id: string; so_remark?: string }) => [o.pso_id, o.so_remark]),
+    );
+    expect(byPso).toEqual({ 'pso-so-1': 'Site asked to split', 'pso-so-2': 'Purchase Request' });
+  });
+});
+
+/** Steps the open guide to its Confirm step from wherever it is and presses Confirm. */
+async function walkConfirmGuideFromHere() {
+  for (let i = 0; i < 12; i += 1) {
+    const confirm = screen.queryByTestId('confirm-guide-confirm');
+    if (confirm) {
+      await waitFor(() => expect(confirm).toBeEnabled());
+      fireEvent.click(confirm);
+      return;
+    }
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeEnabled());
+    fireEvent.click(screen.getByTestId('confirm-guide-next'));
+  }
+  throw new Error('the guide never reached its Confirm step');
+}

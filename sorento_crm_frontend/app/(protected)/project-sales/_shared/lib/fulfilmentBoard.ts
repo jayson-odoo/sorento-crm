@@ -1121,6 +1121,31 @@ export function splitEditsToConfirm(
  * `countsInPress`), once per line, so the guided Confirm's pages list exactly the lines N
  * counts.
  */
+/**
+ * FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R1): whether this line of the press is a CHANGE,
+ * which makes its order's Remark required. A withdrawal, a Transfer to Cancel SO, a split edit,
+ * a line the book cancelled, an Amend of a confirmed line, and a line posted over an order
+ * inquiry purchasing already holds (covered with no decision, e.g. an imported raised row) are
+ * changes. A brand-new line's first decision and a re-approve with nothing changed are not.
+ */
+export function isChangeLine(
+  contribution: BoardContribution,
+  draft: BoardDraft,
+  batchBlocked = false,
+  batchNamedKeys?: ReadonlySet<string>,
+): boolean {
+  const decision = draft[contribution.key];
+  const role = pressRoleFor(contribution, decision, batchBlocked, batchNamedKeys);
+  if (role.kind === 'withdraw' || role.kind === 'cancel_so' || role.kind === 'cancelled') {
+    return true;
+  }
+  if (splitEditApplies(contribution, batchBlocked, batchNamedKeys)) return true;
+  if (role.kind !== 'post') return false;
+  if (contribution.cancelled) return true;
+  if (contribution.decision) return decision?.verdict === 'amended';
+  return Boolean(contribution.covered);
+}
+
 export function confirmLinesByOrder(
   contributions: BoardContribution[],
   draft: BoardDraft,
