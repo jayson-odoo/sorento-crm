@@ -1472,3 +1472,30 @@ def test_v66_regressions_gold_file():
     for r in rows:
         text = json.dumps(r, ensure_ascii=False).upper()
         assert "SDN BHD" not in text and "ENTERPRISE" not in text, r["id"]  # no customer names in a public repo
+
+
+# ENTITY-EXTRACT-MATCH S2 review: a version carrying `== LOOKUP SPANS ==` is gold-run through the span seam.
+def test_parse_one_gives_a_spans_version_the_span_pass_lines_not_the_ngram_ones(session_factory, monkeypatch):
+    from app.services.chatbot import engine
+    from app.services.chatbot.head import lookup_lists as ll
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot.test_span_extract import (
+        BASE, BRAND, HDR, SPANS_LINE, FakeProvider, _brand_label, seed_prompts, seed_world, spans_json,
+    )
+
+    seed_world(session_factory)
+    seed_prompts(session_factory, template=BASE + SPANS_LINE + "\n")
+    monkeypatch.setattr(ll, "EMBED", None, raising=False)
+    events: list = []
+    provider = FakeProvider(events, spans_json((BRAND, "brand")))
+    monkeypatch.setattr("app.services.llm_provider.get_provider", lambda name, key, model: provider)
+    seen: dict = {}
+    monkeypatch.setattr(parser_mod, "parse", lambda cfg, block: seen.setdefault("block", block) or {})
+    ngram: list = []
+    real = engine._lookup_lines
+    monkeypatch.setattr(engine, "_lookup_lines", lambda *a, **k: ngram.append(1) or real(*a, **k))
+    pg._parse_one(f"{BRAND.lower()} stock", _config(lookup_spans=True), session_factory)
+    assert len(provider.calls) == 1, "the gold run must make the span call"
+    assert ngram == [], "a spans version must not use the n-gram lookup"
+    lines = seen["block"].splitlines()
+    assert HDR["brand"] in lines and f"- {_brand_label(session_factory)}" in lines, seen["block"]

@@ -80,9 +80,10 @@ class FakeProvider:
         self.events.append("span")
         if self.check:
             self.check()
-        if isinstance(self.output, Exception):
-            raise self.output
-        return ChatResult(content=self.output, prompt_tokens=11, completion_tokens=7, total_tokens=18)
+        out = self.output() if callable(self.output) else self.output
+        if isinstance(out, Exception):
+            raise out
+        return ChatResult(content=out, prompt_tokens=11, completion_tokens=7, total_tokens=18)
 
 
 def seed_world(session_factory) -> None:
@@ -543,3 +544,85 @@ def test_ac_s2_8_downgrade_removes_only_its_own_rows(_small_diet):
         assert _versions(db)[0].id == prod.id
         assert _versions(db, SPAN_KEY) == []
         assert [(lbl.label, lbl.version_id) for lbl in db.query(AIPromptLabel).filter(AIPromptLabel.name == PARSER)] == [("production", prod.id)]
+
+
+# ---------------------------------------------------------------------------------------------- S2 review round
+def _ngram_expected(session_factory, body: str, *, numbers: bool = False) -> list[str]:
+    """Today's lines for `body` offline: shortlist plus (as `_lookup_lines` does) the number hits."""
+    from app.services.chatbot import turn_runtime
+
+    db = scoped(session_factory)
+    hits = ll.shortlist(body, ll.load_rows(db), None, brand_words=ll.brand_words(db, turn_runtime.active_brands(db)))
+    if numbers:
+        nums = ll.number_hits(body, db, hidden_spec_keys=frozenset())
+        assert nums, "the control message must carry a number the lookup understands"
+        hits["spec"] = [*nums, *hits.get("spec", [])][: ll.TOP_K["spec"]]
+    return ll.render(hits)
+
+
+@pytest.mark.parametrize("output", [
+    RuntimeError("zz provider down"), llm_call.TimedOut("zz no answer"), "this is not json {",
+    json.dumps({"spans": "not a list"}),
+], ids=["raises", "timeout", "invalid_json", "wrong_shape"])
+def test_review_fallback_keeps_the_number_hits_of_todays_path(session_factory, seeded, stub_access, monkeypatch, output):
+    from tests.chatbot.test_lookup_lists_s2 import HDR_SPEC, seed_world as seed_specs
+
+    seed_world(session_factory)
+    seed_specs(session_factory)
+    body = "zz basin 200mm"
+    expected = _ngram_expected(session_factory, body, numbers=True)
+    assert HDR_SPEC in expected, expected
+    r = run(session_factory, stub_access, monkeypatch, text_body=body, span=output)
+    assert all(line in r.lines for line in expected), (expected, r.lines)
+
+
+@pytest.mark.parametrize("answer", [spans_json(), spans_json(("SRTWC8065", "product_code"))], ids=["no_spans", "product_code_only"])
+def test_review_a_successful_call_naming_nothing_offers_no_row_the_ngram_path_would(
+    session_factory, seeded, stub_access, monkeypatch, answer
+):
+    seed_world(session_factory)
+    body = "zz basin price"
+    control = _ngram_expected(session_factory, body)
+    assert HDR["category"] in control and "- ZZ Basin" in control, ("the n-gram path must offer the row", control)
+    r = run(session_factory, stub_access, monkeypatch, text_body=body, span=answer)
+    assert r.provider.calls
+    assert HDR["category"] not in r.lines and "- ZZ Basin" not in r.lines, r.lines
+
+
+def test_review_a_resolver_failure_falls_back_to_todays_ngram_lines(session_factory, seeded, stub_access, monkeypatch):
+    from app.services.chatbot.head import list_resolver
+
+    seed_world(session_factory)
+    body = f"{BRAND.lower()} zz basin"
+    expected = _ngram_expected(session_factory, body)
+    assert expected
+
+    def boom(*a, **k):
+        raise RuntimeError("zz resolver down")
+
+    monkeypatch.setattr(list_resolver, "resolve", boom)
+    r = run(session_factory, stub_access, monkeypatch, text_body=body, span=spans_json((BRAND, "brand")))
+    assert all(line in r.lines for line in expected), (expected, r.lines)
+    ev = trace_events(session_factory, r)
+    assert len(ev) == 1 and ev[0]["fallback"] is True, ev
+    assert (r.result.reply or {}).get("text"), r.result
+
+
+def test_review_a_failed_call_records_its_real_elapsed_ms(session_factory, seeded, stub_access, monkeypatch):
+    import time
+
+    def slow_fail():
+        time.sleep(0.06)
+        return RuntimeError("zz slow failure")
+
+    seed_world(session_factory)
+    r = run(session_factory, stub_access, monkeypatch, text_body="zz basin", span=slow_fail)
+    ev = trace_events(session_factory, r)[0]
+    assert ev["fallback"] is True and ev["ms"] >= 50, ev
+
+
+def test_review_cached_tokens_are_null_when_the_provider_reports_none(session_factory, seeded, stub_access, monkeypatch):
+    seed_world(session_factory)
+    run(session_factory, stub_access, monkeypatch, text_body=f"{BRAND.lower()} stock", span=spans_json((BRAND, "brand")))
+    rows = usage_rows(session_factory)
+    assert len(rows) == 1 and rows[0].cached_tokens is None, [r.cached_tokens for r in rows]
