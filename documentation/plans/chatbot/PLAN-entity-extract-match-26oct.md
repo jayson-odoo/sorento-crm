@@ -41,6 +41,37 @@ noise (rows offered the message never named), tokens + latency per turn. Model g
 3. Run arms A/B/C on the set; record metrics + cost in a ledger.
 4. Report: recommendation, PR slicing with sizes, fate of `head/lookup_lists.py` and of the prompt.
 
+## Owner question 2 (26 Oct ~14:50): industry aliases without hard-coding
+
+"how do we nudge the parser for things like srt is actually sorento brand, wc is actually water closet, all these
+industry-specific aliases, how can we nudge it without hard coding in the prompt?"
+
+Phase 1 adds:
+
+1. ALIAS STORE as data: rows attached to list rows (brand SRT -> Sorento, category/product type WC -> water closet,
+   马桶/马桶盖 -> toilet/seat cover, BM/ZH names), admin-editable, used by the resolver for spelling + meaning match on
+   spans. The parser extracts the span ("srt", "wc") and never needs the alias.
+2. Aliases MINED from data, approved by owner/admin, not typed by hand: product-code segments vs master data (SRT*
+   codes -> brand Sorento; WC/WB/KS segments vs category), did-you-mean picks users accepted, AutoCount item
+   descriptions.
+3. Inventory of every place aliases live today (code constants such as `head/lookup_lists.py` PROMPT_SYNONYMS, brand
+   aliases in `turn_runtime.active_brands`, `lookup_sets`, `sales_agents.aliases`, prompt text) and a move plan.
+4. Measure how many labelled messages need an alias to resolve (gold flag per mention).
+
+## Facts from the scout (26 Oct)
+
+- Lookup vectors are in-process dicts only (`head/lookup_lists.py:588-598`): row cache keyed (model, sha1(text)),
+  cap 20000; warm-up thread; spelling-only until warm. No shared/persisted store today.
+- Lookup is gated by the "== LOOKUP LISTS ==" line in the template (`head/parser.py:1028`); blocks go into the user
+  block after the message (`turn/context.py:266-268`).
+- Parser already emits `entities[]` with `raw` + free-string `hint` (`head/parser.py:194-249`); hints seen: brand,
+  customer, category/product_type, warehouse, sales_agent, specification (+ spec_key/spec_value), attachment_type.
+- `entity_resolver.resolve_references` (`entity_resolver.py:5292`): Tier 1 exact (:5463), Tier 2 ILIKE (:5525),
+  Tier 3 vector over embedding_chunks, min sim 0.80 (:5755-5775, :3073-3078). Brand, category, spec registry values,
+  sales agents have no probe at all; warehouse + attachment_type have exact/prefix but no vectors.
+- Corpus: 7,048 distinct live inbound texts in `chatbot.turns` on `sorento_explore1020` (read-only harness
+  `prompt-diet/harness/inject.py`); no existing file has span gold for all lists.
+
 ## Owner rules honoured
 
 No hard-coded regex/keyword rules (semantic/data only); typo + language robustness (BM, Chinese); parser extracts, code
