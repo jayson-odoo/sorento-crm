@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect } from 'react';
 import { zodResolver } from '@hookform/resolvers/zod';
 import { useForm } from 'react-hook-form';
 import { z } from 'zod';
@@ -25,8 +25,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { getCompaniesSelect } from '@/app/(protected)/system-management/companies/services/companyService';
+import { DealerGroupSelect } from './DealerGroupSelect';
 import { FormDescription } from '@/components/ui/form';
 import { useCreateBrand, useUpdateBrand, useBrand } from '../hooks/useBrands';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
@@ -69,17 +68,6 @@ const BrandFormSchema = z.object({
   dealer_company_id: z.string().nullable(),
 });
 
-async function fetchCompanyOptions(query: string) {
-  try {
-    const needle = query.trim().toLowerCase();
-    return (await getCompaniesSelect())
-      .filter((c) => !needle || `${c.name} ${c.code}`.toLowerCase().includes(needle))
-      .map((c) => ({ value: c.id, label: c.name, description: c.code }));
-  } catch {
-    return [];
-  }
-}
-
 interface BrandFormDialogProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -98,7 +86,6 @@ export default function BrandFormDialog({
   const { data: accessTypeOptions = [] } = useContactAccessTypes();
   const createMutation = useCreateBrand();
   const updateMutation = useUpdateBrand();
-  const [dealerName, setDealerName] = useState<string | null>(null);
 
   const form = useForm<z.infer<typeof BrandFormSchema>>({
     resolver: zodResolver(BrandFormSchema),
@@ -130,7 +117,6 @@ export default function BrandFormDialog({
           is_searchable: brand.is_searchable ?? true,
           dealer_company_id: brand.dealer_company_id ?? null,
         });
-        setDealerName(brand.dealer_company_name ?? null);
       } else if (copyFromBrand) {
         form.reset({
           brand_code: `${copyFromBrand.brand_code}-COPY`,
@@ -144,7 +130,6 @@ export default function BrandFormDialog({
           is_searchable: copyFromBrand.is_searchable ?? true,
           dealer_company_id: copyFromBrand.dealer_company_id ?? null,
         });
-        setDealerName(copyFromBrand.dealer_company_name ?? null);
       } else {
         form.reset({
           brand_code: '',
@@ -157,7 +142,6 @@ export default function BrandFormDialog({
           is_searchable: true,
           dealer_company_id: null,
         });
-        setDealerName(null);
       }
     }
   }, [open, form, brandId, brand, copyFromBrand]);
@@ -348,19 +332,10 @@ export default function BrandFormDialog({
                 <FormItem>
                   <FormLabel>Dealer group</FormLabel>
                   <FormControl>
-                    <SearchableSelect
-                      value={field.value ?? ''}
-                      onChange={(value) => field.onChange(value || null)}
-                      onOptionChange={(option) => setDealerName(option?.label ?? null)}
-                      fetchOptions={fetchCompanyOptions}
-                      selectedOption={
-                        field.value && dealerName
-                          ? { value: field.value, label: dealerName }
-                          : undefined
-                      }
-                      placeholder="No dealer group"
-                      aria-label="Dealer group"
-                      clearable
+                    <DealerGroupSelect
+                      value={field.value}
+                      storedName={brand?.dealer_company_name ?? copyFromBrand?.dealer_company_name}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormMessage />
