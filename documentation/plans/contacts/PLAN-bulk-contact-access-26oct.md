@@ -35,7 +35,7 @@ transaction -> result report + one audit row per changed contact. Re-upload is i
 ## Architecture
 Layer: backend service + one endpoint; FE dialog through hook -> feature service -> `lib/api-client`.
 Shared mechanism (one copy, no second matcher, no second planner):
-- `app/services/contact_bulk_setup_engine.py` (new, moved not rewritten): `normalise_name`, `_merge_flags`,
+- `app/services/contact_setup_engine.py` (new, moved not rewritten): `normalise_name`, `_merge_flags`,
   `_find_contacts`, `_resolve_world`, `_plan_contact`, `_apply_contact` leave `scripts/contact_bulk_setup.py`,
   which re-imports them (its CLI, Excel parser, `from_sheet` stay). Its tests
   (`tests/test_contact_bulk_setup_script.py`, `tests/test_contact_bulk_setup_from_sheet.py`) stay green unchanged.

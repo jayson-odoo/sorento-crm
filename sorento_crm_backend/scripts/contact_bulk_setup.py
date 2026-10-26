@@ -87,7 +87,7 @@ from app.models.media import ContactMediaLimit  # noqa: E402
 from app.models.order import Customer  # noqa: E402
 from app.services import audit_service  # noqa: E402
 from app.services import company_scope as _company_scope  # noqa: E402,F401 - registers the scope listeners
-from app.services.contact_bulk_setup_engine import (  # noqa: E402,F401 - moved to the engine, re-exported here
+from app.services.contact_setup_engine import (  # noqa: E402,F401 - moved to the engine, re-exported here
     CASH_CODE_PREFIXES,
     CONTACT_COLUMNS,
     Desired,

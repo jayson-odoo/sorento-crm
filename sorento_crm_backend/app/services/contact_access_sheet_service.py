@@ -2,7 +2,7 @@
 
 UAC ``documentation/plans/contacts/bulk-contact-access-26oct-acceptance-criteria.md``; contract
 ``PLAN-bulk-contact-access-26oct.md``. The planner and writer are the shared engine
-(`contact_bulk_setup_engine`); this module owns the 26 Oct template, the CSV parse, the dealer
+(`contact_setup_engine`); this module owns the 26 Oct template, the CSV parse, the dealer
 blocks (exact accounts across every company, ranked candidates when there is none) and the one
 transaction that applies it all.
 """
@@ -27,7 +27,7 @@ from app.models.order import Customer
 from app.models.product import Brand
 from app.models.sales_agent import SalesAgent
 from app.services import audit_service
-from app.services import contact_bulk_setup_engine as engine
+from app.services import contact_setup_engine as engine
 from app.services.contact_access_copy_service import Names, names_for, snapshots
 from app.services.contact_customer_service import link_customer
 from app.services.error_handler import AppException

@@ -15,7 +15,7 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
   -> MCH (case-insensitive); the token right after a brand company is that company's agent unless it is another
   brand company or a role word; `Business Owner` -> owner, `Employee` -> employee; any other token = alt dealer
   text. A row with no brand company, no role, or no phone is a row error (listed, not applied).
-- U3 Phone matched to a CRM contact the way the 4 Oct script does (`contact_bulk_setup_engine.normalise_phone`:
+- U3 Phone matched to a CRM contact the way the 4 Oct script does (`contact_setup_engine.normalise_phone`:
   Malaysian numbers, so `012-345 6789`, `+60 12-345 6789` and `60123456789` are equal; otherwise digits only). Not
   found = skipped "not_in_crm" [Q5]; two contacts with the same number = skipped "ambiguous_phone". Never created.
   The same phone twice in one sheet: the later row is a row error ("Same phone as line N").
