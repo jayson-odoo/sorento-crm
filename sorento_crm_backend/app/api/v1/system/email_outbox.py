@@ -1,5 +1,5 @@
 """Email outbox admin API. List, view, retry, cancel rows."""
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Path, Query, Response, status
 from pydantic import BaseModel, Field
 from sqlalchemy import or_
 from sqlalchemy.orm import Session
@@ -9,9 +9,11 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.models.email_outbox import EmailOutbox
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.schemas.email_outbox import EmailOutboxRowResponse
+from app.schemas.email_outbox import EmailOutboxAttachment, EmailOutboxRowResponse
 from app.services.email_outbox_service import cancel as cancel_outbox, retry as retry_outbox
 from app.services.error_handler import handle_internal_error
+from app.tasks.email_outbox_tasks import _fetch_attachment, attachment_refs
+from app.utils.http import content_disposition
 
 router = APIRouter()
 
@@ -49,6 +51,10 @@ def _to_response(row: EmailOutbox) -> EmailOutboxRowResponse:
         error_message=row.error_message,
         cancel_reason=row.cancel_reason,
         coalesce_key=row.coalesce_key,
+        attachments=[
+            EmailOutboxAttachment(index=i, filename=ref["filename"])
+            for i, ref in enumerate(attachment_refs(row))
+        ],
         created_at=row.created_at,
         updated_at=row.updated_at,
     )
@@ -102,6 +108,43 @@ async def get_email_outbox(
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbox row not found")
     return _to_response(row)
+
+
+@router.get("/email-outbox/{row_id}/attachments/{index}")
+async def download_email_outbox_attachment(
+    row_id: str,
+    index: int = Path(..., ge=0),
+    current_user: dict = Depends(require_permission("system.email_outbox.view")),
+    db: Session = Depends(get_db),
+):
+    """The bytes of one file the row's email carries, by its position in `attachments`.
+
+    Addressed by position, never by a storage key from the caller, so only an object the row
+    itself lists can be served.
+    """
+    row = db.query(EmailOutbox).filter(EmailOutbox.id == row_id).first()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Outbox row not found")
+    refs = attachment_refs(row)
+    if index >= len(refs):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found")
+    ref = refs[index]
+    try:
+        name, mime, data = _fetch_attachment(ref["storage_provider"], ref["storage_key"], ref["filename"])
+    except Exception as exc:  # noqa: BLE001 - the storage backends raise plain Exception
+        # Both backends word a missing object "File not found ..." (s3_service / r2_service).
+        if "not found" in str(exc).lower():
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Attachment file not found in storage"
+            )
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY, detail="Could not read the attachment from storage"
+        )
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={"Content-Disposition": content_disposition(name)},
+    )
 
 
 @router.post("/email-outbox/{row_id}/retry", response_model=EmailOutboxRowResponse)

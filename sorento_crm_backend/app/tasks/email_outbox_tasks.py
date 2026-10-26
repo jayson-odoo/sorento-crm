@@ -85,18 +85,55 @@ def _fetch_attachment(provider: Optional[str], key: str, filename: Optional[str]
     return name, _ATTACHMENT_MIME.get(ext, "application/octet-stream"), data
 
 
-def _attachments_for(row: EmailOutbox) -> Optional[list]:
-    """Fetch the row's attachments, if it declared any.
-
-    A failure to read an object is raised, not swallowed: an email that was supposed to carry
-    a document and silently arrives without one is worse than one that retries. The outbox's
-    existing backoff then applies, which is the behaviour every other send failure already gets.
+def attachment_refs(row: EmailOutbox) -> list[dict]:
+    """Every file the row's email carries, in send order, without reading storage.
 
     ONE file lives in the row's own columns, and that is every event but one. A container
     request sends two - the PDF and the supplier's own stock list with the quantity to load
     filled in (`supplier_notice_service`, F4) - and the second travels as
     `metadata_json["extra_attachments"]` rather than as a second set of columns nothing else
     in the system would ever fill.
+
+    Each ref is `{filename, storage_provider, storage_key, optional}`. The Email Outbox detail
+    lists these and downloads one by its position (OUTBOX-ATTACHMENT), so the screen shows
+    exactly what the drainer sends.
+    """
+    refs: list[dict] = []
+
+    key = getattr(row, "attachment_storage_key", None)
+    if key:
+        refs.append(
+            {
+                "filename": getattr(row, "attachment_filename", None) or key.rsplit("/", 1)[-1],
+                "storage_provider": getattr(row, "attachment_storage_provider", None),
+                "storage_key": key,
+                "optional": False,
+            }
+        )
+
+    meta = row.metadata_json if isinstance(row.metadata_json, dict) else {}
+    for extra in meta.get("extra_attachments") or []:
+        if not isinstance(extra, dict) or not extra.get("storage_key"):
+            continue
+        key = extra["storage_key"]
+        refs.append(
+            {
+                "filename": extra.get("filename") or key.rsplit("/", 1)[-1],
+                "storage_provider": extra.get("storage_provider"),
+                "storage_key": key,
+                "optional": bool(extra.get("optional")),
+            }
+        )
+
+    return refs
+
+
+def _attachments_for(row: EmailOutbox) -> Optional[list]:
+    """Fetch the row's attachments (`attachment_refs`), if it declared any.
+
+    A failure to read an object is raised, not swallowed: an email that was supposed to carry
+    a document and silently arrives without one is worse than one that retries. The outbox's
+    existing backoff then applies, which is the behaviour every other send failure already gets.
 
     An extra marked `"optional": True` (#1312, AC-E6: the OI handover's own per-line
     files - a file can be deleted between the email being queued and the outbox
@@ -106,37 +143,20 @@ def _attachments_for(row: EmailOutbox) -> Optional[list]:
     """
     out: list[tuple] = []
 
-    key = getattr(row, "attachment_storage_key", None)
-    if key:
-        out.append(
-            _fetch_attachment(
-                getattr(row, "attachment_storage_provider", None),
-                key,
-                getattr(row, "attachment_filename", None),
-            )
-        )
-
-    meta = row.metadata_json if isinstance(row.metadata_json, dict) else {}
-    for extra in meta.get("extra_attachments") or []:
-        if not isinstance(extra, dict) or not extra.get("storage_key"):
-            continue
-        if extra.get("optional"):
+    for ref in attachment_refs(row):
+        if ref["optional"]:
             try:
                 out.append(
-                    _fetch_attachment(
-                        extra.get("storage_provider"), extra["storage_key"], extra.get("filename")
-                    )
+                    _fetch_attachment(ref["storage_provider"], ref["storage_key"], ref["filename"])
                 )
             except Exception:  # noqa: BLE001 - a missing optional file must not block the email
                 logger.warning(
                     "email_outbox: skipping missing optional attachment %s (%s)",
-                    extra.get("filename"), extra.get("storage_key"),
+                    ref["filename"], ref["storage_key"],
                 )
             continue
         out.append(
-            _fetch_attachment(
-                extra.get("storage_provider"), extra["storage_key"], extra.get("filename")
-            )
+            _fetch_attachment(ref["storage_provider"], ref["storage_key"], ref["filename"])
         )
 
     return out or None
