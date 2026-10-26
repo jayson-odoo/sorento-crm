@@ -1,6 +1,6 @@
 """Lane BULK-CONTACT-ACCESS: POST /api/v1/user-management/contacts/access-sheet.
 
-UAC ``documentation/plans/contacts/bulk-contact-access-26oct-acceptance-criteria.md`` U1-U19.
+UAC ``documentation/plans/_archive/contacts/bulk-contact-access-26oct-acceptance-criteria.md`` U1-U19.
 RED tests written before any implementation: the route does not exist yet, so every test fails
 on a 404 / missing key, the right red. Contract: PLAN-bulk-contact-access-26oct.md "API contract".
 

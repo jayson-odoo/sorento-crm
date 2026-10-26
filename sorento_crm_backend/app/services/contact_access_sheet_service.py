@@ -1,6 +1,6 @@
 """Upload the Respond dealer-contact sheet and set each contact's access (BULK-CONTACT-ACCESS).
 
-UAC ``documentation/plans/contacts/bulk-contact-access-26oct-acceptance-criteria.md``; contract
+UAC ``documentation/plans/_archive/contacts/bulk-contact-access-26oct-acceptance-criteria.md``; contract
 ``PLAN-bulk-contact-access-26oct.md``. The planner and writer are the shared engine
 (`contact_setup_engine`); this module owns the 26 Oct template, the CSV parse, the dealer
 blocks (exact accounts across every company, ranked candidates when there is none) and the one
