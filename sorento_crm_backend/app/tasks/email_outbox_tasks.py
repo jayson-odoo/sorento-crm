@@ -113,16 +113,14 @@ def attachment_refs(row: EmailOutbox) -> list[dict]:
 
     meta = row.metadata_json if isinstance(row.metadata_json, dict) else {}
     for extra in meta.get("extra_attachments") or []:
-        # A key that is not a string can never be fetched; skipping it keeps one malformed
-        # entry from failing the whole send or the Email Outbox list that shows these.
-        if not isinstance(extra, dict) or not isinstance(extra.get("storage_key"), str):
+        if not isinstance(extra, dict) or not extra.get("storage_key"):
             continue
         key = extra["storage_key"]
-        if not key:
-            continue
         refs.append(
             {
-                "filename": str(extra.get("filename") or "") or key.rsplit("/", 1)[-1],
+                # str(): a malformed entry still lists on the Email Outbox screen; its fetch
+                # then fails like any other, so the drainer's retry rule is unchanged.
+                "filename": str(extra.get("filename") or "") or str(key).rsplit("/", 1)[-1],
                 "storage_provider": extra.get("storage_provider"),
                 "storage_key": key,
                 "optional": bool(extra.get("optional")),
