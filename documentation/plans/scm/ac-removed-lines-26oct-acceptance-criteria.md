@@ -4,6 +4,10 @@ Status: FINAL, 26 Oct 2026, from the owner's rulings on `ac-removed-lines-behavi
 (Q1 a, Q2 just remove the links, Q3 no suggestion, Q4 a, Q5 no UI change, minimum change
 management). Plan: `PLAN-ac-removed-lines-26oct.md`.
 
+Superseded: `test_oi_cancelled_line_used_confirm.py` pinned that a raised row on an SO line a
+push removes is flagged To confirm (ruling C1, 20 Sep); Q1 (a) now retires it (AC-RL-20). Actioned
+rows keep the C1 flag.
+
 ## Journey
 
 Purchasing deletes a PO line in AutoCount. The next AutoCount push reaches the CRM. The line
@@ -55,7 +59,8 @@ SO line removed (Q1 a)
 Unchanged (regression guards)
 - AC-RL-30 A line cancelled by a Cancel PO / Cancel SO document, a line on a header the push
   cancels, and a CS-board cancelled SO line keep every link.
-- AC-RL-31 An SPO document pushed as cancelled (`force_closed`, no `retired_at`) keeps its links.
+- AC-RL-31 An SPO document pushed as cancelled (`force_closed`) keeps its links, including a line
+  that same cancelled push no longer carries (cancel, not removal).
 - AC-RL-32 A ref-less (xlsx-era) line or a duplicate-ref row swept by the push keeps its links.
 - AC-RL-33 A line that was already cancelled before this push and is again absent changes
   nothing (release runs only on the transition, never as a backlog sweep on a later push).
@@ -68,12 +73,16 @@ Reconciliation (Q4 a)
   code, line qty, linked qty, OI rows affected; no customer or contact names.
 - AC-RL-41 It selects only: PO lines `cancelled`, AutoCount source with a DtlKey, header not
   cancelled, not `cancelled_by_cancel_doc`, with a live OI link or open claim; SO lines the same
-  plus `cancelled_at IS NULL`, with live OI rows; SPO lines with `retired_at` set and a live OI
-  link or open claim.
+  plus `cancelled_at IS NULL`, with rows the AC-RL-20 retire acts on (raised / partly linked /
+  placed; actioned rows are only flagged, so they never select a line); SPO lines with
+  `retired_at` set and a live OI link or open claim.
 - AC-RL-42 `dry_run=False` applies exactly the ingest's release (same functions, AC-RL-01..20)
   and a second run finds nothing.
 - AC-RL-43 A CLI entry (`python -m scripts.release_removed_autocount_lines --company <id>
   [--apply]`) prints the dry-run report; it writes only with `--apply`.
+- AC-RL-44 The reconciliation sends nothing: `--apply` retires SO rows (AC-RL-20) but queues no
+  purchasing handover email or other notification (owner: minimum change management; these
+  removals are weeks old). The ingest path keeps its AC-RL-20 handover.
 
 No UI change (Q5)
 - AC-RL-50 No frontend file changes; removed lines keep showing Cancelled.
