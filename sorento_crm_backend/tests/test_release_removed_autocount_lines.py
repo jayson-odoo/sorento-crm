@@ -60,7 +60,16 @@ K_SO_REMOVED, K_SO_CS_BOARD, K_SO_NO_ROWS = "82001", "82002", "82003"
 K_SO_CANCEL_DOC, K_SO_HDR_CANCELLED, K_SO_ACTIONED_ONLY = "82004", "82005", "82006"
 K_SPO_RETIRED, K_SPO_NOT_RETIRED, K_SPO_RETIRED_B = "83001", "83002", "83003"
 SELECTED = (K_PO_REMOVED, K_PO_CLAIM_ONLY, K_SO_REMOVED, K_SPO_RETIRED, K_SPO_RETIRED_B)
-ALL_SPO = [K_SPO_RETIRED, K_SPO_RETIRED_B]
+def _key(dtl: str) -> str:
+    """The allow-list key (AC-RL-46): `<source DB>:<DtlKey>`."""
+    return f"{DB}:{dtl}"
+
+
+ALL_SPO = [_key(K_SPO_RETIRED), _key(K_SPO_RETIRED_B)]
+# Same DtlKey in two AutoCount databases (E, F), and the same database + DtlKey under two
+# DocKeys (G, H): the keys that are or are not unique.
+K_SPO_TWIN = "84001"
+K_SPO_DUP = "84002"
 UNSELECTED = (
     K_PO_CANCEL_DOC, K_PO_REFLESS, K_PO_OPEN, K_PO_HDR_CANCELLED,
     K_SO_CS_BOARD, K_SO_NO_ROWS, K_SPO_NOT_RETIRED,
@@ -211,11 +220,11 @@ def _world(db) -> World:
     }
 
     # --- SPO lines: retired + linked (selected), closed but never retired (not selected).
-    def _spo(dtl, *, retired):
+    def _spo(dtl, *, retired, source_ref=None):
         alloc = SPOAllocation(
             id=_uid(), company_id=c, spo_number=f"ZZT-SPO-{_uid()[:6]}", spo_line_number=1,
             product_id=w.product.id, allocated_quantity=10, line_status="closed",
-            source_system="autocount", source_ref=_ref(dtl),
+            source_system="autocount", source_ref=source_ref or _ref(dtl),
             retired_at=datetime(2026, 9, 1) if retired else None,
         )
         db.add(alloc)
@@ -230,6 +239,16 @@ def _world(db) -> World:
     w.row_spo_retired_b, w.link_spo_retired_b = _row_linked(
         db, c, w.product, spo=w.spo_retired_b, doc=w.spo_retired_b.spo_number
     )
+    w.twin = {}
+    for name, ref in (
+        ("sorento", f"AED_SORENTO:ZZDOC1:{K_SPO_TWIN}"),
+        ("mocha", f"AED_V2_MOCHA:ZZDOC2:{K_SPO_TWIN}"),
+        ("dup1", f"AED_DUP:ZZDOC1:{K_SPO_DUP}"),
+        ("dup2", f"AED_DUP:ZZDOC2:{K_SPO_DUP}"),
+    ):
+        alloc = _spo(K_SPO_TWIN, retired=True, source_ref=ref)
+        row, link = _row_linked(db, c, w.product, spo=alloc, doc=alloc.spo_number)
+        w.twin[name] = (alloc, row, link)
     w.spo_live = _spo(K_SPO_NOT_RETIRED, retired=False)
     _row, link = _row_linked(db, c, w.product, spo=w.spo_live, doc=w.spo_live.spo_number)
     w.kept_links["spo_not_retired"] = str(link.id)
@@ -415,7 +434,7 @@ def test_ac_rl_43_cli_prints_the_dry_run_report_and_writes_only_with_apply(
     for dtl in SELECTED:
         assert dtl in out, f"the CLI dry run must print {dtl}"
 
-    code = mod.main(["--company", str(w.company), "--apply", "--only", K_SPO_RETIRED])
+    code = mod.main(["--company", str(w.company), "--apply", "--only", _key(K_SPO_RETIRED)])
 
     assert code in (0, None)
     live_links = _link_ids(db)
@@ -459,6 +478,7 @@ def test_ac_rl_45_dry_run_lists_each_spo_candidate_with_its_evidence(db):
         (K_SPO_RETIRED_B, w.spo_retired_b, w.row_spo_retired_b),
     ):
         assert dtl in text_, dtl
+        assert _key(dtl).lower() in text_, "the candidate's key is <source DB>:<DtlKey>"
         assert alloc.spo_number.lower() in text_, "the SPO number"
         assert row.zzt_so_number.lower() in text_, "the SO numbers of its links"
     assert w.product.product_code.lower() in text_, "the item code"
@@ -487,7 +507,7 @@ def test_ac_rl_45_apply_releases_only_the_listed_spo_line(db):
 
     preview = run(db, w.company, dry_run=True)
 
-    report = run(db, w.company, dry_run=False, spo_dtl_keys=[K_SPO_RETIRED])
+    report = run(db, w.company, dry_run=False, spo_dtl_keys=[_key(K_SPO_RETIRED)])
 
     live = _link_ids(db)
     assert str(w.link_spo_retired.id) not in live, "A is listed: released"
@@ -517,10 +537,12 @@ def test_ac_rl_45_a_listed_key_that_is_not_a_candidate_is_reported_and_ignored(d
     w = _world(db)
     before = _snapshot(db)
 
-    report = run(db, w.company, dry_run=False, spo_dtl_keys=["99999", K_SPO_NOT_RETIRED])
+    report = run(db, w.company, dry_run=False, spo_dtl_keys=[_key("99999"), _key(K_SPO_NOT_RETIRED)])
 
     text_ = _flat(report)
-    assert "99999" in text_ and K_SPO_NOT_RETIRED in text_, "unknown keys are reported"
+    assert _key("99999").lower() in text_ and _key(K_SPO_NOT_RETIRED).lower() in text_, (
+        "unknown keys are reported"
+    )
     live = _link_ids(db)
     assert w.kept_links["spo_not_retired"] in live, "a non-candidate is never touched"
     assert str(w.link_spo_retired.id) in live and str(w.link_spo_retired_b.id) in live
@@ -539,7 +561,79 @@ def test_ac_rl_45_cli_only_releases_that_spo_line_and_apply_alone_releases_none(
     live = _link_ids(db)
     assert str(w.link_spo_retired.id) in live and str(w.link_spo_retired_b.id) in live
 
-    mod.main(["--company", str(w.company), "--apply", "--only", K_SPO_RETIRED_B])
+    mod.main(["--company", str(w.company), "--apply", "--only", _key(K_SPO_RETIRED_B)])
     live = _link_ids(db)
     assert str(w.link_spo_retired_b.id) not in live, "B listed with --only: released"
     assert str(w.link_spo_retired.id) in live, "A not listed: keeps its links"
+
+
+# ====================================================================== AC-RL-46
+def _refusal_keys(report) -> str:
+    """Every report key that talks about a refusal (names are the implementation's)."""
+    return " ".join(
+        f"{k} {_flat(v)}"
+        for k, v in report.items()
+        if any(word in str(k).lower() for word in ("refus", "invalid", "ambig", "reject"))
+    )
+
+
+def test_ac_rl_46_the_same_dtl_key_in_two_databases_is_told_apart_by_the_key(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+    preview = run(db, w.company, dry_run=True)
+    text_ = _flat(preview)
+    assert f"aed_sorento:{K_SPO_TWIN}" in text_ and f"aed_v2_mocha:{K_SPO_TWIN}" in text_
+
+    run(db, w.company, dry_run=False, spo_dtl_keys=[f"AED_SORENTO:{K_SPO_TWIN}"])
+
+    live = _link_ids(db)
+    assert str(w.twin["sorento"][2].id) not in live, "the AED_SORENTO line is released"
+    assert str(w.twin["mocha"][2].id) in live, "the other database's line keeps its links"
+
+
+def test_ac_rl_46_a_bare_dtl_key_is_refused_and_a_valid_key_in_the_same_run_applies(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+
+    report = run(
+        db, w.company, dry_run=False,
+        spo_dtl_keys=[K_SPO_TWIN, _key(K_SPO_RETIRED)],
+    )
+
+    live = _link_ids(db)
+    assert str(w.twin["sorento"][2].id) in live and str(w.twin["mocha"][2].id) in live, (
+        "a bare DtlKey releases nothing"
+    )
+    refused = _refusal_keys(report)
+    assert K_SPO_TWIN in refused, f"the bare key must be reported as refused: {report}"
+    assert str(w.link_spo_retired.id) not in live, "the valid key in the same run still applies"
+
+
+def test_ac_rl_46_a_key_matching_two_candidates_is_refused(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+    ambiguous = f"AED_DUP:{K_SPO_DUP}"
+
+    report = run(db, w.company, dry_run=False, spo_dtl_keys=[ambiguous, _key(K_SPO_RETIRED)])
+
+    live = _link_ids(db)
+    assert str(w.twin["dup1"][2].id) in live and str(w.twin["dup2"][2].id) in live
+    assert ambiguous.lower() in _refusal_keys(report).lower(), report
+    assert str(w.link_spo_retired.id) not in live, "the valid key in the same run still applies"
+
+
+def test_ac_rl_46_cli_refuses_a_bare_key_and_says_so(db, monkeypatch, capsys):
+    import scripts.release_removed_autocount_lines as mod
+
+    w = _world(db)
+    monkeypatch.setattr(mod, "SessionLocal", lambda: _Session(db))
+
+    mod.main(["--company", str(w.company), "--apply", "--only", K_SPO_TWIN])
+
+    out = capsys.readouterr().out.lower()
+    live = _link_ids(db)
+    assert str(w.twin["sorento"][2].id) in live and str(w.twin["mocha"][2].id) in live
+    assert any(word in out for word in ("refus", "invalid", "ambig")), out
