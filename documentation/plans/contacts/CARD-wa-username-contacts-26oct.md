@@ -217,7 +217,7 @@ resent a stale answer. Pending: owner's hand-shared-card test (expected `origin:
 
 **Security.** The number comes from WhatsApp, not the user: only a tap yields `origin: 'contact_request'`; a user
 can type text or hand-share any card, never forge `origin` (Meta sets it; the CRM accepts it only from an HMAC-signed
-webhook, `direct_ingress.py:174-178`). The wa_id cross-check adds a second Meta field. No reply reveals whether a
+webhook, `direct_ingress.py:171-175`). The wa_id cross-check adds a second Meta field. No reply reveals whether a
 number is known (same line either way). Merge is the irreversible step (only Respond.io Owners/Managers unmerge),
 so it runs only after rule 3 passes. security-reviewer runs on the PR.
 
@@ -243,7 +243,7 @@ so it runs only after rule 3 passes. security-reviewer runs on the PR.
 - **Q4 (card from a linked contact):** (a) no bot reply, staff see it in Respond.io; (b) a short "noted" line.
   **Rec (a).**
 - **Q5 (ingress prerequisite):** the tap only reaches the turn by direct ingress, which covers a contact only when
-  `chatbot_direct_ingress_mode` is `all` or the contact is listed (`direct_ingress.py:139-142`, `:170-173`); a new
+  `chatbot_direct_ingress_mode` is `all` or the contact is listed (`direct_ingress.py:139-142`, `:167-170`); a new
   username user is never listed. Prod mode UNVERIFIED (crew can read it). (a) mode `all` already: nothing to do;
   (b) a narrow code exception: a `type: 'contact'` message from an HMAC-signed webhook starts a turn whatever the
   mode; (c) add `contact` to the n8n Trigger (owner publishes). **Rec (a) if already `all`, else (b)** (no n8n change).
