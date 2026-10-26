@@ -1,7 +1,7 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: S1 #1876 reviewer READY, CI label run pending, owner OK to merge (26 Oct ~23:58). S2 in progress (Phase 2). Phase 1 done; owner design OK
-26 Oct ~16:15. S2 branch: built on the S1 head, rebased onto main by merge after #1876 merges.
+Status: S2 #1885 built dark (head 3e5740d367, reviewer READY on b261d856bf, security CLEAN, crew-audit fixes in);
+S2 gate NOT PASSED on either model (see "S2 gate results"); owner decision pending. S1 #1876 merged (078b1ab482).
 Track: L overall (chatbot architecture), lead pattern; S1 itself is M (library + eval, no migration, no behaviour change).
 UAC: `documentation/plans/chatbot/entity-extract-match-acceptance-criteria.md`.
 
@@ -374,6 +374,19 @@ set in `resolve_config` next to `lookup_lists=LL.gate_on(raw_template)` at `:102
   script at `laneboard/scripts/<PR>.md` with real dev-data cases (masked in the repo).
 
 Size: L, ~700 lines + migration. Security review: yes (AC-S2-2 visibility path is company/contact scoping adjacent).
+
+## S2 gate results (27 Oct)
+
+| Gate | Head | Right row (today -> span pass) | Unnamed rows offered / msg | Spend |
+| --- | --- | --- | --- | --- |
+| OpenAI gpt-5.4-mini, embeddings on, V1 (spans only) | b261d856bf | A 80.4 / R 81.5 -> B 77.5 (B-A -3.0 [-7.8, +1.6]) | 6.48 -> 0.83 | ~USD 6.6 (dev key ran out of credits) |
+| Gemini flash-lite, embeddings off, V2 (spans + near-exact spellings) | 3e5740d367 | R 75.3 -> B 73.8 (-1.5 [-4.3, +1.5]) | 2.11 -> 1.00 | USD 2.92 (owner waiver 4.00) |
+
+Span call p50 ~1.1 s. R5: R 21 / B 19 (Gemini); TRAIN: R 94 / B 97 (Gemini). Reading: in both models the span pass
+gives the parser cleaner candidate blocks but not more right answers; remaining losses are mentions the span model never
+copies out (category words inside codes, spec names) and partial customer names. Offline (no LLM) on the recorded span
+answers: V1 offered the gold row for 79.0% of mentions, V2 85.0%, today's lookup 79.8% (spelling only). Owner option:
+gemini-3.5-flash-lite as span model finds more spans than gpt-5.4-mini (94.0 vs 90.3 span recall on 186 messages).
 
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 
