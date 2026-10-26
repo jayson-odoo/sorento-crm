@@ -1380,8 +1380,8 @@ export function PurchaseOrderDetail({ id }: { id: string }) {
                 // and pointing at a control that is not there is worse than saying nothing.
                 <p className="text-sm text-muted-foreground">
                   {isDraftPurchaseOrder(po.status)
-                    ? 'Nothing received yet. This order has not been placed.'
-                    : 'Nothing received yet. Receipts recorded against this order show here.'}
+                    ? 'Nothing transferred yet. This order has not been placed.'
+                    : 'Nothing transferred yet. Receipts recorded against this order show here.'}
                 </p>
               )}
             </div>
