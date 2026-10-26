@@ -1,5 +1,11 @@
 # Behaviour card - WA-USERNAME-CONTACTS: a WhatsApp username-only contact proves its phone and joins the contact that holds its access
 
+**Owner answers (26 Oct ~22:45, via crew):** Q3 (a) bot asks. Q4 (a) nothing before linking. Q5 wording:
+"Hi there, please share your phone number with us" / "xxxx is your verification code, please paste your code here" /
+"Wrong code, please try again" / "Phone number verified, you may start using the AI". Merge survivor = the contact
+WITH the phone number (owner tested in Respond.io). Q1 leaning (c) ("the sorento number is verified"), Q2 asks
+whether Respond.io has a merge API: both open pending research round 2 (section 8).
+
 Lane WA-USERNAME-CONTACTS, size L, 26 Oct 2026. Card before any code. Researched on main `36f571df3b`, static
 reading only: no DB, no Respond.io call, no n8n call. Backend paths under `sorento_crm_backend/`. People are
 CONTACT A / B, phones +6010000000x (fake).
@@ -32,9 +38,9 @@ CONTACT A / B, phones +6010000000x (fake).
 - Respond.io: contacts created after Apr 2026 carry BSUID/username in the message webhook `channel` block; if the
   Meta contact book is OFF, Respond.io "will not be able to match" username users to existing contacts and makes a
   duplicate (respond.io/help/whatsapp/whatsapp-business-platform-api-channel-configuration).
-- **Merging is UI-only.** No merge or merge-suggestion endpoint is documented; Respond.io suggests a merge when two
-  profiles share a phone or email; agents merge from the Messages > Channels tab, only Owners/Managers unmerge
-  (respond.io/blog/merge-contacts). Which contact id survives a merge: UNVERIFIED.
+- **Merging: CORRECTED in round 2 (section 8).** Round 1 said UI-only; wrong. The API has `POST /v2/contact/merge`.
+  Merge *suggestions* are UI-only: Respond.io suggests a merge when two profiles share a phone or email
+  (respond.io/blog/merge-contacts).
 - Setting the phone: `PUT /v2/contact/{identifier}` takes `phone` (we already PUT custom fields there,
   `respond_sync_handler.py:311`). Behaviour when the phone is already on another contact (error vs merge
   suggestion): UNVERIFIED. The official API reference pages did not load from here.
@@ -91,7 +97,7 @@ authentication charge per code (MY rate UNVERIFIED), a one-time template approva
 templates and whether the shared number is WhatsApp-attested is UNVERIFIED.
 **Rec (a)**: the only option that proves ownership without a person's judgement; staff then merge mechanically.
 
-**Q2 Merge.** Respond.io has no merge API (none documented).
+**Q2 Merge.** (Round 1 text; superseded by section 8: the merge API exists.)
 (a) staff merges in Respond.io on the bot's comment + assignment; the CRM follows by phone with no new data model.
 (b) no Respond.io merge: the CRM contact carries a second Respond.io id (new column or table, history re-point, two
 inboxes stay split in Respond.io).
@@ -111,3 +117,55 @@ the team; handed to the team. Plus the authentication template text (Meta's fixe
   username becomes a phoneless twin; ON cuts case 1 sharply.
 - One test merge on a Respond.io test pair: which contact id survives? (Rule 6 works either way; the answer decides
   whether the CRM row's id changes.)
+
+## 8. Research round 2 (26 Oct ~23:00, after the owner's answers)
+Sources: Meta BSUID page (P1) https://developers.facebook.com/documentation/business-messaging/whatsapp/business-scoped-user-ids;
+Meta auth templates (P2) https://developers.facebook.com/documentation/business-messaging/whatsapp/templates/authentication-templates/authentication-templates;
+Respond.io help/changelog pages named below. developers.respond.io is a script-rendered site: its API facts come
+from search snippets of the official pages, not a full page read (marked "snippet").
+
+**Share Contact Info button (Q1 option c).**
+- P1: "If a user taps this button, their WhatsApp phone number will be shared in the message thread", i.e. the
+  number of the WhatsApp account that taps, not a number the user types or picks. A contact card the user shares by
+  hand is a different message: P1 changelog 4 May 2026, "vCard is only included when a user shares a contact
+  directly, not when tapping the `REQUEST_CONTACT_INFO` button"; the webhook marks the two with `origin`
+  (`contact_request` vs `other`; field name from a page summary, exact text UNVERIFIED).
+- Security rule that follows: accept a number ONLY from a button tap, never from a hand-shared contact card (a user
+  could share a dealer's card).
+- Verified business: P1 does not tie the button or the phone reveal to business verification; "verified name"
+  appears only in the display-name rules. Being verified changes nothing here.
+- Respond.io: "available in Marketing and Utility message templates" (https://roadmap.respond.io/changelog/whatsapp-usernames-and-business-scoped-user-ids-bsuids-are-here);
+  label fixed "Share Contact Info" (https://respond.io/help/whatsapp/whatsapp-message-templates). Meta also allows
+  it as an interactive message (P1), but Respond.io documents only the template route.
+- UNVERIFIED: what Respond.io hands on after a tap: does it fill the contact's phone itself, and does the `origin`
+  marker reach the message webhook / our chat turn? This decides whether (c) is safe to automate (owner test below).
+- Cost: one Utility template per ask. Meta's price for a Utility template inside an open service window: UNVERIFIED this round.
+
+**Authentication template (Q1 option a, Q5 line 2).** P2: body is "Fixed, non-customizable preset text":
+"<VERIFICATION_CODE> is your verification code." + optional "For your security, do not share this code." + optional
+footer "This code expires in <NUM_MINUTES> minutes." "please paste your code here" CANNOT go in the template; it
+would be a separate bot message right after it. Auth templates must go to a phone number, not a BSUID (P1; Respond.io
+help snippet "Authentication templates must be sent using a phone number").
+
+**Merge API (Q2).** `POST /v2/contact/merge`, body `contactIds` (two ids) plus optional name/phone/email/language;
+"older contact becomes primary" (snippet, https://developers.respond.io/docs/api/3c34d8547c5c9-merge-two-contacts).
+Matches the owner's test (the contact with the phone survives). The Respond.io n8n node also lists "Merge Contact"
+(https://respond.io/help/integrations/n8n). No merge-suggestion endpoint. Also `GET /v2/contact/{identifier}/channels`
+(snippet, https://developers.respond.io/docs/api/a17bccb520d2e-list-contact-channels).
+Consequence: survivor = the phone contact, so the CRM row keeps its `respond_io_id` and access works on the next
+message with no CRM re-point.
+
+**Meta contact book (owner check).** Meta-side, not Respond.io: Meta Business Suite > Business settings > Business
+info > "Contact book for WhatsApp" (https://business.facebook.com/latest/settings/business_info). Respond.io: "It is
+enabled by default." / "If this feature is turned off, respond.io will not be able to match Contacts who use WhatsApp
+usernames" (https://respond.io/help/whatsapp/whatsapp-business-platform-api-channel-configuration, Best practices).
+P1: turning it off deletes what it stored. If ON, anyone who ever messaged us keeps their phone visible, so the flow
+mostly meets genuinely new people.
+
+**Updated recommendations.**
+- Q1: (c) Share Contact Info button, IF a 5-minute owner test shows the tap is distinguishable from a hand-shared
+  card (Respond.io fills the phone only on a tap, or the `origin` marker reaches the message webhook). Then the flow
+  is: template "Hi there, please share your phone number with us" + [Share Contact Info] -> tap -> merge -> "Phone
+  number verified, you may start using the AI". No code, nothing to type, no wrong-code loop. If the test shows the
+  two look the same: (a) code, with "please paste your code here" as a separate message.
+- Q2: merge by API right after the proof, no staff click; staff only when the merge call fails (comment + assign).

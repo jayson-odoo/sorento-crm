@@ -1,6 +1,6 @@
 # PLAN: WhatsApp username-only contacts get a verified phone and join the contact that holds their access (WA-USERNAME-CONTACTS)
 
-Status: Card filed (`CARD-wa-username-contacts-26oct.md`), Waiting:owner; no code until the owner answers. Track: L (new chat flow, contact
+Status: Card round 2 filed (owner answered Q3/Q4/Q5 + survivor; Q1/Q2 re-asked with research, card section 8), Waiting:owner; no code until Q1/Q2 settle. Track: L (new chat flow, contact
 merge across Respond.io and CRM, ownership proof = auth-adjacent, security-reviewer required). LEAD pattern.
 UAC: `wa-username-contacts-26oct-acceptance-criteria.md` (written after the card is answered).
 
@@ -26,7 +26,7 @@ In `CARD-wa-username-contacts-26oct.md` sections 1-2 (file:line and doc URLs the
   `respond_contacts.phone_number` is unique NOT NULL (`app/models/access.py:268`).
 - Unknown Respond.io id -> `access_denied` reply (`app/services/chatbot/engine.py:6352-6353`).
 - Sync already re-points a CRM row's `respond_io_id` by phone (`respond_sync_handler.py:241-257`).
-- Respond.io merge is UI-only (no documented API); survivor id UNVERIFIED.
+- Respond.io merge API exists: `POST /v2/contact/merge`, older contact primary (card section 8; round 1 said UI-only, corrected). Owner test: the contact with the phone survives.
 - n8n: no contact-create flow; the spine posts the whole Respond.io message to `/external/chat/turn`.
 
 ## Open questions (card)
