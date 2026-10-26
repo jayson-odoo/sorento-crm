@@ -746,6 +746,18 @@ class RespondClient:
             response.raise_for_status()
             return response.json() if response.content else {}
 
+    def merge_contacts(self, contact_ids: list) -> dict:
+        """Merge two contacts via POST /v2/contact/merge. ``contact_ids`` = [primary, other]; the
+        older contact survives, so callers pass the one that must remain first."""
+        if not self.api_key:
+            raise ValueError("Respond API key is not configured.")
+        url = f"{self.base_url}/v2/contact/merge"
+        payload = {"contactIds": [int(i) for i in contact_ids]}
+        with self._http(timeout=15) as client:
+            response = client.post(url, headers=self._headers(), json=payload)
+            response.raise_for_status()
+            return response.json() if response.content else {}
+
 
 class IntegrationLogService:
     """Service for integration log operations."""
