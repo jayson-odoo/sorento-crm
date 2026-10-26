@@ -173,6 +173,13 @@ describe('SalesOpportunitiesView', () => {
     expect(screen.getByText('CRM')).toBeTruthy();
   });
 
+  it('O7-1: shows the Source as Chat for an opportunity logged in chat', () => {
+    withOpportunities([opportunity({ id: 'opp-chat', source: 'chat' })]);
+    render(<SalesOpportunitiesView />);
+    expect(screen.getByText('Chat')).toBeTruthy();
+    expect(screen.queryByText('chat')).toBeNull();
+  });
+
   it('links each row to its detail page', () => {
     withOpportunities([opportunity()]);
     render(<SalesOpportunitiesView />);

@@ -50,7 +50,9 @@ export type BranchKind =
   | 'business_query'
   | 'media_denied'
   /** AI-ALLOWED-GATE: the CRM declined to answer this contact, nothing was sent. */
-  | 'ai_not_allowed';
+  | 'ai_not_allowed'
+  /** SALES-TARGET-CHAT: a salesperson logging a sales opportunity. */
+  | 'log_opportunity';
 
 /**
  * One stage of one turn.
