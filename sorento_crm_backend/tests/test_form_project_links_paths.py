@@ -332,3 +332,38 @@ def test_portal_opportunity_update_refuses_a_foreign_project(w, monkeypatch):
             db=w.db,
         )
     assert _code(exc.value) == "PROJECT_LINK_NOT_ALLOWED"
+
+
+# ---------------------------------- registrations waiting for approval (merge with #1849)
+
+
+def _pending(w) -> str:
+    """One of Sorento's own projects, turned into a portal registration still waiting for
+    approval: visible to the editor and the contact, but not a project yet (R4)."""
+    from app.models.projects import Project
+
+    owner = w.db.query(Project.owner_user_id).filter(Project.id == w.own).scalar()
+    pid = _project(w.db, w.srt, owner)
+    w.db.query(Project).filter(Project.id == pid).update(
+        {"approval_state": "pending"}, synchronize_session=False
+    )
+    w.db.flush()
+    return pid
+
+
+def test_staff_stock_inquiry_refuses_a_registration_waiting_for_approval(w):
+    with pytest.raises(AppException) as exc:
+        _si(w, project_id=_pending(w))
+    assert _code(exc.value) == "project_not_approved"
+
+
+def test_portal_price_tag_create_refuses_a_registration_waiting_for_approval(w, monkeypatch):
+    from app.schemas.price_tag import PriceTagRequestCreate
+
+    routes = _ptr_routes(monkeypatch)
+    monkeypatch.setattr(routes, "_resolve_company", lambda db, token: w.srt)
+    with pytest.raises(AppException) as exc:
+        routes.portal_create_price_tag_request(
+            PriceTagRequestCreate(project_id=_pending(w)), token=_token(w.contact), db=w.db
+        )
+    assert _code(exc.value) == "PROJECT_LINK_NOT_ALLOWED"
