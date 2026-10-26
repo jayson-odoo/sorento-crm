@@ -184,3 +184,75 @@ def test_cancel_so_on_a_use_brw_line_still_reads_cancel_as_today(api, emails):
 
     assert len(emails) == 1, emails
     assert sorted(r for *_x, r in _lines(emails[0])) == ["CANCEL", "ORDER"]
+
+
+# ------------------------- crew audit 26 Oct: CHANGED on qty moves, never "CANCEL ORDER"
+
+
+def _buy_then(api, emails, cut_to, second):
+    """Line A Buy 10 confirmed; AutoCount moves the line to `cut_to`; re-Confirm `second`. The
+    one email line of the re-Confirm."""
+    from decimal import Decimal
+
+    from .test_oi_saved_line_email import _one_line_order
+
+    _client, world = api
+    order, line, core_line = _one_line_order(world, "10")
+    _post(api, order, [_line_payload(line.id, buy_qty="10")])
+    emails.clear()
+    if cut_to is not None:
+        core_line.qty_ordered = Decimal(cut_to)
+        line.qty = Decimal(cut_to)
+        world.db.commit()
+    _post(api, order, [_line_payload(line.id, amend_reason="Changed.", **second)])
+    assert len(emails) == 1, emails
+    [entry] = emails[0]["lines"]
+    return entry
+
+
+def test_a_buy_turned_use_own_location_with_a_qty_cut_reads_changed_not_cancel(api, emails):
+    _client, world = api
+    _stock(world.db, world.product, world.own_wh, on_hand=50)
+    world.db.commit()
+    own = world.own_wh.warehouse_code
+
+    entry = _buy_then(api, emails, "8", {"reserve": [{"warehouse_id": world.own_wh.id, "qty": "8"}]})
+
+    assert entry["remark"] == f"CHANGED: ORDER 10 -> USE {own} 8", entry
+    assert entry["was"] == {"qty": "10"} and entry["qty"] == "8", entry
+
+
+def test_a_buy_turned_use_own_location_with_a_qty_rise_is_never_blank(api, emails):
+    _client, world = api
+    _stock(world.db, world.product, world.own_wh, on_hand=50)
+    world.db.commit()
+    own = world.own_wh.warehouse_code
+
+    entry = _buy_then(
+        api, emails, "12", {"reserve": [{"warehouse_id": world.own_wh.id, "qty": "12"}]}
+    )
+
+    assert entry["remark"] == f"CHANGED: ORDER 10 -> USE {own} 12", entry
+    assert entry["was"] == {"qty": "10"} and entry["qty"] == "12", entry
+
+
+def test_a_buy_turned_order_back_reads_changed_never_cancel_order(api, emails):
+    """Crew audit (3): purchasing reads CANCEL ORDER as a customer cancel, so a Buy moved to an
+    Order back states the change too."""
+    from .test_oi_saved_line_email import _borrow_from, _donor
+
+    _client, world = api
+    donor = _donor(world, "KL")
+
+    entry = _buy_then(api, emails, None, {"borrow": _borrow_from(world, donor, "10")})
+
+    assert entry["remark"] == f"CHANGED: ORDER 10 -> ORDER BACK {donor.warehouse_code} 10", entry
+    assert "CANCEL" not in entry["remark"]
+
+
+def test_a_customer_cut_of_the_same_buy_still_reads_cancel_n(api, emails):
+    """The one cancel purchasing must read as such: the customer cut the line."""
+    entry = _buy_then(api, emails, "8", {"buy_qty": "8"})
+
+    assert entry["remark"] == "CANCEL 2", entry
+    assert entry["was"] == {"qty": "10"}, entry

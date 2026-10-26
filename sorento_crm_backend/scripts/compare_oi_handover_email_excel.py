@@ -1,11 +1,13 @@
 """Compare a purchasing handover email with the OI Excel it attached (OI-EMAIL-PURCHASING-FOCUS).
 
 Read-only. Finds the newest `order_inquiry_handover` email on record (a Notification of type
-`automation_email`) whose body names the given S/O number, reads its line table, fetches the
-attached OI Excel from storage and prints both side by side, then PASS when every email line is
-an Excel row and nothing else is.
+`automation_email`) whose body names the given S/O number, and its Email Outbox row (the email
+System Management > Email Outbox shows). Reads the outbox row's line table, fetches the attached
+OI Excel from storage and prints both side by side, then PASS when every email line is an Excel
+row and nothing else is. `--after` is when the Confirm (or resend) was pressed: an outbox row
+from before it is an older email, so that is a FAIL, never a pass on stale evidence.
 
-    venv/bin/python scripts/compare_oi_handover_email_excel.py SO394881
+    venv/bin/python scripts/compare_oi_handover_email_excel.py SO394881 --after "2026-10-26 14:05"
     venv/bin/python scripts/compare_oi_handover_email_excel.py --latest
 """
 from __future__ import annotations
@@ -20,15 +22,23 @@ from typing import List, Optional, Sequence, Tuple
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-#: The email's line-table headings and the Excel heading each one is in the sheet.
+#: The email's line-table headings and the Excel heading each one is in the sheet. Both the
+#: current layout (`oihr_0010`) and the older wide one (`oihr_0004`) are read.
 _EMAIL_TO_EXCEL = {
+    "SO DATE": "SO DATE",
+    "S/O NO": "S/O NO",
     "LOCATION": "LOCATION",
+    "STOCK LOCATION": "LOCATION",
     "ITEM CODE": "ITEM CODE",
     "NEW ITEM CODE": "NEW ITEM CODE",
     "QTY": "QTY",
-    "NEW QTY": "NEW QTY",
+    "NEW QTY": "QTY CHANGE TO",
+    "QTY CHANGE TO": "QTY CHANGE TO",
     "DELIVERY": "DELIVERY DATE",
-    "NEW DATE": "NEW DATE",
+    "DELIVERY DATE": "DELIVERY DATE",
+    "NEW DATE": "DELIVERY DATE CHANGE TO",
+    "DELIVERY DATE CHANGE TO": "DELIVERY DATE CHANGE TO",
+    "PROJECT/CUSTOMER": "PROJECT/CUSTOMER",
     "REMARK": "REMARK",
 }
 
@@ -113,11 +123,16 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("so_number", nargs="?")
     parser.add_argument("--latest", action="store_true", help="the newest handover email")
+    parser.add_argument(
+        "--after",
+        help="when the Confirm was pressed, server time (YYYY-MM-DD HH:MM); older email = FAIL",
+    )
     args = parser.parse_args(argv)
     if not args.so_number and not args.latest:
         parser.error("give an S/O number or --latest")
 
     from app.database import SessionLocal
+    from app.models.email_outbox import EmailOutbox
     from app.models.notification import Notification
     from app.services import storage_router
 
@@ -134,8 +149,20 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
             print("No handover email on record for that.")
             return 2
         data = note.data or {}
-        print(f"Email of {note.created_at}: {data.get('subject') or note.title}")
-        head, emailed = email_rows(data.get("body_html") or "")
+        outbox = (
+            db.query(EmailOutbox)
+            .filter(EmailOutbox.metadata_json["notification_id"].astext == str(note.id))
+            .order_by(EmailOutbox.created_at.desc())
+            .first()
+        )
+        if outbox is None:
+            print(f"FAIL: the email of {note.created_at} has no Email Outbox row yet.")
+            return 1
+        print(f"Email Outbox row of {outbox.created_at} ({outbox.status}): {outbox.subject}")
+        if args.after and outbox.created_at <= datetime.fromisoformat(args.after):
+            print(f"FAIL: that email is older than the Confirm at {args.after}.")
+            return 1
+        head, emailed = email_rows(outbox.body_html or data.get("body_html") or "")
         excel = [
             a for a in data.get("extra_attachments") or [] if a.get("filename", "").endswith(".xlsx")
         ]

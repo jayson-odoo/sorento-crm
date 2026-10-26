@@ -13,7 +13,7 @@ from decimal import Decimal
 
 import pytest
 
-from app.services.project_order_inquiry_service import saved_line_remark
+from app.services.project_order_inquiry_service import purchasing_remark, saved_line_remark
 from tests.scm.test_line_splits_api import _put, _sp, _url
 from tests.scm.test_line_splits_round3 import _excel_rows, api, emails, world  # noqa: F401 - fixtures reused
 from tests.test_planning_changes import BASE, _core_line, _core_so, _project_line, _project_so
@@ -130,30 +130,34 @@ def _words(s, no):
 
 
 def _email_words(reserve=(), buy=None, order_back=False, own=None):
-    """What the email's own function says for the same decision (one function)."""
+    """What the email's own function says for the same decision (one function). Since
+    OI-EMAIL-PURCHASING-FOCUS (26 Oct 2026) that is `purchasing_remark`: purchasing's parts
+    only, `None` for a line that tells purchasing nothing."""
     components = [
         {"kind": "reserve", "qty": c["qty"], "rung": c.get("rung"), "source_location": c["location"]}
         for c in reserve
     ]
     if buy:
         components.append({"kind": "buy", "qty": str(buy)})
-    return saved_line_remark(
+    return purchasing_remark(
         {"components": components, "order_back": order_back, "location": own}
-    )[0]
+    ) or None
 
 
-def test_f3_own_location_reserve_reads_use_and_the_location(api):
+def test_f3_own_location_reserve_has_no_words_as_the_email_sends_none(api):
+    """OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026): a Use own location line is not sent to
+    purchasing, so the guide shows no email words for it (it read USE <location>)."""
     s = _seed(api)
     _save_draft(s, 10, _amend([_own(s, 10)]))
-    assert _words(s, 10) == f"USE {s.world.own_wh.warehouse_code}"
+    assert _words(s, 10) is None
     assert _words(s, 10) == _email_words([_own(s, 10)])
 
 
 def test_f3_pool_reserve_and_buy_read_in_the_emails_words(api):
     s = _seed(api)
     _save_draft(s, 20, _amend([_pool(s, 6)], buy=4))
-    pool = s.world.pool_wh.warehouse_code
-    assert _words(s, 20) == f"USE {pool} 6 & ORDER 4"
+    # Owner Q1 (a), 26 Oct 2026: only purchasing's part.
+    assert _words(s, 20) == "ORDER 4"
     assert _words(s, 20) == _email_words([_pool(s, 6)], buy=4)
 
 
@@ -213,13 +217,17 @@ def test_f3_a_line_delivered_in_full_with_a_saved_draft_reads_its_words(api):
     s = _seed(api)
     s.core[50].qty_delivered = Decimal("10")
     s.db.commit()
-    _save_draft(s, 50, _amend([_own(s, 10)]))
-    assert _words(s, 50) == f"USE {s.world.own_wh.warehouse_code}"
+    _save_draft(s, 50, _amend([_own(s, 10)], buy=0))
+    # A Use own location draft: no email words (OI-EMAIL-PURCHASING-FOCUS, 26 Oct 2026).
+    assert _words(s, 50) is None
+    _save_draft(s, 50, _amend(buy=10))
+    assert _words(s, 50) == "ORDER"
 
 
-def test_f11_incoming_stock_prints_the_spo_numbers_the_email_prints(api):
-    """Arrival on or before the line's required date at the line's own location: the SPO number,
-    not "INCOMING"."""
+def test_f11_incoming_stock_has_no_words_as_the_email_sends_none(api):
+    """Arrival on or before the line's required date at the line's own location. Owner Q3 (a),
+    26 Oct 2026: a Use incoming line is not sent to purchasing, so no words (it read the SPO
+    number)."""
     from app.models.procurement import InboundShipment, SPOAllocation
     import uuid
 
@@ -238,7 +246,7 @@ def test_f11_incoming_stock_prints_the_spo_numbers_the_email_prints(api):
     ))
     s.db.commit()
     _save_draft(s, 10, {"verdict": "approved", "timely_spo_qty": "10", "reserve": [], "borrow": [], "buy_qty": "0"})
-    assert _words(s, 10) == "ZZT-SPO-F11A"
+    assert _words(s, 10) is None
 
 
 @pytest.mark.parametrize("kind", ["buy", "order_back"])
@@ -266,7 +274,7 @@ def test_f12_the_guides_words_equal_the_emails_words_from_the_confirmed_snapshot
         .first()
     )
     snap = next(x for x in decision.line_snapshots if x["project_line_id"] == str(s.line[10].id))
-    assert guide == saved_line_remark(snap)[0], (guide, saved_line_remark(snap))
+    assert guide == saved_line_remark(snap)[0] == purchasing_remark(snap), (guide, snap)
 
 
 def test_f15_a_saved_reject_on_a_confirmed_line_reads_the_emails_withdrawal_word(api):

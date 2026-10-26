@@ -469,18 +469,6 @@ def _then_changed_email(api, emails, *, first, second, second_donor_moves, cut_t
     return emails[0]["lines"][0]
 
 
-def _same(moved, still, own, *, kept_at, moved_to):
-    """A donor move reads as the same change without it, except that REMARK names the new
-    donor where the unmoved one names the old (OI-ORDERBACK-LOCATION, owner 21 Oct 2026)."""
-    assert moved["location"] == own and still["location"] == own, (moved, still)
-    for key in ("item_code", "qty", "was"):
-        assert moved.get(key) == still.get(key), (key, moved, still)
-    assert moved["remark"] == still["remark"].replace(
-        kept_at.warehouse_code, moved_to.warehouse_code
-    ), (moved, still)
-    assert "CANCEL ORDER" not in moved["remark"] or "CANCEL ORDER" in still["remark"], moved
-
-
 def _moved_and_kept(api, emails, tag, **change):
     _client, world = api
     x, y = _donor(world, f"{tag}X"), _donor(world, f"{tag}Y")
@@ -537,7 +525,14 @@ def test_a_borrow_moved_with_a_new_buy_split_reads_as_the_same_split_without_the
         second={"borrow": _borrow_from(world, y, "4"), "buy_qty": "6", "amend_reason": "Part from stock."},
         second_donor_moves=True,
     )
-    _same(moved, kept, own, kept_at=x, moved_to=y)
+    # OI-EMAIL-PURCHASING-FOCUS (crew audit 26 Oct 2026, owner Q4 principle): the Order back
+    # cut by 2 reads as the change, each side naming its own donor, never CANCEL ORDER.
+    for got, now_at in ((kept, x), (moved, y)):
+        assert got["location"] == own, got
+        assert got["remark"] == (
+            f"CHANGED: ORDER BACK {x.warehouse_code} 6 & ORDER 4"
+            f" -> ORDER BACK {now_at.warehouse_code} 4 & ORDER 6"
+        ), got
 
 
 # ------------------------------- a resized hole among several donors is not a cancelled order
@@ -625,10 +620,11 @@ def test_two_donor_borrow_cut_in_place_reads_the_cut(api, emails):
         second={"borrow": _borrow_from(world, x, "5") + _borrow_from(world, y, "3")},
         second_donor_moves=False, cut_to="8",
     )
-    # Guard: the order back purchasing held drops 10 -> 8, so "CANCEL ORDER 2" is the real 2
-    # (reviewer, 14 Oct); netting the two resized holes must not double or drop it.
+    # Guard: the order back purchasing held drops 10 -> 8, so the cancel is the real 2
+    # (reviewer, 14 Oct); netting the two resized holes must not double or drop it. The book
+    # cut the line, so it reads CANCEL 2, never "CANCEL ORDER" (crew audit 26 Oct 2026).
     assert got["remark"] == (
-        f"ORDER BACK {x.warehouse_code} 5 & ORDER BACK {y.warehouse_code} 3, CANCEL ORDER 2"
+        f"ORDER BACK {x.warehouse_code} 5 & ORDER BACK {y.warehouse_code} 3, CANCEL 2"
     ), got
 
 
@@ -640,7 +636,8 @@ def test_two_donor_borrow_cut_in_place_reads_the_cut(api, emails):
 
 def test_so426913_buy_turned_borrow_names_the_donor_in_remark(api, emails):
     """The real case: ORDER 4 at the line's own location, re-Confirmed as Borrow 4 from
-    another location. One row at the own location, "ORDER BACK <donor>, CANCEL ORDER 4"."""
+    another location. One row at the own location, "CHANGED: ORDER 4 -> ORDER BACK <donor> 4"
+    (it read "ORDER BACK <donor>, CANCEL ORDER 4" before the crew audit of 26 Oct 2026)."""
     _client, world = api
     donor = _donor(world, "BB")
     order, line, _core = _one_line_order(world, "4")
@@ -655,7 +652,7 @@ def test_so426913_buy_turned_borrow_names_the_donor_in_remark(api, emails):
 
     assert len(emails) == 1, emails
     assert _lines(emails[0]) == [
-        (code, "4", own, f"ORDER BACK {donor.warehouse_code}, CANCEL ORDER 4"),
+        (code, "4", own, f"CHANGED: ORDER 4 -> ORDER BACK {donor.warehouse_code} 4"),
     ], _lines(emails[0])
     assert emails[0]["subject_scope"].startswith(f"{own} @ "), emails[0]["subject_scope"]
 

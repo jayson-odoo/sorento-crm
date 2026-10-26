@@ -124,7 +124,7 @@ def _excel_rows(body):
         (
             row.get("ITEM CODE") or "",
             _num(row.get("QTY")),
-            _num(row.get("NEW QTY")),
+            _num(row.get("QTY CHANGE TO")),
             row.get("LOCATION") or "",
             row.get("REMARK") or "",
         )
@@ -183,7 +183,7 @@ def test_an_amendment_excel_is_the_one_changed_line_with_its_change_column(api, 
 
     [context] = contexts
     headings, body = _sheet(context, uploads)
-    assert "NEW QTY" in headings
+    assert "QTY CHANGE TO" in headings
     for gone in ("REQUESTED RESERVE", "RESERVED", "TOTAL QTY"):
         assert gone not in headings
     assert _excel_rows(body) == _email_rows(context)
@@ -263,6 +263,10 @@ def test_the_compare_script_reads_the_rendered_email_and_the_excel_as_the_same_r
               remark="DELAY, CANCEL 2"),
         _line(item_code="ZZT-NEW", was={"item_code": "ZZT-OLD"}, remark="NEW ITEM CODE"),
         _line(item_code="ZZT-C", qty="0", was={"qty": "6"}, remark="CANCEL"),
+        # A split line: its second row prints only what that split changes (`oihr_0009`).
+        _line(item_code="ZZT-S", qty="4", was={"qty": "10"}, remark="ORDER 4"),
+        _line(item_code="ZZT-S", qty="6", was={"qty": "10", "delivery_date": "01/12/2026"},
+              remark="ORDER 6", continued=True),
     ]
     rendered = _render_current(lines)
 
@@ -270,6 +274,6 @@ def test_the_compare_script_reads_the_rendered_email_and_the_excel_as_the_same_r
     sheet_head, sheet = excel_rows(handover_xlsx(lines), head)
 
     assert {"NEW ITEM CODE", "NEW QTY", "NEW DATE"} <= set(head), head
-    assert {"NEW ITEM CODE", "NEW QTY", "NEW DATE"} <= set(sheet_head), sheet_head
-    assert len(emailed) == 4, emailed
+    assert {"NEW ITEM CODE", "QTY CHANGE TO", "DELIVERY DATE CHANGE TO"} <= set(sheet_head), sheet_head
+    assert len(emailed) == 6, emailed
     assert emailed == sheet

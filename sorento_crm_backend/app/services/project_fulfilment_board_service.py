@@ -5425,6 +5425,7 @@ class FulfilmentBoardService:
                     ],
                     buy_origin=self._buy_origin.get(str(row.product_id)) if row.product_id else None,
                     withdraws_raised=_withdraws(row),
+                    before=row.decision,
                 )
             elif row.cancelled and not row.cancelled_at:
                 row.saved_remark = handover_remark("cancelled", row, None)

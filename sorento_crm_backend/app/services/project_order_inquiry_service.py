@@ -431,6 +431,7 @@ _HANDOVER_VERB_ORDER = (
     "USE",
     "INCOMING",
     "LOCAL_BUY",
+    "CHANGED",
 )
 _HANDOVER_VERB_LABEL = {
     IV_ORDER: "ORDER",
@@ -456,6 +457,8 @@ _HANDOVER_VERB_LABEL = {
     "USE": "USE BRW",
     "INCOMING": "INCOMING",
     "LOCAL_BUY": "LOCAL BUY",
+    # OI-EMAIL-PURCHASING-FOCUS (owner Q4, 26 Oct 2026): a Buy purchasing held, changed.
+    "CHANGED": "CHANGED",
 }
 
 
@@ -608,14 +611,6 @@ def _parts_with_qty(snapshot: Mapping[str, Any]) -> str:
     )
 
 
-def _stock_qty(snapshot: Mapping[str, Any]) -> Decimal:
-    """How much of a saved line is NOT purchasing's (stock, incoming, LOCAL BUY)."""
-    return sum(
-        (qty for _w, _l, qty, key in _saved_line_parts(snapshot) if key not in _PURCHASING_KEYS),
-        _ZERO,
-    )
-
-
 def saved_draft_remark(
     decision: Optional[Mapping[str, Any]],
     *,
@@ -624,6 +619,7 @@ def saved_draft_remark(
     spo_numbers: Sequence[str] = (),
     buy_origin: Optional[str] = None,
     withdraws_raised: bool = False,
+    before: Optional[Mapping[str, Any]] = None,
 ) -> Optional[str]:
     """OI-SPLIT-GUIDE (UAC F3, F11): what the purchasing email will say for a line whose
     decision is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`,
@@ -638,7 +634,13 @@ def saved_draft_remark(
     cascade-only links) is a withdrawal told with a `cancelled` handover, whose word is
     `handover_remark("cancelled", ...)` (UAC F15, F20); any other Reject (nothing the press
     cancels, e.g. a reserve-only line, UAC F17), or a draft with nothing composed, has no
-    words (`None`)."""
+    words (`None`).
+
+    OI-EMAIL-PURCHASING-FOCUS (crew audit, 26 Oct 2026): the words are the email's own,
+    purchasing's parts only (`purchasing_remark`), so a stock-only line (Use own location, Use
+    BRW, incoming, LOCAL BUY) has none. `before` is the line's confirmed snapshot: a Buy it held
+    that the draft moves to another kind of decision reads `CHANGED: <before> -> <draft>`, as the
+    email tells it."""
     if not decision:
         return None
     verdict = decision.get("verdict")
@@ -646,7 +648,24 @@ def saved_draft_remark(
         return "CANCEL"
     if verdict == "rejected":
         return handover_remark("cancelled", None, None) if withdraws_raised else None
-    codes = codes or {}
+    now = _draft_snapshot(decision, location, codes or {}, spo_numbers, buy_origin)
+    if before:
+        held = _draft_snapshot(before, location, codes or {}, spo_numbers, buy_origin)
+        if _buy_qty(held) > _buy_qty(now) and _decision_words(held) != _decision_words(now):
+            return f"CHANGED: {_parts_with_qty(held)} -> {_parts_with_qty(now)}"
+    return purchasing_remark(now) or None
+
+
+def _draft_snapshot(
+    decision: Mapping[str, Any],
+    location: Optional[str],
+    codes: Mapping[str, str],
+    spo_numbers: Sequence[str],
+    buy_origin: Optional[str],
+) -> Dict[str, Any]:
+    """A board decision (a draft, or a confirmed line's `_line_decision`) laid out the way
+    `ProjectSupplyService._snapshot` freezes a confirmed line's composition (reserve, incoming,
+    borrow, buy, in that order), for the email's own readers."""
 
     def code_of(item: Mapping[str, Any], key: str) -> Optional[str]:
         return item.get(key) or codes.get(str(item.get("warehouse_id") or "")) or None
@@ -668,22 +687,20 @@ def saved_draft_remark(
             "qty": item.get("qty"),
             "rung": "supply_borrow" if item.get("supply_key") else None,
             "supply_document": item.get("supply_document"),
-            "source_location": code_of(item, "warehouse_code"),
+            # A draft names its donor `warehouse_code`, a confirmed line's decision `location`.
+            "source_location": code_of(item, "warehouse_code") or item.get("location"),
         }
         for item in decision.get("borrow") or []
     )
     if _dec(decision.get("buy_qty")) > _ZERO:
         components.append({"kind": "buy", "qty": decision.get("buy_qty")})
-    remark, _location = saved_line_remark(
-        {
-            "components": components,
-            "order_back": bool(decision.get("order_back")),
-            "buy_origin": "local" if buy_origin == "local" else None,
-            "location": location,
-            "timely_spo_refs": [{"spo_number": number} for number in spo_numbers],
-        }
-    )
-    return remark or None
+    return {
+        "components": components,
+        "order_back": bool(decision.get("order_back")),
+        "buy_origin": "local" if buy_origin == "local" else None,
+        "location": location,
+        "timely_spo_refs": [{"spo_number": number} for number in spo_numbers],
+    }
 
 
 def _saved_line_parts(
@@ -4675,7 +4692,10 @@ class ProjectOrderInquiryService:
                 # Cancel SO is told); a remark-only change is a change.
                 self._queue_saved_line(
                     pso_id, line, now, before, actor_user_id=actor_user_id, remark=own,
-                    keys=[key for _w, _l, _q, key in _saved_line_parts(now)],
+                    keys=[
+                        key for _w, _l, _q, key in _saved_line_parts(now)
+                        if key in _PURCHASING_KEYS
+                    ],
                 )
                 continue
             if unchanged and _borrow_donors(before) != _borrow_donors(now):
@@ -5082,11 +5102,24 @@ class ProjectOrderInquiryService:
         already carries the date and quantity move) and THEN raises its own DELAY /
         ADVANCE / CANCEL BALANCE notice rows for the lines the confirm could not settle in
         place. Those rows stay on the worklist; their email lines would tell the same
-        saved line twice (review B1), so they are dropped here."""
+        saved line twice (review B1), so they are dropped here.
+
+        A saved line that tells purchasing nothing (OI-EMAIL-PURCHASING-FOCUS: stock only)
+        keeps a CANCEL BALANCE notice: it is an AutoCount cut of a row purchasing holds, and
+        no saved line tells it (lane review S3). Its DELAY / ADVANCE notices still go."""
         saved_ids = (self.db.info.get(_SAVED_TOLD_KEY) or {}).pop(pso_id, set())
         queue = self.db.info.get(_HANDOVER_PENDING_KEY)
         if not saved_ids or not queue:
             return
+        told = {
+            item.get("so_line_id")
+            for item in queue
+            if item.get("pso_id") == pso_id
+            and (
+                str(item.get("row_id", "")).startswith("saved:")
+                or item.get("told_for_saved_line")
+            )
+        }
         queue[:] = [
             item
             for item in queue
@@ -5095,6 +5128,10 @@ class ProjectOrderInquiryService:
                 and item.get("so_line_id") in saved_ids
                 and not str(item.get("row_id", "")).startswith("saved:")
                 and not item.get("told_for_saved_line")
+                and (
+                    item.get("so_line_id") in told
+                    or IV_CANCEL_BALANCE not in (item.get("verb_keys") or ())
+                )
             )
         ]
 
@@ -5187,6 +5224,7 @@ class ProjectOrderInquiryService:
             qty_before = _dec(before.get("open_qty"))
             date_before, date_now = before.get("required_date"), now.get("required_date")
             pieces: List[str] = []
+            date_words = {REMARK_SPELLING[IV_DELAY], REMARK_SPELLING[IV_ADVANCE]}
             same_kinds = _decision_words(before) == _decision_words(now)
             # Purchasing held something for this line before (a Buy, an Order back): its
             # date and quantity moves are theirs to read. A line that only ever drew on
@@ -5227,33 +5265,48 @@ class ProjectOrderInquiryService:
                         pieces.append(f"ORDER {_qty_str(grown)}")
                         keys.append(IV_ORDER)
             if not explicit:
-                # The decision's words when the KIND of decision moved (Buy to Use BRW, a
-                # new part) or nothing above says anything; a pure date or quantity move of
-                # the same decision reads as today's settle line did ("DELAY, ORDER 3").
-                # A donor move also reads its decision words, so the new donor is named
-                # beside any date or quantity word (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
                 # The rows of this line told purchasing to cancel something they hold
                 # (a raised order withdrawn, settled down, a CANCEL BALANCE exception).
                 # Read off what the rows actually did, never off the Buy's size: a Buy
                 # whose goods arrived and now cover the line from stock is not an order
-                # to take back (crew audit, SO400236).
-                takes_back = ("qty" not in was or raised is not None) and taken_back > _ZERO
-                if takes_back and _stock_qty(now) > _stock_qty(before):
-                    # Stock took the order's place: told as the change it is, never "CANCEL
-                    # ORDER", which purchasing reads as the customer cancelling (owner Q4,
-                    # 26 Oct 2026): "CHANGED: ORDER 10 -> USE BRW-BB 10".
+                # to take back (crew audit, SO400236). Unless the customer cut the line
+                # (the same decision, smaller: "CANCEL 2"), that is told as the change it is,
+                # never "CANCEL ORDER", which purchasing reads as the customer cancelling
+                # (owner Q4, 26 Oct 2026): "CHANGED: ORDER 10 -> USE BRW-BB 8". The two
+                # sides carry their quantities, so no qty word goes beside it.
+                # A line the book cut to nothing carries no parts at all: a customer cut too.
+                # Several row lines (`raised` set) are a customer cut only when they raised
+                # nothing fresh and the line shrank (a Borrow's holes resized down); a fold or
+                # redirect that raised fresh rows is a change.
+                customer_cut = (
+                    "qty" in was
+                    and (same_kinds or not _saved_line_parts(now))
+                    and (raised is None or (raised <= _ZERO and qty_now < qty_before))
+                )
+                if taken_back > _ZERO and not customer_cut and _saved_line_parts(now):
+                    pieces = [piece for piece in pieces if piece in date_words]
                     pieces.append(f"CHANGED: {_parts_with_qty(before)} -> {_parts_with_qty(now)}")
-                else:
-                    if (
-                        not same_kinds
-                        or not pieces
-                        or _borrow_donors(before) != _borrow_donors(now)
-                    ):
-                        pieces.append(remark)
-                    if takes_back:
-                        pieces.append(f"CANCEL ORDER {_qty_str(taken_back)}")
-                        keys.append(IV_CANCEL_BALANCE)
+                    keys = [key for key in keys if key in (IV_DELAY, IV_ADVANCE)] + ["CHANGED"]
+                elif (
+                    # The decision's words when the KIND of decision moved (Buy to Use BRW,
+                    # a new part) or nothing above says anything; a pure date or quantity
+                    # move of the same decision reads as today's settle line did ("DELAY,
+                    # ORDER 3"). A donor move also reads its decision words, so the new
+                    # donor is named beside any date or quantity word
+                    # (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
+                    not same_kinds
+                    or not pieces
+                    or _borrow_donors(before) != _borrow_donors(now)
+                ):
+                    pieces.append(remark)
+                if customer_cut and raised is not None and taken_back > _ZERO:
+                    # What the customer's cut takes off what purchasing holds.
+                    pieces.append(f"CANCEL {_qty_str(taken_back)}")
+                    keys.append(IV_CANCEL_BALANCE)
                 remark = ", ".join(piece for piece in pieces if piece)
+                if not remark:
+                    # Nothing of purchasing's moved: no line.
+                    return
             if before.get("item_code") and before.get("item_code") != now.get("item_code"):
                 was["item_code"] = before.get("item_code")
                 keys.append("CHANGE_ITEM_CODE")

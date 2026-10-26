@@ -3817,22 +3817,27 @@ class OrderInquiryWorklistService:
 
 
 #: OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, Q5 (a)): the handover Excel's columns, the
-#: email's own line table plus the S/O facts each row needs on a sheet. The bracketed three of
-#: the email (NEW ITEM CODE / NEW QTY / NEW DATE) print only when a line in it has one.
+#: email's own line table plus the S/O facts each row needs on a sheet, in the owner's words for
+#: the change columns (QTY CHANGE TO / DELIVERY DATE CHANGE TO, ruled with Q5 (a)). The three
+#: change columns print only when a line in this email has one, as the email's own do.
 HANDOVER_HEADINGS = (
     "SO DATE",
     "S/O NO",
     "ITEM CODE",
     "NEW ITEM CODE",
     "QTY",
-    "NEW QTY",
+    "QTY CHANGE TO",
     "DELIVERY DATE",
-    "NEW DATE",
+    "DELIVERY DATE CHANGE TO",
     "PROJECT/CUSTOMER",
     "LOCATION",
     "REMARK",
 )
-_HANDOVER_CHANGE_KEYS = {"NEW ITEM CODE": "item_code", "NEW QTY": "qty", "NEW DATE": "delivery_date"}
+_HANDOVER_CHANGE_KEYS = {
+    "NEW ITEM CODE": "item_code",
+    "QTY CHANGE TO": "qty",
+    "DELIVERY DATE CHANGE TO": "delivery_date",
+}
 
 
 def _sheet_date(value: Any) -> Any:
@@ -3880,9 +3885,9 @@ def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
             "ITEM CODE": was(line, "item_code") or line.get("item_code") or "",
             "NEW ITEM CODE": line.get("item_code") if was(line, "item_code") else None,
             "QTY": _sheet_qty(was(line, "qty") or line.get("qty")),
-            "NEW QTY": _sheet_qty(line.get("qty")) if was(line, "qty") else None,
+            "QTY CHANGE TO": _sheet_qty(line.get("qty")) if was(line, "qty") else None,
             "DELIVERY DATE": _sheet_date(was(line, "delivery_date") or line.get("delivery_date")),
-            "NEW DATE": _sheet_date(line.get("delivery_date"))
+            "DELIVERY DATE CHANGE TO": _sheet_date(line.get("delivery_date"))
             if was(line, "delivery_date")
             else None,
             "PROJECT/CUSTOMER": project_customer_label(line.get("customer"), line.get("project"))
@@ -3890,6 +3895,11 @@ def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
             "LOCATION": line.get("location") or "",
             "REMARK": line.get("remark") or "",
         }
+        if line.get("continued"):
+            # A split line's later rows, as the email prints them (`oihr_0009`, AC-G6):
+            # LOCATION, ITEM CODE, QTY and DELIVERY on the line's first row only.
+            for heading in ("LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE"):
+                values[heading] = None
         sheet.append([values[heading] for heading in columns])
     _style_sheet(sheet, columns)
     buffer = io.BytesIO()
@@ -3920,12 +3930,14 @@ _EXPORT_WIDTHS = {
     "CHANGE QUANTITY": 12,
     "CHANGE DATE": 13,
     "NEW ITEM CODE": 18,
-    "NEW QTY": 9,
-    "NEW DATE": 13,
+    "QTY CHANGE TO": 11,
+    "DELIVERY DATE CHANGE TO": 14,
     "REMARK": 30,
 }
 _EXPORT_DEFAULT_WIDTH = 14
-_EXPORT_DATE_HEADINGS = frozenset({"SO DATE", "DELIVERY DATE", "CHANGE DATE", "NEW DATE"})
+_EXPORT_DATE_HEADINGS = frozenset(
+    {"SO DATE", "DELIVERY DATE", "CHANGE DATE", "DELIVERY DATE CHANGE TO"}
+)
 
 
 def _style_sheet(sheet, columns: Sequence[str]) -> None:
