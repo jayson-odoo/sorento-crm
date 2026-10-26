@@ -321,3 +321,23 @@ def test_r4b_a_cancelled_line_whose_only_spo_is_retired_is_dead_on_chain_and_bot
     scm = _line_of(PurchaseOrderService(db).get_one(str(po.id)), line)
     assert popup.get("dead_reason") == "po_cancelled"
     assert scm.get("dead_reason") == "po_cancelled"
+
+
+def test_r4b_a_partly_cancelled_line_still_on_order_is_not_dead(scm_app):
+    """Ordered 10, a Cancel PO took the 5 transferred (received 5, cancelled 5), 5 still on
+    order, no SPO: alive on the chain and on both PO screens."""
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    db = scm_app[1]
+    w = _World(db)
+    po, line = w.po(ordered=10, transferred=5, open_line=True)
+    line.qty_cancelled = Decimal("5")
+    db.flush()
+    _row, link = w.place_on_po(line, 3)
+
+    chain = _gc().chains_for_links(db, [str(link.id)])[str(link.id)]
+    assert all(h.state != "dead" for h in chain.hops), chain.hops
+    popup = _line_of(_svc(db).get_po_detail(str(po.id)), line)
+    scm = _line_of(PurchaseOrderService(db).get_one(str(po.id)), line)
+    assert popup.get("dead_reason", "missing") is None
+    assert scm.get("dead_reason", "missing") is None
