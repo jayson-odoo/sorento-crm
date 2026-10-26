@@ -472,6 +472,10 @@ class ConfirmSupplyBody(BaseModel):
     #: Whole lines CS transferred to Cancel SO (SO-CANCEL-LINE). Never beside `lines` for the
     #: same line, refused beside a `batch_id` like `rejected_line_ids`.
     cancelled_lines: List[CancelledLine] = Field(default_factory=list)
+    #: FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026): the planning Confirm's popup Remark, the
+    #: same field confirm-all carries (`ConfirmManyOrderBody.so_remark`). `None` = compute the
+    #: default from the lines in the email, `""` = staff cleared it.
+    so_remark: Optional[str] = Field(None, max_length=100)
 
 
 class ConfirmException(BaseModel):

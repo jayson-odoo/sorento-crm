@@ -1605,6 +1605,11 @@ def confirm_supply(
         )
         if held:
             body["lines_held_back"] = held
+        # FULFIL-SO-REMARK-CHANGES: the popup's Remark rides on this order's handover lines,
+        # as on confirm-all (`write_one`); absent computes the default when the email is built.
+        from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+        ProjectOrderInquiryService(db).stamp_so_remark(str(order.id), payload.so_remark)
         db.commit()
         return body
     except Exception as exc:

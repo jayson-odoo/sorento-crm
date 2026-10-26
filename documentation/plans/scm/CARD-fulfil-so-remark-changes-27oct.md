@@ -1,7 +1,7 @@
 # Behaviour card: per-SO Remark after Confirm also when the Confirm carries changes (FULFIL-SO-REMARK-CHANGES)
 
-Status: card, waiting on owner answers (Q1-Q5). No code until answered. Track: TBD (expected M,
-no migration). Follows FULFIL-SO-REMARK (#1847, `CARD-fulfil-so-remark-25oct.md`) and
+Status: Build (owner answered Q1-Q5, 26 Oct ~21:10 and ~21:45; one follow-up question R5 open).
+Track: L (two Confirm paths unified, no migration). Follows FULFIL-SO-REMARK (#1847, `CARD-fulfil-so-remark-25oct.md`) and
 OI-EMAIL-PURCHASING-FOCUS (#1871, merged 242cb0d554).
 
 Owner, 26 Oct 2026 ~19:25 (verbatim): "remark is needed when there is change for fulfilment
@@ -9,6 +9,41 @@ planning (meaning except new order), remark is needed after i click confirm at f
 planning".
 
 FE = `sorento_crm_frontend/app/(protected)/project-sales/`, BE = `sorento_crm_backend/app/`.
+
+## Owner rulings (26 Oct 2026)
+
+~21:10, verbatim: "needed means when they confirm, there will be a Remark field in the poup, that
+is needed when there is a change, 2 keep it empty, let the user key in, 3 wdym, 4 i am taling about
+the planning confirm, 5 yeah it is about the email's SO table".
+
+~21:45 (Q3), verbatim: "the confirm should always open popup, the user expereince must be unified
+lol, and the email, popup, excel must always match in which shows the saved lines, well of course
+they can split in the popup, then the email and excel must tally to it".
+
+- R1 (Q1 a): the Confirm popup has a Remark field per SO; it is REQUIRED when the SO's press has a
+  change, optional for a new-only SO.
+- R2 (Q2): a change SO's Remark starts EMPTY, staff key it in (no Sponsorship / Purchase Request /
+  Mockup prefill there); a new-only SO keeps today's prefill.
+- R3 (Q3): EVERY Confirm opens the same popup: the board's Confirm (including a press that only
+  applies an AutoCount change) and the planning sheet's "Confirm Project SO".
+- R4 (Q4): the planning Confirm gets the Remark step: `POST /sales-orders/{id}/confirm` takes
+  `so_remark` like confirm-all.
+- R5 (Q5 a + Q3): the Remark prints in the email's SO table. The popup's lines, the email's lines
+  and the Excel's rows always match, all built from the saved lines, including splits made in the
+  popup.
+
+"A change" (R1): a line withdrawn, transferred to Cancel SO or split-edited; an Amend of a
+confirmed line; a line posted over a live imported OI row; a book-cancelled line; the lines an
+AutoCount change applies. A re-approve with nothing changed and a brand-new line are not.
+
+### Open: R5 against the #1871 rule
+
+Since #1871 (owner, 26 Oct ~13:05) the email and the Excel leave out Use own location, Use BRW,
+Use incoming and LOCAL BUY lines. The popup today lists every saved line. For popup == email ==
+Excel one of them has to move: (a) the popup's line list shows only the lines the email will send
+(the stock-only lines listed apart under "Not sent to purchasing", or hidden), or (b) the email and
+Excel go back to listing every saved line. Recommendation: (a), with the stock-only lines shown
+apart, so the planner still sees every saved line and the purchasing part matches exactly.
 
 ## Today's behaviour (file:line)
 
