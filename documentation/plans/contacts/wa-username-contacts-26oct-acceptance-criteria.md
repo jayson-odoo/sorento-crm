@@ -90,5 +90,10 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
   ingress (n8n, poller, retry, console) is never accepted; from an unknown phoneless contact it is answered by the
   ask (WU10).
 
+- WU23 Chat History (System Management > Chat History, turn timeline) names the four phone kinds in words: lane
+  `phone_ask` "Asked for a phone number", `phone_linked` "Phone linked", `phone_ignored` "Phone card ignored",
+  `phone_handoff` "Phone handed to staff"; status word `phone_ask` "Asked", `phone_linked` "Linked",
+  `phone_ignored` "No reply", `phone_handoff` "Handed to staff" (never "Answered"). FE `BranchKind` carries them.
+
 ## Not in scope
 Typed numbers or one-time codes (Q1); re-pointing chat history rows of the merged-away Respond.io id; n8n; any UI.
