@@ -48,6 +48,8 @@ EXPECT_KEYS = frozenset({
     "self_reference",
     # REPORT-SMART-L R6: the parse's `by_words` (any string: the message names an axis; null: it names none; graded only when the parse carries the key).
     "by_words",
+    # CHAT-V66-REGRESSIONS: the access levels the message selects, compared as a set, case aside.
+    "access_levels",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
@@ -55,6 +57,7 @@ _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "s
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),
+    "access_levels": (list,),
     "entities_none": (bool,),
     "self_reference": (bool,),
     "by_words": (str, type(None)),
@@ -205,6 +208,10 @@ def grade_parse(verdict: dict[str, Any], expect: dict[str, Any]) -> tuple[bool, 
         has = any(e.get("hint") == "customer" for e in entities)
         if has != bool(expect["customer"]):
             reasons.append("customer entity " + ("missing" if expect["customer"] else "present"))
+    if "access_levels" in expect:
+        got = {_fold(a) for a in verdict.get("access_levels") or []}
+        if got != {_fold(a) for a in expect["access_levels"]}:
+            reasons.append(f"access_levels {verdict.get('access_levels')!r} != {expect['access_levels']!r}")
     if "promotion_kind" in expect and _fold(verdict.get("promotion_kind")) != _fold(expect["promotion_kind"]):
         reasons.append(f"promotion_kind {verdict.get('promotion_kind')!r} != {expect['promotion_kind']!r}")
     if "is_active" in expect and verdict.get("is_active") is not expect["is_active"]:
@@ -297,6 +304,17 @@ def _state_block(context: dict[str, Any]) -> str:
     ])
 
 
+def _subject_values(subject: Any) -> dict[str, list[str]]:
+    """A gold `subject` (the State block's rendered text, `chat_state._subject_text`) back to its key -> values;
+    the held domain is not a value."""
+    out: dict[str, list[str]] = {}
+    for part in str(subject or "").split("; "):
+        key, _sep, value = part.partition(" ")
+        if key and value and key != "domain":
+            out[key] = [v for v in value.split(", ") if v]
+    return out
+
+
 def _fresh_turn(message: str) -> tuple[Any, str]:
     """A fresh text turn as the engine reads it: its UserTurn (`user_turn.from_envelope`) and the
     `Current user message` text (`engine.build_latest_user_message`), both off a text envelope."""
@@ -325,27 +343,38 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     index lines and no Product types / Product details lines."""
     from app.models.base import set_company_scope
     from app.services.chatbot import engine, turn_runtime
-    from app.services.chatbot.head import parser
+    from app.services.chatbot.head import lookup_lists, parser
     from app.services.chatbot.turn import context as context_mod
     from app.services.company_scope import DEFAULT_COMPANY_ID
     from app.services.reports.ask import SALES_CHANNELS
 
     user_turn, latest_user_message = _fresh_turn(message)
+    held = context or {}
+    # CHAT-V66-REGRESSIONS: a lookup version gets the engine's lookup blocks (the message's own text plus the values the
+    # row's subject holds) and loses the per-turn lists, as `engine.run_turn` builds it. The gold contact resolves to
+    # no one, so no Salesperson or Customer block (staff-only blocks the harness never sees).
+    lookup = bool(getattr(config, "lookup_lists", False))
+    lookup_lines = None
     db = factory()
     try:
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
         brands = turn_runtime.active_brands(db)
         promotion_kinds = turn_runtime.promotion_kind_rows(db)
-        product_types = None if config.closed_lists_index else turn_runtime.product_type_names(db)
-        product_details = None if config.closed_lists_index else turn_runtime.product_detail_values(db)
+        lists_free = config.closed_lists_index or lookup
+        product_types = None if lists_free else turn_runtime.product_type_names(db)
+        product_details = None if lists_free else turn_runtime.product_detail_values(db)
         lines, _listed, _picks = (
             engine._candidate_lines(db, user_turn, [], code_lookup=config.code_lookup, index=config.closed_lists_index)
             if config.closed_lists
             else (None, frozenset(), {})
         )
+        if lookup:
+            lookup_lines, _event = engine._lookup_lines(
+                db, user_turn.own_text, config, frozenset(), "parser-gold", None, brands,
+                lookup_lists.held_values(_subject_values(held.get("subject"))),
+            )
     finally:
         db.close()
-    held = context or {}
     # As the engine: an empty state adds no block.
     held_any = bool(
         held.get("subject") or held.get("open_question") or held.get("last_list") or held.get("pending_task")
@@ -358,11 +387,12 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         previous_response=held.get("previous_reply"),
         current_subject=None if state else held.get("subject"),
         pending_kind=None, pending_options=None, settings_profile_line=None,
-        current_message=latest_user_message, reply_to=held.get("reply_to"), media_line=None, brands=brands,
-        promotion_kinds=promotion_kinds,
+        current_message=latest_user_message, reply_to=held.get("reply_to"), media_line=None,
+        brands=None if lookup else brands, promotion_kinds=None if lookup else promotion_kinds,
         # REPORT-SMART-L R9: as the engine, only when the prompt names the line (`ParserConfig.sales_channels`).
-        sales_channels=list(SALES_CHANNELS) if getattr(config, "sales_channels", True) else None,
+        sales_channels=list(SALES_CHANNELS) if getattr(config, "sales_channels", True) and not lookup else None,
         product_types=product_types, product_details=product_details, candidate_lines=lines,
+        lookup_lines=lookup_lines or None,
         open_question_line=None if state else parser.open_question_line(held.get("open_question")),
         state_block=state,
     )
