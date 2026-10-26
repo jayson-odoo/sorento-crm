@@ -293,7 +293,8 @@ def test_ac5_list_pagination_total_counts_only_visible_shipments(client, db):
 
 
 def _dealer_world(db):
-    """Dealer allowed BRW + MWH; P arrives on three containers, in scope on one only."""
+    """Dealer allowed BRW + MWH; P arrives on three containers, in scope on one only (the
+    owner ruled ETA is not location-scoped, so all three are told)."""
     w = World(db, mode="availability")
     k3 = _ship(db, eta=date(2026, 10, 25))
     _incoming_line(db, shipment_id=k3.id, product_id=w.p.id, shipped=20)
@@ -304,8 +305,13 @@ def _dealer_world(db):
     return w
 
 
-def test_ac6_dealer_is_told_only_etas_of_shipments_with_in_scope_quantity(client, db):
+def test_ac6_dealer_is_told_every_eta_location_scope_does_not_apply_to_eta(client, db):
+    """Owner 26 Oct: location scoping does not apply to ETA. A BRW + MWH dealer is told
+    product + ETAs only, so every container's date is told: the one in scope, the ones
+    allocated only to BRW-BB / BRW-NTC, and one with no allocation at all."""
     w = _dealer_world(db)
+    k4 = _ship(db, eta=date(2026, 10, 30))
+    _incoming_line(db, shipment_id=k4.id, product_id=w.p.id, shipped=10)
     for path, params in (
         ("/list", {"product_ids": w.p.product_code}),
         ("/by-product", {"product_ids": w.p.id}),
@@ -313,7 +319,7 @@ def test_ac6_dealer_is_told_only_etas_of_shipments_with_in_scope_quantity(client
         _, body = _get(client, path, contact_id=w.contact.id, **params)
         assert body["dealer_view"] is True
         (row,) = [r for r in body["data"] if r["product_code"] == w.p.product_code]
-        assert row["etas"] == ["10/10/2026"], path
+        assert row["etas"] == ["10/10/2026", "20/10/2026", "25/10/2026", "30/10/2026"], path
 
 
 def test_ac6_control_dealer_with_every_location_is_told_every_eta(client, db):

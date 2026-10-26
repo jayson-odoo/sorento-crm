@@ -66,6 +66,10 @@ class _Contact:
             # included), so a contact this route admits is not read as nobody here.
             policy = resolve_policy(db, self.resolved) if self.resolved else None
             self.warehouse_scope = [] if policy is None else scope_warehouse_ids(db, policy)
+            if policy is not None and policy.mode == "availability":
+                # owner 26 Oct: location scoping does not apply to ETA. A dealer is told
+                # product + ETAs only, no quantity, allocation or warehouse.
+                self.warehouse_scope = None
 
     def eta_from(self, db: Session, eta_from: Optional[date]) -> Optional[date]:
         return query_eta_from(db, self.rules, eta_from)
