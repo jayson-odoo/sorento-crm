@@ -107,3 +107,29 @@ def test_grouped_orders_list_group_rows_are_slimmed_like_the_flat_rows():
     assert grouped["order_status"] == "Delivered"
     assert grouped == out["data"][0]
     _assert_no_uuid_values(out["groups"])
+
+
+def test_so_outstanding_rows_keep_their_plain_text_customer_flat_and_grouped():
+    """The `customer` drop is for the DO row's embedded customer OBJECT. An SO-outstanding
+    row's `customer` is the plain-text name (`order_service.so_outstanding_rows`) the
+    presenter prints as Customer, so it survives the trim, in `data` and in group rows."""
+    so_row = {
+        "so_number": "SO-ZZT-1",
+        "product_id": "77777777-7777-7777-7777-777777777777",
+        "product_code": "ZZT5733",
+        "outstanding_qty": 4,
+        "order_date": "2026-09-20",
+        "customer": "CUSTOMER A",
+    }
+    raw = json.dumps(
+        {
+            "data": [so_row],
+            "order_status": "so_outstanding",
+            "groups": [{"key": "ZZT5733", "label": "ZZT5733", "rows": [so_row]}],
+        }
+    )
+    out = json.loads(_sanitize_tool_response("crm_order_management_orders_list", raw))
+    assert out["data"][0]["customer"] == "CUSTOMER A"
+    assert out["groups"][0]["rows"][0]["customer"] == "CUSTOMER A"
+    do_row = _slim_orders_list_row({**_raw_order_row(), "customer": {"id": "x", "customer_name": "CUSTOMER A"}})
+    assert "customer" not in do_row
