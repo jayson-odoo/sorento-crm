@@ -440,7 +440,7 @@ jobs:
           LABEL: ${{ github.event.label.name }}
           PR: ${{ github.event.pull_request.number }}
           # pull_request: the PR head now (the PR gate tests it merged into
-          # main's head now, scripts/ci_merge_main.sh).
+          # main's head now, step "Merge main's current head into the PR head").
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
           # Release inputs (workflow_dispatch only; empty on every other event).
           SKIP_TESTS: ${{ inputs.skip_tests }}
@@ -687,11 +687,11 @@ jobs:
 
       # Only on a PR that changes backend code: the selection reads the
       # backend sources, and nothing else in this job needs a checkout.
-      # Sparse: app/, scripts/ and tests/ are all the script parses (plus
-      # the root scripts/ for the merge below). On a PR the PR head with its
-      # history (sparse means blob:none, so commits and trees only), merged
-      # with main's head in the next step: the selection reads the tree the
-      # PR gate tests, not GitHub's merge commit (CI-STALE-MERGE-REF). The
+      # Sparse: app/, scripts/ and tests/ are all the script parses. On a
+      # PR the PR head with its history (sparse means blob:none, so commits
+      # and trees only), merged with main's head in the next step: the
+      # selection reads the tree the PR gate tests, not GitHub's merge
+      # commit (CI-STALE-MERGE-REF). The
       # `ref` is empty off a PR, so a release checks out as before.
       - name: Checkout backend sources for test selection
         if: steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true'
@@ -700,14 +700,26 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: ${{ github.event_name == 'pull_request' && '0' || '1' }}
           sparse-checkout: |
-            scripts
             sorento_crm_backend/app
             sorento_crm_backend/scripts
             sorento_crm_backend/tests
 
+      # The same shell as the PR gate's step of this name (a test holds the
+      # two equal).
       - name: Merge main's current head into the PR head
         if: github.event_name == 'pull_request' && (steps.filter.outputs.backend_code != '' || steps.filter.outputs.lean == 'true')
-        run: bash scripts/ci_merge_main.sh
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          main=$(git rev-parse refs/remotes/origin/main)
+          head=$(git rev-parse HEAD)
+          # The runner has no git identity; the merge commit is local, never pushed.
+          if ! git -c user.name=sorento-ci -c user.email=ci@example.invalid merge --no-edit origin/main; then
+            echo "::error title=PR head does not merge into main::$head conflicts with main $main: merge origin/main into the branch, resolve, push, then re-label"
+            git diff --name-only --diff-filter=U | sed 's/^/  conflict: /'
+            exit 1
+          fi
+          echo "testing PR head $head merged into main $main: tree $(git rev-parse 'HEAD^{tree}')"
+          echo "main=$main" >> "$GITHUB_OUTPUT"
 
       # Point 5 of the job comment. Stdlib-only script on the runner's own
       # python3; it prints the selection, so the job log shows what runs.
@@ -1539,12 +1551,28 @@ jobs:
           fetch-depth: ${{ (github.event_name == 'pull_request' || needs.changes.outputs.frontend == 'true') && '0' || '1' }}
 
       # Before every gate, so the alembic head check, the tests, tsc, vitest
-      # and the validated-tree marker all see what would land now. A
-      # conflict fails the PR gate here.
+      # and the validated-tree marker all see what would land now: run
+      # 40354117904 (#1876) tested "Merge 149c4b3d into 1aaeed54" while main
+      # was seven merges on. A conflict fails the PR gate here. Inline, not
+      # a script: on a PR this workflow comes from GitHub's merge commit but
+      # the checkout is the PR head, and a head that branched before this
+      # step holds no such script (reviewer, CI-STALE-MERGE-REF). Writes
+      # `main` (the main it merged) for vitest's base.
       - name: Merge main's current head into the PR head
         id: merge
         if: github.event_name == 'pull_request'
-        run: bash scripts/ci_merge_main.sh
+        run: |
+          git fetch --no-tags --quiet origin +refs/heads/main:refs/remotes/origin/main
+          main=$(git rev-parse refs/remotes/origin/main)
+          head=$(git rev-parse HEAD)
+          # The runner has no git identity; the merge commit is local, never pushed.
+          if ! git -c user.name=sorento-ci -c user.email=ci@example.invalid merge --no-edit origin/main; then
+            echo "::error title=PR head does not merge into main::$head conflicts with main $main: merge origin/main into the branch, resolve, push, then re-label"
+            git diff --name-only --diff-filter=U | sed 's/^/  conflict: /'
+            exit 1
+          fi
+          echo "testing PR head $head merged into main $main: tree $(git rev-parse 'HEAD^{tree}')"
+          echo "main=$main" >> "$GITHUB_OUTPUT"
 
       # The four fast gates, folded into this job on a PR (CI-COST round 2):
       # as separate jobs each billed a whole minute for 16-54 s of work (run

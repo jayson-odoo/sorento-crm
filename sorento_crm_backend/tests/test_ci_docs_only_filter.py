@@ -2077,7 +2077,14 @@ def test_both_merge_steps_run_the_same_inline_shell():
     no helper script, and `bash scripts/...` died with exit 127 on every such PR
     (reviewer, CI-STALE-MERGE-REF). So the shell is inline and reads nothing from
     the checkout."""
-    body = lambda step: step.split("run: |\n", 1)[1]
+    def body(step: str) -> str:
+        lines = []
+        for line in step.split("run: |\n", 1)[1].splitlines():
+            if line.strip() and not line.startswith(" " * 10):
+                break  # the next step's leading comments
+            lines.append(line)
+        return "\n".join(lines).strip()
+
     lean, changes = _lean_gate_steps()[MERGE_STEP], _changes_steps()[MERGE_STEP]
     assert body(lean) == body(changes)
     assert not re.search(r"\bscripts/", body(lean))

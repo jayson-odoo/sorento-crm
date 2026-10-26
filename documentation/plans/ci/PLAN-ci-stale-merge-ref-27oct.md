@@ -1,6 +1,6 @@
 # PLAN: the PR gate tests the PR head merged into main's CURRENT head (CI-STALE-MERGE-REF)
 
-Status: fix committed, PR next (small fix track: CI workflow + one CI script, no migration, no product code)
+Status: PR #1886, review round 2 (inline merge step); proof run on draft #1887 waits on Actions billing (small fix track: CI workflow only, no migration, no product code)
 
 UAC: `ci-stale-merge-ref-27oct-acceptance-criteria.md` (alongside).
 
@@ -30,17 +30,21 @@ same marker skip.
    parents (`git/commits/$PUSH_AFTER`). The marker counts only when parent 1 is main's head now
    and parent 2 is the PR head (`github.event.pull_request.head.sha`). Otherwise, or on any failed
    lookup, the gate tests (fail-safe direction, as today).
-2. New `scripts/ci_merge_main.sh`: fetch `origin/main`, `git merge --no-edit origin/main` into the
+2. A step "Merge main's current head into the PR head" (inline shell): fetch `origin/main`,
+   `git merge --no-edit origin/main` into the
    checked-out PR head, fail with an `::error` naming the conflicting files on a conflict, print
    what was tested, write `main=<sha>` to `$GITHUB_OUTPUT`.
+   Inline, not a script (review round 1): on a PR the workflow comes from GitHub's merge commit
+   but the checkout is the PR head, and a head that branched before this change has no such script
+   (exit 127 on every open PR).
 3. `lean-gate`: Checkout `ref: ${{ github.event.pull_request.head.sha }}` (empty off a PR, so a
-   release checks out exactly as before), then a PR-only step runs the script before every gate.
+   release checks out exactly as before), then that PR-only step runs before every gate.
    The alembic head, PII, tests, tsc and vitest then run on the live merge, and "Mark this tree as
    validated" (`git rev-parse 'HEAD^{tree}'`) keys the marker on that merge's tree. The vitest
    `--changed` base becomes the merged main (the PR's own change) instead of the payload's
    `base.sha`.
 4. `changes` selection checkout: same `ref:`, full (blobless, sparse already implies
-   `blob:none`) history on a PR only, and the same script before "Select backend tests by import",
+   `blob:none`) history on a PR only, and the same step (identical shell) before "Select backend tests by import",
    so the selection reads the tree the gate tests.
 
 Unchanged: every gate, the gitleaks range (base..head of the PR's own commits), the merge_group
@@ -56,11 +60,12 @@ costs minutes, never correctness; it is the price of not adding a checkout to ev
 ## Tests
 
 `sorento_crm_backend/tests/test_ci_docs_only_filter.py` (the workflow logic executed as it ships)
-plus a script test that runs `scripts/ci_merge_main.sh` against a throwaway git remote: clean
+plus the merge step's shell as it ships, run against a throwaway git remote whose main moves after
+the runner cloned: clean
 merge holds both sides, conflict fails loudly, an up-to-date head is unchanged.
 
 ## Proof run
 
 One throwaway draft PR labelled by crew after main moves: the PR gate log must show
-`Merge ... into <main's head at label time>` from the script, and no marker skip on a stale
+`testing PR head ... merged into main <main's head at label time>` from the merge step, and no marker skip on a stale
 GitHub merge commit.
