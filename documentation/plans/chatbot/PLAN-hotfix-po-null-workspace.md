@@ -1,6 +1,6 @@
 # PLAN: HOTFIX-PO-NULL-WORKSPACE
 
-Status: Review (red e1fdf9c733, fix c28a5cc5da, kill-proof done). Track: small fix (size S, hotfix for #1880). No migration, no RBAC change, no new
+Status: Waiting on crew ruling (reviewer NOT READY: the company scope blocks the fix end to end; PR draft). Red e1fdf9c733, fix c28a5cc5da, kill-proof done. Track: small fix (size S, hotfix for #1880). No migration, no RBAC change, no new
 ingest surface, no prompt change. UAC: `hotfix-po-null-workspace-acceptance-criteria.md`.
 
 ## Problem
@@ -17,8 +17,20 @@ The chatbot admits that same contact through
 `field_access.resolve_contact_with_null_workspace_fallback` (`app/services/field_access.py:278`),
 and the purchase-order rung sends the Respond.io id plus `space_id`
 (`app/services/chatbot/lanes/business/answer.py:1313-1321`). So a NULL-workspace contact is
-answered by the chatbot but told nothing is on order. Before #1880 the rows came back (the old
-code only withheld `location`, `git show 3ce30c5c85^:.../purchase_orders.py:176-186`).
+answered by the chatbot but told nothing is on order. The brief claimed that before #1880 the rows
+came back (the old code only withheld `location`, `git show 3ce30c5c85^:.../purchase_orders.py:176-186`).
+
+**Review finding (26 Oct, verified by probe): the route fix alone changes nothing end to end.**
+The company scope resolves the same contact with `resolve_contact_id` and no fallback: on the
+MCP path through `ContactAccessTypeService.resolve_contact_company_ids`
+(`app/services/contact_access_type_service.py:404-405`, via `company_scope_resolver.py:248-252`),
+and in process through the chatbot's `_contact_company_scope` (`app/services/chatbot/engine.py:1070`).
+A NULL-workspace contact therefore gets an empty company scope, and `PurchaseOrderLine`
+(`CompanyScopedMixin`, `app/models/procurement.py:917`) returns 0 rows, both before and after
+#1880. Probe through the real scope, with no `apply_company_scope` override: workspace contact
+`['PO-VIS']`, NULL-workspace contact `[]`. HPNW-1/2 pass only because the shared `client` fixture
+overrides the scope (`tests/test_purchase_orders_placed.py:185-190`). Ruling asked of crew:
+(a) close, (b) widen company-scope resolution, or (c) keep as consistency hardening.
 
 Reported by lane CHAT-INCOMING-LOCATION-SCOPE on #1882 (comment 6418229930), which fixes the
 same bug for the incoming routes. This lane ships only the placed-route part, as a hotfix.
