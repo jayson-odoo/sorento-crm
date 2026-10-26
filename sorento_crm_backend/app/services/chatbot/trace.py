@@ -257,8 +257,8 @@ _LANE_WORDS = {
     "log_opportunity": "Logging a sales opportunity",
     "phone_ask": "Asked for a phone number",
     "phone_linked": "Phone linked",
-    "phone_ignored": "Phone flow, nothing to do",
-    "phone_handoff": "Phone flow, handed to staff",
+    "phone_ignored": "Phone card ignored",
+    "phone_handoff": "Phone handed to staff",
 }
 
 

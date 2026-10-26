@@ -2853,7 +2853,7 @@ def _ai_not_allowed_turn(
     )
 
 
-# WA-USERNAME-CONTACTS: asks per contact per rolling window before the chat goes to staff.
+# WA-USERNAME-CONTACTS: asks per contact per rolling window (`PHONE_ASK_CAP`) before the chat goes to staff.
 PHONE_ASK_CAP = 3
 PHONE_WINDOW = timedelta(hours=24)
 
@@ -2959,17 +2959,46 @@ def _phone_turn(
             turn_id = str(row.id)
 
         facts: dict[str, Any] = {"lane": "wa_phone_link", "side": side}
-        if side == "card_linked":
-            branch_kind, summary = "phone_ignored", "Contact card from a known contact; sent no reply"
-        else:
-            branch_kind, summary = _phone_unknown_decision(
-                db, envelope, contact_respond_id=contact_respond_id, dry_run=dry_run, facts=facts
+        try:
+            if side == "card_linked":
+                branch_kind, summary = "phone_ignored", "Contact card from a known contact; sent no reply"
+                why = "The CRM already knows this contact, so a shared contact card needs no answer."
+            else:
+                # IQ-27 / IQ-45: on the inbox drain the turn claims its place BEFORE any Respond.io
+                # call, so a yielded or lost claim never repeats a merge or a send.
+                inbox_queue.checkpoint(turn_id)
+                branch_kind, summary = _phone_unknown_decision(
+                    db, envelope, contact_respond_id=contact_respond_id, dry_run=dry_run, facts=facts, turn_id=turn_id
+                )
+                why = "A WhatsApp username-only contact has no phone, so the CRM cannot tell who it is until it shares one."
+        except Exception as exc:  # noqa: BLE001 - a failed turn is recorded, never left `processing`
+            message = f"{type(exc).__name__}: {exc}"
+            logger.exception("chatbot turn %s failed in the phone flow", turn_id)
+            db.rollback()
+            turn_trace.record(
+                "received",
+                status="failed",
+                summary="The turn stopped before it could be answered.",
+                why="Something the turn depends on did not respond as expected.",
+                facts={"stage": "received"},
+                error=message,
+                raw=None,
             )
+            _close_turn(
+                db,
+                turn_id,
+                status="failed",
+                stage="received",
+                branch_kind=None,
+                error=message,
+                records=turn_trace.persisted(),
+            )
+            return _failed_result(turn_id, "received", message, [], dry_run)
         turn_trace.record(
             "received",
             status="skipped",
             summary=summary,
-            why="A WhatsApp username-only contact has no phone, so the CRM cannot tell who it is until it shares one.",
+            why=why,
             facts=facts,
             raw=None,
         )
@@ -3002,6 +3031,7 @@ def _phone_unknown_decision(
     contact_respond_id: str,
     dry_run: bool,
     facts: dict[str, Any],
+    turn_id: str | None = None,
 ) -> tuple[str, str]:
     """The branch and trace summary for an unknown phoneless contact; makes the Respond.io calls."""
     from app.services import wa_phone_link
@@ -3016,7 +3046,11 @@ def _phone_unknown_decision(
             logger.warning("chatbot: phone-link staff comment failed", exc_info=True)
 
     handoffs = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_handoff")
-    phone = wa_phone_link.accepted_card_phone(envelope.message)
+    # Only a card that arrived through the CRM's own HMAC-signed webhook counts as proof (WU22):
+    # every other ingress can carry a body its caller wrote.
+    phone = (
+        wa_phone_link.accepted_card_phone(envelope.message) if envelope.ingress == DIRECT_INGRESS else None
+    )
     if phone:
         facts["card"] = "accepted"
         if dry_run:
@@ -3028,14 +3062,17 @@ def _phone_unknown_decision(
             facts["reason"] = outcome.reason
             if handoffs:
                 return "phone_ignored", "Phone link failed; staff already told in the last 24 hours"
-            comment(client, contact_respond_id, f"could not link the shared phone ({outcome.reason})", phone)
+            # After a merge the turn's own id may no longer exist: the survivor gets the comment (WU26).
+            comment(
+                client,
+                outcome.survivor_respond_id or contact_respond_id,
+                f"could not link the shared phone ({outcome.reason})",
+                phone,
+            )
             return "phone_handoff", "Phone link failed; handed to staff"
         survivor = outcome.survivor_respond_id or contact_respond_id
         if outcome.chatbot_allowed:
-            try:
-                client.send_message(survivor, wa_phone_link.VERIFIED_LINE)
-            except Exception:  # noqa: BLE001 - the link stands; the next message resolves to the row
-                logger.warning("chatbot: phone-link verified line failed", exc_info=True)
+            wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id)
         else:
             comment(client, survivor, "phone verified, AI off for this contact")
         return "phone_linked", "Phone linked to the contact that holds its access"
@@ -3052,10 +3089,10 @@ def _phone_unknown_decision(
         )
     client = wa_phone_link.respond_client(db)
     if asks >= PHONE_ASK_CAP:
-        comment(client, contact_respond_id, "asked for a phone number 3 times in 24 hours with no answer")
+        comment(client, contact_respond_id, f"asked for a phone number {PHONE_ASK_CAP} times in 24 hours with no answer")
         return "phone_handoff", "Ask cap reached; handed to staff"
     try:
-        sent = wa_phone_link.send_ask(db, contact_respond_id=contact_respond_id)
+        sent = wa_phone_link.send_ask(db, contact_respond_id=contact_respond_id, turn_id=turn_id)
         reason = "no template is mapped for the phone-share ask"
     except Exception as e:  # noqa: BLE001 - a failed ask is a hand-off, not a failed turn
         logger.warning("chatbot: phone-share ask failed", exc_info=True)
