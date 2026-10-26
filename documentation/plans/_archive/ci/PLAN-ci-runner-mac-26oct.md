@@ -1,6 +1,6 @@
 # PLAN: CI-RUNNER-MAC (bring the Mac mini runner back for a private repo)
 
-Status: Measured; runner online; awaiting owner on var flip (crew). Proof run 40359349579 green on sorento-mac-1. Track: small fix track (infra:
+Status: Done. Owner approved; RUNNER_TESTS=mac + RUNNER_FAST=mac set 26 Oct 17:14Z; releases dispatch with `-f runner=github` unless crew says otherwise. Proof run 40359349579 green on sorento-mac-1. Track: small fix track (infra:
 `scripts/ci-runner/`, no app code, no migration, no auth/RBAC, no ingest).
 
 ## Why
