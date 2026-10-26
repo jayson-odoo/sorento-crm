@@ -285,6 +285,21 @@ Tests (tester writes first, red): `tests/chatbot/test_list_resolver.py` (AC-S1-1
 `tests/chatbot_eval/test_span_resolve_cli.py` (AC-S1-12), plus an import guard for AC-S1-14. Existing
 `tests/chatbot/test_lookup_lists_*.py` must stay green.
 
+S1 as built (fad8b63b0a), where it departs from the text above, with the evidence:
+
+- Type preference: a typed span keeps its own list's best row when that row is within `TYPE_MARGIN = 0.15` of the
+  best row over all lists; otherwise (and for untyped spans, or a typed list with no passing row) the best over all
+  lists wins. A pure tie-break reached 264/271 oracle (a customer beating a salesperson on a person's name); the margin
+  gives 267/271, 268 with the floor change below. Still never a filter (AC-S1-5).
+- Ambiguous needs both score AND row coverage within `AMBIGUITY_MARGIN = 0.03` (on score alone "kimlan"-like partial
+  names stay ambiguous against longer siblings). A span made only of words common in a list (IDF below
+  `DISTINCTIVE_IDF = 0.5` of an unseen word's) does not resolve in that list unless it equals a whole text (AC-S1-4).
+- Floors: `floors_partial.json` except category spell 0.4 -> 0.45 and meaning 0.6 -> 0.55 (inside the stated ranges).
+- Counting: the phase-1 "right row" and the CLI's `oracle` / `right` lines count an ambiguous result whose candidates
+  include a gold row as right (gold `row_ids` lists every acceptable row, e.g. "wc" -> WC / Water Closet / SRT-WC).
+  Counting resolved only: oracle 193/271, right row 157/271. The CLI prints both; the real split (ambiguous among
+  acceptable rows only vs ambiguous with a wrong row, which needs a clarify) is reported in the PR.
+
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 
 | Place | What | Editable by |
