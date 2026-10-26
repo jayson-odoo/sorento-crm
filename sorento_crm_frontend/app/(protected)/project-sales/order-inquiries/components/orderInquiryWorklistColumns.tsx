@@ -40,6 +40,8 @@ import {
   raisedKindLabel,
 } from '../../_shared/lib/orderInquiryWorklist';
 import type {
+  OrderInquiryDeadReason,
+  OrderInquiryLinkReceipt,
   OrderInquiryLinkSuggestion,
   OrderInquiryWorklistRow,
 } from '../../_shared/types/orderInquiry.types';
@@ -74,32 +76,39 @@ export const DEFAULT_HIDDEN_COLUMNS: string[] = ['inquiry_no', 'raise_event'];
 export function WorklistPill({
   as = 'span',
   warning = false,
+  destructive = false,
   testId,
   onClick,
   ariaLabel,
+  title,
   children,
 }: {
   as?: 'span' | 'button';
   warning?: boolean;
+  /** LINKAGE-UNIFY U3 (Q5): the red "PO cancelled" / "SPO withdrawn" marks. */
+  destructive?: boolean;
   testId: string;
   onClick?: (event: React.MouseEvent) => void;
   ariaLabel?: string;
+  title?: string;
   children: React.ReactNode;
 }) {
+  const variant = destructive ? 'destructive' : warning ? 'warning' : 'secondary';
   return (
-    <Badge asChild size="sm" variant={warning ? 'warning' : 'secondary'} appearance="light">
+    <Badge asChild size="sm" variant={variant} appearance="light">
       {as === 'button' ? (
         <button
           type="button"
           data-testid={testId}
           aria-label={ariaLabel}
+          title={title}
           className="shrink-0"
           onClick={onClick}
         >
           {children}
         </button>
       ) : (
-        <span data-testid={testId} className="shrink-0">
+        <span data-testid={testId} title={title} className="shrink-0">
           {children}
         </span>
       )}
@@ -190,11 +199,20 @@ export interface DocumentEntry {
    * construction on the wire, but the chip reads whichever the link states).
    */
   suggestion: OrderInquiryLinkSuggestion | null;
+  /**
+   * LINKAGE-UNIFY U3 (Q1, Q4, Q6): where this document's goods were received for the
+   * row, one per GR bin - every link of THIS book naming the document, added together. A
+   * PO number read off an SPO link (`via: 'spo'`) carries none: goods that went on
+   * through an SPO are that SPO's, never the PO's (owner note on mock v1).
+   */
+  receipts: OrderInquiryLinkReceipt[];
+  /** Q5: a link of this book naming the document brings nothing, and why. */
+  deadReason: OrderInquiryDeadReason | null;
 }
 
 export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): DocumentEntry[] {
   const entries: DocumentEntry[] = [];
-  const seen = new Set<string>();
+  const seen = new Map<string, DocumentEntry>();
   for (const link of row.links ?? []) {
     let named: string | null = null;
     let via: 'po' | 'spo' | null = null;
@@ -216,9 +234,19 @@ export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): D
       via = link.derived ? 'po' : null;
     }
     const document = (named ?? '').trim();
-    if (!document || seen.has(document)) continue;
-    seen.add(document);
-    entries.push({
+    if (!document) continue;
+    // LINKAGE-UNIFY U3: only a link of this cell's own book speaks for the document's
+    // receipts and dead state; one book's goods never read as the other's.
+    const ownBook = link.kind === kind;
+    const existing = seen.get(document);
+    if (existing) {
+      if (ownBook) {
+        existing.receipts.push(...(link.receipts ?? []));
+        existing.deadReason = existing.deadReason ?? link.dead_reason ?? null;
+      }
+      continue;
+    }
+    const entry: DocumentEntry = {
       document,
       via,
       poId,
@@ -227,9 +255,73 @@ export function documentsOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo'): D
       qty: link.qty ?? null,
       expectedDate: link.expected_date ?? null,
       suggestion: link.suggestion ?? null,
-    });
+      receipts: ownBook ? [...(link.receipts ?? [])] : [],
+      deadReason: ownBook ? (link.dead_reason ?? null) : null,
+    };
+    seen.set(document, entry);
+    entries.push(entry);
   }
   return entries;
+}
+
+const DEAD_LABEL: Record<OrderInquiryDeadReason, string> = {
+  po_cancelled: 'PO cancelled',
+  spo_withdrawn: 'SPO withdrawn',
+};
+
+function receiptText(receipt: OrderInquiryLinkReceipt): string {
+  const qty = formatInquiryQty(receipt.qty);
+  return receipt.bin ? `Received ${qty} at ${receipt.bin}` : `Received ${qty}`;
+}
+
+/**
+ * LINKAGE-UNIFY U3 (AC-D1, AC-D3, AC-D4): the state pills beside ONE document chip, the
+ * same piece on the worklist (`DocumentsCell`) and the Lines tab (`DocumentCell`), so
+ * the two screens agree by construction. Red "PO cancelled" / "SPO withdrawn" for a
+ * dead document (Q5); "Received <qty> at <bin>" for where the goods landed (Q1, Q6),
+ * the first bin with a "+N" for the rest. No "received" pill on a PO chip unless the PO
+ * line itself received the goods (Q4): `documentsOf` only gives a PO entry the PO
+ * links' own receipts.
+ */
+export function DocumentStatePills({
+  entry,
+  testIdPrefix,
+  testIdSuffix,
+  onOpen,
+}: {
+  entry: DocumentEntry;
+  /** Test ids read `<prefix>-received-<suffix>`, `<prefix>-dead-<suffix>`. */
+  testIdPrefix: string;
+  testIdSuffix: string;
+  onOpen?: (event: React.MouseEvent) => void;
+}) {
+  const [first, ...rest] = entry.receipts;
+  return (
+    <>
+      {entry.deadReason ? (
+        <WorklistPill destructive testId={`${testIdPrefix}-dead-${testIdSuffix}`}>
+          {DEAD_LABEL[entry.deadReason]}
+        </WorklistPill>
+      ) : null}
+      {first ? (
+        <WorklistPill
+          as={onOpen ? 'button' : 'span'}
+          testId={`${testIdPrefix}-received-${testIdSuffix}`}
+          onClick={onOpen}
+        >
+          {receiptText(first)}
+        </WorklistPill>
+      ) : null}
+      {rest.length ? (
+        <WorklistPill
+          testId={`${testIdPrefix}-received-more-${testIdSuffix}`}
+          title={rest.map(receiptText).join(', ')}
+        >
+          +{rest.length}
+        </WorklistPill>
+      ) : null}
+    </>
+  );
 }
 
 /**
@@ -398,25 +490,18 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
           {first.via === 'po' ? 'via PO' : 'via SPO'}
         </WorklistPill>
       ) : null}
-      {/* S1, AC-RL-02 (17 Sep rulings): the document is fully received - location
-          stock now, not a promise still in transit. ONE muted pill, same style as
-          the "via" mark beside it, and CLICKABLE like every other mark on this row -
-          opens the SAME lightbox, whose own body states the receipt in full. */}
-      {first.received ? (
-        <WorklistPill
-          as="button"
-          testId={
-            kind === 'spo'
-              ? `backing-documents-received-spo-${row.id}`
-              : `backing-documents-received-${row.id}`
-          }
-          onClick={open_}
-        >
-          received
-        </WorklistPill>
-      ) : null}
-      {/* S1b, AC-RL-24: a reallocate/unlink instruction, mutually exclusive with the
-          `received` mark above (a received link never carries a suggestion). */}
+      {/* LINKAGE-UNIFY U3 (replacing S1's one-word "received" mark): where the goods
+          were received, and the red dead-document mark - the SAME pills the Lines tab
+          draws. The receipt pill stays CLICKABLE like every other mark on this row and
+          opens the SAME lightbox. */}
+      <DocumentStatePills
+        entry={first}
+        testIdPrefix="backing-documents"
+        testIdSuffix={kind === 'spo' ? `spo-${row.id}` : row.id}
+        onOpen={open_}
+      />
+      {/* S1b, AC-RL-24: a reallocate/unlink instruction (a received link never carries
+          a suggestion). */}
       {first.suggestion ? (
         <LinkSuggestionMark
           suggestion={first.suggestion}

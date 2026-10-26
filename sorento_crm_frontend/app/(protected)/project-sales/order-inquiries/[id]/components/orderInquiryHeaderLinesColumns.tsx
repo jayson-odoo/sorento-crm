@@ -46,6 +46,7 @@ import {
 import {
   DeliveryDateCell,
   documentsOf,
+  DocumentStatePills,
   ItemCodeCell,
   LocationCell,
   orderInquiryReserveQtyColumns,
@@ -220,6 +221,12 @@ function DocumentCell({
           via {entry.via === 'po' ? 'PO' : 'SPO'}
         </WorklistPill>
       ) : null}
+      {/* LINKAGE-UNIFY U3 (AC-D4): the worklist's own document pills, the same piece. */}
+      <DocumentStatePills
+        entry={entry}
+        testIdPrefix="lines"
+        testIdSuffix={`${kind}-${row.id}`}
+      />
     </span>
   );
 }

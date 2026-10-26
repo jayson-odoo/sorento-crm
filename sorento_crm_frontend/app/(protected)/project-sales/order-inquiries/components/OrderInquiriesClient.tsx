@@ -121,6 +121,7 @@ import {
   unplaceOrderInquiryRow,
 } from '../../_shared/services/orderInquiryService';
 import type {
+  OrderInquiryDeadReason,
   OrderInquiryMatrixAxis,
   OrderInquiryMatrixCell,
   OrderInquiryMatrixGranularity,
@@ -145,6 +146,18 @@ import { SupplyKindCard } from '../../_shared/components/SupplyKindCard';
 function reserveFilterFrom(value: string | null): OrderInquiryReserveStatus | '' {
   return (ORDER_INQUIRY_RESERVE_STATUSES as string[]).includes(value ?? '')
     ? (value as OrderInquiryReserveStatus)
+    : '';
+}
+
+/** LINKAGE-UNIFY U3 (Q5): the "Dead document" filter's two options. */
+const DEAD_DOCUMENT_OPTIONS: { value: OrderInquiryDeadReason; label: string }[] = [
+  { value: 'po_cancelled', label: 'PO cancelled' },
+  { value: 'spo_withdrawn', label: 'SPO withdrawn' },
+];
+
+function deadDocumentFilterFrom(value: string | null): OrderInquiryDeadReason | '' {
+  return DEAD_DOCUMENT_OPTIONS.some((option) => option.value === value)
+    ? (value as OrderInquiryDeadReason)
     : '';
 }
 
@@ -438,6 +451,11 @@ export function OrderInquiriesClient({
   const [reserveFilter, setReserveFilter] = React.useState<OrderInquiryReserveStatus | ''>(
     () => reserveFilterFrom(searchParams.get('reserve')),
   );
+  // LINKAGE-UNIFY U3 (Q5): rows holding a link whose document is dead. URL-seeded and
+  // synced like `state`.
+  const [deadDocumentFilter, setDeadDocumentFilter] = React.useState<
+    OrderInquiryDeadReason | ''
+  >(() => deadDocumentFilterFrom(searchParams.get('dead_document')));
   const {
     value: poNumberInput,
     setValue: setPoNumberInput,
@@ -583,6 +601,8 @@ export function OrderInquiriesClient({
       ['state', stateFilter],
       // OI-BULK-RESERVE v4.
       ['reserve', reserveFilter],
+      // LINKAGE-UNIFY U3.
+      ['dead_document', deadDocumentFilter],
     ] as const) {
       if (value) next.set(key, value);
       else next.delete(key);
@@ -620,6 +640,7 @@ export function OrderInquiriesClient({
     spoNumberFilter,
     stateFilter,
     reserveFilter,
+    deadDocumentFilter,
     linkUpTo,
     horizonCleared,
     pathname,
@@ -655,6 +676,7 @@ export function OrderInquiriesClient({
     spoNumberFilter,
     stateFilter,
     reserveFilter,
+    deadDocumentFilter,
   ]);
 
   // S6 (AC-CF-20): once, when the remembered view has resolved, every filter the URL did
@@ -785,6 +807,7 @@ export function OrderInquiriesClient({
       // even though the list hides it by default otherwise (S5).
       state: stateFilter || undefined,
       reserve: reserveFilter || undefined,
+      dead_document: deadDocumentFilter || undefined,
     }),
     [
       debounced,
@@ -802,6 +825,7 @@ export function OrderInquiriesClient({
       spoNumberFilter,
       stateFilter,
       reserveFilter,
+      deadDocumentFilter,
     ],
   );
 
@@ -921,7 +945,8 @@ export function OrderInquiriesClient({
     poNumberFilter ||
     spoNumberFilter ||
     stateFilter ||
-    reserveFilter,
+    reserveFilter ||
+    deadDocumentFilter,
   );
 
   // S2/S3 (code review, 20 Aug 2026): what the confirm dialog names as the scope. `state`
@@ -1420,7 +1445,8 @@ export function OrderInquiriesClient({
     (poNumberFilter ? 1 : 0) +
     (spoNumberFilter ? 1 : 0) +
     (stateFilter ? 1 : 0) +
-    (reserveFilter ? 1 : 0);
+    (reserveFilter ? 1 : 0) +
+    (deadDocumentFilter ? 1 : 0);
 
   // S3: the cell already carries its own axis label; only the bucket's granularity-aware
   // reading (`buildOrderInquiryMatrix`'s own label) still has to be looked up.
@@ -1580,6 +1606,23 @@ export function OrderInquiriesClient({
         />
       </div>
       <div className="space-y-1.5">
+        {/* LINKAGE-UNIFY U3 (Q5): rows holding a link whose document brings nothing. */}
+        <Label className="text-xs text-muted-foreground">Dead document</Label>
+        <SearchableSelect
+          value={deadDocumentFilter}
+          onChange={(next) => setDeadDocumentFilter(deadDocumentFilterFrom(next))}
+          clearable
+          options={DEAD_DOCUMENT_OPTIONS.map((option) => {
+            const count = summary.data?.dead_documents?.[option.value];
+            return {
+              value: option.value,
+              label: count === undefined ? option.label : `${option.label} (${count})`,
+            };
+          })}
+          placeholder="Every row"
+        />
+      </div>
+      <div className="space-y-1.5">
           <Label className="text-xs text-muted-foreground">Reserve</Label>
           <SearchableSelect
             value={reserveFilter}
@@ -1671,6 +1714,7 @@ export function OrderInquiriesClient({
             setSpoNumberInput('');
             setStateFilter('');
             setReserveFilter('');
+            setDeadDocumentFilter('');
             // Counted above, so it is cleared here: "Clear filters" that
             // left a card pressed would leave the screen still narrowed.
             setKindFilter(null);

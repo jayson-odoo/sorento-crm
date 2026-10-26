@@ -72,6 +72,13 @@ class OrderInquiryBundledHostChangeOut(BaseModel):
     previous_delivery_date: Optional[date] = None
 
 
+class OrderInquiryLinkReceiptOut(BaseModel):
+    """LINKAGE-UNIFY U3: one GR bin a placement's goods were received at, and how many."""
+
+    qty: str
+    bin: Optional[str] = None
+
+
 class OrderInquiryLinkOut(BaseModel):
     """One placement on an order inquiry row (`projects.order_inquiry_links`, AC-I5).
 
@@ -122,6 +129,14 @@ class OrderInquiryLinkOut(BaseModel):
     #: How much of THIS placement has landed (`goods_chain.received_qty`): its own share,
     #: not the document's whole receipt, stated even when `received` itself is false.
     received_qty: Optional[str] = None
+    #: LINKAGE-UNIFY U3 (owner rulings Q1, Q4, Q6): where the goods were received, one
+    #: entry per GR bin - an SPO entry's received hops, or a PO entry's own received-direct
+    #: hops (a PO line no SPO names). Empty when nothing landed. Goods that went on through
+    #: an SPO sit on that SPO's (derived) entry, never on the PO's.
+    receipts: List[OrderInquiryLinkReceiptOut] = []
+    #: Q5: `po_cancelled` / `spo_withdrawn` when the document brings nothing; the link
+    #: stays placed. Null on a live link and on a derived entry.
+    dead_reason: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
     auto: bool = False
     linked_at: Optional[datetime] = None
     #: WHO linked it, by name. Null on a cascade link, which nobody did by hand.
@@ -716,6 +731,10 @@ class OrderInquiryWorklistSummary(BaseModel):
     #: How many rows sit at each acknowledgement state (AC-H4), computed with the `ack`
     #: filter dropped for the same reason `kinds` drops its own.
     ack: OrderInquiryAckCounts = OrderInquiryAckCounts()
+    #: LINKAGE-UNIFY U3 (Q5): rows holding a link whose document is dead, by reason
+    #: (`po_cancelled`, `spo_withdrawn`) - the "Dead document" filter's own counts, with
+    #: that filter dropped like every other control here.
+    dead_documents: Dict[str, int] = {}
     #: What the page's "Link up to" date starts at (AC-LH5): the latest completed reorder
     #: run's own "Plan until". Read from here rather than invented on the page, so the plan
     #: and the buyer cannot be working to two different horizons. `None` when no run has
@@ -1228,6 +1247,8 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     delivery_to: Optional[str] = None
     #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
+    #: LINKAGE-UNIFY U3 (Q5): the "Dead document" filter, as on the GET list.
+    dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
 
 
 class UnplaceAllResult(BaseModel):

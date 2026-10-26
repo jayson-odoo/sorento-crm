@@ -98,7 +98,7 @@ from app.services.project_order_inquiry_service import (
 )
 from app.services.project_line_split_service import remark_for_row  # noqa: F401 - AC-G5, the one REMARK function
 from app.services.project_supply_service import ProjectSupplyService
-from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm import goods_chain, order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.raise_event_matching import nearest_raise_event
 
@@ -1102,6 +1102,69 @@ class OrderInquiryWorklistService:
 
     def __init__(self, db: Session):
         self.db = db
+        # LINKAGE-UNIFY U3: `_dead_document_rows` per reason, read once per service (the
+        # summary asks for both reasons, the list for one).
+        self._dead_rows: Dict[str, set] = {}
+
+    # -------------------------------------------------------------- dead documents
+
+    def _dead_document_rows(self, reason: str) -> set:
+        """LINKAGE-UNIFY U3 (owner ruling Q5): the ids of the rows holding a live link
+        whose document is dead for `reason` (`goods_chain.PO_CANCELLED` /
+        `SPO_WITHDRAWN`) - the "Dead document" filter.
+
+        Narrowed in SQL to the links that can be dead (a PO line off order that moved
+        nothing past what a Cancel PO took; an SPO line retired, or no longer incoming,
+        with nothing received), then confirmed by the goods chain in one batched read, so
+        the filter and the row's own red pill never disagree.
+        """
+        if reason in self._dead_rows:
+            return self._dead_rows[reason]
+        links = self.db.query(OrderInquiryLink.id).join(
+            OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id
+        )
+        if reason == goods_chain.PO_CANCELLED:
+            links = (
+                links.join(
+                    PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id
+                )
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .filter(
+                    ~and_(*ProjectSupplyService.open_po_line_clauses()),
+                    func.coalesce(PurchaseOrderLine.qty_received, 0)
+                    <= func.coalesce(PurchaseOrderLine.qty_cancelled, 0),
+                )
+            )
+        else:
+            links = (
+                links.join(
+                    SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
+                )
+                .outerjoin(
+                    InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+                )
+                .filter(
+                    func.coalesce(SPOAllocation.quantity_received, 0) == 0,
+                    or_(
+                        SPOAllocation.retired_at.isnot(None),
+                        ~and_(*spo_supply.open_incoming_clauses()),
+                    ),
+                )
+            )
+        chains = goods_chain.chains_for_links(
+            self.db,
+            [link_id for (link_id,) in links.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)],
+            with_bins=False,
+        )
+        rows = {
+            chain.row_id
+            for chain in chains.values()
+            if any(
+                hop.state == goods_chain.DEAD and hop.reason == reason for hop in chain.hops
+            )
+        }
+        self._dead_rows[reason] = rows
+        return rows
 
     # -------------------------------------------------------------- derived SPO
 
@@ -1283,6 +1346,9 @@ class OrderInquiryWorklistService:
         inquiry_id: Optional[str] = None,
         # OI-BULK-RESERVE v4: keep a line when one of ITS request rows is in this status.
         reserve: Optional[str] = None,
+        # LINKAGE-UNIFY U3 (Q5): keep a row holding a link whose document is dead for
+        # this reason (`po_cancelled` / `spo_withdrawn`).
+        dead_document: Optional[str] = None,
         # Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C3): the OI worksheet's own
         # row set - a run's `run_scope_oi_rows` result, fed in as the row ids to print
         # rather than as a new set of filter clauses. `None` (the default) means "every
@@ -1395,6 +1461,17 @@ class OrderInquiryWorklistService:
             )
         if row_ids is not None:
             base = base.filter(OrderInquiryRow.id.in_(list(row_ids)))
+        if dead_document:
+            if dead_document not in (goods_chain.PO_CANCELLED, goods_chain.SPO_WITHDRAWN):
+                raise AppException(
+                    422,
+                    f"'{dead_document}' is not a dead document. Use po_cancelled or "
+                    "spo_withdrawn.",
+                    code="invalid_dead_document_filter",
+                )
+            base = base.filter(
+                OrderInquiryRow.id.in_(sorted(self._dead_document_rows(dead_document)))
+            )
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
         if raised_by:
@@ -3019,6 +3096,18 @@ class OrderInquiryWorklistService:
             # The four acknowledgement counts, computed with the ACK FILTER ITSELF
             # DROPPED, for the reason every other axis here drops its own.
             "ack": self._acks({**filters, "ack": None}),
+            # LINKAGE-UNIFY U3 (Q5): the "Dead document" filter's own counts, with that
+            # filter dropped for the reason every other axis here drops its own.
+            "dead_documents": {
+                reason: int(
+                    self._base(**{**filters, "dead_document": reason})
+                    .with_entities(func.count(OrderInquiryRow.id))
+                    .order_by(None)
+                    .scalar()
+                    or 0
+                )
+                for reason in (goods_chain.PO_CANCELLED, goods_chain.SPO_WITHDRAWN)
+            },
             # Where the page's "Link up to" date starts (AC-LH5). The latest completed
             # reorder run's own "Plan until", read off the run rather than guessed at on
             # the page: one date, so a plan that netted to October and a buyer linking to
