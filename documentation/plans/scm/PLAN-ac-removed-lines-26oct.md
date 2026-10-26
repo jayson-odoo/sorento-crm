@@ -5,7 +5,9 @@ test and the prod reconciliation (dry run -> owner OK -> apply) pending. Lane AC
 branch `crew/ac-removed-lines`. Size L by brief (ingest behaviour + prod reconciliation), lead
 pattern; the owner's rulings removed the migration, the UI and the mock. Review rounds added the
 zero-line push guard (AC-RL-07), claims deleted (AC-RL-04) and the SPO allow-list (AC-RL-45);
-crew audit added the `<source DB>:<DtlKey>` allow-list key with ambiguous keys refused (AC-RL-46). Card: `ac-removed-lines-behaviour-card.md` (answered). UAC:
+crew audit added the `<source DB>:<DtlKey>` allow-list key with ambiguous keys refused (AC-RL-46).
+Crew audit 2: every claim on a removed line deleted, resolved included (AC-RL-04), claim-only
+lines selected, SO-line claims listed not removed (AC-RL-47), all-cancelled documents skipped (AC-RL-48). Card: `ac-removed-lines-behaviour-card.md` (answered). UAC:
 `ac-removed-lines-26oct-acceptance-criteria.md` (final).
 
 ## 0. What the owner saw (prod, 26 Oct 2026)
