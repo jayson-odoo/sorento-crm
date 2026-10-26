@@ -36,6 +36,10 @@ reported under `refused_keys` and release nothing, while other valid keys in the
 Runbook: dry run -> crew checks each SPO line against AutoCount -> owner OK ->
 `--apply --only AED_SORENTO:<DtlKey>[,...]`.
 
+Claims naming a removed SO line (AC-RL-47) are LEFT in place and listed under
+`so_line_claims_left` (PO number, PO line DtlKey, SO number, SO line DtlKey, claim qty): the live
+PO line's own AutoCount book still names that SO line, so the fix belongs in AutoCount.
+
 A second run finds nothing: every selector needs a link, an open claim or a live row, and the
 release removes exactly that.
 
@@ -118,18 +122,17 @@ def _links_by(db, column) -> dict[str, tuple[Decimal, set[str]]]:
     return out
 
 
-def _open_claim_ids(db, column) -> set[str]:
+def _claim_ids(db, column) -> set[str]:
+    """Lines holding ANY claim, open or resolved: a resolved one still dedicates the line in
+    PO detail Placed (AC-RL-41)."""
     return {
-        str(line_id)
-        for (line_id,) in db.query(column).filter(
-            column.isnot(None), OrderLinkClaim.resolved_at.is_(None)
-        )
+        str(line_id) for (line_id,) in db.query(column).filter(column.isnot(None))
     }
 
 
 def _po_candidates(db, company_id: str) -> list[dict[str, Any]]:
     links = _links_by(db, OrderInquiryLink.po_line_id)
-    claims = _open_claim_ids(db, OrderLinkClaim.po_line_id)
+    claims = _claim_ids(db, OrderLinkClaim.po_line_id)
     lines = (
         db.query(PurchaseOrderLine, PurchaseOrder.po_number, Product.product_code)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
@@ -167,7 +170,7 @@ def _po_candidates(db, company_id: str) -> list[dict[str, Any]]:
 
 def _spo_candidates(db, company_id: str) -> list[dict[str, Any]]:
     links = _links_by(db, OrderInquiryLink.spo_allocation_id)
-    claims = _open_claim_ids(db, OrderLinkClaim.spo_allocation_id)
+    claims = _claim_ids(db, OrderLinkClaim.spo_allocation_id)
     so_numbers: dict[str, set[str]] = {}
     for alloc_id, so_number in (
         db.query(OrderInquiryLink.spo_allocation_id, SalesOrder.so_number)
@@ -275,6 +278,43 @@ def _so_candidates(db, company_id: str) -> list[dict[str, Any]]:
     return found
 
 
+def _claims_on_removed_so_lines(db, company_id: str, release_po_ids: set[str]) -> list[dict[str, Any]]:
+    """AC-RL-47: claims whose `so_line_id` is a REMOVED SO line (the AC-RL-41 SO filter minus
+    the live-row condition). They are LEFT in place: the live PO line's own AutoCount book still
+    names that SO line, so the next PO push would write the claim again. Listed for the owner to
+    correct in AutoCount. A claim on a PO line this run releases goes with that line instead."""
+    rows = (
+        db.query(OrderLinkClaim, PurchaseOrder.po_number, PurchaseOrderLine, SalesOrder.so_number,
+                 SalesOrderLine)
+        .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderLinkClaim.po_line_id)
+        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .join(SalesOrderLine, SalesOrderLine.id == OrderLinkClaim.so_line_id)
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .filter(
+            OrderLinkClaim.company_id == company_id,
+            SalesOrderLine.line_status == CANCELLED,
+            SalesOrderLine.source_system == AUTOCOUNT,
+            SalesOrderLine.source_ref.isnot(None),
+            SalesOrderLine.cancelled_by_cancel_doc.is_(False),
+            SalesOrderLine.cancelled_at.is_(None),
+            SalesOrder.status != CANCELLED,
+        )
+        .order_by(PurchaseOrder.po_number, SalesOrder.so_number)
+        .all()
+    )
+    return [
+        {
+            "po_number": po_number,
+            "po_dtl_key": _dtl_key(po_line.source_ref),
+            "so_number": so_number,
+            "so_dtl_key": _dtl_key(so_line.source_ref),
+            "qty": _qty(claim.qty),
+        }
+        for claim, po_number, po_line, so_number, so_line in rows
+        if str(po_line.id) not in release_po_ids
+    ]
+
+
 def run(
     db, company_id: str, dry_run: bool = True, spo_dtl_keys: Sequence[str] = ()
 ) -> dict[str, Any]:
@@ -292,6 +332,7 @@ def run(
         spo = _spo_candidates(db, company_id)
         so = _so_candidates(db, company_id)
         wanted = {str(k).strip() for k in spo_dtl_keys if str(k).strip()}
+        kept_claims = _claims_on_removed_so_lines(db, company_id, {c["id"] for c in po})
         by_key: dict[str, list[dict[str, Any]]] = {}
         for c in spo:
             by_key.setdefault(c["key"], []).append(c)
@@ -342,6 +383,7 @@ def run(
         "rows_affected": sum(c["rows_affected"] for c in (*po, *so, *counted_spo)),
         "ignored_keys": ignored,
         "refused_keys": refused,
+        "so_line_claims_left": kept_claims,
         "lines": lines,
     }
 
@@ -375,6 +417,13 @@ def main(argv: list[str] | None = None) -> int:
                 + (f" so={','.join(line['so_numbers'])}" if line.get("so_numbers") else "")
                 + (f" released={line['released']}" if "released" in line else "")
             )
+        if report["so_line_claims_left"]:
+            print("\nClaims naming a removed SO line: correct in AutoCount")
+            for c in report["so_line_claims_left"]:
+                print(
+                    f"  PO {c['po_number']} line {c['po_dtl_key']} -> SO {c['so_number']} "
+                    f"line {c['so_dtl_key']} qty={c['qty']}"
+                )
         if report["refused_keys"]:
             print(
                 "refused --only keys (a bare DtlKey, or ambiguous: use <source DB>:<DtlKey>): "

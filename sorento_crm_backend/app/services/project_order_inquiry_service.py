@@ -6063,7 +6063,7 @@ class ProjectOrderInquiryService:
         reads `raised` / `partly linked` by the normal rules and an `actioned` one stays
         actioned. No `ack_state` change, no notification, no email: AutoCount's linkage is
         the source of truth, nobody is asked to confirm. Open `order_link_claim` rows on the
-        same ids are deleted. A reserve link names neither id, so it is never matched.
+        same ids are deleted, resolved ones too. A reserve link names neither id, so it is never matched.
         Returns the number of rows that lost a link. In the caller's transaction.
         """
         po_ids = [str(i) for i in po_line_ids if i]
@@ -6095,11 +6095,12 @@ class ProjectOrderInquiryService:
             claim_conditions.append(OrderLinkClaim.po_line_id.in_(po_ids))
         if spo_ids:
             claim_conditions.append(OrderLinkClaim.spo_allocation_id.in_(spo_ids))
-        # DELETED, not stamped resolved: a resolved claim reads "matched to PO X" on the SO
-        # list, and the line no longer exists in AutoCount (AC-RL-04).
+        # EVERY claim on the line goes, open or resolved, any source: a resolved claim reads
+        # "matched to PO X" on the SO list and still dedicates the line in PO detail Placed,
+        # and the line no longer exists in AutoCount (AC-RL-04/06).
         claims = (
             self.db.query(OrderLinkClaim)
-            .filter(OrderLinkClaim.resolved_at.is_(None), or_(*claim_conditions))
+            .filter(or_(*claim_conditions))
             .all()
         )
         for claim in claims:
