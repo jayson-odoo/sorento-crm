@@ -5,7 +5,7 @@ attachment, then each `metadata_json["extra_attachments"]` entry, in the drainer
 downloads one by its POSITION in that list. There is no storage-key parameter: only a key the
 row itself carries can ever be served.
 
-Plan: documentation/plans/email/PLAN-outbox-attachment-26oct.md
+Plan: documentation/plans/_archive/email/PLAN-outbox-attachment-26oct.md
 """
 from datetime import datetime
 from unittest.mock import MagicMock
