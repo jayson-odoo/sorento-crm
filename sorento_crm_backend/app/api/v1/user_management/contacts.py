@@ -1,5 +1,5 @@
 """Respond contacts API routes."""
-from fastapi import APIRouter, Depends, Query, status, HTTPException, Body, Request
+from fastapi import APIRouter, Depends, File, Form, Query, status, HTTPException, Body, Request, UploadFile
 from sqlalchemy.orm import Session
 from typing import Annotated, Literal, Optional
 from pydantic import BaseModel, ConfigDict, Field, field_validator
@@ -251,6 +251,38 @@ def bulk_copy_contact_access(
     except Exception as e:
         db.rollback()
         logger.error(f"Error in bulk_copy_contact_access: {e}", exc_info=True)
+        raise handle_internal_error(str(e))
+
+
+@router.post("/access-sheet", status_code=status.HTTP_200_OK)
+def import_contact_access_sheet(
+    file: UploadFile = File(...),
+    dry_run: bool = Form(True),
+    confirmed: Optional[str] = Form(None),
+    current_user: dict = Depends(require_permission("user_management.contacts.edit")),
+    db: Session = Depends(get_db),
+):
+    """Upload the Respond contact export CSV: a dry run (default) writes nothing and previews every
+    dealer block and contact; `dry_run=false` with `confirmed` ({dealer key: [customer id]}) sets
+    each contact's access and links the confirmed accounts in ONE transaction. Facets the caller
+    could not set directly are listed in `not_applied`. Contract: PLAN-bulk-contact-access-26oct.md."""
+    from app.services import contact_access_copy_service, contact_access_sheet_service as sheet
+
+    try:
+        data = file.file.read(sheet.MAX_BYTES + 1)
+        return sheet.run(
+            db,
+            data,
+            dry_run=dry_run,
+            confirmed_raw=confirmed,
+            actor_id=str(current_user.get("id") or "") or None,
+            skip=contact_access_copy_service.facets_to_skip(db, current_user["id"]),
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        db.rollback()
+        logger.error(f"Error in import_contact_access_sheet: {e}", exc_info=True)
         raise handle_internal_error(str(e))
 
 
