@@ -311,11 +311,13 @@ describe('R3 the SPO column is wide enough on both tables', () => {
  * ROUND 8 (owner, #1870 hand test: one pill at every width, truncating like other components)
  * SUPERSEDES the compact chip: the floor is number + "via PO" + a TRUNCATED pill, so the
  * ranges become worklist 240-270 and Lines tab 260-290.
+ * ROUND 8b: browser measure (a 2 px sliver at 250, "R..." at 270) moves both floors to
+ * 285-300, so a pill still shows "Rec..." (about 40 px).
  */
 describe('R4 the SPO column floor keeps the number, "via PO" and the compact chip', () => {
   const tables: Array<[string, () => unknown[], number, number]> = [
-    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 240, 270],
-    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 260, 290],
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 285, 300],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 285, 300],
   ];
 
   it.each(tables)('(a) the %s SPO column minSize is within its range', (_n, build, low, high) => {
