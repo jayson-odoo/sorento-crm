@@ -608,17 +608,11 @@ def _parts_with_qty(snapshot: Mapping[str, Any]) -> str:
     )
 
 
-def _purchasing_key(snapshot: Mapping[str, Any]) -> Tuple[Any, ...]:
-    """What purchasing holds for a saved line: its date, product and their parts (words with
-    the donor named, quantity). Two snapshots with the same key ask purchasing nothing new."""
-    return (
-        snapshot.get("required_date"),
-        snapshot.get("item_code"),
-        tuple(
-            (words, qty)
-            for words, _location, qty, key in _saved_line_parts(snapshot, name_donors=True)
-            if key in _PURCHASING_KEYS
-        ),
+def _stock_qty(snapshot: Mapping[str, Any]) -> Decimal:
+    """How much of a saved line is NOT purchasing's (stock, incoming, LOCAL BUY)."""
+    return sum(
+        (qty for _w, _l, qty, key in _saved_line_parts(snapshot) if key not in _PURCHASING_KEYS),
+        _ZERO,
     )
 
 
@@ -5176,11 +5170,6 @@ class ProjectOrderInquiryService:
             keys = [key for _w, _l, _q, key in _saved_line_parts(now) if key in _PURCHASING_KEYS]
             if not remark and not (before is not None and taken_back > _ZERO):
                 return
-            if before is not None and taken_back <= _ZERO and _purchasing_key(
-                before
-            ) == _purchasing_key(now):
-                # Only the stock side moved: what purchasing holds is as it was.
-                return
         else:
             location = now.get("location") or None
             keys = list(keys or [])
@@ -5243,21 +5232,27 @@ class ProjectOrderInquiryService:
                 # the same decision reads as today's settle line did ("DELAY, ORDER 3").
                 # A donor move also reads its decision words, so the new donor is named
                 # beside any date or quantity word (OI-ORDERBACK-LOCATION, owner 21 Oct 2026).
-                if ("qty" not in was or raised is not None) and taken_back > _ZERO:
-                    # The rows of this line told purchasing to cancel something they hold
-                    # (a raised order withdrawn, settled down, a CANCEL BALANCE exception).
-                    # Read off what the rows actually did, never off the Buy's size: a Buy
-                    # whose goods arrived and now cover the line from stock is not an order
-                    # to take back (crew audit, SO400236). Told as the change it is, never
-                    # "CANCEL ORDER", which purchasing reads as the customer cancelling
-                    # (owner Q4, 26 Oct 2026): "CHANGED: ORDER 10 -> USE BRW-BB 10".
+                # The rows of this line told purchasing to cancel something they hold
+                # (a raised order withdrawn, settled down, a CANCEL BALANCE exception).
+                # Read off what the rows actually did, never off the Buy's size: a Buy
+                # whose goods arrived and now cover the line from stock is not an order
+                # to take back (crew audit, SO400236).
+                takes_back = ("qty" not in was or raised is not None) and taken_back > _ZERO
+                if takes_back and _stock_qty(now) > _stock_qty(before):
+                    # Stock took the order's place: told as the change it is, never "CANCEL
+                    # ORDER", which purchasing reads as the customer cancelling (owner Q4,
+                    # 26 Oct 2026): "CHANGED: ORDER 10 -> USE BRW-BB 10".
                     pieces.append(f"CHANGED: {_parts_with_qty(before)} -> {_parts_with_qty(now)}")
-                elif (
-                    not same_kinds
-                    or not pieces
-                    or _borrow_donors(before) != _borrow_donors(now)
-                ):
-                    pieces.append(remark)
+                else:
+                    if (
+                        not same_kinds
+                        or not pieces
+                        or _borrow_donors(before) != _borrow_donors(now)
+                    ):
+                        pieces.append(remark)
+                    if takes_back:
+                        pieces.append(f"CANCEL ORDER {_qty_str(taken_back)}")
+                        keys.append(IV_CANCEL_BALANCE)
                 remark = ", ".join(piece for piece in pieces if piece)
             if before.get("item_code") and before.get("item_code") != now.get("item_code"):
                 was["item_code"] = before.get("item_code")

@@ -78,7 +78,6 @@ def test_a_first_confirm_sends_one_line_per_saved_line_with_its_decision(api, em
     _stock(world.db, world.product, world.pool_wh, on_hand=50)
     world.db.commit()
     order, line_a, line_b = _order(api)
-    pool = world.pool_wh.warehouse_code
     own = world.own_wh.warehouse_code
 
     _post(api, order, [
@@ -88,10 +87,8 @@ def test_a_first_confirm_sends_one_line_per_saved_line_with_its_decision(api, em
 
     assert len(emails) == 1, emails
     code = world.product.product_code
-    assert sorted(_lines(emails[0])) == sorted([
-        (code, "10", own, "ORDER"),
-        (code, "6", own, f"USE {pool}"),
-    ]), _lines(emails[0])
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026): a Use BRW line is not purchasing's.
+    assert _lines(emails[0]) == [(code, "10", own, "ORDER")], _lines(emails[0])
 
 
 def test_a_saved_line_whose_decision_moved_is_the_only_line(api, emails):
@@ -140,7 +137,6 @@ def test_one_saved_line_is_one_email_line_however_many_rows_it_raised(api, email
     _stock(world.db, world.product, world.pool_wh, on_hand=50)
     world.db.commit()
     order, line_a, _line_b = _order(api)
-    pool = world.pool_wh.warehouse_code
     own = world.own_wh.warehouse_code
 
     _post(api, order, [
@@ -149,8 +145,9 @@ def test_one_saved_line_is_one_email_line_however_many_rows_it_raised(api, email
     ])
 
     assert len(emails) == 1, emails
+    # OI-EMAIL-PURCHASING-FOCUS Q1 (a), owner 26 Oct 2026: only purchasing's part.
     assert _lines(emails[0]) == [
-        (world.product.product_code, "10", own, f"USE {pool} 6 & ORDER 4"),
+        (world.product.product_code, "10", own, "ORDER 4"),
     ]
 
 
@@ -333,9 +330,11 @@ def test_a_buy_replaced_by_stock_says_to_take_the_order_back(api, emails):
     ])
 
     assert len(emails) == 1, emails
+    # OI-EMAIL-PURCHASING-FOCUS Q4 (owner, 26 Oct 2026): "CANCEL ORDER" read as a customer
+    # cancel; the line says it changed from the Buy to the stock.
     assert _lines(emails[0]) == [
         (world.product.product_code, "10", world.own_wh.warehouse_code,
-         f"USE {pool}, CANCEL ORDER 10"),
+         f"CHANGED: ORDER 10 -> USE {pool} 10"),
     ]
 
 
@@ -681,7 +680,6 @@ def test_a_use_plus_borrow_mix_names_the_donor_beside_use(api, emails):
     donor = _donor(world, "KL")
     order, line, _core = _one_line_order(world, "10")
     own = world.own_wh.warehouse_code
-    pool = world.pool_wh.warehouse_code
     _post(api, order, [_line_payload(
         line.id,
         reserve=[{"warehouse_id": world.pool_wh.id, "qty": "6"}],
@@ -690,7 +688,7 @@ def test_a_use_plus_borrow_mix_names_the_donor_beside_use(api, emails):
     )])
 
     assert len(emails) == 1, emails
+    # OI-EMAIL-PURCHASING-FOCUS Q1 (a), owner 26 Oct 2026: the Use BRW part is not theirs.
     assert _lines(emails[0]) == [(
-        world.product.product_code, "10", own,
-        f"USE {pool} 6 & ORDER BACK {donor.warehouse_code} 4",
+        world.product.product_code, "10", own, f"ORDER BACK {donor.warehouse_code} 4",
     )], _lines(emails[0])

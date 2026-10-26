@@ -65,6 +65,16 @@ def _srtwb246_shape(api):
     return fixture
 
 
+
+def _told(calls, item_code: str) -> list:
+    """Every handover line naming this item, across every dispatch of the test."""
+    return [
+        line
+        for call in _handover_calls(calls)
+        for line in call["context"]["handover"]["lines"]
+        if line["item_code"] == item_code
+    ]
+
 def test_redirected_line_prints_its_date_move_as_was_now(api, monkeypatch):
     """SO400236 / SRTWB246: a date-only move on a line whose one row was used elsewhere
     prints DELIVERY = the old date and NEW DATE = the new one, on the fresh ORDER line."""
@@ -241,13 +251,10 @@ def test_dev_shape_date_move_prints_delay_never_a_cancel_to_zero(api, monkeypatc
         old_date=WAS_1, new_date=later, qty="1",
     )
 
-    entries = _line_entries(calls, row.item_code)
-    assert len(entries) == 1, entries
-    assert entries[0]["qty"] == "1", f"never a cancel to 0: {entries[0]}"
-    assert entries[0]["delivery_date"] == later.strftime("%d/%m/%Y"), entries[0]
-    assert entries[0]["was"] == {"delivery_date": WAS_FMT}, entries[0]
-    headline = _handover_calls(calls)[-1]["context"]["handover"]["headline"]
-    assert "DELAY" in headline and "CANCEL" not in headline, headline
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, supersedes the 12 Oct rule for this
+    # shape): the line is met from its own location's stock, so purchasing holds nothing for
+    # it and is told nothing.
+    assert _told(calls, row.item_code) == []
 
 
 def test_redirected_and_met_from_stock_delay_notice_carries_its_was(api, monkeypatch):
@@ -271,18 +278,12 @@ def test_redirected_and_met_from_stock_delay_notice_carries_its_was(api, monkeyp
         old_date=WAS_1, new_date=later, qty="1",
     )
 
-    # Every line of the mail: the notice row carries the batch row's own item code (the
-    # harness's `_change` names "ZZT-ITEM"), not the product's.
-    entries = _handover_calls(calls)[-1]["context"]["handover"]["lines"]
-    dated = [e for e in entries if (e["was"] or {}).get("delivery_date")]
-    assert dated, f"the date move must reach the email: {entries}"
-    # ORDERBACK-DELTA review B1: the apply's own DELAY notice does not tell the saved line
-    # a second time - ONE line in the whole email.
-    every_line = _handover_calls(calls)[-1]["context"]["handover"]["lines"]
-    assert len(every_line) == 1, every_line
-    assert dated[0]["was"]["delivery_date"] == WAS_FMT, dated[0]
-    assert dated[0]["delivery_date"] == later.strftime("%d/%m/%Y"), dated[0]
-    assert not any(e["qty"] == "0" for e in entries), entries
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, supersedes the 12 Oct rule for this
+    # shape): the line is met from its own location's stock, so purchasing holds nothing for
+    # it and is told nothing.
+    # The apply's own DELAY notice row is not told either (ORDERBACK-DELTA review B1: it
+    # never tells a saved line a second time).
+    assert [line for c in _handover_calls(calls) for line in c["context"]["handover"]["lines"]] == []
 
 
 def test_qty_up_met_from_stock_prints_its_numbers_but_never_order(api, monkeypatch):
@@ -310,12 +311,10 @@ def test_qty_up_met_from_stock_prints_its_numbers_but_never_order(api, monkeypat
 
     live = [r for r in _rows_of(world, fixture["line"]) if r.state != INQUIRY_CANCELLED]
     assert not [r for r in live if r.verb == IV_ORDER], "sanity: stock meets it, no buy"
-    entries = _line_entries(calls, fixture["row"].item_code)
-    assert len(entries) == 1, entries
-    assert entries[0]["qty"] == "2", entries[0]
-    assert entries[0]["was"] == {"qty": "1", "delivery_date": WAS_FMT}, entries[0]
-    headline = _handover_calls(calls)[-1]["context"]["handover"]["headline"]
-    assert "DELAY" in headline and "ORDER" not in headline, headline
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, supersedes the 12 Oct rule for this
+    # shape): the line is met from its own location's stock, so purchasing holds nothing for
+    # it and is told nothing.
+    assert _told(calls, fixture["row"].item_code) == []
 
 
 def test_product_swap_met_from_landed_stock_prints_item_code_and_new_item_code(
@@ -385,9 +384,7 @@ def test_qty_rise_met_from_stock_alone_names_qty_change_in_the_headline(api, mon
         old_date=WAS_1, new_date=WAS_1, qty="1", new_qty="2",
     )
 
-    entries = _line_entries(calls, fixture["row"].item_code)
-    assert len(entries) == 1 and entries[0]["was"] == {"qty": "1"}, entries
-    headline = _handover_calls(calls)[-1]["context"]["handover"]["headline"]
-    # ORDERBACK-DELTA (owner, 13 Oct 2026): the headline names the decision the line now
-    # carries (met from own stock), never empty.
-    assert headline == "USE OWN LOCATION", headline
+    # OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, supersedes the 12 Oct rule for this
+    # shape): the line is met from its own location's stock, so purchasing holds nothing for
+    # it and is told nothing.
+    assert _told(calls, fixture["row"].item_code) == []
