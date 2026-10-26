@@ -503,12 +503,19 @@ def _promotion_kind_rows(db: "Session") -> list[LookupRow]:
     ]
 
 
-def _location_rows(db: "Session") -> list[LookupRow]:
-    """Active warehouses of the session's companies: label `<name> (<code>)`."""
+def _location_rows(db: "Session", warehouse_scope: list[str] | None = None) -> list[LookupRow]:
+    """Active warehouses of the session's companies: label `<name> (<code>)`. `warehouse_scope`
+    (CHAT-INCOMING-LOCATION-SCOPE) narrows to the warehouses the contact's stock-visibility policy
+    allows; None = no narrowing, [] = no rows."""
     from app.models.inventory import Warehouse
 
+    query = db.query(Warehouse).filter(Warehouse.is_active.is_(True))
+    if warehouse_scope is not None:
+        if not warehouse_scope:
+            return []
+        query = query.filter(Warehouse.id.in_(warehouse_scope))
     out: list[LookupRow] = []
-    for w in db.query(Warehouse).filter(Warehouse.is_active.is_(True)).order_by(Warehouse.warehouse_code).all():
+    for w in query.order_by(Warehouse.warehouse_code).all():
         code = str(w.warehouse_code or "").strip()
         name = str(w.warehouse_name or "").strip()
         if code:
@@ -558,6 +565,7 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
 def load_rows(
     db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
     include_customers: bool = False, customer_ids: frozenset[str] | None = None, brands: list[dict] | None = None,
+    warehouse_scope: list[str] | None = None,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels."""
@@ -587,7 +595,7 @@ def load_rows(
     out.extend(_file_type_rows(db))
     out.extend(_brand_rows(db, brands))
     out.extend(_promotion_kind_rows(db))
-    out.extend(_location_rows(db))
+    out.extend(_location_rows(db, warehouse_scope))
     if include_salespeople:
         out.extend(_salesperson_rows(db))
     if include_customers:

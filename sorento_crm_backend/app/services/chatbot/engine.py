@@ -1244,10 +1244,23 @@ def _lookup_lines(
         )
         include_salespeople = bool(resolved) and guarded(lambda: _may_see_salespeople(db, str(resolved)), False)
         include_customers, customer_ids = guarded(lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
+        # CHAT-INCOMING-LOCATION-SCOPE: the LOCATION list offers only the warehouses the contact's
+        # stock-visibility policy allows. No contact id in play = unchanged; one that does not
+        # resolve (or whose policy cannot be read) = no location rows.
+        def _warehouse_scope():
+            from app.services.stock_visibility import resolve_policy, scope_warehouse_ids
+
+            if not contact_respond_id:
+                return None
+            policy = resolve_policy(db, str(resolved)) if resolved else None
+            return [] if policy is None else scope_warehouse_ids(db, policy)
+
+        warehouse_scope = guarded(_warehouse_scope, [])
         with db.begin_nested():
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+                warehouse_scope=warehouse_scope,
             )
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)

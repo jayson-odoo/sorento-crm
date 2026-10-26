@@ -54,6 +54,16 @@ class _Contact:
         self.rules = rules_for_contact(db, self.resolved) if contact_id else None
         #: The packing list regions this contact may be told about; None = no contact, no filter.
         self.regions = self.rules.regions if self.rules is not None else None
+        #: CHAT-INCOMING-LOCATION-SCOPE: the warehouse ids this contact's stock-visibility
+        #: policy lets it be told about (`stock_visibility.scope_warehouse_ids`, the one scope
+        #: the stock lines and the placed route use). None = no contact, or a policy naming
+        #: no location list: no filter. [] = an unresolvable contact: fail closed.
+        self.warehouse_scope: Optional[list[str]] = None
+        if contact_id:
+            from app.services.stock_visibility import resolve_policy, scope_warehouse_ids
+
+            policy = resolve_policy(db, contact_id, space_id)
+            self.warehouse_scope = [] if policy is None else scope_warehouse_ids(db, policy)
 
     def eta_from(self, db: Session, eta_from: Optional[date]) -> Optional[date]:
         return query_eta_from(db, self.rules, eta_from)
@@ -222,7 +232,9 @@ _CONTACT_ID_DOC = (
     "The contact this question is being asked ON BEHALF OF (respond_contacts.id or the "
     "Respond.io id). When set, the ETA carries that contact's +x days offset when their "
     "switch is on, the packing list is sent only when their packing list switch is on, "
-    "and gated fields follow their Incoming Stock Enquiries field reveals."
+    "and gated fields follow their Incoming Stock Enquiries field reveals. Only "
+    "allocations and quantities on locations its stock-visibility policy lets it see are "
+    "returned (the same locations as its stock lines)."
 )
 _SPACE_ID_DOC = "Respond.io workspace id, to disambiguate a Respond.io `contact_id`."
 
@@ -298,7 +310,9 @@ def get_incoming_for_product(
                 }
             resolved_product_filter.extend(buckets.product_codes)
     try:
-        svc = IncomingStockService(db, regions=contact.regions)
+        svc = IncomingStockService(
+            db, regions=contact.regions, warehouse_scope=contact.warehouse_scope
+        )
         # A windowed contact answer reads the service's maximum and pages the products
         # that survive the padded window itself (`_fetch_window`); this route has no page.
         result, paged = _fetch_window(
@@ -391,7 +405,9 @@ def get_incoming_shipments(
                     "resolved_entities": entity_echo,
                 }
     try:
-        svc = IncomingStockService(db, regions=contact.regions)
+        svc = IncomingStockService(
+            db, regions=contact.regions, warehouse_scope=contact.warehouse_scope
+        )
         result, paged = _fetch_window(
             lambda p, n: svc.incoming_shipments(
                 query=extra_query,
@@ -487,7 +503,9 @@ def get_incoming_list(
                 flat_product_ids.append(piece)
     try:
         contact = _Contact(db, contact_id, space_id)
-        svc = IncomingStockService(db, regions=contact.regions)
+        svc = IncomingStockService(
+            db, regions=contact.regions, warehouse_scope=contact.warehouse_scope
+        )
         # product_ids may be UUIDs or product_codes; the service resolves both, so
         # pass through raw rather than via parse_uuid_list (which rejects codes).
         result, paged = _fetch_window(
@@ -554,7 +572,9 @@ def get_incoming_shipment_products(
     """
     try:
         contact = _Contact(db, contact_id, space_id)
-        svc = IncomingStockService(db, regions=contact.regions)
+        svc = IncomingStockService(
+            db, regions=contact.regions, warehouse_scope=contact.warehouse_scope
+        )
         return _for_contact(
             db,
             svc.shipment_incoming_products(shipment_id),
@@ -581,7 +601,9 @@ def get_incoming_shipment_attachment(
     """
     try:
         contact = _Contact(db, contact_id, space_id)
-        svc = IncomingStockService(db, regions=contact.regions)
+        svc = IncomingStockService(
+            db, regions=contact.regions, warehouse_scope=contact.warehouse_scope
+        )
         data = svc.shipment_attachment(shipment_id)
         if data is None:
             return {"data": None, "empty": True}
