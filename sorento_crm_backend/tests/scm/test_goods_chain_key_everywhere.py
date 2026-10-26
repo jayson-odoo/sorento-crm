@@ -244,6 +244,11 @@ def test_k5_an_spo_of_another_company_is_not_counted_by_the_batch_own_arrival_re
     db.flush()
     a.company_id = other
     db.flush()
+    # Widen the session scope to BOTH companies, so only the key's own company condition can
+    # keep the other company's SPO out.
+    from app.models.base import set_company_scope
+
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID, other}))
     assert _landed_batch(db, w, so_ref) == Decimal("0")
     assert _landed_single(db, w, so_ref) == Decimal("0")
 
@@ -259,3 +264,25 @@ def test_k6_an_spo_naming_the_po_line_by_fk_is_counted_as_landed(scm_app):
     db.flush()
     assert _landed_single(db, w, so_ref) == Decimal("50")
     assert _landed_batch(db, w, so_ref) == Decimal("50")
+
+
+def test_the_followed_cache_resets_when_a_link_is_removed_on_the_same_service(scm_app):
+    """One service instance walks row 2's candidates (A reads 0: row 1's PO placement follows
+    onto it), row 1's link is removed through the normal unplace path (which invalidates the
+    link cache), and the SAME instance walks again: A now shows the freed 486."""
+    from tests.scm.conftest import seed_user
+
+    db = scm_app[1]
+    w, a, row1, row2 = _followed_world(db)
+    svc = _service(db)
+
+    def offered():
+        return [
+            Decimal(str(c["remaining"]))
+            for c in svc.po_candidates_for_row(str(row2.id))
+            if c["spo_allocation_id"] == str(a.id)
+        ]
+
+    assert all(r == 0 for r in offered())
+    svc.unplace(str(row1.id), actor_user_id=seed_user(db, None))
+    assert offered() == [Decimal("486")]
