@@ -658,16 +658,12 @@ def test_wu25_an_unexpected_error_closes_the_turn_failed_not_processing(
     _install(world, monkeypatch)
 
     def _boom(body):
-        raise RuntimeError("zzt unexpected")
+        raise RuntimeError(f"zzt unexpected for +{E164}")
 
     monkeypatch.setattr(wa_phone_link, "accepted_card_phone", _boom)
-    result = None
-    try:
-        result = _run(session_factory, _env("tap", mid="WU-boom-1"))
-    except Exception:
-        pass
-    if result is not None:
-        assert result.actions == []
+    result = _run(session_factory, _env("tap", mid="WU-boom-1"))  # must return, never raise
+    assert result.actions == []
+    assert result.status == "failed"
     rows = (
         session_factory()
         .query(ChatbotTurn)
@@ -676,12 +672,37 @@ def test_wu25_an_unexpected_error_closes_the_turn_failed_not_processing(
     )
     assert len(rows) == 1
     assert rows[0].status == "failed", rows[0].status
+    assert rows[0].stage == "received", rows[0].stage
     assert rows[0].finished_at is not None
-    assert rows[0].error
+    assert rows[0].error and "TypeError" not in rows[0].error and "replace()" not in rows[0].error
+    assert E164 not in rows[0].error
     monkeypatch.undo()
     _install(world, monkeypatch)
     second = _run(session_factory, _env("tap", mid="WU-boom-1"))
     assert not (second.duplicate and second.status == "processing")
+
+
+def test_wu25_a_drain_turn_with_an_unexpected_error_ends_failed_with_the_phone_flow_error(
+    session_factory, parser_calls, world, monkeypatch
+):
+    from app.services import wa_phone_link
+    from app.services.chatbot import inbox_queue
+
+    _install(world, monkeypatch)
+    env = _env("tap", mid="WU-boom-drain")
+    turn_id = _queued_row(session_factory, env)
+    monkeypatch.setattr(inbox_queue, "checkpoint", lambda tid=None: None)
+
+    def _boom(body):
+        raise RuntimeError(f"zzt unexpected for +{E164}")
+
+    monkeypatch.setattr(wa_phone_link, "accepted_card_phone", _boom)
+    result = engine_mod.run_turn(env, session_factory=session_factory, offload=False, queued_turn_id=turn_id)
+    assert result.actions == []
+    row = session_factory().query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
+    assert row.status == "failed", row.status
+    assert row.error and "TypeError" not in row.error and "replace()" not in row.error
+    assert E164 not in row.error
 
 
 # ---------------------------------------------------------------- WU24 outbox rows

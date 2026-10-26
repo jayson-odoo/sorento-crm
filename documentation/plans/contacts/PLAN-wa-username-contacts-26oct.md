@@ -1,6 +1,6 @@
 # PLAN: WhatsApp username-only contacts get a verified phone and join the contact that holds their access (WA-USERNAME-CONTACTS)
 
-Status: Build (owner answered card section 9, 27 Oct ~00:55; rule 3 confirmed on the tap + hand-shared payloads). Phase 2 tester-first. Track: L (new chat flow, contact
+Status: Review (4 red/green rounds on PR #1888, head c29a0c7afa; security-reviewer CLEAN on round 3; reviewer round-4 confirm pending; hand test = copy replay, decision-level). Track: L. Track: L (new chat flow, contact
 merge across Respond.io and CRM, ownership proof = auth-adjacent, security-reviewer required). LEAD pattern.
 UAC: `wa-username-contacts-26oct-acceptance-criteria.md` (written after the card is answered).
 
