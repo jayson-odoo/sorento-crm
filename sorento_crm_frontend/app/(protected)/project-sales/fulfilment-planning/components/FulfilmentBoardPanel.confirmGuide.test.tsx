@@ -242,12 +242,25 @@ const SO2_L1 = demand({
 
 type Board = ReturnType<typeof buildBoard>;
 
+/** FULFIL-SO-REMARK-CHANGES: the line never confirmed, so its first decision is not a change. */
+const fresh = (line: BoardDemandLine): BoardDemandLine =>
+  ({ ...line, decision: null }) as unknown as BoardDemandLine;
+
 function mapContributions(board: Board, fn: (entry: Record<string, unknown>) => Record<string, unknown>) {
   const apply = (entry: unknown) => fn(entry as Record<string, unknown>);
   return {
     ...board,
     cells: board.cells.map((cell) => ({ ...cell, contributions: cell.contributions.map(apply) })),
     contributions: (board as unknown as { contributions?: unknown[] }).contributions?.map(apply),
+  } as unknown as Board;
+}
+
+/** A pending AutoCount change on every order: what retires a book-cancelled line. */
+function withPendingBatch(board: Board) {
+  const built = board as unknown as { orders: Record<string, unknown>[] };
+  return {
+    ...board,
+    orders: built.orders.map((order) => ({ ...order, pending_change_batch_id: 'b-zzt' })),
   } as unknown as Board;
 }
 
@@ -576,10 +589,12 @@ describe('T-FE2 (F2 F3 F4): a page for every order, listing every covered line a
   // FULFIL-SO-REMARK-CHANGES (owner R3, 26 Oct 2026): the popup still shows it, on its order's
   // page, since every Confirm opens the same popup and the email tells that line.
   it('B2: a covered book-cancelled line with no draft is the AutoCount note and a row on its page', async () => {
-    const board = mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
-      entry.project_line_id === 'pl-1-2'
-        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
-        : entry,
+    const board = withPendingBatch(
+      mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
+        entry.project_line_id === 'pl-1-2'
+          ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+          : entry,
+      ),
     );
     await mountWith(board, ['SO000001']);
     expect(await screen.findByTestId('board-autocount-change-note')).toHaveTextContent(
@@ -1857,9 +1872,9 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
     within(pageOf(so)).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
 
   // SO000001: lines 1 and 3 re-approved (saved drafts, no change), line 2 is not in the press.
-  // FULFIL-SO-REMARK-CHANGES (R2): only a no-change order is prefilled, so no split edit here.
+  // FULFIL-SO-REMARK-CHANGES (R2): only a new-only order is prefilled, so these lines are new.
   const base = () =>
-    withDraft(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1]), ['pl-1-1', 'pl-1-3', 'pl-2-1']);
+    withDraft(boardOf([SO1_L1, SO1_L2, SO1_L3, SO2_L1].map(fresh)), ['pl-1-1', 'pl-1-3', 'pl-2-1']);
 
   async function openAt(board: Board) {
     await mountWith(board);
@@ -1955,8 +1970,8 @@ describe('FULFIL-SO-REMARK: the Remark field and Mockup badge on each SO page', 
 
 // ---------------------------------------------------------------------------
 // FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R1/R2): the Remark is REQUIRED on an SO whose
-// press carries a change, and starts EMPTY there; a new-only / re-approve-only SO keeps today's
-// optional, prefilled Remark.
+// press carries a change, and starts EMPTY there; a new-only SO keeps today's optional,
+// prefilled Remark.
 // ---------------------------------------------------------------------------
 
 describe('FULFIL-SO-REMARK-CHANGES: a change SO needs its Remark keyed in', () => {
@@ -1972,10 +1987,10 @@ describe('FULFIL-SO-REMARK-CHANGES: a change SO needs its Remark keyed in', () =
     within(pageOf(so)).getByTestId('confirm-guide-so-remark') as HTMLInputElement;
   const next = () => screen.getByTestId('confirm-guide-next') as HTMLButtonElement;
 
-  // SO000001: line 1 split-edited (a change). SO000002: line 1 re-approved as it was (no change).
+  // SO000001: line 1 split-edited (a change). SO000002: line 1 a new line's first decision.
   const board = () =>
     withRemarkType(
-      withDraft(withSplitEdited(boardOf([SO1_L1, SO1_L2, SO2_L1]), ['pl-1-1']), ['pl-2-1']),
+      withDraft(withSplitEdited(boardOf([SO1_L1, SO1_L2, fresh(SO2_L1)]), ['pl-1-1']), ['pl-2-1']),
       { 'so-1': 'Sponsorship', 'so-2': 'Purchase Request' },
     );
 
@@ -2000,7 +2015,7 @@ describe('FULFIL-SO-REMARK-CHANGES: a change SO needs its Remark keyed in', () =
     await waitFor(() => expect(next()).toBeEnabled());
   });
 
-  it('R1/R2: a re-approve-only SO keeps its prefill and stays optional', async () => {
+  it('R1/R2: a new-only SO keeps its prefill and stays optional', async () => {
     await open();
     fireEvent.change(remarkInput('SO000001'), { target: { value: 'Site asked to split' } });
     await waitFor(() => expect(next()).toBeEnabled());
@@ -2051,10 +2066,12 @@ describe('FULFIL-SO-REMARK-CHANGES: an AutoCount-change-only press gets its page
   // SO000001's line 2 was cancelled in the book and nothing is decided: the press applies the
   // AutoCount change only.
   const changeOnly = () =>
-    mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
-      entry.project_line_id === 'pl-1-2'
-        ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
-        : entry,
+    withPendingBatch(
+      mapContributions(boardOf([SO1_L1, SO1_L2]), (entry) =>
+        entry.project_line_id === 'pl-1-2'
+          ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+          : entry,
+      ),
     );
 
   it('R3: the popup opens on SO000001 with the retired line and an empty, required Remark', async () => {
@@ -2067,5 +2084,22 @@ describe('FULFIL-SO-REMARK-CHANGES: an AutoCount-change-only press gets its page
     expect(remark).toHaveValue('');
     expect(remark).toBeRequired();
     await waitFor(() => expect(screen.getByTestId('confirm-guide-next')).toBeDisabled());
+  });
+  it('R5: a mixed order lists its decided lines AND the retired ones, as its email does', async () => {
+    const mixed = withPendingBatch(
+      mapContributions(
+        withDraft(boardOf([fresh(SO1_L1), SO1_L2]), ['pl-1-1']),
+        (entry) =>
+          entry.project_line_id === 'pl-1-2'
+            ? { ...entry, cancelled: true, cancelled_at: null, saved_remark: 'CANCEL ALL' }
+            : entry,
+      ),
+    );
+    await mountWith(mixed, ['SO000001']);
+    await openGuideRaw();
+    const page = await screen.findByTestId('confirm-guide-split-page');
+    expect(await within(page).findByTestId('split-line-1')).toBeInTheDocument();
+    expect(within(page).getByTestId('split-line-2')).toBeInTheDocument();
+    expect(within(page).getByTestId('confirm-guide-so-remark')).toBeRequired();
   });
 });

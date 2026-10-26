@@ -974,11 +974,16 @@ export function autocountChangeNotes(
 export function autocountChangeLinesByOrder(
   contributions: BoardContribution[],
   draft: BoardDraft,
+  pendingBatchSalesOrderIds: ReadonlySet<string>,
   excludeKeys?: ReadonlySet<string>,
 ): Map<string, BoardContribution[]> {
   const out = new Map<string, BoardContribution[]>();
   for (const contribution of contributions) {
     if (excludedFromPress(contribution, excludeKeys)) continue;
+    // Only what the press retires (`retiresBookCancelled`): a pending change to apply, and not a
+    // line still waiting for its Transfer to Cancel SO.
+    if (!pendingBatchSalesOrderIds.has(contribution.sales_order_id)) continue;
+    if (awaitsCancelSo(contribution)) continue;
     if (pressRoleFor(contribution, draft[contribution.key], false).kind !== 'cancelled') continue;
     const lines = out.get(contribution.sales_order_id) ?? [];
     lines.push(contribution);
@@ -1137,17 +1142,13 @@ export function splitEditsToConfirm(
 }
 
 /**
- * OI-SPLIT-GUIDE (UAC A3, F2): per sales order one press confirms, the lines it covers: the
- * orders and the per-line rule `confirmSummaryFor` counts by (`confirmScope`,
- * `countsInPress`), once per line, so the guided Confirm's pages list exactly the lines N
- * counts.
- */
-/**
  * FULFIL-SO-REMARK-CHANGES (owner, 26 Oct 2026, R1): whether this line of the press is a CHANGE,
  * which makes its order's Remark required. A withdrawal, a Transfer to Cancel SO, a split edit,
- * a line the book cancelled, an Amend of a confirmed line, and a line posted over an order
- * inquiry purchasing already holds (covered with no decision, e.g. an imported raised row) are
- * changes. A brand-new line's first decision and a re-approve with nothing changed are not.
+ * a line the book cancelled, any new decision on a confirmed line (an Amend, or a re-approve,
+ * which posts the engine's current suggestion and so can move what purchasing was told), and a
+ * line posted over an order inquiry purchasing already holds (covered with no decision, e.g. an
+ * imported raised row) are changes. Only a brand-new line's first decision is not, the same
+ * reading as the planning sheet, where re-confirming an order is a change.
  */
 export function isChangeLine(
   contribution: BoardContribution,
@@ -1163,10 +1164,15 @@ export function isChangeLine(
   if (splitEditApplies(contribution, batchBlocked, batchNamedKeys)) return true;
   if (role.kind !== 'post') return false;
   if (contribution.cancelled) return true;
-  if (contribution.decision) return decision?.verdict === 'amended';
-  return Boolean(contribution.covered);
+  return Boolean(contribution.decision) || Boolean(contribution.covered);
 }
 
+/**
+ * OI-SPLIT-GUIDE (UAC A3, F2): per sales order one press confirms, the lines it covers: the
+ * orders and the per-line rule `confirmSummaryFor` counts by (`confirmScope`,
+ * `countsInPress`), once per line, so the guided Confirm's pages list exactly the lines N
+ * counts.
+ */
 export function confirmLinesByOrder(
   contributions: BoardContribution[],
   draft: BoardDraft,

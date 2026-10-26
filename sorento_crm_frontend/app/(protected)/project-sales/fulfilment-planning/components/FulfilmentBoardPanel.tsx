@@ -2245,10 +2245,20 @@ export function FulfilmentBoardPanel({
     );
     // FULFIL-SO-REMARK-CHANGES (R3): an order whose press only applies an AutoCount change gets
     // its page too (its retired lines), so every Confirm asks for the change's Remark.
-    const retired = autocountChangeLinesByOrder(allContributions, draftWithoutPreMark);
+    // A mixed order lists both, as its email does (R5).
+    const retired = autocountChangeLinesByOrder(
+      allContributions,
+      draftWithoutPreMark,
+      pendingBatchSalesOrderIds,
+    );
     return (board.data?.orders ?? []).flatMap((order) => {
-      const lines = covered.get(order.sales_order_id) ?? retired.get(order.sales_order_id);
-      if (!lines) return [];
+      const decided = covered.get(order.sales_order_id) ?? [];
+      const decidedKeys = new Set(decided.map((line) => line.key));
+      const lines = [
+        ...decided,
+        ...(retired.get(order.sales_order_id) ?? []).filter((line) => !decidedKeys.has(line.key)),
+      ];
+      if (lines.length === 0) return [];
       return [
         {
           psoId: order.project_sales_order_id ?? guideAdopted.get(order.sales_order_id) ?? null,

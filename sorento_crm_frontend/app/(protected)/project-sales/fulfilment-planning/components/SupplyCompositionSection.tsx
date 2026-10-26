@@ -203,7 +203,7 @@ export function SupplyCompositionSection({
    */
   async function submit(soRemarks: ReadonlyMap<string, string>): Promise<boolean> {
     setFailingLines([]);
-    const remark = soRemarks.get(salesOrderKey)?.trim() ?? defaultRemark;
+    const remark = soRemarks.get(salesOrderKey)?.trim() ?? '';
     try {
       await confirm.mutateAsync({
         psoId,

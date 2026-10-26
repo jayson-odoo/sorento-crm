@@ -48,9 +48,16 @@ they can split in the popup, then the email and excel must tally to it".
   tests cover new-only, change-only, cancel-all, mixed, split, AutoCount-only and the per-order
   route.
 
-"A change" (R1): a line withdrawn, transferred to Cancel SO or split-edited; an Amend of a
-confirmed line; a line posted over a live imported OI row; a book-cancelled line; the lines an
-AutoCount change applies. A re-approve with nothing changed and a brand-new line are not.
+"A change" (R1): a line withdrawn, transferred to Cancel SO or split-edited; any new decision on
+a confirmed line (an Amend, or a re-approve, which posts the engine's CURRENT suggestion and can
+move what purchasing was told); a line posted over a live imported OI row; a book-cancelled line;
+the lines an AutoCount change applies. Only a brand-new line's first decision is not. The board
+and the planning sheet read this the same way: re-confirming an order from the sheet re-posts its
+confirmed lines, so it is a change there too.
+
+Review round 1 changed this: it first read a plain re-approve as no change, but the board posts a
+re-approve as the engine's current suggestion, which can differ from the confirmed composition
+(SO404352 L22 shape), so a re-approve could change the email with the Remark optional.
 
 ### Open: R5 against the #1871 rule
 

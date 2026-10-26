@@ -507,6 +507,18 @@ describe('SupplyCompositionSection', () => {
     ).toBe('');
   });
 
+  it('a failed call (not a refusal) keeps the popup open so the Confirm can be pressed again', async () => {
+    confirmSupply.mockRejectedValueOnce(new Error('Network down'));
+    renderSection();
+    await screen.findByText('Line 1 · CB6633');
+
+    await confirmViaPopup();
+
+    await waitFor(() => expect(confirmSupply).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.getByTestId('confirm-guide-confirm')).toBeEnabled());
+    expect(screen.getByTestId('confirm-guide')).toBeInTheDocument();
+  });
+
   it('R1 R2: a re-confirm is a change, so its Remark starts empty and must be keyed in', async () => {
     getSupply.mockResolvedValue(CONFIRMED);
     renderSection();
