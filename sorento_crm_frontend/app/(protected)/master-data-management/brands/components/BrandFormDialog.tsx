@@ -25,6 +25,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Button } from '@/components/ui/button';
+import { DealerGroupSelect } from './DealerGroupSelect';
 import { FormDescription } from '@/components/ui/form';
 import { useCreateBrand, useUpdateBrand, useBrand } from '../hooks/useBrands';
 import { useContactAccessTypes } from '@/app/(protected)/user-management/contact-access-types/hooks/useContactAccessTypes';
@@ -63,6 +64,8 @@ const BrandFormSchema = z.object({
   // false for the placeholder brands OTHERS and NO LOGO, which record the
   // absence of a brand rather than name a real one.
   is_searchable: z.boolean(),
+  // The company whose dealers get this brand from the access-sheet upload; null = a project brand.
+  dealer_company_id: z.string().nullable(),
 });
 
 interface BrandFormDialogProps {
@@ -96,6 +99,7 @@ export default function BrandFormDialog({
       flows_to_purchasing: true,
       chatbot_weight: 0,
       is_searchable: true,
+      dealer_company_id: null,
     },
   });
 
@@ -111,6 +115,7 @@ export default function BrandFormDialog({
           flows_to_purchasing: brand.flows_to_purchasing,
           chatbot_weight: brand.chatbot_weight ?? 0,
           is_searchable: brand.is_searchable ?? true,
+          dealer_company_id: brand.dealer_company_id ?? null,
         });
       } else if (copyFromBrand) {
         form.reset({
@@ -123,6 +128,7 @@ export default function BrandFormDialog({
           // A copy never takes the preference of the brand it was copied from.
           chatbot_weight: 0,
           is_searchable: copyFromBrand.is_searchable ?? true,
+          dealer_company_id: copyFromBrand.dealer_company_id ?? null,
         });
       } else {
         form.reset({
@@ -134,6 +140,7 @@ export default function BrandFormDialog({
           flows_to_purchasing: true,
           chatbot_weight: 0,
           is_searchable: true,
+          dealer_company_id: null,
         });
       }
     }
@@ -150,6 +157,7 @@ export default function BrandFormDialog({
         flows_to_purchasing: data.flows_to_purchasing,
         chatbot_weight: data.chatbot_weight,
         is_searchable: data.is_searchable,
+        dealer_company_id: data.dealer_company_id || null,
       };
 
       if (brandId) {
@@ -310,6 +318,24 @@ export default function BrandFormDialog({
                       inputMode="decimal"
                       className="w-32"
                       {...field}
+                    />
+                  </FormControl>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="dealer_company_id"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>Dealer group</FormLabel>
+                  <FormControl>
+                    <DealerGroupSelect
+                      value={field.value}
+                      storedName={brand?.dealer_company_name ?? copyFromBrand?.dealer_company_name}
+                      onChange={field.onChange}
                     />
                   </FormControl>
                   <FormMessage />

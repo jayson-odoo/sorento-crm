@@ -68,6 +68,8 @@ class BrandBase(BaseModel):
     # "Customers can ask for this brand" (#1286, D3). False keeps a placeholder brand
     # (OTHERS, NO LOGO) out of what the chatbot offers and binds on a single word.
     is_searchable: bool = True
+    # BULK-CONTACT-ACCESS: the company whose dealers get this brand (NULL = a project brand).
+    dealer_company_id: Optional[str] = None
 
 
 class BrandCreate(BrandBase):
@@ -85,10 +87,12 @@ class BrandUpdate(BaseModel):
     flows_to_purchasing: Optional[bool] = None
     chatbot_weight: Optional[float] = Field(None, ge=0, le=9999)
     is_searchable: Optional[bool] = None
+    dealer_company_id: Optional[str] = None
 
 
 class BrandResponse(BrandBase):
     id: str
+    dealer_company_name: Optional[str] = None
     created_at: datetime
     updated_at: Optional[datetime] = None
     product_count: Optional[int] = None
