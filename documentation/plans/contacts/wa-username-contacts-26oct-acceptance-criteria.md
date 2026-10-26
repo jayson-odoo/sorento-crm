@@ -14,9 +14,11 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
 - **Linked**: a CRM contact (`respond_contacts`) has `respond_io_id` = the turn's Respond.io contact id (the
   query the AI-allowed gate uses, whatever its `chatbot_allowed` value).
 - **Unknown phoneless**: not linked, AND the turn envelope's contact block has no phone.
-- **Accepted card**: a card with `message.message.contact.origin == 'contact_request'`, a non-empty
-  `message.message.contact.phone`, and, when `channel.meta.wa_id` is present, `normalize_msisdn(wa_id) ==
-  normalize_msisdn(contact.phone)`.
+- **Accepted card** (STRICT, crew ruling 27 Oct + security review): a card that arrived through the CRM's own
+  HMAC-signed Respond.io webhook (`envelope.ingress == DIRECT_INGRESS`, set only by `direct_ingress.envelope_for`
+  after `skip_reason` required `hmac_signed`), with `message.message.contact.origin == 'contact_request'`, a
+  non-empty `message.message.contact.phone`, AND a present `channel.meta.wa_id` with `normalize_msisdn(wa_id) ==
+  normalize_msisdn(contact.phone)`. A missing wa_id is NOT accepted.
 
 ## Gate (before the parser)
 - WU1 A card never reaches the parser or any business answer, whoever sends it (linked or not). The turn is
@@ -50,10 +52,13 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
 
 ## Link
 - WU12 Merge: if Respond.io has a contact for that phone (lookup by phone) and it is not the turn's contact, the
-  CRM calls `POST /v2/contact/merge` with `contactIds` [phone contact id, turn contact id]. On success the phone
-  contact is the survivor: a CRM row with that phone keeps its row and access and its `respond_io_id` becomes the
-  phone contact's id (unchanged in the normal case); with no CRM row for that phone, one is created with the phone,
-  the phone contact's id and the default workspace, and the default agents (as any new contact).
+  CRM calls `POST /v2/contact/merge` with `contactIds` [phone contact id, turn contact id]. Respond.io keeps the
+  OLDER contact whatever the order, so the survivor is read, never assumed: the merge response's `contactId`; if
+  the response carries none, a fresh lookup by phone; if that fails too, WU16 (no CRM write; the scheduled sync
+  re-points by phone later, `respond_sync_handler.py:241-257`). A CRM row with that phone keeps its row and access
+  and its `respond_io_id` becomes the survivor id; with no CRM row for that phone, one is created with the phone,
+  the survivor id and the default workspace, and the default agents (as any new contact). The verified line goes
+  to the survivor.
 - WU13 Staff hand-off = one internal comment on the Respond.io conversation (posted by the CRM through `RespondClient.create_comment`) naming the
   reason (the phone shown only to staff). No assignment (an unknown contact has no routing) and no customer-facing
   line (no approved wording).
@@ -66,7 +71,7 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
   message resolves to that row and its access. When `chatbot_allowed = false` (every new contact, owner ruling
   5 Oct), the customer gets nothing and staff get a comment that the phone is verified and the AI is off.
 - WU16 Any failure (a Respond.io lookup/merge/update error or timeout, more than one CRM row for the phone, the
-  phone's CRM row on a non-default workspace): no CRM write, no verified line, staff hand-off (WU13). The CRM never
+  phone's CRM row on a non-default workspace, or a CRM row that names a workspace while no default workspace exists): no CRM write, no verified line, staff hand-off (WU13). The CRM never
   writes before the Respond.io step succeeds, so nothing is half-linked.
 - WU17 A repeat of the same webhook (same message id) does not merge or write twice. A second accepted card after
   linking is WU2.
@@ -79,6 +84,11 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
 - WU19 Every Respond.io call in this flow (ask, lookup, merge, phone update, verified line, staff comment) goes
   through `RespondClient` for the default workspace, called by the CRM itself; the turn hands the sender no actions
   (after a merge the turn's contact id no longer exists). Tests stub the client.
+
+- WU22 `POST /api/v1/external/chat/turn` refuses (422) an envelope whose `ingress` is `respond_webhook`: that
+  value is the CRM's own signed-webhook marker and no caller may claim it. A card that arrives with any other
+  ingress (n8n, poller, retry, console) is never accepted; from an unknown phoneless contact it is answered by the
+  ask (WU10).
 
 ## Not in scope
 Typed numbers or one-time codes (Q1); re-pointing chat history rows of the merged-away Respond.io id; n8n; any UI.
