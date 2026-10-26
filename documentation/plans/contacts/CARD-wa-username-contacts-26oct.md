@@ -169,3 +169,81 @@ mostly meets genuinely new people.
   number verified, you may start using the AI". No code, nothing to type, no wrong-code loop. If the test shows the
   two look the same: (a) code, with "please paste your code here" as a separate message.
 - Q2: merge by API right after the proof, no staff click; staff only when the merge call fails (comment + assign).
+
+## 9. FINAL flow (27 Oct ~00:40; supersedes sections 3 and 6)
+**Owner test (27 Oct ~00:20):** Utility template + [Share Contact Info] sent from Respond.io, owner tapped it. Chat
+shows an inbound contact card; Respond.io did NOT fill the contact's phone. **Crew read the live payload** (n8n
+sender exec 21883768, read-only): `message.message = {type: 'contact', contact: {cId, phone: '<number>',
+origin: 'contact_request', payload: null, firstName}}`; envelope `contact.phone` = null; `channel.meta` carries
+`wa_id: '<same number>'` and `user_id: 'MY.<...>'` (the BSUID). It reached the CRM by direct ingress, not n8n (the
+n8n Respond.io Trigger takes text/attachment only). Side bug seen: the bot read the card as a business question and
+resent a stale answer. Pending: owner's hand-shared-card test (expected `origin: 'other'` + vCard `payload`).
+
+**Where the event enters the CRM (verified).** `POST /api/v1/public/respond/webhook`
+(`app/api/v1/public/respond_webhook.py:335`) -> HMAC check -> `map_webhook_message` (`:152`) stores the row ->
+`chat_turns.enqueue_direct_turn` (`:322`; `app/tasks/chat_turns.py:113`) -> `direct_ingress.skip_reason`
+(`app/services/chatbot/direct_ingress.py:145`; in queue mode non-text types pass, `:193`) -> `envelope_for`
+(`:297`) hands the engine the Respond.io body verbatim, so `message.message.contact.origin` is readable in the turn.
+
+**Rules.**
+1. **Gate before the parser.** Every turn first checks: is `message.message.type == 'contact'`? Then it is handled
+   by the phone-link step below and never parsed or answered as a business question (fixes the side bug, for
+   every contact, linked or not). The access check runs only after the parser (`app/services/chatbot/engine.py:3981`),
+   so the gate must sit ahead of it.
+2. **Detect.** The contact has no CRM row (`field_access.resolve_contact_with_null_workspace_fallback`,
+   `app/services/field_access.py:278`) and the envelope's `contact.phone` is empty -> no parser, no business
+   answer; the CRM sends the Utility template with [Share Contact Info] (Q3 below) through the existing template
+   send (`RespondClient.send_template_message`, `app/services/integration_service.py:682`; template picked by a
+   template-default use case, `app/services/respond_template_service.py:444`, so the owner maps it in Settings).
+   At most 3 asks per contact per 24 h (counted from `chatbot.turns.branch_kind`, `app/models/chatbot_turn.py:99`);
+   after the 3rd, comment + assign to staff (existing `create_comment` `:472`, `set_conversation_assignee` `:583`).
+3. **Accept a number ONLY when** `message.message.type == 'contact'` AND `contact.origin == 'contact_request'`
+   AND `contact.phone` is non-empty AND (when `channel.meta.wa_id` is present) `wa_id == contact.phone` after
+   `normalize_msisdn` (`app/services/phone_utils.py:22`). Anything else (hand-shared card `origin: 'other'`,
+   typed number, mismatch) is never accepted: the bot repeats the ask (counts toward the 3).
+4. **Find the match.** CRM row by phone (`respond_contacts.phone_number`, unique, `app/models/access.py:268`) and
+   the live Respond.io contact for that phone (`RespondClient.get_contact_by_phone`, `integration_service.py:384`).
+5. **Merge (Q2, auto).** If a Respond.io contact with that phone exists and is not this one:
+   `POST /v2/contact/merge` `{contactIds: [<phone contact id>, <username contact id>]}` (new `RespondClient.merge_contacts`;
+   older = primary = the phone contact, as the owner tested). The CRM row keeps its `respond_io_id`; no CRM re-point.
+   The reply after the merge goes to the survivor id.
+6. **No match.** No Respond.io contact with that phone: `PUT /v2/contact/id:<username id>` `{phone}`
+   (`RespondClient.update_contact`, `integration_service.py:738`), then create the CRM row now, not at the next sync
+   (`ContactService.create_contact`, `app/services/contact_service.py:397`, which assigns the default agents, `:428`).
+7. **Reply** "Phone number verified, you may start using the AI" (owner Q5 line 4). The next message resolves to the
+   CRM row with its access.
+8. **Failure** (merge/PUT error, phone already on a CRM row in another workspace): comment + assign to staff; the
+   user gets the hand-off line; nothing half-linked (the CRM writes only after Respond.io succeeds).
+
+**Security.** The number comes from WhatsApp, not the user: only a tap yields `origin: 'contact_request'`; a user
+can type text or hand-share any card, never forge `origin` (Meta sets it; the CRM accepts it only from an HMAC-signed
+webhook, `direct_ingress.py:174-178`). The wa_id cross-check adds a second Meta field. No reply reveals whether a
+number is known (same line either way). Merge is the irreversible step (only Respond.io Owners/Managers unmerge),
+so it runs only after rule 3 passes. security-reviewer runs on the PR.
+
+**Cases (fake identities).**
+| # | Case | Result |
+|---|------|--------|
+| 1 | CONTACT A (dealer, access) on a username, taps the button | origin ok -> merge into A's phone contact -> verified line -> stock answers |
+| 2 | CONTACT B, new person, taps | no match -> PUT phone, CRM row created with default agents -> verified line |
+| 3 | CONTACT C hand-shares CONTACT A's card | origin 'other' -> refused, ask again; after 3 asks -> staff |
+| 4 | CONTACT A (already linked) shares a colleague's card | gate catches it; no business answer, no link (Q4) |
+| 5 | CONTACT D ignores the ask, keeps typing questions | ask x3 in 24 h, then staff; no access meanwhile |
+
+**Questions (final).**
+- **Q1 (proof):** (c) button with rule 3, no code path in v1 (owner lines 2-3 unused); a typed number is never
+  accepted, the bot re-asks. Alternative: also build (a) code for typed numbers (reuses the portal OTP machinery,
+  `app/services/portal_service.py:553`, `phone_signin_service.py`: hashed codes, 10 min, cooldown, 5-try lock).
+  **Rec (c) only**, pending the hand-shared-card test; (a) only if a real user cannot tap (UNVERIFIED that any
+  WhatsApp client lacks the button).
+- **Q2 (merge):** auto-merge by API after rule 3. **Rec yes.**
+- **Q3 (template text):** the approved Utility template body: owner's test text "Hi, please share you contact info
+  to access the system." or Q5 line 1 "Hi there, please share your phone number with us"? Owner creates/names it in
+  Respond.io (Meta approval) and maps it. **Rec** Q5 line 1 (typo-free).
+- **Q4 (card from a linked contact):** (a) no bot reply, staff see it in Respond.io; (b) a short "noted" line.
+  **Rec (a).**
+- **Q5 (ingress prerequisite):** the tap only reaches the turn by direct ingress, which covers a contact only when
+  `chatbot_direct_ingress_mode` is `all` or the contact is listed (`direct_ingress.py:139-142`, `:170-173`); a new
+  username user is never listed. Prod mode UNVERIFIED (crew can read it). (a) mode `all` already: nothing to do;
+  (b) a narrow code exception: a `type: 'contact'` message from an HMAC-signed webhook starts a turn whatever the
+  mode; (c) add `contact` to the n8n Trigger (owner publishes). **Rec (a) if already `all`, else (b)** (no n8n change).

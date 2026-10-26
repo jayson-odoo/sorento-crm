@@ -1,6 +1,6 @@
 # PLAN: WhatsApp username-only contacts get a verified phone and join the contact that holds their access (WA-USERNAME-CONTACTS)
 
-Status: Card round 2 filed (owner answered Q3/Q4/Q5 + survivor; Q1/Q2 re-asked with research, card section 8), Waiting:owner; no code until Q1/Q2 settle. Track: L (new chat flow, contact
+Status: Final card filed (card section 9: flow (c) on the live payload, Q1-Q5), Waiting:owner; no code until answered. Track: L (new chat flow, contact
 merge across Respond.io and CRM, ownership proof = auth-adjacent, security-reviewer required). LEAD pattern.
 UAC: `wa-username-contacts-26oct-acceptance-criteria.md` (written after the card is answered).
 
@@ -30,4 +30,12 @@ In `CARD-wa-username-contacts-26oct.md` sections 1-2 (file:line and doc URLs the
 - n8n: no contact-create flow; the spine posts the whole Respond.io message to `/external/chat/turn`.
 
 ## Open questions (card)
-Card section 6, Q1-Q5, filed via `crew report --ask` 26 Oct.
+Final: card section 9 (Q1 proof (c) only, Q2 auto-merge, Q3 template text, Q4 card from a linked
+contact, Q5 direct-ingress prerequisite). Rounds 1-2 (sections 6, 8) are history.
+
+## Draft build (after answers; detail in the UAC)
+- Pre-parse gate in the engine turn: `type == 'contact'` -> phone-link step; unknown + phoneless -> ask template.
+- New core service (phone-link): rule 3 check, match by phone, `RespondClient.merge_contacts` (new) or
+  `update_contact` + `ContactService.create_contact`, staff hand-off on failure.
+- No migration expected (ask count from `chatbot.turns.branch_kind`); tests: pytest for the gate, rule 3 accept/refuse
+  matrix, merge vs no-match vs failure, the 3-ask cap, and that a contact card never reaches the parser.
