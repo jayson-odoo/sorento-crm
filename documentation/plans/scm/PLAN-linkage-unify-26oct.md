@@ -321,3 +321,50 @@ Tests (red first, tester): `tests/scm/test_goods_chain.py` (new) for AC-C1..C7; 
 existing `tests/scm/test_stock_debt_po_transferred.py`, `tests/scm/test_stock_debt_routes.py`,
 `tests/scm/test_oi_po_lightbox_spo_numbers.py` pass unedited (baseline 78 passed on the lane
 throwaway DB `sorento_lu_throwaway`, 26 Oct).
+
+## 8. U2 contract (received semantics, GR bins, dead hops; rulings Q3, Q4, Q5, Q6)
+
+Track: slice U2 of the L lane, own PR stacked on U1. No migration, no UI (the pills are U3).
+
+goods_chain gains:
+
+- `DEAD` hops, qty 0, `reason`: `po_cancelled` (PO line cancelled / closed with nothing
+  transferred, or a Cancel PO line: `qty_cancelled >= qty_received > 0` and no SPO under the key),
+  `spo_withdrawn` (direct link on an SPO line retired with 0 received, or closed with nothing
+  landed; the U1 "no hops" case). The placement's `unplaced_qty` stays its full qty.
+- `RECEIVED_DIRECT` `po` hops (class d): PO line transferred (`qty_received > qty_cancelled`), no
+  SPO under the key, not dead. Qty `min(rest, qty_received - qty_cancelled)`.
+- GR bins (Q4, Q6) for every `received` and `received_direct` hop: the GR lines naming the
+  document, `picking_headers.picking_type = 'goods_received'`, counted with the same "this GR
+  counts" filter the CRM receipt recompute uses (`procurement_service.get_received_quantities_by_product`
+  :1094 / `_write_received` :4745; coder confirms the filter for AutoCount GRs, `doc_key` set).
+  AutoCount GR lines link by `picking_lines.spo_allocation_id` / `po_line_id`, bin =
+  `location_code` resolved to `warehouses.warehouse_code` in the company, qty = `qty`. Excel GR
+  lines (`doc_key` NULL) link SPO lines by `spo_allocation_id`; a PO line only by header
+  `spo_number` (holds the PO number) + product when that PO has exactly one line of the product;
+  bin = `source_warehouse_id`, qty = `quantity_picked`. GR line capacity is handed to placements
+  in the same `linked_at, id` order, GR lines in `picking_date, id` order; a hop splits into one
+  hop per bin; landed qty no GR covers stays at the document's own bin. A `location_code` that
+  names no warehouse falls back to the document's bin.
+- Helpers `is_received(chain)` (every unit of the placement in `received` / `received_direct`
+  hops, `unplaced_qty == 0`) and `received_qty(chain)`.
+
+Call sites switched to the chain (each keeps its signature):
+
+1. `links_for_rows` (PS:8254-8284): a link's `received` = `is_received`, `received_qty` =
+   `received_qty` (the placement's share, not the PO transfer or the SPO total).
+2. `_received_documents_for` (PS:3346): a link is in the result iff `is_received`; the date
+   stays the SPO shipment's `actual_arrival_date` when the chain has one, else `None`. All its
+   callers (A-R3: replan "used", split, settle, reallocate, `received_links_of`, import
+   `_move_received_links`, `planning_change_service.py:1604`) follow without edits.
+3. `received_links_of` / `po_lines_with_open_chained_spo` (PS:13453-13503) and the worklist
+   `blocked` set (WS:1742): received comes from the chain; the chained-open-SPO block becomes
+   redundant (a PO link with an open SPO is no longer received). Remove it only if nothing else
+   reads it; otherwise route it through the chain key.
+4. Stock Debt `_holds`: `received_direct` and GR-binned `received` hops -> `on_hand:<bin>` holds
+   per bin (each subject to `found_empty` and `assign()`'s bin cap, as today); `dead` -> nothing.
+
+Tests (red first): chain level AC-R3..R7 in `tests/scm/test_goods_chain.py` (new tests, the U1
+ones untouched); Stock Debt cell AC-R3, R4, R6, R7; OI received AC-R1, R2, R6, R8 in the existing
+#973 / #1708 suites' style. Real-case seeds: L880 (GR-2026/10-0017 486 at BRW-BB) and
+OI-2609-0352 L1216 (GR-2026/08-0155 260 at MWH while the SPO says BRW-BB).
