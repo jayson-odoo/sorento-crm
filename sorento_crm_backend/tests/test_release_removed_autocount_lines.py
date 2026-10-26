@@ -423,7 +423,8 @@ def test_ac_rl_42_a_second_apply_finds_nothing(db):
 
     again = run(db, w.company, dry_run=False, spo_dtl_keys=ALL_SPO)
 
-    text_ = _flat(again)
+    # candidate entries only: AC-RL-47 keeps listing the claim that names a removed SO line.
+    text_ = _flat(again["lines"])
     for dtl in SELECTED:
         assert dtl not in text_, f"{dtl} found again on the second run: {again}"
     assert all(v == 0 for v in again.values() if isinstance(v, int) and not isinstance(v, bool)), again
@@ -431,7 +432,7 @@ def test_ac_rl_42_a_second_apply_finds_nothing(db):
     # and a dry run afterwards is empty too
     dry = run(db, w.company, dry_run=True)
     for dtl in SELECTED:
-        assert dtl not in _flat(dry)
+        assert dtl not in _flat(dry["lines"])
 
 
 # ====================================================================== AC-RL-43
