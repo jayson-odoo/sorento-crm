@@ -5308,7 +5308,13 @@ def _run_stages_body(  # noqa: PLR0915
         # `log_opportunity` status, a declared answer to the lane's own field question, or a
         # yes / no to its read-back is the lane's turn, answered whole before any other seam
         # reads the verdict (`lanes/opportunity.py`). Any other ask drops an open read-back.
-        if access.get("allowed") is True and opportunity_lane.takes_turn(verdict, open_ask, state_in.pending):
+        # Reachable only when the active parser prompt carries the LOG OPPORTUNITY line
+        # (`ParserConfig.opportunity`): a prompt without it (production v63) never offers the lane.
+        if (
+            access.get("allowed") is True
+            and parser_config.opportunity
+            and opportunity_lane.takes_turn(verdict, open_ask, state_in.pending)
+        ):
             return _run_opportunity_arm(
                 db,
                 turn_id=turn_id,
