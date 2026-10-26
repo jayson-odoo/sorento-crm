@@ -183,3 +183,18 @@ def test_ac_r7_a_received_spo_pins_the_gr_bin_not_the_spo_bin(scm_app):
         so1 = _so1(c, marker, product, due)
     assert so1["status"] == "pinned"
     assert _from(so1) == [("on_hand", f"On hand {b2.warehouse_code}", 50)]
+
+
+def test_r_a_partial_cancel_po_on_an_open_line_still_pins_the_po(scm_app):
+    """PO line 100, Cancel PO took 40 (received 40, cancelled 40), line open, no SPO: the
+    60 on order is live supply, SO1's placement of 50 pins the PO for 50 (as before U2)."""
+    from decimal import Decimal
+
+    app, db = _client(scm_app)
+    marker, warehouse, product, po, po_line, due = _case(db, ordered=100, transferred=40)
+    po_line.qty_cancelled = Decimal("40")
+    db.flush()
+    with TestClient(app) as c:
+        so1 = _so1(c, marker, product, due)
+    assert so1["status"] == "pinned"
+    assert [(e["kind"], e["qty"]) for e in so1["assigned_from"]] == [("po", 50)]

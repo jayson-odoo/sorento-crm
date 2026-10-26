@@ -37,7 +37,7 @@ def _gc():
 # ---------------------------------------------------------------------------- GR seeding
 
 
-def _gr_header(db, *, doc_key, spo_number, picking_date):
+def _gr_header(db, *, doc_key, spo_number, picking_date, status="approved"):
     from app.models.procurement import PickingHeader
 
     header = PickingHeader(
@@ -45,7 +45,7 @@ def _gr_header(db, *, doc_key, spo_number, picking_date):
         picking_number=f"ZZTGR-{_u()[:10]}",
         spo_number=spo_number,
         picking_type="goods_received",
-        picking_status="approved",
+        picking_status=status,
         picking_date=picking_date,
         doc_key=doc_key,
         source_book="AED_SORENTO" if doc_key is not None else None,
@@ -56,13 +56,26 @@ def _gr_header(db, *, doc_key, spo_number, picking_date):
     return header
 
 
-def gr_autocount(db, w, *, qty, bin_code, picking_date, po_line=None, spo=None):
-    """An AutoCount GR line naming a PO line or an SPO allocation, received at `bin_code`."""
+_AUTO = object()
+
+
+def gr_autocount(db, w, *, qty, bin_code, picking_date, po_line=None, spo=None,
+                 destination=_AUTO, status="approved"):
+    """An AutoCount GR line naming a PO line or an SPO allocation, received at `bin_code`.
+    The ingest resolves the bin to `destination_warehouse_id` (the id the chain reads);
+    `destination` defaults to the warehouse whose code is `bin_code` (None when no such
+    warehouse), pass an id or None to override."""
+    from app.models.inventory import Warehouse
     from app.models.procurement import PickingLine
+
+    if destination is _AUTO:
+        destination = (
+            db.query(Warehouse.id).filter(Warehouse.warehouse_code == bin_code).scalar()
+        )
 
     header = _gr_header(
         db, doc_key=random.randint(10**8, 10**12), picking_date=picking_date,
-        spo_number=spo.spo_number if spo is not None else None,
+        spo_number=spo.spo_number if spo is not None else None, status=status,
     )
     line = PickingLine(
         id=_u(),
@@ -72,6 +85,7 @@ def gr_autocount(db, w, *, qty, bin_code, picking_date, po_line=None, spo=None):
         quantity_picked=int(qty),
         qty=Decimal(str(qty)),
         location_code=bin_code,
+        destination_warehouse_id=destination,
         po_line_id=po_line.id if po_line is not None else None,
         spo_allocation_id=spo.id if spo is not None else None,
         company_id=SORENTO_COMPANY_ID,
@@ -81,9 +95,10 @@ def gr_autocount(db, w, *, qty, bin_code, picking_date, po_line=None, spo=None):
     return line
 
 
-def gr_excel(db, w, *, qty, bin_row, picking_date, po_number):
-    """An Excel GR line: no doc_key, no `qty`, no line link; the PO number sits in the
-    header `spo_number`, the bin only in `source_warehouse_id`."""
+def gr_excel(db, w, *, qty, bin_row, picking_date, po_number, spo=None, po_line=None):
+    """An Excel GR line: no doc_key, no `qty`; the PO number sits in the header
+    `spo_number`, the bin only in `source_warehouse_id`. `spo` / `po_line` set the line's
+    own link columns (default: no line link)."""
     from app.models.procurement import PickingLine
 
     header = _gr_header(db, doc_key=None, spo_number=po_number, picking_date=picking_date)
@@ -95,6 +110,8 @@ def gr_excel(db, w, *, qty, bin_row, picking_date, po_number):
         quantity_picked=int(qty),
         qty=None,
         source_warehouse_id=bin_row.id,
+        spo_allocation_id=spo.id if spo is not None else None,
+        po_line_id=po_line.id if po_line is not None else None,
         company_id=SORENTO_COMPANY_ID,
     )
     db.add(line)
@@ -341,16 +358,34 @@ def test_landed_qty_no_gr_covers_stays_at_the_spo_bin(scm_app):
     ]
 
 
-def test_a_gr_location_code_naming_no_warehouse_falls_back_to_the_document_bin(scm_app):
+def test_a_gr_with_no_destination_warehouse_falls_back_to_the_document_bin(scm_app):
+    """`destination_warehouse_id` NULL (the ingest could not resolve the code): the hop sits
+    at the SPO's own bin, even though `location_code` happens to name another warehouse."""
     db = scm_app[1]
     w = _World(db)
     po, po_line = w.po(ordered=100, transferred=100)
     a = _landed_spo(w, po, po_line, qty=100)
-    gr_autocount(db, w, qty=100, bin_code=f"NOSUCH{_u()[:6]}", picking_date=D1, spo=a)
+    gr_autocount(db, w, qty=100, bin_code=w.b2.warehouse_code, picking_date=D1, spo=a,
+                 destination=None)
     _row, link = w.place_on_po(po_line, 50)
     assert _view(_chain(db, link)) == [
         ("spo", "received", Decimal("50"), w.b1.warehouse_code, None)
     ]
+
+
+def test_r_c_the_gr_bin_is_destination_warehouse_id_not_the_location_code_text(scm_app):
+    """`location_code` is a different-case, unknown code; `destination_warehouse_id` is B2
+    (resolved at ingest): the hop sits at B2."""
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=100)
+    a = _landed_spo(w, po, po_line, qty=100)
+    gr_autocount(db, w, qty=100, bin_code=w.b2.warehouse_code.lower() + "-x",
+                 picking_date=D1, spo=a, destination=w.b2.id)
+    _row, link = w.place_on_po(po_line, 50)
+    chain = _chain(db, link)
+    assert _view(chain) == [("spo", "received", Decimal("50"), w.b2.warehouse_code, None)]
+    assert chain.hops[0].warehouse_id == str(w.b2.id)
 
 
 # ---------------------------------------------------------------------------- helpers
@@ -403,3 +438,106 @@ def test_is_received_counts_received_direct_and_requires_nothing_unplaced(scm_ap
     over_chain = _chain(db, over)
     assert over_chain.unplaced_qty > 0
     assert gc.is_received(over_chain) is False
+
+
+# ---------------------------------------------------------------------------- U2 review round
+
+
+def test_r_a_partial_cancel_po_on_an_open_line_is_still_on_order(scm_app):
+    """PO line 100, Cancel PO took 40 (`qty_received` 40, `qty_cancelled` 40), line still
+    open, no SPO: the 60 left is on order, so a placement of 50 is one `po` on_order hop,
+    never dead."""
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=40)
+    po_line.qty_cancelled = Decimal("40")
+    db.flush()
+    _row, link = w.place_on_po(po_line, 50)
+    chain = _chain(db, link)
+    assert [(h.kind, h.state, Decimal(str(h.qty)), h.reason) for h in chain.hops] == [
+        ("po", "on_order", Decimal("50"), None)
+    ]
+    assert chain.unplaced_qty == Decimal("0")
+
+
+def test_r_b_a_crm_raised_spo_linked_by_po_line_fk_is_followed(scm_app):
+    """An SPO allocation whose `po_line_id` is the PO line (no from_po_number /
+    from_po_line_ref), PO line transferred 100, SPO 100 in transit at B2: the placement is
+    one `spo` in_transit hop on that SPO, not received_direct at the PO bin."""
+    from tests.scm.test_stock_debt_routes import _spo
+
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=100)
+    a = _spo(db, w.product, w.b2, qty=100, arrives=w.due)
+    a.po_line_id = po_line.id
+    db.flush()
+    _row, link = w.place_on_po(po_line, 50)
+    chain = _chain(db, link)
+    assert [(h.kind, h.state, Decimal(str(h.qty)), h.spo_number) for h in chain.hops] == [
+        ("spo", "in_transit", Decimal("50"), a.spo_number)
+    ]
+
+
+def test_g1_a_gr_that_is_not_approved_does_not_count(scm_app):
+    """A draft GR names the PO line with 100 at B2: it counts for no bin and no quantity, so
+    the answer is R4's (50 at the PO line's own bin B1)."""
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=100)
+    gr_autocount(db, w, qty=100, bin_code=w.b2.warehouse_code, picking_date=D1,
+                 po_line=po_line, status="draft")
+    _row, link = w.place_on_po(po_line, 50)
+    assert _view(_chain(db, link)) == [
+        ("po", "received_direct", Decimal("50"), w.b1.warehouse_code, None)
+    ]
+
+
+def test_g2_an_excel_gr_line_naming_an_spo_is_not_also_counted_against_the_po(scm_app):
+    """Excel header `spo_number` = the PO number, but the line carries `spo_allocation_id`
+    of another SPO (30 at B3, earliest): it belongs to that SPO, not to the PO line. The
+    PO line's received_direct is the unlinked Excel line (70 at B2) then the uncovered 30 at
+    the PO bin B1; the 30 at B3 is not double counted."""
+    from tests.scm.test_stock_debt_routes import _spo, _warehouse
+
+    db = scm_app[1]
+    w = _World(db)
+    b3 = _warehouse(db, f"ZZTB3{_u()[:4]}")
+    po, po_line = w.po(ordered=100, transferred=100)
+    other = _spo(db, w.product, b3, qty=30, arrives=TODAY - timedelta(days=3), received=30,
+                 receipt_status="fully_received", line_status="closed")
+    gr_excel(db, w, qty=30, bin_row=b3, picking_date=D1, po_number=po.po_number, spo=other)
+    gr_excel(db, w, qty=70, bin_row=w.b2, picking_date=D2, po_number=po.po_number)
+    _row, link = w.place_on_po(po_line, 100)
+    assert _view(_chain(db, link)) == [
+        ("po", "received_direct", Decimal("70"), w.b2.warehouse_code, None),
+        ("po", "received_direct", Decimal("30"), w.b1.warehouse_code, None),
+    ]
+
+
+def test_g3_a_cancelled_po_header_with_nothing_under_the_key_is_dead(scm_app):
+    """PO header cancelled, line not on order, nothing transferred, no SPO: dead."""
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=0)
+    po.status = "cancelled"
+    db.flush()
+    _row, link = w.place_on_po(po_line, 50)
+    chain = _chain(db, link)
+    assert _view(chain) == [("po", "dead", Decimal("0"), None, "po_cancelled")]
+    assert chain.unplaced_qty == Decimal("50")
+
+
+def test_g4_an_excel_style_gr_line_with_a_po_line_id_is_not_an_autocount_po_gr(scm_app):
+    """Only a header with `doc_key` links a PO line by `po_line_id`. This GR header has no
+    doc_key (and its `spo_number` is not the PO number, so the Excel route misses it too):
+    it does not count, and the answer is R4's (50 at the PO line's own bin B1)."""
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=100)
+    gr_excel(db, w, qty=100, bin_row=w.b2, picking_date=D1, po_number=f"NOT-{po.po_number}",
+             po_line=po_line)
+    _row, link = w.place_on_po(po_line, 50)
+    assert _view(_chain(db, link)) == [
+        ("po", "received_direct", Decimal("50"), w.b1.warehouse_code, None)
+    ]

@@ -138,3 +138,27 @@ def test_ac_r8_po_lines_with_open_chained_spo_uses_the_same_key(scm_app):
     assert ProjectOrderInquiryService(db).po_lines_with_open_chained_spo(
         [str(po_line.id)]
     ) == {str(po_line.id)}
+
+
+def test_r_d_a_po_link_fully_on_an_spo_in_transit_gets_no_window_suggestion(scm_app):
+    """The PO line's own expected date is old (past the row's lead-time window), but every
+    unit of the placement is on an SPO in transit: the PO date says nothing about the
+    goods, so the worklist offers no reallocate / unlink suggestion."""
+    from types import SimpleNamespace
+
+    from app.services.order_inquiry_worklist_service import OrderInquiryWorklistService
+
+    db = scm_app[1]
+    w, _po, po_line, _a, row, link = _in_transit_placement(db)
+    po_line.expected_date = TODAY - timedelta(days=30)
+    row.delivery_date = TODAY + timedelta(days=400)
+    db.flush()
+    svc = ProjectOrderInquiryService(db)
+    [entry] = [e for e in svc.links_for_rows([str(row.id)])[str(row.id)] if e["id"] == link.id]
+    assert entry["expected_date"] == po_line.expected_date
+    entries = {str(row.id): [entry]}
+    row.so_number = f"{w.marker}-SO1"
+    OrderInquiryWorklistService(db)._attach_link_suggestions(
+        [row], entries, {str(row.id): str(w.product.id)}
+    )
+    assert entries[str(row.id)][0]["suggestion"] is None
