@@ -1,0 +1,343 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>LINKAGE-UNIFY mockup</title>
+<style>
+  :root {
+    --bg: #f3f4f6; --card: #fff; --border: #e5e7eb; --muted: #6b7280; --fg: #111827;
+    --primary: #1b84ff; --head: #f9fafb; --new: #fff7d6; --newb: #f5c518;
+    --sec-bg: #f1f5f9; --sec-fg: #334155;
+    --red-bg: #fef2f2; --red-fg: #b91c1c; --red-bd: #fee2e2;
+    --blue-bg: #dbeafe; --blue-fg: #1e40af; --amber-bg: #fef3c7; --amber-fg: #92400e;
+    --note-bg: #1f2937; --note-fg: #e5e7eb;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--fg); background: var(--bg); }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 24px 16px 64px; }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 16px; margin: 36px 0 8px; }
+  .lead { color: var(--muted); margin: 0 0 12px; max-width: 920px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin: 8px 0 12px; }
+  .seg { display: inline-flex; border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: #fff; }
+  .seg button { border: 0; background: #fff; padding: 6px 14px; font: inherit; cursor: pointer; color: var(--fg); }
+  .seg button[aria-pressed="true"] { background: var(--primary); color: #fff; }
+  .grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  @media (min-width: 1100px) { .grid { grid-template-columns: minmax(0, 1fr) 300px; align-items: start; } }
+
+  /* the mocked app surface */
+  .frame { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 16px; min-width: 0; }
+  .phead { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+  .phead .t { font-size: 20px; font-weight: 600; }
+  .phead .s { color: var(--muted); font-size: 13px; }
+  .tabs { display: flex; gap: 20px; border-bottom: 1px solid var(--border); margin-bottom: 12px; overflow-x: auto; }
+  .tabs span { padding: 8px 0; color: var(--muted); white-space: nowrap; }
+  .tabs span.on { color: var(--fg); font-weight: 600; border-bottom: 2px solid var(--primary); }
+  .scroll { overflow-x: auto; border: 1px solid var(--border); border-radius: 10px; }
+  table { border-collapse: collapse; table-layout: fixed; width: 100%; }
+  th, td { padding: 9px 12px; border-bottom: 1px solid var(--border); text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  th { background: var(--head); font-weight: 500; color: #374151; font-size: 13px; }
+  tr:last-child td { border-bottom: 0; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; }
+  td.chg { background: var(--new); }
+  .muted { color: var(--muted); }
+  .cell { display: flex; align-items: center; gap: 4px; min-width: 0; }
+  a.doc { color: var(--primary); font-weight: 500; font-size: 12px; text-decoration: none; font-variant-numeric: tabular-nums; cursor: pointer; }
+  a.doc:hover { text-decoration: underline; }
+  .pill { display: inline-flex; align-items: center; border-radius: 9999px; padding: 1px 8px; font-size: 11px; font-weight: 500; line-height: 16px; background: var(--sec-bg); color: var(--sec-fg); white-space: nowrap; flex: none; border: 1px solid transparent; }
+  .pill.red { background: var(--red-bg); color: var(--red-fg); border-color: var(--red-bd); }
+  .plus { display: inline-flex; align-items: center; border-radius: 9999px; padding: 0 6px; font-size: 11px; background: var(--sec-bg); color: var(--sec-fg); flex: none; cursor: pointer; border: 0; font-family: inherit; }
+  .state { display: inline-flex; border-radius: 9999px; padding: 2px 8px; font-size: 12px; font-weight: 600; }
+  .state.placed { background: var(--blue-bg); color: var(--blue-fg); }
+  .state.raised { background: var(--amber-bg); color: var(--amber-fg); }
+
+  /* strip cards */
+  .strip { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; max-width: 560px; margin-bottom: 12px; }
+  .strip.four { grid-template-columns: repeat(2, minmax(0, 1fr)); max-width: 560px; }
+  @media (min-width: 640px) { .strip.four { grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 760px; } }
+  .kc { border: 1px solid var(--border); border-radius: 8px; padding: 10px; background: #fff; }
+  .kc .l { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; }
+  .kc .sw { width: 10px; height: 10px; border-radius: 2px; flex: none; }
+  .kc .q { display: block; margin-top: 6px; font-size: 18px; font-weight: 600; font-variant-numeric: tabular-nums; }
+  .kc.prop { border: 1px dashed #d97706; background: #fffbeb; }
+  .tag { display: inline-block; font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; background: #d97706; color: #fff; border-radius: 4px; padding: 1px 5px; margin-bottom: 4px; }
+  .rose { background: #f43f5e; } .sky { background: #0ea5e9; } .violet { background: #8b5cf6; } .emerald { background: #10b981; }
+  .t-rose { color: #be123c; } .t-sky { color: #0369a1; } .t-violet { color: #6d28d9; } .t-emerald { color: #047857; }
+
+  /* filter */
+  .filters { border: 1px solid var(--border); border-radius: 10px; padding: 12px; margin-bottom: 12px; display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); }
+  .filters label { display: block; font-size: 12px; color: var(--muted); margin-bottom: 4px; }
+  .sel { border: 1px solid var(--border); border-radius: 8px; padding: 6px 10px; display: flex; justify-content: space-between; color: var(--muted); background: #fff; }
+  .sel.on { color: var(--fg); border-color: var(--primary); }
+  .opts { border: 1px solid var(--border); border-radius: 8px; margin-top: 4px; box-shadow: 0 6px 16px rgba(0,0,0,.12); background: #fff; }
+  .opts div { padding: 6px 10px; }
+  .opts div.sel1 { background: #eff6ff; }
+  .pop { border: 1px solid var(--border); border-radius: 8px; box-shadow: 0 6px 16px rgba(0,0,0,.12); padding: 8px; display: inline-grid; gap: 6px; margin-top: 10px; background: #fff; }
+
+  /* annotation panel: never part of the mocked UI */
+  .notes { background: var(--note-bg); color: var(--note-fg); border-radius: 12px; padding: 14px 16px; font-size: 13px; }
+  .notes h3 { margin: 0 0 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #fbbf24; }
+  .notes ul { margin: 0 0 10px; padding-left: 18px; }
+  .notes li { margin: 4px 0; }
+  .notes code { background: #374151; color: #fde68a; }
+  code { font-size: 12px; background: #eef0f3; padding: 1px 4px; border-radius: 4px; }
+  .map { background: #fff; border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-top: 8px; overflow-x: auto; }
+  .map table { min-width: 900px; table-layout: auto; }
+  .map td, .map th { white-space: normal; overflow: visible; vertical-align: top; }
+  .legend { display: inline-block; width: 12px; height: 12px; background: var(--new); border: 1px solid var(--newb); vertical-align: middle; margin-right: 4px; }
+  [hidden] { display: none !important; }
+  @media (max-width: 640px) {
+    .wrap { padding: 16px; }
+    .frame { padding: 10px; }
+    .phead .t { font-size: 17px; }
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>LINKAGE-UNIFY: PO and SPO chips on order inquiry rows</h1>
+  <p class="lead">Real dev rows (customers and projects not shown). <span class="legend"></span>marks a cell that changes. Use the toggle on each screen for Before, After or both stacked.</p>
+
+  <!-- ================= SCREEN 1 ================= -->
+  <h2>1. Order inquiry header, Lines tab (OI-2609-0128)</h2>
+  <div class="bar">
+    <div class="seg" role="group" aria-label="View screen 1" data-target="s1">
+      <button type="button" data-v="before" aria-pressed="false">Before</button>
+      <button type="button" data-v="after" aria-pressed="true">After</button>
+      <button type="button" data-v="both" aria-pressed="false">Both</button>
+    </div>
+  </div>
+  <div class="grid">
+    <div id="s1" data-view="after">
+      <div class="frame" data-pane="before">
+        <div class="phead"><div><div class="t">OI-2609-0128</div><div class="s">Sales order SO364824</div></div></div>
+        <div class="tabs"><span class="on">Lines</span><span>Documents</span><span>History</span></div>
+        <div class="scroll"><table id="t1-before"></table></div>
+      </div>
+      <div class="frame" data-pane="after">
+        <div class="phead"><div><div class="t">OI-2609-0128</div><div class="s">Sales order SO364824</div></div></div>
+        <div class="tabs"><span class="on">Lines</span><span>Documents</span><span>History</span></div>
+        <div class="scroll"><table id="t1-after"></table></div>
+      </div>
+    </div>
+    <aside class="notes">
+      <h3>Notes (not part of the UI)</h3>
+      <ul>
+        <li>Line 880 (OI line 22): PO 202607-S0100 closed 486/486 transferred, then SPO-2026/09-0107 L9 486/486 <code>fully_received</code>, bin BRW-BB. The shipment still reads <code>in_transit</code> (no arrival date on any dev shipment), so landing is decided by the receipt fields.</li>
+        <li>Before: SPO "-" because the chained SPO is hidden once received. After: PO and SPO both shown (Q1), SPO pill reads "Received 486 at BRW-BB".</li>
+        <li>Line 832: 46 on PO 202607-S0083 moved to SPO-2026/10-0046 L172 (not received, so the PO chip carries no received pill, Q3) plus 440 direct on SPO-2026/08-0046 L189, received. The "+1" is the second SPO.</li>
+        <li>Line 944: direct on SPO-2026/09-0036 L129, received at BRW-BB.</li>
+        <li>Line 1040 (second SRTSS4210 row, raised, unlinked) is untouched. Line 1024 (PO still on order) is untouched.</li>
+        <li>Parity: the Lines tab today draws only the "via" pill; After it draws the same document pills as the worklist.</li>
+        <li>State pill "On PO/SPO" is unchanged on every row (Q2).</li>
+        <li>Assumption: the PO chip keeps its "received" pill once the SPO has landed (same meaning as the worklist today, Q3). Open for the owner: drop it when the SPO pill is shown.</li>
+        <li>Before for line 832 SPO cell is inferred from the visibility rule (direct landed link shown, chained open SPO as "+1"); not run through the screen.</li>
+      </ul>
+    </aside>
+  </div>
+
+  <!-- ================= SCREEN 2 ================= -->
+  <h2>2. Order inquiry worklist</h2>
+  <div class="bar">
+    <div class="seg" role="group" aria-label="View screen 2" data-target="s2">
+      <button type="button" data-v="before" aria-pressed="false">Before</button>
+      <button type="button" data-v="after" aria-pressed="true">After</button>
+      <button type="button" data-v="both" aria-pressed="false">Both</button>
+    </div>
+  </div>
+  <div class="grid">
+    <div id="s2" data-view="after">
+      <div class="frame" data-pane="before">
+        <div class="phead"><div class="t">Order inquiries</div></div>
+        <div class="strip">
+          <div class="kc"><span class="l"><span class="sw rose"></span>Buy</span><span class="q t-rose">0</span></div>
+          <div class="kc"><span class="l"><span class="sw sky"></span>Purchased</span><span class="q t-sky">2406</span></div>
+          <div class="kc"><span class="l"><span class="sw violet"></span>Incoming</span><span class="q t-violet">548</span></div>
+        </div>
+        <div class="scroll"><table id="t2-before"></table></div>
+      </div>
+      <div class="frame" data-pane="after">
+        <div class="phead"><div class="t">Order inquiries</div></div>
+        <div class="strip">
+          <div class="kc"><span class="l"><span class="sw rose"></span>Buy</span><span class="q t-rose">0</span></div>
+          <div class="kc"><span class="l"><span class="sw sky"></span>Purchased</span><span class="q t-sky">2406</span></div>
+          <div class="kc"><span class="l"><span class="sw violet"></span>Incoming</span><span class="q t-violet">548</span></div>
+        </div>
+        <div class="filters">
+          <div>
+            <label>State</label>
+            <div class="sel">Every state <span>v</span></div>
+          </div>
+          <div>
+            <label>Dead document</label>
+            <div class="sel on">Every document <span>v</span></div>
+            <div class="opts"><div>PO cancelled (20)</div><div class="sel1">SPO withdrawn (4)</div></div>
+          </div>
+        </div>
+        <div class="scroll"><table id="t2-after"></table></div>
+        <div class="pop" aria-label="SPO overflow for the 354 row">
+          <div class="cell"><a class="doc">SPO-2026/09-0107 L12</a><span class="pill">Received 60 at BRW-BB</span></div>
+          <div class="cell"><a class="doc">SPO-2026/09-0107 L7</a><span class="pill red">SPO withdrawn</span></div>
+        </div>
+      </div>
+
+      <div class="frame" id="prop" style="margin-top:16px">
+        <span class="tag">Proposal, needs owner OK</span>
+        <div class="strip four">
+          <div class="kc"><span class="l"><span class="sw rose"></span>Buy</span><span class="q t-rose">0</span></div>
+          <div class="kc"><span class="l"><span class="sw sky"></span>Purchased</span><span class="q t-sky">1626</span></div>
+          <div class="kc"><span class="l"><span class="sw violet"></span>Incoming</span><span class="q t-violet">548</span></div>
+          <div class="kc prop"><span class="l"><span class="sw emerald"></span>Received</span><span class="q t-emerald">780</span></div>
+        </div>
+      </div>
+    </div>
+    <aside class="notes">
+      <h3>Notes (not part of the UI)</h3>
+      <ul>
+        <li>Rows: OI-2609-0128 L880 (class c, landed); OI-2609-0194 L64 (PO 202607-S0105 links 701+3+194 = 898, plus 194 direct on SPO-2026/10-0008 L76, 1092 allocated, 0 received, in transit); OI-2609-0252 L784 two rows (294 on PO 202607-S0100, and 354 = 294 direct on retired L7 + 60 direct on L12); OI-2609-0194 line 16 (class z).</li>
+        <li>Q3: row L64 PO chip loses "received": PO line 1092/1092 transferred, but SPO L76 received 0.</li>
+        <li>Q1: landed SPO chip reads "Received <i>qty</i> at <i>bin</i>". Assumption: qty is the placement's share (294 on L12 although L12 holds 354), not the allocation total.</li>
+        <li>Q5: the 294 direct on retired L7 stays placed; the chip is red "SPO withdrawn". L7 and L12 share one document number, so the "+1" popover lists them by line. Class z: PO 202607-S0083, line cancelled, received 0, 728 placed on live SO396348 line 16.</li>
+        <li>Dead document filter counts are dev placements on open SO lines: 20 PO cancelled (2,565 units), 4 SPO withdrawn (443 units).</li>
+        <li>State "On PO/SPO" stays on every row (Q2); shown unchanged in the State column.</li>
+        <li>Cards: figures are for the five sample rows only, computed by hand from the stage formulas (<code>_incoming_qty</code>, <code>_purchased_qty</code>); not run through the live summary. Today landed PO-linked units (486 + 294) fall back into Purchased because the derived cover only counts allocated minus received.</li>
+        <li>Proposal alternatives: a fourth Received card (shown), or simply drop those units from every card. Either way Purchased reads 1626 here.</li>
+        <li>Side effect to note (not a ruling): on row L64 the 898 PO units read as Purchased even though SPO L76 is in transit, because the SPO the row also links directly is excluded from the derived cover.</li>
+      </ul>
+    </aside>
+  </div>
+
+  <!-- ================= ELEMENT MAP ================= -->
+  <h2>Element map</h2>
+  <div class="map">
+    <table>
+      <thead><tr><th>Changed element</th><th>Reuses (path:line)</th><th>Ruling</th></tr></thead>
+      <tbody>
+        <tr><td>SPO chip stays visible after the SPO is received (Lines tab SPO column)</td><td><code>order-inquiries/[id]/components/orderInquiryHeaderLinesColumns.tsx:136</code> (LineDocumentsCell), <code>:186</code> (DocumentCell), <code>:769</code> (SPO column); backend visibility <code>project_order_inquiry_service.py:366</code> (derived_spo_open_clauses)</td><td>Q1</td></tr>
+        <tr><td>Pill "Received &lt;qty&gt; at &lt;bin&gt;" on the SPO chip</td><td><code>WorklistPill</code> <code>order-inquiries/components/orderInquiryWorklistColumns.tsx:74</code> (Badge secondary light, <code>components/ui/badge.tsx</code>), placed where the "received" pill sits <code>orderInquiryWorklistColumns.tsx:405</code></td><td>Q1</td></tr>
+        <tr><td>PO chip "received" only when the goods landed on the SPO</td><td><code>orderInquiryWorklistColumns.tsx:405-419</code> (received pill), backend flag that feeds it (worklist service documents entries)</td><td>Q3</td></tr>
+        <tr><td>Row state label "On PO/SPO"</td><td><code>_shared/components/OrderInquiryVerbPill.tsx:98</code> (STATE_LABEL), <code>:106</code> palette; Lines tab <code>orderInquiryHeaderLinesColumns.tsx:846</code></td><td>Q2 (unchanged)</td></tr>
+        <tr><td>Red pill "PO cancelled" / "SPO withdrawn" on the document chip</td><td><code>WorklistPill</code> with the Badge destructive light variant (<code>components/ui/badge.tsx:94</code>); both screens</td><td>Q5</td></tr>
+        <tr><td>Retired-SPO link no longer hidden in Lines tab</td><td><code>orderInquiryHeaderLinesColumns.tsx:136</code> via <code>documentsOf</code>; hiding rule <code>project_order_inquiry_service.py:366</code></td><td>Q5</td></tr>
+        <tr><td>Worklist "Dead document" filter</td><td>Filters popover <code>order-inquiries/components/OrderInquiriesClient.tsx:1577</code> (SearchableSelect, clearable, same pattern as State)</td><td>Q5</td></tr>
+        <tr><td>Lines tab gets the worklist's document pills</td><td>Same pill markup as <code>orderInquiryWorklistColumns.tsx:391-419</code> (via and received) inside DocumentCell <code>orderInquiryHeaderLinesColumns.tsx:186</code></td><td>Parity</td></tr>
+        <tr><td>"+N" overflow lists documents with their pills</td><td><code>orderInquiryHeaderLinesColumns.tsx:136</code> popover (LineDocumentsCell); worklist <code>orderInquiryWorklistColumns.tsx:434</code> badge</td><td>Parity, Q5</td></tr>
+        <tr><td>Stage cards: landed units leave "Purchased" (optional Received card)</td><td><code>order-inquiries/components/OrderInquiryStrip.tsx</code>, <code>_shared/components/SupplyKindCard.tsx</code>, <code>_shared/lib/orderInquiryKinds.ts:47</code> (KIND_LABELS); backend <code>order_inquiry_worklist_service.py:1179</code> (_derived_cover_qty), <code>:3066</code> (_stage_rows, _kinds)</td><td>Proposal, needs owner OK</td></tr>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<script>
+(function () {
+  // data: every figure below was read from the dev DB, see data.sql
+  function chip(doc, pills) {
+    return '<a class="doc">' + doc + '</a>' + (pills || []).map(function (p) {
+      return '<span class="pill' + (p.red ? ' red' : '') + '">' + p.t + '</span>';
+    }).join('');
+  }
+  function cell(parts, plus) {
+    if (!parts) return '<span class="muted">-</span>';
+    return '<span class="cell">' + parts + (plus ? '<button type="button" class="plus" title="' + plus.title + '">+' + plus.n + '</button>' : '') + '</span>';
+  }
+  function state(s) {
+    return s === 'placed' ? '<span class="state placed">On PO/SPO</span>' : '<span class="state raised">To buy</span>';
+  }
+  var RCV = function (q) { return { t: 'Received ' + q + ' at BRW-BB' }; };
+  var RECEIVED = { t: 'received' };
+
+  // ---- screen 1 ----
+  var lines = [
+    { no: 832, p: 'SRTWT7202', q: 486, d: '01/09/2026', st: 'placed',
+      poB: cell(chip('202607-S0083')), poA: cell(chip('202607-S0083')),
+      spoB: cell(chip('SPO-2026/08-0046'), { n: 1, title: 'SPO-2026/10-0046' }),
+      spoA: cell(chip('SPO-2026/08-0046', [RCV(440)]), { n: 1, title: 'SPO-2026/10-0046' }), chg: [0, 1] },
+    { no: 880, p: 'SRTSS4210', q: 486, d: '01/09/2026', st: 'placed',
+      poB: cell(chip('202607-S0100')), poA: cell(chip('202607-S0100', [RECEIVED])),
+      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(486)])), chg: [0, 1] },
+    { no: 944, p: 'SRTWT2215', q: 486, d: '01/09/2026', st: 'placed',
+      poB: cell(null), poA: cell(null),
+      spoB: cell(chip('SPO-2026/09-0036')), spoA: cell(chip('SPO-2026/09-0036', [RCV(486)])), chg: [1] },
+    { no: 1024, p: 'C-FH14', q: 486, d: '15/12/2026', st: 'placed',
+      poB: cell(chip('202609-S0109')), poA: cell(chip('202609-S0109')),
+      spoB: cell(null), spoA: cell(null), chg: [] },
+    { no: 1040, p: 'SRTSS4210', q: 486, d: '15/12/2026', st: 'raised',
+      poB: cell(null), poA: cell(null), spoB: cell(null), spoA: cell(null), chg: [] }
+  ];
+  function t1(side) {
+    var h = '<colgroup><col style="width:64px"><col style="width:140px"><col style="width:70px"><col style="width:110px"><col style="width:200px"><col style="width:300px"><col style="width:90px"><col style="width:120px"></colgroup>' +
+      '<thead><tr><th>No.</th><th>Product</th><th class="n">Qty</th><th>Delivery date</th><th>PO</th><th>SPO</th><th>Location</th><th>State</th></tr></thead><tbody>';
+    lines.forEach(function (l) {
+      var after = side === 'after';
+      h += '<tr><td>' + l.no + '</td><td>' + l.p + '</td><td class="n">' + l.q + '</td><td>' + l.d + '</td>' +
+        '<td' + (after && l.chg.indexOf(0) > -1 && l.poA !== l.poB ? ' class="chg"' : '') + '>' + (after ? l.poA : l.poB) + '</td>' +
+        '<td' + (after && l.chg.indexOf(1) > -1 ? ' class="chg"' : '') + '>' + (after ? l.spoA : l.spoB) + '</td>' +
+        '<td>BRW-BB</td><td>' + state(l.st) + '</td></tr>';
+    });
+    return h + '</tbody>';
+  }
+  document.getElementById('t1-before').innerHTML = t1('before');
+  document.getElementById('t1-after').innerHTML = t1('after');
+
+  // ---- screen 2 ----
+  var RED_PO = { t: 'PO cancelled', red: true };
+  var RED_SPO = { t: 'SPO withdrawn', red: true };
+  var work = [
+    { oi: 'OI-2609-0128', so: 'SO364824', l: 880, p: 'SRTSS4210', q: 486,
+      poB: cell(chip('202607-S0100', [RECEIVED])), poA: cell(chip('202607-S0100', [RECEIVED])),
+      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(486)])), chg: [1] },
+    { oi: 'OI-2609-0194', so: 'SO396348', l: 64, p: 'SRTA8046', q: 1092,
+      poB: cell(chip('202607-S0105', [RECEIVED])), poA: cell(chip('202607-S0105')),
+      spoB: cell(chip('SPO-2026/10-0008')), spoA: cell(chip('SPO-2026/10-0008')), chg: [0] },
+    { oi: 'OI-2609-0252', so: 'SO396349', l: 784, p: 'SRTSS3170', q: 294,
+      poB: cell(chip('202607-S0100', [RECEIVED])), poA: cell(chip('202607-S0100', [RECEIVED])),
+      spoB: cell(null), spoA: cell(chip('SPO-2026/09-0107', [RCV(294)])), chg: [1] },
+    { oi: 'OI-2609-0252', so: 'SO396349', l: 784, p: 'SRTSS3170', q: 354,
+      poB: cell(null), poA: cell(null),
+      spoB: cell(chip('SPO-2026/09-0107', [RECEIVED])),
+      spoA: cell(chip('SPO-2026/09-0107', [RCV(60)]), { n: 1, title: 'SPO-2026/09-0107 L7: SPO withdrawn' }), chg: [1] },
+    { oi: 'OI-2609-0194', so: 'SO396348', l: 16, p: 'SRTWT165', q: 728,
+      poB: cell(chip('202607-S0083')), poA: cell(chip('202607-S0083', [RED_PO])),
+      spoB: cell(null), spoA: cell(null), chg: [0] }
+  ];
+  function t2(side) {
+    var h = '<colgroup><col style="width:120px"><col style="width:90px"><col style="width:70px"><col style="width:110px"><col style="width:70px"><col style="width:280px"><col style="width:300px"><col style="width:90px"><col style="width:120px"></colgroup>' +
+      '<thead><tr><th>Inquiry</th><th>S/O</th><th>S/O line</th><th>Item code</th><th class="n">Qty</th><th>PO</th><th>SPO</th><th>Location</th><th>State</th></tr></thead><tbody>';
+    work.forEach(function (w) {
+      var after = side === 'after';
+      h += '<tr><td>' + w.oi + '</td><td>' + w.so + '</td><td>' + w.l + '</td><td>' + w.p + '</td><td class="n">' + w.q + '</td>' +
+        '<td' + (after && w.chg.indexOf(0) > -1 ? ' class="chg"' : '') + '>' + (after ? w.poA : w.poB) + '</td>' +
+        '<td' + (after && w.chg.indexOf(1) > -1 ? ' class="chg"' : '') + '>' + (after ? w.spoA : w.spoB) + '</td>' +
+        '<td>BRW-BB</td><td><span class="state placed">On PO/SPO</span></td></tr>';
+    });
+    return h + '</tbody>';
+  }
+  document.getElementById('t2-before').innerHTML = t2('before');
+  document.getElementById('t2-after').innerHTML = t2('after');
+
+  // ---- toggles ----
+  function apply(id, v) {
+    var root = document.getElementById(id);
+    root.setAttribute('data-view', v);
+    root.querySelectorAll('[data-pane]').forEach(function (p) {
+      p.hidden = !(v === 'both' || p.getAttribute('data-pane') === v);
+      p.style.marginTop = (v === 'both' && p.getAttribute('data-pane') === 'after') ? '16px' : '0';
+    });
+    var prop = root.querySelector('#prop');
+    if (prop) prop.hidden = (v === 'before');
+    document.querySelectorAll('.seg[data-target="' + id + '"] button').forEach(function (b) {
+      b.setAttribute('aria-pressed', b.getAttribute('data-v') === v ? 'true' : 'false');
+    });
+  }
+  document.querySelectorAll('.seg').forEach(function (seg) {
+    seg.addEventListener('click', function (e) {
+      var b = e.target.closest('button'); if (!b) return;
+      apply(seg.getAttribute('data-target'), b.getAttribute('data-v'));
+    });
+  });
+  apply('s1', 'after'); apply('s2', 'after');
+})();
+</script>
+</body>
+</html>
