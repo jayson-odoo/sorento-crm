@@ -193,6 +193,82 @@ def _prepare(texts: list[str]) -> dict[str, tuple[str, frozenset[str]]]:
         return built
 
 
+#: CHAT-V66-REGRESSIONS: only the rows a floor can be reached for go through the exact per-piece loop
+#: (`_rows_that_can_hit`); False sends every row (the reference the tests compare against).
+FILTER_ROWS = True
+#: Per row set: the trigram postings of its texts (text columns in `row_texts` order), kept like `_prepared`.
+_indexes: dict[str, tuple[dict[str, Any], Any, Any]] = {}
+
+
+def _text_index(texts: list[str], prepared: dict[str, tuple[str, frozenset[str]]]):
+    """(trigram -> columns holding it, trigrams per text, words per text, folded text -> its columns) for `texts`
+    (folded, non-empty)."""
+    import numpy as np
+
+    key = hashlib.sha1("\0".join(texts).encode()).hexdigest()
+    with _store_lock:
+        built = _indexes.get(key)
+        if built is None:
+            postings: dict[str, list[int]] = {}
+            for col, t in enumerate(texts):
+                for g in prepared[t][1]:
+                    postings.setdefault(g, []).append(col)
+            same: dict[str, list[int]] = {}
+            for col, t in enumerate(texts):
+                same.setdefault(prepared[t][0], []).append(col)
+            built = (
+                {g: np.asarray(cols, dtype=np.int64) for g, cols in postings.items()},
+                np.asarray([len(prepared[t][1]) for t in texts], dtype=np.int64),
+                np.asarray([prepared[t][0].count(" ") + 1 for t in texts], dtype=np.int64),
+                same,
+            )
+            while len(_indexes) >= _PREPARED_SETS:
+                _indexes.pop(next(iter(_indexes)))
+            _indexes[key] = built
+        return built
+
+
+def _rows_that_can_hit(rows, by_list, prepared, texts, piece_grams, meaning) -> list[LookupRow]:
+    """The rows (in order) whose best spelling (`_spelling`: the same trigram Jaccard, from integer counts) or best
+    meaning (the same cosines) over their list's pieces reaches a floor. Every other row would score below both floors
+    in the exact loop, so leaving it out changes no hit."""
+    import numpy as np
+
+    pieces_all = list(piece_grams)
+    postings, sizes, nwords, same = _text_index(texts, prepared)
+    n = len(texts)
+    col = {t: i for i, t in enumerate(texts)}
+    jac = np.zeros((len(pieces_all), n), dtype=np.float64)
+    for i, p in enumerate(pieces_all):
+        parts = [postings[g] for g in piece_grams[p] if g in postings]
+        if parts:
+            inter = np.bincount(np.concatenate(parts), minlength=n)
+            jac[i] = inter / (len(piece_grams[p]) + sizes - inter)
+        jac[i, same.get(p, [])] = 1.0  # `_spelling`: the same folded text is 1.0 (a Chinese word has no ASCII trigrams)
+    pwords = np.asarray([p.count(" ") + 1 for p in pieces_all], dtype=np.int64)
+    sim = meaning[2].astype(np.float64) if meaning is not None else None
+    pos = {p: i for i, p in enumerate(pieces_all)}
+    keep: set[int] = set()
+    by_name: dict[str, list[tuple[int, LookupRow]]] = {}
+    for at, r in enumerate(rows):
+        by_name.setdefault(r.list_name, []).append((at, r))
+    for name, members in by_name.items():
+        allowed = [pos[p] for p in by_list.get(name) or [] if p in pos]
+        if not allowed:
+            continue
+        spell = jac[allowed]
+        if name == "spec":  # `_spelling(same_words=True)`: a near spelling has as many words as the text
+            spell = spell * (pwords[allowed][:, None] == nwords[None, :])
+        best = (spell.max(axis=0) >= FLOOR_SPELLING)
+        if sim is not None:
+            floor = FLOOR_MEANING_BY_LIST.get(name, _FLOOR_MEANING_OTHER)
+            best = best | (sim[allowed].max(axis=0) >= floor)
+        for at, r in members:
+            if any(best[col[t]] for t in r.texts if t in col):
+                keep.add(at)
+    return [r for at, r in enumerate(rows) if at in keep]
+
+
 def _unit_rows(mat):
     import numpy as np
 
@@ -273,8 +349,9 @@ def shortlist(
     row_texts = [t for t, (folded, _g) in prepared.items() if folded]
     meaning = _meaning(embed, usable, row_texts)
     piece_grams = {p: candidates.trigrams(p) for p in usable}
+    scan = _rows_that_can_hit(rows, by_list, prepared, row_texts, piece_grams, meaning) if FILTER_ROWS else rows
 
-    for row in rows:
+    for row in scan:
         row_pieces = by_list.get(row.list_name) or []
         floor_meaning = FLOOR_MEANING_BY_LIST.get(row.list_name, _FLOOR_MEANING_OTHER)
         spell_best, mean_best, piece_best, score_best = 0.0, 0.0, "", -1.0
