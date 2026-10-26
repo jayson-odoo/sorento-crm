@@ -135,3 +135,15 @@ def test_ac9_policy_naming_no_location_list_is_unchanged(client, db):
     _, rows = _rows(client, prod, contact)
     assert [r["spo_number"] for r in rows] == ["SPO-BB", "SPO-MWH"]
     assert rows[0]["warehouse"] == bb.warehouse_code
+
+
+def test_null_workspace_contact_is_scoped_on_its_own_policy_not_read_as_nobody(client, db):
+    """Fix round 1: a Respond.io id + space_id for a NULL-workspace contact resolves through
+    the fallback, so its include list applies instead of failing closed with no rows."""
+    brw, bb, mwh, prod, contact = _world(db)
+    _policy(db, contact, warehouse_ids=[brw.id, mwh.id])
+    contact.respond_io_id = unique_code("RIO")
+    db.commit()
+    resp, rows = _rows(client, prod, contact.respond_io_id, space_id="364817")
+    assert [r["spo_number"] for r in rows] == ["SPO-MWH", "SPO-BRW"]
+    assert bb.warehouse_code not in resp.text

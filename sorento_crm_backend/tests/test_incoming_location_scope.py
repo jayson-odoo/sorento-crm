@@ -376,3 +376,20 @@ def test_ac9_policy_naming_no_location_list_is_unchanged(client, db):
     assert p["unallocated_quantity"] == 20
     _, prods = _get(client, f"/shipments/{w.k1.id}/products", contact_id=w.contact.id)
     assert len(prods["data"]["products"]) == 3
+
+
+# --------------------------------------------------------------------- NULL-workspace contact
+
+
+def test_null_workspace_contact_is_scoped_on_its_own_policy_not_read_as_nobody(client, db):
+    """Fix round 1: a Respond.io id + space_id for a contact with a NULL `workspace_id` is
+    admitted by the fallback resolver, so its include-list policy applies (BRW 30), rather than
+    the policy lookup reading nobody and failing closed with an empty answer."""
+    w = World(db)
+    w.contact.respond_io_id = unique_code("RIO")
+    db.flush()
+    _, body = _get(
+        client, "/list", product_ids=w.p.id, contact_id=w.contact.respond_io_id, space_id="364817"
+    )
+    (line,) = body["data"][0]["lines"]
+    assert _codes(line["warehouse_allocations"]) == {w.brw.warehouse_code: 30}
