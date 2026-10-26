@@ -452,3 +452,9 @@ follow the same key (trim, product).
   screens renamed "Transferred"; (b) "SPO withdrawn" explained on #1870 (`retired_at`, L784
   example); the red pill stays until the owner picks a name ("SPO line removed" /
   "Dropped from SPO" offered). Build U4 after the #1870 round-5 pill fix.
+
+U5 notes (26 Oct): the one key drops SPO rows that name a PO line by `from_po_line_ref` without
+`from_po_number`; 0 of 72,340 dev rows have that shape (`sql/v-key-nopo.sql`), so the Stock Debt
+lendable seed was corrected to the real AutoCount shape. Follow-up, not built: the Link dialog's
+PO-side remaining still subtracts every placement on the PO line, so a PARTLY transferred line
+can be over-netted (0 partial transfers on dev; trigger: the first one).
