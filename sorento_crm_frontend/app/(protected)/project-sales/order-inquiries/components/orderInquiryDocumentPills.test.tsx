@@ -397,3 +397,20 @@ describe.each<Where>(['worklist', 'lines'])('R5 the number leads, the receipt gi
     expect(fallback!.className).toMatch(/@max-\[300px\]:(inline-flex|flex|inline-block|block)/);
   });
 });
+
+// ---------------------------------------------------------------------------- round 7
+
+describe('R7 the default SPO column width shows the full receipt pill', () => {
+  // number + "via PO" + "Received 486 at BRW-BB" (147 px) + gaps/padding: worklist ~355,
+  // Lines tab (wider number) ~374.
+  it.each([
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 360],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 380],
+  ] as Array<[string, () => unknown[], number]>)('the %s default size is >= %i', (_n, build, floor) => {
+    const { result } = renderHook(build);
+    const column = result.current.find((c) => (c as { id?: string }).id === 'spo_number') as {
+      size?: number;
+    };
+    expect(column.size ?? 0).toBeGreaterThanOrEqual(floor);
+  });
+});
