@@ -66,6 +66,9 @@ ALLOWED = {
     # request path. Listed by file, not by directory, like the parity script above.
     "scripts/chatbot_eval/replay.py",
     "scripts/chatbot_eval/parser_gold.py",
+    # ENTITY-EXTRACT-MATCH (#1876): offline span eval of `head.list_resolver` on labelled lists and
+    # gold files, no DB and no network. Bench tooling, not core, not on a request path.
+    "scripts/chatbot_eval/span_resolve.py",
     "tests/chatbot_eval/test_replay.py",
     # CHAT-LATENCY-SCOUT (#1801): times one turn stage by stage on synthetic data. It stubs
     # `head.parser` and the engine's access check and wraps `trace.TurnTrace.record`, none of
