@@ -37,7 +37,7 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
   template mapped to use case `wa_phone_share` in the CRM's template-default mapping (Settings), sent to that
   Respond.io contact. The template text lives in Respond.io / the mapping, never in code.
 - WU7 At most 3 asks per contact in any rolling 24 h. The message that would be the 4th ask instead hands the
-  chat to staff (WU13); after that, no further ask or hand-off for that contact until the 24 h window frees a slot.
+  chat to staff (WU13); after that, no further ask or hand-off for that contact for 24 h from that hand-off.
 - WU8 No template mapped for `wa_phone_share`: no ask is sent; the chat is handed to staff (WU13), at most once
   per contact per 24 h.
 - WU9 [Q1] A phone number typed as text is never accepted; it is an ordinary message from an unknown phoneless
@@ -94,6 +94,18 @@ a stub in every test; no test calls Respond.io or sends WhatsApp.
   `phone_ask` "Asked for a phone number", `phone_linked` "Phone linked", `phone_ignored` "Phone card ignored",
   `phone_handoff` "Phone handed to staff"; status word `phone_ask` "Asked", `phone_linked` "Linked",
   `phone_ignored` "No reply", `phone_handoff` "Handed to staff" (never "Answered"). FE `BranchKind` carries them.
+
+- WU24 Every customer-facing Respond.io send of this flow (the ask template, the verified line) writes a Respond
+  outbox row (`integration_logs`) on success and on failure, as every other Respond.io send does (precedent
+  `stock_ask_service`); the phone is masked there.
+- WU25 Ordering on the inbox drain: the turn claims its place (`inbox_queue.checkpoint`) BEFORE any Respond.io call,
+  so a yielded or lost claim never repeats a merge or a send. An unexpected error inside the phone flow closes the
+  turn `failed` (never left `processing`), like every other turn.
+- WU26 When the merge succeeded but a later CRM step failed, the staff comment goes to the surviving Respond.io
+  contact (the merged-away id no longer exists).
+- WU27 Every branch-kind list outside the engine knows the four phone kinds: chat analytics outcome
+  (`app/services/chatbot/analytics/outcome.py`) counts them as not answered (the bucket `ai_not_allowed` uses), and
+  the chat asks words (`chat_asks.py` `BRANCH_WORDS`) use the WU23 words.
 
 ## Not in scope
 Typed numbers or one-time codes (Q1); re-pointing chat history rows of the merged-away Respond.io id; n8n; any UI.
