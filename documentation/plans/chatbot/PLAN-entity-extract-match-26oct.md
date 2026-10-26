@@ -1,6 +1,7 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: S1 in progress (Phase 2, tester red tests first). Phase 1 done; owner design OK 26 Oct ~16:15.
+Status: S1 review round 1 fixed (28ad4c2882), re-review pending; PR #1876 (draft). Phase 1 done; owner design OK
+26 Oct ~16:15. S2 starts after S1 is READY.
 Track: L overall (chatbot architecture), lead pattern; S1 itself is M (library + eval, no migration, no behaviour change).
 UAC: `documentation/plans/chatbot/entity-extract-match-acceptance-criteria.md`.
 
@@ -285,20 +286,42 @@ Tests (tester writes first, red): `tests/chatbot/test_list_resolver.py` (AC-S1-1
 `tests/chatbot_eval/test_span_resolve_cli.py` (AC-S1-12), plus an import guard for AC-S1-14. Existing
 `tests/chatbot/test_lookup_lists_*.py` must stay green.
 
-S1 as built (fad8b63b0a), where it departs from the text above, with the evidence:
+S1 as built (fad8b63b0a, then review round 1 up to 28ad4c2882), where it departs from the text above:
 
 - Type preference: a typed span keeps its own list's best row when that row is within `TYPE_MARGIN = 0.15` of the
   best row over all lists; otherwise (and for untyped spans, or a typed list with no passing row) the best over all
   lists wins. A pure tie-break reached 264/271 oracle (a customer beating a salesperson on a person's name); the margin
-  gives 267/271, 268 with the floor change below. Still never a filter (AC-S1-5).
-- Ambiguous needs both score AND row coverage within `AMBIGUITY_MARGIN = 0.03` (on score alone "kimlan"-like partial
-  names stay ambiguous against longer siblings). A span made only of words common in a list (IDF below
-  `DISTINCTIVE_IDF = 0.5` of an unseen word's) does not resolve in that list unless it equals a whole text (AC-S1-4).
-- Floors: `floors_partial.json` except category spell 0.4 -> 0.45 and meaning 0.6 -> 0.55 (inside the stated ranges).
-- Counting: the phase-1 "right row" and the CLI's `oracle` / `right` lines count an ambiguous result whose candidates
-  include a gold row as right (gold `row_ids` lists every acceptable row, e.g. "wc" -> WC / Water Closet / SRT-WC).
-  Counting resolved only: oracle 193/271, right row 157/271. The CLI prints both; the real split (ambiguous among
-  acceptable rows only vs ambiguous with a wrong row, which needs a clarify) is reported in the PR.
+  gave 267/271 on the first build. Still never a filter (AC-S1-5); both bounds are pinned by tests.
+- Review round 1 (reviewer NOT READY on fad8b63b0a; red a4f1594b1d + a62794730a, fix 359f27e34d + 28ad4c2882):
+  ambiguity is decided on SCORE only (rows within `AMBIGUITY_MARGIN = 0.03` of the best); coverage only orders the
+  candidates; among the close rows, rows the span equals outright win ("length" -> Length, not Trap outlet length).
+  No per-list cap before that decision: an ambiguous result carries every close row. A span word weighs what the row
+  word it matches weighs (a typo of a common word stays common); the unseen-word IDF applies only to a word that matches
+  nothing. A one-edit word weighs `1 - 1/len` of an exact one (0.8-0.9); a trigram-only match weighs its similarity.
+  A word is common only when 2+ texts of the list carry it. A flat 0.8 one-edit weight was measured and lost.
+- Common-word rule: a span made only of words common in a list (IDF below `DISTINCTIVE_IDF = 0.5` of an unseen
+  word's) does not resolve in that list unless it equals a whole text (AC-S1-4).
+- Floors: exactly the phase-1 calibration (`floors_partial.json`, calibrated on the calib half) except category spell
+  0.4 -> 0.45, which the synthetic meaning test needs. Hand-fits to single gold phrases were removed (captain ruling);
+  a fresh coordinate-descent calibration on the calib half scored lower on the test half (80.3%) and broke 3 tests.
+- Counting: the CLI's `oracle` / `right` lines count an ambiguous result whose candidates include a gold row as right
+  (gold `row_ids` lists every acceptable row, e.g. "wc" -> WC / Water Closet / SRT-WC); it also prints resolved-only.
+
+Gate at 28ad4c2882 (phase-1 data; AC-S1-13 as amended):
+
+| Half | Oracle | B1 right row | Resolved right | Resolved wrong | Ambiguous, all gold | Ambiguous, gold + wrong | Ambiguous, no gold | Unresolved / missed |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Oracle ALL (271) | 265 | - | 185 | 1 | 71 | 9 | 0 | 5 |
+| Oracle TEST (132) | 130 | - | 89 | 1 | 39 | 2 | 0 | 1 |
+| B1 spans ALL (271) | - | 226 (83.4%) | 150 | 13 | 57 | 19 | 8 | 24 |
+| B1 spans TEST (132) | - | 107 (81.1%) | 71 | 9 | 32 | 4 | 6 | 10 |
+
+Ambiguous results carry 4.5 candidates on average (max 16 oracle, 58 on B1 spans). Open for S2 (not S1 behaviour):
+- One category-typed word that is common across customer names (7 letters) ties 58 rows in customer + spec; S2 must
+  cap what one ambiguous result renders into the parser block (lookup `TOP_K` per list) or treat a very wide tie as
+  "names nothing", decided by the S2 eval.
+- Typo mentions lost when the one-phrase floor fits were removed: a misspelled "technical drawings", "drawing", one
+  partial customer name, "booster pump". Re-calibrate floors on a larger labelled set in S2.
 
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 

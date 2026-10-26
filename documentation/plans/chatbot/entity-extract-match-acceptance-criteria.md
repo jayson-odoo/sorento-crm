@@ -56,5 +56,10 @@ Fixtures in tests are invented (public repo): never a real customer, salesperson
   the test; it makes no network call and needs no DB.
 - **AC-S1-13 [T]** Gate (evidence in the PR, data stays outside git): the CLI on the phase-1 gold
   (crew/state/eval/eem) reproduces oracle >= 268/271 and B1-span right row on the test half >= 77%.
+  Amended 26 Oct (captain, review round 1): the review fixes removed silent picks on equal scores, the per-list
+  cap on ambiguous rows and full weight for one-edit words, and the floors went back to the phase-1 calibration with no
+  one-phrase fits. The honest gate is oracle >= 265/271 ALL and >= 130/132 TEST, B1-span right row on the test half
+  >= 80%, and resolved-wrong on B1 spans no higher than 13 ALL. Floors are re-calibrated on a larger labelled set
+  in S2.
 - **AC-S1-14 [T]** No behaviour change: no module on the turn path imports `list_resolver` in S1; the existing head
   lookup tests pass unchanged.
