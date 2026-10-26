@@ -1,7 +1,7 @@
 # PLAN: CHAT-V66-REGRESSIONS (26 Oct 2026)
 
-Status: Build (F1 + F7 green with red/kill proofs; F2 waits on the crew ask; gate next). Track: small fix track per case (S); a prompt change ships as a new unlabelled
-version via migration (like `lkp_0001`), owner moves labels.
+Status: Review (F1 + latency built with red/kill proofs; calibration stopped by the owner 14:40 and reverted; gate on the
+case rows + R5/TRAIN/category vs v185). Track: small fix track (S). No prompt change, no migration.
 
 ## Why
 
