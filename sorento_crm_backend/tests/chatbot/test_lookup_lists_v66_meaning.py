@@ -117,3 +117,17 @@ def test_word_stats_count_each_word_once_per_message_and_are_read_once(monkeypat
     stats = ll.word_stats("db1")
     assert stats.n == 3 and stats.df["check"] == 2 and stats.df["zz"] == 3 and stats.df["hanlim"] == 1
     assert ll.word_stats("db2") is stats and calls == ["db1"]
+
+
+def test_the_meaning_winner_is_a_row_the_message_does_not_already_spell():
+    # "bidet seat": the Bidet row is spelled ("bidet"); the piece's meaning goes to the next row it names.
+    rows = [ll.LookupRow("category", "b", "ZZ Bidet", ("zzbidet",)), ll.LookupRow("category", "t", "ZZ Toilet seat", ("zz toilet seat",)),
+            ll.LookupRow("category", "k", "ZZ Sink", ("zz sink",))]
+
+    def embed(texts):
+        table = {"zzbidet zzseat": [1.0, 0.0, 0.0], "zzbidet": [0.9, 0.43589, 0.0], "zz toilet seat": [0.75, 0.0, 0.66144],
+                 "zz sink": [0.3, 0.0, 0.95394]}
+        return np.asarray([table.get(t, [0.0, 0.0, 0.0]) if t in table else [0.0, 1.0, 0.0] for t in texts], dtype=np.float32)
+
+    hits = ll.shortlist("zzbidet zzseat", rows, embed)
+    assert _keys(hits, "category") == ["b", "t"], hits
