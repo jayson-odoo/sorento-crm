@@ -91,3 +91,22 @@ describe('F1 the PO popup', () => {
     expect(screen.queryByText(/in transit/i)).not.toBeInTheDocument();
   });
 });
+
+describe('P2 the PO popup SPO cell uses the one shared pill', () => {
+  it('the receipt is the shared Badge pill (truncating, full title) and the SPO number never truncates', async () => {
+    getOrderInquiryPoDetail.mockResolvedValue(PO_DETAIL);
+    renderNode(<OrderInquiryDocumentDialog kind="po" document="202607-S0100" poId="po-1" open onOpenChange={vi.fn()} />);
+    await screen.findByText('DAFUYUAN');
+    const text = screen.getByText('Received 486 at BRW-BB');
+    const badge = text.closest('[data-slot="badge"]') as HTMLElement | null;
+    expect(badge).not.toBeNull();
+    expect(text.className).toContain('truncate');
+    expect(badge!.className).toContain('min-w-0');
+    expect((text.closest('[title]') as HTMLElement).getAttribute('title')).toBe(
+      'Received 486 at BRW-BB',
+    );
+    const number = screen.getAllByText('SPO-2026/09-0107')[0].closest('button') as HTMLElement;
+    expect(number.className).toContain('shrink-0');
+    expect(number.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis|(^|\s)max-w-/);
+  });
+});

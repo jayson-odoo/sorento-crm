@@ -168,3 +168,47 @@ def test_d5_scm_po_detail_lines_carry_the_same_spos(scm_app):
     assert [(Decimal(str(r["qty"])), r["bin"]) for r in entry["receipts"]] == [
         (Decimal("100"), s.w.b2.warehouse_code)
     ]
+
+
+# ---------------------------------------------------------------------------- U4 round 2
+
+
+def test_k7_via_po_share_on_each_spo_is_the_chains_split(scm_app):
+    """PO line 100 onto SPO A 60 (earlier) and SPO B 40, both in transit; P1 50 then P2 50 on
+    the PO line. On A: P1 50 and P2 10 (both via the PO). On B: P2 40 only."""
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=100)
+    a = w.onto(po, po_line, qty=60, arrives=w.due.replace(day=1), warehouse=w.b1)
+    b = w.onto(po, po_line, qty=40, arrives=w.due.replace(day=9), warehouse=w.b1)
+    _r1, p1 = w.place_on_po(po_line, 50, minute=1)
+    _r2, p2 = w.place_on_po(po_line, 50, minute=2)
+
+    def shares(spo):
+        out = {}
+        for item in _items(_placements_on()(db, spo_allocation_ids=[str(spo.id)])):
+            chain = _chain_of(item)
+            qty = sum(
+                (Decimal(str(h.qty)) for h in chain.hops if h.spo_allocation_id == str(spo.id)),
+                Decimal("0"),
+            )
+            out[chain.link_id] = (qty, getattr(item, "via_po", None))
+        return out
+
+    assert shares(a) == {
+        str(p1.id): (Decimal("50"), po.po_number),
+        str(p2.id): (Decimal("10"), po.po_number),
+    }
+    assert shares(b) == {str(p2.id): (Decimal("40"), po.po_number)}
+
+
+def test_k8_an_spo_line_closed_with_nothing_landed_shows_on_the_po_line_as_withdrawn(scm_app):
+    db = scm_app[1]
+    w = _World(db)
+    po, po_line = w.po(ordered=100, transferred=100)
+    a = w.onto(po, po_line, qty=100, line_status="closed")
+    detail = _svc(db).get_po_detail(str(po.id))
+    [line] = detail["lines"]
+    assert [(e["spo_number"], e["dead_reason"]) for e in line.get("spos", [])] == [
+        (a.spo_number, "spo_withdrawn")
+    ]

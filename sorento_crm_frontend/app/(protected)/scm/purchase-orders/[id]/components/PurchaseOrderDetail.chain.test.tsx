@@ -238,3 +238,32 @@ describe('F3 PurchaseOrderDetail Lines tab', () => {
     expect(screen.queryByText(/in transit/i)).not.toBeInTheDocument();
   });
 });
+
+describe('P2 the SCM PO Lines SPO column uses the one shared pill', () => {
+  it('the receipt is the shared Badge pill (truncating, full title) and the SPO number never truncates', () => {
+    usePurchaseOrder.mockReturnValue({ data: withSpos(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Lines');
+    const text = screen.getByText('Received 486 at BRW-BB');
+    const badge = text.closest('[data-slot="badge"]') as HTMLElement | null;
+    expect(badge).not.toBeNull();
+    expect(text.className).toContain('truncate');
+    expect(badge!.className).toContain('min-w-0');
+    expect((text.closest('[title]') as HTMLElement).getAttribute('title')).toBe(
+      'Received 486 at BRW-BB',
+    );
+    const number = screen.getAllByText('SPO-2026/09-0107')[0] as HTMLElement;
+    expect(number.className).toContain('shrink-0');
+    expect(number.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis|(^|\s)max-w-/);
+  });
+});
+
+describe('P3 the Goods receipt card says "transferred" for the AutoCount figure (owner ruling c)', () => {
+  it('reads "<qty> of <ordered> transferred", never "received"', () => {
+    usePurchaseOrder.mockReturnValue({ data: withSpos(), isLoading: false, isError: false });
+    renderDetail();
+    openTab('Goods receipt');
+    expect(screen.getByText(/780 of 780 transferred/)).toBeInTheDocument();
+    expect(screen.queryByText(/of [\d,.]+ received/)).not.toBeInTheDocument();
+  });
+});
