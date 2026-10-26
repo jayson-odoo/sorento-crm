@@ -224,8 +224,12 @@ def transferred_allocations(db: Session, po_lines: Sequence[Any]) -> Dict[str, L
       and company, for an allocation off the AutoCount feed. A PO line with no `source_ref`
       reaches nothing this way;
     * the allocation's own `po_line_id`, for one this system raised off the line
-      (`allocation_suggestion_service.approve`, `spo_conversion_service.create`), in the
-      line's company.
+      (`allocation_suggestion_service.approve`), in the line's company.
+
+    Not followed yet: a CRM-converted SPO (`spo_conversion_service.create`) points its
+    allocation's `po_line_id` at the CRM SPO's own new PO line and names the source PO line
+    only in that line's `pulls` JSON. Trigger to build that route: the first `crm_spo` PO
+    line carrying `pulls` in the data (0 on the dev copy, 26 Oct 2026).
 
     Every visible allocation, not only the open ones: a landed allocation is where the
     goods ARE, and the split turns it into a `received` hop. The company is part of both
