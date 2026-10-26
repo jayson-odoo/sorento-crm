@@ -111,7 +111,7 @@ describe('AccessSheetImportDialog', () => {
     renderDialog();
     await toPreview();
     expect(screen.getAllByText('BETA TILES SDN BHD').length).toBeGreaterThan(0);
-    expect(screen.getByText(/exact/i)).toBeInTheDocument();
+    expect(screen.getByText(/^exact$/i)).toBeInTheDocument();
     expect(screen.getByText(/needs a pick/i)).toBeInTheDocument();
     expect(screen.getByText(/3 contacts in sheet/i)).toBeInTheDocument();
     expect(screen.getByText(/3 found in CRM/i)).toBeInTheDocument();

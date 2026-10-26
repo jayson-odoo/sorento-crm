@@ -265,7 +265,7 @@ describe('ContactsList - bulk Link customers (U4)', () => {
     await waitFor(() => expect(toastMock.success).toHaveBeenCalled());
     expect(toastMock.error).not.toHaveBeenCalled();
     await waitFor(() =>
-      expect(screen.queryByRole('button', { name: /^Actions/ })).not.toBeInTheDocument(),
+      expect(screen.queryByRole('button', { name: /^Clear/ })).not.toBeInTheDocument(),
     );
   });
 
@@ -374,7 +374,7 @@ describe('ContactsList - selection resets on page change (review R2)', () => {
 
     fireEvent.click(await screen.findByRole('button', { name: /Go to next page/ }));
     await screen.findByText('+60100000073');
-    expect(screen.queryByRole('button', { name: /^Actions/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /^Clear/ })).not.toBeInTheDocument();
     const boxes = screen.getAllByRole('checkbox', { name: 'Select row' }) as HTMLInputElement[];
     expect(boxes.some((b) => b.checked || b.getAttribute('aria-checked') === 'true')).toBe(false);
 

@@ -283,11 +283,10 @@ function PreviewStep({
         <Button
           variant="outline"
           size="sm"
-          aria-label="Confirm all exact"
           disabled={counts.blocks_exact === 0 || allConfirmed}
           onClick={() => onChange(confirmAllExact(preview, selection))}
         >
-          {allConfirmed ? 'All confirmed' : 'Confirm all'}
+          {allConfirmed ? 'All exact confirmed' : 'Confirm all exact'}
         </Button>
       </div>
       {preview.errors.length ? (
