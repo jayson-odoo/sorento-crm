@@ -2,9 +2,10 @@
  *  A pending timer that fired after jsdom teardown failed CI with "document is not defined". */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
-import { render, screen, fireEvent, within } from '@testing-library/react';
+import { render, screen, fireEvent } from '@testing-library/react';
 
 import type { PortalContact } from '../lib/portal-client';
+import { typeBadInput } from '@/test-utils/badInput';
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -53,13 +54,11 @@ afterEach(() => {
   vi.restoreAllMocks();
 });
 
-function submitEmpty() {
-  fireEvent.click(screen.getAllByRole('button', { name: /Submit sponsorship form/i })[0]);
-  const dialog = screen.queryByRole('alertdialog');
-  if (dialog) {
-    fireEvent.click(within(dialog).getByRole('button', { name: /Submit sponsorship form/i }));
-  }
-  expect(toasts.error).toHaveBeenCalledWith(expect.stringMatching(/^Missing \d+ required field/));
+/** Save Draft with a bad header number reports through `reportMissingRequired`, which arms the timer. */
+function saveWithBadNumber() {
+  typeBadInput(screen.getAllByRole('spinbutton')[0]);
+  fireEvent.click(screen.getByRole('button', { name: /Save as draft/i }));
+  expect(toasts.error).toHaveBeenCalledWith(expect.stringMatching(/^Fix the number in:/));
 }
 
 function fieldLookups(spy: ReturnType<typeof vi.spyOn>) {
@@ -68,24 +67,24 @@ function fieldLookups(spy: ReturnType<typeof vi.spyOn>) {
 
 describe('SubmissionForm scroll-to-invalid timer', () => {
   it('still scrolls to the first invalid field while mounted', async () => {
-    render(<SubmissionForm kind="sponsorship_form" />);
+    render(<SubmissionForm kind="stock_inquiry" />);
     await screen.findByText(CONTACT.name as string);
     vi.useFakeTimers();
     const spy = vi.spyOn(document, 'querySelector');
 
-    submitEmpty();
+    saveWithBadNumber();
     vi.advanceTimersByTime(100);
 
     expect(fieldLookups(spy).length).toBe(1);
   });
 
   it('a timer pending at unmount is cleared and never touches document', async () => {
-    const { unmount } = render(<SubmissionForm kind="sponsorship_form" />);
+    const { unmount } = render(<SubmissionForm kind="stock_inquiry" />);
     await screen.findByText(CONTACT.name as string);
     vi.useFakeTimers();
     const spy = vi.spyOn(document, 'querySelector');
 
-    submitEmpty();
+    saveWithBadNumber();
     unmount();
     vi.advanceTimersByTime(100);
 
