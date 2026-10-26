@@ -4,7 +4,8 @@ Status: IN REVIEW, 26 Oct 2026. PR #1878; reviewer READY, security-reviewer CLEA
 test and the prod reconciliation (dry run -> owner OK -> apply) pending. Lane AC-REMOVED-LINES,
 branch `crew/ac-removed-lines`. Size L by brief (ingest behaviour + prod reconciliation), lead
 pattern; the owner's rulings removed the migration, the UI and the mock. Review rounds added the
-zero-line push guard (AC-RL-07), claims deleted (AC-RL-04) and the SPO allow-list (AC-RL-45). Card: `ac-removed-lines-behaviour-card.md` (answered). UAC:
+zero-line push guard (AC-RL-07), claims deleted (AC-RL-04) and the SPO allow-list (AC-RL-45);
+crew audit added the `<source DB>:<DtlKey>` allow-list key with ambiguous keys refused (AC-RL-46). Card: `ac-removed-lines-behaviour-card.md` (answered). UAC:
 `ac-removed-lines-26oct-acceptance-criteria.md` (final).
 
 ## 0. What the owner saw (prod, 26 Oct 2026)
