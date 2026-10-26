@@ -24,6 +24,37 @@ vi.mock('@/lib/toast', () => ({ toast: toastMock }));
 const svc = vi.hoisted(() => ({ previewAccessSheet: vi.fn(), applyAccessSheet: vi.fn() }));
 vi.mock('@/services/contactAccessSheetService', () => svc);
 
+const customerSvc = vi.hoisted(() => ({ searchCustomersSelect: vi.fn() }));
+vi.mock('@/app/(protected)/order-management/customers/services/customerService', () => customerSvc);
+
+// Stand-in for the Radix multi-select: one button per fetched option, chips for the selected ones.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: (props: {
+    value: string[];
+    onChange: (v: string[]) => void;
+    fetchOptions?: (q: string) => Promise<{ value: string; label: string }[]>;
+    selectedOptions?: { value: string; label: string }[];
+  }) => {
+    const [opts, setOpts] = React.useState<{ value: string; label: string }[]>([]);
+    React.useEffect(() => {
+      void props.fetchOptions?.('').then(setOpts);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    return (
+      <div data-testid="extra-search">
+        {opts.map((o) => (
+          <button key={o.value} type="button" onClick={() => props.onChange([...props.value, o.value])}>
+            {`search result ${o.label}`}
+          </button>
+        ))}
+        {(props.selectedOptions ?? []).map((o) => (
+          <span key={o.value}>{o.label}</span>
+        ))}
+      </div>
+    );
+  },
+}));
+
 import AccessSheetImportDialog from './AccessSheetImportDialog';
 
 const acct = (id: string, over: Record<string, unknown> = {}) => ({
@@ -141,8 +172,65 @@ describe('AccessSheetImportDialog', () => {
     renderDialog();
     pickFile();
     fireEvent.click(screen.getByRole('button', { name: /^Preview/ }));
-    await waitFor(() => expect(toastMock.error).toHaveBeenCalled());
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('The file has no Tags column.')));
     expect(screen.getByRole('button', { name: /^Preview/ })).toBeInTheDocument();
     expect(screen.queryByText('ALPHA BATH SDN BHD')).toBeNull();
+  });
+
+  it('U14b: a brands change from "every brand" renders that text and the after brand names', async () => {
+    const withBrands = {
+      ...PREVIEW,
+      blocks: [
+        {
+          ...PREVIEW.blocks[0],
+          contacts: [
+            person('Ann', {
+              changes: [{ facet: 'brands', before: 'every brand', after: ['SORENTO', 'CABANA'] }],
+            }),
+          ],
+        },
+        PREVIEW.blocks[1],
+      ],
+    };
+    svc.previewAccessSheet.mockResolvedValueOnce(withBrands);
+    renderDialog();
+    await toPreview();
+    if (!screen.queryByText(/every brand/i)) fireEvent.click(screen.getAllByText('ALPHA BATH SDN BHD')[0]);
+    expect((await screen.findAllByText(/every brand/i)).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/SORENTO/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText(/CABANA/).length).toBeGreaterThan(0);
+  });
+
+  it('an account added through the customer search survives collapsing and reopening its dealer block, and Apply sends it', async () => {
+    customerSvc.searchCustomersSelect.mockResolvedValue([
+      { value: 'extra-1', label: 'EXTRA TRADING SDN BHD', description: '' },
+    ]);
+    renderDialog();
+    await toPreview();
+    const header = () => screen.getAllByText('BETA TILES SDN BHD')[0];
+    if (!screen.queryByTestId('extra-search')) fireEvent.click(header());
+    fireEvent.click(await screen.findByRole('button', { name: /EXTRA TRADING SDN BHD/ }));
+    expect((await screen.findAllByText('EXTRA TRADING SDN BHD')).length).toBeGreaterThan(0);
+
+    fireEvent.click(header()); // collapse
+    await waitFor(() => expect(screen.queryByTestId('extra-search')).toBeNull());
+    fireEvent.click(header()); // reopen
+    expect((await screen.findAllByText('EXTRA TRADING SDN BHD')).length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole('button', { name: /confirm all exact/i }));
+    fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
+    await waitFor(() => expect(svc.applyAccessSheet).toHaveBeenCalledTimes(1));
+    expect(JSON.stringify(svc.applyAccessSheet.mock.calls[0][1])).toContain('extra-1');
+  });
+
+  it('a failed apply shows the message as a toast and stays on the preview step', async () => {
+    svc.applyAccessSheet.mockRejectedValueOnce(new Error('Mocha is not in your companies.'));
+    renderDialog();
+    await toPreview();
+    fireEvent.click(screen.getByRole('button', { name: /confirm all exact/i }));
+    fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
+    await waitFor(() => expect(toastMock.error).toHaveBeenCalledWith(expect.stringContaining('Mocha is not in your companies.')));
+    expect(screen.getByRole('button', { name: /apply access/i })).toBeInTheDocument();
+    expect(screen.queryByText(/Import finished/i)).toBeNull();
   });
 });

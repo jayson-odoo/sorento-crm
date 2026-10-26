@@ -299,11 +299,11 @@ def _sheet(rows, header=("First Name", "Last Name", "Phone Number", "Tags", "Ema
     return (("﻿" + text) if bom else text).encode("utf-8")
 
 
-def _post(client, content, *, dry_run=True, confirmed=None):
+def _post(client, content, *, dry_run=True, confirmed=None, params=None):
     data = {"dry_run": "true" if dry_run else "false"}
     if confirmed is not None:
         data["confirmed"] = confirmed if isinstance(confirmed, str) else json.dumps(confirmed)
-    return client.post(URL, files={"file": ("sheet.csv", content, "text/csv")}, data=data)
+    return client.post(URL, files={"file": ("sheet.csv", content, "text/csv")}, data=data, params=params)
 
 
 def _confirm_all(preview):
@@ -996,7 +996,7 @@ def test_u18_without_stock_edit_locations_are_not_applied(client, db, w, env):
     cid = _contact(db, w, 1)
     _, result = _apply_all(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))]))
     assert _state(db, w, cid)["stock"] is None
-    assert {"stock_check_mode", "stock_locations"} & set(_by_name(result)["ZZT Ann"]["not_applied"])
+    assert {"stock_check_mode", "stock_locations"} <= set(_by_name(result)["ZZT Ann"]["not_applied"])
 
 
 def test_u18_without_agents_edit_grants_are_not_applied(client, db, w, env):
@@ -1029,5 +1029,260 @@ def test_u19_a_confirmed_id_outside_scope_is_422_and_nothing_is_written(client, 
     content = _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])
     resp = _post(client, content, dry_run=False, confirmed={KEY: [hidden]})
     assert resp.status_code == 422, resp.text
+    assert _state(db, w, cid) == before
+    assert _audits(db, w) == []
+
+
+# ================================================================ ROUND 2 (UAC rewrite 26 Oct): U8 name key
+
+
+TAG_TEXTS = ["A/C I", "A/C II", "A/C III", "A/C IV", "BRAVAT", "IBORN", "PROJECT-CASH"]
+
+
+def _tag_fillers(db, w, tags=TAG_TEXTS, bases=10, company=None):
+    """Account tags are DATA: a bracket text on >= 10 different base names. Seed that many bases."""
+    for tag in tags:
+        for i in range(bases):
+            _cust(db, w, company or w.srt, f"ZZT FILLER {unique_code('F', alpha=True)[-6:]} {i} SDN BHD [{tag}]")
+
+
+def _exact(body, key):
+    return {a["customer_id"] for a in _block(body, key)["accounts"] if a["match"] == "exact"}
+
+
+def _preview_for(client, dealer, companies=("SRT",)):
+    return _post(client, _sheet([("ZZT Ann", "+60100000001", _tags(dealer, list(companies), OWNER))])).json()
+
+
+def test_u8_ampersand_dealer_matches_only_the_spaced_ampersand_accounts(client, db, w):
+    _tag_fillers(db, w)
+    a = _cust(db, w, w.srt, "J & Y WORLD HARDWARE SDN BHD [A/C I]")
+    b = _cust(db, w, w.srt, "J & Y WORLD HARDWARE SDN BHD [A/C III]")
+    other = [
+        _cust(db, w, w.srt, "J & M LIGHTING SDN BHD [A/C I]"),
+        _cust(db, w, w.srt, "J & W TIMBER SDN BHD"),
+    ]
+    _contact(db, w, 1)
+    body = _preview_for(client, "J&Y WORLD HARDWARE")
+    exact = _exact(body, "j y world hardware")
+    assert exact == {a, b}
+    assert not (exact & set(other))
+
+
+def test_u8_a_branch_in_brackets_is_part_of_the_name(client, db, w):
+    _tag_fillers(db, w)
+    ipoh = _cust(db, w, w.srt, "SUPER CERAMIC TILES (JLN IPOH) SDN BHD [A/C I]")
+    jb = _cust(db, w, w.srt, "SUPER CERAMIC TILES (JB) SDN BHD [A/C I]")
+    klang = _cust(db, w, w.srt, "SUPER CERAMIC TILES (KLANG) SDN BHD [A/C I]")
+    _contact(db, w, 1)
+    body = _preview_for(client, "Super ceramic tiles (Jln Ipoh)")
+    (block,) = body["blocks"]
+    exact = {a["customer_id"] for a in block["accounts"] if a["match"] == "exact"}
+    assert exact == {ipoh}
+    assert jb not in exact and klang not in exact
+
+
+def test_u8_every_account_tag_form_is_dropped_so_all_accounts_are_exact(client, db, w):
+    _tag_fillers(db, w)
+    names = [
+        "ALPHA BATH SDN BHD [A/C I]", "ALPHA BATH SDN BHD [A/C II]", "ALPHA BATH SDN BHD [A/C III]",
+        "ALPHA BATH SDN BHD [A/C IV]", "ALPHA BATH SDN BHD (BRAVAT)", "ALPHA BATH SDN BHD - [IBORN]",
+        "ALPHA BATH SDN BHD (PROJECT-CASH)",
+    ]
+    ids = {_cust(db, w, w.srt, n) for n in names}
+    _contact(db, w, 1)
+    body = _preview_for(client, DEALER)
+    assert _exact(body, KEY) == ids
+
+
+@pytest.mark.parametrize("bases, dropped", [(10, True), (9, False)])
+def test_u8_a_bracket_text_is_a_tag_only_on_ten_or_more_base_names(client, db, w, bases, dropped):
+    # the dealer's own account is one of the `bases` base names carrying the bracket text
+    _tag_fillers(db, w, tags=["ZZ ODD TAG"], bases=bases - 1)
+    own = _cust(db, w, w.srt, "NINE BASE TILES SDN BHD [ZZ ODD TAG]")
+    _contact(db, w, 1)
+    body = _preview_for(client, "NINE BASE TILES SDN BHD")
+    block = [b for b in body["blocks"] if b["dealer"].startswith("NINE BASE")][0]
+    exact = {a["customer_id"] for a in block["accounts"] if a["match"] == "exact"}
+    assert (own in exact) is dropped
+
+
+# ================================================================ ROUND 2: U14 confirmed required, U14a limits
+
+
+def test_u14_apply_without_confirmed_is_422_and_writes_nothing(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    cid = _contact(db, w, 1)
+    before = _state(db, w, cid)
+    content = _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])
+    resp = _post(client, content, dry_run=False)
+    assert resp.status_code == 422, resp.text
+    assert _state(db, w, cid) == before
+    assert _audits(db, w) == []
+
+
+def test_u14_empty_confirmed_skips_every_contact_as_dealer_not_confirmed(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    ids = [_contact(db, w, 1), _contact(db, w, 2)]
+    before = [_state(db, w, c) for c in ids]
+    content = _sheet(
+        [
+            ("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER)),
+            ("ZZT Bob", "+60100000002", _tags(DEALER, ["SRT"], EMPLOYEE)),
+        ]
+    )
+    body = _post(client, content, dry_run=False, confirmed={}).json()
+    assert {c["skip_reason"] for c in _by_name(body).values()} == {"dealer_not_confirmed"}
+    assert body["counts"]["applied"] == 0 and body["counts"]["skipped"] == 2
+    assert [_state(db, w, c) for c in ids] == before
+
+
+def test_u14a_tags_cell_over_1000_chars_is_a_row_error(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    cid = _contact(db, w, 1)
+    before = _state(db, w, cid)
+    tags = _tags(DEALER, ["SRT"], OWNER) + ", " + "x" * 1000
+    assert len(tags) > 1000
+    body = _post(client, _sheet([("ZZT Ann", "+60100000001", tags)])).json()
+    assert body["counts"]["row_errors"] == 1 and len(body["errors"]) == 1
+    assert _state(db, w, cid) == before
+
+
+@pytest.mark.parametrize("alts, is_error", [(5, False), (6, True)])
+def test_u14a_more_than_five_alt_dealer_texts_is_a_row_error(client, db, w, alts, is_error):
+    _dealer(db, w, companies=("SRT",))
+    _contact(db, w, 1)
+    tags = f"{DEALER}, {SRT_TAG}, ZZT AGENT SRT, " + ", ".join(f"ALT DEALER {i}" for i in range(alts)) + f", {OWNER}"
+    body = _post(client, _sheet([("ZZT Ann", "+60100000001", tags)])).json()
+    assert body["counts"]["row_errors"] == (1 if is_error else 0), body["errors"]
+
+
+def test_u14a_a_csv_field_over_the_parser_limit_is_422_not_500(client, db, w):
+    _contact(db, w, 1)
+    huge = "y" * 140_000  # over Python's csv field limit (131072)
+    content = _sheet([("ZZT Ann", "+60100000001", huge)])
+    assert len(content) < 2 * 1024 * 1024
+    resp = _post(TestClient(app, raise_server_exceptions=False), content)
+    assert resp.status_code == 422, resp.text[:300]
+    low = resp.text.lower()
+    assert "select " not in low and "psycopg" not in low and "sqlalchemy" not in low
+
+
+# ================================================================ ROUND 2: U14b honest changes, U15, U16
+
+
+def test_u14b_null_brands_show_as_every_brand_before(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    _contact(db, w, 1, brand_ids=None)
+    content = _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])
+    contact = _by_name(_post(client, content).json())["ZZT Ann"]
+    (change,) = [c for c in contact["changes"] if c["facet"] == "brands"]
+    assert change["before"] == "every brand"
+    assert "ZZT ZSB-1" in str(change["after"])
+
+
+def test_u14b_a_facet_the_caller_cannot_set_is_no_change_no_audit_and_not_listed(client, db, w, env):
+    env["granted"] = {EDIT, AGENTS_EDIT}  # no inventory.stock.edit
+    _dealer(db, w, companies=("SRT",))
+    _contact(db, w, 1)
+    content = _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])
+    _, first = _apply_all(client, content)
+    contact = _by_name(first)["ZZT Ann"]
+    assert {"stock_check_mode", "stock_locations"} <= set(contact["not_applied"])
+    assert not {c["facet"] for c in contact["changes"]} & {"stock_check_mode", "stock_locations"}
+    audits = len(_audits(db, w))
+    _, second = _apply_all(client, content)
+    assert _by_name(second)["ZZT Ann"]["status"] == "no_change"
+    assert second["counts"]["applied"] == 0
+    assert len(_audits(db, w)) == audits
+
+
+def test_u15_a_row_error_counts_in_skipped(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    _contact(db, w, 1)
+    _contact(db, w, 2)
+    content = _sheet(
+        [
+            ("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER)),
+            ("ZZT NoRole", "+60100000002", f"{DEALER}, {SRT_TAG}, ZZT AGENT SRT"),
+        ]
+    )
+    _, result = _apply_all(client, content)
+    assert result["counts"]["row_errors"] == 1
+    assert result["counts"]["applied"] == 1
+    assert result["counts"]["skipped"] == 1
+
+
+def test_u16_the_audit_row_keeps_the_requests_full_audit_context(client, db, w, actor):
+    from app import audit_context
+
+    _dealer(db, w, companies=("SRT",))
+    cid = _contact(db, w, 1)
+    session_id = str(uuid.uuid4())
+    audit_context.stamp_actor(
+        audit_context.AuditActor(
+            actor_type="user", user_id=actor, real_user_id=actor, auth_method="password",
+            session_id=session_id, ip_address="203.0.113.7", user_agent="zzt-agent/1.0",
+        ),
+        db=db,
+    )
+    try:
+        _apply_all(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))]))
+    finally:
+        audit_context.clear_actor(db)
+    (row,) = _audits(db, w, cid)
+    assert str(row.user_id) == actor
+    assert row.auth_method == "password"
+    assert str(row.session_id) == session_id
+    assert row.ip_address == "203.0.113.7"
+    assert row.user_agent == "zzt-agent/1.0"
+
+
+# ================================================================ ROUND 2 addendum: U19a one ACTIVE company, grants widening
+
+GRANTS = {"company_scope": "grants"}
+
+
+def _grant(db, user_id, *company_ids):
+    from app.models.company import UserCompany
+
+    for company_id in company_ids:
+        db.add(UserCompany(user_id=user_id, company_id=company_id))
+    db.flush()
+    db.commit()
+
+
+def test_u19a_a_user_granted_srt_and_mch_with_srt_active_resolves_mocha_under_grants(client, db, w, env, actor):
+    env["superadmin"] = False
+    env["scope"] = frozenset({w.srt})  # staff requests run under ONE active company
+    _grant(db, actor, w.srt, w.mch)
+    ids = _dealer(db, w)
+    cid = _contact(db, w, 1)
+    content = _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT", "MCH"], OWNER))])
+    pre = _post(client, content, params=GRANTS)
+    assert pre.status_code == 200, pre.text
+    block = _block(pre.json())
+    assert block["status"] == "exact"
+    assert {a["customer_id"] for a in block["accounts"] if a["match"] == "exact" and a["proposed"]} == set(ids.values())
+    res = _post(client, content, dry_run=False, confirmed=_confirm_all(pre.json()), params=GRANTS)
+    assert res.status_code == 200, res.text
+    s = _state(db, w, cid)
+    assert s["stock"]["warehouses"] == sorted([w.wh["BRW"], w.wh["MWH"], w.wh["HQ"], w.wh["MOCHA-WH"]])
+    assert sorted(l[0] for l in s["links"]) == sorted(ids.values())
+
+
+def test_u19a_a_user_granted_srt_only_gets_422_naming_mocha_not_500(client, db, w, env, actor):
+    env["superadmin"] = False
+    env["scope"] = frozenset({w.srt})
+    _grant(db, actor, w.srt)
+    _dealer(db, w)
+    cid = _contact(db, w, 1)
+    before = _state(db, w, cid)
+    content = _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["MCH"], OWNER))])
+    tc = TestClient(app, raise_server_exceptions=False)
+    for dry_run, confirmed in ((True, None), (False, {})):
+        resp = _post(tc, content, dry_run=dry_run, confirmed=confirmed, params=GRANTS)
+        assert resp.status_code == 422, resp.text[:400]
+        assert "MCH" in resp.text or "Mocha" in resp.text
     assert _state(db, w, cid) == before
     assert _audits(db, w) == []

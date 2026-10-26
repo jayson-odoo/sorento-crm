@@ -118,3 +118,23 @@ describe('resultCsv', () => {
     expect(resultCsv(result)).toContain('not_in_crm');
   });
 });
+
+describe('resultCsv tab and carriage return', () => {
+  const result = {
+    dry_run: false,
+    counts: {},
+    errors: [],
+    blocks: [
+      {
+        key: 'k', dealer: 'D', alt_dealers: [], companies: ['SRT'], status: 'exact', warnings: [], accounts: [],
+        contacts: [contact('\tTabbed'), contact('\rReturned')],
+      },
+    ],
+  } as never;
+
+  it('U20: cells starting with a tab or a carriage return are prefixed with a single quote', () => {
+    const csv = resultCsv(result);
+    expect(csv).toContain("'\tTabbed");
+    expect(csv).toContain("'\rReturned");
+  });
+});

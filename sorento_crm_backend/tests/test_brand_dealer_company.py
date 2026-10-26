@@ -84,3 +84,21 @@ def test_the_incumbent_company_is_a_valid_dealer_company(api, db):
     resp = _create(api, "ZZT Srt Dealer Brand", dealer_company_id=DEFAULT_COMPANY_ID)
     assert resp.status_code == 201, resp.text
     assert resp.json()["dealer_company_id"] == DEFAULT_COMPANY_ID
+
+
+def test_a_malformed_company_id_is_422_without_database_text(api, db):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+
+    tc = TestClient(app, raise_server_exceptions=False)
+    resp = tc.post(BRANDS_ENDPOINT, json={"brand_code": unique_code("BDC"), "brand_name": "ZZT Bad Id", "dealer_company_id": "x"})
+    assert resp.status_code == 422, resp.text[:300]
+    low = resp.text.lower()
+    assert "select " not in low and "psycopg" not in low and "sqlalchemy" not in low
+
+    brand_id = _create(api, "ZZT Bad Id Put").json()["id"]
+    put = tc.put(f"{BRANDS_ENDPOINT}/{brand_id}", json={"dealer_company_id": "x"})
+    assert put.status_code == 422, put.text[:300]
+    low = put.text.lower()
+    assert "select " not in low and "psycopg" not in low and "sqlalchemy" not in low
