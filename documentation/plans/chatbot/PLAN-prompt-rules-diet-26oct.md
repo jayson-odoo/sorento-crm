@@ -1,7 +1,10 @@
 # PLAN: PROMPT-RULES-DIET (parser prompt 130k -> under 90k chars, measured round by round)
 
-Status: Plan (size M, prompt-only; behaviour card filed to crew before any code). Track: M (crew brief), not the small fix track: the
-text change is large and gated on paid evals. Base: the list-free parser text of PR #1865 (CHAT-SLIM-INDEX), not yet merged.
+Status: Build (size M, prompt-only). Behaviour card answered by crew a74970758 (26 Oct): Q1 (a) pay a round-0 baseline on
+v185; Q2 TRAIN x3 while it fits, x2 from the round that would pass USD 30, stop and report before any spend past 30; Q3 harness
+runs the slim-index worktree read-only until #1865 merges, product module + migration on a branch from main after; Q4 (a);
+Q5 hand test = diet version alone. Track: M (crew brief), not the small fix track: the text change is large and gated on
+paid evals. Base: the list-free parser text of PR #1865 (CHAT-SLIM-INDEX), not yet merged.
 
 ## Owner ruling (26 Oct ~08:15 MYT, verbatim)
 "yeah take the prompt from 130k to 90k yes, measured round by round"
@@ -35,7 +38,9 @@ CONFIDENCE 3,399 (L419); ENTITY OPERATIONS 3,235 (L366); COMPANY-NAME REPLY 3,12
 - Invariants checked dry on every round (free): every parser gate read off the raw template is unchanged
   (`parser.resolve_config`: closed_lists / lookup_lists / code_lookup gate_on, chat-state HEADING, TEMPLATE_MARKER,
   "compare_to", "by_words", SALES_CHANNELS_LINE, `extract_tokens`; `chatbot_prompt_vars.py:941` "CUSTOMER ACCOUNT NUMBER"),
-  every `== ... ==` heading line kept, the SALES-TARGET-CHAT anchor
+  the `<<<CHATBOT POLICY BLOCKS>>>` region byte-identical (L1720-1751 of v185, ~3.7k chars: it is re-rendered from the
+  domain / entity-kind / spec tables at publish, `chatbot_prompt_vars.py:918-925`, so an edit there would be lost and drift
+  from the tables), every `== ... ==` heading line kept, the SALES-TARGET-CHAT anchor
   `== SALES REPORT: order_status "sales_report", domain_hint "order" ==` kept exactly once, every OUTPUT key kept.
 
 ## Rounds (each: one coherent edit set ~8-12k chars, dry identity checks, then the paid gate)
