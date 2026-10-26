@@ -26,6 +26,8 @@ export function WorklistPill({
   testId,
   onClick,
   ariaLabel,
+  title,
+  truncate = false,
   children,
 }: {
   as?: 'span' | 'button';
@@ -35,8 +37,13 @@ export function WorklistPill({
   testId: string;
   onClick?: (event: React.MouseEvent) => void;
   ariaLabel?: string;
+  title?: string;
+  /** The pill's text ellipsizes when its cell narrows (`title` should carry the full text). */
+  truncate?: boolean;
   children: React.ReactNode;
 }) {
+  const className = truncate ? 'min-w-0 max-w-full shrink-0' : 'shrink-0';
+  const body = truncate ? <span className="truncate">{children}</span> : children;
   const variant = destructive ? 'destructive' : warning ? 'warning' : 'secondary';
   return (
     <Badge asChild size="sm" variant={variant} appearance="light">
@@ -45,14 +52,15 @@ export function WorklistPill({
           type="button"
           data-testid={testId}
           aria-label={ariaLabel}
-          className="shrink-0"
+          title={title}
+          className={className}
           onClick={onClick}
         >
-          {children}
+          {body}
         </button>
       ) : (
-        <span data-testid={testId} className="shrink-0">
-          {children}
+        <span data-testid={testId} title={title} className={className}>
+          {body}
         </span>
       )}
     </Badge>
@@ -86,17 +94,6 @@ export function receiptsByBin(receipts: OrderInquiryLinkReceipt[]): OrderInquiry
 }
 
 /**
- * Below this cell width the receipt pills give way to one compact chip (owner, #1870 hand
- * test: "the focus is on the SPO number; if I resize narrow I still need to see the
- * number"). The cell root carries `@container`. Round 6: at 300px the number, "via PO" and
- * a readable receipt no longer fit side by side, so the chip takes over from there down to
- * the SPO column's own floor (`minSize`), which still fits the number, "via PO" and the
- * chip.
- */
-const RECEIPTS_HIDE = '@max-[300px]:hidden';
-const FALLBACK_SHOW = '@max-[300px]:inline-flex';
-
-/**
  * LINKAGE-UNIFY U3 (AC-D1, AC-D3, AC-D4): the state pills beside ONE document line chip,
  * the same piece on the worklist (`DocumentsCell`), the Lines tab (`DocumentCell`) and
  * the backing-documents dialog, so the screens agree by construction. Red "PO cancelled"
@@ -104,10 +101,9 @@ const FALLBACK_SHOW = '@max-[300px]:inline-flex';
  * the goods landed at (Q1, Q6). A PO chip only ever carries the PO line's own receipts
  * (Q4); goods that went on through an SPO are on the SPO's chip.
  *
- * Round 5 (owner): the receipt pills are quieter than the number and give way FIRST - they
- * ellipsize (full wording in `title`), and in a narrow cell they hide behind one compact
- * "Received" chip whose label names every receipt and which opens the same view as the
- * cell's "+N" (`onShowAll`). The number itself never truncates.
+ * Round 8 (owner): the receipt tag is the same `WorklistPill` as "via PO" at every width; in a
+ * narrow cell its text ellipsizes ("Rec...", full wording in `title`). The number itself
+ * never truncates.
  */
 export function DocumentStatePills({
   receipts,
@@ -115,7 +111,6 @@ export function DocumentStatePills({
   testIdPrefix,
   testIdSuffix,
   onOpen,
-  onShowAll,
 }: {
   receipts: OrderInquiryLinkReceipt[];
   deadReason: OrderInquiryDeadReason | null;
@@ -125,8 +120,6 @@ export function DocumentStatePills({
   testIdSuffix: string;
   /** Makes each receipt pill a button that opens the document, as the chip does. */
   onOpen?: (event: React.MouseEvent) => void;
-  /** The narrow-cell chip opens what the cell's "+N" opens. No chip without it. */
-  onShowAll?: (event: React.MouseEvent) => void;
 }) {
   const texts = receipts.map(receiptText);
   return (
@@ -137,54 +130,20 @@ export function DocumentStatePills({
         </WorklistPill>
       ) : null}
       {receipts.length ? (
-        <span className={`flex min-w-0 items-center gap-1 overflow-hidden ${RECEIPTS_HIDE}`}>
-          {receipts.map((receipt, index) => {
-            const testId = `${testIdPrefix}-received-${testIdSuffix}${index ? `-${index}` : ''}`;
-            const className =
-              'min-w-0 truncate rounded-sm px-1 text-2xs leading-4 text-muted-foreground ring-1 ring-inset ring-border';
-            return onOpen ? (
-              <button
-                key={`${receipt.bin ?? ''}-${index}`}
-                type="button"
-                data-testid={testId}
-                title={texts[index]}
-                className={`${className} hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
-                onClick={onOpen}
-              >
-                {texts[index]}
-              </button>
-            ) : (
-              <span
-                key={`${receipt.bin ?? ''}-${index}`}
-                data-testid={testId}
-                title={texts[index]}
-                className={className}
-              >
-                {texts[index]}
-              </span>
-            );
-          })}
+        <span className="flex min-w-0 items-center gap-1 overflow-hidden">
+          {receipts.map((receipt, index) => (
+            <WorklistPill
+              key={`${receipt.bin ?? ''}-${index}`}
+              as={onOpen ? 'button' : 'span'}
+              truncate
+              title={texts[index]}
+              testId={`${testIdPrefix}-received-${testIdSuffix}${index ? `-${index}` : ''}`}
+              onClick={onOpen}
+            >
+              {texts[index]}
+            </WorklistPill>
+          ))}
         </span>
-      ) : null}
-      {receipts.length && onShowAll ? (
-        // The "+N" pill's own Badge; `hidden` overrides its display until the container
-        // query shows it.
-        <Badge
-          asChild
-          size="sm"
-          variant="secondary"
-          appearance="light"
-          className={`hidden shrink-0 ${FALLBACK_SHOW}`}
-        >
-          <button
-            type="button"
-            data-testid={`${testIdPrefix}-received-compact-${testIdSuffix}`}
-            aria-label={texts.join(', ')}
-            onClick={onShowAll}
-          >
-            Received
-          </button>
-        </Badge>
       ) : null}
     </>
   );
