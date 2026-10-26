@@ -527,8 +527,12 @@ def test_ac_rl_45_apply_releases_only_the_listed_spo_line(db):
     assert _released(_entry(report, K_SPO_RETIRED)) is True
     assert _released(_entry(report, K_SPO_RETIRED_B)) is False
     assert report["spo_lines"] == 1, report
-    b_rows = _entry(preview, K_SPO_RETIRED_B)["rows_affected"]
-    assert report["rows_affected"] == preview["rows_affected"] - b_rows, report
+    unlisted_rows = sum(
+        l["rows_affected"]
+        for l in preview["lines"]
+        if l.get("kind") == "spo" and l["dtl_key"] != K_SPO_RETIRED
+    )
+    assert report["rows_affected"] == preview["rows_affected"] - unlisted_rows, report
 
 
 def test_ac_rl_45_a_listed_key_that_is_not_a_candidate_is_reported_and_ignored(db):
