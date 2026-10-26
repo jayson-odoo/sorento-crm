@@ -312,3 +312,17 @@ def test_the_board_preview_says_what_the_email_says():
     assert saved_draft_remark(use_own, location="BRW-BB", before=held_buy) == (
         "CHANGED: ORDER 10 -> USE BRW-BB 10"
     )
+
+
+def test_the_board_preview_reads_a_grown_purchasing_part_as_the_email_does():
+    """Lane review S6: purchasing's part only grows, nothing is taken back, so the email reads
+    ORDER words, never CHANGED, and the preview says the same."""
+    from app.services.project_order_inquiry_service import saved_draft_remark
+
+    held_mix = {"reserve": [{"location": "BRW-BB", "qty": "6"}], "borrow": [], "buy_qty": "4"}
+    whole_buy = {"verdict": "amended", "reserve": [], "borrow": [], "buy_qty": "10"}
+    more_buy = {"verdict": "amended", "reserve": [{"location": "BRW-BB", "qty": "4"}],
+                "borrow": [], "buy_qty": "6"}
+
+    assert saved_draft_remark(whole_buy, location="BRW-BB", before=held_mix) == "ORDER"
+    assert saved_draft_remark(more_buy, location="BRW-BB", before=held_mix) == "ORDER 6"

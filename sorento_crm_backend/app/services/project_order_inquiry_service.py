@@ -687,12 +687,29 @@ def saved_draft_remark(
         return handover_remark("cancelled", None, None) if withdraws_raised else None
     now = _draft_snapshot(decision, location, codes or {}, spo_numbers, buy_origin)
     if before:
-        changed = held_change_remark(
-            _draft_snapshot(before, location, codes or {}, spo_numbers, buy_origin), now
-        )
+        held = _draft_snapshot(before, location, codes or {}, spo_numbers, buy_origin)
+        # The email tells a CHANGED only when the rows take something purchasing held back.
+        # The preview has no rows, so it reads the nearest stand-in: some purchasing part
+        # (by its words) is smaller than it was (lane review S6). A part that only grows is
+        # an ORDER, as the email says.
+        changed = held_change_remark(held, now) if _shrinks(held, now) else None
         if changed:
             return changed
     return purchasing_remark(now) or None
+
+
+def _shrinks(before: Mapping[str, Any], now: Mapping[str, Any]) -> bool:
+    """Whether any of purchasing's parts of `before` is smaller (or gone) in `now`."""
+
+    def theirs(snapshot: Mapping[str, Any]) -> Dict[str, Decimal]:
+        out: Dict[str, Decimal] = {}
+        for words, _l, qty, key in _saved_line_parts(snapshot, name_donors=True):
+            if key in _PURCHASING_KEYS:
+                out[words] = out.get(words, _ZERO) + qty
+        return out
+
+    after = theirs(now)
+    return any(qty > after.get(words, _ZERO) for words, qty in theirs(before).items())
 
 
 def _draft_snapshot(
