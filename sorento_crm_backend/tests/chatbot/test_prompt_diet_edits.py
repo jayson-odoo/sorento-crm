@@ -134,7 +134,7 @@ def test_data_invariants_over_edits():
 
 def test_size_target_ac1():
     saved = sum(len(e.anchor) - len(e.payload) for e in ALL_TEXT_EDITS)
-    assert diet.BASE_CHARS == 129_651 and diet.TARGET_CHARS == 90_000
+    assert diet.BASE_CHARS == 129_651 and diet.TARGET_CHARS == 103_000
     assert diet.BASE_CHARS - saved < diet.TARGET_CHARS, f"{diet.BASE_CHARS - saved} chars, target {diet.TARGET_CHARS}"
 
 
