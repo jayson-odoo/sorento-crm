@@ -55,6 +55,7 @@ from .test_order_inquiry_kinds import _link, _product, _sorento, _uid
 DB = "ZZT_DB"
 # DtlKeys are distinctive 5-digit numbers so the report can be searched as text.
 K_PO_REMOVED, K_PO_CLAIM_ONLY = "81001", "81002"
+K_ALLC_PO_1, K_ALLC_PO_2, K_ALLC_SO_1, K_ALLC_SO_2 = "85001", "85002", "85003", "85004"
 K_PO_RESOLVED_ONLY, K_PO_LINK_AND_RESOLVED, K_PO_LIVE = "81007", "81008", "81009"
 K_PO_CANCEL_DOC, K_PO_REFLESS, K_PO_OPEN, K_PO_HDR_CANCELLED = "81003", "81004", "81005", "81006"
 K_SO_REMOVED, K_SO_CS_BOARD, K_SO_NO_ROWS = "82001", "82002", "82003"
@@ -200,7 +201,7 @@ def _world(db) -> World:
     # --- SO lines: removed + live row (selected); CS board cancelled (cancelled_at set);
     # removed but its only row is already cancelled (no live rows).
     def _so_chain(dtl, *, cs_board=False, row_state=INQUIRY_RAISED, cancel_doc=False,
-                  header_cancelled=False):
+                  header_cancelled=False, open_sibling=True):
         so, core, pso, mirror = _line_chain(db, c, w.product, qty="10", line_status="cancelled")
         so.source_system = "autocount"
         if header_cancelled:
@@ -215,6 +216,14 @@ def _world(db) -> World:
             db, c, inquiry.id, mirror.id, w.product.product_code, "10",
             state=row_state, ack_state=ACK_ACKNOWLEDGED,
         )
+        if open_sibling:
+            # AC-RL-48: the document still has a live line, so its cancelled line is a
+            # removal candidate (a document with EVERY line cancelled is a zero-line push).
+            db.add(SalesOrderLine(
+                id=_uid(), company_id=c, sales_order_id=so.id, product_id=w.product.id,
+                qty_ordered=Decimal("10"), line_status="open", source_system="autocount",
+                source_ref=_ref(f"{dtl or 'x'}-open"),
+            ))
         db.flush()
         return so, core, row
 
@@ -244,6 +253,25 @@ def _world(db) -> World:
         "refless": (w.so_row_refless, INQUIRY_RAISED),
         "actioned_only": (w.so_row_actioned_only, INQUIRY_ACTIONED),
     }
+
+    # --- AC-RL-48: documents whose EVERY line is cancelled under an open header.
+    allc_po_number = f"ZZT-POALLC-{_uid()[:6]}"
+    allc_po = _header(allc_po_number)
+    w.allc_po_number = allc_po_number
+    w.allc_po_l1 = _po_line(db, c, allc_po, w.product, K_ALLC_PO_1)
+    w.allc_po_l2 = _po_line(db, c, allc_po, w.product, K_ALLC_PO_2)
+    _row, w.allc_po_link = _row_linked(db, c, w.product, po_line=w.allc_po_l1, doc=allc_po_number)
+    w.allc_po_claim = _claim(db, c, w.product, allc_po_number, po_line=w.allc_po_l2)
+    w.allc_po_claim.source = "autocount"
+    w.allc_po_claim.resolved_at = datetime(2026, 10, 1)
+    w.allc_so, w.allc_so_core1, w.allc_so_row = _so_chain(K_ALLC_SO_1, open_sibling=False)
+    db.flush()
+    db.add(SalesOrderLine(
+        id=_uid(), company_id=c, sales_order_id=w.allc_so.id, product_id=w.product.id,
+        qty_ordered=Decimal("10"), line_status="cancelled", source_system="autocount",
+        source_ref=_ref(K_ALLC_SO_2),
+    ))
+    db.flush()
 
     # --- SPO lines: retired + linked (selected), closed but never retired (not selected).
     def _spo(dtl, *, retired, source_ref=None):
@@ -701,3 +729,67 @@ def test_ac_rl_47_a_claim_naming_a_removed_so_line_is_listed_and_left_in_place(d
     assert (applied["po_lines"], applied["so_lines"]) == (4, 1), applied
     assert preview["spo_lines"] == 6, preview
     assert _flat(applied).count(w.so_removed.so_number.lower()) >= 1, "still reported on apply"
+
+
+# ====================================================================== AC-RL-48
+def _dicts_naming(value, needle: str):
+    """Every nested dict whose values mention `needle`."""
+    found = []
+    if isinstance(value, dict):
+        if any(needle.lower() in str(v).lower() for v in value.values() if not isinstance(v, (dict, list))):
+            found.append(value)
+        for v in value.values():
+            found.extend(_dicts_naming(v, needle))
+    elif isinstance(value, (list, tuple)):
+        for v in value:
+            found.extend(_dicts_naming(v, needle))
+    return found
+
+
+def test_ac_rl_48_an_all_cancelled_document_is_listed_but_contributes_no_candidate(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+
+    report = run(db, w.company, dry_run=True)
+
+    candidates = _flat(report["lines"])
+    for dtl in (K_ALLC_PO_1, K_ALLC_PO_2, K_ALLC_SO_1, K_ALLC_SO_2):
+        assert dtl not in candidates, f"{dtl}: a zero-line push is not a removal"
+    for number in (w.allc_po_number, w.allc_so.so_number):
+        outside = _dicts_naming({k: v for k, v in report.items() if k != "lines"}, number)
+        assert outside, f"{number} must be listed in the report outside the candidate lines"
+        assert any(2 in d.values() for d in outside), f"{number}: line count 2 missing: {outside}"
+    # counts exclude them: the same four PO lines and one SO line as before.
+    assert (report["po_lines"], report["so_lines"]) == (4, 1), report
+
+
+def test_ac_rl_48_apply_touches_nothing_on_an_all_cancelled_document(db):
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+
+    applied = run(db, w.company, dry_run=False, spo_dtl_keys=ALL_SPO)
+
+    db.expire_all()
+    assert str(w.allc_po_link.id) in _link_ids(db), "the link stays"
+    assert db.get(OrderLinkClaim, w.allc_po_claim.id) is not None, "the claim stays"
+    assert _row_state(db, w.allc_so_row) == INQUIRY_RAISED, "the raised row is not retired"
+    assert db.get(OrderInquiryRow, w.allc_so_row.id).note in (None, "")
+    for number in (w.allc_po_number, w.allc_so.so_number):
+        assert _dicts_naming({k: v for k, v in applied.items() if k != "lines"}, number), number
+    assert (applied["po_lines"], applied["so_lines"]) == (4, 1), applied
+
+
+def test_ac_rl_48_guard_a_document_with_one_cancelled_and_one_open_line_is_not_excluded(db):
+    # guard: the PO world's main document holds cancelled lines AND an open one (81005),
+    # the SO world's removed line has an open sibling: their removed lines stay candidates.
+    from scripts.release_removed_autocount_lines import run
+
+    w = _world(db)
+
+    report = run(db, w.company, dry_run=True)
+
+    candidates = _flat(report["lines"])
+    for dtl in (K_PO_REMOVED, K_SO_REMOVED):
+        assert dtl in candidates, f"{dtl} must stay a candidate"
