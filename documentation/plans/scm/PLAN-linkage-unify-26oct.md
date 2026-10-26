@@ -1,7 +1,8 @@
 # PLAN: one answer to "where are this SO line's goods now" (LINKAGE-UNIFY)
 
-Status: SCOUT DONE 26 Oct 2026 (report only, no product code); behaviour card filed with crew,
-build waits on the owner's answers. The fix is L in total, cut into the slices of section 6.
+Status: RULED 26 Oct 2026 (owner, card a76592390, section 5). Size L, lead pattern. Now: Q4 GR
+check + Lavish mock v1 (OI Lines tab + worklist, OI-2609-0128); build only after the owner
+approves the mock. The fix is cut into the slices of section 6.
 Lane LINKAGE-UNIFY, branch `crew/linkage-unify`, base origin/main 263643ae36.
 
 Evidence (committed beside this plan, `evidence/linkage-unify/`):
@@ -132,7 +133,7 @@ Second and later callers exist today (section 2), so the lift is earned.
 | `on_order` | PO hop, `ProjectSupplyService.open_po_line_clauses()` PSS:10067 | `min(rest, ordered - received)` |
 | `in_transit` | SPO hop, `open_incoming_clauses()` AND allocated > received | `_follow_capacity` |
 | `received` | SPO hop not incoming, `_landed_qty > 0`; warehouse = the SPO's bin | `min(rest, landed)` |
-| `received_direct` | PO line transferred, not cancelled, no SPO under the key (class d, 8 of 9) | owner Q4 |
+| `received_direct` | PO line transferred, not cancelled, no SPO under the key (class d, 8 of 9); bin + qty from the AutoCount GR when synced (Q4 ruling, GR check pending), else the PO line's bin | `min(rest, received on the PO)` |
 | `dead` | PO line cancelled / closed with nothing transferred (z), Cancel PO (d, 1 of 9), SPO retired with 0 received (x), SPO closed with nothing landed | 0 |
 
 Hop quantities foot to the placed qty; anything left is reported as `unplaced` (an over-placed
@@ -165,10 +166,12 @@ is set on none. Trigger: measure both columns on a prod copy before using either
    (PS:3346, every caller listed in A-R3), `received_links_of` + `po_lines_with_open_chained_spo` (PS:13453-13503),
    `planning_change_service.py:1604`. Received = every hop received. Stock Debt picks up
    `received_direct` (Q4) and `dead`.
-3. OI display: `_append_derived_spo_entries` (PS:8391) shows every SPO hop with its state;
-   row label from the chain (Q1, Q2); Lines tab received pill parity
-   (`orderInquiryHeaderLinesColumns.tsx:186-224`); worklist cards gain a received stage
-   (WS:1179-1241, 3066-3175).
+3. OI display: `_append_derived_spo_entries` (PS:8391) shows every SPO hop with its state and
+   the pill "Received <qty> at <bin>" (Q1); dead hops show red "PO cancelled" / "SPO withdrawn"
+   plus a worklist filter (Q5); the row label "On PO/SPO" is untouched (Q2); Lines tab pill
+   parity with the worklist (`orderInquiryHeaderLinesColumns.tsx:186-224`); worklist stage cards
+   stop counting landed qty as "On PO" (WS:1179-1241, 3066-3175) only if the owner approves that
+   proposal in the mock.
 4. Popups and documents: PO popup SPO column with state (WS:2716); "Allocated to" on both popups
    via `placements_on` (WS:2893); SPO document so_covered (`procurement_service.py:3055`); SCM PO
    detail "Qty received" relabel + SPO column (`scm/purchase_order_service.py:145`,
@@ -183,6 +186,20 @@ chatbot SO status (`chatbot/so_status.py`, no supply statement today: a new feat
 the owner asks for "where is my order" in chat); pile readers (correct as they are).
 
 ## 5. Behaviour card (filed with crew as `--ask`)
+
+**Owner rulings (26 Oct, ~09:20, relayed by crew):**
+
+- Q1 (a): show PO + SPO, SPO pill "Received <qty> at <bin>".
+- Q2 KEEP AS IS: "On PO/SPO" label unchanged; no chain-derived label, no split.
+- Q3 (a): a PO placement is received when the goods land on the SPO it was transferred onto.
+- Q4 (a): received at the PO's bin and Stock Debt pins it there, BUT owner: "I am pretty sure
+  there is GR for this": first check whether the AutoCount Goods Received document is synced
+  (table, sync code) and carries bin + qty; if it is, Q4 follows PO -> GR (bin and qty from the
+  GR) instead of assuming the PO bin; if not, state it with evidence and propose the smallest
+  read-only pull. Finding: section 5a.
+- Q5 (a): stays placed, red "PO cancelled" / "SPO withdrawn", worklist filter.
+
+The card as filed:
 
 1. OI line once its SPO is received (L880): (a) PO + SPO both shown, SPO pill "Received 486 at
    BRW-BB" [recommended]; (b) SPO only; (c) as today (SPO "-").
@@ -200,10 +217,16 @@ the owner asks for "where is my order" in chat); pile readers (correct as they a
    filter so purchasing re-places [recommended: no silent unlink]; (b) auto-release the link,
    row returns to Raised.
 
-Screens that change visibly (each through a Lavish mock on a real case before build): OI Lines
-tab (SPO column, label, pill), OI worklist (cards, pill meaning), PO and SPO popups (state,
-Allocated to), SPO document detail (SO covered), SCM PO detail (Qty received label, SPO column),
-Stock Debt (class d lines pin under Q4a), CS reserve email ("received" wording under Q3a).
+Screens that change visibly under the rulings (each through a Lavish mock on a real case before
+build): OI Lines tab (SPO column, pills, dead-document pill), OI worklist (pill meaning, filter,
+card proposal), PO and SPO popups (state, Allocated to), SPO document detail (SO covered), SCM PO
+detail (Qty received label, SPO column), Stock Debt (class d lines pin under Q4), CS reserve
+email ("received" wording under Q3). Mock v1 = OI Lines tab + worklist:
+`documentation/mockups/LINKAGE-UNIFY/index.html`.
+
+### 5a. Q4: is the AutoCount GR synced?
+
+Pending (read-only check of ingest code + dev data in progress).
 
 ## 6. Slicing (one lane per slice, in order)
 
@@ -211,9 +234,12 @@ Stock Debt (class d lines pin under Q4a), CS reserve email ("received" wording u
 |---|---|---|---|
 | U1 | `goods_chain.py` + Stock Debt calls it (move, no behaviour change); chain tests per class a..z | M (about 400 lines, no UI) | no |
 | U2 | received semantics (Q3, Q4, Q5 data side) across the OI received tests, reserve, planning change, Stock Debt | M | pill / email wording, Stock Debt class d |
-| U3 | OI display: SPO column every hop, chain label (Q1, Q2), Lines tab pill parity, worklist received stage | M (mock) | yes |
+| U3 | OI display: SPO column every hop with "Received <qty> at <bin>" (Q1), dead pills + filter (Q5), Lines tab pill parity, card proposal if approved; label unchanged (Q2) | M (mock) | yes |
 | U4 | popups, SPO document, SCM PO detail via `placements_on` | M (mock) | yes |
 | U5 | candidate walk netting + one key everywhere (step 5 and 6) | S | no (closes a double offer) |
 
-U1 first, alone: every later slice reads its output. U2 needs Q3-Q5; U3/U4 need Q1-Q2 plus an
-approved mock. No migration in any slice under the recommended answers.
+U1 first, alone: every later slice reads its output. U2 is ruled (Q3, Q5; Q4 waits on 5a);
+U3/U4 wait on an approved mock. No migration in any slice under the rulings, unless 5a needs a
+GR pull (then that pull is its own slice, U0, ahead of U2's Q4 part). Per the lane contract each
+slice runs tester (red tests from the UAC) -> coder -> reviewer, security-reviewer only if a GR
+pull adds an ingest surface.
