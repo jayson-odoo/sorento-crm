@@ -28,8 +28,8 @@ SAFETY
 ------
 `--apply` is required to write; the default prints the report and rolls back. The report
 names document number, DtlKey, product code, quantities and a row count, never a customer.
-One commit at the end of each kind. The SO retire queues the purchasing handover, which the
-post-commit listener sends exactly as it does for a removal pushed by the ingest.
+One commit at the end of each kind. The SO retire runs with `notify=False` (AC-RL-44): these
+removals are weeks old, so no purchasing handover email or other notification is sent.
 
 USAGE
 -----
@@ -259,7 +259,7 @@ def run(db, company_id: str, dry_run: bool = True) -> dict[str, Any]:
                 cores = db.query(SalesOrderLine).filter(
                     SalesOrderLine.id.in_([c["id"] for c in so])
                 ).all()
-                service.retire_rows_for_removed_so_lines(cores)
+                service.retire_rows_for_removed_so_lines(cores, notify=False)
                 db.commit()
         else:
             db.rollback()

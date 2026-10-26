@@ -5834,6 +5834,7 @@ class ProjectOrderInquiryService:
         *,
         actor_user_id: Optional[str] = None,
         reason: str = "Removed in AutoCount",
+        notify: bool = True,
     ) -> int:
         """AC-REMOVED-LINES (owner, 26 Oct 2026): a sales order line AutoCount REMOVED has its
         order inquiry rows retired exactly as CS's Transfer to Cancel SO retires them - the
@@ -5843,6 +5844,10 @@ class ProjectOrderInquiryService:
         board. The ONE sequence the ingest and `scripts/release_removed_autocount_lines.py`
         share. Handover lines are queued only for lines whose rows actually retired. Call
         before `flag_rows_for_cancelled_lines`, which then only meets actioned rows.
+
+        `notify=False` (AC-RL-44, the reconciliation script: weeks-old removals): whatever this
+        call queued for after the commit, the purchasing handover and the changed-with-links
+        notice, is dropped again, so it retires rows and sends nothing.
         """
         from app.services import project_line_draft_service
 
@@ -5850,6 +5855,8 @@ class ProjectOrderInquiryService:
         if not lines:
             return 0
         core_ids = [str(line.id) for line in lines]
+        queue_keys = (_HANDOVER_PENDING_KEY, _CHANGED_WITH_LINKS_PENDING_KEY)
+        queued_before = {key: len(self.db.info.get(key) or []) for key in queue_keys}
         project_line_draft_service.delete_drafts_for_lines(
             self.db,
             core_ids,
@@ -5858,6 +5865,11 @@ class ProjectOrderInquiryService:
         retired = self.retire_rows_for_cancelled_lines(
             [(cid, reason) for cid in core_ids], actor_user_id=actor_user_id
         )
+        if not notify:
+            for key in queue_keys:
+                if key in self.db.info:
+                    del self.db.info[key][queued_before[key]:]
+            return retired
         queued = {
             str(item.get("so_line_id"))
             for item in (self.db.info.get(_HANDOVER_PENDING_KEY) or [])
