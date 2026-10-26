@@ -88,8 +88,13 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
 ## Brand dealer group (owner 15:20)
 - U21 `brands.dealer_company_id` (nullable, FK companies): the company whose dealers get the brand. Migration seeds
   SORENTO, CABANA, ELLECI, WDI, NO LOGO -> Sorento Sdn Bhd; MOCHA, IBORN -> Mocha Sdn Bhd; the rest NULL. Brand
-  create / edit (master data) has a clearable "Dealer group" select of companies; the brand API accepts and returns
+  create / edit (master data dialog AND the brand detail page, view and edit) has a clearable "Dealer group" select of companies; the brand API accepts and returns
   `dealer_company_id` + `dealer_company_name`; an unknown or malformed company id is refused (422, no database text).
+
+- U19a [browser pass 26 Oct] The request runs under every company the caller is GRANTED (FE sends
+  `company_scope=grants`, `widen_if_requested`, `company_scope_resolver.py:401-438`), not only the active company:
+  a Sorento-active admin granted both companies previews and applies Mocha rows. A caller not granted a company
+  the sheet tags gets 422 naming it (never 500); the dialog shows any preview/apply error and stays on its step.
 
 ## Screen
 - U20 Contacts list > Actions > Import access sheet (shown with `user_management.contacts.edit`) opens a dialog:
