@@ -21,6 +21,18 @@ WHAT IT SELECTS (AC-RL-41)
   actioned row is only ever flagged, so selecting on it would never run dry).
 - SPO lines with `retired_at` set and a live OI link or an open claim.
 
+SPO LINES NEED AN ALLOW-LIST (AC-RL-45, owner via crew, 26 Oct 2026)
+---------------------------------------------------------------------
+The data cannot tell a removed SPO line from one dropped by a cancelled SPO push or a
+superseded DocKey, and a placement on a cancelled SPO stays placed. So `--apply` releases an
+SPO line ONLY when its DtlKey is passed with `--only` (repeatable or comma separated, SPO
+DtlKeys); without it no SPO line is released. The dry run lists every SPO candidate with its
+SPO number, DtlKey, item code, placed qty and the SO numbers of its links. A listed key that
+matches no retired SPO line is reported under `ignored_keys` and does nothing.
+
+Runbook: dry run -> crew checks each SPO line against AutoCount -> owner OK ->
+`--apply --only <keys>`.
+
 A second run finds nothing: every selector needs a link, an open claim or a live row, and the
 release removes exactly that.
 
@@ -34,7 +46,8 @@ removals are weeks old, so no purchasing handover email or other notification is
 USAGE
 -----
     venv/bin/python -m scripts.release_removed_autocount_lines --company <company id>
-    venv/bin/python -m scripts.release_removed_autocount_lines --company <company id> --apply
+    venv/bin/python -m scripts.release_removed_autocount_lines --company <company id> --apply \
+        --only <SPO DtlKey>[,<SPO DtlKey>...]
 """
 from __future__ import annotations
 
@@ -43,7 +56,7 @@ import logging
 import os
 import sys
 from decimal import Decimal
-from typing import Any
+from typing import Any, Sequence
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
@@ -144,6 +157,19 @@ def _po_candidates(db, company_id: str) -> list[dict[str, Any]]:
 def _spo_candidates(db, company_id: str) -> list[dict[str, Any]]:
     links = _links_by(db, OrderInquiryLink.spo_allocation_id)
     claims = _open_claim_ids(db, OrderLinkClaim.spo_allocation_id)
+    so_numbers: dict[str, set[str]] = {}
+    for alloc_id, so_number in (
+        db.query(OrderInquiryLink.spo_allocation_id, SalesOrder.so_number)
+        .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+        .join(ProjectSalesOrderLine, ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id)
+        .join(
+            SalesOrderLine,
+            SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+        )
+        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+        .filter(OrderInquiryLink.spo_allocation_id.isnot(None))
+    ):
+        so_numbers.setdefault(str(alloc_id), set()).add(so_number)
     lines = (
         db.query(SPOAllocation, Product.product_code)
         .outerjoin(Product, Product.id == SPOAllocation.product_id)
@@ -163,6 +189,7 @@ def _spo_candidates(db, company_id: str) -> list[dict[str, Any]]:
             {
                 "kind": "spo",
                 "id": str(alloc.id),
+                "so_numbers": sorted(so_numbers.get(str(alloc.id), ())),
                 "document": alloc.spo_number,
                 "dtl_key": _dtl_key(alloc.source_ref),
                 "product_code": code,
@@ -236,8 +263,13 @@ def _so_candidates(db, company_id: str) -> list[dict[str, Any]]:
     return found
 
 
-def run(db, company_id: str, dry_run: bool = True) -> dict[str, Any]:
+def run(
+    db, company_id: str, dry_run: bool = True, spo_dtl_keys: Sequence[str] = ()
+) -> dict[str, Any]:
     """The report for ONE company; with `dry_run=False` it also releases what it lists.
+
+    SPO lines are released only when their DtlKey is in `spo_dtl_keys` (AC-RL-45); a listed
+    key that matches no retired SPO line comes back under `ignored_keys`.
 
     `dry_run` defaults to `True` and a dry run ends with `db.rollback()`, so a caller that
     forgets the argument previews rather than writes.
@@ -247,13 +279,24 @@ def run(db, company_id: str, dry_run: bool = True) -> dict[str, Any]:
         po = _po_candidates(db, company_id)
         spo = _spo_candidates(db, company_id)
         so = _so_candidates(db, company_id)
+        wanted = {str(k).strip() for k in spo_dtl_keys if str(k).strip()}
+        spo_to_release = [c for c in spo if c["dtl_key"] in wanted]
+        retired_keys = {
+            _dtl_key(ref)
+            for (ref,) in db.query(SPOAllocation.source_ref).filter(
+                SPOAllocation.company_id == company_id, SPOAllocation.retired_at.isnot(None)
+            )
+        }
+        ignored = sorted(wanted - retired_keys)
         if not dry_run:
             service = ProjectOrderInquiryService(db)
             if po:
                 service.release_removed_lines(po_line_ids=[c["id"] for c in po])
                 db.commit()
-            if spo:
-                service.release_removed_lines(spo_allocation_ids=[c["id"] for c in spo])
+            if spo_to_release:
+                service.release_removed_lines(
+                    spo_allocation_ids=[c["id"] for c in spo_to_release]
+                )
                 db.commit()
             if so:
                 cores = db.query(SalesOrderLine).filter(
@@ -269,6 +312,7 @@ def run(db, company_id: str, dry_run: bool = True) -> dict[str, Any]:
         "so_lines": len(so),
         "spo_lines": len(spo),
         "rows_affected": sum(c["rows_affected"] for c in (*po, *so, *spo)),
+        "ignored_keys": ignored,
         "lines": lines,
     }
 
@@ -277,20 +321,31 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--company", required=True, help="Company id")
     parser.add_argument("--apply", action="store_true", help="Write; the default is a dry run")
+    parser.add_argument(
+        "--only",
+        action="append",
+        default=[],
+        help="SPO DtlKey to release (repeatable or comma separated); no SPO line is "
+        "released without it",
+    )
     args = parser.parse_args(argv)
+    spo_keys = [k for chunk in args.only for k in chunk.split(",") if k.strip()]
     dry_run = not args.apply
 
     logging.basicConfig(level=logging.INFO, format="%(message)s")
     db = SessionLocal()
     try:
         print(f"=== {'DRY-RUN (no writes)' if dry_run else 'APPLYING'} ===")
-        report = run(db, args.company, dry_run=dry_run)
+        report = run(db, args.company, dry_run=dry_run, spo_dtl_keys=spo_keys)
         for line in report["lines"]:
             print(
                 f"{line['kind'].upper()} {line['document']} dtl={line['dtl_key']} "
                 f"product={line['product_code']} line_qty={line['line_qty']} "
                 f"linked_qty={line['linked_qty']} rows={line['rows_affected']}"
+                + (f" so={','.join(line['so_numbers'])}" if line.get("so_numbers") else "")
             )
+        if report["ignored_keys"]:
+            print(f"ignored --only keys (no retired SPO line): {', '.join(report['ignored_keys'])}")
         print("\n=== summary ===")
         for key in ("po_lines", "so_lines", "spo_lines", "rows_affected"):
             print(f"{key}: {report[key]}")

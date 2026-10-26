@@ -5786,7 +5786,7 @@ class ProjectOrderInquiryService:
         reads `raised` / `partly linked` by the normal rules and an `actioned` one stays
         actioned. No `ack_state` change, no notification, no email: AutoCount's linkage is
         the source of truth, nobody is asked to confirm. Open `order_link_claim` rows on the
-        same ids are resolved. A reserve link names neither id, so it is never matched.
+        same ids are deleted. A reserve link names neither id, so it is never matched.
         Returns the number of rows that lost a link. In the caller's transaction.
         """
         po_ids = [str(i) for i in po_line_ids if i]
@@ -5818,14 +5818,24 @@ class ProjectOrderInquiryService:
             claim_conditions.append(OrderLinkClaim.po_line_id.in_(po_ids))
         if spo_ids:
             claim_conditions.append(OrderLinkClaim.spo_allocation_id.in_(spo_ids))
-        now = datetime.utcnow()
-        for claim in (
+        # DELETED, not stamped resolved: a resolved claim reads "matched to PO X" on the SO
+        # list, and the line no longer exists in AutoCount (AC-RL-04).
+        claims = (
             self.db.query(OrderLinkClaim)
             .filter(OrderLinkClaim.resolved_at.is_(None), or_(*claim_conditions))
             .all()
-        ):
-            claim.resolved_at = now
+        )
+        for claim in claims:
+            self.db.delete(claim)
         self.db.flush()
+        logger.info(
+            "release_removed_lines: %d row(s) released, %d claim(s) deleted, po_line_ids=%s "
+            "spo_allocation_ids=%s",
+            len(rows),
+            len(claims),
+            po_ids,
+            spo_ids,
+        )
         return len(rows)
 
     def retire_rows_for_removed_so_lines(
@@ -5863,7 +5873,9 @@ class ProjectOrderInquiryService:
             company_id=str(lines[0].company_id) if lines[0].company_id else None,
         )
         retired = self.retire_rows_for_cancelled_lines(
-            [(cid, reason) for cid in core_ids], actor_user_id=actor_user_id
+            [(cid, reason) for cid in core_ids],
+            actor_user_id=actor_user_id,
+            note_text=reason,
         )
         if not notify:
             for key in queue_keys:
@@ -5900,6 +5912,7 @@ class ProjectOrderInquiryService:
         cancelled: Sequence[Tuple[Any, str]],
         *,
         actor_user_id: Optional[str] = None,
+        note_text: Optional[str] = None,
     ) -> int:
         """SO-CANCEL-HANDOVER: CS transferred whole lines to Cancel SO, so each line's live
         still-owed rows (raised, partly linked or placed; ORDER / ORDER_BACK; not released to
@@ -5935,7 +5948,7 @@ class ProjectOrderInquiryService:
                 self._remove_links(row, links)
             row.state = INQUIRY_CANCELLED
             _record_cancel(self.db, row, "cancel_so", actor_user_id=actor_user_id)
-            stamp = f"Transferred to Cancel SO: {reason_by_core[str(core_id)]}"
+            stamp = note_text or f"Transferred to Cancel SO: {reason_by_core[str(core_id)]}"
             row.note = f"{row.note}; {stamp}" if row.note else stamp
             self._drop_suggested_links([row])
             self.db.flush()

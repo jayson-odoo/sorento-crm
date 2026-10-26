@@ -1669,7 +1669,9 @@ class DocumentIngestService(MasterRefResolver):
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
-        if removed_lines:
+        # AC-RL-07: a push carrying no lines at all (header-only, failed detail) releases
+        # nothing; the sweep above still runs as before.
+        if removed_lines and (line_values or dropped_refs):
             from app.services.project_order_inquiry_service import ProjectOrderInquiryService
 
             oi_service = ProjectOrderInquiryService(self.db)
