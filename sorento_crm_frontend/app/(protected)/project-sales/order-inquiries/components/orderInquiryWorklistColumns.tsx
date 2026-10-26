@@ -384,9 +384,7 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
     setOpen(true);
   };
   return (
-    // Round 5: a container, so the receipt pills hide behind one compact chip in a narrow
-    // cell while the number stays whole (`DocumentStatePills`).
-    <span className="@container flex w-full min-w-0 items-center gap-1">
+    <span className="flex w-full min-w-0 items-center gap-1">
       <DraftMark row={row} />
       <button
         type="button"
@@ -423,7 +421,6 @@ function DocumentsCell({ row, kind }: { row: OrderInquiryWorklistRow; kind: 'po'
         testIdPrefix="backing-documents"
         testIdSuffix={kind === 'spo' ? `spo-${row.id}` : row.id}
         onOpen={open_}
-        onShowAll={open_}
       />
       {/* S1b, AC-RL-24: a reallocate/unlink instruction (a received link never carries
           a suggestion). */}
@@ -1271,11 +1268,8 @@ export function useOrderInquiryWorklistColumns({
         // whole "Received 486 at BRW-BB" and "+1" side by side (and "awaiting shipment").
         // Round 7b: measured in the browser.
         size: 400,
-        // Round 4/6: a floor TanStack's `getSize()` clamps to (a saved or dragged width
-        // included): the number (124px), "via PO" (52) and the compact Received chip (66)
-        // with the draft mark, gaps and cell padding, so a narrow resize reaches the chip
-        // and never clips the number.
-        minSize: 296,
+        // Round 9 (owner): no `minSize`, so the column shrinks like the PO column; the pill
+        // ellipsizes and the number stays whole.
         meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => {
           // A bundled row's documents are the anchor's, and the PO cell already says so

@@ -136,16 +136,10 @@ function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' 
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverAnchor asChild>
-        {/* A container, so the receipt pills hide behind one compact chip in a narrow
-            cell while the number stays whole (`DocumentStatePills`). */}
-        <span className="@container flex w-full min-w-0 items-center gap-1">
+        <span className="flex w-full min-w-0 items-center gap-1">
           <DocumentCell
             chip={first}
             kind={kind}
-            onShowAll={(event) => {
-              event.stopPropagation();
-              setOpen(true);
-            }}
           />
           {rest.length > 0 ? (
             <PopoverTrigger asChild>
@@ -183,15 +177,12 @@ function DocumentCell({
   chip,
   kind,
   showLine = false,
-  onShowAll,
 }: {
   chip: DocumentEntry;
   kind: 'po' | 'spo';
   /** Name the line (`L7`) beside the number - the "+N" list, where lines of one
    * document sit side by side. */
   showLine?: boolean;
-  /** What the narrow-cell receipt chip opens: the cell's own "+N" list. */
-  onShowAll?: (event: React.MouseEvent) => void;
 }) {
   // LINKAGE-UNIFY U3 round 2: the receipt pill opens the same document the number does,
   // as the worklist's own receipt pill opens its lightbox.
@@ -236,7 +227,6 @@ function DocumentCell({
           event.stopPropagation();
           setDocumentOpen(true);
         }}
-        onShowAll={onShowAll}
       />
       {documentOpen ? (
         <OrderInquiryDocumentDialog
@@ -802,11 +792,8 @@ export function useOrderInquiryHeaderLinesColumns({
         // and "+1" side by side at 1280 (this table's number is wider than the worklist's).
         // Round 7b: measured in the browser.
         size: 420,
-        // Round 4/6: a floor TanStack's `getSize()` clamps to. The old 170 default is saved
-        // in some users' column preferences for this listing key; it lifts to this. Fits
-        // the number (143px), "via PO" (52) and the compact Received chip (66) with gaps
-        // and cell padding, so a narrow resize reaches the chip.
-        minSize: 300,
+        // Round 9 (owner): no `minSize`, so the column shrinks like the PO column; the pill
+        // ellipsizes and the number stays whole.
         meta: { headerTitle: 'SPO' },
         cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="spo" />,
       },
