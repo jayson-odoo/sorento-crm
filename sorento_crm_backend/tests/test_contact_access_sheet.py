@@ -931,22 +931,24 @@ def test_u16_one_audit_row_per_changed_contact_none_for_unchanged(client, db, w,
 
     # get_current_user stamps the actor in production; the test client overrides it.
     audit_context.stamp_actor(audit_context.AuditActor(actor_type="user", user_id=actor), db=db)
-    _dealer(db, w, companies=("SRT",))
-    c1, c2 = _contact(db, w, 1), _contact(db, w, 2)
-    tags = _tags(DEALER, ["SRT"], OWNER)
-    _apply_all(client, _sheet([("ZZT Ann", "+60100000001", tags)]))
-    assert len(_audits(db, w, c1)) == 1 and _audits(db, w, c2) == []
-    _, result = _apply_all(
-        client, _sheet([("ZZT Ann", "+60100000001", tags), ("ZZT Bob", "+60100000002", tags)])
-    )
-    by = _by_name(result)
-    assert by["ZZT Ann"]["status"] == "no_change" and by["ZZT Bob"]["status"] == "applied"
-    assert len(_audits(db, w, c1)) == 1, "no audit row for an unchanged contact"
-    (row,) = _audits(db, w, c2)
-    assert row.entity_id == c2
-    assert str(row.user_id) == actor
-    assert row.new_values, "before/after per facet are recorded"
-    audit_context.clear_actor(db)
+    try:
+        _dealer(db, w, companies=("SRT",))
+        c1, c2 = _contact(db, w, 1), _contact(db, w, 2)
+        tags = _tags(DEALER, ["SRT"], OWNER)
+        _apply_all(client, _sheet([("ZZT Ann", "+60100000001", tags)]))
+        assert len(_audits(db, w, c1)) == 1 and _audits(db, w, c2) == []
+        _, result = _apply_all(
+            client, _sheet([("ZZT Ann", "+60100000001", tags), ("ZZT Bob", "+60100000002", tags)])
+        )
+        by = _by_name(result)
+        assert by["ZZT Ann"]["status"] == "no_change" and by["ZZT Bob"]["status"] == "applied"
+        assert len(_audits(db, w, c1)) == 1, "no audit row for an unchanged contact"
+        (row,) = _audits(db, w, c2)
+        assert row.entity_id == c2
+        assert str(row.user_id) == actor
+        assert row.new_values, "before/after per facet are recorded"
+    finally:
+        audit_context.clear_actor(db)
 
 
 def test_u17_same_sheet_again_is_zero_applied_and_every_contact_no_change(client, db, w):
@@ -1100,8 +1102,8 @@ def test_u8_every_account_tag_form_is_dropped_so_all_accounts_are_exact(client, 
     assert _exact(body, KEY) == ids
 
 
-@pytest.mark.parametrize("bases, dropped", [(10, True), (9, False)])
-def test_u8_a_bracket_text_is_a_tag_only_on_ten_or_more_base_names(client, db, w, bases, dropped):
+@pytest.mark.parametrize("bases, dropped", [(8, True), (7, False)])
+def test_u8_a_bracket_text_is_a_tag_only_on_eight_or_more_base_names(client, db, w, bases, dropped):
     # the dealer's own account is one of the `bases` base names carrying the bracket text
     _tag_fillers(db, w, tags=["ZZ ODD TAG"], bases=bases - 1)
     own = _cust(db, w, w.srt, "NINE BASE TILES SDN BHD [ZZ ODD TAG]")
@@ -1291,3 +1293,56 @@ def test_u19a_a_user_granted_srt_only_gets_422_naming_mocha_not_500(client, db, 
         assert "MCH" in resp.text or "Mocha" in resp.text
     assert _state(db, w, cid) == before
     assert _audits(db, w) == []
+
+
+# ================================================================ ROUND 3: U8 suffix-only segment, U13 already_configured, apply never ranks
+
+
+def test_u8_a_suffix_only_bracket_is_always_dropped_even_when_rare(client, db, w):
+    _tag_fillers(db, w, tags=["A/C I"])
+    acct = _cust(db, w, w.srt, "ALPHA BATH (M) SDN BHD [A/C I]")  # "(M)" sits on this one base name only
+    _contact(db, w, 1)
+    body = _preview_for(client, DEALER)
+    assert acct in _exact(body, KEY)
+
+
+def test_u13_already_configured_counts_found_contacts_holding_any_type_or_link(client, db, w):
+    from app.models.access import RespondContactCustomer
+
+    cust = _cust(db, w, w.srt, DEALER)
+    typed = _contact(db, w, 1, types=_types(db, "end_user"))
+    linked = _contact(db, w, 2)
+    _contact(db, w, 3)
+    set_company_scope(db, w.all)
+    db.add(RespondContactCustomer(contact_id=linked, customer_id=cust, company_id=w.srt, source="manual"))
+    db.commit()
+    tags = _tags(DEALER, ["SRT"], OWNER)
+    content = _sheet(
+        [("ZZT Ann", "+60100000001", tags), ("ZZT Bob", "+60100000002", tags), ("ZZT Cy", "+60100000003", tags)]
+    )
+    body = _post(client, content).json()
+    assert body["counts"]["contacts_found"] == 3
+    assert body["counts"]["already_configured"] == 2
+    assert typed and linked
+
+
+def test_u13_apply_never_ranks_and_reports_a_non_exact_block_as_pick(client, db, w, monkeypatch):
+    from app.services import contact_access_sheet_service as svc
+
+    exact_srt = _cust(db, w, w.srt, DEALER)
+    for suffix in ("S", "E", "X"):
+        _cust(db, w, w.mch, f"ALPHA BATH{suffix} SDN BHD")  # similar MCH names: the preview ranks these
+    cid = _contact(db, w, 1)
+    content = _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT", "MCH"], OWNER))])
+    pre = _post(client, content).json()
+    assert _block(pre)["status"] == "pick"
+
+    class NoRanking:
+        def __init__(self, *a, **kw):
+            raise AssertionError("apply must not rank candidates")
+
+    monkeypatch.setattr(svc, "SequenceMatcher", NoRanking)
+    resp = _post(client, content, dry_run=False, confirmed={KEY: [exact_srt]})
+    assert resp.status_code == 200, resp.text
+    assert _block(resp.json())["status"] == "pick"
+    assert [l[0] for l in _state(db, w, cid)["links"]] == [exact_srt]

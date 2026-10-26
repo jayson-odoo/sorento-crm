@@ -233,4 +233,34 @@ describe('AccessSheetImportDialog', () => {
     expect(screen.getByRole('button', { name: /apply access/i })).toBeInTheDocument();
     expect(screen.queryByText(/Import finished/i)).toBeNull();
   });
+
+  it('U11: ticking a candidate in a pick block confirms the block and Apply sends it; unticking un-confirms', async () => {
+    renderDialog();
+    await toPreview();
+    const header = () => screen.getAllByText('BETA TILES SDN BHD')[0];
+    if (!screen.queryByRole('checkbox', { name: /link 300-b1/i })) fireEvent.click(header());
+    const confirmBox = () => screen.getByRole('checkbox', { name: /confirm beta tiles/i });
+    expect(confirmBox()).toHaveAttribute('aria-checked', 'false');
+
+    fireEvent.click(await screen.findByRole('checkbox', { name: /link 300-b1/i }));
+    await waitFor(() => expect(confirmBox()).toHaveAttribute('aria-checked', 'true'));
+    fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
+    await waitFor(() => expect(svc.applyAccessSheet).toHaveBeenCalledTimes(1));
+    expect(svc.applyAccessSheet).toHaveBeenLastCalledWith(file, { 'beta tiles': ['b1'] });
+  });
+
+  it('U11: unticking the last account of a pick block un-confirms it and Apply omits the block', async () => {
+    renderDialog();
+    await toPreview();
+    const header = () => screen.getAllByText('BETA TILES SDN BHD')[0];
+    if (!screen.queryByRole('checkbox', { name: /link 300-b1/i })) fireEvent.click(header());
+    const link = await screen.findByRole('checkbox', { name: /link 300-b1/i });
+    fireEvent.click(link);
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: /confirm beta tiles/i })).toHaveAttribute('aria-checked', 'true'));
+    fireEvent.click(screen.getByRole('checkbox', { name: /link 300-b1/i }));
+    await waitFor(() => expect(screen.getByRole('checkbox', { name: /confirm beta tiles/i })).toHaveAttribute('aria-checked', 'false'));
+    fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
+    await waitFor(() => expect(svc.applyAccessSheet).toHaveBeenCalledTimes(1));
+    expect(svc.applyAccessSheet).toHaveBeenLastCalledWith(file, {});
+  });
 });
