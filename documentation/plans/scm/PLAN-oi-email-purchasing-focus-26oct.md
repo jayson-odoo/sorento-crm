@@ -1,6 +1,6 @@
 # PLAN: OI purchasing email + Excel show only what purchasing must act on
 
-Status: Build (owner answered the card 26 Oct ~13:05; red tests landed). Track: small fix (no
+Status: Build done, under review (owner answered the card 26 Oct ~13:05). Track: small fix (no
 migration, no auth/RBAC, no new ingest).
 
 ## 0. Owner rulings, 26 Oct 2026 ~13:05 MYT
@@ -117,7 +117,25 @@ Edge cases:
   change. Recommend (a): simplest, and the email has no PO either; (b) needs a PO lookup per
   saved line.
 
-## 4. Build (after answers)
+## 4. Build (as built)
+
+- `purchasing_remark` / `_PURCHASING_KEYS` (S, beside `saved_line_remark`): a saved line's
+  email REMARK keeps only ORDER / ORDER BACK parts. `_queue_saved_line` returns without a line
+  when there is none and nothing purchasing held is taken back.
+- Q4: `CHANGED: <before parts> -> <now parts>` only where stock replaced the order
+  (`_stock_qty(now) > _stock_qty(before)`); other take-backs (a redirect, two rows folded, Buy
+  turned Order back) keep today's `CANCEL ORDER n`.
+- Planner's own REMARK on a line purchasing holds nothing for: not sent (`record_saved_lines`).
+- `handover_xlsx(lines)` (W) writes the email's own `handover.lines` under `HANDOVER_HEADINGS`
+  (change columns NEW ITEM CODE / NEW QTY / NEW DATE, the email's own words, only when a line
+  has one); `store_handover_excel` stores it for Confirm and resend alike. The OI list export and
+  the planning-board worksheet are untouched.
+- `scripts/compare_oi_handover_email_excel.py <SO>`: the hand-test check, read-only.
+
+Column words: the email's change columns read NEW ITEM CODE / NEW QTY / NEW DATE (oihr_0006 to
+0010), so the Excel uses those words rather than "QTY CHANGE TO".
+
+## 4a. Original build sketch
 
 - `_build_handover_context` / `_queue_saved_line`: drop USE / USE_OWN parts per rule 2 + answers.
 - New `handover_excel_bytes(context)` in W (or a small module) writing `handover.lines` with the

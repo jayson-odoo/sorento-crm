@@ -221,3 +221,55 @@ def test_a_cancel_all_excel_lists_the_cancelled_lines_the_email_lists(api, sent)
     _headings, body = _sheet(context, uploads)
     assert _excel_rows(body) == _email_rows(context)
     assert len(body) == 2, body
+
+
+# ------------------------------------------- the hand-test script reads both the same way
+
+
+def _render_current(lines):
+    """The handover template as a real database holds it now (`oihr_0006` seeded, then every
+    later layout migration), rendered for these lines."""
+    from app.services.email_template_service import EmailTemplateService
+
+    from ._pg_fixture import blank_session
+    from .test_oi_saved_line_email import _context, _migration
+    from .test_order_inquiry_handover_automation import _run_upgrade
+    from app.models.email_template import EmailTemplate
+
+    with blank_session() as db:
+        for name in (
+            "oihr_0006_no_remark_column", "oihr_0007_excel_remark", "oihr_0008_so_table_on_top",
+            "oihr_0009_split_rows", "oihr_0010_so_remark_column",
+        ):
+            _run_upgrade(_migration(name), db)
+        template = (
+            db.query(EmailTemplate)
+            .filter(EmailTemplate.code == "order_inquiry_handover_default")
+            .one()
+        )
+        return EmailTemplateService(db).render(template, _context(lines))
+
+
+def test_the_compare_script_reads_the_rendered_email_and_the_excel_as_the_same_rows():
+    from scripts.compare_oi_handover_email_excel import email_rows, excel_rows
+
+    from app.services.order_inquiry_worklist_service import handover_xlsx
+
+    from .test_oi_saved_line_email import _line
+
+    lines = [
+        _line(),
+        _line(item_code="ZZT-B", qty="8", was={"qty": "10", "delivery_date": "01/11/2026"},
+              remark="DELAY, CANCEL 2"),
+        _line(item_code="ZZT-NEW", was={"item_code": "ZZT-OLD"}, remark="NEW ITEM CODE"),
+        _line(item_code="ZZT-C", qty="0", was={"qty": "6"}, remark="CANCEL"),
+    ]
+    rendered = _render_current(lines)
+
+    head, emailed = email_rows(rendered["body_html"])
+    sheet_head, sheet = excel_rows(handover_xlsx(lines), head)
+
+    assert {"NEW ITEM CODE", "NEW QTY", "NEW DATE"} <= set(head), head
+    assert {"NEW ITEM CODE", "NEW QTY", "NEW DATE"} <= set(sheet_head), sheet_head
+    assert len(emailed) == 4, emailed
+    assert emailed == sheet
