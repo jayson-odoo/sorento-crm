@@ -62,7 +62,9 @@ class _Contact:
         if contact_id:
             from app.services.stock_visibility import resolve_policy, scope_warehouse_ids
 
-            policy = resolve_policy(db, contact_id, space_id)
+            # The id `resolve_request_contact` already resolved (NULL-workspace fallback
+            # included), so a contact this route admits is not read as nobody here.
+            policy = resolve_policy(db, self.resolved) if self.resolved else None
             self.warehouse_scope = [] if policy is None else scope_warehouse_ids(db, policy)
 
     def eta_from(self, db: Session, eta_from: Optional[date]) -> Optional[date]:

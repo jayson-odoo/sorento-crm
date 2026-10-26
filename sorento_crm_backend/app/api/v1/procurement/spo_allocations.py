@@ -109,9 +109,12 @@ async def get_spo_last_receipt(
         policy = None
         nothing_visible = False
         if contact_id:
+            from app.services.eta_policy import resolve_request_contact
             from app.services.stock_visibility import resolve_policy, scope_warehouse_ids
 
-            policy = resolve_policy(db, contact_id, space_id)
+            # Resolved once through the NULL-workspace fallback the chatbot admits a contact by.
+            resolved_contact = resolve_request_contact(db, contact_id, space_id)
+            policy = resolve_policy(db, resolved_contact) if resolved_contact else None
             scope = scope_warehouse_ids(db, policy) if policy is not None else []
             if scope is not None:
                 allowed = set(scope)

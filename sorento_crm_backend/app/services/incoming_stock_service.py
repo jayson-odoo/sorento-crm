@@ -315,6 +315,17 @@ class IncomingStockService:
             _outstanding_expr() > 0,
         )
 
+    def _shipment_in_scope_clause(self):
+        """Filter clause: the shipment has a still-incoming line a scoped contact may be told
+        about (what `/list` would return it for). `true()` when unscoped."""
+        if self.warehouse_scope is None:
+            return true()
+        return exists().where(
+            InboundShipmentLine.shipment_id == InboundShipment.id,
+            _still_incoming_filter(),
+            self._line_in_scope_clause(),
+        )
+
     @staticmethod
     def _scoped_takes(
         rows: list[Any], outstanding_map: dict[tuple[str, str], list[dict[str, Any]]]
@@ -1235,7 +1246,11 @@ class IncomingStockService:
                 "bill_of_lading_number",
                 "invoice_number",
             ),
-            extra_filters=(_not_draft_shipment_filter(), _region_filter(self.regions)),
+            extra_filters=(
+                _not_draft_shipment_filter(),
+                _region_filter(self.regions),
+                self._shipment_in_scope_clause(),
+            ),
         )
         if resolved is None or not resolved:
             return None
@@ -1246,6 +1261,7 @@ class IncomingStockService:
                 InboundShipment.id.in_(resolved),
                 _not_draft_shipment_filter(),
                 _region_filter(self.regions),
+                self._shipment_in_scope_clause(),
             )
             .first()
         )

@@ -32,7 +32,7 @@ from tests.test_incoming_region_filter import (  # noqa: F401 - fixtures
     client,
     db,
 )
-from tests.test_stock_availability_block import _incoming_line, _incoming_shipment, _wh
+from tests.test_stock_availability_block import _attachment, _incoming_line, _incoming_shipment, _wh
 
 BASE = "/api/v1/incoming-stock"
 
@@ -393,3 +393,25 @@ def test_null_workspace_contact_is_scoped_on_its_own_policy_not_read_as_nobody(c
     )
     (line,) = body["data"][0]["lines"]
     assert _codes(line["warehouse_allocations"]) == {w.brw.warehouse_code: 30}
+
+
+# --------------------------------------------------------------------- packing list (attachment)
+
+
+def test_attachment_of_a_shipment_with_no_in_scope_line_is_empty(client, db):
+    """K2 is allocated to BRW-NTC only, which the contact may not see: `/list` hides it, so
+    its packing list is not handed out either."""
+    w = World(db)
+    w.k2.attachment_id = _attachment(db).id
+    db.flush()
+    _, body = _get(client, f"/shipments/{w.k2.id}/attachment", contact_id=w.contact.id)
+    assert body["empty"] is True and body["data"] is None
+
+
+def test_attachment_of_a_shipment_with_an_in_scope_line_is_returned(client, db):
+    w = World(db)
+    w.k1.attachment_id = _attachment(db).id
+    db.flush()
+    _, body = _get(client, f"/shipments/{w.k1.id}/attachment", contact_id=w.contact.id)
+    assert body["empty"] is False
+    assert body["data"]["attachment"]["filename"] == "packing-list.pdf"
