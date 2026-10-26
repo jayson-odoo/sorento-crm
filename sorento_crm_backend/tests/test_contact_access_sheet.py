@@ -927,6 +927,10 @@ def test_u14_a_failure_mid_apply_rolls_back_every_contact(db, w, env, actor, mon
 
 
 def test_u16_one_audit_row_per_changed_contact_none_for_unchanged(client, db, w, actor):
+    from app import audit_context
+
+    # get_current_user stamps the actor in production; the test client overrides it.
+    audit_context.stamp_actor(audit_context.AuditActor(actor_type="user", user_id=actor), db=db)
     _dealer(db, w, companies=("SRT",))
     c1, c2 = _contact(db, w, 1), _contact(db, w, 2)
     tags = _tags(DEALER, ["SRT"], OWNER)
@@ -942,6 +946,7 @@ def test_u16_one_audit_row_per_changed_contact_none_for_unchanged(client, db, w,
     assert row.entity_id == c2
     assert str(row.user_id) == actor
     assert row.new_values, "before/after per facet are recorded"
+    audit_context.clear_actor(db)
 
 
 def test_u17_same_sheet_again_is_zero_applied_and_every_contact_no_change(client, db, w):
