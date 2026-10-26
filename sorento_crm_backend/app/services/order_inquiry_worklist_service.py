@@ -3498,10 +3498,10 @@ class OrderInquiryWorklistService:
         """The filtered set as their own workbook, on ONE sheet.
 
         Owner, 16 Oct 2026: "our OI excel cannot split by month, this applies to all
-        places where OI excel is printed" - the list export, the export tasks and the
-        handover attachment (Confirm and resend, `store_handover_excel`) all print
-        through here, so every delivery month and the undated rows share one
-        sheet.
+        places where OI excel is printed" - the list export and the export tasks print
+        through here, so every delivery month and the undated rows share one sheet. The
+        handover attachment is one sheet too, written from the email's own lines instead
+        (`handover_xlsx`, OI-EMAIL-PURCHASING-FOCUS).
         A row with no date is still an instruction and is never dropped from the file.
 
         Within the sheet the rows go SUPPLIER then ITEM CODE then delivery date, which is

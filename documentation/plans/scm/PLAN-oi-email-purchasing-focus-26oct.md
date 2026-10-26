@@ -19,7 +19,17 @@ so need to mention change from buy to use own location, 5a".
   `USE <loc>, CANCEL ORDER n` (S:5193-5200, pinned by `test_a_buy_replaced_by_stock_says_to_
   take_the_order_back`), which purchasing reads as a customer cancel. New wording:
   `CHANGED: ORDER 10 -> USE BRW-BB 10` (each side's parts with their quantities).
-- Q5 (a): exactly rule 4's columns.
+- Q5 (a): exactly rule 4's columns, in the owner's words QTY CHANGE TO / DELIVERY DATE CHANGE TO
+  (crew audit 26 Oct: not the email's NEW QTY / NEW DATE).
+- SO400236 shape (owner, 26 Oct ~13:52, verbatim): "not if the decision stay at use own location,
+  if it changes to buy then yeah purchasing need to know". A line whose Buy's goods arrived and
+  now reads Use own location sends nothing on later date / qty moves; turned back to Buy, it
+  reads ORDER like any Buy.
+- Crew audit 26 Oct (owner's Q4 principle applied everywhere): never "CANCEL ORDER". Any
+  take-back of something purchasing held reads `CHANGED: <before parts> -> <now parts>` (a Buy
+  to stock, with or without a qty move; a redirect; two rows folded; Buy to Order back), except
+  a customer cut of the same decision, which reads `CANCEL n`. The board's "email words"
+  preview shows the same words the email will.
 
 Lane: OI-EMAIL-PURCHASING-FOCUS. Owner ask 26 Oct 2026 ~12:45 MYT. Supersedes the "every saved
 decision is listed" part of the 13 Oct 22:40 ruling (`saved_line_remark` docstring).
@@ -65,9 +75,10 @@ Rules:
    `_build_handover_context` returns), never from an OI query. Same rows, same order, same
    values. Confirm and resend both go through `build_handover_email` already, so both get it.
 2. A line is sent to purchasing only when it carries something purchasing acts on: ORDER, ORDER
-   BACK (Buy order back, and Borrow `ORDER BACK <donor>`), LOCAL BUY, CANCEL (Cancel SO), CANCEL
-   ORDER n (an order purchasing held is taken back), or a qty / date / item-code change to a line
-   purchasing held something for. A line whose decision is only "Use own location" (`USE <loc>`)
+   BACK (Buy order back, and Borrow `ORDER BACK <donor>`), CANCEL (Cancel SO), a CHANGED take-back
+   of an order purchasing held, or a qty / date / item-code change to a line purchasing holds
+   something for. (Superseded in the card's first draft: LOCAL BUY is NOT sent, and "CANCEL ORDER
+   n" is never written; see section 0.) A line whose decision is only "Use own location" (`USE <loc>`)
    or "Use BRW" (`USE BRW`) is not sent, and neither are its date/qty moves.
 3. A Confirm whose lines are all filtered out by rule 2 sends no email (unchanged rule: notify
    only when there is an action).
@@ -90,8 +101,8 @@ Examples (shapes from code, values masked):
 
 Edge cases:
 
-- Line was Buy, now Use own location: purchasing held an order, so it is sent as `CANCEL ORDER n`
-  (Q4).
+- Line was Buy, now Use own location: purchasing held an order, so it is sent as
+  `CHANGED: ORDER n -> USE <own loc> n` (Q4 as ruled; the draft's `CANCEL ORDER n` is superseded).
 - Line was Use own location, now Buy: sent as ORDER (a fresh instruction, no "was").
 - Split lines (`_tell_splits`): each printed split row is an email line, so it is an Excel row;
   a split whose only part is a USE reserve follows rule 2.
@@ -122,18 +133,23 @@ Edge cases:
 - `purchasing_remark` / `_PURCHASING_KEYS` (S, beside `saved_line_remark`): a saved line's
   email REMARK keeps only ORDER / ORDER BACK parts. `_queue_saved_line` returns without a line
   when there is none and nothing purchasing held is taken back.
-- Q4: `CHANGED: <before parts> -> <now parts>` only where stock replaced the order
-  (`_stock_qty(now) > _stock_qty(before)`); other take-backs (a redirect, two rows folded, Buy
-  turned Order back) keep today's `CANCEL ORDER n`.
+- Q4 + crew audit: `CHANGED: <before parts> -> <now parts>` for every take-back that is not a
+  customer cut (`customer_cut` in `_queue_saved_line`); a customer cut reads `CANCEL n`; the
+  CHANGED line's headline key is `CHANGED`.
+- `forget_rows_told_for_saved_lines`: a stock-only saved line (no line of its own) keeps its
+  CANCEL BALANCE notice (lane review S3).
+- `saved_draft_remark(..., before=row.decision)`: the board preview is the email's words.
 - Planner's own REMARK on a line purchasing holds nothing for: not sent (`record_saved_lines`).
 - `handover_xlsx(lines)` (W) writes the email's own `handover.lines` under `HANDOVER_HEADINGS`
-  (change columns NEW ITEM CODE / NEW QTY / NEW DATE, the email's own words, only when a line
-  has one); `store_handover_excel` stores it for Confirm and resend alike. The OI list export and
+  (change columns NEW ITEM CODE / QTY CHANGE TO / DELIVERY DATE CHANGE TO, only when a line has
+  one; a split line's continued rows blank LOCATION / ITEM CODE / QTY / DELIVERY DATE as the
+  email does); `store_handover_excel` stores it for Confirm and resend alike. The OI list export and
   the planning-board worksheet are untouched.
 - `scripts/compare_oi_handover_email_excel.py <SO>`: the hand-test check, read-only.
 
-Column words: the email's change columns read NEW ITEM CODE / NEW QTY / NEW DATE (oihr_0006 to
-0010), so the Excel uses those words rather than "QTY CHANGE TO".
+Column words: the email's change columns read NEW QTY / NEW DATE (oihr_0006 to 0010); the Excel
+uses the owner's QTY CHANGE TO / DELIVERY DATE CHANGE TO (crew audit). The compare script maps
+one to the other.
 
 ## 4a. Original build sketch
 
