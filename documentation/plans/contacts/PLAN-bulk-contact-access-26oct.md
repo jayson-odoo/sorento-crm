@@ -1,6 +1,6 @@
 # PLAN: upload a dealer-contact sheet, bulk-configure each contact's access (BULK-CONTACT-ACCESS)
 
-Status: Phase 1 - behaviour card filed to crew 26 Oct (CARD-bulk-contact-access-26oct.md), waiting on owner answers; mock next. No code yet. Track: L (new upload flow, bulk writes to contact
+Status: Phase 1 - card + mock v1 filed to crew 26 Oct, waiting on owner answers (Q1-Q5) and mock approval. No code yet. Track: L (new upload flow, bulk writes to contact
 access settings, customer linking). LEAD pattern. UAC: `bulk-contact-access-26oct-acceptance-criteria.md`
 (written after the owner answers the card).
 
@@ -27,11 +27,46 @@ Respond.io contact export (CSV): First Name, Phone Number, Tags (+ empty Respond
 - Missing today: an in-app upload; the Respond CSV `Tags` parser; per-brand sales agent; packing list off;
   promotion rule per role (to verify).
 
-## Shape (draft, settles after the card answers)
-Upload -> server-side preview (no writes) -> admin confirms per dealer company (bulk-confirm exact matches) ->
-apply in one transaction -> result report + one audit row per changed contact. Re-upload is idempotent.
-Engine lifted from `contact_bulk_setup.py` into a service the script and the endpoint both call (one copy).
+## Shape
+Upload -> server-side preview (no writes) -> admin confirms per dealer (bulk-confirm exact) -> apply in ONE
+transaction -> result report + one audit row per changed contact. Re-upload is idempotent. Card section 4.
 
-## Tickets (draft)
-T0 card + mock (lead) -> T1 red tests (tester) -> T2 service + endpoints (coder) -> T3 FE upload/preview (coder)
--> reviewer + security-reviewer + browser pass -> hand test.
+## Architecture
+Layer: backend service + one endpoint; FE dialog through hook -> feature service -> `lib/api-client`.
+Shared mechanism (one copy, no second matcher, no second planner):
+- `app/services/contact_bulk_setup_engine.py` (new, moved not rewritten): `normalise_name`, `_merge_flags`,
+  `_find_contacts`, `_resolve_world`, `_plan_contact`, `_apply_contact` leave `scripts/contact_bulk_setup.py`,
+  which re-imports them (its CLI, Excel parser, `from_sheet` stay). Its tests
+  (`tests/test_contact_bulk_setup_script.py`, `tests/test_contact_bulk_setup_from_sheet.py`) stay green unchanged.
+  The engine keeps taking `rules`; the script keeps its 4 Oct `RULES`. Engine gains only what the 26 Oct
+  template needs: a list of owner types per company (Q2 cabana_dealer) and a brands facet (NULL -> template set;
+  a set list -> union with the template).
+- `app/services/contact_access_sheet_service.py` (new): `TEMPLATE` (the 26 Oct rules: card section 3),
+  `parse_respond_csv(bytes)`, `plan(db, rows, actor_id)` (contacts, dealer blocks, candidates, per-contact
+  changes, warnings), `apply(db, rows, confirmed, actor_id)` (re-plan, validate confirmed ids, write, audit
+  `contact.access_sheet`, one transaction).
+- Endpoint `POST /api/v1/user-management/contacts/access-sheet` (multipart `file`, `confirmed` JSON form field
+  `{dealer_key: [customer_id]}`, `dry_run` default true), `require_permission("user_management.contacts.edit")`,
+  facets via `contact_access_copy_service.facets_to_skip`. Mirrors `POST /sales/targets/import`
+  (`app/api/v1/sales/targets.py:163`). File cap 2 MB, row cap 2000.
+- FE: `user-management/contacts/components/AccessSheetImportDialog.tsx` (steps as `BulkCopyAccessDialog.tsx`,
+  drop zone as `DealerTargetImportDialog.tsx`), `hooks/useAccessSheetImport.ts`,
+  `services/contactAccessSheetService.ts`. Entry: Actions menu item via `secondaryActions` +
+  `secondaryActionsAsMenu` (`components/ui/data-grid-list-toolbar.tsx:207-209`) in `ContactsList.tsx`, shown with
+  `user_management.contacts.edit`. Result step "Download result" = CSV built in the browser from the result JSON
+  (cells starting with = + - @ escaped).
+Classes fixed (not one shape): any brand-company combination of the row; any role word; dealer text and alt texts;
+any number of accounts per company; any prior access on the contact (add-only).
+
+## Tests (tester writes first; fake names/phones)
+Backend `tests/test_contact_access_sheet.py` on `tests/_pg_fixture.py`: U1-U3 parse + phone, U4-U6 template x 6,
+U7 add-only + warnings, U8 exact fan-out (merge survivor / held excluded), U9 pick/none + unconfirmed skipped,
+U10 untagged company unticked, U12 inactive unticked + agent never written, U13 dry run writes nothing, U14
+rollback on error, U16 audit rows, U17 re-run = 0 changes, U18 facets skipped per permission, U19 out-of-scope
+customer 422, endpoint 403 without `contacts.edit`. Regression: the two script test files above.
+FE vitest: dialog steps, Confirm all exact ticks exact dealers only, unconfirmed dealer counted skipped, apply
+posts file + confirmed ids.
+
+## Tickets
+T0 card + mock (lead, done) -> T1 red tests (tester) -> T2 engine move + service + endpoint (coder) -> T3 FE
+dialog (coder, same instance) -> reviewer + security-reviewer + browser pass (crew test copy) -> hand test.
