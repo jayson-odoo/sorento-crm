@@ -37,9 +37,18 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
   than its template (types, companies or locations outside it) gets warning `holds_more`.
 
 ## Customer accounts
-- U8 Dealer block key = `normalise_name(dealer text)` (`scripts/contact_bulk_setup.py:563`); rows whose dealer
-  texts normalise equal share one block. Exact account = a customer of ANY company whose normalised name equals the
-  block's dealer text or an alt text, merge survivor and not held (`_merge_flags`, line 582).
+- U8 [crew audit 26 Oct] Name key (sheet dealer text and every customer name alike): split the name into its
+  bracket texts (`[..]`, `(..)`) and its ` - ` segments; a segment is an ACCOUNT TAG when its text (letters and
+  digits only, case-folded) appears on customers of at least 10 different base names in the caller's scope (data,
+  not a list: measured on the 20 Oct copy, the smallest tag is MALAYSIA at 10 bases - A/C I-IV, CERAMIC, IBORN,
+  PROJECT(-CASH), SRT, BRAVAT, SHOWCASE, M - and the largest place is SEMENYIH at 5); tags are dropped, every
+  other segment stays in the name (a branch such as `(Jln Ipoh)`, `(JB)`, `(Klang)` is part of the company name).
+  Then case-fold, `&` and punctuation become spaces (never a cut), a leading "the" and trailing legal suffixes
+  (`normalise_name`'s list) are dropped. Block key = the dealer text's key; rows whose keys are equal share one
+  block. Exact account = a customer of ANY company whose key equals the block key or an alt text's key, merge
+  survivor and not held. So `J&Y WORLD HARDWARE` matches `J & Y WORLD HARDWARE SDN BHD [A/C I]` but not
+  `J & M LIGHTING`; `Super ceramic tiles (Jln Ipoh)` matches only the Jln Ipoh accounts, the other branches are
+  candidates. The 4 Oct script keeps its own `normalise_name` unchanged.
 - U9 Block status: `exact` when every company the block's rows tag has at least one exact account; otherwise
   `pick` with up to 5 ranked candidates per tagged company (similarity score, not ticked) when any exist, else
   `none`. Rows of one block that tag different companies get warning `rows_disagree`.
@@ -53,12 +62,19 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
 
 ## Preview, apply, result
 - U13 Preview (`dry_run` true) writes nothing.
-- U14 Apply (`dry_run` false) sends the same file + the confirmed account ids per block; the server re-plans and
+- U14 Apply (`dry_run` false) REQUIRES `confirmed` (missing -> 422; `{}` = nothing confirmed, every contact
+  skipped) and sends the same file + the confirmed account ids per block; the server re-plans and
   writes everything in ONE transaction. Any error rolls all of it back; nothing is half-applied.
+- U14a Limits (security review): Tags cell over 1000 characters or more than 5 alt dealer texts on a row = row
+  error; at most 300 non-exact blocks are ranked for candidates (the rest show none); a CSV the parser rejects
+  (e.g. a field over the csv limit) = 422, never 500; error responses never carry database text.
+- U14b Changes are honest: a contact whose brands are NULL (every brand) shows the change as
+  `every brand -> SORENTO, CABANA, ...`; a facet the caller may not set never appears as a change, never counts
+  as applied and never gets an audit row (one facet name per setting, shared with the copy service).
 - U15 Result per contact: `applied` (with its changes), `no_change`, or `skipped` with reason (`not_in_crm`,
   `ambiguous_phone`, `dealer_not_confirmed`, `row_error`).
 - U16 One audit row per changed contact (event `contact.access_sheet`, before/after per facet, actor = the
-  admin). No audit row for an unchanged contact.
+  admin with the request's full audit context: the service never re-stamps the actor). No audit row for an unchanged contact.
 - U17 The same sheet with the same confirmations again: 0 applied, every found contact `no_change`.
 
 ## Permission and scope
@@ -73,10 +89,10 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
 - U21 `brands.dealer_company_id` (nullable, FK companies): the company whose dealers get the brand. Migration seeds
   SORENTO, CABANA, ELLECI, WDI, NO LOGO -> Sorento Sdn Bhd; MOCHA, IBORN -> Mocha Sdn Bhd; the rest NULL. Brand
   create / edit (master data) has a clearable "Dealer group" select of companies; the brand API accepts and returns
-  `dealer_company_id` + `dealer_company_name`; an unknown company id is refused (422).
+  `dealer_company_id` + `dealer_company_name`; an unknown or malformed company id is refused (422, no database text).
 
 ## Screen
 - U20 Contacts list > Actions > Import access sheet (shown with `user_management.contacts.edit`) opens a dialog:
   Upload > Preview > Result, as mock v1 (`documentation/mockups/BULK-CONTACT-ACCESS/index.html`). Usable at
   375 px and 1280 px; no UUIDs shown; dealer blocks collapsible; long names truncate with title. Result has
-  "Download result" (CSV built in the browser; cells starting with = + - @ are prefixed with ').
+  "Download result" (CSV built in the browser; cells starting with = + - @, tab or carriage return are prefixed with ').
