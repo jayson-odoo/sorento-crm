@@ -99,6 +99,9 @@ class World:
         self.phone_contact_id: int | None = PHONE_ID
         self.merge_error: Exception | None = None
         self.merge_survivor = "phone"  # "phone" | "turn"
+        self.order: list[str] = []
+        self.send_error: Exception | None = None
+        self.template_error: Exception | None = None
         self.messages: list[tuple[str, str]] = []
         self.comments: list[tuple[str, str]] = []
 
@@ -107,30 +110,32 @@ class World:
 
         class _C:
             def get_contact_by_phone(self, phone):
-                world.calls.append(("lookup", phone))
+                world.order.append("client"); world.calls.append(("lookup", phone))
                 if world.phone_contact_id is None:
                     req = httpx.Request("GET", "https://api.example.test/x")
                     raise httpx.HTTPStatusError("nf", request=req, response=httpx.Response(404, request=req))
                 return {"id": world.phone_contact_id}
 
             def merge_contacts(self, ids):
-                world.calls.append(("merge", [int(i) for i in ids]))
+                world.order.append("client"); world.calls.append(("merge", [int(i) for i in ids]))
                 if world.merge_error:
                     raise world.merge_error
                 return {"contactId": PHONE_ID if world.merge_survivor == "phone" else CONTACT_ID}
 
             def send_message(self, identifier, text_):
-                world.calls.append(("send_message", str(identifier), text_))
+                world.order.append("client"); world.calls.append(("send_message", str(identifier), text_))
+                if world.send_error is not None:
+                    raise world.send_error
                 world.messages.append((str(identifier), text_))
                 return {}
 
             def create_comment(self, identifier, text_):
-                world.calls.append(("create_comment", str(identifier), text_))
+                world.order.append("client"); world.calls.append(("create_comment", str(identifier), text_))
                 world.comments.append((str(identifier), text_))
                 return {}
 
             def update_contact(self, ident, payload):
-                world.calls.append(("put", str(ident), payload))
+                world.order.append("client"); world.calls.append(("put", str(ident), payload))
                 return {}
 
         return _C()
@@ -153,6 +158,9 @@ def _install(world: World, monkeypatch):
     def fake_send(db, *, identifier, use_case, context_vars):
         if world.template == "skipped":
             raise respond_messaging_service.TemplateSendSkipped(use_case, "not mapped")
+        if world.template_error is not None:
+            raise world.template_error
+        world.order.append("template")
         world.sends.append((str(identifier), use_case))
         return {}
 
@@ -562,3 +570,197 @@ def test_wu12_verified_line_goes_to_the_survivor_the_merge_response_names(
         text("SELECT respond_io_id FROM respond_contacts WHERE phone_number = :p"), {"p": f"+{E164}"}
     ).scalar()
     assert rid == str(CONTACT_ID)
+
+
+# ---------------------------------------------------------------- 7. origin guard at the engine
+
+
+def test_wu10_signed_card_with_origin_other_and_matching_wa_id_is_not_linked(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    env = _env("tap", ingress="respond_webhook")
+    env.message["message"]["message"]["contact"]["origin"] = "other"
+    assert env.message["channel"]["meta"]["wa_id"] == "60100000001"
+    result = _run(session_factory, env)
+    assert result.branch_kind == "phone_ask"
+    assert world.calls == []
+
+
+# ---------------------------------------------------------------- WU25 drain order and failure
+
+
+def _queued_row(session_factory, envelope) -> str:
+    db = session_factory()
+    row = ChatbotTurn(
+        contact_respond_id=str(CONTACT_ID),
+        message_id=str(envelope.message["message"]["messageId"]),
+        ingress=envelope.ingress,
+        envelope=envelope.model_dump(mode="json"),
+        status="queued",
+    )
+    db.add(row)
+    db.commit()
+    return str(row.id)
+
+
+@pytest.mark.parametrize("exc_name", ["ClaimLost", "TurnYielded"])
+@pytest.mark.parametrize("kind", ["text", "tap"])
+def test_wu25_a_lost_or_yielded_claim_makes_no_respond_call(
+    session_factory, parser_calls, world, monkeypatch, exc_name, kind
+):
+    from app.services.chatbot import inbox_queue
+
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    env = _env(kind)
+    turn_id = _queued_row(session_factory, env)
+
+    def _gone(tid=None):
+        raise getattr(inbox_queue, exc_name)()
+
+    monkeypatch.setattr(inbox_queue, "checkpoint", _gone)
+    with pytest.raises((inbox_queue.ClaimLost, inbox_queue.TurnYielded)):
+        engine_mod.run_turn(env, session_factory=session_factory, offload=False, queued_turn_id=turn_id)
+    assert world.calls == []
+    assert world.sends == []
+    assert world.order == []
+
+
+@pytest.mark.parametrize("kind", ["text", "tap"])
+def test_wu25_checkpoint_runs_before_the_first_respond_call(
+    session_factory, parser_calls, world, monkeypatch, kind
+):
+    from app.services.chatbot import inbox_queue
+
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    env = _env(kind)
+    turn_id = _queued_row(session_factory, env)
+    monkeypatch.setattr(inbox_queue, "checkpoint", lambda tid=None: world.order.append(f"checkpoint:{tid}"))
+    result = engine_mod.run_turn(env, session_factory=session_factory, offload=False, queued_turn_id=turn_id)
+    assert result.branch_kind in PHONE_KINDS
+    assert world.order, "the phone flow made no call at all"
+    assert world.order[0] == f"checkpoint:{turn_id}", world.order
+
+
+def test_wu25_an_unexpected_error_closes_the_turn_failed_not_processing(
+    session_factory, parser_calls, world, monkeypatch
+):
+    from app.services import wa_phone_link
+
+    _install(world, monkeypatch)
+
+    def _boom(body):
+        raise RuntimeError("zzt unexpected")
+
+    monkeypatch.setattr(wa_phone_link, "accepted_card_phone", _boom)
+    try:
+        _run(session_factory, _env("tap", mid="WU-boom-1"))
+    except Exception:
+        pass
+    rows = (
+        session_factory()
+        .query(ChatbotTurn)
+        .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID), ChatbotTurn.message_id == "WU-boom-1")
+        .all()
+    )
+    assert len(rows) == 1
+    assert rows[0].status == "failed", rows[0].status
+    assert rows[0].finished_at is not None
+    assert rows[0].error
+    monkeypatch.undo()
+    _install(world, monkeypatch)
+    second = _run(session_factory, _env("tap", mid="WU-boom-1"))
+    assert not (second.duplicate and second.status == "processing")
+
+
+# ---------------------------------------------------------------- WU24 outbox rows
+
+
+def _logs(session_factory):
+    from app.models.integration import IntegrationLog
+
+    return (
+        session_factory()
+        .query(IntegrationLog)
+        .filter(IntegrationLog.integration_channel == "respond_io")
+        .order_by(IntegrationLog.created_at)
+        .all()
+    )
+
+
+def _no_phone_in(rows):
+    for r in rows:
+        blob = " ".join(
+            str(getattr(r, f) or "")
+            for f in ("endpoint", "request_headers", "request_payload", "response_payload", "error_message", "external_reference")
+        )
+        assert E164 not in blob, blob
+
+
+def test_wu24_a_successful_ask_writes_an_outbox_row(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    result = _run(session_factory, _env("text"))
+    assert result.branch_kind == "phone_ask"
+    rows = _logs(session_factory)
+    assert len(rows) == 1 and rows[0].status == "success"
+    _no_phone_in(rows)
+
+
+def test_wu24_a_failed_ask_send_writes_a_failed_row_with_the_phone_masked(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    world.template_error = RuntimeError(f"zzt respond down for +{E164}")
+    _run(session_factory, _env("text"))
+    rows = _logs(session_factory)
+    assert len(rows) == 1 and rows[0].status == "failed"
+    _no_phone_in(rows)
+
+
+def test_wu24_a_successful_verified_line_writes_an_outbox_row(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_linked"
+    rows = _logs(session_factory)
+    assert len(rows) == 1 and rows[0].status == "success"
+    _no_phone_in(rows)
+
+
+def test_wu24_a_failed_verified_line_writes_a_failed_row(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    world.send_error = RuntimeError(f"zzt send failed for +{E164}")
+    _run(session_factory, _env("tap"))
+    rows = _logs(session_factory)
+    assert len(rows) == 1 and rows[0].status == "failed"
+    _no_phone_in(rows)
+
+
+# ---------------------------------------------------------------- WU26 comment to the survivor
+
+
+@pytest.mark.parametrize("survivor,expected", [("phone", PHONE_ID), ("turn", CONTACT_ID)])
+def test_wu26_crm_write_failing_after_a_merge_comments_on_the_survivor(
+    session_factory, parser_calls, world, monkeypatch, survivor, expected
+):
+    from app.services.contact_service import ContactService
+
+    _install(world, monkeypatch)
+    world.merge_survivor = survivor
+
+    def _boom(self, data):
+        raise RuntimeError("zzt crm write failed")
+
+    monkeypatch.setattr(ContactService, "create_contact", _boom)
+    result = _run(session_factory, _env("tap"))
+    assert result.branch_kind == "phone_handoff"
+    assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
+    assert len(world.comments) == 1
+    assert world.comments[0][0] == str(expected)
+    assert world.messages == []
