@@ -57,9 +57,10 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
 - U10 [Q4] Every exact account is proposed and ticked by default, including accounts of a company the rows do
   not tag; inactive exact accounts are listed but not ticked.
 - U11 Nothing is linked for a block the admin did not confirm; its contacts are skipped "dealer_not_confirmed".
-  "Confirm all exact" confirms every `exact` block with its ticked accounts. In a `pick` / `none` block, ticking a
-  candidate or adding an account through the search confirms the block (its Confirm box shows ticked); unticking
-  the last account un-confirms it. A confirmed block links EVERY
+  "Confirm all exact" confirms every `exact` block with its ticked accounts. In a `pick` / `none` block only an admin CHOICE confirms it
+  [crew audit round 4]: ticking a `candidate` account or adding one through the search ticks its Confirm box;
+  unticking never confirms; when no admin-chosen account is ticked any more the block is un-confirmed; exact
+  accounts pre-ticked from another company never count; the block's own Confirm box still confirms explicitly. A confirmed block links EVERY
   confirmed account to EVERY found contact of the block.
 - U12 Each account shows debtor code, name, company, active flag and its sales agent; the sheet's agent text for
   that company sits beside it. The sales agent is never written.
