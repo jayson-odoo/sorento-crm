@@ -1267,6 +1267,9 @@ export function useOrderInquiryWorklistColumns({
         // LINKAGE-UNIFY U3 round 3: wide enough at 1280 for the number, "via PO",
         // "Received 486 at BRW-BB" and "+1" side by side (and "awaiting shipment" in full).
         size: 340,
+        // Round 4: a floor TanStack's `getSize()` clamps to, so a narrower width saved
+        // under the listing key (or dragged) can never clip the pills.
+        minSize: 320,
         meta: { headerTitle: 'SPO', skeleton: <Skeleton className="h-4 w-24" /> },
         cell: ({ row }) => {
           // A bundled row's documents are the anchor's, and the PO cell already says so
