@@ -270,16 +270,19 @@ def test_spec_key_rows_from_registry_entries():
     assert res.status == "resolved" and res.candidates[0].row.key == "finish"
 
 
-# AC-S1-14
-def test_nothing_on_the_turn_path_imports_list_resolver():
-    root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
-    offenders = [
+# AC-S1-14 narrowed on purpose by AC-S2-9: only the span pass and the engine seam import the resolver
+def _importers(root: Path) -> list[str]:
+    return sorted(
         str(p.relative_to(root)) for p in root.rglob("*.py")
         if p.name != "list_resolver.py" and "list_resolver" in p.read_text(encoding="utf-8", errors="ignore")
-    ]
-    assert offenders == []
-    # and the module itself must exist for the guard to mean anything
+    )
+
+
+def test_only_span_extract_and_the_engine_import_list_resolver():
+    root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
     assert (root / "head" / "list_resolver.py").is_file()
+    assert (root / "head" / "span_extract.py").is_file(), "AC-S2-9: the span pass module must exist"
+    assert _importers(root) == ["engine.py", "head/span_extract.py"]
 
 
 # AC-S1-6 guard: the margin itself (a zero margin must fail this)
@@ -356,14 +359,10 @@ def test_exact_other_list_beats_one_edit_typed_row():
     assert res.candidates[0].row.list_name == "brand" and res.candidates[0].row.key == "b1"
 
 
-# AC-S1-14 widened: nothing under app/ imports it
-def test_nothing_in_app_references_list_resolver():
+# AC-S1-14 widened, then narrowed by AC-S2-9: nothing else under app/ references it
+def test_nothing_else_in_app_references_list_resolver():
     root = Path(__file__).resolve().parents[2] / "app"
-    offenders = [
-        str(p.relative_to(root)) for p in root.rglob("*.py")
-        if p.name != "list_resolver.py" and "list_resolver" in p.read_text(encoding="utf-8", errors="ignore")
-    ]
-    assert offenders == []
+    assert _importers(root) == ["services/chatbot/engine.py", "services/chatbot/head/span_extract.py"]
 
 
 # nit: a one-row list is not all-common
