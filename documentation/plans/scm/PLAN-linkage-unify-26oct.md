@@ -440,6 +440,7 @@ Tests (red first): the candidate walk offers no free SPO quantity a followed pla
 holds; a space-padded `from_po_line_ref` is followed by the own-arrival readers; an SPO with the
 same line ref under ANOTHER PO number is not; the ingest hook and `_book_names_target_for_line`
 follow the same key (trim, product).
+
 ## 11. Owner rulings after the U3 hand test and the U4 mock (26 Oct, ~13:40-13:50)
 
 - #1870 hand test: the document number (SPO and PO) never truncates at any column width; the
