@@ -388,3 +388,24 @@ def test_ac_rl_43_cli_prints_the_dry_run_report_and_writes_only_with_apply(
     assert str(w.link_po_removed.id) not in live_links
     assert str(w.link_spo_retired.id) not in live_links
     assert _row_state(db, w.so_row_removed) == INQUIRY_CANCELLED
+
+
+# ====================================================================== AC-RL-44
+def test_ac_rl_44_apply_retires_so_rows_but_queues_no_handover(db, monkeypatch):
+    from scripts.release_removed_autocount_lines import run
+
+    from .test_order_inquiry_handover_automation import (
+        _captured_dispatches,
+        _handover_calls,
+        _register,
+    )
+
+    w = _world(db)
+    _register(None)
+    calls = _captured_dispatches(monkeypatch)
+
+    run(db, w.company, dry_run=False)
+
+    assert _row_state(db, w.so_row_removed) == INQUIRY_CANCELLED, "the SO row is retired"
+    assert _handover_calls(calls) == [], "the reconciliation must queue no handover"
+    assert not [c for c in calls if str(c["trigger_type"]).startswith("order_inquiry")], calls

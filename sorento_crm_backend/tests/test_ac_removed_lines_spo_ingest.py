@@ -253,3 +253,15 @@ def test_ac_rl_33_guard_a_line_retired_earlier_and_absent_again_changes_nothing(
     after = _snapshot(env, row_id, inquiry_id)
     assert after["link_ids"] == set(link_ids), after
     assert after["state"] == INQUIRY_PLACED, after
+
+
+def test_ac_rl_31_guard_a_cancelled_push_that_also_drops_a_line_keeps_that_lines_links(env):
+    # guard: cancelled document AND a line it no longer carries: cancel, not removal.
+    w = _push_spo(env)
+    row_id, inquiry_id, link_ids = _row_on_spo(env, w, links=[(w.alloc_a, QTY)])
+
+    _repush(env, w, lines=[w.payload_b], status="cancelled")
+
+    after = _snapshot(env, row_id, inquiry_id)
+    assert after["link_ids"] == set(link_ids), after
+    assert after["state"] == INQUIRY_PLACED, after
