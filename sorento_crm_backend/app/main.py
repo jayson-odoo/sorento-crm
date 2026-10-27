@@ -717,10 +717,10 @@ def public_health_role():
     accepts writes.
 
     A warm standby serves pages from a hot-standby replica, so `/api/v1/health` is green there
-    too; the LB must not send users to it until the replica is promoted. 503 with
-    `role: standby` and the replay lag (seconds since the last replayed commit; grows while the
-    primary is idle) on a replica, 503 `unhealthy` when the DB does not answer. Unauthenticated
-    like `/api/v1/health`: states and one number only, no error text.
+    too; the LB must not send users to it until the replica is promoted. 503 `role: standby` on
+    a replica, 503 `unhealthy` when the DB does not answer. Unauthenticated like
+    `/api/v1/health`: states only. No replay lag either: it grows while the primary is idle, so
+    on a public URL it would show when the business is active (lag is read over SQL instead).
     """
     from sqlalchemy import text
     from app import database
@@ -728,12 +728,7 @@ def public_health_role():
     db = None
     try:
         db = database.SessionLocal()
-        in_recovery, lag = db.execute(
-            text(
-                "SELECT pg_is_in_recovery(), "
-                "EXTRACT(EPOCH FROM now() - pg_last_xact_replay_timestamp())"
-            )
-        ).one()
+        in_recovery = db.execute(text("SELECT pg_is_in_recovery()")).scalar()
     except Exception as e:
         logging.getLogger(__name__).warning("api/v1/health/role: database check failed: %s", type(e).__name__)
         return JSONResponse(status_code=503, content={"status": "unhealthy", "role": "unknown"})
@@ -741,12 +736,5 @@ def public_health_role():
         if db is not None:
             db.close()
     if in_recovery:
-        return JSONResponse(
-            status_code=503,
-            content={
-                "status": "standby",
-                "role": "standby",
-                "replay_lag_seconds": None if lag is None else round(float(lag), 1),
-            },
-        )
+        return JSONResponse(status_code=503, content={"status": "standby", "role": "standby"})
     return {"status": "healthy", "role": "primary"}

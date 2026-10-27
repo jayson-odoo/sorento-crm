@@ -40,6 +40,7 @@ echo "docker $*" >> "$FAKE_LOG"
 args=" $* "
 case "$args" in
   *" ps "*) [ -n "${FAKE_PS_FAIL:-}" ] && exit 1; for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
+  *"etcdctl auth status"*) echo "Authentication Status: ${FAKE_ETCD_AUTH:-true}"; exit 0 ;;
   *"etcdctl endpoint health"*) for i in $(seq 1 "${FAKE_ETCD_HEALTHY:-3}"); do echo "http://m$i:2379 is healthy: took 2ms"; done; exit 0 ;;
   *" backup-list "*) echo "${FAKE_BACKUPS:-[]}"; exit 0 ;;
   *"pg_stat_replication WHERE"*) echo "${FAKE_REPLICAS:-1}"; exit 0 ;;
@@ -172,6 +173,7 @@ def test_checks_all_ok_pings_success(env):
         ({"FAKE_ARCHIVER": "30 1"}, "WAL archive failing"),
         ({"FAKE_WAL": 20000000000}, "pg_wal"),
         ({"FAKE_ETCD_HEALTHY": 2}, "etcd 2/3"),
+        ({"FAKE_ETCD_AUTH": "false"}, "etcd auth not enabled"),
         ({"FAKE_BACKUPS": "[]"}, "base backup age"),
         ({"FAKE_CLUSTER": '{"members": [{"role": "replica"}, {"role": "replica"}]}'}, "cluster has 0 leaders"),
         ({"FAKE_CLUSTER": '{"members": [{"role": "leader"}, {"role": "leader"}]}'}, "cluster has 2 leaders"),
@@ -244,8 +246,9 @@ def test_checks_no_prune_below_threshold(env):
 
 SWITCHBACK = SCRIPTS / "switchback.sh"
 
-# 03:02 MYT on 27 Oct 2026 (19:02 UTC on 26 Oct).
-IN_WINDOW = 1793041320
+# 04:02 MYT on 27 Oct 2026 (20:02 UTC on 26 Oct); the window starts at 04:00, clear of the
+# 03:00 nightly pg_dump.
+IN_WINDOW = 1793041320 + 3600
 DAY = 24 * 3600
 
 
@@ -265,6 +268,8 @@ def sb(env, tmp_path):
     patroni.write_text(
         r"""#!/usr/bin/env bash
 echo "docker $*" >> "$FAKE_LOG"
+# Cron starts in $HOME: the script must have cd'd to PROJECT_DIR (compose files are relative).
+[ "$PWD" = "$PROJECT_DIR" ] || { echo "docker: wrong cwd $PWD" >&2; exit 9; }
 case " $* " in
   *" list "*) echo "$FAKE_MEMBERS" ;;
   *" switchover "*) exit ${FAKE_SWITCH_RC:-0} ;;
@@ -273,7 +278,9 @@ esac
     )
     patroni.chmod(0o755)
     state = tmp_path / "state"
-    return {**e, "STATE_DIR": str(state)}, log, state / "kl-healthy-since"
+    project = tmp_path / "project"
+    project.mkdir()
+    return {**e, "STATE_DIR": str(state), "PROJECT_DIR": str(project)}, log, state / "kl-healthy-since"
 
 
 def _switches(log):
@@ -303,7 +310,7 @@ def test_switchback_outside_the_window_does_nothing(sb):
     e, log, marker = sb
     marker.parent.mkdir()
     marker.write_text(str(IN_WINDOW - 3 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW + 3600, FAKE_MEMBERS=_members())  # 04:02 MYT
+    run(SWITCHBACK, e, NOW=IN_WINDOW - 3600, FAKE_MEMBERS=_members())  # 03:02 MYT: backup hour
     assert _switches(log) == []
 
 
@@ -317,7 +324,8 @@ def test_first_healthy_reading_starts_the_clock(sb):
 @pytest.mark.parametrize(
     "members",
     [
-        _members(kl_lag=3),
+        _members(kl_lag=20),
+        _members(kl_lag="unknown"),
         _members(kl_state="starting"),
         _members(kl_role="Replica", kl_state="stopped"),
     ],
@@ -329,6 +337,50 @@ def test_any_unhealthy_reading_resets_the_clock(sb, members):
     run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=members)
     assert not marker.exists()
     assert _switches(log) == []
+
+
+def test_small_stale_lag_keeps_the_clock(sb):
+    """Patroni's lag is up to 10 s stale: a write burst reading a few MB is not unhealthy."""
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - 2 * DAY))
+    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(kl_lag=3))
+    assert len(_switches(log)) == 1
+
+
+def test_paused_cluster_is_left_alone(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - 2 * DAY))
+    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(), FAKE_CLUSTER='{"pause": true, "members": []}')
+    assert _switches(log) == []
+    assert marker.exists()
+
+
+def test_garbage_marker_restarts_the_clock(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text("not-a-number")
+    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
+    assert r.returncode == 0
+    assert marker.read_text().strip() == str(IN_WINDOW)
+    assert _switches(log) == []
+
+
+def test_runs_from_the_project_dir_even_when_cron_starts_elsewhere(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - 2 * DAY))
+    r = subprocess.run(
+        ["bash", str(SWITCHBACK)],
+        env={**e, "NOW": str(IN_WINDOW), "FAKE_MEMBERS": _members()},
+        cwd="/",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert "wrong cwd" not in r.stderr
+    assert len(_switches(log)) == 1
 
 
 def test_nothing_when_kl_already_leads(sb):

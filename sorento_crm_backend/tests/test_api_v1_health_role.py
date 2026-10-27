@@ -2,7 +2,7 @@
 
 200 only when the node's database accepts writes, so the LB sends no users to a warm standby
 until its replica is promoted (documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md
-sections 2 and 5). Unauthenticated: states and one number, never error text.
+sections 2 and 5). Unauthenticated: states only, never error text or lag.
 """
 from __future__ import annotations
 
@@ -13,15 +13,15 @@ from app.main import app
 
 
 class _RowSession:
-    def __init__(self, row):
-        self.row = row
+    def __init__(self, in_recovery):
+        self.in_recovery = in_recovery
 
     def execute(self, *a, **kw):
-        row = self.row
+        value = self.in_recovery
 
         class _R:
-            def one(self_inner):
-                return row
+            def scalar(self_inner):
+                return value
 
         return _R()
 
@@ -35,19 +35,13 @@ def test_primary_is_200_without_credentials():
     assert response.json() == {"status": "healthy", "role": "primary"}
 
 
-def test_hot_standby_is_503_with_lag(monkeypatch):
-    monkeypatch.setattr(database, "SessionLocal", lambda: _RowSession((True, 2.345)))
+def test_hot_standby_is_503_and_states_only(monkeypatch):
+    monkeypatch.setattr(database, "SessionLocal", lambda: _RowSession(True))
     response = TestClient(app).get("/api/v1/health/role")
     assert response.status_code == 503
-    assert response.json() == {"status": "standby", "role": "standby", "replay_lag_seconds": 2.3}
+    # No lag on a public URL: it would show when the business is active (security review N1).
+    assert response.json() == {"status": "standby", "role": "standby"}
     assert '"status":"healthy"' not in response.text
-
-
-def test_standby_that_never_replayed_reports_null_lag(monkeypatch):
-    monkeypatch.setattr(database, "SessionLocal", lambda: _RowSession((True, None)))
-    response = TestClient(app).get("/api/v1/health/role")
-    assert response.status_code == 503
-    assert response.json()["replay_lag_seconds"] is None
 
 
 def test_db_down_is_503_and_leaks_nothing(monkeypatch):

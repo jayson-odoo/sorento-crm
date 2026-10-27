@@ -55,10 +55,17 @@ if [ -n "$pct" ] && [ "$pct" -ge "$PRUNE_AT_PCT" ] && [ -d "$SNAPSHOT_DIR" ]; th
 fi
 if [ -z "$pct" ]; then note "disk: df failed"; elif [ "$pct" -ge "$ALERT_AT_PCT" ]; then note "disk ${pct}% used"; fi
 
-# 2. etcd quorum members (etcd runs in a container; ETCDCTL_USER comes from etcd.env).
+# 2. etcd quorum members, and auth must be on. The official etcd image has no shell, so etcdctl
+# is exec'd directly; it reads ETCDCTL_USER (the role-less `healthcheck` user) from the
+# container env. On the witness: PROJECT_DIR=<witness compose dir> COMPOSE_FILES="-f
+# docker-compose.yml" ETCD_ONLY=1.
 # shellcheck disable=SC2086
-healthy=$(docker compose $COMPOSE_FILES exec -T "$ETCD_SERVICE" sh -c 'etcdctl endpoint health --cluster' 2>&1 | grep -c "is healthy" || true)
+healthy=$(docker compose $COMPOSE_FILES exec -T "$ETCD_SERVICE" etcdctl endpoint health --cluster 2>&1 | grep -c "is healthy" || true)
 if [ "$healthy" -lt "$ETCD_MEMBERS" ]; then note "etcd ${healthy}/${ETCD_MEMBERS} members healthy"; fi
+# shellcheck disable=SC2086
+if ! docker compose $COMPOSE_FILES exec -T "$ETCD_SERVICE" etcdctl auth status 2>/dev/null | grep -q "Authentication Status: true"; then
+  note "etcd auth not enabled"
+fi
 
 # 3. Exactly one leader in the Patroni cluster (both nodes as replicas would otherwise look fine).
 if [ "$ETCD_ONLY" != "1" ]; then

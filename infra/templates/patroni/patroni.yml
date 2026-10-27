@@ -15,11 +15,22 @@ restapi:
   # included) could POST a failover.
   authentication:
     username: patroni-admin
+    # password from PATRONI_RESTAPI_PASSWORD; the image's entrypoint refuses to start without it.
+  # Defence in depth only (container traffic can arrive masqueraded as a member address; the
+  # real guard is templates/host/docker-user.nft).
+  allowlist:
+    - 127.0.0.1
+    - <KL_WG_IP>
+    - <IN_WG_IP>
 
 etcd3:
   hosts: <KL_WG_IP>:2379,<IN_WG_IP>:2379,<WITNESS_WG_IP>:2379
-  # etcd auth is on (templates/etcd/etcd.env.template): PATRONI_ETCD3_USERNAME=patroni,
+  # etcd auth + TLS are on (templates/etcd/etcd.env.template): PATRONI_ETCD3_USERNAME=patroni,
   # PATRONI_ETCD3_PASSWORD from patroni.env. A user that can write /sorento/ can move the leader.
+  protocol: https
+  cacert: /etc/etcd/pki/ca.crt
+  cert: /etc/etcd/pki/patroni.crt
+  key: /etc/etcd/pki/patroni.key
 
 bootstrap:
   dcs:
@@ -76,10 +87,14 @@ postgresql:
     checkpoint: fast
   # `host`, not `hostssl`: these addresses exist only inside WireGuard, which already encrypts
   # and authenticates the link. Switch to hostssl only together with ssl=on + certs.
+  # The superuser works over the local socket only (security review S1). The app and
+  # pgbouncer roles come from the CRM compose network, pinned to one /24 with compose `ipam`,
+  # never a broad range that would take in the n8n networks.
   pg_hba:
     - local   all          all                                  peer
-    - host    all          all          127.0.0.1/32            scram-sha-256
-    - host    all          all          <DOCKER_NET_CIDR>       scram-sha-256
+    - host    all          postgres     0.0.0.0/0               reject
+    - host    all          <APP_DB_USER>,<PGBOUNCER_AUTH_USER>  127.0.0.1/32   scram-sha-256
+    - host    all          <APP_DB_USER>,<PGBOUNCER_AUTH_USER>  <CRM_COMPOSE_SUBNET_24>  scram-sha-256
     - host    replication  replicator   <KL_WG_IP>/32           scram-sha-256
     - host    replication  replicator   <IN_WG_IP>/32           scram-sha-256
     - host    all          rewinder     <KL_WG_IP>/32           scram-sha-256

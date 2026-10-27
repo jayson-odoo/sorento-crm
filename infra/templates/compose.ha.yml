@@ -18,6 +18,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./patroni.yml:/etc/patroni/patroni.yml:ro
+      - /etc/etcd/pki:/etc/etcd/pki:ro
     devices:
       # Host prep first (templates/host/): without softdog loaded this device does not exist
       # and the container will not start at all.
@@ -65,16 +66,40 @@ services:
     network_mode: host                               # binds the tunnel address + 127.0.0.1 only
     volumes:
       - etcd_data:/etcd-data
+      - /etc/etcd/pki:/etc/etcd/pki:ro                # private CA + certs, never in git
+    restart: unless-stopped
+
+  # The Docker socket is root on the host (security review S4): autoheal never gets it directly.
+  # A socket proxy allows only container list / inspect / restart; both images pinned by digest.
+  docker_socket_proxy:
+    image: <SOCKET_PROXY_IMAGE>@sha256:<DIGEST>
+    environment:
+      CONTAINERS: "1"
+      POST: "1"
+      ALLOW_RESTARTS: "1"
+      IMAGES: "0"
+      NETWORKS: "0"
+      VOLUMES: "0"
+      EXEC: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [autoheal_net]
     restart: unless-stopped
 
   autoheal:
-    image: <AUTOHEAL_IMAGE>:<PIN>
+    image: <AUTOHEAL_IMAGE>@sha256:<DIGEST>
     environment:
       AUTOHEAL_CONTAINER_LABEL: autoheal
       AUTOHEAL_INTERVAL: "15"
-    volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      DOCKER_SOCK: tcp://docker_socket_proxy:2375
+    networks: [autoheal_net]
+    depends_on: [docker_socket_proxy]
     restart: unless-stopped
 
 volumes:
   etcd_data:
+
+networks:
+  # Internal only: no ports, nothing else attached.
+  autoheal_net:
+    internal: true

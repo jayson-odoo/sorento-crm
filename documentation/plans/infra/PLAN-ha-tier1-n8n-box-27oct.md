@@ -195,9 +195,19 @@ alone, under 0.5 GB.
   and Postgres 5432; from the India HAProxy to KL 443, 8765 and 6432; SSH 22. Nothing of this on
   a public interface. Postgres rules are `host` (not `hostssl`): the link is already WireGuard.
 - Control plane auth: Patroni's unsafe REST calls (failover, switchover, restart, config) need a
-  login, and etcd runs with auth on (a `patroni` user limited to the `/sorento/` prefix), so
-  nothing else that reaches a tunnel address (n8n's Code nodes on the India box included) can
-  move the leader.
+  login (the image refuses to start without the password), and etcd runs with auth on (a
+  `patroni` user limited to the `/sorento/` prefix) and TLS with a private CA on both the client
+  and the peer port (`etcdctl auth` alone leaves the raft port 2380 open).
+- Container firewall (`infra/templates/host/docker-user.nft`) on the India box and the witness:
+  binding to 127.0.0.1 + the tunnel address does NOT keep local containers out, and n8n's traffic
+  to KL is masqueraded to the India tunnel address, so KL would see it as the India node. The
+  rules let n8n's subnets reach only the HAProxy address (443, 8765, 6432) and drop everything
+  else toward the members and the 2379/2380/5432/8008 ports. Drill 9 proves it.
+- Postgres superuser over the local socket only; the app and pgbouncer roles only from the pinned
+  CRM compose subnet (`pg_hba` in `patroni.yml`).
+- n8n's three ports need clash-free binds before HAProxy starts: India's nginx (443 and MCP's
+  8765) on the public address only, India's pgbouncer on 127.0.0.1 only, and KL's pgbouncer and
+  MCP also on `<KL_WG_IP>` (details in `infra/templates/haproxy/haproxy.cfg`).
 - Public on the two CRM nodes: 80/443 limited to Cloudflare ranges (the HA-SEC-EDGE rules), 22
   key-only. The India node needs the same edge rules before it joins the LB. Witness: 22 + the
   WireGuard UDP port only.
@@ -225,9 +235,13 @@ Automatic for the database: when the KL node comes back, Patroni rejoins it as a
 India leader (`pg_rewind`, or a full re-seed if that fails). It is not automatically promoted back
 (that would flap). Owner ruling O3 (a): the primary moves back to KL AUTOMATICALLY.
 `infra/scripts/switchback.sh` (cron every 5 minutes on the KL node) runs `patronictl switchover
---leader <current> --candidate kl` only when KL has been a streaming replica 0 MB behind for 24 h
-in a row (any other reading resets the clock) and the time is inside 03:00-03:10 MYT: a 5-15 s
-write pause at night, no data loss. Tests: `infra/tests/test_ha_scripts.py`.
+--leader <current> --candidate kl` only when KL has been a streaming replica at most 16 MB behind
+for 24 h in a row (any other reading resets the clock; Patroni's lag figure is up to 10 s stale, so
+exactly 0 would let a busy week postpone it forever), the cluster is not paused, and the time is
+inside 04:00-04:10 MYT: a 5-15 s write pause at night, no data loss. The owner said 03:00; the
+window is one hour later because the nightly `pg_dump` runs at 03:00
+(`documentation/runbooks/backups.md:207`) and a switchover restarts the database it reads from.
+Tests: `infra/tests/test_ha_scripts.py`.
 
 ## 3. Location (owner ruling D2: India)
 
@@ -323,7 +337,7 @@ Phased path (recommended):
   chatbot catalogue lookups: exact paths chosen from access logs when triggered) to the standby's
   backend over the tunnel. That costs ONE round trip per request, not one per statement, because
   the standby's backend reads its local replica. Lag guard: the standby answers those paths only
-  while `/api/v1/health/role` reports `replay_lag_seconds` under a limit (proposed 5 s);
+  while its replica's replay lag (read over SQL on the tunnel, not from the public endpoint) is under a limit (proposed 5 s);
   otherwise nginx's `backup` upstream serves them on the primary. A page that must read its own
   write (save then reload) stays on the primary. Trigger: primary CPU above 60% sustained for a
   week, or one of those pages' p95 over 3 s from load, not from code. Cost: one nginx block and
@@ -449,7 +463,7 @@ With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 12
 
 1. **`GET /api/v1/health/role`** (unauthenticated, like `/api/v1/health`; `sorento_crm_backend/app/main.py`):
    200 `{"status":"healthy","role":"primary"}` when the DB answers and `pg_is_in_recovery()` is
-   false; 503 `{"status":"standby","role":"standby","replay_lag_seconds":N}` on a replica; 503
+   false; 503 `{"status":"standby","role":"standby"}` on a replica (no lag on a public URL: it would show when the business is active); 503
    `{"status":"unhealthy","role":"unknown"}` when the DB is unreachable. The LB monitor (section 5),
    and the lag number Phase B would use. No host, no error text.
 2. **Scheduler leader guard** (`sorento_crm_backend/app/scheduler/leader.py`, called first in
@@ -480,7 +494,7 @@ With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 12
    - `templates/compose.ha.yml` (Patroni replaces the `db` service; workers behind profile
      `promoted`; `SKIP_MIGRATIONS` defaults to 0, a non-leading node must start with 1).
    - `templates/haproxy/haproxy.cfg` (n8n's API, MCP and DB ports on the India box follow the primary).
-   - `templates/host/` (softdog + udev rule so the watchdog actually arms).
+   - `templates/host/` (softdog + udev rule so the watchdog actually arms; `docker-user.nft`, the container firewall).
    - `templates/walg.env.example`, `templates/wireguard/wg0.conf.template` (three-peer mesh).
    - `scripts/role-watcher.sh` + `templates/systemd/role-watcher.service`: workers and scheduler
      run only on the leader.
@@ -509,7 +523,7 @@ offload on its trigger (section 4).
 | Scheduler lost its lock (Postgres restart, demotion) | worker exits, restarts, re-takes or refuses | section 8 |
 | Disk filling with pre-migrate dumps | `ha-checks.sh` keeps the newest 2 when disk use passes 85%, and alerts | `infra/scripts/ha-checks.sh` |
 | WAL piling up, replica lagging, member missing, base backup older than 26 h, archive stalled | `ha-checks.sh` alerts through Healthchecks.io (outside our servers, as HA-MONITOR) | same |
-| After a failover, KL back and healthy for 24 h | `switchback.sh` moves the primary back at 03:00 MYT | O3 |
+| After a failover, KL back and healthy for 24 h | `switchback.sh` moves the primary back at 04:00 MYT | O3 |
 | Witness dies | nothing to heal: KL + India are still a majority; `ha-checks.sh` alerts | etcd |
 
 ## 9. Owner-side steps (crew/owner apply; nothing here touches prod from the lane)
@@ -520,8 +534,10 @@ offload on its trigger (section 4).
 3. WireGuard mesh between the three (or confirm the tailnet reaches all three).
 4. R2 bucket + scoped token for WAL-G.
 5. etcd on all three members; check `etcdctl endpoint health --cluster` shows 3 healthy.
-5b. Turn on etcd auth (commands in `templates/etcd/etcd.env.template`) and set the Patroni REST
-   login in each node's `patroni.env`.
+5b. Before Patroni first starts: private CA + certs on the three boxes (`/etc/etcd/pki`), etcd
+   auth on (commands and order in `templates/etcd/etcd.env.template`), the Patroni REST and etcd
+   passwords in each node's `patroni.env`, and the container firewall
+   (`templates/host/docker-user.nft`) loaded on the India box and the witness.
 6. Adopt the prod Postgres into Patroni (Patroni's documented "convert a standalone" path) in one
    planned window, about 1-2 minutes of downtime for the restart that also turns on
    `wal_log_hints` and archiving. Before the first start:
@@ -529,7 +545,10 @@ offload on its trigger (section 4).
      wrong path looks empty, and Patroni would initdb a NEW cluster with an empty database.
    - Copy prod's `shared_preload_libraries` into `patroni.yml`.
    - Create the `replicator` (REPLICATION) and `rewinder` roles by hand: adopting an existing
-     cluster skips Patroni's bootstrap, which would otherwise create them.
+     cluster skips Patroni's bootstrap, which would otherwise create them. `rewinder` also needs
+     `GRANT EXECUTE` on `pg_catalog.pg_ls_dir(text, boolean, boolean)`,
+     `pg_catalog.pg_stat_file(text, boolean)`, `pg_catalog.pg_read_binary_file(text)` and
+     `pg_catalog.pg_read_binary_file(text, bigint, bigint, boolean)`.
    - Do the host prep in `infra/templates/host/` (watchdog).
    Later changes to the `bootstrap.dcs` block take effect only through `patronictl edit-config`
    (bootstrap is read once); that belongs in the `ha-failover.md` runbook.
@@ -560,8 +579,9 @@ Owner rulings, 27 Oct about 19:35 (recorded verbatim where quoted):
   (section 2), not by a human.
 
 - **O2 LB check interval: (b) 15 s checks** (27 Oct about 19:45). Cost in section 5 and 11.
-- **O3 Moving the primary back to KL: (a) automatic**, 03:00 MYT after 24 h healthy and caught
-  up (27 Oct about 19:45). `infra/scripts/switchback.sh`, section 2 "Failback".
+- **O3 Moving the primary back to KL: (a) automatic** after 24 h healthy and caught up (27 Oct
+  about 19:45). Window 04:00 MYT, not the 03:00 asked, to stay clear of the 03:00 nightly
+  `pg_dump` (section 2 "Failback"). `infra/scripts/switchback.sh`, section 2 "Failback".
 
 Still open:
 
@@ -684,8 +704,10 @@ active-active, which section 4 and section 3 rule out for this latency.
   nothing while KL and India see each other. Drill 4 tests it.
 - Watchdog in containers needs the host prep (`infra/templates/host/`); until the Patroni log shows
   "watchdog activated", the TTL self-demotion is the only fence.
-- The failover control plane (Patroni REST, etcd) is itself an attack surface: logins on both, and
-  a security review of the infra repo before go-live.
+- The failover control plane (Patroni REST, etcd) is itself an attack surface. Security review of
+  this PR (27 Oct): logins on both, etcd peer + client TLS, the container firewall, superuser on
+  the local socket only, the Docker socket behind a proxy, images pinned by digest. Repeat the
+  review on the private infra repo once real configs exist.
 - Deploys touch two nodes: the release must deploy both, same image, migrations only on the leader
   (`SKIP_MIGRATIONS=1` elsewhere: `sorento_crm_backend/start.sh` otherwise runs
   `alembic upgrade head` against a read-only replica and the container fails to start).
@@ -706,6 +728,7 @@ active-active, which section 4 and section 3 rule out for this latency.
 | 5 | quarterly | stop the witness | nothing changes; alert fires |
 | 6 | monthly | `scripts/ops/restore-test.sh` + a WAL-G PITR restore to a chosen minute in a throwaway container | restore finishes; row counts match |
 | 7 | monthly | `ha-checks.sh` with a lowered threshold | Healthchecks alert reaches the owner |
-| 8 | after drill 2, at the next 03:00 MYT past 24 h | leave `switchback.sh` alone | primary back on KL with a write pause under 15 s; LB, workers and n8n follow |
+| 8 | after drill 2, at the next 04:00 MYT past 24 h | leave `switchback.sh` alone | primary back on KL with a write pause under 15 s; LB, workers and n8n follow |
+| 9 | before go-live, then after every infra change | from INSIDE an n8n container: `curl -m 3` to 8008, 2379, 2380 and 5432 on each of the three tunnel addresses | every one times out; only the HAProxy address answers on 443, 8765 and 6432 |
 
 Each drill's numbers go into `documentation/runbooks/` (follow-up runbook `ha-failover.md`).
