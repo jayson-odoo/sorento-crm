@@ -31,6 +31,8 @@ const CHIPS: [
   string,
   (value: string, labels: Partial<Record<string, string>>) => string | null,
 ][] = [
+  // FILTER-MULTISELECT: several companies are one filter, one chip; the popover names them.
+  ['company', (_v, l) => `Company: ${l.company ?? 'Selected companies'}`],
   ['access_type', (v, l) => `Access type: ${l.access_type ?? v}`],
   ['tier', (v) => `Tier: ${TIER[v] ?? v}`],
   ...Object.keys(YES_NO).map((k): [string, (v: string) => string | null] => [

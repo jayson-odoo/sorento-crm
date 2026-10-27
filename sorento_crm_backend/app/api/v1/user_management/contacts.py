@@ -30,6 +30,7 @@ from app.schemas.contact_customer import (
 from app.services import contact_customer_service
 from app.services.company_scope_resolver import company_name_map, grants_scope, widen_if_requested
 from app.services.error_handler import handle_internal_error, handle_not_found
+from app.utils.multi_value import multi_uuids
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,9 @@ async def get_contacts(
     stock: Optional[Literal["yes", "no"]] = Query(None),
     region: Optional[Literal["west", "east"]] = Query(None),
     customer_id: Optional[uuid.UUID] = Query(None),
+    # FILTER-MULTISELECT: the companies of the contact's linked customers, any-of; the ids
+    # repeat or comma-join (app/utils/multi_value.py).
+    company: Optional[list[str]] = Query(None),
     # CONTACT-TAGS: `tag` repeats (any-of); `tags=none` lists contacts holding no tag.
     tag: Optional[list[uuid.UUID]] = Query(None),
     tags: Optional[Literal["none"]] = Query(None),
@@ -149,6 +153,7 @@ async def get_contacts(
                 "stock": stock,
                 "region": region,
                 "customer_id": str(customer_id) if customer_id else None,
+                "company_ids": multi_uuids(company, "Company"),
                 "tag_ids": [str(t) for t in tag] if tag else None,
                 "no_tags": tags == "none",
                 "tag_settings": tag_settings,

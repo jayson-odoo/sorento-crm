@@ -64,6 +64,7 @@ import { useRespondContactOutboundMutations } from '@/hooks/useRespondContactOut
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   contactAccessFiltersFromUrl,
+  contactCompanyFilterFromUrl,
   contactTagFiltersFromUrl,
   contactTagSettingsFilterFromUrl,
   type TagSettingsFilter,
@@ -152,6 +153,8 @@ export default function ContactsList() {
   const [tagSettings, setTagSettings] = useState<TagSettingsFilter | null>(
     null,
   );
+  // FILTER-MULTISELECT: the companies of the contact's linked customers, any-of.
+  const [companyIds, setCompanyIds] = useState<string[]>([]);
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -166,6 +169,7 @@ export default function ContactsList() {
     setTagIds(tagState.tagIds);
     setNoTags(tagState.noTags);
     setTagSettings(contactTagSettingsFilterFromUrl(state.filters));
+    setCompanyIds(contactCompanyFilterFromUrl(state.filters));
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
@@ -178,6 +182,7 @@ export default function ContactsList() {
     customersNone,
     accessFiltersKey,
     tagFiltersKey,
+    companyIds.join(','),
   ]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -210,6 +215,7 @@ export default function ContactsList() {
         tagIds,
         noTags,
         tagSettings,
+        companyIds,
       }),
     }),
     [
@@ -222,6 +228,7 @@ export default function ContactsList() {
       tagIds,
       noTags,
       tagSettings,
+      companyIds,
     ],
   );
 
@@ -453,6 +460,29 @@ export default function ContactsList() {
         meta: {
           headerTitle: 'Customers',
           skeleton: <Skeleton className="h-4 w-28" />,
+        },
+      },
+      // FILTER-MULTISELECT (owner 27 Oct): the companies of the linked customers, by name.
+      {
+        id: 'companies',
+        accessorFn: (row) => row.customer_companies?.join(', ') ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Companies" column={column} />
+        ),
+        size: 160,
+        cell: ({ row }) => {
+          const label = (row.original.customer_companies ?? []).join(', ');
+          return label ? (
+            <span className="block truncate" title={label}>
+              {label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground"> - </span>
+          );
+        },
+        meta: {
+          headerTitle: 'Companies',
+          skeleton: <Skeleton className="h-4 w-24" />,
         },
       },
       {
@@ -777,9 +807,11 @@ export default function ContactsList() {
     accessFilters,
     customersNone,
     noTags,
+    companyIds,
     setAccessFilters,
     setCustomersNone,
     setNoTags,
+    setCompanyIds,
   });
 
   // Reset selection whenever the result set changes.
