@@ -1464,8 +1464,9 @@ class DocumentIngestService(MasterRefResolver):
         `updated` (matched by its own existing `source_ref`), `adopted` (an
         xlsx-era ref-less row claimed by `_adopt_lines`'s three-step match),
         `created` (neither matched, so a fresh row), `deleted` (an unmatched
-        leftover row nothing points at) and `cancelled` (an unmatched leftover
-        row something still points at).
+        ref-less leftover row nothing points at) and `cancelled` (any other
+        unmatched leftover: one with an AutoCount `source_ref`, or one something
+        still points at).
 
         A line whose `source_ref` is NULL was written by the extract importer
         before AutoCount owned this document, and leaving it counted would
@@ -1645,7 +1646,14 @@ class DocumentIngestService(MasterRefResolver):
         removed_lines: list[Any] = []
         for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
             prior_line_status = row.line_status
-            if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
+            # AC-REMOVED-KEEP-CANCELLED (owner, 27 Oct 2026): a line carrying an AutoCount
+            # DtlKey is NEVER deleted, referenced or not - it stays as a Cancelled record and
+            # only its linkage goes. Without this, the release above left it unreferenced
+            # and the NEXT push deleted it. Only a ref-less (xlsx-era) leftover nothing
+            # points at is still deleted: it is the duplicate count this sweep exists for.
+            if row.source_ref or is_referenced(
+                self.db, line_table, row.id, referrers=line_referrers
+            ):
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.
