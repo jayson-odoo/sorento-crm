@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, ReactNode, useMemo, useState } from 'react';
+import { Fragment, ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Table } from '@tanstack/react-table';
 import { Columns3, Download, Filter, MoreHorizontal, RefreshCw, X, type LucideIcon } from 'lucide-react';
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useRangeDragMoving } from '@/components/ui/data-grid-range-select';
 import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import {
   DropdownMenu,
@@ -393,6 +394,17 @@ export function DataGridListToolbar<TData extends object>({
   // off in the normal cluster, enabled inside the bulk strip.
   const bulkStripActive = hasSelection || allRecordsActive;
 
+  // GRID-DRAG-SELECT: while a checkbox drag moves, hold the height the toolbar had before it.
+  // The bulk strip is shorter than most idle toolbars (130px shorter on Internal Users), and
+  // that jump slid the rows under a still pointer, so the drag ticked rows past the pointer.
+  // The banner below would push the rows the other way, so it also waits for the release.
+  const rangeDragMoving = useRangeDragMoving();
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const heightBeforeDrag = useRef<number>(0);
+  useLayoutEffect(() => {
+    if (!rangeDragMoving) heightBeforeDrag.current = toolbarRef.current?.offsetHeight ?? 0;
+  });
+
   const clearSelection = () => {
     table.resetRowSelection();
     selectAllMatching?.onClear();
@@ -439,7 +451,12 @@ export function DataGridListToolbar<TData extends object>({
   // to wrap them goes.
   return (
     <>
-      <div data-slot="data-grid-list-toolbar" className="flex w-full flex-col gap-2 py-5">
+      <div
+        ref={toolbarRef}
+        data-slot="data-grid-list-toolbar"
+        className="flex w-full flex-col gap-2 py-5"
+        style={rangeDragMoving && heightBeforeDrag.current ? { minHeight: heightBeforeDrag.current } : undefined}
+      >
         {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
             other past the viewport edge instead of stacking, so Quick filters and
             Group by went out of reach. */}
@@ -644,7 +661,7 @@ export function DataGridListToolbar<TData extends object>({
         ) : null}
 
         {/* "Select all N records" banner (Odoo pattern, D4/F). */}
-        {showSelectAllBanner && selectAllMatching ? (
+        {showSelectAllBanner && selectAllMatching && !rangeDragMoving ? (
           <div className="flex flex-wrap items-center justify-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 text-sm">
             {allRecordsActive ? (
               <>

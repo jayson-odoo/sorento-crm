@@ -1,5 +1,6 @@
 'use client';
 
+import { useSyncExternalStore } from 'react';
 import type * as React from 'react';
 import type { Row, RowSelectionState, Table } from '@tanstack/react-table';
 
@@ -39,6 +40,31 @@ type Drag = {
 };
 
 let drag: Drag | null = null;
+
+/**
+ * Whether a checkbox drag is MOVING right now (a press that has not moved yet is still a
+ * plain click). The list toolbar reads it to hold its height: its "N selected" strip is
+ * shorter than the idle toolbar, and the jump slid the rows under a still pointer.
+ */
+let dragMoving = false;
+const dragMovingListeners = new Set<() => void>();
+
+function setDragMoving(value: boolean) {
+  if (dragMoving === value) return;
+  dragMoving = value;
+  dragMovingListeners.forEach((listener) => listener());
+}
+
+export function useRangeDragMoving(): boolean {
+  return useSyncExternalStore(
+    (listener) => {
+      dragMovingListeners.add(listener);
+      return () => dragMovingListeners.delete(listener);
+    },
+    () => dragMoving,
+    () => false,
+  );
+}
 
 /**
  * Eats the one click the browser sends after a drag is released, wherever it lands: on the
@@ -115,6 +141,7 @@ function onDragMove(event: PointerEvent) {
   if (id === null || id === drag.lastId) return;
   if (!drag.moved) {
     drag.moved = true;
+    setDragMoving(true);
     setTextSelectable(false);
     window.getSelection?.()?.removeAllRanges();
   }
@@ -131,6 +158,7 @@ function endDrag() {
     swallowNextClick();
   }
   drag = null;
+  setDragMoving(false);
   window.removeEventListener('pointermove', onDragMove);
   window.removeEventListener('pointerup', endDrag, { capture: true });
   window.removeEventListener('pointercancel', endDrag, { capture: true });
