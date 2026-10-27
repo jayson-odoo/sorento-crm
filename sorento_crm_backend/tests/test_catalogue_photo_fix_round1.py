@@ -564,3 +564,41 @@ class TestLookalikeAudit:
         assert result.get("lookalike_compared") == 1, result
         assert result.get("lookalike_unreadable") == 1, result
         assert result.get("lookalike_flagged") == 1, result
+
+
+class TestSameNameTwice:
+    """FR-26: the drive's partial unique index on (directory_id, lower(original_filename))."""
+
+    def test_fr26_uploading_the_same_file_name_twice_makes_two_readings(self, api) -> None:
+        from sqlalchemy import text
+        from app.models.resources import Attachment, AttachmentDirectory
+        from app.services.attachment_bulk_download_service import suffix_copy_name
+
+        # Production carries this index (migration 198); the model-built blank schema does not.
+        api.db.execute(text(
+            "CREATE UNIQUE INDEX ux_zzt_dir_lower_filename ON attachments "
+            "(directory_id, lower(original_filename)) "
+            "WHERE is_deleted = false AND directory_id IS NOT NULL"))
+        _photo_type(api.db)
+        _seed_catalogue_products(api.db)
+        with TestClient(app, raise_server_exceptions=False) as client:
+            first = _upload(client, filename="zzt-same.pdf")
+            second = _upload(client, filename="zzt-same.pdf")
+            assert first.status_code == 201, first.text
+            assert second.status_code == 201, second.text
+            rid1, rid2 = first.json()["id"], second.json()["id"]
+            assert rid1 != rid2
+            r1 = api.db.query(CataloguePhotoReading).filter_by(id=rid1).one()
+            r2 = api.db.query(CataloguePhotoReading).filter_by(id=rid2).one()
+            assert str(r1.directory_id) != str(r2.directory_id)
+            f1 = api.db.query(AttachmentDirectory).filter_by(id=str(r1.directory_id)).one()
+            f2 = api.db.query(AttachmentDirectory).filter_by(id=str(r2.directory_id)).one()
+            assert f2.name == suffix_copy_name(f1.name)
+            p1 = api.db.query(Attachment).filter_by(id=str(r1.pdf_attachment_id)).one()
+            p2 = api.db.query(Attachment).filter_by(id=str(r2.pdf_attachment_id)).one()
+            assert p2.original_filename == suffix_copy_name(p1.original_filename)
+            _run(api, rid2)
+            assert _detail(client, rid2)["status"] == "ready"
+        names = sorted(a.original_filename for a in api.db.query(Attachment).filter(
+            Attachment.directory_id == r2.directory_id))
+        assert CODE_A + ".jpg" in names and CODE_B + ".jpg" in names
