@@ -825,6 +825,11 @@ def start_scheduler():
     Start the APScheduler background scheduler.
     Uses a single heartbeat to execute due DB-configured tasks.
     """
+    # HA leader guard: never on a read-only standby, never twice against one primary.
+    from app.scheduler.leader import acquire_leadership
+
+    acquire_leadership()
+
     register_task_handlers()
 
     scheduler = BackgroundScheduler()
