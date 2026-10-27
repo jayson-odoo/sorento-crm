@@ -49,6 +49,13 @@ class PhoneVerifyRequest(BaseModel):
     code: str = Field(..., pattern=r"^\d{6}$")
 
 
+class PortalLinkRequest(BaseModel):
+    """POST /api/v1/auth/portal-link (PORTAL-P1-SESSION-LINK): the one-time secret that
+    `/public/portal/verify-otp` returned to the browser that entered the code."""
+
+    portal_link_secret: str = Field(..., max_length=255)
+
+
 class SetPasswordRequest(BaseModel):
     """POST /api/v1/auth/password (identity S1, plan 5.3)."""
 

@@ -147,7 +147,9 @@ def _po_lines(db: Session, product_id: str, *, open_lines: bool) -> list[dict]:
         where = (
             "po.status <> 'draft' AND po.status <> 'draft_recommendation' "
             "AND (pol.line_status <> 'open' OR pol.qty_ordered <= pol.qty_received) "
-            f"AND po.issue_date >= (CURRENT_DATE - INTERVAL '{_HISTORY_MONTHS} months')"
+            f"AND po.issue_date >= (CURRENT_DATE - INTERVAL '{_HISTORY_MONTHS} months') "
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            "AND NOT pol.removed_unreferenced"
         )
         order = "ORDER BY po.issue_date DESC NULLS LAST, po.po_number"
     sql = f"""
