@@ -431,12 +431,20 @@ class ContactService:
             from app.models.order import Customer
 
             customers = Customer.__table__
+            # Both sides, as the Companies sort does: a link's company is stamped from its customer,
+            # but nothing enforces it, so the customer's own company must be in reach too.
+            scope = self._link_scope(viewer_id)
+            wanted = f["company_ids"]
+            if isinstance(scope, frozenset):
+                wanted = [c for c in wanted if c in scope]
+            elif scope is not None:  # UNSET fails closed
+                wanted = []
             q = q.filter(
                 self._visible_link(
                     viewer_id,
                     exists().where(
                         customers.c.id == RespondContactCustomer.customer_id,
-                        customers.c.company_id.in_(f["company_ids"]),
+                        customers.c.company_id.in_(wanted),
                     ),
                 )
             )
@@ -466,16 +474,21 @@ class ContactService:
         can see count: every company they are granted when the viewer is known (Internal Users is
         company-less), else the active scope."""
         from app.models.access import RespondContactCustomer
-        from app.models.base import get_company_scope
         from app.services.company_scope import build_company_predicate
-        from app.services.company_scope_resolver import grants_scope_value
 
         link = exists().where(RespondContactCustomer.contact_id == RespondContact.id, *criteria)
-        scope = grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
-        predicate = build_company_predicate(RespondContactCustomer, scope)
+        predicate = build_company_predicate(RespondContactCustomer, self._link_scope(viewer_id))
         if predicate is not None:
             link = link.where(predicate)
         return link
+
+    def _link_scope(self, viewer_id: Optional[str]):
+        """The companies a customer link must sit in to count for this viewer: every company they
+        are granted when known, else the active scope (None = every company)."""
+        from app.models.base import get_company_scope
+        from app.services.company_scope_resolver import grants_scope_value
+
+        return grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
 
     def _filter_tag_settings(self, q, f: dict):
         """Contacts whose tag settings differ / match, over the holders of a tag that sets something."""

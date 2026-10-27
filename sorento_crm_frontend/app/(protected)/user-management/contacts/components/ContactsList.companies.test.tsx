@@ -25,6 +25,9 @@ if (!('ResizeObserver' in window)) {
 Element.prototype.scrollIntoView = Element.prototype.scrollIntoView ?? vi.fn();
 
 const apiFetchMock = vi.fn();
+// The list's own query string, as `useSearchParams` hands it over (one object per test: the hook
+// memoises on its identity).
+const urlState = vi.hoisted(() => ({ search: new URLSearchParams() }));
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetchMock(...a) }));
 vi.mock('@/hooks/useRespondContactOutbound', () => ({
   RESPOND_CONTACTS_OUTBOUND_KEY: 'respond-contacts-outbound',
@@ -44,7 +47,7 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
   usePathname: () => '/user-management/contacts',
-  useSearchParams: () => ({ get: () => null }),
+  useSearchParams: () => urlState.search,
 }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
@@ -124,6 +127,7 @@ const filtersButton = () => screen.getByRole('button', { name: /^filters/i });
 beforeEach(() => {
   vi.clearAllMocks();
   window.history.replaceState(null, '', '/user-management/contacts');
+  urlState.search = new URLSearchParams();
   getContactsMock.mockResolvedValue({ data: [BOTH, NONE], pagination: { total: 2 } } as never);
   apiFetchMock.mockImplementation(async (url: string) => ({
     ok: true,
@@ -177,5 +181,30 @@ describe('ContactsList - Company filter', () => {
     await user.click(screen.getByRole('button', { name: 'Clear filter: Company: Mocha, Sorento' }));
     await waitFor(() => expect(screen.queryByText('Company: Mocha, Sorento')).toBeNull());
     expect(window.location.search).not.toContain('company');
+  });
+});
+
+describe('ContactsList - Company filter in the URL', () => {
+  it('a shared link with several companies applies them on load', async () => {
+    urlState.search = new URLSearchParams(`company=${MOCHA},${SORENTO}`);
+    renderList();
+    await screen.findByText('+60100000021');
+    expect(lastFilters().company).toBe(`${MOCHA},${SORENTO}`);
+  });
+
+  it('changing the companies goes back to page one', async () => {
+    const user = userEvent.setup();
+    urlState.search = new URLSearchParams('page=3&limit=50');
+    renderList();
+    await screen.findByText('+60100000021');
+    const lastPage = () =>
+      (getContactsMock.mock.calls.at(-1)?.[0] as { pageIndex: number }).pageIndex;
+    expect(lastPage()).toBe(2);
+    await user.click(filtersButton());
+    const select = await screen.findByLabelText('Company: any');
+    await waitFor(() => expect((select as HTMLSelectElement).options.length).toBe(2));
+    await user.selectOptions(select, [MOCHA]);
+    await waitFor(() => expect(lastFilters().company).toBe(MOCHA));
+    expect(lastPage()).toBe(0);
   });
 });
