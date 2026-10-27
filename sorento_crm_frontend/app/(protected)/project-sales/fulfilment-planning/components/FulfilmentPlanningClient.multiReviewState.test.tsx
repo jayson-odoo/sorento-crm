@@ -112,7 +112,9 @@ describe('Fulfilment planning - multi Review state filter', () => {
     await render_();
     await user.selectOptions(await box('not_started'), ['not_started', 'confirmed']);
     await waitFor(() => expect(setOf(lastParams().review_state)).toEqual(['confirmed', 'not_started']));
-    await waitFor(() => expect(within(screen.getByRole('button', { name: /filters/i })).getByText('1')).toBeInTheDocument());
+    // The Filters menu is modal, so its button is hidden from the a11y tree while it is open.
+    await user.keyboard('{Escape}');
+    await waitFor(() => expect(within(screen.getByRole('button', { name: /^filters/i })).getByText('1')).toBeInTheDocument());
   });
 
   it('the Any sentinel is never sent', async () => {

@@ -102,7 +102,7 @@ async function box(value: string) {
   return boxesWith(value)[0];
 }
 function openFilters() {
-  fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), { button: 0, ctrlKey: false });
+  fireEvent.pointerDown(screen.getByRole('button', { name: /^filters/i }), { button: 0, ctrlKey: false });
 }
 
 beforeEach(() => {
@@ -144,6 +144,7 @@ describe('Attachment browser - multi filters', () => {
     openFilters();
     await user.selectOptions(await box(a), [a, b]);
     await waitFor(() => expect(setOf(valueOf(param))).toEqual([a, b].sort()));
+    await user.keyboard('{Escape}');
     openFilters();
     await user.deselectOptions(await box(a), [a, b]);
     await waitFor(() => expect(setOf(valueOf(param))).toEqual([]));
