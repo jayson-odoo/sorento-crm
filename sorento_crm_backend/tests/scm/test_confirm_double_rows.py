@@ -292,36 +292,62 @@ def test_a_shortfall_only_the_on_hand_floor_finds_is_frozen_against_its_componen
             assert _frozen_short(db, world)[0]["warehouse_id"] == str(world["own"].id)
 
 
+def _cross_group(db):
+    """SO-B at its own bin; 36 at another group's bin that an earlier order of THAT group
+    needs, so a Reserve from it is short 36 at SO-B's date."""
+    company_id, eling, project, product = _world(db)
+    _group, sites = _group_sites(db)
+    own, _pool = sites["BRW"]
+    other = _warehouse(db, f"ZZTMWH-IR{own.warehouse_code[-3:]}")
+    _stock(db, product, other, on_hand=36)
+    _seed_line(
+        db, company_id, project, product, other, qty_ordered="36", line_no=1,
+        required_date=REQUIRED_DATE - timedelta(days=20),
+    )
+    order, line, _cso, _cline = _seed_line(
+        db, company_id, project, product, own, qty_ordered="36", line_no=1,
+    )
+    return {"eling": eling, "other": other, "order": order, "line": line}
+
+
+def _confirm_other(db, world, reserve, buy="0"):
+    entry = ConfirmLine(
+        project_line_id=world["line"].id,
+        reserve=[{"warehouse_id": str(world["other"].id), "qty": reserve}],
+        buy_qty=Decimal(buy),
+        amend_reason="From the other group.",
+    )
+    body = ProjectSupplyService(db).confirm(
+        world["order"], ConfirmSupplyBody(lines=[entry]), actor_user_id=world["eling"]
+    )
+    db.commit()
+    return body
+
+
+def test_changing_the_decision_and_back_never_holds_what_was_short():
+    """The path the board itself allows (it will not re-save an unchanged confirmed line):
+    Reserve 36 (short 36), then Reserve 35 + Buy 1, then Reserve 36 again. Each press holds
+    only what that decision can hold now: nothing at the other group's bin."""
+    with blank_session() as db:
+        world = _cross_group(db)
+        for reserve, buy, short in (("36", "0", "36 short"), ("35", "1", "35 short"),
+                                    ("36", "0", "36 short")):
+            body = _confirm_other(db, world, reserve, buy)
+            rows = [row for row in _active_rows(db, world) if row[0] != ALLOC_SOURCE_ORDER]
+            assert rows == [], (reserve, rows)
+            notices = _shorts(body)
+            assert len(notices) == 1 and short in notices[0], (reserve, notices)
+
+
 def test_a_cross_group_reserve_with_a_reason_pressed_again_stays_short():
     """The board's own path: an amended line always carries a reason, which lifts the
     capacity recheck only at the line's OWN group's bins. A Reserve from another group's bin
     that an earlier order of that group needs is short 36 on press 1, and on main press 2
     wrote it in full (`brw 36`). Every press is the same."""
     with blank_session() as db:
-        company_id, eling, project, product = _world(db)
-        _group, sites = _group_sites(db)
-        own, _pool = sites["BRW"]
-        other = _warehouse(db, f"ZZTMWH-IR{own.warehouse_code[-3:]}")
-        _stock(db, product, other, on_hand=36)
-        _seed_line(
-            db, company_id, project, product, other, qty_ordered="36", line_no=1,
-            required_date=REQUIRED_DATE - timedelta(days=20),
-        )
-        order, line, _cso, _cline = _seed_line(
-            db, company_id, project, product, own, qty_ordered="36", line_no=1,
-        )
-        world = {"order": order, "line": line}
+        world = _cross_group(db)
         for press in (1, 2, 3):
-            entry = ConfirmLine(
-                project_line_id=line.id,
-                reserve=[{"warehouse_id": str(other.id), "qty": "36"}],
-                buy_qty=Decimal("0"),
-                amend_reason="From the other group.",
-            )
-            body = ProjectSupplyService(db).confirm(
-                order, ConfirmSupplyBody(lines=[entry]), actor_user_id=eling
-            )
-            db.commit()
+            body = _confirm_other(db, world, "36")
             assert _active_rows(db, world) == [], press
             notices = _shorts(body)
             assert len(notices) == 1 and "36 short" in notices[0], (press, notices)
