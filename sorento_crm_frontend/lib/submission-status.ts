@@ -11,6 +11,9 @@
 export const SUBMITTED = 'submitted';
 export const RESUBMITTED = 'resubmitted';
 
+/** The review stage of each stage-based form, i.e. the stage `resubmitted` stands in for. */
+export const SI_REVIEW_STAGE = 'pending_project_sales';
+
 export function isAwaitingReview(
   status: string | null | undefined,
   stage: string = SUBMITTED,
