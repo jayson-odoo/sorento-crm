@@ -1,6 +1,6 @@
 # PLAN: goods chain PO->SPO key query stops growing with key count (GOODSCHAIN-INDEX-QUERY)
 
-Status: in progress (small fix track: backend only, one index migration, no auth change)
+Status: in review, PR #1899, reviewer READY 27 Oct (small fix track: backend only, one index migration, no auth change)
 
 ## Incident
 
