@@ -128,6 +128,8 @@ async function toPreview() {
 }
 
 beforeEach(() => {
+  // Every card starts open, so a pick card's customer search mounts and fetches at once.
+  customerSvc.searchCustomersSelect.mockResolvedValue([]);
   svc.previewAccessSheet.mockResolvedValue(PREVIEW);
   svc.applyAccessSheet.mockResolvedValue(RESULT);
 });
