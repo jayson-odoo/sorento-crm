@@ -50,9 +50,10 @@ class PhoneVerifyRequest(BaseModel):
 
 
 class PortalLinkRequest(BaseModel):
-    """POST /api/v1/auth/portal-link (PORTAL-P1-SESSION-LINK): a just-verified portal token."""
+    """POST /api/v1/auth/portal-link (PORTAL-P1-SESSION-LINK): the one-time secret that
+    `/public/portal/verify-otp` returned to the browser that entered the code."""
 
-    portal_token: str = Field(..., max_length=255)
+    portal_link_secret: str = Field(..., max_length=255)
 
 
 class SetPasswordRequest(BaseModel):

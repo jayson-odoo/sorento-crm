@@ -1,6 +1,6 @@
 /**
- * PORTAL-P1-SESSION-LINK: the `phone-otp` provider also accepts a just-verified portal token
- * (`portal_token`) and exchanges it at `/api/v1/auth/portal-link`. No new provider.
+ * PORTAL-P1-SESSION-LINK: the `phone-otp` provider also accepts the one-time secret the portal's
+ * verify-otp returned (`portal_link_secret`) and exchanges it at `/api/v1/auth/portal-link`. No new provider.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -42,19 +42,19 @@ async function phoneOtpAuthorize(): Promise<Authorize> {
   return provider!.options!.authorize!;
 }
 
-describe('phone-otp authorize with a portal_token', () => {
-  it('posts only the portal token to /auth/portal-link and returns the session user', async () => {
+describe('phone-otp authorize with a portal_link_secret', () => {
+  it('posts only the secret to /auth/portal-link and returns the session user', async () => {
     fetchMock.mockResolvedValue(new Response(JSON.stringify(LOGIN), { status: 200 }));
     const authorize = await phoneOtpAuthorize();
     const user = (await authorize(
-      { portal_token: 'PT123' },
+      { portal_link_secret: 'PLS123' },
       { headers: { 'x-forwarded-for': '203.0.113.7' } },
     )) as Record<string, unknown>;
 
     const [url, init] = fetchMock.mock.calls[0];
     expect(String(url)).toBe('http://localhost:8101/api/v1/auth/portal-link');
     expect((init as RequestInit).method).toBe('POST');
-    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ portal_token: 'PT123' });
+    expect(JSON.parse(String((init as RequestInit).body))).toEqual({ portal_link_secret: 'PLS123' });
     expect((init as RequestInit).headers).toMatchObject({ 'X-Forwarded-For': '203.0.113.7' });
     expect(user.apiToken).toBe('api-session-token');
     expect(user.id).toBe('u1');
@@ -66,7 +66,7 @@ describe('phone-otp authorize with a portal_token', () => {
       new Response(JSON.stringify({ detail: 'Portal link sign-in refused.' }), { status: 401 }),
     );
     const authorize = await phoneOtpAuthorize();
-    await expect(authorize({ portal_token: 'PT123' }, { headers: {} })).rejects.toThrow(
+    await expect(authorize({ portal_link_secret: 'PLS123' }, { headers: {} })).rejects.toThrow(
       JSON.stringify({ code: 401, message: 'Portal link sign-in refused.' }),
     );
   });
@@ -78,7 +78,7 @@ describe('phone-otp authorize with a portal_token', () => {
     expect(String(fetchMock.mock.calls[0][0])).toBe('http://localhost:8101/api/v1/auth/phone/verify');
   });
 
-  it('neither a portal token nor phone + code is refused before any fetch', async () => {
+  it('neither a secret nor phone + code is refused before any fetch', async () => {
     const authorize = await phoneOtpAuthorize();
     await expect(authorize({}, { headers: {} })).rejects.toThrow();
     expect(fetchMock).not.toHaveBeenCalled();

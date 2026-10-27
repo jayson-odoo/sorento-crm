@@ -880,7 +880,7 @@ export async function verifyOtp(
   contactId: string,
   spaceId: string,
   code: string,
-): Promise<{ token: string; expires_at: string }> {
+): Promise<{ token: string; expires_at: string; portal_link_secret?: string }> {
   const res = await fetch('/api/v1/public/portal/verify-otp', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -899,8 +899,6 @@ export interface PortalTokenInfo {
   name?: string | null;
   masked_phone?: string | null;
   whatsapp_number?: string | null;
-  /** The contact has an eligible CRM user: verifying also opens a CRM session. */
-  has_user?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -913,8 +911,6 @@ export interface PortalSlugInfo {
   name: string | null;
   masked_phone: string | null;
   whatsapp_number: string | null;
-  /** The contact has an eligible CRM user: verifying also opens a CRM session. */
-  has_user?: boolean;
 }
 
 /** GET /api/v1/public/portal/slug-info/{slug} - null mirrors the 404. */
@@ -933,20 +929,35 @@ export async function fetchSlugInfo(
 // CRM session opened from the portal link (PORTAL-P1-SESSION-LINK)
 // ---------------------------------------------------------------------------
 
-/** Set when the verify card opened a CRM session, so portal Log out ends it too. */
+/**
+ * Holds the id of the user the verify card signed in, so portal Log out ends
+ * that session and never a different user's who signed in on this browser since.
+ */
 export const CRM_SESSION_FLAG_KEY = 'sorento.portal.crmSession';
 
+async function currentSessionUserId(): Promise<string | null> {
+  const { getSession } = await import('next-auth/react');
+  const session = await getSession();
+  const id = (session?.user as { id?: unknown } | undefined)?.id;
+  return typeof id === 'string' && id ? id : null;
+}
+
 /**
- * Exchange the just-verified portal token for a CRM session through the existing
- * `phone-otp` NextAuth provider. Best-effort: the portal never depends on it, so a
- * refusal or a network error is swallowed. Only called when the contact has a user.
+ * Exchange the one-time secret `verify-otp` returned (only for a contact with a
+ * CRM user) for a CRM session through the existing `phone-otp` NextAuth provider.
+ * Best-effort: the portal never depends on it, so a refusal or a network error
+ * is swallowed.
  */
-export async function openCrmSession(portalToken: string): Promise<boolean> {
+export async function openCrmSession(portalLinkSecret: string): Promise<boolean> {
   try {
     const { signIn } = await import('next-auth/react');
-    const res = await signIn('phone-otp', { portal_token: portalToken, redirect: false });
+    const res = await signIn('phone-otp', {
+      portal_link_secret: portalLinkSecret,
+      redirect: false,
+    });
     if (!res?.ok || res.error) return false;
-    window.localStorage.setItem(CRM_SESSION_FLAG_KEY, '1');
+    const userId = await currentSessionUserId();
+    if (userId) window.localStorage.setItem(CRM_SESSION_FLAG_KEY, userId);
     return true;
   } catch {
     return false;
@@ -955,13 +966,16 @@ export async function openCrmSession(portalToken: string): Promise<boolean> {
 
 /**
  * End the CRM session the verify card opened: revoke the FastAPI row, then sign
- * NextAuth out. A no-op (no request at all) when the card never opened one.
+ * NextAuth out. A no-op (no request at all) when the card never opened one, and
+ * it leaves alone a session that now belongs to someone else.
  */
 export async function endCrmSession(): Promise<void> {
   if (typeof window === 'undefined') return;
-  if (window.localStorage.getItem(CRM_SESSION_FLAG_KEY) !== '1') return;
+  const flagged = window.localStorage.getItem(CRM_SESSION_FLAG_KEY);
+  if (!flagged) return;
   window.localStorage.removeItem(CRM_SESSION_FLAG_KEY);
   try {
+    if ((await currentSessionUserId()) !== flagged) return;
     const { revokeCurrentSession, clearCachedAuthToken } = await import('@/lib/api');
     await revokeCurrentSession();
     clearCachedAuthToken();

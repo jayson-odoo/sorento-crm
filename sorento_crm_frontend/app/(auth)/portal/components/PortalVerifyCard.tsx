@@ -89,8 +89,6 @@ export function PortalVerifyCard({ slug }: Props) {
   const [contactName, setContactName] = useState<string | null>(null);
   const [maskedPhone, setMaskedPhone] = useState<string | null>(null);
   const [whatsappNumber, setWhatsappNumber] = useState<string | null>(null);
-  // The contact has a CRM user: verifying also opens a CRM session (PORTAL-P1-SESSION-LINK).
-  const [hasUser, setHasUser] = useState(false);
   const [code, setCode] = useState('');
   const [sentTo, setSentTo] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
@@ -164,7 +162,6 @@ export function PortalVerifyCard({ slug }: Props) {
           setContactName(info.name ?? null);
           setMaskedPhone(info.masked_phone);
           setWhatsappNumber(info.whatsapp_number);
-          setHasUser(info.has_user === true);
           // Deep link → confirm identity before sending. Otherwise auto-fire.
           if (entityType) {
             setState('confirm-identity');
@@ -188,7 +185,6 @@ export function PortalVerifyCard({ slug }: Props) {
         setContactName(info.name ?? null);
         setMaskedPhone(info.masked_phone ?? null);
         setWhatsappNumber(info.whatsapp_number ?? null);
-        setHasUser(info.has_user === true);
         if (entityType) {
           setState('confirm-identity');
           return;
@@ -242,8 +238,9 @@ export function PortalVerifyCard({ slug }: Props) {
       const result = await verifyOtp(contactId, spaceId, code.trim());
       writePortalToken(result.token);
       if (slug) writePortalSlug(slug);
+      // A contact with a CRM user also gets a CRM session (PORTAL-P1-SESSION-LINK).
       // Before navigating, so the NextAuth cookie is set when the page is left.
-      if (hasUser) await openCrmSession(result.token);
+      if (result.portal_link_secret) await openCrmSession(result.portal_link_secret);
       if (typeof window !== 'undefined') {
         window.sessionStorage.setItem('sorento.portalTokenWrittenAt', String(Date.now()));
         Object.keys(window.sessionStorage)
@@ -271,7 +268,7 @@ export function PortalVerifyCard({ slug }: Props) {
     } finally {
       setPending(false);
     }
-  }, [code, contactId, hasUser, router, searchParams, slug, spaceId]);
+  }, [code, contactId, router, searchParams, slug, spaceId]);
 
   if (state === 'loading') {
     return (

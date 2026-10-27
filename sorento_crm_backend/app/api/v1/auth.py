@@ -653,13 +653,14 @@ def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = De
 
 @router.post("/portal-link", response_model=LoginResponse)
 def portal_link(payload: PortalLinkRequest, request: Request, db: Session = Depends(get_db)):
-    """A portal token verified in the last 120 s becomes a CRM session for the
-    contact's linked user (PORTAL-P1-SESSION-LINK). Every refusal answers the
-    same 401 body, so the route says nothing about why.
+    """The one-time secret `/public/portal/verify-otp` handed the browser that
+    entered the code becomes a CRM session for the contact's linked user
+    (PORTAL-P1-SESSION-LINK). A portal token is never accepted here (security
+    review H1). Every refusal answers the same 401 body.
 
-    Per-IP limit as on the other unauthenticated routes (NextAuth forwards the
-    browser's address, `forwardedForHeader`). The token itself carries 240 bits,
-    so the limit is a brake on noise, not the guessing bound.
+    Its own per-IP limit (`rate_limit_portal_link_*`; NextAuth forwards the
+    browser's address, `forwardedForHeader`). The secret carries 256 bits and
+    lives 120 s, so the limit is a brake on noise, not the guessing bound.
     """
     from app.services import phone_signin_service as svc
     from app.services import rate_limit
@@ -667,14 +668,14 @@ def portal_link(payload: PortalLinkRequest, request: Request, db: Session = Depe
     ip = client_ip(request)
     gate = rate_limit.hit(
         "portal_link", ip,
-        limit=app_settings.rate_limit_portal_otp_max,
-        window_seconds=app_settings.rate_limit_portal_otp_window_seconds,
+        limit=app_settings.rate_limit_portal_link_max,
+        window_seconds=app_settings.rate_limit_portal_link_window_seconds,
     )
     if not gate.allowed:
-        return _rate_limited_response(gate.retry_after_seconds or app_settings.rate_limit_portal_otp_window_seconds)
+        return _rate_limited_response(gate.retry_after_seconds or app_settings.rate_limit_portal_link_window_seconds)
 
-    login_response = svc.exchange_portal_token(
-        db, payload.portal_token,
+    login_response = svc.exchange_portal_link_secret(
+        db, payload.portal_link_secret,
         user_agent=request.headers.get("user-agent"),
         ip_address=ip,
     )

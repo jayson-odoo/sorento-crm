@@ -15,8 +15,10 @@ See documentation/plans/identity/s1-contract.md.
 """
 from __future__ import annotations
 
+import hashlib
 import logging
 import math
+import secrets
 from dataclasses import dataclass
 from typing import Optional
 
@@ -453,22 +455,19 @@ def attempt_verify(
 # --------------------------------------------------------------------------- #
 # Portal link -> CRM session (PORTAL-P1-SESSION-LINK)                          #
 # --------------------------------------------------------------------------- #
-# A portal token verified this recently may be exchanged once for a CRM session.
-# The verify card calls the exchange right after `verify-otp` answers, so two
-# minutes covers a slow network with room to spare.
-PORTAL_LINK_WINDOW_SECONDS = 120
-_PORTAL_LINK_CLAIM_TTL_SECONDS = PORTAL_LINK_WINDOW_SECONDS + 60
+# `verify-otp` hands the browser that typed the code a one-time secret; the card
+# exchanges it at `/auth/portal-link` right away, so two minutes covers a slow
+# network with room to spare.
+PORTAL_LINK_SECRET_TTL_SECONDS = 120
 
 
 def eligible_user_for_contact(db: Session, contact_id: str) -> Optional[User]:
-    """The ONE eligible user linked to this contact, or ``None``.
+    """The eligible user linked to this contact, or ``None``.
 
     Same rule as :func:`find_eligible`, keyed on the contact instead of a typed
     number (``uq_users_respond_contact_id`` allows one user per contact): the
-    user is eligible and the user's own number still matches the contact's (a stale link after a
-    phone change is refused, plan 5.3 "lost phone"). Drives both the exchange
-    and the ``has_user`` flag on slug-info / token-info, so the card only asks
-    for a session the exchange will grant.
+    user is eligible and the user's own number still matches the contact's
+    (a stale link after a phone change is refused, plan 5.3 "lost phone").
     """
     if not contact_id:
         return None
@@ -488,69 +487,76 @@ def eligible_user_for_contact(db: Session, contact_id: str) -> Optional[User]:
     return user
 
 
-def _claim_portal_link(contact_id: str, verified_at) -> bool:
-    """One OTP verification mints at most one session (security review decision).
+def _portal_link_key(secret: str) -> str:
+    return "portal_link:secret:" + hashlib.sha256(secret.encode("utf-8")).hexdigest()
 
-    `verify_otp` stamps every unverified token of the contact with the same
-    ``verified_at``, so the claim is keyed on (contact, verified_at), not on the
-    token: the fresh token and the admin-sent link verified by the same code
-    share one claim. ``SET NX`` is atomic, so two parallel exchanges cannot both
-    win. The claim only has to outlive the 120 s window, which is why Redis (with
-    a TTL) holds it rather than a column. No Redis means no claim, so the
-    exchange fails closed: the portal still works, the person just gets no CRM
-    session this time.
+
+def issue_portal_link_secret(db: Session, contact_id: str) -> Optional[str]:
+    """A one-time secret for the browser that just verified, or ``None`` when the
+    contact has no eligible user (or Redis is down: no secret, the portal still works).
+
+    Security review H1: the exchange must not accept a portal token, because
+    ``verify_otp`` stamps every token of the contact and staff can re-send the
+    verified one (``get_or_mint_token``). Only the verify-otp response body carries
+    this secret, so only that browser can mint, and only its hash is stored.
     """
+    if eligible_user_for_contact(db, contact_id) is None:
+        return None
     r = _redis()
     if r is None:
-        return False
-    key = f"portal_link:claim:{contact_id}:{verified_at.isoformat()}"
+        return None
+    secret = secrets.token_urlsafe(32)
     try:
-        return bool(r.set(key, "1", nx=True, ex=_PORTAL_LINK_CLAIM_TTL_SECONDS))
+        r.set(_portal_link_key(secret), contact_id, ex=PORTAL_LINK_SECRET_TTL_SECONDS)
     except Exception as e:  # noqa: BLE001
-        logger.warning("Portal link: Redis claim failed (%s); refusing.", e)
-        return False
+        logger.warning("Portal link: Redis secret write failed (%s)", e)
+        return None
+    return secret
 
 
-def exchange_portal_token(
+def _take_portal_link_secret(secret: str) -> Optional[str]:
+    """The contact id the secret was issued for, deleting it in the same
+    transaction (GET + DEL under MULTI), so two parallel exchanges cannot both
+    read it. Fails closed without Redis."""
+    if not secret:
+        return None
+    r = _redis()
+    if r is None:
+        return None
+    try:
+        pipe = r.pipeline(transaction=True)
+        pipe.get(_portal_link_key(secret))
+        pipe.delete(_portal_link_key(secret))
+        value, _deleted = pipe.execute()
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Portal link: Redis secret read failed (%s); refusing.", e)
+        return None
+    if value is None:
+        return None
+    return value.decode("utf-8") if isinstance(value, bytes) else str(value)
+
+
+def exchange_portal_link_secret(
     db: Session,
-    token_value: str,
+    secret: str,
     *,
     user_agent: Optional[str],
     ip_address: Optional[str],
 ) -> Optional[LoginResponse]:
-    """A portal token verified in the last 120 s becomes a `portal_link` CRM
-    session for the contact's eligible user. ``None`` for every refusal, so the
-    router answers one 401 body whatever the reason.
-
-    Refused: unknown, revoked, expired or unverified token (``resolve_token``),
-    an admin "view as contact" token, a verification older than the window
-    (``verified_at`` against the same ``_utcnow`` that ``verify_otp`` stamps it
-    with, never the DB-default ``created_at``), no eligible user, or a claim
-    already spent by this verification.
-    """
-    from datetime import timedelta
-
-    from app.services.portal_service import PortalAuthError
+    """A live portal-link secret becomes a `portal_link` CRM session for the
+    contact's eligible user. ``None`` for every refusal (unknown, spent or expired
+    secret, no Redis, the user no longer eligible), so the router answers one
+    401 body whatever the reason."""
     from app.services.user_session_service import mint_session
 
-    try:
-        token = PortalService(db).resolve_token(token_value or "")
-    except PortalAuthError:
+    contact_id = _take_portal_link_secret(secret)
+    if contact_id is None:
         return None
-    if bool(getattr(token, "is_impersonation", False)):
-        return None
-    verified_at = token.verified_at
-    now = _utcnow()
-    if verified_at is None or verified_at < now - timedelta(seconds=PORTAL_LINK_WINDOW_SECONDS):
-        return None
-
-    user = eligible_user_for_contact(db, token.contact_id)
+    user = eligible_user_for_contact(db, contact_id)
     if user is None:
         return None
-    if not _claim_portal_link(token.contact_id, verified_at):
-        return None
 
-    user.last_sign_in_at = now
+    user.last_sign_in_at = _utcnow()
     db.add(user)
     db.commit()
 

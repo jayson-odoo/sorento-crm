@@ -6,9 +6,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const signOutMock = vi.fn();
+const sessionUser = { id: 'u1' as string | null };
 vi.mock('next-auth/react', () => ({
   signIn: vi.fn(),
   signOut: (...args: unknown[]) => signOutMock(...args),
+  getSession: async () => (sessionUser.id ? { user: { id: sessionUser.id } } : null),
 }));
 
 const revokeMock = vi.fn();
@@ -26,6 +28,7 @@ const order: string[] = [];
 beforeEach(() => {
   vi.clearAllMocks();
   order.length = 0;
+  sessionUser.id = 'u1';
   window.localStorage.clear();
   window.sessionStorage.clear();
   fetchMock.mockImplementation(async () => {
@@ -40,7 +43,7 @@ beforeEach(() => {
 describe('portalLogout', () => {
   it('with the flag: revokes the CRM session, signs NextAuth out, clears the flag, revokes the portal token', async () => {
     writePortalToken('PT');
-    window.localStorage.setItem(CRM_SESSION_FLAG_KEY, '1');
+    window.localStorage.setItem(CRM_SESSION_FLAG_KEY, 'u1');
     await portalLogout();
 
     expect(revokeMock).toHaveBeenCalledTimes(1);
@@ -63,11 +66,23 @@ describe('portalLogout', () => {
 
   it('a failing CRM sign-out never blocks the portal logout', async () => {
     writePortalToken('PT');
-    window.localStorage.setItem(CRM_SESSION_FLAG_KEY, '1');
+    window.localStorage.setItem(CRM_SESSION_FLAG_KEY, 'u1');
     signOutMock.mockRejectedValue(new Error('boom'));
     await portalLogout();
 
     expect(order).toContain('portal-logout');
+    expect(window.localStorage.getItem(CRM_SESSION_FLAG_KEY)).toBeNull();
+  });
+
+  it('a different user signed in since: their session is left alone', async () => {
+    writePortalToken('PT');
+    window.localStorage.setItem(CRM_SESSION_FLAG_KEY, 'u1');
+    sessionUser.id = 'someone-else';
+    await portalLogout();
+
+    expect(revokeMock).not.toHaveBeenCalled();
+    expect(signOutMock).not.toHaveBeenCalled();
+    expect(order).toEqual(['portal-logout']);
     expect(window.localStorage.getItem(CRM_SESSION_FLAG_KEY)).toBeNull();
   });
 });
