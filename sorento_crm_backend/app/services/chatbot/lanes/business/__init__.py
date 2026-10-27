@@ -512,6 +512,11 @@ def _top_selling_category_ids(
             found, labels = business_services.resolve_category_class(db, token)
             if not found and len(labels) > 1:
                 return [], True, labels, []
+            if len(labels) == 1:
+                found = business_services.class_member_ids(db, labels)
+        elif found and not code and business_services.unclassed_ids(db, found):
+            # EEM-CATEGORY-PICK: a generic code no class owns ("wc") means the one class the shared rule gives it.
+            found = [*found, *business_services.classless_hit_class(db, matched)]
         if not found:
             unknown.append(token)
         for category_id in found:

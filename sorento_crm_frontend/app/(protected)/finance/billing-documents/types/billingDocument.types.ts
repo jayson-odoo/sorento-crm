@@ -84,6 +84,8 @@ export interface BillingDocumentDetail extends BillingDocumentListRow {
     notes: BillingRelatedNote[];
     sales_orders: { id: string; doc_no: string }[];
     delivery_order_nos: string[];
+    /** DOC-RELATIONS: the DOs the lines came from; id null when the DO is not in the CRM. */
+    delivery_orders: { id: string | null; doc_no: string; doc_date: string | null }[];
   };
 }
 
@@ -107,6 +109,7 @@ export interface BillingDocumentListParams {
   dateTo?: string | null;
   openOnly?: boolean;
   salesOrderId?: string;
+  deliveryOrderId?: string;
 }
 
 export interface BillingDocumentListResponse {

@@ -136,6 +136,11 @@ class ParserConfig:
     # (`OPPORTUNITY_LINE`), so the strict schema offers the `opportunity` key (`with_opportunity`).
     # Production v63 carries no such line: its schema is unchanged. False for a bare config.
     opportunity: bool = False
+    # EEM-CATEGORY-PICK: the prompt in use carries the sentence below, so the Category candidates block is grouped
+    # by class (`category_pick`) and the schema offers `message_language` (`with_message_language`). Today's prompts
+    # carry neither: their behaviour and schema are unchanged.
+    category_pick: bool = False
+    message_language: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -896,6 +901,20 @@ def with_opportunity(schema: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+#: EEM-CATEGORY-PICK: the raw template sentences that turn the two flags on (the `MEANING_ASK` pattern).
+CATEGORY_PICK_ASK = "For a category entity, canonical_code is the label before the colon of the Category candidates line the message means."
+LANGUAGE_ASK = 'Also return top-level "message_language": the language the user wrote the current message in.'
+
+
+def with_message_language(schema: dict[str, Any]) -> dict[str, Any]:
+    """A copy of `schema` with the flag-gated `message_language` last in `properties` and `required` (required and
+    nullable, as strict mode needs)."""
+    out = copy.deepcopy(schema)
+    out["properties"]["message_language"] = {"type": ["string", "null"], "enum": ["en", "ms", "zh", None]}
+    out["required"] = [*[k for k in out["required"] if k != "message_language"], "message_language"]
+    return out
+
+
 def closed_lists_schema(
     items: list[str], *, state: bool = False, report_fields: bool = True, by_words: bool = True
 ) -> dict[str, Any]:
@@ -1021,6 +1040,8 @@ def resolve_config(
         )
         if OPPORTUNITY_LINE in (raw_template or ""):
             json_schema = with_opportunity(json_schema)
+        if LANGUAGE_ASK in (raw_template or ""):
+            json_schema = with_message_language(json_schema)
     return ParserConfig(
         system_prompt=system_prompt,
         prompt_version=prompt_version,
@@ -1037,6 +1058,8 @@ def resolve_config(
         by_words=by_words,
         sales_channels=sales_channels,
         opportunity=OPPORTUNITY_LINE in (raw_template or ""),
+        category_pick=CATEGORY_PICK_ASK in (raw_template or ""),
+        message_language=LANGUAGE_ASK in (raw_template or ""),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
         reasoning_effort=reasoning_effort_setting(db),
@@ -1301,7 +1324,8 @@ def _base_schema(config: ParserConfig) -> dict[str, Any]:
     schema = PARSE_OUTPUT_JSON_SCHEMA_WITH_STATE if config.state_block else PARSE_OUTPUT_JSON_SCHEMA
     schema = schema if config.report_fields else without_report_fields(schema)
     schema = schema if config.by_words else without_by_words(schema)
-    return with_opportunity(schema) if config.opportunity else schema
+    schema = with_opportunity(schema) if config.opportunity else schema
+    return with_message_language(schema) if config.message_language else schema
 
 
 def parse(config: ParserConfig, user_block: str) -> ParsedOutput:

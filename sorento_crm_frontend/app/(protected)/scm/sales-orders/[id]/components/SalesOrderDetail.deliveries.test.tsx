@@ -365,8 +365,51 @@ describe('SalesOrderDetail - Delivery tab DO list (DO-SO-LINK-SURFACE R3)', () =
       'href',
       '/order-management/orders/77aa0001-0000-4000-8000-000000000001',
     );
-    // today's sentence stays on top
-    expect(screen.getByText(/delivered/)).toBeInTheDocument();
+    // DOC-RELATIONS (owner, mock v2): with DO rows the table is the answer, no sentence above it.
+    expect(screen.queryByText(/delivered/)).toBeNull();
+  });
+
+  // DOC-RELATIONS bug 5: SO427775 said "Nothing delivered yet" over four DO rows, because the
+  // sentence read the order lines' stale `qty_delivered` (0) while the table read the DO lines.
+  it('never says nothing was delivered above a table of DO rows', async () => {
+    grantedPermissions = new Set(['order_management.orders.view']);
+    useSalesOrder.mockReturnValue({
+      data: {
+        ...order(),
+        lines: order().lines.map((l) => ({ ...l, qty_delivered: 0, outstanding_qty: l.qty_ordered })),
+      },
+      isLoading: false,
+      isError: false,
+    });
+    getSalesOrderDeliveries.mockResolvedValue({
+      lines: [
+        { line_id: LINE_A, deliveries: [row('77aa0001-0000-4000-8000-000000000002', '202610-3905', '2026-10-21', 5)], cancels: [] },
+        { line_id: LINE_B, deliveries: [row('77aa0001-0000-4000-8000-000000000002', '202610-3905', '2026-10-21', 10)], cancels: [] },
+      ],
+      groups: [],
+    });
+    renderDetail();
+    openDelivery();
+
+    await screen.findByRole('region', { name: 'Delivery orders' });
+    expect(screen.queryByText(/Nothing delivered yet/)).toBeNull();
+  });
+
+  it('keeps "Nothing delivered yet" for an order with no DO at all', async () => {
+    useSalesOrder.mockReturnValue({
+      data: {
+        ...order(),
+        lines: order().lines.map((l) => ({ ...l, qty_delivered: 0, outstanding_qty: l.qty_ordered })),
+      },
+      isLoading: false,
+      isError: false,
+    });
+    getSalesOrderDeliveries.mockResolvedValue({ lines: [], groups: [] });
+    renderDetail();
+    openDelivery();
+
+    expect(await screen.findByText(/Nothing delivered yet/)).toBeInTheDocument();
+    expect(screen.queryByRole('region', { name: 'Delivery orders' })).toBeNull();
   });
 
   it('also lists a DO line naming this SO whose product is on no line of it, with its SKU', async () => {

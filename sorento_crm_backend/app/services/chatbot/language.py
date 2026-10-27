@@ -50,14 +50,25 @@ def choose(detected: str | None, conversation: str | None, saved: str | None) ->
     return "en"
 
 
+#: EEM-CATEGORY-PICK: "the turn has no parser verdict" (distinct from a verdict whose `message_language` is None).
+NOT_PARSED: Any = object()
+
+
 def for_turn(
     message: str,
     session_vars: dict[str, Any],
     saved: str | None,
     *,
     strip: Iterable[str] = (),
+    parsed: Any = NOT_PARSED,
 ) -> str:
-    """This turn's reply language, also written to `session_vars["reply_language"]` to carry."""
-    lang = choose(detect(message, strip=strip), session_vars.get("reply_language"), saved)
+    """This turn's reply language, also written to `session_vars["reply_language"]` to carry. On a parsed turn it
+    is the parser's own reading of the message, else the saved language, then the conversation's, then English."""
+    if parsed is NOT_PARSED:
+        lang = choose(detect(message, strip=strip), session_vars.get("reply_language"), saved)
+    elif parsed in LANGUAGES:
+        lang = parsed
+    else:
+        lang = choose(None, saved, session_vars.get("reply_language"))
     session_vars["reply_language"] = lang
     return lang
