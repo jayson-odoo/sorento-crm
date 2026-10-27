@@ -37,6 +37,7 @@ from sqlalchemy.orm import Session
 
 from app.models.inventory import Warehouse
 from app.models.product import Product
+from app.models.project_so import ALLOC_BORROW_SOURCES
 from app.models.scm import ReorderRecommendation, ReorderRun
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
@@ -1293,6 +1294,10 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     """``{(product_id, warehouse_id): qty}`` of stock an ACTIVE Project decision has
     already claimed, at the location it was claimed FROM.
 
+    BOARD-NO-HOLD (owner 27 Oct 2026): only a BORROW claims stock. A Reserve is a plan,
+    not a hold, so it no longer comes off Retail supply (the lines below that say
+    "Reserve" describe the older rule).
+
     > "every confirmed non-Buy component of an active Project decision (Reserve, Borrow,
     >  and timely SPO cover) is removed from Retail planning supply at its recorded source
     >  location"   (front planning 1.3, 5.3, AC-F07)
@@ -1323,7 +1328,10 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     if not pids:
         return {}
     so_join = ""
-    params: dict[str, Any] = {"pids": pids, "horizon": horizon, "horizon_start": horizon_start}
+    params: dict[str, Any] = {
+        "pids": pids, "horizon": horizon, "horizon_start": horizon_start,
+        "borrow_sources": list(ALLOC_BORROW_SOURCES),
+    }
     if so_numbers:
         # `sso.id = sol.sales_order_id` (security N1, 21 Sep 2026) - the "equivalent
         # alias" to `oir.company_id` this query has no `oir` row to compare against: it
@@ -1349,7 +1357,7 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
           ON d.project_sales_order_id = psl.project_sales_order_id
          AND d.state = 'active'
         {so_join}
-        WHERE a.source_type <> 'order'
+        WHERE a.source_type = ANY(:borrow_sources)
           AND sol.product_id::text = ANY(:pids)
           AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                OR sol.required_date <= CAST(:horizon AS date))

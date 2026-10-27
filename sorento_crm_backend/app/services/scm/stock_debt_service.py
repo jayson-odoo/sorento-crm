@@ -1671,8 +1671,9 @@ class StockDebtService:
         anybody queues (AC-S2-2), and both are keyed to the CORE sales-order line, which is
         what the demand read above is keyed on.
 
-        **The allocation half is `ProjectSupplyService._hold_query`, not a second spelling of
-        it.** That is the one predicate for "this row is holding stock right now" - confirmed,
+        **The allocation half is `ProjectSupplyService._hold_query` (Borrows, pinned) and
+        `_reserve_plan_query` (Reserves, `Hold.route`: a plan, not a hold, BOARD-NO-HOLD),
+        not a second spelling of it.** That is the one predicate for "this row is holding stock right now" - confirmed,
         located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
         it is shared with the free-stock arithmetic precisely so the two cannot come to
         disagree. Restated by hand here, it had already lost `confirmed_at IS NOT NULL`, so a
@@ -1838,7 +1839,32 @@ class StockDebtService:
                 if event.kind == KIND_ON_HAND
             }
 
-        for core_line_id, warehouse_id, qty, warehouse_code, product_id in rows:
+        # BOARD-NO-HOLD: the live Reserve plans, same base predicate, handed to the walk as
+        # ROUTES (the line may draw the bin at its own date), not as pins.
+        route_rows = (
+            self.supply._reserve_plan_query(
+                [str(pid) for pid in product_ids],
+                exclude_line_ids=None,
+                entities=(
+                    ProjectSalesOrderLine.core_sales_order_line_id,
+                    SOLineAllocation.warehouse_id,
+                    held_qty_expr(),
+                    Warehouse.warehouse_code,
+                    _hold_product,
+                ),
+            )
+            .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
+            .filter(ProjectSalesOrderLine.core_sales_order_line_id.in_(keys))
+            .order_by(
+                SOLineAllocation.confirmed_at,
+                SOLineAllocation.created_at,
+                SOLineAllocation.id,
+            )
+            .all()
+        )
+
+        tagged = [(False, row) for row in rows] + [(True, row) for row in route_rows]
+        for is_route, (core_line_id, warehouse_id, qty, warehouse_code, product_id) in tagged:
             # STOCK-DEBT-STALE-PIN (see the docstring): a pin on stock the bin no longer
             # holds (or never held: the own location may be chosen at 0) covers nobody.
             if _float(qty) <= 0 or found_empty(str(product_id), str(warehouse_id)):
@@ -1850,6 +1876,7 @@ class StockDebtService:
                     qty=_float(qty),
                     kind=KIND_ON_HAND,
                     warehouse=warehouse_code,
+                    route=is_route,
                 )
             )
 

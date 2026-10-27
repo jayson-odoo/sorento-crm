@@ -160,8 +160,13 @@ def _held_at(db, world, warehouse) -> Decimal:
 @pytest.mark.parametrize("enabled", [False, True])
 def test_confirm_reserve_plus_an_over_asked_own_location_borrow_passes_short(enabled):
     """The owner's flow: Reserve what is free at the own location, Borrow the rest from the
-    same location. Confirm passes; the borrow beyond what is free is confirmed as decided and
-    recorded short, and nothing is held twice."""
+    same location. Confirm passes.
+
+    BOARD-NO-HOLD (owner, 27 Oct 2026): the line's own Reserve of 8 is a plan and holds
+    nothing, so it is not subtracted from the bin. 8 on hand, no other holder: all 8 are
+    free to the Borrow, which holds its full 2 and is not short. The HELD figure is the
+    Borrow's alone (was 8 held by the Reserve, the Borrow 2 short).
+    """
     with blank_session() as db:
         world = _own_world(db, on_hand=8)
         _set_borrow_order(db, enabled)
@@ -169,32 +174,22 @@ def test_confirm_reserve_plus_an_over_asked_own_location_borrow_passes_short(ena
         body = _confirm(
             db, world, reserve=[(world["own"], "8")], borrow=[_own_borrow(world, "2")]
         )
-        code = world["own"].warehouse_code
-        notices = body["stock_short_notices"]
-        assert len(notices) == 1, notices
-        assert notices[0]["reason"].startswith(
-            f"Borrow 2 at {code} confirmed as decided; only 0 free at {code}"
-        ), notices[0]["reason"]
-        # BOARD-NO-HOLD (27 Oct 2026): the Reserve of 8 is a plan and holds nothing, and the
-        # Borrow beyond what is free is all short, so the HELD figure is the Borrow's alone.
-        # What this pins is the ceiling: held never exceeds what is on hand.
-        assert _held_at(db, world, world["own"]) <= Decimal("8"), "never more than on hand"
+        assert not body.get("stock_short_notices"), body.get("stock_short_notices")
+        assert _held_at(db, world, world["own"]) == Decimal("2")
 
 
 def test_re_confirming_the_same_reserve_and_own_borrow_never_holds_more_than_on_hand():
     """Review B1: on a re-confirm the line's own hold is un-netted, so an unchanged
-    (carried) Reserve must still come off what the own-location Borrow can take."""
+    (carried) Reserve must not change what the own-location Borrow can take. Since
+    BOARD-NO-HOLD the Reserve holds nothing, so both confirms hold the Borrow's 2 and
+    neither is short."""
     with blank_session() as db:
         world = _own_world(db, on_hand=8)
         body = dict(reserve=[(world["own"], "8")], borrow=[_own_borrow(world, "2")])
         _confirm(db, world, **body)
         again = _confirm(db, world, **body)
-        # BOARD-NO-HOLD (27 Oct 2026): the Reserve of 8 is a plan and holds nothing, and the
-        # Borrow beyond what is free is all short, so the HELD figure is the Borrow's alone.
-        # What this pins is the ceiling: held never exceeds what is on hand.
-        assert _held_at(db, world, world["own"]) <= Decimal("8"), "never more than on hand"
-        notices = again["stock_short_notices"]
-        assert len(notices) == 1 and "2 short" in notices[0]["reason"], notices
+        assert _held_at(db, world, world["own"]) == Decimal("2")
+        assert not again.get("stock_short_notices"), again.get("stock_short_notices")
 
 
 def test_confirm_an_own_location_borrow_with_free_stock_holds_it():
