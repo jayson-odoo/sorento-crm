@@ -35,8 +35,19 @@ GRN or picking edit writes many lines.
    - The process stops calling it once a run finds nothing left. Nothing can create a new
      active document of these types, so a restart costs at most one scan.
 
-Documents are deactivated, not deleted. Chunks stay, and search already requires
-`embedding_documents.is_active`.
+Documents are deactivated, not deleted, so they no longer come back from search, which requires
+`embedding_documents.is_active`. Two more paths are closed:
+- The rebuild endpoint refuses these types with a 422.
+- `dedupe_embedding_chunks_current.py` skips them, so it cannot reactivate them.
+
+## Follow-up (not in this PR)
+
+The line chunks stay `is_current` in the vector index. That index returns a limited candidate
+set before filters apply, so while line chunks are the bulk of `embedding_chunks` they still
+take candidate slots from real hits. Type-filtered `entity_resolver` reads and
+`semantic_search` can then return fewer than k rows (review finding, 27 Oct). Deleting the
+dropped types' chunks fixes that recall and reclaims the storage. That is a prod data deletion,
+so it needs an owner OK first, and the line-chunk count on prod measured.
 
 ## Tests
 

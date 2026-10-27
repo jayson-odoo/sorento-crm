@@ -169,3 +169,15 @@ def test_prune_task_runs_the_retire_step_until_it_is_done(db, monkeypatch):
     for _ in range(3):
         task_scheduler._handler_embedding_queue_prune(db, None)
     assert len(calls) == 2  # the third run skips it: nothing left to retire
+
+
+@pytest.mark.parametrize("source", DROPPED)
+def test_rebuild_api_refuses_a_line_type(source, db):
+    from fastapi import HTTPException
+
+    from app.api.v1.system.embeddings import request_rebuild
+
+    with pytest.raises(HTTPException) as exc:
+        request_rebuild(source_type=source, source_id=str(uuid.uuid4()), current_user={"id": None}, db=db)
+    assert exc.value.status_code == 422
+    assert db.query(EmbeddingQueue).count() == 0

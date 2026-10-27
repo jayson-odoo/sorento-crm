@@ -952,9 +952,10 @@ def retire_dropped_embedding_types(db: Session, *, batch_size: int = 5000, max_b
 
     Deactivates their documents (kept, not deleted: search already requires `is_active`) and
     skips their pending queue rows. Batched, each batch committed, at most `max_batches` per
-    run. Documents are walked by keyset over the unique (source_type, source_id) index, so a
-    run never rescans what it already did. `done` is True when a run finished with nothing
-    left; the caller stops calling it then.
+    run. The `is_active` filter is what makes it correct and resumable; the keyset over the
+    unique (source_type, source_id) index only keeps one run from rescanning its own batches
+    (a later run re-walks the documents earlier runs switched off, a bounded cost paid until
+    `done`). `done` is True when a run finished with nothing left; the caller stops then.
     """
     from sqlalchemy import select
 

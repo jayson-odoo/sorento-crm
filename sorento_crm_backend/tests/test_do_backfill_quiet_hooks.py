@@ -149,7 +149,9 @@ def test_plain_batch_still_queues_embeddings(env):
     """AC-DH46 baseline: the listener queues the DO and its lines."""
     _records(_post(env, [_record()]))
     ids = _landed_ids(env, 900001)
-    assert _queue_rows(env, ids) >= len(ids)
+    # The DO queues its embedding; its lines are not embedded (EMBED-DROP-LINE-TYPES).
+    assert _queue_rows(env, ids[:1]) >= 1
+    assert _queue_rows(env, ids[1:]) == 0
 
 
 def test_backfill_dry_run_relinks_nothing(env, monkeypatch):

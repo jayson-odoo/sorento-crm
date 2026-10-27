@@ -35,6 +35,8 @@ def main() -> None:
     )
     args = parser.parse_args()
 
+    from app.services.embedding_change_listener import DROPPED_SOURCE_TYPES
+
     db = SessionLocal()
     now = datetime.utcnow()
     try:
@@ -46,6 +48,8 @@ def main() -> None:
         ).distinct()
         if args.source_type:
             part_q = part_q.filter(EmbeddingChunk.source_type == args.source_type)
+        # A type no longer embedded stays deactivated; this script must not switch it back on.
+        part_q = part_q.filter(EmbeddingChunk.source_type.notin_(sorted(DROPPED_SOURCE_TYPES)))
         partitions = part_q.all()
 
         hash_collapses = 0

@@ -241,7 +241,9 @@ def two_sessions():
     conns, sessions = [], []
     for _ in range(2):
         conn = engine.connect()
-        conn.exec_driver_sql(f'SET search_path TO "{name}"')
+        # public after the scratch schema: app listeners (lookup validation) read their own
+        # tables from there, while embedding_queue resolves to the scratch copy.
+        conn.exec_driver_sql(f'SET search_path TO "{name}", public')
         # A broken lock fails the test instead of hanging it.
         conn.exec_driver_sql("SET statement_timeout = '5s'")
         conn.commit()
@@ -256,6 +258,9 @@ def two_sessions():
         for conn in conns:
             conn.exec_driver_sql("RESET search_path")
             conn.exec_driver_sql("RESET statement_timeout")
+            # SET is transactional: without the commit the pool's rollback would undo the
+            # RESET and hand the next test a connection pointed at the dropped schema.
+            conn.commit()
             conn.close()
         admin.exec_driver_sql(f'DROP SCHEMA "{name}" CASCADE')
         admin.close()
@@ -520,7 +525,10 @@ def test_poll_takes_mcp_tool_first_then_oldest_up_to_the_batch(db, monkeypatch):
 def test_poll_pick_reads_the_pending_poll_index(db):
     from app.models.embeddings import EMBEDDING_QUEUE_POLL_PRIORITY
 
+    # Only an index whose leading expression matches the ORDER BY can avoid both; on a tiny
+    # table the planner would otherwise happily sort.
     db.execute(text("SET LOCAL enable_seqscan = off"))
+    db.execute(text("SET LOCAL enable_sort = off"))
     plan = "\n".join(
         r[0]
         for r in db.execute(

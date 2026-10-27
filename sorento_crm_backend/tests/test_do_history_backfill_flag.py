@@ -64,7 +64,9 @@ def test_plain_push_still_audits_and_enqueues_embeddings(env):
     res = env.push_do([copy.deepcopy(do_records()[0])])
     assert _records(res)["db1:DO:900001"]["outcome"] == "created"
     ids = _landed_ids(env, 900001)
-    assert _queue_rows(env, ids) >= len(ids)
+    # The DO queues its embedding; its lines are not embedded (EMBED-DROP-LINE-TYPES).
+    assert _queue_rows(env, ids[:1]) >= 1
+    assert _queue_rows(env, ids[1:]) == 0
     assert _audit_rows(env, ids[0]) >= 1
     assert _summary_rows(env) == []
 
@@ -75,8 +77,7 @@ def test_backfill_push_writes_no_row_audit_and_no_embedding_event(env):
     recs = _records(res)
     assert recs["db1:DO:900001"]["outcome"] == "created"
     for doc_key in (900001, 900002):
-        order_id, *line_ids = _landed_ids(env, doc_key)
-        assert _queue_rows(env, line_ids) == 0
+        order_id, *_lines = _landed_ids(env, doc_key)
         events = env.db.execute(
             select(EmbeddingQueue.event_type).where(EmbeddingQueue.source_id == order_id)
         ).scalars().all()
@@ -130,7 +131,9 @@ def test_suppression_ends_with_the_backfill_request(env):
     _post(env, DO_INGEST, [copy.deepcopy(do_records()[0])], backfill=True)
     env.push_do([copy.deepcopy(do_records()[1])])
     ids = _landed_ids(env, 900002)
-    assert _queue_rows(env, ids) >= len(ids)
+    # The DO queues its embedding; its lines are not embedded (EMBED-DROP-LINE-TYPES).
+    assert _queue_rows(env, ids[:1]) >= 1
+    assert _queue_rows(env, ids[1:]) == 0
     assert _audit_rows(env, ids[0]) >= 1
 
 
@@ -160,5 +163,7 @@ def test_backfill_false_is_a_plain_push(env):
     res = _post(env, DO_INGEST, [copy.deepcopy(do_records()[0])], backfill=False)
     assert _records(res)["db1:DO:900001"]["outcome"] == "created"
     ids = _landed_ids(env, 900001)
-    assert _queue_rows(env, ids) >= len(ids)
+    # The DO queues its embedding; its lines are not embedded (EMBED-DROP-LINE-TYPES).
+    assert _queue_rows(env, ids[:1]) >= 1
+    assert _queue_rows(env, ids[1:]) == 0
     assert _summary_rows(env) == []

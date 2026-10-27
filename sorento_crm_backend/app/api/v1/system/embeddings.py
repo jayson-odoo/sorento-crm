@@ -1,11 +1,12 @@
 """Embedding operations and observability endpoints."""
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user, require_permission
 from app.services.embedding_service import EmbeddingReadService, EmbeddingEventService
 from app.services.embedding_backfill_service import EmbeddingBackfillService
+from app.services.embedding_change_listener import DROPPED_SOURCE_TYPES
 from app.models.embeddings import EmbeddingQueue
 
 router = APIRouter(prefix="/embeddings")
@@ -68,6 +69,8 @@ def request_rebuild(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    if source_type in DROPPED_SOURCE_TYPES:
+        raise HTTPException(status_code=422, detail=f"{source_type} is no longer embedded")
     item = EmbeddingEventService(db).request_rebuild(source_type=source_type, source_id=source_id, triggered_by=current_user.get("id"))
     return {"id": str(item.id), "status": item.status}
 
