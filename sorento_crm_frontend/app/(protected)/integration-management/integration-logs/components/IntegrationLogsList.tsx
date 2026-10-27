@@ -374,10 +374,10 @@ export default function IntegrationLogsList() {
                     value={splitMulti(statusFilter)}
                     onChange={(v) => setStatusFilter(joinMulti(v))}
                     options={[
-                      { value: 'failed', label: 'Failed' },
                       { value: 'pending', label: 'Pending' },
                       { value: 'processing', label: 'Processing' },
                       { value: 'success', label: 'Success' },
+                      { value: 'failed', label: 'Failed' },
                     ]}
                     placeholder="Status"
                     triggerClassName="w-full"
