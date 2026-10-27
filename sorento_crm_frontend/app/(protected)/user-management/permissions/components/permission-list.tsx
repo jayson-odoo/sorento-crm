@@ -149,7 +149,7 @@ const PermissionList = () => {
 
   // Handle row selection
   const roleIds = splitMulti(selectedRole);
-  const roleOptions = (roleList ?? []).map((role: UserRole) => ({
+  const roleOptions: { value: string; label: string }[] = (roleList ?? []).map((role: UserRole) => ({
     value: role.id,
     label: role.name,
   }));
