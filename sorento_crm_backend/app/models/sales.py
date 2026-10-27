@@ -638,3 +638,37 @@ class SalesPointRatio(CompanyScopedMixin, Base):
         CheckConstraint("rm_per_point > 0", name="ck_sales_point_ratios_positive"),
         {"schema": SCHEMA},
     )
+
+
+class SetApartCustomer(CompanyScopedMixin, Base):
+    """A customer whose sales the reports set apart from Dealer and Project team, for the
+    months it covers (SALES-UNIFIED 2.4, owner ruling Q3 (a)). Months are stored as their first
+    day; `to_month` NULL is open. No two rows of one customer overlap, checked in
+    `set_apart_service`, the only writer (the `team_members` rule)."""
+
+    __tablename__ = "set_apart_customers"
+    __audit_track__ = True
+    __audit_entity_type__ = "sales_set_apart_customers"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    customer_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("customers.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    from_month = Column(Date, nullable=False)
+    to_month = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "to_month IS NULL OR to_month >= from_month",
+            name="ck_sales_set_apart_customers_months",
+        ),
+        Index("ix_sales_set_apart_customers_company_customer", "company_id", "customer_id"),
+        {"schema": SCHEMA},
+    )
