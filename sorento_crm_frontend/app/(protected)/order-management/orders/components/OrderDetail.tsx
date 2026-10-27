@@ -1,7 +1,8 @@
 'use client';
 
 import { useRouter } from 'next/navigation';
-import { Banknote, Edit, Info, Truck } from 'lucide-react';
+import { useState } from 'react';
+import { Edit, FileText, Link2, ListOrdered, Receipt, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -15,6 +16,9 @@ import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDate } from '@/lib/helpers';
 import OrderLinesCard from './OrderLinesCard';
 import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
+import { OrderInvoices } from '@/app/(protected)/finance/billing-documents/components/OrderInvoices';
+import { BILLING_VIEW_SLUG } from '@/app/(protected)/finance/billing-documents/lib/permissions';
+import { RelatedDocumentsPanel } from '../../shared/related/RelatedDocumentsPanel';
 
 interface OrderDetailProps {
   orderId: string;
@@ -30,6 +34,8 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   // DO-SO-LINK-SURFACE: the SO column's numbers open the sales order only for a user who can
   // see it (the SCM sales-order page's own gate).
   const canOpenSo = useHasPermission('scm.dashboard.view');
+  const canSeeInvoices = useHasPermission(BILLING_VIEW_SLUG);
+  const [tab, setTab] = useState('general');
   const { actions, dialogs, pending } = useOrderActions(order, {
     onDeleted: () => router.push(`/order-management/orders${listQs}`),
   });
@@ -108,25 +114,36 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
         />
       </div>
 
-      <Tabs defaultValue="information" className="w-full">
-        {/* `overflow-x-auto` is the list's own since S1; the icons are what make
-            a scrolled strip readable when a label is half off the edge. */}
-        <TabsList className="mb-4">
-          <TabsTrigger value="information">
-            <Info />
-            <span>Delivery order information</span>
+      {/* DOC-RELATIONS (owner 27 Oct): the SO detail's tab shape - General, Lines, Delivery,
+          Invoices, Related - with the SAME Invoices grid and Related table components. No
+          Transfers: a delivery order has no stock transfer link to show. */}
+      <Tabs value={tab} onValueChange={setTab} className="w-full">
+        <TabsList variant="line" className="mb-4 w-full justify-start">
+          <TabsTrigger value="general">
+            <FileText />
+            <span>General</span>
           </TabsTrigger>
-          <TabsTrigger value="financial">
-            <Banknote />
-            <span>Financial summary</span>
+          <TabsTrigger value="lines">
+            <ListOrdered />
+            <span>Lines</span>
           </TabsTrigger>
           <TabsTrigger value="delivery">
             <Truck />
-            <span>Delivery &amp; tracking</span>
+            <span>Delivery</span>
+          </TabsTrigger>
+          {canSeeInvoices ? (
+            <TabsTrigger value="invoices">
+              <Receipt />
+              <span>Invoices</span>
+            </TabsTrigger>
+          ) : null}
+          <TabsTrigger value="related">
+            <Link2 />
+            <span>Related</span>
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="information" className="mt-0 space-y-6 focus-visible:outline-none">
+        <TabsContent value="general" className="mt-0 space-y-6 focus-visible:outline-none">
           <Card>
             <CardHeader>
               <CardTitle>Delivery order information</CardTitle>
@@ -196,15 +213,6 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
               )}
             </CardContent>
           </Card>
-          <OrderLinesCard
-            orderId={orderId}
-            lines={order.lines ?? []}
-            readOnly={(order.autocount_owned_fields ?? []).length > 0}
-            canOpenSo={canOpenSo}
-          />
-        </TabsContent>
-
-        <TabsContent value="financial" className="mt-0 focus-visible:outline-none">
           <Card>
             <CardHeader>
               <CardTitle>Financial summary</CardTitle>
@@ -254,6 +262,15 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
               </div>
             </CardContent>
           </Card>
+        </TabsContent>
+
+        <TabsContent value="lines" className="mt-0 focus-visible:outline-none">
+          <OrderLinesCard
+            orderId={orderId}
+            lines={order.lines ?? []}
+            readOnly={(order.autocount_owned_fields ?? []).length > 0}
+            canOpenSo={canOpenSo}
+          />
         </TabsContent>
 
         <TabsContent value="delivery" className="mt-0 focus-visible:outline-none">
@@ -359,6 +376,16 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
               )}
             </CardContent>
           </Card>
+        </TabsContent>
+
+        {canSeeInvoices ? (
+          <TabsContent value="invoices" className="mt-0 focus-visible:outline-none">
+            <OrderInvoices deliveryOrderId={order.id} />
+          </TabsContent>
+        ) : null}
+
+        <TabsContent value="related" className="mt-0 focus-visible:outline-none">
+          <RelatedDocumentsPanel kind="delivery_order" id={order.id} />
         </TabsContent>
       </Tabs>
 

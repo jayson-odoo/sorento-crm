@@ -71,6 +71,14 @@ describe('getBillingDocuments', () => {
     expect(qs.get('sales_order_id')).toBe('so-1');
   });
 
+  it('sends delivery_order_id for a delivery order\'s Invoices tab (DOC-RELATIONS)', async () => {
+    apiFetch.mockResolvedValue(ok({ data: [], pagination: { total: 0 }, empty: true }));
+    await getBillingDocuments({ ...BASE_PARAMS, deliveryOrderId: 'do-1' });
+    const qs = new URLSearchParams(apiFetch.mock.calls[0][0].split('?')[1]);
+    expect(qs.get('delivery_order_id')).toBe('do-1');
+    expect(qs.get('sales_order_id')).toBeNull();
+  });
+
   it('leaves unset filters off the query string, and open_only off when false', async () => {
     apiFetch.mockResolvedValue(ok({ data: [], pagination: { total: 0 }, empty: true }));
 

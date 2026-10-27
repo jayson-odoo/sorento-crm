@@ -1,5 +1,6 @@
 """Orders API routes."""
 import calendar
+import logging
 import re
 from datetime import datetime, time
 
@@ -23,6 +24,7 @@ from app.services.order_service import (
     stamp_so_outstanding_rows,
 )
 from app.services.uuid_list_param import parse_uuid_list
+from app.services.document_relations import RELATED_SORT_PATTERN
 from app.config import settings as app_settings
 
 
@@ -1139,6 +1141,36 @@ async def get_order(
         raise
     except Exception as e:
         raise handle_internal_error(str(e))
+
+
+@router.get("/{order_id}/related")
+def get_order_related(
+    order_id: str,
+    sort: str = Query("doc_date", pattern=RELATED_SORT_PATTERN),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
+    db: Session = Depends(get_db),
+):
+    """DOC-RELATIONS: the sales orders and billing documents of this delivery order, each kind
+    null without its view slug, plus the visible ones as one table sorted server side."""
+    from app.services import document_relations as relations
+
+    try:
+        order = OrderService(db).get_order(order_id)  # 404 if missing
+        return relations.related_response(
+            db,
+            current_user["id"],
+            relations.relations_for_delivery_order(db, order),
+            sort=sort,
+            dir=dir,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Logged with its real text, answered generically (security review nit): a SQL error
+        # never reaches the caller.
+        logging.getLogger(__name__).error("Related documents failed for %s: %s", order_id, e, exc_info=True)
+        raise handle_internal_error()
 
 
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
