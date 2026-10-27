@@ -129,3 +129,8 @@ def test_apply_relabels_and_revert_puts_them_back(conn):
 
     assert _status(conn, "complaints", complaint) == "submitted"
     assert _status(conn, "stock_inquiries", inquiry) == "pending_project_sales"
+
+
+def test_revert_refuses_a_record_naming_a_column_the_script_never_writes(conn):
+    with pytest.raises(SystemExit):
+        backfill.revert(conn, {"x": {"table": "users", "column": "password", "from": "a", "to": "b", "ids": []}})

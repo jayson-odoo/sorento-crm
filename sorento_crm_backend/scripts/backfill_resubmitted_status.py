@@ -136,7 +136,10 @@ def apply(conn, found: dict[str, list[tuple[str, str]]]) -> dict:
 
 
 def revert(conn, record: dict) -> None:
+    allowed = {(table, column) for _query, table, column, _from in FORMS.values()}
     for form, entry in record.items():
+        if (entry["table"], entry["column"]) not in allowed:
+            raise SystemExit(f"{form}: {entry['table']}.{entry['column']} is not a column this script writes")
         conn.execute(
             text(
                 f"UPDATE {entry['table']} SET {entry['column']} = :frm "
