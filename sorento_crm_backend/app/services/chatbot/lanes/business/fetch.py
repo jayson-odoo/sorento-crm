@@ -437,8 +437,8 @@ SCALAR_PARAMS: frozenset[str] = frozenset()
 #: The sales analysis's `group_by` -> the route's `rows` (the years are always across).
 #: "month" is months down the side; "year" and no axis said are one line per channel.
 SALES_ANALYSIS_GROUP_BY = {"": "channel", "year": "channel", "month": "month"}
-#: The bases `GET /sales/analysis` answers (finance S1 added invoiced); anything else,
-#: or none, is Delivered, the report's default.
+#: The bases `GET /sales/analysis` answers (finance S1 added invoiced). The lane asks one when the
+#: message names none (`sales_basis_ask`).
 SALES_ANALYSIS_BASES = ("ordered", "delivered", "invoiced")
 
 DATE_PARAMS: dict[str, tuple[str, str]] = {
@@ -1220,8 +1220,9 @@ def entity_ids_transformer(
         channel = jsc.get(semantic_input, "sales_channel")
         if channel in ("dealer", "project"):
             out["channel"] = channel
+        # SALES-TOTAL-ASK: the basis is the one the person named or answered (`sales_basis_ask`), never
+        # defaulted here.
         basis = jsc.get(semantic_input, "sales_basis")
-        out["basis"] = "invoiced"  # SALES-UNIFIED: sales is invoiced unless the person names a basis
         if basis in SALES_ANALYSIS_BASES:
             out["basis"] = basis
         company = jsc.get(semantic_input, "sales_company")
