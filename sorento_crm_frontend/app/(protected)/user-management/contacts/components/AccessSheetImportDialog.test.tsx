@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/components/common/FileDropzone', () => ({
@@ -59,11 +59,12 @@ import AccessSheetImportDialog from './AccessSheetImportDialog';
 
 const acct = (id: string, over: Record<string, unknown> = {}) => ({
   customer_id: id, customer_code: `300-${id}`, customer_name: `ACCOUNT ${id}`, company_code: 'SRT', is_active: true,
-  sales_agent: 'AG ONE', sheet_agent: 'AG ONE', match: 'exact', score: 1, proposed: true, ...over,
+  sales_agent: 'AG ONE', sheet_agent: 'AG ONE', match: 'exact', score: 1, proposed: true, links_to: [], ...over,
 });
 const person = (name: string, over: Record<string, unknown> = {}) => ({
   line: 2, name, phone: '+60100000001', in_crm: true, contact_id: `id-${name}`, role: 'owner', companies: ['SRT'],
-  template: 'SRT owner', status: 'applied', skip_reason: null, changes: [], warnings: [], not_applied: [], ...over,
+  template: 'SRT owner', status: 'applied', skip_reason: null, changes: [], warnings: [], not_applied: [],
+  holds_more_items: [], outside_links: [], ...over,
 });
 
 const PREVIEW = {
@@ -322,5 +323,89 @@ describe('AccessSheetImportDialog', () => {
     await openMixed();
     fireEvent.click(confirmBox());
     expect([...(await apply())['beta tiles']].sort()).toEqual(['x1', 'x2']);
+  });
+
+  // BULK-ACCESS-PREVIEW (owner 27 Oct): every change visible, per contact, nothing truncated.
+  const FULL = {
+    ...PREVIEW,
+    blocks: [
+      {
+        ...PREVIEW.blocks[0],
+        companies: ['SRT', 'MCH'],
+        accounts: [
+          acct('m1', { company_code: 'MCH', customer_code: '300-Y055', links_to: ['Wong'] }),
+          acct('s1', { customer_code: '300-Y065', links_to: ['Shi', 'Wong'] }),
+          acct('z1', { company_code: 'ZZX', customer_code: '300-Z001', links_to: [] }),
+        ],
+        contacts: [
+          person('Shi', {
+            changes: [
+              { facet: 'access_types', before: ['end_user'], after: ['cabana_dealer', 'dealer', 'end_user'] },
+              { facet: 'customers', before: ['300-Y055 YOO A'], after: ['300-Y055 YOO A', '300-Y065 YOO B'] },
+            ],
+            outside_links: ['300-Y055 YOO A (MCH)'],
+          }),
+          person('Wong', {
+            companies: ['SRT', 'MCH'],
+            template: 'SRT+MCH owner',
+            warnings: ['holds_more'],
+            holds_more_items: [
+              { facet: 'brands', items: ['BRAVAT'] },
+              { facet: 'stock_locations', items: ['KCH'] },
+            ],
+          }),
+        ],
+      },
+      PREVIEW.blocks[1],
+    ],
+  };
+
+  async function openFull() {
+    svc.previewAccessSheet.mockResolvedValueOnce(FULL);
+    renderDialog();
+    await toPreview();
+    if (!screen.queryByText('Shi')) fireEvent.click(screen.getAllByText('ALPHA BATH SDN BHD')[0]);
+    await screen.findByText('Shi');
+  }
+
+  it('P5: each changed facet lists before and after one item per line, added items marked', async () => {
+    await openFull();
+    const panel = screen.getByTestId('contact-Shi');
+    const added = within(panel).getAllByTestId('added-item').map((n) => n.textContent);
+    expect(added).toEqual(expect.arrayContaining(['cabana_dealer', 'dealer', '300-Y065 YOO B']));
+    expect(added).not.toContain('end_user');
+    // each item is its own element, never a joined line
+    expect(within(panel).getAllByText('end_user')).toHaveLength(2);
+    expect(within(panel).queryByText(/cabana_dealer, dealer/)).toBeNull();
+    expect(panel.querySelector('.truncate')).toBeNull();
+  });
+
+  it('P5: unchanged facets are named in one No change line', async () => {
+    await openFull();
+    expect(within(screen.getByTestId('contact-Shi')).getByText(/^No change:/)).toHaveTextContent(/Segments/);
+  });
+
+  it('P6: Holds more than the template lists the extra items per facet', async () => {
+    await openFull();
+    const panel = screen.getByTestId('contact-Wong');
+    expect(within(panel).getByText(/Holds more than the template/i)).toBeInTheDocument();
+    expect(within(panel).getByText('Brands: BRAVAT')).toBeInTheDocument();
+    expect(within(panel).getByText('Locations: KCH')).toBeInTheDocument();
+  });
+
+  it('P4: links outside the row companies show as an info line on that contact only', async () => {
+    await openFull();
+    expect(within(screen.getByTestId('contact-Shi')).getByText(/Linked outside this row's companies/i)).toBeInTheDocument();
+    expect(within(screen.getByTestId('contact-Shi')).getByText('300-Y055 YOO A (MCH)')).toBeInTheDocument();
+    expect(within(screen.getByTestId('contact-Wong')).queryByText(/Linked outside/i)).toBeNull();
+  });
+
+  it('P3: the accounts table names who each account links to, or Nobody', async () => {
+    await openFull();
+    const row = (code: string) => screen.getByRole('checkbox', { name: `Link ${code}` }).closest('tr') as HTMLElement;
+    expect(within(row('300-Y065')).getByText('Shi')).toBeInTheDocument();
+    expect(within(row('300-Y065')).getByText('Wong')).toBeInTheDocument();
+    expect(within(row('300-Y055')).queryByText('Shi')).toBeNull();
+    expect(within(row('300-Z001')).getByText('Nobody')).toBeInTheDocument();
   });
 });
