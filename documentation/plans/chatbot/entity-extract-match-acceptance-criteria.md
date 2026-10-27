@@ -138,3 +138,23 @@ languages and units). Crew 27 Oct: prompt-registry label `chatbot_lookup_embedde
 - **AC-S3-7 [T]** Migration: single head, idempotent, downgrade removes only its own rows, no label moves.
 - **AC-S3-8 [T]** On the copy (label `chatbot_lookup_embedder` -> gemini, span label -> v2): the owner's two messages
   plus "emas", "biru", "金色" rerun, per phrase before / after, posted on the PR.
+
+### S3 round 2: startup warm of the lookup vectors (crew 27 Oct ~11:3x, ask a70702435)
+
+Why: today the list vectors are embedded lazily by the first turn (`lookup_lists.warm`, called from
+`engine._lookup_lines` and `engine._span_prep`); turns never block on it but run spelling only
+(`lookup_lists.usable_embedder`) until ~4.6k texts are cached, which took more than 70 s on Gemini (100-text batches,
+`GEMINI_EMBED_CHUNK`). So every process start has a no-meaning window, and it only starts when a message arrives.
+
+- **AC-S3-9 [BE]** API start-up (`startup_event`) starts ONE background daemon thread that embeds every list row text a
+  turn can load (the `engine._span_prep` rows at the widest visibility: salespeople and all customers of all companies,
+  plus the spec-name rows) with the embedder the turn would use (`lookup_lists.embedder`, label-driven). Start-up
+  returns without waiting for it: an embedder that blocks for minutes delays start-up by well under 1 s.
+- **AC-S3-10 [BE]** Once that warm finishes, the FIRST turn after start uses meaning matching (its rows are cached, so
+  `usable_embedder` gives the embedder and a meaning-only span resolves); no earlier turn is needed to start the warm.
+- **AC-S3-11 [BE]** The warm is advisory: no key (embedder None), a database error or a provider error is logged and
+  swallowed; start-up completes and turns behave as today (lazy warm, spelling only until cached).
+- **AC-S3-12 [BE]** Switch `CHATBOT_LOOKUP_WARM_ENABLED` (default on; "0"/"false"/"off"/"no" turn it off);
+  `tests/conftest.py` turns it off like `CHATBOT_INBOX_SWEEPER_ENABLED`. The warm reads row texts only, in its own
+  read session with company scope None (all companies; the texts go only to the per-process vector cache and to the
+  same embedding provider a turn already sends them to), and closes the session before embedding.
