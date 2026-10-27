@@ -1,6 +1,8 @@
 # PLAN: Catalogue image extraction (CATALOG-IMAGES)
 
-Status: Plan. The behaviour card is posted as one crew-ask; nothing is built until the owner answers.
+Status: Plan. The behaviour card is posted as one crew-ask; the screen and the writes wait for the owner's
+answers. Red tests for the answer-independent part (contract below) are written now (crew, 27 Oct).
+Lane moved local 27 Oct (CATALOG-IMAGES-L, same PR #1923, branch claude/catalog-images-9kwphh).
 Track: full (new upload/ingest surface, migration for the extraction rows, master-data writes).
 
 Owner ask (27 Oct 2026, verbatim): "i got this code that reads pdf like [catalogue page] and turns it into
@@ -114,6 +116,48 @@ Phase 1 FE mock against fixtures. Phase 2 test-first: fixture PDFs generated in 
 (no real catalogue in git), then extraction + match + confirm + dedupe. Phase 3 reviewer +
 security-reviewer (upload size/type, no path traversal: storage keys are server-built from uuids,
 images re-encoded) + browser pass + hand test.
+
+## Phase 2 contract, answer-independent part (red tests written now, crew 27 Oct)
+
+None of the five questions changes these. They are pure functions plus one read-only DB lookup, so they
+stand whether the screen ends up on the flyer reading (Q1 a) or on its own page (Q1 b).
+
+`app/services/dealer_kit/catalog_photos.py` (pure, no DB):
+
+- `extract_catalog_photos(data: bytes) -> list[CatalogPhoto]`. Same refusals as `extract_flyer`
+  (`flyer_extraction.py:248`): not a PDF -> `ValueError`, encrypted -> `EncryptedFlyerError`.
+- `CatalogPhoto` (frozen dataclass): `page: int` (1-based); `rect: tuple[float, float, float, float]`
+  (the visible placement on the page, in pt); `block_codes: list[str]` (every code-shaped token of the
+  caption, printed order, placeholders excluded); `placeholders: list[str]` (R4 tokens of that caption);
+  `image_bytes: bytes`; `mime: str` (`image/jpeg` or `image/png`); `sha256: str` (hex of `image_bytes`);
+  `width: int`, `height: int` (pixels of `image_bytes`). Property `primary_code` = `block_codes[0]` or None.
+- Code-shaped token: owner's shape `^[A-Z]{3,}\d{3,}[A-Z0-9\-]*$` on whitespace-split caption words,
+  trailing `,;:.` stripped. Placeholder token: letters then a run of 3 or more underscores (`SRTWB_____`).
+- R1: one `CatalogPhoto` per PLACEMENT (an image placed twice is two photos). Skipped: placement under
+  40pt on either side; a placement covering the page (`_covers_the_page`); a banner (width >= 80% of the
+  page, touching the top). Kept photos are cropped to the visible part of the page, RGB, re-encoded:
+  PNG when the source has an soft mask, JPEG q90 otherwise. Never the source stream bytes.
+- R2: the caption is chosen with the owner's rule (its first code line sits below the photo's centre,
+  its x0 within [photo.x0 - 20, photo.x1], nearest by `(y0 - cy) + 0.5 * |x0 - photo.x0|`). A photo with
+  no caption is still returned, with `block_codes == []` (it lands in the Unmatched bucket).
+- Order: page, then top-to-bottom, then left-to-right.
+
+`app/services/dealer_kit/catalog_photo_matching.py` (DB, read-only, ORM so company scope applies):
+
+- `match_codes(db, codes: list[str]) -> dict[str, CodeMatch]`, one entry per input code.
+- `CodeMatch` (frozen dataclass): `code` (as printed); `rung` in `exact | normalised | suffix | alias |
+  none`; `product_id: str | None`; `product_code: str | None`; `confidence` in `high | medium | low |
+  none` (exact = high; normalised/suffix/alias = medium; none with a suggestion = low; else none);
+  `suggestion: str | None` (a product_code, only when `rung == "none"`, never applied).
+- Rungs as R3. Suffix: unique only, either direction (`SRTW5112` printed vs `SRTW5112-MW` in the master,
+  or the other way round); two candidates -> `none` with a suggestion. Alias: a
+  `supplier_product_code_alias` row with this `supplier_code` and a non-null `product_id`, unique product.
+  A product under another company never matches.
+- `already_on_file(db, product_id: str, sha256: str) -> bool`: True when a `product_attachments` row of
+  that product links an attachment whose `file_hash == sha256` (R5).
+
+Tests: `tests/test_catalog_photo_extraction.py` (fixture PDFs built with PyMuPDF in the test, as
+`tests/_flyer_pdf.py` does), `tests/test_catalog_photo_matching.py` (Postgres, `tests/_pg_fixture.py`).
 
 ## Owner's script (27 Oct, verbatim)
 
