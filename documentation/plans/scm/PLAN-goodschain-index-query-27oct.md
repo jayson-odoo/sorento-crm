@@ -31,3 +31,12 @@ calls per Stock Debt request), and the literal row-IN overflows `max_stack_depth
 
 The Stock Debt board computes every product (~6k) before paging; the Python side is ~1.5 s of
 a ~3 s request on the local clone after both indexes (crew profiling, 27 Oct).
+
+## Measured
+
+CONCURRENTLY build on the local clone `sorento_prod_1020` (PG 17.7, crew, 27 Oct):
+`ix_spo_allocations_from_po_key` 434.2 ms (88,343 rows / 28 MB), `ix_purchase_order_lines_src_key`
+721.3 ms (152,480 rows / 35 MB); drops 3.7 ms / 0.8 ms. Never stalls a deploy: the build is
+CONCURRENTLY under the repo's migration limits (`app/utils/migration_timeouts.py`), a timed-out
+build warns and the revision succeeds, and `start.sh` retries it in the background
+(`app/utils/online_index.py`, `scripts/ensure_goods_chain_indexes.py`).
