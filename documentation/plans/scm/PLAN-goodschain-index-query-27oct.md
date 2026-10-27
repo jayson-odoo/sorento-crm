@@ -12,10 +12,22 @@ calls per Stock Debt request), and the literal row-IN overflows `max_stack_depth
 
 ## Fix
 
-1. Migration: `CREATE INDEX CONCURRENTLY IF NOT EXISTS ix_spo_allocations_from_po_key ON
-   spo_allocations (from_po_number, btrim(from_po_line_ref), product_id, company_id)`, the exact
-   name and shape the owner adds by hand on prod, so that one is reused.
+1. Migration `gc_idx_0001_spo_from_po_key`, both halves of the key, the exact names and shapes
+   the owner built by hand on prod (a VALID one is kept; an INVALID one, which the owner's
+   interrupted first CONCURRENTLY build left on prod, is dropped and rebuilt CONCURRENTLY and
+   checked `indisvalid` after):
+   - `ix_spo_allocations_from_po_key ON spo_allocations (from_po_number, btrim(from_po_line_ref), product_id, company_id)`;
+   - `ix_purchase_order_lines_src_key ON purchase_order_lines (btrim(source_ref), product_id, company_id)`
+     (crew profiling: `_po_lines_feeding` over ~949 keys walked every line of 208 POs, 1.2 s;
+     28 ms with the index).
 2. `transferred_allocations`: the OR becomes two reads (`po_line_id IN`, then the key), the key
    passed as one `unnest` of four arrays joined to the table, so the SQL text does not grow with N.
-3. `_po_lines_feeding`: the same key-as-unnest join over purchase_orders / purchase_order_lines.
-4. Test: more than 5,000 keys, identical output, no stack-depth error.
+3. `_po_lines_feeding` and Stock Debt's `_follow_totals`: the same key-as-unnest join over
+   purchase_orders / purchase_order_lines.
+4. Test: 9,000 keys, identical output, no stack-depth error (red on main: stack depth limit
+   exceeded); migration test for build / keep VALID / rebuild INVALID.
+
+## Follow-up (not this PR)
+
+The Stock Debt board computes every product (~6k) before paging; the Python side is ~1.5 s of
+a ~3 s request on the local clone after both indexes (crew profiling, 27 Oct).

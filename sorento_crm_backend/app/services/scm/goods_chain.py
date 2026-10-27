@@ -239,16 +239,17 @@ def key_rows(keys: Iterable[Tuple[Any, ...]], **columns: Any) -> Any:
     (name = type, `KEY_TEXT` or `KEY_UUID`, in tuple order), to JOIN on instead of a literal
     `tuple_(...).in_(keys)`.
 
-    A row-IN of N tuples is N ORed ANDs in the SQL text: the planner cannot use an index for
-    it, Stock Debt's ~6,800 keys seq-scanned `spo_allocations` per call (6.3 s, prod incident
-    27 Oct 2026), and an expression that deep overflows the default 2MB `max_stack_depth`.
-    One `unnest` of one array per column is the same SQL for 5 keys or 50,000, and a join
-    against it can use the key's index. Each array is cast to its column's type so a uuid
+    A row-IN of N tuples is N ORed ANDs in the SQL text. Without an index each is one more
+    filter on a sequential scan (Stock Debt's ~6,800 keys: 6.3 s a call on `spo_allocations`,
+    prod incident 27 Oct 2026); with one, planning a BitmapOr of N arms still costs more as N
+    grows; and an expression that deep overflows the default 2MB `max_stack_depth` (about
+    7,500 keys in the sandbox). One `unnest` of one array per column is the same SQL for 5
+    keys or 50,000, and a join against it can use the key's index. Each array is cast to its column's type so a uuid
     column is compared as uuid. `keys` must not be empty."""
     names = list(columns)
-    distinct = sorted(set(keys))
+    distinct = sorted({tuple(str(value) for value in key) for key in keys})
     arrays = [
-        cast([str(value) for value in values], ARRAY(columns[name]))
+        cast(list(values), ARRAY(columns[name]))
         for name, values in zip(names, zip(*distinct))
     ]
     return (
@@ -725,7 +726,10 @@ def _po_lines_feeding(db: Session, spo_rows: Sequence[Any]) -> Set[str]:
             str(row.spo_company_id),
         )
         for row in spo_rows
-        if row.spo_from_po_number and row.spo_from_ref and row.spo_product_id
+        if row.spo_from_po_number
+        and row.spo_from_ref
+        and row.spo_product_id
+        and row.spo_company_id
     }
     if not keys:
         return named
