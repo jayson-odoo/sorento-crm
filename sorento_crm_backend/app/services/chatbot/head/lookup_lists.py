@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import random
 import re
 import threading
 import time
@@ -734,15 +735,11 @@ GEMINI_EMBED_CHUNK = 100
 GEMINI_EMBED_DIMENSIONS = 1536
 
 
-#: Waits (seconds) before each retry of a warm chunk the provider rate-limited; a per-minute burst limit clears in one.
+#: Waits (seconds) before each retry of a warm chunk the provider rate-limited; a per-minute burst limit clears in
+#: one. Each wait is stretched by up to 50% jitter so the workers of a container do not retry in lockstep.
 WARM_RETRY_WAITS = (15, 30, 60)
 _sleep = time.sleep
-
-
-def _rate_limited(exc: Exception) -> bool:
-    """A provider 429 (`GeminiHTTPError.status_code`, read by attribute so the provider is not imported here) or an SDK
-    error whose class name says rate limit."""
-    return getattr(exc, "status_code", None) == 429 or "RateLimit" in type(exc).__name__
+_jitter = random.random
 
 
 def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
@@ -786,9 +783,11 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
                     raw = request(chunk)
                     break
                 except Exception as exc:  # noqa: BLE001
-                    if wait is None or not _rate_limited(exc):
+                    from app.services.chatbot import llm_call
+
+                    if wait is None or not llm_call.is_rate_limited(exc) or llm_call._quota_exhausted(exc):
                         raise
-                    _sleep(wait)
+                    _sleep(wait * (1 + 0.5 * _jitter()))
             store(chunk, raw)
 
     def matrix(texts: list[str]):
@@ -920,9 +919,15 @@ def row_texts(rows: list[LookupRow]) -> list[str]:
 def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
     """Embed every row text on a background thread so a cold cache never blocks a turn. One warm-up
     at a time; a failure is swallowed (the next turn tries again, the turn itself is spelling only)."""
-    if embed is None or not rows or not _warm_lock.acquire(blocking=False):
+    if embed is None or not rows:
         return
     texts = row_texts(rows)
+    # A full cache has nothing to fetch: no thread, no lock, no log line per turn.
+    is_cached = getattr(embed, "is_cached", None)
+    if is_cached is not None and is_cached(texts):
+        return
+    if not _warm_lock.acquire(blocking=False):
+        return
 
     def run() -> None:
         started = time.monotonic()
