@@ -61,6 +61,19 @@ def _add_second_row(session_factory, *, allowed: bool) -> None:
     db.commit()
 
 
+def _phone_envelope():
+    """An unknown contact WITH a phone in the envelope: WU4's unchanged `ai_not_allowed` path.
+    A phoneless unknown contact now goes to the WA-USERNAME-CONTACTS phone flow (WU3)."""
+    return _envelope(
+        contact={
+            "id": CONTACT_ID,
+            "firstName": "ZZT",
+            "phone": "+60100000009",
+            "custom_fields": [{"name": "is_human_intervened", "value": "false"}],
+        }
+    )
+
+
 def _turns(session_factory) -> list[ChatbotTurn]:
     return (
         session_factory()
@@ -115,7 +128,7 @@ class TestUnknownContact:
         stub_parser(on_call=calls.append)
         stub_access()
 
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        result = engine_mod.run_turn(_phone_envelope(), session_factory=session_factory)
 
         _assert_silent(result)
         assert calls == []
@@ -126,7 +139,7 @@ class TestUnknownContact:
         stub_parser()
         stub_access()
 
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        result = engine_mod.run_turn(_phone_envelope(), session_factory=session_factory)
 
         _assert_closed_row(session_factory, result)
         assert len(_turns(session_factory)) == 1
@@ -303,7 +316,7 @@ class TestGateOrdering:
         stub_parser()
         stub_access()
 
-        result = engine_mod.run_turn(_envelope(), session_factory=session_factory)
+        result = engine_mod.run_turn(_phone_envelope(), session_factory=session_factory)
 
         _assert_silent(result)
 
