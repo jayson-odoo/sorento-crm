@@ -494,4 +494,19 @@ describe('AccessSheetImportPage', () => {
     const labels = within(screen.getByTestId('contact-Shi')).getAllByText('Before');
     for (const l of labels) expect(l.className).not.toMatch(/(^|\s)sm:hidden(\s|$)/);
   });
+
+  it('page: changing page from the pager below the cards brings the first card into view', async () => {
+    svc.previewAccessSheet.mockResolvedValueOnce(many(25));
+    const spy = vi.spyOn(Element.prototype, 'scrollIntoView').mockImplementation(() => {});
+    renderDialog();
+    pickFile();
+    fireEvent.click(screen.getByRole('button', { name: /^Preview/ }));
+    await screen.findByText('DEALER 01 SDN BHD');
+    spy.mockClear();
+    const next = screen.getAllByRole('button', { name: 'Next page' });
+    fireEvent.click(next[next.length - 1]);
+    await screen.findByText('DEALER 21 SDN BHD');
+    expect(spy).toHaveBeenCalled();
+    spy.mockRestore();
+  });
 });

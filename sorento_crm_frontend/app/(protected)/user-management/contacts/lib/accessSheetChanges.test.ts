@@ -7,7 +7,9 @@ import {
   allExactConfirmed,
   changeLines,
   confirmAllExact,
+  hasConfirmableExact,
   initialSelection,
+  orderedChanges,
   resultCsv,
   unchangedFacets,
 } from './accessSheet';
@@ -145,5 +147,47 @@ describe('resultCsv (BULK-ACCESS-PREVIEW)', () => {
     expect(header).toContain('Linked outside row');
     expect(row).toContain('brands: BRAVAT');
     expect(row).toContain('300-Y055 YOO A (MCH)');
+  });
+});
+
+describe('orderedChanges', () => {
+  it('lists the changes in the template order the No change line uses', () => {
+    const out = orderedChanges([
+      { facet: 'packing_list_allowed', before: true, after: false },
+      { facet: 'customers', before: [], after: ['300-A'] },
+      { facet: 'access_types', before: [], after: ['end_user'] },
+      { facet: 'companies', before: [], after: ['SRT'] },
+    ]);
+    expect(out.map((c) => c.facet)).toEqual([
+      'companies',
+      'access_types',
+      'customers',
+      'packing_list_allowed',
+    ]);
+  });
+});
+
+describe('hasConfirmableExact', () => {
+  it('is false when every exact card has rows that disagree (Confirm all exact has nothing to do)', () => {
+    const block = (warnings: string[]) => ({
+      key: 'b',
+      dealer: 'b',
+      alt_dealers: [],
+      companies: ['SRT'],
+      status: 'exact',
+      warnings,
+      accounts: [],
+      contacts: [],
+    });
+    expect(
+      hasConfirmableExact({
+        blocks: [block(['rows_disagree'])],
+      } as unknown as AccessSheetResult),
+    ).toBe(false);
+    expect(
+      hasConfirmableExact({
+        blocks: [block([])],
+      } as unknown as AccessSheetResult),
+    ).toBe(true);
   });
 });
