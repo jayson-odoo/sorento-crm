@@ -302,9 +302,24 @@ SALES_AGENT = rf.FieldSpec(
     allow_all=False, required=False, pick_head="Which sales agent? Reply with a number:",
 )
 
+def _company_question(extras: dict[str, Any]) -> str:
+    from app.api.v1.sales.analysis import company_question
+
+    names = [str(n) for n in (extras.get("company_names") or [])]
+    return company_question(names) if len(names) > 1 else "Which company?"
+
+
+#: REPORT-UNIFY phase 3 (R1): a contact in two companies who names neither and no product or customer is asked "<A> or
+#: <B>?" (the SALES-COMPANY rule, `sales_company_ask`). A field of this ask, so every filter the message named rides the
+#: slot to the answer. Never required: it is a field only when the lane found the company unnamed.
+COMPANY = rf.FieldSpec(
+    name="company", noun="company", question="Which company?", question_fn=_company_question,
+    resolve=lambda _db, _word, _extras: rf.Resolved("unknown"), allow_all=False, required=False, pick_head_is_question=True,
+)
+
 SALES_RANKING_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
-    fields=(PERIOD, TOP_N, METRIC, BASIS, SALES_AGENT),
+    fields=(PERIOD, TOP_N, METRIC, BASIS, COMPANY, SALES_AGENT),
     slot_fields=(SCOPE,),
     # REPORT-SMART-L S3-1: the parser is shown the question (owed fields + held values) and
     # its declared answer (mode fill) runs the ask, as the low stock report's.
@@ -787,7 +802,7 @@ HELD_KEY = "report_held"
 #: The route params of a held total that stay on the ranking its reply becomes: the period and the filters.
 _HELD_TOTAL_KEYS = (
     "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids", "customer_ids",
-    "sales_agent_ids", "customer_agent_ids", "channel", "spec", "warehouse_codes",
+    "sales_agent_ids", "customer_agent_ids", "channel", "spec", "warehouse_codes", "company",
 )
 #: REPORT-SMART-L R9: the open question a sales report reply arms with its drill offer (`fetch._sales_report_output`),
 #: so the engine-held sign that the last answer was a sales report (`contracts.DETAIL_OFFER_KINDS`).
@@ -1161,7 +1176,7 @@ def _fresh_args(
 
 
 #: The keys `_fresh_args` always sets (or an axis); any other key it sets is a filter.
-_NON_FILTER_ARGS = frozenset({"basis", "measure", "sort", "group_by", "compare_to", "mine"})
+_NON_FILTER_ARGS = frozenset({"basis", "measure", "sort", "group_by", "compare_to", "mine", "company"})
 
 
 def _given_top_n(args: dict[str, Any], top_n: Any) -> dict[str, Any]:
@@ -1259,7 +1274,8 @@ def _detail_outcome(db: Any, frame: dict[str, Any], detail: dict[str, Any]) -> r
 
 
 def settle(
-    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True
+    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True,
+    companies: Any = (),
 ) -> tuple[rf.Outcome | None, str | None]:
     """Every required field settled, or the line to send instead of running. Returns
     `(outcome, None)` (send `outcome.reply` with `outcome.slot` unless `outcome.done`), or
@@ -1466,6 +1482,18 @@ def settle(
     agent_pick = args.pop("sales_agent_pick", None)
     if agent_pick:
         given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
+    company_names: list[str] = []
+    own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
+    if own and not dealer and parse_output.get("ranking_refine") is not True:
+        # R1: the company the message (the parser's `sales_company`) names, among the contact's own; else, with two or
+        # more companies and no product or customer named, the company question.
+        said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
+        named = next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
+        if named is not None:
+            args["company"] = str(named[0])
+        elif len(own) > 1 and not any(args.get(k) for k in ("customer_ids", "product_code", "product_ids")):
+            given["company"] = rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own))
+            company_names = [str(c[1]) for c in own]
     if parse_output.get("capability_from") == "outstanding" and args.get("basis") in OUTSTANDING_KINDS:
         # An outstanding ask that named its kind shows both measures (no "by quantity or by amount?").
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
@@ -1475,6 +1503,8 @@ def settle(
         # period alone never runs a total (it asks). One that names its own axis (R5 row 7) keeps its period.
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
+    if company_names:
+        extras["company_names"] = company_names
     if parse_output.get("capability_from") == "outstanding":
         extras["kind_ask"] = True  # the basis question is the three kinds (Q2)
     if period is None and (args.get("basis") in OUTSTANDING_KINDS or extras.get("kind_ask")):
@@ -1735,6 +1765,9 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     top_n = (outcome.values.get("top_n") or {}).get("value")
     if args.get("group_by") and isinstance(top_n, int):
         args["top_n"] = top_n
+    company = _dict(outcome.values.get("company")).get("value")
+    if company:
+        args["company"] = str(company)  # the company the person chose
     agent = _dict(outcome.values.get("sales_agent")).get("value")
     if agent:
         args["sales_agent_ids"] = [str(agent)]  # the agent the person picked

@@ -963,6 +963,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "answers `status: refused`), `channel` dealer | project. OMIT a filter you do not "
             "use: an empty value is 422 `empty_filter` (it never reads as 'no filter'), and an "
             "id naming nothing is 404.\n\n"
+            "`company` (a company name, code or id) narrows a contact in several companies to that one (403 "
+            "`COMPANY_FORBIDDEN` if it is not theirs); ask 'Sorento or Mocha?' when they named none and no product or "
+            "customer.\n\n"
             "ACCESS: the contact needs the Sales report reveal (403 `sales_report_not_enabled`); the outstanding, "
             "pending_delivery and unpaid bases need the Outstanding reveal instead (403 `outstanding_not_enabled`). "
             "A customer-linked dealer sees only its own customers' sales and may group or "
@@ -993,7 +996,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort",
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
-            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec",
+            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec", "company",
         ),
         domain="orders",
         related_tools=("crm_sales_report",),

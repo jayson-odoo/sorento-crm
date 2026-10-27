@@ -121,6 +121,8 @@ class FieldSpec:
     ask_unknown: bool = False
     #: The first line of a numbered pick, when "Which <noun> do you mean?" does not fit.
     pick_head: str | None = None
+    #: The pick's first line is the field's own (live) question ("Sorento or Mocha?"), not a "Which ...?" head.
+    pick_head_is_question: bool = False
 
 
 @dataclass(frozen=True)
@@ -207,7 +209,7 @@ def _miss_line(word: str, spec: FieldSpec, note: str = "") -> str:
 
 def _pick_line(spec: FieldSpec, options: list[list[Any]]) -> str:
     takes_all = spec.allow_all or not spec.required
-    head = spec.pick_head or (
+    head = (spec.question if spec.pick_head_is_question else None) or spec.pick_head or (
         f"Which {spec.noun} do you mean? Reply with a number" + (' or "all":' if takes_all else ":")
     )
     return "\n".join([head, *[f"{i}. {label}" for i, (_value, label) in enumerate(options, start=1)]])

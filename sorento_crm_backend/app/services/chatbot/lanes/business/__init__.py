@@ -2227,7 +2227,8 @@ def run_fetch(
         _attrs = (ctx.get("access") or {}).get("attributes") if isinstance(ctx.get("access"), dict) else None
         _agent_filter = report_ask.grant_key(parse_output) in set(_attrs) if isinstance(_attrs, (list, tuple, set, frozenset)) else False
         settled, line = report_ask.settle(
-            db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter
+            db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter,
+            companies=sales_company_ask._companies(db, contact_id, space_id),
         )
         if trace is not None:
             trace.add(
