@@ -805,9 +805,11 @@ def book_so_ref_of(
 
     A PO line reads `cancelled` from three writers only: its header was cancelled, AutoCount
     Cancel PO documents took all of it (`cancelled_by_cancel_doc`), or a push stopped carrying
-    it on a header that push did not cancel (`document_ingest_service`'s leftover sweep, the
-    removed-line path). The first two keep their S/O (LINKAGE-UNIFY Q5); only the third is
-    hidden. The stored column is left as it is, for audit.
+    it on a header that push did not cancel (`document_ingest_service`'s leftover sweep: the
+    removed-line path, plus ref-less and duplicate-ref leftovers the book no longer names
+    either). The first two keep their S/O (LINKAGE-UNIFY Q5); only the third is hidden. Read
+    off the line's CURRENT state, so a removed line whose header is cancelled later reads as
+    header-cancelled again. The stored column is left as it is, for audit.
     """
     if (
         line_status == "cancelled"
