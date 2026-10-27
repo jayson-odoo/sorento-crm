@@ -1,6 +1,6 @@
 # PLAN - Resubmitted status (submit after a rejection)
 
-Status: SCOUTING - behaviour card pending owner answers. Track: TBD (likely M: migration + shared helper).
+Status: IN PROGRESS - complaint slice built and pushed; behaviour card Q1-Q5 awaiting owner (PR #1925). Track: M (NPA CHECK migration if Q1 is ruled in).
 Lane: RESUBMITTED-STATUS
 Slug: `resubmitted-status-27oct`
 
