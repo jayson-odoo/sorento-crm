@@ -233,3 +233,37 @@ listing preferences or saved view.
 
 Each PR: red tests first (vitest per screen filter control + URL round trip; pytest per backend param
 via `multi_values`), kill tests, reviewer, browser pass on 5+ screens, hand-test script.
+Every PR also covers the screen's export / summary / board paths with the same multi values (PR3
+review lesson, 28 Oct: two list-query exports broke on a second value while the lists worked).
+
+### 4.1 PR7 design (advanced filter dialog pick lists; owner Q4 (a))
+
+Facts (28 Oct scan): the dialog (`components/list/ListQueryFilterDialog.tsx`) opens on Orders,
+Products, Suppliers, Promotions and the two workflow lists; its value input is free text for every
+non-boolean, non-number field (:329-334); `list_query_fields` rows are seeded by migrations and the
+metadata route hard-codes `option_source: None` (`api/v1/list_query.py:161`); no column involved is a
+DB enum. Pick-list fields today: Orders `order_status_id`, `customer_id`, `line_product_id`,
+`line_warehouse_id`, `order_type`, `agent`; Products `category_id`, `brand_id`, `base_uom_id`,
+`item_type`; Suppliers `country`; Workflow submissions `definition_id`, `current_state_code`.
+Promotions has none left; `published_version_id` stays text (a version id is not a choice users make).
+
+Design (one mechanism, no registry table):
+- BE: one endpoint `GET /api/v1/list-query/{resource}/fields/{field_key}/options?query=&page=`
+  returning `{data: [{value, label}], pagination}`: the DISTINCT values of that field over the
+  resource's own base query (so company scope and the resource's view permission apply exactly as
+  the list does), labelled through the field's relation (`order_status_id` -> `status_name`, etc.).
+  The label compile key per field lives in a small dict next to `_infer_filter_ui_type`; a field
+  absent from the dict gets no options (text box as today). The metadata route sets
+  `option_source: {"kind": "distinct"}` for the dict's fields.
+- FE: when a field has `option_source`, the value input for `in` / `not_in` is a
+  `SearchableMultiSelect` (paginated loader from the endpoint) and for `eq` / `neq` a
+  `SearchableSelect`; the stored value stays the array the URL already carries (`advFilter` keeps
+  arrays, `lib/listNavQuery.ts:93-123`), so saved links keep working.
+- Text boxes turned into dropdowns (multi): Import jobs Type / Status (`ImportJobsList.tsx:325,:330`,
+  `system/jobs.py:27-28`), Import logs Entity type (`ImportLogsList.tsx:218`, `system/import_logs.py:19`),
+  Workflow submissions State code (`WorkflowSubmissionsList.tsx:293`; options from the definition's
+  schema `states`). Options from the code's own constants where they exist, else the distinct values.
+- Reports: Company stays single (owner Q2 (b)); no change.
+- security-reviewer runs on PR7 (a new read endpoint over scoped data).
+Trigger to revisit: a field whose distinct values are too many to list (then it needs a search-only
+lookup), or a third consumer of the label dict (then the labels move onto `list_query_fields`).
