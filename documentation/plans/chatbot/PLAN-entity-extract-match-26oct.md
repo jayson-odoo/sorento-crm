@@ -1,12 +1,10 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: 27 Oct ~11:3x. S1 #1876 merged (078b1ab482); S2 #1885 merged dark (b464ff7a9b); S2 switch-on fix #1895
-merged (dark; drawer Span pass section, eem_0002, F1 vowel-dropped typo match). S3 semantic bridge #1898 (Gemini lookup
-embedder via `chatbot_lookup_embedder` label, per-model floors, span `meaning`, eem_0003): CI green on 773572304e,
-reviewer READY; round 2 in progress = startup warm of the lookup vectors (AC-S3-9..12, crew ask a70702435), red-first,
-then crew labels ci once. 200-msg right-row gate with S3 waits for the owner's spend OK (one arm, cap 1.00); harness
-dry-run only until then. Track: L lane, round 2 is a small fix inside it (no migration). Copy :3112
-(sorento_explore1020) runs ab304e6508 with span pass ON (labels on Gemini); per-phrase rerun posted on #1898.
+Status: 27 Oct 14:2x. S1 #1876, S2 #1885 (dark), S2 fix #1895 merged. S3 #1898 head 5c483b59fe (semantic bridge +
+startup warm round AC-S3-9..15): CI green (run 40448538146), reviewer READY, security CLEAN, owner hand test done; owner
+ruling 14:2x: merge AS IS (crew merges). The three hand-test FAILs (parser v132 never sets a category canonical_code;
+'wc' code hit shadows the class; Latin message inherits zh) go to a NEW lane after the merge (brief: crew-note
+6435294917 on #1898). 200-msg S3 gate: 74.2 vs R 75.3 / B 73.8 (flat). Track: L lane.
 
 Owner rulings (26 Oct ~16:15, via crew): Q1 (a) two-pass + union, slices S1 -> S2 -> S3 -> S4, S1 its own PR
 (red-first, reviewer), then S2; Q2 +~1.0 s per turn OK; Q3 (a) no new alias table: PROMPT_SYNONYMS into lookup_sets,
