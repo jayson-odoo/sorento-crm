@@ -872,6 +872,8 @@ def demand_for_recommendation(db: Session, rec_id: str,
             WHERE sol.product_id::text = :pid
               AND so.order_date >= :since AND so.order_date < :until
               AND {hist_pred}
+              -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+              AND NOT sol.removed_unreferenced
               {("AND " + co) if co else ""}
         """
         hist_params = {"pid": rec["product_id"], "since": since, "until": until,

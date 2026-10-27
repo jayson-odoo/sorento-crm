@@ -149,6 +149,8 @@ def _refresh_run_counts(db: Session, run_id: str) -> None:
               LEFT JOIN purchase_order_lines pol
                      ON pol.source_ref = r.id::text
                     AND pol.source_system IN (:src, :src_product)
+                    -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                    AND NOT pol.removed_unreferenced
              WHERE r.run_id = CAST(:run_id AS uuid)
                AND r.rec_type = ANY(:kinds)
             """

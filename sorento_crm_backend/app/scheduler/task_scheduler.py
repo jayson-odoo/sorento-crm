@@ -184,7 +184,8 @@ def _handler_notification_delivery_processor(db, task):
 
 def _handler_embedding_job_processor(db, task):
     """Process embedding jobs: Redis RQ first; optional Postgres embedding_queue fallback."""
-    rq_result = _run_queue_jobs_impl(settings.embedding_queue_name, max_jobs_per_run=10)
+    batch_size = max(1, int(settings.embedding_queue_batch_size))
+    rq_result = _run_queue_jobs_impl(settings.embedding_queue_name, max_jobs_per_run=batch_size)
     if not getattr(settings, "embedding_queue_db_fallback_enabled", True):
         return {
             "processed": rq_result.get("processed", 0),
@@ -193,11 +194,10 @@ def _handler_embedding_job_processor(db, task):
             "processed_db": 0,
             "db_fallback_enabled": False,
         }
-    db_result = _run_embedding_db_queue_fallback(db, max_jobs_per_run=10)
+    db_result = _run_embedding_db_queue_fallback(db, max_jobs_per_run=batch_size)
     return {
         "processed": rq_result.get("processed", 0) + db_result.get("processed", 0),
         "queued_redis": rq_result.get("queued", 0),
-        "queued_db_pending_before": db_result.get("queued_db_pending_before", 0),
         "processed_redis": rq_result.get("processed", 0),
         "processed_db": db_result.get("processed", 0),
         "db_fallback_enabled": True,
@@ -205,25 +205,21 @@ def _handler_embedding_job_processor(db, task):
 
 
 def _run_embedding_db_queue_fallback(db, max_jobs_per_run: int) -> dict:
-    """Run worker for pending ``embedding_queue`` rows (available now), no Redis required."""
-    from sqlalchemy import case, func
-    from app.models.embeddings import EmbeddingQueue
+    """Run worker for pending ``embedding_queue`` rows (available now), no Redis required.
+
+    No count(*) of the backlog: it ran on every poll and, with no index it could use, read the
+    whole table each time. The pick is answered from ix_embedding_queue_pending_poll_cov, whose
+    leading expression is EMBEDDING_QUEUE_POLL_PRIORITY verbatim.
+    """
+    from sqlalchemy import literal_column
+    from app.models.embeddings import EMBEDDING_QUEUE_POLL_PRIORITY, EmbeddingQueue
     from app.services.embedding_worker import process_embedding_queue_item
 
     now_naive = datetime.utcnow()
-    pending_before = (
-        db.query(func.count(EmbeddingQueue.id))
-        .filter(EmbeddingQueue.status == "pending", EmbeddingQueue.available_at <= now_naive)
-        .scalar()
-        or 0
-    )
     ids = (
         db.query(EmbeddingQueue.id)
         .filter(EmbeddingQueue.status == "pending", EmbeddingQueue.available_at <= now_naive)
-        .order_by(
-            case((EmbeddingQueue.source_type == "mcp_tool", 0), else_=1).asc(),
-            EmbeddingQueue.created_at.asc(),
-        )
+        .order_by(literal_column(EMBEDDING_QUEUE_POLL_PRIORITY).asc(), EmbeddingQueue.created_at.asc())
         .limit(max_jobs_per_run)
         .all()
     )
@@ -231,11 +227,49 @@ def _run_embedding_db_queue_fallback(db, max_jobs_per_run: int) -> dict:
     processed = 0
     for qid in ids:
         try:
-            process_embedding_queue_item(qid)
-            processed += 1
+            # "busy": an open transaction holds the row; it stays pending for the next poll.
+            if (process_embedding_queue_item(qid) or {}).get("status") != "busy":
+                processed += 1
         except Exception as e:
             logger.error("Embedding DB fallback failed for queue id %s: %s", qid, e, exc_info=True)
-    return {"processed": processed, "queued_db_pending_before": int(pending_before)}
+    return {"processed": processed}
+
+
+def _handler_embedding_queue_prune(db, task):
+    """Delete completed/skipped embedding_queue rows past the retention window, in batches.
+
+    Also the retry path for the pending-only indexes: one the deploy could not build in its
+    time budget is rebuilt here, in the daily retry hour only (a catalog read otherwise).
+    """
+    from app.database import engine
+    from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes, missing_indexes
+    from app.services.embedding_service import prune_embedding_queue
+
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        missing = missing_indexes(connection)
+        if missing and datetime.utcnow().hour == settings.embedding_queue_index_retry_hour_utc:
+            indexes = ensure_embedding_queue_indexes(connection)
+        else:
+            indexes = {name: "missing" for name in missing}
+    result = prune_embedding_queue(
+        db,
+        retention_days=settings.embedding_queue_retention_days,
+        batch_size=settings.embedding_queue_prune_batch_size,
+        max_batches=settings.embedding_queue_prune_max_batches,
+    )
+    return {**result, "indexes": indexes}
+
+
+def _handler_embedding_queue_dedupe(db, task):
+    """Retire duplicate pending embedding_queue rows, a bounded slice per run (EMBED-QUEUE-DEDUPE)."""
+    from app.services.embedding_service import dedupe_pending_embedding_queue
+
+    return dedupe_pending_embedding_queue(
+        db,
+        batch_size=settings.embedding_queue_dedupe_batch_size,
+        max_batches=settings.embedding_queue_dedupe_max_batches,
+        pause_seconds=settings.embedding_queue_dedupe_pause_seconds,
+    )
 
 
 def _handler_user_sla_daily_summary(db, task):
@@ -757,6 +791,8 @@ def register_task_handlers():
     register_handler("import_job_processor", _handler_import_job_processor)
     register_handler("notification_delivery_processor", _handler_notification_delivery_processor)
     register_handler("embedding_job_processor", _handler_embedding_job_processor)
+    register_handler("embedding_queue_prune", _handler_embedding_queue_prune)
+    register_handler("embedding_queue_dedupe", _handler_embedding_queue_dedupe)
     register_handler("user_sla_daily_summary", _handler_user_sla_daily_summary)
     register_handler("promotion_active_window", _handler_promotion_active_window)
     register_handler("price_tag_auto_collect", _handler_price_tag_auto_collect)

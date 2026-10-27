@@ -34,9 +34,12 @@ from app.services.company_scope import (
     pending_company_id,
     stamp_lookup_companies,
 )
+from sqlalchemy import inspect as _sa_inspect
+
 from app.services.embedding_change_listener import (
     suppress_embedding_events,
     bulk_enqueue_embedding_events,
+    embedded_fields_changed,
 )
 from app.services.fuzzy_resolver import resolve_via_embedding_then_ilike
 from app.services.order_field_ownership import (
@@ -481,6 +484,9 @@ def stamp_so_outstanding_rows(
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(Customer, _cust_on)
+            # AC-REMOVED-KEEP-CANCELLED: a line AutoCount removed that the ingest used to
+            # delete is kept now, but never counts (owner via crew, 27 Oct).
+            .filter(SalesOrderLine.removed_unreferenced.is_(False))
         )
         if customer_ids:
             q = q.filter(SalesOrder.customer_id.in_([str(c) for c in customer_ids]))
@@ -3373,11 +3379,19 @@ class OrderService:
             }
 
         try:
+            # Only orders whose embedded fields changed are queued (EMBED-QUEUE-DEDUPE): the
+            # Master sheet re-imports the full order history every run, so "touched" is nearly
+            # every order. Decided before the flush, which clears attribute history. A change
+            # an earlier flush in this import wrote was queued by the listener at that flush.
+            changed_orders = [
+                o for o in touched_orders
+                if _sa_inspect(o).pending or embedded_fields_changed(o, "order")
+            ]
             with suppress_embedding_events("order"):
                 self.db.flush()
                 seen: set[str] = set()
                 touched_ids: list[str] = []
-                for o in touched_orders:
+                for o in changed_orders:
                     oid = getattr(o, "id", None)
                     if oid is None:
                         continue
@@ -3390,8 +3404,8 @@ class OrderService:
                     self.db, "order", touched_ids, event_type="order.updated"
                 )
                 logger.info(
-                    "Order tracking import: bulk-enqueued %s embedding events (touched=%s)",
-                    enqueued, len(touched_orders),
+                    "Order tracking import: bulk-enqueued %s embedding events (changed=%s, touched=%s)",
+                    enqueued, len(touched_ids), len(touched_orders),
                 )
                 self.db.commit()
             _import_commit_ok = True

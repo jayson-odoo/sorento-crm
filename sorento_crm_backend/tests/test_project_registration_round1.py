@@ -226,11 +226,14 @@ def test_s8_only_a_title_or_developer_change_queues_a_project_embedding():
 
         def queued():
             session.flush()
-            return (
-                session.query(EmbeddingQueue)
-                .filter(EmbeddingQueue.source_type == "project", EmbeddingQueue.source_id == row.id)
-                .count()
+            rows = session.query(EmbeddingQueue).filter(
+                EmbeddingQueue.source_type == "project", EmbeddingQueue.source_id == row.id
             )
+            count = rows.count()
+            # A source keeps one pending row (EMBED-QUEUE-DEDUPE), so settle each event
+            # before the next step: otherwise a second change folds into the first row.
+            rows.update({"status": "completed"}, synchronize_session=False)
+            return count
 
         base = queued()
         assert base >= 1  # the insert
@@ -256,11 +259,14 @@ def test_s8_the_profile_queues_the_parent_only_when_state_or_mukim_changes():
 
         def queued():
             session.flush()
-            return (
-                session.query(EmbeddingQueue)
-                .filter(EmbeddingQueue.source_type == "project", EmbeddingQueue.source_id == row.id)
-                .count()
+            rows = session.query(EmbeddingQueue).filter(
+                EmbeddingQueue.source_type == "project", EmbeddingQueue.source_id == row.id
             )
+            count = rows.count()
+            # A source keeps one pending row (EMBED-QUEUE-DEDUPE), so settle each event
+            # before the next step: otherwise a second change folds into the first row.
+            rows.update({"status": "completed"}, synchronize_session=False)
+            return count
 
         base = queued()
         profile = session.get(ProjectSalesProfile, row.id)

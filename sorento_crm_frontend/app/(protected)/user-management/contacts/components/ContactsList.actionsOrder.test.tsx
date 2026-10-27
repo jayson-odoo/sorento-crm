@@ -40,8 +40,9 @@ vi.mock('@/hooks/usePermissions', () => ({ useHasPermission: () => true }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
+const nav = vi.hoisted(() => ({ push: vi.fn() }));
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
+  useRouter: () => ({ replace: vi.fn(), push: nav.push }),
   usePathname: () => '/user-management/contacts',
   useSearchParams: () => ({ get: () => null }),
 }));
@@ -111,5 +112,14 @@ describe('ContactsList Actions menu order (S4b)', () => {
     expect(at('Apply tag settings')).toBeGreaterThan(at('Remove tag'));
     expect(at('Disable messaging')).toBeGreaterThan(at('Apply tag settings'));
     expect(at('Delete')).toBeGreaterThan(at('Disable messaging'));
+  });
+
+  it('BULK-ACCESS-PREVIEW: Import access sheet opens its own page', async () => {
+    renderList();
+    await screen.findByText('+60100000011');
+    const [trigger] = await screen.findAllByRole('button', { name: /^Actions/ });
+    fireEvent.pointerDown(trigger, { button: 0, ctrlKey: false });
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Import access sheet/ }));
+    expect(nav.push).toHaveBeenCalledWith('/user-management/contacts/access-sheet');
   });
 });

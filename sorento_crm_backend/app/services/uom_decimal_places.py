@@ -58,6 +58,7 @@ UomClass = Literal["count", "measure", "unknown"]
 # `rtrim(...,'0')` drops trailing zeroes first, so 2.50000 is scale 1 rather than 5, and
 # split_part on a value with no decimal point yields '' (scale 0) rather than a stray
 # reading off an integer whose trailing zeroes rtrim also removed.
+# AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
 _OBSERVED_SCALE_SQL = """
     WITH q AS (
         SELECT p.base_uom_id AS uom_id, ol.quantity AS qty
@@ -65,18 +66,23 @@ _OBSERVED_SCALE_SQL = """
         UNION ALL
         SELECT p.base_uom_id, sol.qty_ordered
         FROM sales_order_lines sol JOIN products p ON p.id = sol.product_id
+        WHERE NOT sol.removed_unreferenced
         UNION ALL
         SELECT p.base_uom_id, sol.qty_delivered
         FROM sales_order_lines sol JOIN products p ON p.id = sol.product_id
+        WHERE NOT sol.removed_unreferenced
         UNION ALL
         SELECT p.base_uom_id, sol.qty_required
         FROM sales_order_lines sol JOIN products p ON p.id = sol.product_id
+        WHERE NOT sol.removed_unreferenced
         UNION ALL
         SELECT p.base_uom_id, pol.qty_ordered
         FROM purchase_order_lines pol JOIN products p ON p.id = pol.product_id
+        WHERE NOT pol.removed_unreferenced
         UNION ALL
         SELECT p.base_uom_id, pol.qty_received
         FROM purchase_order_lines pol JOIN products p ON p.id = pol.product_id
+        WHERE NOT pol.removed_unreferenced
     )
     SELECT uom_id::text AS uom_id,
            MAX(length(split_part(rtrim(qty::text, '0'), '.', 2))) AS scale

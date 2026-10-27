@@ -99,6 +99,10 @@ class MediaIntakeOutcome:
     # console's diagnostic `media_error` field only (`console_service.py`); a real
     # WhatsApp turn has no equivalent surface and never reads this.
     extraction_error: str | None = None
+    # Owner ruling 27 Oct (MEDIA-JSON-TOLERANT option B): the photo read failed or read
+    # nothing, but the photo carried a caption, so the turn goes on as a plain text
+    # turn on that caption. No "I read ..." / "could not read" line is prefixed.
+    caption_fallback: bool = False
 
 
 def _modality_of(attachment: dict[str, Any]) -> str | None:
@@ -224,6 +228,11 @@ def _build_request(
         # `console_service._upload_console_media`, so it must not store a second copy.
         context={"source": source},
     )
+
+
+def _caption_text(caption: str | None) -> str | None:
+    text = (caption or "").strip()
+    return text or None
 
 
 def _poll(job_id: str, timeout_seconds: float, session_factory) -> dict[str, Any] | None:
@@ -398,6 +407,25 @@ def run(
             elapsed_ms=elapsed_ms,
         )
 
+    caption_text = _caption_text(caption)
+    if snapshot["status"] == "failed" and modality == "image" and caption_text:
+        # Option B (owner ruling 27 Oct): prod turn #597a failed its read and told a
+        # dealer who had typed the code in the caption to type the code. The caption
+        # is the dealer's own words; answer them.
+        return MediaIntakeOutcome(
+            modality=modality,
+            decision=fast.decision,
+            status="failed",
+            stops_here=False,
+            rendered_text=caption_text,
+            job_id=fast.job_id,
+            elapsed_ms=elapsed_ms,
+            notices=fast.notices,
+            max_entities=max_entities,
+            extraction_error=snapshot.get("error"),
+            caption_fallback=True,
+        )
+
     if snapshot["status"] == "failed":
         # AC-1813.
         reply_text = wording.nothing_read() if modality == "image" else wording.voice_unclear()
@@ -448,12 +476,17 @@ def run(
             attachment_error=result.get("attachment_error"),
             max_entities=max_entities,
         )
+    # Option B: a read that found no item on a captioned photo answers the caption
+    # alone, with no "I could not read anything" line on top of the answer.
+    read_nothing = modality == "image" and not any(
+        isinstance(e, dict) and e.get("raw") for e in entities
+    )
     return MediaIntakeOutcome(
         modality=modality,
         decision=fast.decision,
         status="completed",
         stops_here=False,
-        rendered_text=rendered_text,
+        rendered_text=caption_text if read_nothing and caption_text else rendered_text,
         job_id=fast.job_id,
         elapsed_ms=elapsed_ms,
         result=result,
@@ -461,6 +494,7 @@ def run(
         attachment_id=result.get("attachment_id"),
         attachment_error=result.get("attachment_error"),
         max_entities=max_entities,
+        caption_fallback=bool(read_nothing and caption_text),
     )
 
 
@@ -472,7 +506,10 @@ def run(
 
 def reply_prefix(outcome: MediaIntakeOutcome) -> str:
     """"I read A, B and C from that photo." / "I heard: <transcript>" - never a
-    count, never "+N more" (owner ruling Q2)."""
+    count, never "+N more" (owner ruling Q2). Empty on a caption fallback: nothing
+    was read, and the turn answers the caption as if it had been typed."""
+    if outcome.caption_fallback:
+        return ""
     if outcome.modality == "voice":
         transcript = (outcome.rendered_text or "").strip()
         if len(transcript) > _VOICE_PREFIX_MAX_CHARS:
