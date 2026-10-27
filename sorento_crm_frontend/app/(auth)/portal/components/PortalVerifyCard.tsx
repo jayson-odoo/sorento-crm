@@ -26,6 +26,7 @@ import {
   clearPortalToken,
   fetchSlugInfo,
   fetchTokenInfo,
+  openCrmSession,
   readPortalToken,
   requestOtp,
   verifyOtp,
@@ -237,6 +238,9 @@ export function PortalVerifyCard({ slug }: Props) {
       const result = await verifyOtp(contactId, spaceId, code.trim());
       writePortalToken(result.token);
       if (slug) writePortalSlug(slug);
+      // A contact with a CRM user also gets a CRM session (PORTAL-P1-SESSION-LINK).
+      // Before navigating, so the NextAuth cookie is set when the page is left.
+      if (result.portal_link_secret) await openCrmSession(result.portal_link_secret);
       if (typeof window !== 'undefined') {
         window.sessionStorage.setItem('sorento.portalTokenWrittenAt', String(Date.now()));
         Object.keys(window.sessionStorage)
