@@ -178,3 +178,31 @@ def test_po_received_reads_run_without_parallel_workers(scm_app):
     assert captured, "neither read ran"
     assert set(captured) == {"0"}, captured
     assert db.execute(text(query)).scalar() == "2", "the previous value was not restored"
+
+
+def test_a_failed_read_surfaces_its_own_error(scm_app, monkeypatch):
+    """A statement that fails inside the no-parallel window must reach the caller as its own
+    database error, not as InFailedSqlTransaction from the restore running on the aborted
+    transaction."""
+    import pytest
+    from sqlalchemy.exc import DBAPIError
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    db = scm_app[1]
+    refs_by_product, _pid, _refs = _seed(db)
+
+    def _boom(self, *_a, **_k):
+        db.execute(text("select 1/0"))
+
+    monkeypatch.setattr(ProjectSupplyService, "_oi_placements", _boom)
+    nested = db.begin_nested()
+    try:
+        with pytest.raises(DBAPIError) as caught:
+            ProjectSupplyService(db)._po_received_by_product(refs_by_product)
+        assert type(caught.value.orig).__name__ == "DivisionByZero", repr(caught.value.orig)
+    finally:
+        if nested.is_active:
+            nested.rollback()
+        else:
+            db.rollback()
