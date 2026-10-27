@@ -49,3 +49,24 @@ def test_s5_a_ranking_with_a_named_outstanding_kind_still_asks_the_measure(bot) 
     )
     assert calls == [], calls
     assert "By quantity or by amount?" in text, text
+
+
+def test_s11_a_kind_answer_after_the_outstanding_reveal_was_revoked_is_refused(bot, monkeypatch) -> None:
+    """S11: the reveal is re-read on the answering turn, not carried from the asking turn."""
+    from app.services.chatbot import engine as engine_mod
+
+    bot.say(_status("outstanding", basis=None, **NO_DATES), "outstanding")
+    monkeypatch.setattr(
+        engine_mod,
+        "check_access",
+        lambda db, *, agent_code, contact_id, space_id: {
+            "allowed": True, "decision": "allow", "agent_name": "General",
+            "attributes": ["sales_orders.sales_report"], "all_attributes_allowed": None,
+        },
+    )
+    text, calls = bot.say(
+        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="pending_delivery"),
+        "pending delivery",
+    )
+    assert calls == [], calls
+    assert text.strip() == "Outstanding is not enabled for your account.", text
