@@ -320,8 +320,21 @@ SALES_AGENT = rf.FieldSpec(
 def _company_question(extras: dict[str, Any]) -> str:
     from app.api.v1.sales.analysis import company_question
 
-    names = [str(n) for n in (extras.get("company_names") or [])]
+    names = [str(o[1]) for o in (extras.get("company_options") or []) if isinstance(o, (list, tuple)) and len(o) == 2]
     return company_question(names) if len(names) > 1 else "Which company?"
+
+
+#: A company the message named that the contact does not hold: said plainly, nothing runs (never run without it).
+COMPANY_FORBIDDEN_LINE = "You do not have access to that company."
+
+
+def _company_held(extras: dict[str, Any], values: dict[str, Any], args: dict[str, Any], held: dict[str, Any]) -> dict[str, Any]:
+    """`held` with the company question brought back while it is still owed: the first message found the company
+    unnamed (its options ride the slot's extras) and neither an answer nor a named company has settled it."""
+    options = extras.get("company_options")
+    if not options or "company" in values or args.get("company"):
+        return held
+    return {**held, "company": rf.Resolved("ambiguous", options=tuple((str(o[0]), str(o[1])) for o in options))}
 
 
 #: REPORT-UNIFY phase 3 (R1): a contact in two companies who names neither and no product or customer is asked "<A> or
@@ -1297,6 +1310,18 @@ def settle(
     db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True,
     companies: Any = (),
 ) -> tuple[rf.Outcome | None, str | None]:
+    """`_settle`, with the company question asked as the one line `sales_company_ask` asks on the Yearly path (one
+    question, one wording); the slot keeps its numbered options, so a number or a name still answers it."""
+    outcome, line = _settle(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies)
+    if outcome is not None and outcome.slot and outcome.slot.get("asking") == "company" and outcome.reply:
+        outcome.reply = _company_question(_dict(outcome.slot.get("extras")))
+    return outcome, line
+
+
+def _settle(
+    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True,
+    companies: Any = (),
+) -> tuple[rf.Outcome | None, str | None]:
     """Every required field settled, or the line to send instead of running. Returns
     `(outcome, None)` (send `outcome.reply` with `outcome.slot` unless `outcome.done`), or
     `(None, line)` for a word or a dimension the ask cannot run with.
@@ -1321,6 +1346,7 @@ def settle(
         extras = _dict(slot.get("extras"))
         args = _dict(extras.get("args"))
         held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
+        held = _company_held(extras, _dict(slot.get("values")), args, held)
         filled = _reply_fills(parse_output, _dict(slot.get("values")), held)
         if filled:
             # A partial answer is not a miss: what it settled is kept, and only what is
@@ -1339,12 +1365,14 @@ def settle(
                 return None, DEALER_REFUSAL
             args = swapped["args"]
             held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
+            held = _company_held(extras, _dict(slot.get("values")), args, held)
             if args.get("group_by") != _dict(extras.get("args")).get("group_by") and _dict(extras.get("args")).get("group_by") in (None, "month"):
                 # What a total or a month trend settled on its own (no count, both measures) is not
                 # what the new axis owes: the new axis's rules (`held`) decide, typed values stay.
                 slot = {**slot, "values": _settled_by_its_axis(_dict(slot.get("values")), _dict(extras.get("args")).get("group_by"))}
             slot, args = _reply_wins(parse_output, slot, args)
             held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
+            held = _company_held(extras, _dict(slot.get("values")), args, held)
             extras = {**extras, "args": args}
         if parse_output.get("compare_to") in COMPARE_TO:
             # REPORT-SMART-L S4-1: a reply that sets the comparison and fills no owed field adds the
@@ -1363,6 +1391,7 @@ def settle(
             # second echo gives up as today (default top 10).
             slot, args = _reply_wins(parse_output, slot, args)
             held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
+            held = _company_held(extras, _dict(slot.get("values")), args, held)
             again = rf.collect(db, SALES_RANKING_ASK, slot=slot, given=held, extras={"args": args})
             if again.slot:
                 again.slot["misses"] = 1
@@ -1502,20 +1531,22 @@ def settle(
     agent_pick = args.pop("sales_agent_pick", None)
     if agent_pick:
         given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
-    company_names: list[str] = []
+    company_options: list[list[str]] = []
     own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
     if own and not dealer and parse_output.get("ranking_refine") is not True:
         # R1: the company the message (the parser's `sales_company`) names, among the contact's own; else, with two or
         # more companies and no named subject (a customer, product, brand, category, agent or spec), the company question.
         said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
         named = next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
+        if named is None and said:
+            return None, COMPANY_FORBIDDEN_LINE  # the message named a company the contact does not hold
         if named is not None:
             args["company"] = str(named[0])
         elif len(own) > 1 and not any(
             args.get(k) for k in ("customer_ids", "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "spec")
         ):
             given["company"] = rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own))
-            company_names = [str(c[1]) for c in own]
+            company_options = [[str(c[0]), str(c[1])] for c in own]
     if (
         parse_output.get("capability_from") == "outstanding"
         and args.get("basis") in OUTSTANDING_KINDS
@@ -1530,8 +1561,8 @@ def settle(
         # period alone never runs a total (it asks). One that names its own axis (R5 row 7) keeps its period.
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
-    if company_names:
-        extras["company_names"] = company_names
+    if company_options:
+        extras["company_options"] = company_options
     if parse_output.get("capability_from") == "outstanding":
         extras["kind_ask"] = True  # the basis question is the three kinds (Q2)
     if period is None and (args.get("basis") in OUTSTANDING_KINDS or extras.get("kind_ask")):
