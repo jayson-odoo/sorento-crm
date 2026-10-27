@@ -57,6 +57,8 @@ JOIN purchase_orders po ON po.id = pol.purchase_order_id
 JOIN pairs pr ON pr.product_id = pol.product_id
 WHERE po.issue_date >= :since AND po.issue_date < :until
   AND po.status NOT IN :not_a_purchase
+  -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+  AND NOT pol.removed_unreferenced
   {wh}
   {co}
 """
@@ -84,6 +86,8 @@ purchases AS (
     LEFT JOIN suppliers s ON s.id = po.supplier_id
     JOIN pairs pr ON pr.product_id = pol.product_id
     WHERE po.status NOT IN :not_a_purchase
+      -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+      AND NOT pol.removed_unreferenced
       {wh}
       {co}
 )

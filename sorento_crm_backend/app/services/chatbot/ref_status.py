@@ -75,7 +75,11 @@ def _po_lines(db: Session, po_id: Any) -> list[tuple[str, Any]]:
         (code or "", qty)
         for code, qty in db.query(Product.product_code, PurchaseOrderLine.qty_ordered)
         .join(Product, Product.id == PurchaseOrderLine.product_id)
-        .filter(PurchaseOrderLine.purchase_order_id == po_id)
+        # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+        .filter(
+            PurchaseOrderLine.purchase_order_id == po_id,
+            PurchaseOrderLine.removed_unreferenced.is_(False),
+        )
         .order_by(Product.product_code, PurchaseOrderLine.id)
         .all()
     ]

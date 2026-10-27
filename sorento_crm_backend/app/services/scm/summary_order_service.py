@@ -960,6 +960,8 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
         JOIN suppliers s ON s.id = po.supplier_id
         WHERE pol.product_id::text = ANY(:pids)
           AND po.status <> 'cancelled'
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT pol.removed_unreferenced
           {("AND " + co) if co else ""}
         ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC,
                  po.supplier_id DESC
@@ -1034,6 +1036,8 @@ def _last_cost_map(db: Session, product_codes: list[str]) -> dict[str, str]:
         WHERE p.product_code = ANY(:codes)
           AND po.status <> 'cancelled'
           AND pol.unit_cost IS NOT NULL
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT pol.removed_unreferenced
           {("AND " + co) if co else ""}
         ORDER BY p.product_code, po.issue_date DESC NULLS LAST, pol.created_at DESC,
                  po.id DESC
@@ -2243,7 +2247,11 @@ def suppliers_for(
         )
         .join(PurchaseOrder, PurchaseOrder.supplier_id == Supplier.id)
         .join(PurchaseOrderLine, PurchaseOrderLine.purchase_order_id == PurchaseOrder.id)
-        .filter(PurchaseOrderLine.product_id == product.id)
+        # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+        .filter(
+            PurchaseOrderLine.product_id == product.id,
+            PurchaseOrderLine.removed_unreferenced.is_(False),
+        )
         .order_by(PurchaseOrder.issue_date.desc().nullslast())
         .all()
     )
@@ -2468,6 +2476,8 @@ def _delivered_line_counts(
             PurchaseOrderLine.product_id == product_id,
             PurchaseOrder.supplier_id.in_(supplier_ids),
             PurchaseOrderLine.qty_received > 0,
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            PurchaseOrderLine.removed_unreferenced.is_(False),
         )
         .group_by(PurchaseOrder.supplier_id)
         .all()
