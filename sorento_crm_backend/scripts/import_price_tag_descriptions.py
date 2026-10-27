@@ -18,8 +18,10 @@ and, for the chosen company (--company, default SRT) only:
 * VARIANT: a product `<sheet code>-<anything>` that is not itself printed in the sheet, for
   the longest sheet code it extends, when the sheet code is a product and finish / seat
   material match. Same rule as the flyer spec reader (product_spec_flyer_ingest._siblings).
-* Same code on several rows: format-equal rows are one (first row's text); otherwise the
-  longest text wins when it contains every shorter one; otherwise the code is skipped.
+* Same code on several rows: format-equal rows are one (first row's text; spacing, case, `D: `,
+  `150 x 150` vs `150x150`, and the order of the lines do not count); otherwise the
+  longest text wins when it contains every shorter one; otherwise an owner ruling (RULINGS)
+  keeps only the rows with its word; otherwise the code is skipped.
 * A text printing both an S-Trap and a P-Trap block is cut per product by its stored trap
   type; one that cannot be cut is skipped.
 
@@ -85,6 +87,12 @@ R_BOTH = "variant has a different finish and seat material"
 R_BOTH_TRAPS = "both traps printed, product has no trap type"
 R_TRAP_NOT_PRINTED = "product's trap type is not printed"
 
+# Owner rulings on a code whose sheet rows contradict: only the rows containing the word
+# (format_key, no case) count. Rule `<rule>+ruling` in the changes report.
+RULINGS = {
+    "SRTKT1933SS-DIY": "pillar",  # Sorento Lite DIY sheet: Pillar, not Wall (owner, 27 Oct)
+}
+
 CHANGES_COLUMNS = [
     "product_code", "sheet_code", "sheet_rows", "rule", "status",
     "active", "old_description", "new_description",
@@ -139,15 +147,32 @@ def read_sheet(path: str) -> Optional[list[tuple[int, str, str]]]:
 
 
 def format_key(text: str) -> str:
-    """Text compared for duplicates: spacing collapsed, `:` spaced as `: `, `D: ` dropped, no case."""
+    """Text compared for duplicates: spacing collapsed, `:` spaced as `: `, `D: ` dropped, no case,
+    and a dimension product `150 x 150` / `150X150` / `150 × 150` written `150x150`."""
     t = re.sub(r"\s+", " ", text)
+    t = re.sub(r"(\d)\s*[xX×]\s*(?=\d)", r"\1x", t)
     t = re.sub(r"\s*:\s*", ": ", t).lower()
     return re.sub(r"(?:(?<=\s)|^)d: ", "", t).strip(" :")
 
 
+def _lines_key(text: str):
+    """The text's lines, sorted (format_key per line, same counts): the same lines in another order
+    are equal. None for a text with a trap line, where order says which block a line belongs to."""
+    lines = text.split("\n")
+    if any(_trap_of(line) for line in lines):
+        return None
+    return tuple(sorted(filter(None, (format_key(line) for line in lines))))
+
+
 def dedupe(entries: list[tuple[int, str, str]]):
     """entries: (row, text, rule) in sheet order -> the chosen (text, rule), or None on a conflict."""
-    keyed = [(format_key(text), text, rule) for _, text, rule in entries]
+    # Rows printing the same lines in another order share the first such row's key.
+    first_key = {}
+    keyed = []
+    for _, text, rule in entries:
+        lines = _lines_key(text)
+        key = format_key(text) if lines is None else first_key.setdefault(lines, format_key(text))
+        keyed.append((key, text, rule))
     distinct = list(dict.fromkeys(k for k, _, _ in keyed))
     if len(distinct) == 1:
         return keyed[0][1], keyed[0][2]
@@ -270,6 +295,12 @@ def make_plan(db, rows, company_id):
                           "reason": R_NOT_FOUND, "texts": g["texts"]})
             continue
         pick = dedupe(g["entries"])
+        word = RULINGS.get(key)
+        if pick is None and word:
+            ruled = [e for e in g["entries"] if word in format_key(e[1])]
+            pick = dedupe(ruled) if ruled else None
+            if pick:
+                pick = (pick[0], pick[1] + "+ruling")
         if pick is None:
             state[key] = "conflict"
             skips.append({"sheet_code": key, "rows": g["rows"], "product_code": "",

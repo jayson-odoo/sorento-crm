@@ -90,6 +90,8 @@ def _candidates(db: Session, product_ids: set[str], supplier_id: Optional[str]) 
                -- and nobody has sent, so a container cannot be shipping against it.
                AND po.status NOT IN ('draft', 'draft_recommendation')
                AND COALESCE(pol.qty_ordered, 0) - COALESCE(pol.qty_received, 0) > 0
+               -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+               AND NOT pol.removed_unreferenced
                {supplier_clause}
                AND {predicate or 'true'}
              ORDER BY po.issue_date NULLS LAST, po.po_number

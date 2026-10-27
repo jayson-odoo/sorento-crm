@@ -5030,6 +5030,8 @@ def _run_stages_body(  # noqa: PLR0915
             "media_intake",
             status="failed" if outcome.stops_here else "ok",
             summary=(
+                "Could not read the photo; answered its caption instead."
+            ) if outcome.caption_fallback else (
                 "Read the photo." if modality == "image" else "Heard the voice note."
             ) if not outcome.stops_here else (
                 "Could not read the photo." if modality == "image" else "Could not hear the voice note."
@@ -7048,7 +7050,7 @@ def _run_stages_body(  # noqa: PLR0915
                 # heard: X" followed by "I have X."). `None` on a patched-upstream
                 # turn (no outcome ran here at all - S3), which still needs this arm's
                 # own lead.
-                media_prefixed=bool(media_box.get("outcome")),
+                media_prefixed=bool(media_box.get("outcome")) and not media_box["outcome"].caption_fallback,
                 # AC-23: a contact refused the agent gets no fit line on the arm's reply.
                 refused=branch_kind == "access_denied",
             )
@@ -9590,9 +9592,11 @@ def _apply_media_reply_prefix(result: TurnResult, outcome: Any) -> None:
         return
     prefix = media_intake.reply_prefix(outcome)
     notices = media_intake.notice_texts(outcome)
+    if not prefix and not notices:
+        return
     reply = result.reply or {}
     body = reply.get("text") or ""
-    lines = [prefix, *([body] if body else []), *notices]
+    lines = [*([prefix] if prefix else []), *([body] if body else []), *notices]
     full_text = "\n".join(lines)
     result.reply = {**reply, "text": full_text}
     for action in result.actions or []:
@@ -9654,7 +9658,8 @@ def _media_source_modality(media_box: dict[str, Any]) -> str | None:
     the same either way."""
     outcome = media_box.get("outcome")
     if outcome is not None:
-        return outcome.modality
+        # A caption fallback answers the caption as typed text, not "that photo".
+        return None if outcome.caption_fallback else outcome.modality
     return media_box.get("patched_modality")
 
 
@@ -9702,6 +9707,8 @@ def _media_intake_facts(outcome: media_intake.MediaIntakeOutcome) -> dict[str, A
         facts["attachment_error"] = outcome.attachment_error
     if outcome.extraction_error:
         facts["extraction_error"] = outcome.extraction_error
+    if outcome.caption_fallback:
+        facts["caption_fallback"] = True
     return facts
 
 
