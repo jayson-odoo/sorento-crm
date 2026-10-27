@@ -245,8 +245,9 @@ Tests: `infra/tests/test_ha_scripts.py`.
 
 ## 3. Location (owner ruling D2: India)
 
-- **Primary stays where the CRM box is** (Malaysia per the owner's KL remark; the exact data
-  centre is unverified from the repo, crew reads hPanel, VPS, Overview, "Location").
+- **Primary stays where the CRM box is: Malaysia** (owner, 27 Oct about 23:50: all three boxes,
+  the CRM box, the n8n KVM 8 and the shared-service box, are in Malaysia today; provider not
+  stated, hPanel suggests Hostinger for the two VPSs, unconfirmed).
 - **Standby: Hostinger VPS, location "India" = Mumbai.** Hostinger's support page lists India among
   the VPS locations in Asia (with Indonesia and Malaysia), and Hostinger's own blog announced its
   Mumbai data centre; that the VPS location is that Mumbai site comes from third-party reviews
@@ -592,13 +593,39 @@ Owner rulings, 27 Oct about 19:35 (recorded verbatim where quoted):
   `infra/templates/host/ha-members.nft`); the witness runs `infra/templates/witness/compose.witness.yml`;
   the move is `documentation/runbooks/ha-failover.md` "Move the witness" (etcd learner add,
   promote, remove; no downtime, quorum kept).
-  - **Known limit, accepted for now**: if the shared-service box shares a region or data centre
-    with the KL CRM box, a KL region outage loses 2 of the 3 voters and India will NOT take over
-    automatically; a human forces the promotion (runbook, "The witness today"). Its own deploys
-    and reboots also pause automatic failover while they last. Locations of the three boxes are
-    unverified (crew-ask on the PR).
-  - Trigger to move it: crew finds it in the same region as KL, or any incident where its
-    downtime overlapped a KL problem, or the first quarterly drill 5 showing its restarts.
+  - **Known limitation, accepted for now** (locations confirmed by the owner 27 Oct about 23:50:
+    the shared-service box is in MALAYSIA, like the CRM box). See "Known limitation: the witness
+    is in Malaysia" below for exactly what fails and when.
+  - Moving it off-region stays a config-only change (runbook "Move the witness"); crew raises the
+    move with the owner.
+
+### Known limitation: the witness is in Malaysia
+
+While the witness runs on the shared-service box, two of the three voters (the KL CRM box and the
+witness) are in Malaysia. What that means, case by case, once the KVM 8 is in India:
+
+| Event | Voters left | What happens |
+|---|---|---|
+| KL CRM box dies (hardware, OOM, its VPS host) and the shared-service box is up | India + witness (2 of 3) | **automatic failover works** (about 1-1.5 minutes) |
+| Shared-service box down alone (its deploy, reboot, incident) | KL + India | nothing changes; alert |
+| India box down alone | KL + witness | nothing changes; alert |
+| Malaysia vs India link cut, both regions up | KL + witness | KL stays primary (correct); India waits as a replica |
+| **Malaysia-wide outage** (the "SEA got problem" case: region, provider network, upstream link) | India only (1 of 3) | **NO automatic failover.** India is a healthy replica, but without a majority Patroni may not promote it, and `/api/v1/health/role` answers 503 on every node, so the CRM is DOWN until a human acts (runbook "Forced promotion when Malaysia is down"): about 15-30 minutes in practice |
+| **KL dies while the shared-service box is mid-deploy or rebooting** | India only | **NO automatic failover** until the shared-service box is back; then automatic |
+
+Two consequences the owner should know:
+
+- The forced promotion is the riskiest step in the whole design: India has to be made a
+  one-member etcd cluster by hand, and when Malaysia comes back the KL box and the witness still
+  form a majority of the OLD cluster and could keep KL as a second primary. The runbook therefore
+  disables KL's Cloudflare pool first and fences KL and the witness before their network returns.
+  This is exactly the risk an off-region witness removes.
+- Until the KVM 8 has moved to India, all three boxes are in Malaysia: Tier 1 then protects only
+  against a single box failing, not a Malaysia outage.
+
+Fix (config only, no redesign, no downtime): move the witness to a third region outside
+Malaysia and India (Hetzner EU, about EUR 4-5/month), runbook "Move the witness". With that, every
+row above becomes "automatic failover works" or "nothing changes".
 
 ### O1 (c): the shared-service box as the witness (analysis behind the ruling)
 
@@ -694,8 +721,9 @@ active-active, which section 4 and section 3 rule out for this latency.
    own (that would silently lose more than a few seconds). A human picks: wait for the old
    primary, or `patronictl failover --force` and accept the loss. `ha-checks.sh` alerts on lag long
    before this.
-2. Two of the three members are down at once (for example KL and the witness): no majority, so no
-   automatic promotion, by design. A human confirms and forces it.
+2. Two of the three members are down at once: no majority, so no automatic promotion, by design.
+   With the witness in Malaysia this includes **any Malaysia-wide outage** (section 10, "Known
+   limitation"). A human runs the forced promotion in `documentation/runbooks/ha-failover.md`.
 3. A member is gone for good (VPS deleted, disk lost): provision a replacement from the infra repo;
    Patroni then re-seeds it on its own. A lost etcd member also needs `etcdctl member remove/add`
    and a start with `ETCD_INITIAL_CLUSTER_STATE=existing` (`templates/etcd/etcd.env.template`).
@@ -737,5 +765,6 @@ active-active, which section 4 and section 3 rule out for this latency.
 | 7 | monthly | `ha-checks.sh` with a lowered threshold | Healthchecks alert reaches the owner |
 | 8 | after drill 2, at the next 04:00 MYT past 24 h | leave `switchback.sh` alone | primary back on KL with a write pause under 15 s; LB, workers and n8n follow |
 | 9 | before go-live, then after every infra change | from INSIDE an n8n container: `curl -m 3` to 8008, 2379, 2380 and 5432 on each of the three tunnel addresses | every one times out; only the HAProxy address answers on 443, 8765 and 6432 |
+| 10 | quarterly, while the witness is in Malaysia | tabletop of "Forced promotion when Malaysia is down", plus the etcd `--force-new-cluster` step on a throwaway copy | the on-call person can run it from the runbook alone; nothing is tried on prod |
 
 Each drill's numbers go into `documentation/runbooks/` (follow-up runbook `ha-failover.md`).

@@ -14,12 +14,41 @@ Owner ruling 27 Oct: the third etcd voter runs on the shared-service box for now
   networks in `<N8N_SUBNETS>`, so none of its containers can reach 2379/2380.
 - Checks: `ETCD_ONLY=1 PROJECT_DIR=<witness dir> COMPOSE_FILES="-f compose.witness.yml"
   infra/scripts/ha-checks.sh` every 5 minutes, pinging its own Healthchecks check.
-- **Known limit**: if the shared-service box sits in the same region or data centre as the KL
-  CRM box, a KL region outage takes out 2 of the 3 voters at once and India will NOT take over
-  automatically; it waits as a healthy replica until a human forces the promotion
-  (`patronictl failover --candidate in --force`, after confirming KL is really down). Its own
-  deploys and reboots also pause automatic failover while they last. Moving the witness (below)
-  removes both.
+- **Known limitation**: the shared-service box is in MALAYSIA, like the KL CRM box (owner, 27 Oct).
+  A Malaysia-wide outage takes out 2 of the 3 voters at once, so India will NOT take over
+  automatically: it waits as a healthy replica, every node's `/api/v1/health/role` answers 503,
+  and the CRM is down until someone runs the forced promotion below. The same happens if KL dies
+  while the shared-service box is mid-deploy or rebooting (then it resolves by itself once that
+  box is back). Moving the witness off-region (last section) removes both. Full case table: plan
+  section 10, "Known limitation: the witness is in Malaysia".
+
+## Forced promotion when Malaysia is down
+
+Only when KL AND the witness are unreachable and India is a healthy replica. `patronictl
+failover` does not work here: it writes to etcd, and etcd has no majority.
+
+1. Confirm: `scripts/ops/cf-proxy.py status` (not a Cloudflare outage), the KL and witness boxes
+   unreachable from India over the tunnel and from outside, Hostinger status page.
+2. Fence first. In Cloudflare, disable the `kl` pool (so KL cannot take traffic when it comes
+   back). In hPanel, Stop the KL VPS and the shared-service box's witness if the panel still
+   answers. If it does not: on India, firewall the tunnel to KL and the witness
+   (`nft add rule inet sorento_ha_guard input ip saddr { $KL_WG_IP, $WITNESS_WG_IP } drop` and
+   the same in `forward`), so they cannot rejoin when the network returns.
+3. On India: stop etcd, then start it ONCE with `--force-new-cluster` (same data dir; it becomes a
+   one-member cluster keeping the data), then normally. `etcdctl member list` shows only `in`.
+4. Patroni on India sees the old leader key expire and promotes itself (or
+   `patronictl failover --candidate in --force` now that etcd answers). Check
+   `curl -s localhost:8008/primary` is 200, then `/api/v1/health/role` 200; the role watcher
+   starts workers; the LB moves traffic to the `in` pool.
+5. When Malaysia is back: keep the KL box and the witness FENCED. Wipe KL's and the witness's etcd
+   data dirs, re-add them to India's cluster one at a time (`etcdctl member add ... --learner`,
+   start with `ETCD_INITIAL_CLUSTER_STATE=existing`, `member promote`), then start KL's Patroni:
+   it rejoins as a replica (`pg_rewind` or re-seed). Lift the fence and re-enable the `kl` pool
+   only when `patronictl list` shows exactly one leader (India). The 04:00 switchback then moves
+   the primary home after 24 h healthy.
+
+Data: writes that reached KL but not India before the outage (normally under a second) are lost,
+and are discarded when KL is rewound.
 
 ## Move the witness
 
