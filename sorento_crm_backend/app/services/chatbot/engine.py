@@ -5839,7 +5839,10 @@ def _run_stages_body(  # noqa: PLR0915
         # they leave the verdict here with their mark (no later step, store or session sees either).
         verdict = chat_state.without_kept_aside(verdict)
     if _ranking_words:
-        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_ranking_words]}
+        # The words held out of grounding skipped the hidden-key strip above: run it over them before they go back, so
+        # a spec the contact may not see never rides the report ask (security review S2).
+        _held_back = _strip_hidden_spec_entities({"entities": _ranking_words}, hidden_spec)["entities"]
+        verdict = {**verdict, "entities": [*(verdict.get("entities") or []), *_held_back]}
     if grounding_notes:
         turn_trace.add("grounding", {"changes": grounding_notes})
     # Fix round 12 on PR #833 (owner ruling 28 Sep 2026): once grounding has read the ask
