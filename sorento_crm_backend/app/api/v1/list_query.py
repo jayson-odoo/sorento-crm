@@ -68,6 +68,21 @@ def _infer_filter_ui_type(f: ListQueryField) -> str:
     return "text"
 
 
+def _code_with_name_sql(code, name):
+    """SQL twin of `app.utils.product_display.code_with_name`: "CODE - Name", or just "CODE" when the name is
+    blank or equals the code (ignoring case and whitespace runs)."""
+    from sqlalchemy import case, func
+
+    def norm(col):
+        return func.lower(func.regexp_replace(func.trim(func.coalesce(col, "")), r"\s+", " ", "g"))
+
+    return case(
+        (norm(name) == "", func.coalesce(code, "")),
+        (norm(name) == norm(code), func.coalesce(code, "")),
+        else_=func.concat(func.coalesce(code, ""), " - ", name),
+    )
+
+
 def _option_specs() -> Dict[tuple, Dict[str, Any]]:
     """Which fields offer a pick list, and how a value is labelled (FILTER-MULTISELECT PR7).
 
@@ -101,7 +116,7 @@ def _option_specs() -> Dict[tuple, Dict[str, Any]]:
         ("orders", "agent"): own(Order, Order.agent, order_base),
         ("orders", "line_product_id"): {
             "root": OrderLine, "value": OrderLine.product_id,
-            "label": func.concat(Product.product_code, " ", func.coalesce(Product.product_name, "")),
+            "label": _code_with_name_sql(Product.product_code, Product.product_name),
             "joins": [(Order, Order.id == OrderLine.order_id), (Product, Product.id == OrderLine.product_id)],
             "base": order_base,
         },
