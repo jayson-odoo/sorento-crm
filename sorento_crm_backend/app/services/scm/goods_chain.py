@@ -49,7 +49,7 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import and_, func, or_, tuple_
+from sqlalchemy import String, and_, cast, func, or_, tuple_
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
@@ -541,6 +541,11 @@ def chains_for_rows(
     return out
 
 
+def _text(column: Any, name: str) -> Any:
+    # The driver builds a uuid.UUID per uuid cell; as text it is the str the code reads.
+    return cast(column, String).label(name)
+
+
 def _placements(db: Session, *criteria: Any) -> List[Any]:
     """The live placements matching `criteria`, made-first first, each with the columns of
     the document line it names. Live: the order inquiry row is not cancelled and the link
@@ -548,12 +553,12 @@ def _placements(db: Session, *criteria: Any) -> List[Any]:
     its placement still answers (a `dead` hop); `spo_visible` says which it is."""
     return (
         db.query(
-            OrderInquiryLink.id.label("link_id"),
-            OrderInquiryLink.row_id,
+            _text(OrderInquiryLink.id, "link_id"),
+            _text(OrderInquiryLink.row_id, "row_id"),
             OrderInquiryLink.qty,
             OrderInquiryLink.linked_at,
-            OrderInquiryLink.spo_allocation_id,
-            OrderInquiryLink.po_line_id,
+            _text(OrderInquiryLink.spo_allocation_id, "spo_allocation_id"),
+            _text(OrderInquiryLink.po_line_id, "po_line_id"),
             SPOAllocation.spo_number,
             SPOAllocation.spo_line_number,
             and_(*spo_supply.visible_line_clauses()).label("spo_visible"),
@@ -564,16 +569,16 @@ def _placements(db: Session, *criteria: Any) -> List[Any]:
             SPOAllocation.allocated_quantity.label("spo_allocated"),
             SPOAllocation.quantity_received.label("spo_received"),
             SPOAllocation.receipt_status.label("spo_receipt_status"),
-            SPOAllocation.warehouse_id.label("spo_warehouse_id"),
+            _text(SPOAllocation.warehouse_id, "spo_warehouse_id"),
             Warehouse.warehouse_code.label("spo_warehouse_code"),
             InboundShipment.actual_arrival_date.label("spo_arrived"),
             # The PO line an SPO line names as its source (the key read backwards), so a
             # placement on the SPO can find the placements that follow onto it.
             SPOAllocation.from_po_number.label("spo_from_po_number"),
             func.btrim(SPOAllocation.from_po_line_ref).label("spo_from_ref"),
-            SPOAllocation.po_line_id.label("spo_po_line_id"),
-            SPOAllocation.product_id.label("spo_product_id"),
-            SPOAllocation.company_id.label("spo_company_id"),
+            _text(SPOAllocation.po_line_id, "spo_po_line_id"),
+            _text(SPOAllocation.product_id, "spo_product_id"),
+            _text(SPOAllocation.company_id, "spo_company_id"),
             # Is the placed PO line still on order (`_po_rows`'s own test), and what did it
             # transfer? NULL for an SPO link, whose branch never reads them.
             and_(*ProjectSupplyService.open_po_line_clauses()).label("po_open"),
@@ -582,11 +587,11 @@ def _placements(db: Session, *criteria: Any) -> List[Any]:
             PurchaseOrderLine.qty_cancelled.label("po_cancelled"),
             PurchaseOrderLine.line_status.label("po_line_status"),
             func.btrim(PurchaseOrderLine.source_ref).label("po_line_ref"),
-            PurchaseOrderLine.product_id.label("po_product_id"),
-            PurchaseOrderLine.warehouse_id.label("po_warehouse_id"),
-            PurchaseOrderLine.company_id.label("po_company_id"),
+            _text(PurchaseOrderLine.product_id, "po_product_id"),
+            _text(PurchaseOrderLine.warehouse_id, "po_warehouse_id"),
+            _text(PurchaseOrderLine.company_id, "po_company_id"),
             PurchaseOrder.po_number,
-            PurchaseOrder.id.label("purchase_order_id"),
+            _text(PurchaseOrder.id, "purchase_order_id"),
             PurchaseOrder.status.label("po_status"),
         )
         .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
