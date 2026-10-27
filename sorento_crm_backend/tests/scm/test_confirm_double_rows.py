@@ -22,7 +22,7 @@ from app.schemas.project_supply import ConfirmLine, ConfirmSupplyBody
 from app.services.project_supply_service import ProjectSupplyService
 
 from .._pg_fixture import blank_session
-from ..test_so_supply_confirmation import _stock
+from ..test_so_supply_confirmation import _stock, _warehouse
 from .test_project_supply_service_ladder import (
     REQUIRED_DATE,
     _group_sites,
@@ -290,3 +290,38 @@ def test_a_shortfall_only_the_on_hand_floor_finds_is_frozen_against_its_componen
             notices = _shorts(body)
             assert len(notices) == 1 and "26 short" in notices[0], (press, notices)
             assert _frozen_short(db, world)[0]["warehouse_id"] == str(world["own"].id)
+
+
+def test_a_cross_group_reserve_with_a_reason_pressed_again_stays_short():
+    """The board's own path: an amended line always carries a reason, which lifts the
+    capacity recheck only at the line's OWN group's bins. A Reserve from another group's bin
+    that an earlier order of that group needs is short 36 on press 1, and on main press 2
+    wrote it in full (`brw 36`). Every press is the same."""
+    with blank_session() as db:
+        company_id, eling, project, product = _world(db)
+        _group, sites = _group_sites(db)
+        own, _pool = sites["BRW"]
+        other = _warehouse(db, f"ZZTMWH-IR{own.warehouse_code[-3:]}")
+        _stock(db, product, other, on_hand=36)
+        _seed_line(
+            db, company_id, project, product, other, qty_ordered="36", line_no=1,
+            required_date=REQUIRED_DATE - timedelta(days=20),
+        )
+        order, line, _cso, _cline = _seed_line(
+            db, company_id, project, product, own, qty_ordered="36", line_no=1,
+        )
+        world = {"order": order, "line": line}
+        for press in (1, 2, 3):
+            entry = ConfirmLine(
+                project_line_id=line.id,
+                reserve=[{"warehouse_id": str(other.id), "qty": "36"}],
+                buy_qty=Decimal("0"),
+                amend_reason="From the other group.",
+            )
+            body = ProjectSupplyService(db).confirm(
+                order, ConfirmSupplyBody(lines=[entry]), actor_user_id=eling
+            )
+            db.commit()
+            assert _active_rows(db, world) == [], press
+            notices = _shorts(body)
+            assert len(notices) == 1 and "36 short" in notices[0], (press, notices)
