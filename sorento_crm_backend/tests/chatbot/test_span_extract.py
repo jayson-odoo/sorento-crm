@@ -696,7 +696,7 @@ class E:
     def pieces(self, texts): return [[0.0]] * len(texts)
     def fill(self, texts): return None
     def __call__(self, texts): return [[0.0]] * len(texts)
-    def is_cached(self, texts): return True
+    def is_cached(self, texts): return False
 rows = [ll.LookupRow('brand', 'b1', 'ZZBRAND', ('ZZBRAND',))]
 ll.prefetch('zz basin price', E())()
 ll.warm(rows, E())
