@@ -25,6 +25,8 @@ confirms anything.
 """
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import replace as dataclass_replace
 from datetime import date
 from decimal import Decimal
@@ -323,6 +325,9 @@ def _source_order(label: str) -> tuple:
     return (label, 3)
 
 
+logger = logging.getLogger(__name__)
+
+
 class StockDebtService:
     def __init__(self, db: Session):
         self.db = db
@@ -402,10 +407,23 @@ class StockDebtService:
         stores it, so the two cannot read the book differently. Returns the rows, the axis
         (`months`), `totals`, `suppliers`, `sheet_counts`, the `span` and the per-product
         assignment results (`assignments`, keyed by product id) the rows were built from."""
+        board_started = time.perf_counter()
         span = self._warehouses(group, book)
         warehouses = self._narrow_locations(span, location, exclude_location)
-        products = self._products(warehouses, query)
+        started = time.perf_counter()
+        products, demand_ids = self._products(warehouses, query)
+        candidates = len(products)
+        if only_debt and not projected:
+            # STOCKDEBT-PERF: debt is only ever debited from a sales-order line, so a
+            # product with no open demand line in the span cannot reach a row; skip its
+            # walk. Filtered, not re-sorted. The projection reads pool stock, so it keeps all.
+            # `_holds`' `found_empty` reads the DOCUMENT product's stock, which on a remap
+            # differs from the line's product: keep that one too.
+            keep = demand_ids | self._remap_document_products(demand_ids)
+            products = [row for row in products if row[0] in keep]
+        products_ms = int((time.perf_counter() - started) * 1000)
         product_ids = [product_id for product_id, _code, _name, _cat in products]
+        assignments_started = time.perf_counter()
         assignments = self._assignments(
             [(pid, code, name) for pid, code, name, _cat in products],
             warehouses,
@@ -417,6 +435,7 @@ class StockDebtService:
             date_to=date_to,
             view=True,
         )
+        assignments_ms = int((time.perf_counter() - assignments_started) * 1000)
         supplier_map = self._last_supplier_map(product_ids)
         # STOCK-DEBT-PROJECTION (owner, 12 Oct 2026): the switch's own reading. Computed
         # off the SAME assignment, so the month figures it starts from are the page's.
@@ -515,12 +534,24 @@ class StockDebtService:
                 }
             )
 
+        totals = self._totals(data_rows, axis)
+        sheet_counts = self._sheet_counts(data_rows)
+        logger.info(
+            "stock_debt.board candidates=%d walked=%d rows=%d products_ms=%d "
+            "assignments_ms=%d total_ms=%d",
+            candidates,
+            len(products),
+            len(data_rows),
+            products_ms,
+            assignments_ms,
+            int((time.perf_counter() - board_started) * 1000),
+        )
         return {
             "rows": data_rows,
             "months": axis,
-            "totals": self._totals(data_rows, axis),
+            "totals": totals,
             "suppliers": suppliers,
-            "sheet_counts": self._sheet_counts(data_rows),
+            "sheet_counts": sheet_counts,
             "span": span,
             "assignments": assignments,
         }
@@ -992,7 +1023,7 @@ class StockDebtService:
 
     def _products(
         self, warehouses: Dict[str, Warehouse], query: Optional[str]
-    ) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
+    ) -> Tuple[List[Tuple[str, str, Optional[str], Optional[str]]], Set[str]]:
         """Every product with stock, demand or incoming at those bins: id, code, name and
         `category_code` (R4/AC-5) - one JOIN, not a second query, for the same reason the
         rest of this file reads once for the whole set.
@@ -1002,10 +1033,13 @@ class StockDebtService:
         than the other three: an UNLOCATED sales-order line names no bin at all, and a screen
         that lists what is owed while silently dropping 2,312 open lines (30 Aug dev copy)
         is answering a narrower question than the one it is asked.
+
+        Also returns the ids with an open demand line in that span (the demand read's own
+        result), which `_board` narrows to when only debt is asked for.
         """
         ids = set(warehouses)
         if not ids:
-            return []
+            return [], set()
         candidates: set = set()
         candidates |= {
             str(row[0])
@@ -1014,7 +1048,7 @@ class StockDebtService:
             .distinct()
             .all()
         }
-        candidates |= {
+        demand_ids = {
             str(row[0])
             for row in self.db.query(SalesOrderLine.product_id)
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
@@ -1027,6 +1061,7 @@ class StockDebtService:
             .distinct()
             .all()
         }
+        candidates |= demand_ids
         candidates |= {
             str(row[0])
             for row in self.db.query(SPOAllocation.product_id)
@@ -1050,7 +1085,7 @@ class StockDebtService:
             .all()
         }
         if not candidates:
-            return []
+            return [], demand_ids
 
         rows = (
             self.db.query(
@@ -1070,10 +1105,44 @@ class StockDebtService:
                     Product.product_name.ilike(needle),
                 )
             )
-        return [
-            (str(row.id), row.product_code or "", row.product_name, row.category_code)
-            for row in rows.all()
-        ]
+        return (
+            [
+                (str(row.id), row.product_code or "", row.product_name, row.category_code)
+                for row in rows.all()
+            ],
+            demand_ids,
+        )
+
+    def _remap_document_products(self, demand_ids: Set[str]) -> Set[str]:
+        """Document products of order inquiry links whose sales-order line (open demand
+        product in `demand_ids`) is of a DIFFERENT product: what `_holds` reads stock under.
+        Looser than `_holds`' own links filter on purpose; it may over-keep, never under-keep."""
+        if not demand_ids:
+            return set()
+        document = func.coalesce(SPOAllocation.product_id, PurchaseOrderLine.product_id)
+        rows = (
+            self.db.query(document)
+            .select_from(OrderInquiryLink)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .join(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .outerjoin(
+                SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
+            )
+            .outerjoin(
+                PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id
+            )
+            .filter(SalesOrderLine.product_id.in_(demand_ids), document != SalesOrderLine.product_id)
+            .distinct()
+            .all()
+        )
+        return {str(row[0]) for row in rows if row[0] is not None}
 
     @staticmethod
     def _demand_span(warehouse_ids):
@@ -2625,8 +2694,10 @@ class StockDebtService:
         LINE, falling back to the manually-flagged primary product supplier, else neither.
 
         The window (newest `PurchaseOrder.issue_date`, `PurchaseOrderLine.created_at`
-        breaking a tie) is `po_last_cost_service.last_cost_rows`'s own pick key, reused
-        rather than re-derived - the same "which PO line answers for this product" question,
+        breaking a tie, then po_number, then line id, so an exact tie never falls to the
+        query plan) is `po_last_cost_service.last_cost_rows`'s pick key, reused
+        rather than re-derived (bar the tie: that one breaks it on line id ASCENDING) - the
+        same "which PO line answers for this product" question,
         one PARTITION BY `product_id` instead of `(product_id, warehouse_id)` because the
         board asks per PRODUCT, not per bin. Cancelled POs are skipped (A1); a cancelled
         LINE is not, because A1 names only the PO's own status - an SPO's supplier is never
@@ -2645,6 +2716,8 @@ class StockDebtService:
                 order_by=(
                     PurchaseOrder.issue_date.desc().nulls_last(),
                     PurchaseOrderLine.created_at.desc(),
+                    PurchaseOrder.po_number.desc(),
+                    PurchaseOrderLine.id.desc(),
                 ),
             )
             .label("rn")

@@ -25,7 +25,9 @@ import copy
 import hashlib
 import json
 import logging
+import os
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -1333,6 +1335,46 @@ def _span_prep(
         return None
 
 
+def start_lookup_warm(session_factory: Any = None) -> threading.Thread | None:
+    """ENTITY-EXTRACT-MATCH S3: warm the lookup vectors (widest visibility plus the spec names) on a daemon thread at
+    API start-up, so the first turn finds them cached. Process start had a no-meaning window of more than 70 s on
+    Gemini until the first turn's lazy warm filled the cache. Off with `CHATBOT_LOOKUP_WARM_ENABLED` (the test suite
+    turns it off). Advisory: every failure is logged and swallowed. Returns the thread, or None when off."""
+    if os.getenv("CHATBOT_LOOKUP_WARM_ENABLED", "1").strip().lower() in ("0", "false", "off", "no"):
+        return None
+    if session_factory is None:
+        from app.database import SessionLocal as session_factory
+
+    def _run() -> None:
+        db = None
+        try:
+            db = session_factory()
+            set_company_scope(db, None)
+            embed = lookup_lists.embedder(db)
+            if embed is None:
+                return
+            from app.services import product_spec_registry
+
+            rows = lookup_lists.load_rows(db, include_salespeople=True, include_customers=True, customer_ids=None)
+            spec_keys = list_resolver.spec_key_rows(product_spec_registry.active_registry(db))
+            db.rollback()
+            db.close()
+            db = None
+            lookup_lists.warm([*rows, *spec_keys], embed)
+        except Exception:  # noqa: BLE001 - advisory, the first turn's lazy warm takes over
+            logger.warning("chatbot: start-up lookup warm failed", exc_info=True)
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    thread = threading.Thread(target=_run, name="lookup-lists-startup-warm", daemon=True)
+    thread.start()
+    return thread
+
+
 def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
     """Trace only: the rows the resolver offered for one span, best first, the first 8 (`close`
     carries the full count) so the event stays inside the trace entry cap."""
@@ -1364,7 +1406,8 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
     event: dict[str, Any] = {
         "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
         "provider": config.provider if config else None, "model": config.model if config else None,
-        "model_source": config.model_source if config else None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
+        "model_source": config.model_source if config else None,
+        "embedding_model": None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
     }
     if answer is not None and answer.usage and not dry_run:
@@ -1383,13 +1426,14 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
             try:
                 all_rows = [*prep.rows, *prep.spec_key_rows]
                 embed = lookup_lists.usable_embedder(all_rows, prep.embed)
+                event["embedding_model"] = getattr(embed, "model", None) if embed is not None else None
                 resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
                 # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
                 # resolved as their own untyped span, one level only.
                 rest = [
                     list_resolver.Span(left)
                     for r in resolutions
-                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code"
+                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code" and r.matched_by == "text"
                     for left in [list_resolver.unmatched_words(r.span.text, r.candidates[0].row, all_rows)]
                     if left
                 ]
@@ -1421,11 +1465,11 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
                 event["spans"] = [
                     {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
-                     "candidates": _candidates_of(r)}
+                     "candidates": _candidates_of(r), "meaning": r.span.meaning, "matched_by": r.matched_by}
                     for r in resolutions
                 ] + [
                     {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True,
-                     "candidates": _candidates_of(r)}
+                     "candidates": _candidates_of(r), "meaning": None, "matched_by": "text"}
                     for r in extra
                 ]
                 lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}
