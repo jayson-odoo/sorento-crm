@@ -3,19 +3,19 @@
 UAC: documentation/plans/finance/finance-billing-documents-27sep-acceptance-criteria.md, S1.
 Plan 3.4 (round 3): one report, two datasets. Basis = Invoiced reads
 `finance.billing_documents` (IV + CS + DN - CN, `local_net_total`, posted only, by document
-date), in the DEALER and PROJECT TEAM blocks by the stored `demand_class` through the SAME
-channel label and filter the order bases use (ruling Q14), each document credited to its own
-agent (Q15).
+date), each document credited to its own agent (Q15). SALES-UNIFIED (#1916, PLAN-sales-unified-
+27oct section 0, Q1 (b)) re-ruled the blocks: the sales type of the sales orders a document traces
+to, read at run time (never the stored `demand_class`); Invoiced is now the default basis.
 
   S1-2   a CN counts in its own month, never its invoice's
-  S1-3   Basis offers Delivered, Ordered, Invoiced; Delivered stays the default
-  S1-4   the blocks come from `demand_class`; the Channel filter narrows them
+  S1-3   Basis offers Delivered, Ordered, Invoiced; Invoiced is the default (SALES-UNIFIED)
+  S1-4   the blocks are the traced sales orders' type; the Channel filter narrows them
   S1-5   the basis line
   S1-6   the chatbot's `GET /sales/analysis` answers basis=invoiced from the same dataset
          (the parser and fetch lane halves are in tests/chatbot/test_sales_analysis_lane.py,
          inside the chatbot package's import boundary)
   S1-7   `sales.reports.view` alone runs it; no finance slug is needed
-  S1-9   an unclassified document is retail S1's `(blank)` row: last, in the cleared total
+  S1-9   a document with no sales order is the "No sales order" row, in the cleared total
   kernel a detail column only the other basis holds is left out, an unknown one is 422
 
 Postgres only, every row seeded here (CI's database holds none). Engine-level seeds write
@@ -32,16 +32,22 @@ import pytest
 
 from app.main import app  # noqa: F401  (import order: resolves the guards cycle)
 from app.models.base import set_company_scope
-from app.models.finance import BillingDocument
+from app.models.finance import BillingDocument, BillingDocumentLine
+from app.models.order import SalesOrder
 from app.models.sales_agent import SalesAgent
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
 from tests._pg_fixture import blank_session, unique_code
 
 KEY = "sales_yearly"
+#: Every sales type, in block order (`invoiced_sales.SALES_TYPES`).
+ALL_TYPE_LABELS = [
+    "Dealer", "Project team", "Other", "Set apart", "Mixed sales order types",
+    "Sales order type not set", "No sales order",
+]
 NOTE = (
     "Basis: Invoiced (invoices, cash sales and debit notes less credit notes, excluding tax), "
-    "by document date, grouped by the sales order type."
+    "by document date, grouped by the sales type of the sales orders each document traces to."
 )
 
 
@@ -71,6 +77,10 @@ def _doc(
     agent_id=None,
     doc_no=None,
 ):
+    """One billing document. `demand_class` is the class of the sales order it traces to
+    (a line transferred from that SO by number); None traces to no sales order. The block is
+    read from that SO at run time, never from the stored `demand_class` (SALES-UNIFIED Q1 (b),
+    PLAN-sales-unified-27oct section 0)."""
     row = BillingDocument(
         id=str(uuid.uuid4()),
         company_id=company_id,
@@ -88,6 +98,30 @@ def _doc(
     )
     db.add(row)
     db.flush()
+    if demand_class is not None:
+        order = SalesOrder(
+            id=str(uuid.uuid4()),
+            so_number=unique_code("SO"),
+            status="open",
+            demand_class=demand_class,
+            company_id=company_id,
+        )
+        db.add(order)
+        db.flush()
+        db.add(
+            BillingDocumentLine(
+                id=str(uuid.uuid4()),
+                document_id=row.id,
+                company_id=company_id,
+                line_no=1,
+                quantity=Decimal("1"),
+                net_amount=Decimal(net),
+                from_doc_type="SO",
+                from_doc_no=order.so_number,
+                source_ref="D1",
+            )
+        )
+        db.flush()
     return row
 
 
@@ -142,17 +176,19 @@ def test_s1_1_every_type_signed_cancelled_out_by_document_date(db, definition):
 
 
 # ====================================================================== S1-3
-def test_s1_3_basis_offers_delivered_ordered_invoiced_and_delivered_is_the_default(
+def test_s1_3_basis_offers_delivered_ordered_invoiced_and_invoiced_is_the_default(
     db, definition
 ):
+    """SALES-UNIFIED (#1916, owner ruling 27 Oct: Sales = IV + CS + DN - CN by document date)
+    made Invoiced the default; Delivered and Ordered stay on request."""
     basis = next(p for p in definition.params if p.key == "basis")
     assert list(basis.options(db)) == [
         ("delivered", "Delivered"),
         ("ordered", "Ordered"),
         ("invoiced", "Invoiced"),
     ]
-    assert basis.default == ("delivered",)
-    assert definition.default_view["params"]["basis"] == ["delivered"]
+    assert basis.default == ("invoiced",)
+    assert definition.default_view["params"]["basis"] == ["invoiced"]
 
 
 def test_s1_3_an_unknown_basis_is_still_422(db, definition):
@@ -171,7 +207,10 @@ def test_s1_4_the_blocks_are_the_sales_order_type(db, definition):
          document_type="credit_note")
     result = _run(db, definition, rows="channel", cols="year")
     summary = result.layouts.summary
-    assert summary.row_values == ["Dealer", "Project team"]
+    # The sales type is a fixed axis (SALES-UNIFIED, "we shouldn't hide anything"): every
+    # type prints in block order; only the ticked ones hold figures.
+    assert summary.row_values == ALL_TYPE_LABELS
+    assert set(summary.cells) == {"Dealer", "Project team"}
     assert summary.cells["Dealer"]["2026"]["sales_value"] == "300.00"
     assert summary.cells["Project team"]["2026"]["sales_value"] == "650.00"
     assert [b.title for b in result.layouts.blocks] == [
@@ -222,19 +261,21 @@ def test_s1_5_the_workbook_title_block_carries_the_basis_line(db, definition):
 
 
 # ====================================================================== S1-9
-def test_s1_9_an_unclassified_document_is_the_blank_row_last_and_in_the_cleared_total(
+def test_s1_9_a_document_with_no_sales_order_is_its_own_row_and_in_the_cleared_total(
     db, definition
 ):
-    """Retail S1's own fallback (its AC-S1-4): `(blank)`, sorted last, in the total when the
-    Channel filter is cleared, and in neither block when both are ticked."""
+    """SALES-UNIFIED Q1 (b) replaced retail S1's `(blank)` fallback: a document that traces to
+    no sales order is "No sales order", never guessed; in the total when the Channel filter
+    is cleared, and in neither block when only Dealer and Project team are ticked."""
     _doc(db, net="10.00", when=date(2026, 1, 5), demand_class="retail")
     _doc(db, net="20.00", when=date(2026, 1, 5), demand_class="project")
     _doc(db, net="5.00", when=date(2026, 1, 5), demand_class=None)
     cleared = _run(db, definition, rows="channel", cols="year", channel=[]).layouts.summary
-    assert cleared.row_values == ["Dealer", "Project team", "(blank)"]
+    assert cleared.row_values == ALL_TYPE_LABELS
+    assert cleared.cells["No sales order"]["2026"]["sales_value"] == "5.00"
     assert cleared.grand_total["sales_value"] == "35.00"
     ticked = _run(db, definition, rows="channel", cols="year").layouts.summary
-    assert ticked.row_values == ["Dealer", "Project team"]
+    assert set(ticked.cells) == {"Dealer", "Project team"}
     assert ticked.grand_total["sales_value"] == "30.00"
 
 
@@ -344,14 +385,25 @@ def test_no_scope_is_no_rows_on_invoiced_too(db, definition):
         assert result.layouts.summary.grand_total == {}
 
 
-def test_the_order_bases_offer_no_new_dimension(definition):
-    """The union catalog must not hand the order bases' Configure summary an axis they
-    cannot group by (review round 1 S1)."""
+def test_the_only_dimensions_the_order_bases_lack_are_invoiced_ones_and_refused_cleanly(
+    db, definition
+):
+    """Review round 1 S1 kept the union catalog to the order bases' axes. SALES-UNIFIED (#1916)
+    made Invoiced the default and gave its dataset Sales agent and Debtor type, so the union
+    now offers those two; on an order basis a pivot by either is a 422, never a 500."""
+    from app.services.error_handler import AppException
+    from app.services.reports.datasets import billing_documents as bd
     from app.services.reports.datasets import sales_order_lines as ds
 
     order_dims = {c.key for c in ds.DATASET.columns if c.tag == "dimension"}
+    invoiced_dims = {c.key for c in bd.DATASET.columns if c.tag == "dimension"}
     catalog_dims = {c.key for c in definition.catalog() if c.tag == "dimension"}
-    assert catalog_dims == order_dims
+    assert catalog_dims - order_dims == {"sales_agent", "debtor_type"}
+    assert catalog_dims - order_dims <= invoiced_dims
+    for rows in ("sales_agent", "debtor_type"):
+        with pytest.raises(AppException) as refused:
+            _run(db, definition, rows=rows, cols="year", basis=["delivered"])
+        assert refused.value.status_code == 422
 
 
 def test_the_invoiced_detail_opens_with_the_documents_own_columns(db, definition):
