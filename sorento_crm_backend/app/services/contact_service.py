@@ -265,8 +265,10 @@ class ContactService:
                 .where(links.c.contact_id == RespondContact.id)
             )
             if scope is not None:  # None = every company; UNSET or empty fails closed
+                ids = sorted(scope) if isinstance(scope, frozenset) else []
+                # Both sides: a link's company is stamped from its customer, but nothing enforces it.
                 stmt = stmt.where(
-                    links.c.company_id.in_(sorted(scope)) if isinstance(scope, frozenset) and scope else literal(False)
+                    links.c.company_id.in_(ids) & customers.c.company_id.in_(ids) if ids else literal(False)
                 )
             key = first(stmt)
         elif sort_field == "access_types":

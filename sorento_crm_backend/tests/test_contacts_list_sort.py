@@ -190,3 +190,15 @@ def test_customers_sort_reads_the_granted_other_company_codes(client, db, state)
     state["scope"] = frozenset({DEFAULT_COMPANY_ID})
     _grant(db, state["actor_id"], DEFAULT_COMPANY_ID, MOCHA_ID)
     assert _ordered(client, tag, "customers", "asc") == [mocha.id, sorento.id]
+
+
+def test_customers_sort_ignores_codes_of_companies_the_viewer_is_not_granted(client, db, state):
+    """A Mocha link the viewer cannot see neither shows nor orders: that contact sorts as empty."""
+    tag = unique_code("O", alpha=True)
+    hidden = _contact(db, tag, "a")
+    shown = _contact(db, tag, "b")
+    _link(db, hidden, _customer(db, unique_code("ZZT-A"), company_id=MOCHA_ID))
+    _link(db, shown, _customer(db, unique_code("ZZT-B")))
+    state["scope"] = frozenset({DEFAULT_COMPANY_ID})
+    _grant(db, state["actor_id"], DEFAULT_COMPANY_ID)
+    assert _ordered(client, tag, "customers", "asc") == [shown.id, hidden.id]

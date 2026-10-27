@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { useContactAccessTypes } from '../../contact-access-types/hooks/useContactAccessTypes';
 import { searchCustomersSelect } from '@/app/(protected)/order-management/customers/services/customerService';
 import { getContact, getContacts } from '../[id]/services/contactService';
+import { customerFilterLabel, customerFilterLabelKey } from '../lib/customerFilterLabel';
 import { PACKING_LIST_REGION_OPTIONS } from '@/lib/packing-list-regions';
 import type { ContactAccessFilters as Filters } from '../lib/listQuery';
 
@@ -50,18 +51,10 @@ export default function ContactAccessFilters({ value, onChange, hideClear = fals
 
   const set = (field: keyof Filters) => (v: string) => onChange({ ...value, [field]: v || null });
 
-  // Label read-back for an id restored from the URL. The list is company-less, so the customer
-  // may sit in another granted company: read it through the same grants search as the options.
+  // Label read-back for an id restored from the URL.
   const customerLabel = useQuery({
-    queryKey: ['contact-filter-customer-label', value.customerId],
-    queryFn: async () => {
-      const [c] = await searchCustomersSelect('', 0, {
-        companyScope: 'grants',
-        customerId: value.customerId as string,
-      });
-      if (!c) throw new Error('Customer not found');
-      return c.label;
-    },
+    queryKey: customerFilterLabelKey(value.customerId),
+    queryFn: () => customerFilterLabel(value.customerId as string),
     enabled: !!value.customerId && customerOption?.value !== value.customerId,
     staleTime: Infinity,
     retry: 0,
