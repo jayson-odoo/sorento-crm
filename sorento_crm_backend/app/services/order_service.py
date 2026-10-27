@@ -481,6 +481,9 @@ def stamp_so_outstanding_rows(
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
             .join(Product, Product.id == SalesOrderLine.product_id)
             .outerjoin(Customer, _cust_on)
+            # AC-REMOVED-KEEP-CANCELLED: a line AutoCount removed that the ingest used to
+            # delete is kept now, but never counts (owner via crew, 27 Oct).
+            .filter(SalesOrderLine.removed_unreferenced.is_(False))
         )
         if customer_ids:
             q = q.filter(SalesOrder.customer_id.in_([str(c) for c in customer_ids]))

@@ -1611,6 +1611,10 @@ class DocumentIngestService(MasterRefResolver):
                         values["line_status"] = CANCELLED
                 for column, value in values.items():
                     setattr(row, column, value)
+                # AC-REMOVED-KEEP-CANCELLED: AutoCount sends a line it had removed again. The
+                # old sweep would have deleted it and this push recreated it, counted again.
+                if row.removed_unreferenced:
+                    row.removed_unreferenced = False
                 counts["updated"] += 1
                 if spec.entity_type == "sales_orders":
                     self._sync_mirror_line(row, values)
@@ -1659,13 +1663,17 @@ class DocumentIngestService(MasterRefResolver):
             # only its linkage goes. Without this, the release above left it unreferenced
             # and the NEXT push deleted it. Only a ref-less (xlsx-era) leftover nothing
             # points at is still deleted: it is the duplicate count this sweep exists for.
-            if row.source_ref or is_referenced(
-                self.db, line_table, row.id, referrers=line_referrers
-            ):
+            referenced = is_referenced(self.db, line_table, row.id, referrers=line_referrers)
+            if row.source_ref or referenced:
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.
                 row.line_status = CANCELLED
+                # Owner via crew, 27 Oct: a line kept ONLY because of the rule above (the old
+                # sweep would have deleted it here) counts in no total. Sticky until AutoCount
+                # sends the line again; every other cancelled line counts exactly as before.
+                if not referenced:
+                    row.removed_unreferenced = True
                 counts["cancelled"] += 1
                 # PLAN-oi-cancelled-line-used-confirm.md (3.2a): this loop walks
                 # `already_cancelled` on EVERY push (its whole reason to be there is

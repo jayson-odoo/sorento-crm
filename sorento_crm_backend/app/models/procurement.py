@@ -931,6 +931,11 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
     qty_cancelled = Column(Numeric(15, 4), default=0, server_default="0", nullable=False)
     # AC-CANCEL-CRM: True while `cancelled` because cancel documents cancelled all of it.
     cancelled_by_cancel_doc = Column(Boolean, default=False, server_default="false", nullable=False)
+    # AC-REMOVED-KEEP-CANCELLED: True while the ingest keeps this line (cancelled) only because a
+    # DtlKey line is never deleted any more - AutoCount removed it and nothing pointed at it, so
+    # the old sweep would have deleted it. Excluded from every total (owner via crew, 27 Oct);
+    # cleared when AutoCount sends the line again.
+    removed_unreferenced = Column(Boolean, default=False, server_default="false", nullable=False)
     unit_cost = Column(Numeric(12, 2), nullable=True)
     # The rest of the money line the AutoCount PO detail listing states, and the unit the
     # quantity was ordered IN. All three nullable, and an absent figure stays absent: a 0
