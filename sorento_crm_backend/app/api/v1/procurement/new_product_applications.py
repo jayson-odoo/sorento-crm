@@ -30,11 +30,26 @@ from app.utils.http import content_disposition
 
 router = APIRouter()
 
-_ANY = (svc.VIEW, svc.CREATE, svc.APPROVE, svc.OPEN_CODE)
+_ANY = (svc.VIEW, svc.VIEW_OWN, svc.CREATE, svc.APPROVE, svc.OPEN_CODE)
 
 
-def _actor(db: Session, user: dict) -> svc.Actor:
-    return svc.actor_from_slugs(user["id"], permission_slugs(db, user["id"]))
+def _actor(db: Session, user: dict, slugs=None) -> svc.Actor:
+    from app.services import own_scope
+
+    slugs = permission_slugs(db, user["id"]) if slugs is None else slugs
+    actor = svc.actor_from_slugs(user["id"], slugs)
+    if actor.own_only:
+        actor.own_contact_id = own_scope.me(db, user["id"]).contact_id
+    return actor
+
+
+def _own(db: Session, user: dict, app) -> svc.Actor:
+    """The actor for a write. A `.view_own` holder gets a row that is not theirs as not
+    found, before the write's own owner rule (403) answers (PORTAL-P2-ONLY-THEIRS)."""
+    actor = _actor(db, user)
+    if actor.own_only:
+        svc.assert_can_view(app, actor)
+    return actor
 
 
 def _any_actor(db: Session, user: dict) -> svc.Actor:
@@ -43,7 +58,7 @@ def _any_actor(db: Session, user: dict) -> svc.Actor:
         raise AppException(
             status_code=403, message=f"Permission required: {svc.VIEW}", code="FORBIDDEN"
         )
-    return svc.actor_from_slugs(user["id"], slugs)
+    return _actor(db, user, slugs)
 
 
 def _load(db: Session, application_id: str, *, for_update: bool = False):
@@ -144,7 +159,7 @@ def update_application(
 ):
     try:
         app = _load(db, application_id, for_update=True)
-        svc.update(db, app, actor=_actor(db, user), data=payload.model_dump(exclude_unset=True))
+        svc.update(db, app, actor=_own(db, user, app), data=payload.model_dump(exclude_unset=True))
         return _done(db, app)
     except Exception:
         db.rollback()
@@ -284,7 +299,7 @@ def link_attachment(
     """Link a file from the attachment library (the Stock Inquiry flow); unlink is a pending action."""
     try:
         app = _load(db, application_id, for_update=True)
-        svc.link_attachment(db, app, actor=_actor(db, user), attachment_id=payload.attachment_id)
+        svc.link_attachment(db, app, actor=_own(db, user, app), attachment_id=payload.attachment_id)
         return _done(db, app)
     except Exception:
         db.rollback()

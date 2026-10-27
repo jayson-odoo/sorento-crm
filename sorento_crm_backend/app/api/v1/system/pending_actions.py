@@ -169,6 +169,9 @@ def _assert_entity_visible(db: Session, action_key: str, entity_id: str, actor_i
     another company (or one that does not exist) refuses 404 before anything is parked -
     the same answer either way, and no countdown for a record the caller cannot see.
     Deliberately just these keys: no other action asked for it."""
+    from app.services import own_scope
+
+    own_scope.assert_pending_action_allowed(db, action_key, entity_id, actor_id)
     if action_key == "product_alternatives.reset_auto":
         from app.services.product_alternative_service import list_for_product
 

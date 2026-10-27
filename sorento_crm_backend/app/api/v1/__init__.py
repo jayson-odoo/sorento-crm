@@ -44,6 +44,7 @@ from app.api.v1.system import (
     companies as system_companies,
 )
 from app.api.v1.assistant import record_context as assistant_record_context
+from app.api.v1.projects._own_scope import project_own_scope_guard
 from app.modules.runtime.guards import (
     require_any_module_enabled,
     require_module_enabled,
@@ -110,7 +111,11 @@ api_router.include_router(
     projects.router,
     prefix="/project-sales",
     tags=["project-sales"],
-    dependencies=[Depends(require_module_enabled_with_api_key("projects"))],
+    dependencies=[
+        Depends(require_module_enabled_with_api_key("projects")),
+        # "Only theirs" for a user holding projects.projects.view_own alone (PORTAL-P2).
+        Depends(project_own_scope_guard),
+    ],
 )
 api_router.include_router(
     sales.router,

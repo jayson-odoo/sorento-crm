@@ -21,7 +21,7 @@ from sqlalchemy.orm import Session
 from app.api.v1.projects._common import permission_slugs
 from app.api.v1.projects.quotations import _notify_breaches
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     ProjectQuotationDocumentCreate,
@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 # S16: the sales-manager grant on below-floor pricing. The whole access control on that
@@ -101,7 +105,7 @@ def _editable_project(db: Session, project_id: str, current_user: dict, *, write
 )
 async def list_quotation_documents(
     project_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -166,7 +170,7 @@ async def get_quotation_letter_templates(
 async def get_quotation_document(
     project_id: str,
     document_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -340,7 +344,7 @@ async def update_quotation_scope(
 async def list_quotation_issues(
     project_id: str,
     document_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -389,7 +393,7 @@ async def issue_quotation_document(
 
 @router.get("/quotation-approval-graph", response_model=StatusGraphResponse)
 async def get_quotation_approval_graph(
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The `quotation` approval graph, readable by anyone who can see a project.
@@ -645,7 +649,7 @@ async def download_quotation_issue_pdf(
     project_id: str,
     document_id: str,
     issue_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The issued quotation, as the customer received it, rendered inline in this request.
@@ -702,7 +706,7 @@ async def download_quotation_issue_xlsx(
     project_id: str,
     document_id: str,
     issue_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The same issued quotation as a workbook, one sheet per scope (AC-F2).
@@ -811,7 +815,7 @@ async def queue_quotation_issue_pdf(
     project_id: str,
     document_id: str,
     issue_id: str,
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Queue the issued quotation's PDF; it appears in My Downloads when it is ready.
@@ -843,7 +847,7 @@ async def queue_quotation_issue_xlsx(
     project_id: str,
     document_id: str,
     issue_id: str,
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Queue the issued quotation's workbook; it appears in My Downloads when it is ready."""

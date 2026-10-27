@@ -26,7 +26,7 @@ from app.services.embedding_change_listener import (
     enqueue_pending,
     register_embedding_change_listeners,
 )
-from tests._pg_fixture import blank_session
+from tests._pg_fixture import _globally_required_tables, blank_session
 
 register_embedding_change_listeners()
 
@@ -240,6 +240,14 @@ def two_sessions():
     admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
     admin.exec_driver_sql(f'CREATE TABLE "{name}".embedding_queue (LIKE public.embedding_queue INCLUDING ALL)')
+    # The search_path below is this schema alone, so the tables app.main's global flush
+    # listeners query (lookup_bindings on every ORM insert/update) must exist here too. Without
+    # them the claim's flush raised UndefinedTable whenever an earlier file on the same
+    # xdist worker had primed lookup_validator's per-engine "table exists" cache on public.
+    for table in _globally_required_tables():
+        admin.exec_driver_sql(
+            f'CREATE TABLE "{name}".{table.name} (LIKE public.{table.name} INCLUDING ALL)'
+        )
     conns, sessions = [], []
     for _ in range(2):
         conn = engine.connect()

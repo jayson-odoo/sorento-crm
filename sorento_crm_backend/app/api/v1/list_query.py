@@ -105,7 +105,15 @@ def _can_view_listing_key(
     if not perm_exists:
         return not fail_closed
 
-    return UserPermissionService(db).check_user_has_permission(user_id, perm_slug)
+    service = UserPermissionService(db)
+    if service.check_user_has_permission(user_id, perm_slug):
+        return True
+    # A holder of only `<module>.view_own` sees the same listing, narrowed to their own rows
+    # on the server (PORTAL-P2-ONLY-THEIRS), so their own column layout is theirs too. Not
+    # for the fail-closed (shared saved views) callers: those stay on the plain slug.
+    if not fail_closed and perm_slug.endswith(".view"):
+        return service.check_user_has_permission(user_id, perm_slug + "_own")
+    return False
 
 
 @router.get("/resources", response_model=List[ListQueryResourceResponse])

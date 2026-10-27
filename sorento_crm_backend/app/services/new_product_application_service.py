@@ -41,6 +41,7 @@ logger = logging.getLogger(__name__)
 ENTITY = "new_product_application"
 
 VIEW = "procurement.new_product_applications.view"
+VIEW_OWN = "procurement.new_product_applications.view_own"
 CREATE = "procurement.new_product_applications.create"
 APPROVE = "procurement.new_product_applications.approve"
 OPEN_CODE = "procurement.new_product_applications.open_code"
@@ -84,16 +85,23 @@ class Actor:
     can_create: bool = False
     can_approve: bool = False
     can_open_code: bool = False
+    #: `.view_own` without the view-all grants (PORTAL-P2-ONLY-THEIRS): their own rows, the
+    #: ones their own contact raised from the portal included, and anything else not found.
+    own_only: bool = False
+    own_contact_id: Optional[str] = None
 
 
 def actor_from_slugs(user_id: str, slugs: Iterable[str]) -> Actor:
     s = set(slugs)
+    can_view_all = bool(s & {VIEW, APPROVE, OPEN_CODE})
+    own_only = VIEW_OWN in s and not can_view_all
     return Actor(
         user_id=user_id,
-        can_view_all=bool(s & {VIEW, APPROVE, OPEN_CODE}),
+        can_view_all=can_view_all,
         can_create=CREATE in s,
         can_approve=APPROVE in s,
         can_open_code=OPEN_CODE in s,
+        own_only=own_only,
     )
 
 
@@ -134,11 +142,20 @@ def is_owner(app: NewProductApplication, actor: Actor) -> bool:
     return bool(actor.user_id and app.applicant_id and str(app.applicant_id) == str(actor.user_id))
 
 
+def _own_contact_row(app: NewProductApplication, actor: Actor) -> bool:
+    return bool(
+        actor.own_contact_id and app.contact_id and str(app.contact_id) == str(actor.own_contact_id)
+    )
+
+
 def assert_can_view(app: NewProductApplication, actor: Actor) -> None:
     if actor.contact_id is None and actor.can_view_all:
         return
-    if not is_owner(app, actor):
-        raise _forbidden("You do not have access to this application.")
+    if is_owner(app, actor) or _own_contact_row(app, actor):
+        return
+    if actor.own_only:
+        raise handle_not_found("New product application", app.id)
+    raise _forbidden("You do not have access to this application.")
 
 
 def assert_unlocked(app: NewProductApplication) -> None:
@@ -720,7 +737,10 @@ def _visible(query, actor: Actor):
         return query.filter(NewProductApplication.contact_id == str(actor.contact_id))
     if actor.can_view_all:
         return query
-    return query.filter(NewProductApplication.applicant_id == str(actor.user_id))
+    mine = NewProductApplication.applicant_id == str(actor.user_id)
+    if actor.own_contact_id:
+        mine = or_(mine, NewProductApplication.contact_id == str(actor.own_contact_id))
+    return query.filter(mine)
 
 
 _SORTS = {

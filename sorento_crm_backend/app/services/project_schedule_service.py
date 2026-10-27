@@ -1775,6 +1775,11 @@ class ProjectScheduleService:
         """
         version = self.get_version(version_id)
         self._assert_open(version)
+        project_id = (
+            self.db.query(DeliverySchedule.project_id)
+            .filter(DeliverySchedule.id == version.delivery_schedule_id)
+            .scalar()
+        )
         touched: Set[str] = set()
         for payload in cells:
             phase_id = _clean(payload.get("phase_id"), 64)
@@ -1801,7 +1806,7 @@ class ProjectScheduleService:
                     code="schedule_cell_no_column",
                 )
             phase = self.db.get(ProjectDeliveryPhase, phase_id)
-            if phase is None:
+            if phase is None or phase.project_id != project_id:
                 raise AppException(
                     status_code=404,
                     message="That delivery phase is not on this project.",

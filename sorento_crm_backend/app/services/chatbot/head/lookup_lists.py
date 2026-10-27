@@ -125,6 +125,8 @@ class LookupRow:
     label: str
     #: The strings matched (name, code, synonyms, class label).
     texts: tuple[str, ...]
+    #: EEM-CATEGORY-PICK: a category row's class (`product_class_signal.category_class`); a "type:" row is its own.
+    group: str | None = None
 
 
 @dataclass(frozen=True)
@@ -408,10 +410,35 @@ def _one_line(label: str) -> str:
     return text[:MAX_LABEL_CHARS]
 
 
-def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER) -> list[str]:
-    """One block per list with hits: the header, then `- <label>` once per label."""
+def _grouped_category_lines(hits: list[Hit]) -> list[str]:
+    """EEM-CATEGORY-PICK: one line per class, "- <class>: <label>, <label>" (the class row's own label is the line's
+    head, not an item; a class matched only by its own row prints bare); a row with no class prints "- <label>"."""
+    groups: dict[str, list[Any]] = {}  # folded class -> [printed spelling, items, spelling came from a member row]
+    for h in hits:
+        label = _one_line(h.row.label)
+        if not label:
+            continue
+        head = _one_line(h.row.group or "") or label
+        entry = groups.setdefault(head.casefold(), [head, [], False])
+        if label.casefold() != head.casefold():
+            if label not in entry[1]:
+                entry[1].append(label)
+            if not entry[2]:  # the class's own spelling is the one its member rows carry
+                entry[0], entry[2] = head, True
+    return [f"- {head}: {', '.join(items)}" if items else f"- {head}" for head, items, _m in groups.values()]
+
+
+def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False) -> list[str]:
+    """One block per list with hits: the header, then `- <label>` once per label (a category block one line per
+    class when `group_categories`)."""
     lines: list[str] = []
     for name in order:
+        if group_categories and name == "category":
+            grouped = _grouped_category_lines(hits.get(name) or [])
+            if grouped:
+                lines.append(header(name))
+                lines.extend(grouped)
+            continue
         labels: list[str] = []
         for h in hits.get(name) or []:
             label = _one_line(h.row.label)
@@ -575,9 +602,11 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
 def load_rows(
     db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
     include_customers: bool = False, customer_ids: frozenset[str] | None = None, brands: list[dict] | None = None,
+    group_categories: bool = False,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
-    spec word values, file types and the sales channels."""
+    spec word values, file types and the sales channels. `group_categories` (EEM-CATEGORY-PICK) reads the class
+    vocabulary to set each category row's `group`; off, it is never read."""
     from app.models.product import ProductCategory
     from app.services.chatbot import turn_runtime
     from app.services.reports.ask import SALES_CHANNELS
@@ -590,16 +619,23 @@ def load_rows(
         .order_by(ProductCategory.category_name)
         .all()
     )
+    from app.services.product_class_signal import ClassVocabulary, category_class
+
+    vocab = ClassVocabulary(db) if group_categories and any(not (c.class_label or "").strip() for c in cats) else None
     for c in cats:
         texts = tuple(dict.fromkeys(str(t) for t in [c.category_name, c.category_code, c.class_label, *(c.search_synonyms or [])] if t and str(t).strip()))
-        out.append(LookupRow("category", str(c.id), c.category_name, _with_synonyms("category", c.category_name, texts)))
+        group = (
+            category_class(db, code=c.category_code, name=c.category_name, class_label=c.class_label, vocab=vocab)
+            if group_categories else None
+        )
+        out.append(LookupRow("category", str(c.id), c.category_name, _with_synonyms("category", c.category_name, texts), group))
         seen_labels.add(_fold(c.category_name))
     # Class labels and product types, as the parser's old `Product types:` line named them.
     for name in turn_runtime.product_type_names(db):
         key = _fold(name)
         if key and key not in seen_labels:
             seen_labels.add(key)
-            out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,))))
+            out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,)), name if group_categories else None))
     out.extend(_spec_rows(db, hidden_spec_keys))
     out.extend(_file_type_rows(db))
     out.extend(_brand_rows(db, brands))
