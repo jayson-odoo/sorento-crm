@@ -44,6 +44,21 @@ def _resolve_stock_product_id(db: Session, product_id: Optional[str]) -> Optiona
         return str(row.id) if row else None
 
 
+
+def _stock_status_clause(status):
+    """The stock balance status filter as one clause: the OR of the picked buckets (they
+    overlap: normal also holds overstock), so each row matches once. None for no known bucket."""
+    statuses = [status] if isinstance(status, str) else (status or [])
+    reorder = func.coalesce(Product.reorder_level, 0)
+    bucket = {
+        'critical': Stock.quantity_available <= 0,
+        'low': and_(Stock.quantity_available > 0, Stock.quantity_available < reorder),
+        'normal': Stock.quantity_available >= reorder,
+        'overstock': Stock.quantity_available > reorder * 2,
+    }
+    picked = [bucket[s] for s in statuses if s in bucket]
+    return or_(*picked) if picked else None
+
 class WarehouseService:
     """Service for warehouse operations."""
     
@@ -992,17 +1007,9 @@ class StockService:
 
         # Several buckets are OR-ed, and they overlap (normal also holds overstock), so each row
         # is matched once by the OR of the predicates rather than once per bucket.
-        statuses = [status] if isinstance(status, str) else (status or [])
-        reorder = func.coalesce(Product.reorder_level, 0)
-        bucket = {
-            'critical': Stock.quantity_available <= 0,
-            'low': and_(Stock.quantity_available > 0, Stock.quantity_available < reorder),
-            'normal': Stock.quantity_available >= reorder,
-            'overstock': Stock.quantity_available > reorder * 2,
-        }
-        picked = [bucket[s] for s in statuses if s in bucket]
-        if picked:
-            q = q.filter(or_(*picked))
+        status_clause = _stock_status_clause(status)
+        if status_clause is not None:
+            q = q.filter(status_clause)
 
         # Hide rows whose on-hand is 0 ONLY because the most recent ledger movement
         # was a SYSTEM_ADJUSTMENT (e.g. "missing from full stock take") - a real 0
@@ -2043,8 +2050,12 @@ class StockService:
         quantity_operator: Optional[str] = None,
         quantity_value: Optional[str] = None,
         entities: Optional[list[str]] = None,
+        warehouse_ids: Optional[list[str]] = None,
+        status: Optional[list[str] | str] = None,
     ):
         """Get all stock for export (no pagination).
+
+        `warehouse_ids` and `status` take several values, the same as the list's filters.
 
         Args:
             warehouse_id: Optional warehouse filter
@@ -2083,16 +2094,22 @@ class StockService:
             selectinload(Stock.warehouse)
         ).filter(Stock.warehouse.has(Warehouse.is_active.is_(True)))
 
-        warehouse_ids = resolve_identifier(
+        resolved_warehouse_ids = resolve_identifier(
             self.db,
             warehouse_id,
             Warehouse,
             code_fields=("warehouse_code", "warehouse_name"),
         )
-        if warehouse_ids is not None:
-            if not warehouse_ids:
+        if resolved_warehouse_ids is not None:
+            if not resolved_warehouse_ids:
                 return []
+            q = q.filter(Stock.warehouse_id.in_(resolved_warehouse_ids))
+        if warehouse_ids:
             q = q.filter(Stock.warehouse_id.in_(warehouse_ids))
+
+        status_clause = _stock_status_clause(status)
+        if status_clause is not None:
+            q = q.join(Product, Product.id == Stock.product_id).filter(status_clause)
 
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)

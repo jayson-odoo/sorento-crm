@@ -1,4 +1,5 @@
 """Order statuses API routes."""
+from typing import Optional
 import logging
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
@@ -28,13 +29,14 @@ def _safe_select_response():
 async def get_order_statuses(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    is_final_status: Optional[bool] = Query(None, description="true = final statuses only, false = the rest; omit for all."),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get order statuses with pagination."""
     try:
         service = OrderStatusService(db)
-        result = service.list_order_statuses(page=page, limit=limit)
+        result = service.list_order_statuses(page=page, limit=limit, is_final_status=is_final_status)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))

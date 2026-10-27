@@ -440,6 +440,8 @@ def get_stock_alerts(
 @router.get("/balance/export")
 def export_stock_balance(
     warehouse_id: Optional[str] = Query(None),
+    warehouse_ids: Optional[list[str]] = Query(None, description="Canonical warehouse UUIDs (repeated / csv / JSON array)."),
+    status: Optional[list[str]] = Query(None, description="critical, low, normal, overstock; several = any of them."),
     product_id: Optional[str] = Query(
         None,
         description="Single product UUID or product_code (kept for direct callers).",
@@ -469,10 +471,13 @@ def export_stock_balance(
         quantity_operator,
         quantity_value,
     )
+    parsed_export_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
     try:
         service = StockService(db)
         stock_items = service.get_all_stock_for_export(
             warehouse_id=warehouse_id,
+            warehouse_ids=parsed_export_warehouse_ids,
+            status=multi_values(status),
             product_id=product_id,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
             quantity_operator=quantity_operator,

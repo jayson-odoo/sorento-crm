@@ -773,7 +773,7 @@ def list_for(
     statuses: Optional[List[str]] = None,
     q: Optional[str] = None,
     stock_inquiry_id: Optional[str] = None,
-    applicant_id: Optional[str] = None,
+    applicant_id: Optional[list[str] | str] = None,
     page: int = 1,
     limit: int = 25,
     sort: Optional[str] = None,
@@ -787,7 +787,9 @@ def list_for(
             return {"items": [], "total": 0, "page": page, "limit": limit}
         query = query.filter(NewProductApplication.stock_inquiry_id == stock_inquiry_id)
     if applicant_id:
-        query = query.filter(NewProductApplication.applicant_id == applicant_id)
+        query = query.filter(
+            NewProductApplication.applicant_id.in_([applicant_id] if isinstance(applicant_id, str) else applicant_id)
+        )
     text = (q or "").strip()
     if text:
         like = f"%{text}%"
