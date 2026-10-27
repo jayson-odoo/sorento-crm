@@ -783,25 +783,24 @@ def test_u11_unconfirmed_block_is_skipped_and_nothing_is_written(client, db, w):
     assert _audits(db, w, cid) == []
 
 
-def test_u11_confirmed_block_links_every_confirmed_account_to_every_found_contact(client, db, w):
+def test_p1_confirmed_block_links_each_account_only_to_contacts_whose_row_tags_its_company(client, db, w):
+    """BULK-ACCESS-PREVIEW P1 (owner 27 Oct, replaces U11's link-everything): per contact row."""
     ids = {
         "SRT": _cust(db, w, w.srt, DEALER),
         "MCH": _cust(db, w, w.mch, DEALER),
-        "ZZX": _cust(db, w, w.zzx, DEALER),
+        "ZZX": _cust(db, w, w.zzx, DEALER),  # no row can tag ZZX: links to nobody
     }
     c1, c2 = _contact(db, w, 1), _contact(db, w, 2)
     content = _sheet(
         [
             ("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER)),
-            ("ZZT Bob", "+60100000002", _tags(DEALER, ["SRT"], EMPLOYEE)),
+            ("ZZT Bob", "+60100000002", _tags(DEALER, ["SRT", "MCH"], EMPLOYEE)),
             ("ZZT Ghost", "+60100000077", _tags(DEALER, ["SRT"], EMPLOYEE)),
         ]
     )
     _apply_all(client, content)
-    want = sorted((cid, company) for cid, company in zip(
-        [ids["SRT"], ids["MCH"], ids["ZZX"]], [w.srt, w.mch, w.zzx]))
-    assert _state(db, w, c1)["links"] == want
-    assert _state(db, w, c2)["links"] == want
+    assert _state(db, w, c1)["links"] == [(ids["SRT"], w.srt)]
+    assert _state(db, w, c2)["links"] == sorted([(ids["SRT"], w.srt), (ids["MCH"], w.mch)])
 
 
 def test_u11_only_the_confirmed_subset_is_linked_and_other_blocks_stay_skipped(client, db, w):
@@ -1346,3 +1345,141 @@ def test_u13_apply_never_ranks_and_reports_a_non_exact_block_as_pick(client, db,
     assert resp.status_code == 200, resp.text
     assert _block(resp.json())["status"] == "pick"
     assert [l[0] for l in _state(db, w, cid)["links"]] == [exact_srt]
+
+
+# ================================================================ BULK-ACCESS-PREVIEW (owner rulings 27 Oct)
+# UAC documentation/plans/contacts/bulk-access-preview-27oct-acceptance-criteria.md P1-P6.
+
+
+def _yoo(db, w):
+    """The real card's shape, invented names: three MCH and three SRT accounts of one dealer."""
+    _tag_fillers(db, w, tags=["A/C I", "A/C II", "A/C III"])
+    return {
+        c: [_cust(db, w, w.co[c], f"{DEALER} [A/C {n}]", code=unique_code(f"{c}{n}")) for n in ("I", "II", "III")]
+        for c in ("MCH", "SRT")
+    }
+
+
+def _two_contacts_sheet():
+    return _sheet(
+        [
+            ("ZZT Shi", "+60100000001", _tags(DEALER, ["SRT"], OWNER)),
+            ("ZZT Wong", "+60100000002", _tags(DEALER, ["SRT", "MCH"], OWNER)),
+        ]
+    )
+
+
+def test_p1_sorento_only_row_gets_only_the_srt_accounts_and_both_row_gets_all_six(client, db, w):
+    accts = _yoo(db, w)
+    shi, wong = _contact(db, w, 1), _contact(db, w, 2)
+    preview, result = _apply_all(client, _two_contacts_sheet())
+    assert sorted(l[0] for l in _state(db, w, shi)["links"]) == sorted(accts["SRT"])
+    assert sorted(l[0] for l in _state(db, w, wong)["links"]) == sorted(accts["SRT"] + accts["MCH"])
+    # the preview's change shows the same thing the apply wrote
+    by = _by_name(preview)
+    (links,) = [c for c in by["ZZT Shi"]["changes"] if c["facet"] == "customers"]
+    assert len(links["after"]) == 3 and all("[A/C" in label for label in links["after"])
+    assert not any(code in " ".join(links["after"]) for code in ("MCHI", "MCHII", "MCHIII"))
+
+
+def test_p1_the_same_sheet_again_is_no_change_for_every_contact(client, db, w):
+    _yoo(db, w)
+    _contact(db, w, 1)
+    _contact(db, w, 2)
+    _apply_all(client, _two_contacts_sheet())
+    _, again = _apply_all(client, _two_contacts_sheet())
+    assert again["counts"]["applied"] == 0
+    assert {c["status"] for c in _by_name(again).values()} == {"no_change"}
+
+
+def test_p1_an_account_of_a_company_no_row_can_tag_links_to_nobody(client, db, w):
+    srt = _cust(db, w, w.srt, DEALER)
+    zzx = _cust(db, w, w.zzx, DEALER)
+    cid = _contact(db, w, 1)
+    preview, _ = _apply_all(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))]))
+    accounts = {a["customer_id"]: a for a in _block(preview)["accounts"]}
+    assert accounts[zzx]["links_to"] == []
+    assert accounts[srt]["links_to"] == ["ZZT Ann"]
+    assert [l[0] for l in _state(db, w, cid)["links"]] == [srt]
+
+
+def test_p3_links_to_names_every_found_contact_whose_row_tags_the_company(client, db, w):
+    accts = _yoo(db, w)
+    _contact(db, w, 1)
+    _contact(db, w, 2)
+    content = _sheet(
+        [
+            ("ZZT Shi", "+60100000001", _tags(DEALER, ["SRT"], OWNER)),
+            ("ZZT Wong", "+60100000002", _tags(DEALER, ["SRT", "MCH"], OWNER)),
+            ("ZZT Ghost", "+60100000077", _tags(DEALER, ["SRT", "MCH"], EMPLOYEE)),  # not in the CRM
+        ]
+    )
+    accounts = {a["customer_id"]: a for a in _block(_post(client, content).json())["accounts"]}
+    for i in accts["SRT"]:
+        assert accounts[i]["links_to"] == ["ZZT Shi", "ZZT Wong"]
+    for i in accts["MCH"]:
+        assert accounts[i]["links_to"] == ["ZZT Wong"]
+
+
+def test_p2_p4_a_link_outside_the_rows_companies_is_kept_and_listed(client, db, w):
+    from app.services.contact_customer_service import link_customer
+
+    accts = _yoo(db, w)
+    shi = _contact(db, w, 1)
+    set_company_scope(db, w.all)
+    link_customer(db, shi, accts["MCH"][0])  # the wrong link the first import made
+    db.commit()
+    _contact(db, w, 2)
+    preview, result = _apply_all(client, _two_contacts_sheet())
+    for body in (preview, result):
+        shi_entry = _by_name(body)["ZZT Shi"]
+        assert len(shi_entry["outside_links"]) == 1
+        assert "[A/C I]" in shi_entry["outside_links"][0] and "MCH" in shi_entry["outside_links"][0]
+        assert _by_name(body)["ZZT Wong"]["outside_links"] == []
+    links = sorted(l[0] for l in _state(db, w, shi)["links"])
+    assert links == sorted([accts["MCH"][0], *accts["SRT"]]), "apply is add-only: the MCH link stays"
+
+
+def test_p4_outside_links_show_even_when_nothing_else_changes(client, db, w):
+    from app.services.contact_customer_service import link_customer
+
+    accts = _yoo(db, w)
+    shi = _contact(db, w, 1)
+    _contact(db, w, 2)
+    _apply_all(client, _two_contacts_sheet())
+    set_company_scope(db, w.all)
+    link_customer(db, shi, accts["MCH"][1])
+    db.commit()
+    body = _post(client, _two_contacts_sheet()).json()
+    entry = _by_name(body)["ZZT Shi"]
+    assert entry["status"] == "no_change"
+    assert len(entry["outside_links"]) == 1 and "[A/C II]" in entry["outside_links"][0]
+
+
+def test_p6_holds_more_lists_what_is_extra_per_facet(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    _contact(
+        db, w, 1,
+        types=_types(db, "zzt_extra", "end_user"),
+        companies=[w.zzx],
+        brand_ids=[w.brands["X1"], w.brands["S1"]],
+        warehouses=[w.wh["SRT-OTHER"], w.wh["BRW"]],
+    )
+    body = _post(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])).json()
+    entry = _by_name(body)["ZZT Ann"]
+    assert "holds_more" in entry["warnings"]
+    items = {h["facet"]: h["items"] for h in entry["holds_more_items"]}
+    assert items == {
+        "access_types": ["zzt_extra"],
+        "companies": ["ZZX"],
+        "stock_locations": ["ZZT-OTHER"],
+        "brands": ["ZZT ZXB-1"],
+    }
+
+
+def test_p6_a_contact_within_its_template_has_no_holds_more_items(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    _contact(db, w, 1, types=_types(db, "end_user"))
+    body = _post(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])).json()
+    entry = _by_name(body)["ZZT Ann"]
+    assert entry["holds_more_items"] == [] and "holds_more" not in entry["warnings"]
