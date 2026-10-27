@@ -50,3 +50,9 @@ gets A, B, B-touch and D. C is Contacts (`/user-management/contacts`) only in th
 - AC-C4: changing any tick leaves the all-matching mode and keeps only this page's ticks.
 - AC-C5: Clear selection, or changing a filter / search, leaves the mode and clears the ticks.
 - AC-C6: a failed fetch shows its error toast and leaves the page selection as it was.
+- AC-C7: while the select-all fetch runs the link reads "Selecting..." and is disabled; a second
+  click fires no second fetch; leaving the mode (any tick, Clear, sort, filter, search) frees the
+  link at once and the late result is dropped.
+- AC-C8: Link customers on many contacts runs 6 requests at a time, reports several failures as
+  one count ("3 of 20"), cannot be closed while it runs, and any outcome in the mode leaves it.
+- AC-C9: one number format in the select-all wording (en-US grouping, "1,000").
