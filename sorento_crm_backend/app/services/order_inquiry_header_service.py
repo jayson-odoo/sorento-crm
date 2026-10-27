@@ -53,6 +53,7 @@ from app.schemas.project_order_inquiry import (
     OrderInquiryRelatedSPOOut,
 )
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_text, multi_values
 from app.services.order_inquiry_reserve_service import reserve_status_predicates
 from app.services.scm import spo_supply
 
@@ -147,6 +148,19 @@ class HeaderListResult:
     total: int = 0
     page: int = 1
     limit: int = 25
+
+
+def _title_candidates(raw) -> Optional[List[str]]:
+    """The Project filter's titles: each value whole (a title may hold a comma), plus the pieces of a
+    comma-joined value, so a link written before the filter took several still reads."""
+    whole = multi_text(raw)
+    if not whole:
+        return None
+    out = list(whole)
+    for value in multi_values(whole) or []:
+        if value not in out:
+            out.append(value)
+    return out
 
 
 class OrderInquiryHeaderService:
@@ -273,9 +287,9 @@ class OrderInquiryHeaderService:
         agg,
         reserve: Optional[str] = None,
         query: Optional[str] = None,
-        raised_by: Optional[str] = None,
-        agent: Optional[str] = None,
-        project: Optional[str] = None,
+        raised_by: Optional[str | List[str]] = None,
+        agent: Optional[str | List[str]] = None,
+        project: Optional[str | List[str]] = None,
         state: HeaderState = "outstanding",
     ):
         """`agg` is ALWAYS the caller's own `_rows_agg()` instance, never one built in
@@ -358,18 +372,22 @@ class OrderInquiryHeaderService:
                 code="invalid_state_filter",
             )
 
-        if raised_by:
-            base = base.filter(OrderInquiry.raised_by == raised_by)
-        if agent:
-            base = base.filter(_AGENT_NAME == agent)
-        if project:
+        # FILTER-MULTISELECT PR6: Raised by, Agent and Project take several values, OR-ed.
+        raisers = multi_values(raised_by)
+        if raisers:
+            base = base.filter(OrderInquiry.raised_by.in_(raisers))
+        agents = multi_values(agent)
+        if agents:
+            base = base.filter(_AGENT_NAME.in_(agents))
+        titles = _title_candidates(project)
+        if titles:
             # B2 (reviewer): filter on the SAME text the Project column prints
             # (`_PROJECT_TITLE`), not `ProjectSalesOrder.project_id` - 0 of 738 headers
             # on the prod copy carry a `project_id` (an adopted AutoCount order has no
             # registered `Project` row), so that filter never matched anything. Same
             # rule `order_inquiry_worklist_service.py`'s own `project` filter already
             # applies.
-            base = base.filter(_PROJECT_TITLE == project)
+            base = base.filter(_PROJECT_TITLE.in_(titles))
         if query:
             like = f"%{_escape_like(str(query))}%"
             row_match = (
@@ -433,9 +451,9 @@ class OrderInquiryHeaderService:
         *,
         state: HeaderState = "outstanding",
         query: Optional[str] = None,
-        raised_by: Optional[str] = None,
-        agent: Optional[str] = None,
-        project: Optional[str] = None,
+        raised_by: Optional[str | List[str]] = None,
+        agent: Optional[str | List[str]] = None,
+        project: Optional[str | List[str]] = None,
         reserve: Optional[str] = None,
         sort: Optional[str] = None,
         direction: Optional[str] = "asc",

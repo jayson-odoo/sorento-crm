@@ -39,6 +39,20 @@ WORKLIST_FILTER_MAX_LENGTH = 200
 #: The closed state set the worklist list route accepts on `state` - shared so
 #: `AcknowledgeFilter.state` cannot name a value the list route itself would refuse.
 WorklistState = Literal["raised", "partly_linked", "actioned", "cancelled", "placed"]
+WORKLIST_STATES = ("raised", "partly_linked", "actioned", "cancelled", "placed")
+
+#: FILTER-MULTISELECT PR6: a worklist filter body field now carries one id or several, comma-joined (the
+#: shape the list's own query string takes). Each id is still a UUID, so a malformed one stays a 422.
+_UUID_CORE = UUID_PATTERN[1:-1]
+MULTI_UUID_PATTERN = rf"^{_UUID_CORE}(,{_UUID_CORE})*$"
+
+
+def _check_worklist_states(value: Optional[str]) -> Optional[str]:
+    """`state` takes one or several comma-joined states; each is checked like the GET route's Literal."""
+    from app.utils.multi_value import multi_choices
+
+    multi_choices(value, WORKLIST_STATES, "state")
+    return value
 
 
 class OrderInquiryBundledWithOut(BaseModel):
@@ -776,16 +790,17 @@ class AcknowledgeFilter(BaseModel):
     query: Optional[str] = Field(None, max_length=WORKLIST_QUERY_MAX_LENGTH)
     delivery_month: Optional[str] = None
     raised_date: Optional[str] = None
-    state: Optional[WorklistState] = None
-    project_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
-    project: Optional[str] = None
-    supplier_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    state: Optional[str] = None
+    project_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
+    #: Free-text titles: one string, or several (never split on a comma).
+    project: Optional[str | List[str]] = None
+    supplier_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     raised_by: Optional[str] = None
     linked: Optional[str] = None
     kind: Optional[str] = None
     ack: Optional[str] = None
     location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
-    agent: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    agent: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     so_month: Optional[str] = None
     po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
     spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
@@ -799,6 +814,11 @@ class AcknowledgeFilter(BaseModel):
     inquiry_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
     #: OI-BULK-RESERVE v4: keep a line when one of its own request rows is in this status.
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
+
+    @field_validator("state")
+    @classmethod
+    def _states_are_known(cls, value: Optional[str]) -> Optional[str]:
+        return _check_worklist_states(value)
 
 
 class AcknowledgeRowsRequest(BaseModel):
@@ -1202,7 +1222,7 @@ class UnplaceAllRequest(BaseModel):
     #: S5 (`PLAN-oi-project-label-from-so.md` section 5): text, exact match on the
     #: Project column - separate from `project_id`, unchanged. No length bound:
     #: `projects.title` is TEXT with none.
-    project: Optional[str] = None
+    project: Optional[str | List[str]] = None
     supplier_id: Optional[str] = None
     #: The user whose inquiries the list is narrowed to, so the action can never reach
     #: further than what the person pressing it can see.
@@ -1229,10 +1249,11 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     query: Optional[str] = Field(None, max_length=WORKLIST_QUERY_MAX_LENGTH)
     delivery_month: Optional[str] = None
     raised_date: Optional[str] = None
-    state: Optional[WorklistState] = None
-    project_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
-    project: Optional[str] = None
-    supplier_id: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    state: Optional[str] = None
+    project_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
+    #: Free-text titles: one string, or several (never split on a comma).
+    project: Optional[str | List[str]] = None
+    supplier_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     raised_by: Optional[str] = None
     linked: Optional[Literal["po", "spo", "none"]] = None
     kind: Optional[Literal["spo", "po", "buy"]] = None
@@ -1240,7 +1261,7 @@ class OrderInquiryWorklistExportRequest(BaseModel):
         Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]
     ] = None
     location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
-    agent: Optional[str] = Field(None, pattern=UUID_PATTERN)
+    agent: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     so_month: Optional[str] = None
     po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
     spo_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
@@ -1250,6 +1271,11 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     reserve: Optional[Literal["parked", "needs_reserve", "notice_parked", "reserved"]] = None
     #: LINKAGE-UNIFY U3 (Q5): the "Dead document" filter, as on the GET list.
     dead_document: Optional[Literal["po_cancelled", "spo_withdrawn"]] = None
+
+    @field_validator("state")
+    @classmethod
+    def _states_are_known(cls, value: Optional[str]) -> Optional[str]:
+        return _check_worklist_states(value)
 
 
 class UnplaceAllResult(BaseModel):

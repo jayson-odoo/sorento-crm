@@ -54,3 +54,15 @@ def multi_uuids(raw: Iterable[str] | str | None, label: str) -> Optional[list[st
         return [str(uuid.UUID(v)) for v in values]
     except ValueError:
         raise handle_unprocessable(f"{label}: not a valid id") from None
+
+
+def multi_choices(raw: Iterable[str] | str | None, allowed: Iterable[str], label: str) -> Optional[list[str]]:
+    """``multi_values`` for a CLOSED set of codes: each must be one of ``allowed``, else a 422 naming it."""
+    values = multi_values(raw)
+    if values is None:
+        return None
+    allowed_set = set(allowed)
+    for value in values:
+        if value not in allowed_set:
+            raise handle_unprocessable(f"{label}: unknown value {value}")
+    return values

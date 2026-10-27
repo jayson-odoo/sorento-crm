@@ -21,7 +21,7 @@ from __future__ import annotations
 import logging
 from datetime import datetime
 from decimal import Decimal
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from sqlalchemy.orm import Session
 
@@ -38,6 +38,7 @@ from app.models.project_so import (
 )
 from app.models.projects import Project
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 from app.services.project_so_divergence_engine import (
     PRESENCE_BOTH,
     PRESENCE_OURS_ONLY,
@@ -96,7 +97,7 @@ class ProjectSODivergenceService:
     def list_divergences(
         self,
         *,
-        status: Optional[str] = None,
+        status: Optional[str | Sequence[str]] = None,
         project_id: Optional[str] = None,
         page: int = 1,
         limit: int = 50,
@@ -110,8 +111,9 @@ class ProjectSODivergenceService:
             )
             .join(Project, Project.id == ProjectSalesOrder.project_id)
         )
-        if status:
-            query = query.filter(ProjectSODivergence.status == status)
+        states = multi_values(status)
+        if states:
+            query = query.filter(ProjectSODivergence.status.in_(states))
         if project_id:
             query = query.filter(ProjectSalesOrder.project_id == project_id)
 
