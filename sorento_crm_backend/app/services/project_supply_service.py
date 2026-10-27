@@ -3192,10 +3192,11 @@ class ProjectSupplyService:
         self, refs_by_product: Mapping[str, Iterable[str]]
     ) -> Dict[str, Dict[str, Tuple[Decimal, Optional[str]]]]:
         """`product_id -> _po_received_by_so_line_ref(refs, product_id=..., company_id=None)`
-        for many products in two reads, not two per product (STOCK-DEBT-PERF: the Stock
-        Debt board asked once per product, 1,258 of its 1,288 statements on the dev DB).
+        for many products in two reads per `_REF_CHUNK` refs, not two per product
+        (STOCK-DEBT-PERF: the Stock Debt board asked once per product, 1,258 of its 1,288
+        statements on the dev DB).
 
-        The same two joins over every product and ref at once. A row is kept only for the
+        The same two joins over every product and each chunk of refs. A row is kept only for the
         product it is for AND a ref asked about for that product, so each product's answer
         is the single-key read's own: the receipt JOIN pairs the SPO row with the PO line's
         product (the single-key read gets that by comparing both to one literal), and no
