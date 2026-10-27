@@ -1,6 +1,6 @@
 # PLAN: DataGrid drag / range select (GRID-DRAG-SELECT)
 
-Status: Plan (behaviour card + interactive mock posted as crew-ask on the PR, waiting on owner answers). Track: small fix track (FE only, no migration, no RBAC change).
+Status: Build (local lane a3, 28 Oct). Owner answered all five (UAC `grid-drag-select-acceptance-criteria.md`). Done + reviewed: A Shift+click, B drag, D keyboard on both checkbox paths, toolbar hold. Left: C select-all-matching on Contacts (red tests in f67e5b69), B-touch press-and-hold, rollout cost crew-note, reviewer delta, browser 1280/375, hand test. Track: M (FE only, no migration, no RBAC change).
 
 ## Journey
 
