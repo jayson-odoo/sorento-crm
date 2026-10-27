@@ -650,6 +650,15 @@ class SPOAllocation(Base, CompanyScopedMixin):
         # D6 (migration 477): the relink sweep's own lookup, and a container is
         # unique per company only (the same code legitimately arrives twice).
         Index("ix_spo_allocations_company_container", "company_id", "container_number"),
+        # The OI-SPO-EXACT PO -> SPO key `goods_chain.transferred_allocations` joins on
+        # (GOODSCHAIN-INDEX-QUERY, migration `gc_idx_0001_spo_from_po_key`).
+        Index(
+            "ix_spo_allocations_from_po_key",
+            "from_po_number",
+            func.btrim(from_po_line_ref),
+            "product_id",
+            "company_id",
+        ),
         # One DtlKey can adopt at most one line, company-wide - partial so the
         # countless ref-less xlsx-era rows never collide with each other or with it.
         Index(
