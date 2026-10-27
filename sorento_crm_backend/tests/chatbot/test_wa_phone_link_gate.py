@@ -105,6 +105,7 @@ class World:
         self.template_error: Exception | None = None
         self.messages: list[tuple[str, str]] = []
         self.comments: list[tuple[str, str]] = []
+        self.put_error: Exception | None = None
 
     def client(self):
         world = self
@@ -141,6 +142,8 @@ class World:
 
             def update_contact(self, ident, payload):
                 world.order.append("client"); world.calls.append(("put", str(ident), payload))
+                if world.put_error is not None:
+                    raise world.put_error
                 return {}
 
         return _C()
@@ -185,6 +188,7 @@ def _run(session_factory, envelope):
 
 
 VERIFIED = "Phone number verified, you may start using the AI"
+NO_ACCESS = "Phone number verified but the number does not have access yet to the AI system."
 
 
 def _seed_turn(session_factory, branch_kind: str, *, hours_ago: float = 1.0, is_test: bool = False) -> None:
@@ -383,7 +387,8 @@ def test_wu15_link_ok_and_ai_off_tells_staff_only(session_factory, parser_calls,
     result = _run(session_factory, _env("tap"))
     assert result.branch_kind == "phone_linked"
     assert result.actions == []
-    assert world.messages == []
+    # WA-PHONE-SHARE-LOOP: the sender is told once that the number has no access (owner wording).
+    assert world.messages == [(str(PHONE_ID), NO_ACCESS)]
     assert len(world.comments) == 1 and world.comments[0][0] == str(PHONE_ID)
     assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
 
@@ -550,13 +555,16 @@ def test_wu22_the_same_tap_over_the_signed_webhook_is_linked(session_factory, pa
     assert result.branch_kind == "phone_linked"
 
 
-def test_wu10_a_signed_card_without_wa_id_is_not_accepted(session_factory, parser_calls, world, monkeypatch):
+def test_sl1_a_signed_card_without_wa_id_is_accepted(session_factory, parser_calls, world, monkeypatch):
+    # WA-PHONE-SHARE-LOOP: a username-only user can arrive with no wa_id; the tap is still the answer.
     _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
     env = _env("tap", ingress="respond_webhook")
     del env.message["channel"]["meta"]["wa_id"]
     result = _run(session_factory, env)
-    assert result.branch_kind == "phone_ask"
-    assert world.calls == []
+    assert result.branch_kind == "phone_linked"
+    assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
+    assert world.sends == []
 
 
 # ---------------------------------------------------------------- survivor named by the merge response
@@ -854,3 +862,158 @@ def test_wu26_no_contactid_and_a_failing_second_lookup_comments_on_the_phone_con
     assert len(world.comments) == 1
     assert world.comments[0][0] == str(PHONE_ID)
     assert world.messages == []
+
+
+# ---------------------------------------------------------------- WA-PHONE-SHARE-LOOP (prod, 27 Oct)
+
+
+def _prod_tap(**kw):
+    """A tap in the shape prod really delivers: `channel.meta` is a JSON STRING wrapping a nested
+    `meta`, channel source `whatsapp_business` (masked: tests/chatbot/replay_turns/prod_sample)."""
+    env = _env("tap", **kw)
+    env.message["channel"] = {
+        "id": 1,
+        "name": "Internal (scrubbed)",
+        "source": "whatsapp_business",
+        "meta": json.dumps(
+            {"meta": {"profile": {"name": "ZZT"}, "wa_id": E164, "user_id": "MY.0000000000000001", "firstName": "ZZT"}}
+        ),
+    }
+    return env
+
+
+def _trace_facts(session_factory, result) -> dict:
+    trace = _row(session_factory, result).trace or []
+    return next(r for r in trace if r.get("stage") == "received")["facts"]
+
+
+def test_sl1_prod_shaped_tap_is_accepted_not_asked_again(session_factory, parser_calls, world, monkeypatch):
+    """The prod loop: three taps, each read as no answer. A prod-shaped tap is the answer."""
+    _install(world, monkeypatch)
+    _seed_phone_row(session_factory, allowed=True)
+    result = _run(session_factory, _prod_tap())
+    assert result.branch_kind == "phone_linked"
+    assert world.sends == []
+    assert world.merges() == [("merge", [PHONE_ID, CONTACT_ID])]
+    assert world.messages == [(str(PHONE_ID), VERIFIED)]
+    assert _trace_facts(session_factory, result)["card"] == "accepted"
+
+
+def test_sl2_no_contact_holds_the_phone_sets_it_and_says_no_access_once(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    world.phone_contact_id = None
+    first = _run(session_factory, _prod_tap())
+    assert first.branch_kind == "phone_linked"
+    assert first.actions == []
+    assert world.sends == []
+    assert ("put", str(CONTACT_ID), {"phone": f"+{E164}"}) in world.calls
+    db = session_factory()
+    row = db.execute(
+        text("SELECT respond_io_id, chatbot_allowed FROM respond_contacts WHERE phone_number = :p"), {"p": f"+{E164}"}
+    ).one()
+    assert row.respond_io_id == str(CONTACT_ID) and row.chatbot_allowed is False
+    assert world.messages == [(str(CONTACT_ID), NO_ACCESS)]
+    assert len(world.comments) == 1 and world.comments[0][0] == str(CONTACT_ID)
+
+    # SL4: later messages stay silent (the AI-allowed gate), never the template, never the line again.
+    later = _run(session_factory, _env("text", text_="hi again"))
+    assert later.branch_kind == "ai_not_allowed"
+    again = _run(session_factory, _prod_tap())
+    assert again.branch_kind == "phone_ignored"
+    assert world.sends == []
+    assert world.messages == [(str(CONTACT_ID), NO_ACCESS)]
+    assert len(world.comments) == 1
+    assert parser_calls == []
+
+
+def test_sl3_link_failure_hands_off_once_and_never_asks_again(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    world.phone_contact_id = None
+    req = httpx.Request("PUT", "https://api.example.test/v2/contact")
+    world.put_error = httpx.HTTPStatusError("boom", request=req, response=httpx.Response(500, request=req))
+    first = _run(session_factory, _prod_tap())
+    assert first.branch_kind == "phone_handoff"
+    assert world.sends == [] and world.messages == []
+    assert len(world.comments) == 1 and world.comments[0][0] == str(CONTACT_ID)
+
+    # Even once the 24 h hand-off window has passed, a contact whose card was accepted is never asked again.
+    db = session_factory()
+    moved = (
+        db.query(ChatbotTurn)
+        .filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID))
+        .update({ChatbotTurn.created_at: ChatbotTurn.created_at - timedelta(hours=30)}, synchronize_session=False)
+    )
+    db.commit()
+    assert moved == 1
+    later = _run(session_factory, _env("text", text_="hello?"))
+    assert later.branch_kind == "phone_ignored"
+    assert world.sends == []
+    assert len(world.comments) == 1
+    assert parser_calls == []
+
+
+def test_sl3_a_second_tap_after_a_failed_link_retries_the_link_not_the_ask(
+    session_factory, parser_calls, world, monkeypatch
+):
+    _install(world, monkeypatch)
+    world.phone_contact_id = None
+    req = httpx.Request("PUT", "https://api.example.test/v2/contact")
+    world.put_error = httpx.HTTPStatusError("boom", request=req, response=httpx.Response(500, request=req))
+    _run(session_factory, _prod_tap())
+    world.put_error = None
+    second = _run(session_factory, _prod_tap())
+    assert second.branch_kind == "phone_linked"
+    assert world.sends == []
+    assert world.messages == [(str(CONTACT_ID), NO_ACCESS)]
+
+
+def test_sl5_a_refused_card_records_why_in_the_trace(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    shared = _run(session_factory, _env("shared", ingress="respond_webhook"))
+    assert shared.branch_kind == "phone_ask"
+    facts = _trace_facts(session_factory, shared)
+    assert facts["card"] == "not_accepted" and facts["card_refusal"] == "origin"
+    unsigned = _run(session_factory, _prod_tap(ingress="webhook"))
+    facts = _trace_facts(session_factory, unsigned)
+    assert facts["card"] == "not_accepted" and facts["card_refusal"] == "not_signed"
+    assert E164 not in json.dumps(_row(session_factory, unsigned).trace)
+
+
+def _age_turns(session_factory, hours: float) -> None:
+    db = session_factory()
+    db.query(ChatbotTurn).filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID)).update(
+        {ChatbotTurn.created_at: ChatbotTurn.created_at - timedelta(hours=hours)}, synchronize_session=False
+    )
+    db.commit()
+
+
+def test_sl3_link_failure_after_an_ask_cap_handoff_tells_staff_and_never_asks_again(
+    session_factory, parser_calls, world, monkeypatch
+):
+    """The prod contact's state: the ask cap already handed it to staff, then it taps."""
+    _install(world, monkeypatch)
+    _seed_turn(session_factory, "phone_handoff", hours_ago=1)  # the ask-cap hand-off, no card
+    world.phone_contact_id = None
+    req = httpx.Request("PUT", "https://api.example.test/v2/contact")
+    world.put_error = httpx.HTTPStatusError("boom", request=req, response=httpx.Response(500, request=req))
+    tap = _run(session_factory, _prod_tap())
+    assert tap.branch_kind == "phone_handoff"
+    # Staff were told about the ask cap, not about this failed link: they get the link reason too.
+    assert len(world.comments) == 1 and "could not link" in world.comments[0][1]
+    assert world.sends == [] and world.messages == []
+    _age_turns(session_factory, 30)
+    later = _run(session_factory, _env("text", text_="hello?"))
+    assert later.branch_kind == "phone_ignored"
+    assert world.sends == []
+    assert len(world.comments) == 1
+
+
+def test_sl4_asks_resume_after_an_old_handoff_with_no_card(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    _seed_turn(session_factory, "phone_handoff", hours_ago=30)
+    _seed_turn(session_factory, "phone_ignored", hours_ago=29)
+    result = _run(session_factory, _env("text"))
+    assert result.branch_kind == "phone_ask"
+    assert world.sends == [(str(CONTACT_ID), "wa_phone_share")]
