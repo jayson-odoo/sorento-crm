@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
@@ -20,12 +21,7 @@ import {
 } from '../lib/health';
 import { EMPTY_SCM_FILTERS, type ScmFilters } from '../services/scmDashboardService';
 import { isFocusedScope } from '../lib/scope';
-import type {
-  AbcFilterValue,
-  ActiveStatusFilter,
-  LifecycleFilter,
-  XyzFilterValue,
-} from '../types/scm.types';
+import type { ActiveStatusFilter, LifecycleFilter } from '../types/scm.types';
 
 /** The "Value" (ABC) + "Demand" (XYZ) scales are a tiny fixed vocabulary →
  *  static-filter SearchableSelect (not async). Option labels use the same
@@ -134,40 +130,58 @@ export function ScmFilterBar({
       </div>
       <div className="min-w-52 flex-1">
         <Label className="mb-1 block text-xs text-muted-foreground">Product Category</Label>
-        <SearchableSelect
-          value={filters.categoryId ?? ''}
-          onChange={(v) => onChange({ ...filters, categoryId: v || null })}
+        <SearchableMultiSelect
+          value={splitMulti(filters.categoryId)}
+          onChange={(v) => onChange({ ...filters, categoryId: joinMulti(v) || null })}
           loadError={categoryOptions.error}
           onRetry={() => void categoryOptions.refetch()}
           options={categoryOptions.data ?? []}
           placeholder="All categories"
+          clearable
+          renderTriggerLabel={(chosen) =>
+            chosen.length ? (
+              <span className="block truncate">{multiChipLabel('Category', idFilterLabels(chosen))}</span>
+            ) : (
+              <span className="text-muted-foreground">Category: any</span>
+            )
+          }
         />
       </div>
       <div className="min-w-52 flex-1">
         <Label className="mb-1 block text-xs text-muted-foreground">Supplier</Label>
-        <SearchableSelect
-          value={filters.supplier ?? ''}
-          onChange={(v) => onChange({ ...filters, supplier: v || null })}
+        <SearchableMultiSelect
+          value={splitMulti(filters.supplier)}
+          onChange={(v) => onChange({ ...filters, supplier: joinMulti(v) || null })}
           options={supplierOptions.data ?? []}
           placeholder="All suppliers"
+          clearable
+          renderTriggerLabel={(chosen) =>
+            chosen.length ? (
+              <span className="block truncate">{multiChipLabel('Supplier', idFilterLabels(chosen))}</span>
+            ) : (
+              <span className="text-muted-foreground">Supplier: any</span>
+            )
+          }
         />
       </div>
       <div className="min-w-36 flex-1">
         <Label className="mb-1 block text-xs text-muted-foreground">Value</Label>
-        <SearchableSelect
-          value={filters.abcClass ?? ''}
-          onChange={(v) => onChange({ ...filters, abcClass: (v || null) as AbcFilterValue | null })}
+        <SearchableMultiSelect
+          value={splitMulti(filters.abcClass)}
+          onChange={(v) => onChange({ ...filters, abcClass: joinMulti(v) || null })}
           options={VALUE_OPTIONS}
           placeholder="All values"
+          clearable
         />
       </div>
       <div className="min-w-36 flex-1">
         <Label className="mb-1 block text-xs text-muted-foreground">Demand</Label>
-        <SearchableSelect
-          value={filters.xyzClass ?? ''}
-          onChange={(v) => onChange({ ...filters, xyzClass: (v || null) as XyzFilterValue | null })}
+        <SearchableMultiSelect
+          value={splitMulti(filters.xyzClass)}
+          onChange={(v) => onChange({ ...filters, xyzClass: joinMulti(v) || null })}
           options={DEMAND_OPTIONS}
           placeholder="All demand"
+          clearable
         />
       </div>
       <div className="min-w-36 flex-1">

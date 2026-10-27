@@ -49,7 +49,7 @@ export function proformaInvoicesListParamsFromUrl(
 ): ListProformaInvoicesOptions {
   return {
     supplierId: params.filters.supplier_id || null,
-    placement: (params.filters.placement as ProformaPlacement) || null,
+    placement: params.filters.placement || null,
     query: params.searchQuery || null,
     limit: params.pageSize,
     offset: params.pageIndex * params.pageSize,
@@ -69,7 +69,7 @@ export function useProformaInvoices(
   opts: {
     limit?: number;
     offset?: number;
-    placement?: ProformaPlacement | null;
+    placement?: string | null;
     /** The list toolbar's search box: PI number, supplier, container or BL. */
     query?: string | null;
   } = {},

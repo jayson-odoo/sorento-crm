@@ -18,7 +18,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
@@ -103,15 +104,18 @@ export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewP
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  // Open by default: the queue is what is left to decide. Landing on "all" would make the
-  // first action, every time, a click to narrow it.
-  const [statusFilter, setStatusFilter] = useState<string>('open');
+  // Nothing ticked reads as the open queue: that is what is left to decide. Landing on "all"
+  // would make the first action, every time, a click to narrow it.
+  const [statusFilter, setStatusFilter] = useState<string>('');
   const [reviewing, setReviewing] = useState<PlanException | null>(null);
 
   const rows = useMemo(() => {
     const all = data?.rows ?? [];
-    if (statusFilter === 'all') return all;
-    return all.filter((r) => r.status === statusFilter);
+    // Several statuses are OR-ed; none ticked is the open queue again; `all` shows everything.
+    const picked = splitMulti(statusFilter);
+    if (picked.includes('all')) return all;
+    const wanted = picked.length ? picked : ['open'];
+    return all.filter((r) => wanted.includes(r.status));
   }, [data?.rows, statusFilter]);
 
   const columns = useMemo<ColumnDef<PlanException>[]>(
@@ -359,10 +363,11 @@ export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewP
               </button>
             ) : null}
           </div>
-          <SearchableSelect
-            value={statusFilter}
-            onChange={setStatusFilter}
+          <SearchableMultiSelect
+            value={splitMulti(statusFilter)}
+            onChange={(v) => setStatusFilter(joinMulti(v))}
             options={STATUS_OPTIONS}
+            placeholder="Open"
             className="w-40"
             id="exception-status-filter"
           />

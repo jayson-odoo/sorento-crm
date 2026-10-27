@@ -718,7 +718,7 @@ class PurchaseOrderService:
         )
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], supplier: Optional[str],
+             query: Optional[str], status: Optional[Sequence[str] | str], supplier: Optional[str],
              *, product_code: Optional[str] = None,
              outstanding: Optional[bool] = None,
              allocated: Optional[bool] = None,
@@ -736,8 +736,9 @@ class PurchaseOrderService:
             q = q.filter(PurchaseOrder.po_number.in_(
                 [str(number).strip() for number in documents if str(number).strip()]
             ))
-        if status:
-            q = q.filter(PurchaseOrder.status == status)
+        statuses = [status] if isinstance(status, str) else list(status or [])
+        if statuses:
+            q = q.filter(PurchaseOrder.status.in_(statuses))
         if outstanding is not None:
             # The buyer's "at a glance" question (the captain, 20 Aug). The EXACT
             # predicate `_is_on_order` answers per row, so this filter and that row's own

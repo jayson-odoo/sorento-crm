@@ -97,15 +97,16 @@ const BASE = '/api/v1/scm/dashboard';
 
 export interface ScmFilters {
   warehouses: string[];
-  /** Product category - bound to `product_categories.id`. */
+  /** Product category - bound to `product_categories.id`; several ids comma-joined (OR-ed). */
   categoryId: string | null;
+  /** Supplier CODE; several comma-joined (OR-ed). */
   supplier: string | null;
   /** Health-status filter set by the interactive legend chips + drill-downs. */
   healthStatus: HealthState | null;
   /** M2 ABC class filter (client-side in Phase 1). `unknown` = unclassified. */
-  abcClass: AbcFilterValue | null;
+  abcClass: string | null;
   /** M2 XYZ class filter (client-side in Phase 1). `unknown` = unclassified. */
-  xyzClass: XyzFilterValue | null;
+  xyzClass: string | null;
   /** Free-text product search (SKU / name). */
   productSearch: string;
   /**

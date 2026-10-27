@@ -553,7 +553,8 @@ export async function testProformaInvoice(
 export interface ListProformaInvoicesOptions {
   supplierId?: string | null;
   /** Narrow to what has, or has not, reached a packing list (AC-F6). */
-  placement?: ProformaPlacement | null;
+  /** One placement, or several comma-joined (OR-ed). */
+  placement?: string | null;
   /** The list toolbar's search box: PI number, supplier, container or BL. */
   query?: string | null;
   limit?: number;

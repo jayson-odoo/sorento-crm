@@ -19,6 +19,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { cn } from '@/lib/utils';
@@ -126,9 +128,9 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
   const [sorting, setSorting] = useState<SortingState>([]);
   const [searchQuery, setSearchQuery] = useState('');
-  // Defaults to what is still to key, because that IS the screen's primary use (AC-E2.4).
+  // Nothing ticked reads as what is still to key, because that IS the screen's primary use (AC-E2.4).
   // Landing on "all" would make the first action, every time, a click to narrow it.
-  const [statusFilter, setStatusFilter] = useState<string>(OUTSTANDING);
+  const [statusFilter, setStatusFilter] = useState<string>('');
 
   // The run's own two grain fields, as the server states them. A legacy run is the one
   // with a NULL contract version, so the version is read, never inferred from the grain.
@@ -145,14 +147,19 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
 
   const rows = useMemo(() => {
     const all = data?.rows ?? [];
-    if (statusFilter === 'all') return all;
-    if (statusFilter === OUTSTANDING) {
-      // A use-pool row has no purchase order, so it is never outstanding work - but it is
-      // still a row under "All statuses", which is what keeps the worklist reconcilable
-      // one-for-one against the decisions (AC-E2.5).
-      return all.filter((r) => r.chosen_qty > 0 && r.keyed_status !== 'keyed');
-    }
-    return all.filter((r) => r.keyed_status === statusFilter);
+    // Several statuses are OR-ed; `outstanding` (still to key) is a pseudo-value that ORs with
+    // real ones; none ticked is the still-to-key queue again; `all` shows everything.
+    const picked = splitMulti(statusFilter);
+    if (picked.includes('all')) return all;
+    const wanted = picked.length ? picked : [OUTSTANDING];
+    // A use-pool row has no purchase order, so it is never outstanding work - but it is
+    // still a row under "All statuses", which is what keeps the worklist reconcilable
+    // one-for-one against the decisions (AC-E2.5).
+    return all.filter(
+      (r) =>
+        (wanted.includes(OUTSTANDING) && r.chosen_qty > 0 && r.keyed_status !== 'keyed') ||
+        wanted.includes(r.keyed_status),
+    );
   }, [data?.rows, statusFilter]);
 
   const columns = useMemo<ColumnDef<PoWorklistRow>[]>(
@@ -566,10 +573,11 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
           </div>
           {/* In the toolbar, not behind a menu: filtering to not-keyed is the primary
               use of this screen (AC-E2.4). */}
-          <SearchableSelect
-            value={statusFilter}
-            onChange={setStatusFilter}
+          <SearchableMultiSelect
+            value={splitMulti(statusFilter)}
+            onChange={(v) => setStatusFilter(joinMulti(v))}
             options={STATUS_OPTIONS}
+            placeholder="Still to key"
             className="w-44"
             id="keyed-status-filter"
           />

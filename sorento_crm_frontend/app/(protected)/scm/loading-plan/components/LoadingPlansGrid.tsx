@@ -20,7 +20,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { EM_DASH, fmtInt, fmtOpens, fmtTrimmedDecimal } from '../../lib/format';
@@ -83,7 +84,8 @@ export function LoadingPlansGrid() {
     setSearchInputRaw(next);
     setPagination((p) => ({ ...p, pageIndex: 0 }));
   };
-  const [status, setStatus] = useState<LoadingPlanStatus | 'active'>('active');
+  // Nothing ticked reads as the active group (planning + sent), the default view.
+  const [status, setStatus] = useState('');
   const [uploadOpen, setUploadOpen] = useState(false);
   const rowPending = useRowPending<LoadingPlanRecord>('loading_plan');
 
@@ -92,7 +94,7 @@ export function LoadingPlansGrid() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    status,
+    status: status || 'active',
   });
 
   const columns = useMemo<ColumnDef<LoadingPlanRecord>[]>(
@@ -299,7 +301,7 @@ export function LoadingPlansGrid() {
         onRetry={() => void list.refetch()}
         isPlaceholderData={list.isPlaceholderData}
         emptyMessage={
-          searchQuery || status !== 'active'
+          searchQuery || status
             ? 'No plan matches this search and filter.'
             : 'No container plans yet. Upload a supplier stock list or proforma invoice to start one.'
         }
@@ -315,30 +317,35 @@ export function LoadingPlansGrid() {
               primaryAction={listPrimaryAction}
               filters={{
                 kind: 'custom',
-                active: status !== 'active',
-                activeCount: status !== 'active' ? 1 : 0,
-                activeSummary:
-                  status !== 'active'
-                    ? {
-                        label: `Status: ${STATUS_LABEL[status]}`,
-                        onClear: () => setStatus('active'),
-                      }
-                    : undefined,
+                active: status !== '',
+                activeCount: status ? 1 : 0,
+                activeSummary: status
+                  ? {
+                      label: multiChipLabel(
+                        'Status',
+                        splitMulti(status).map(
+                          (s) => STATUS_LABEL[s as LoadingPlanStatus] ?? 'Active',
+                        ),
+                      ),
+                      onClear: () => setStatus(''),
+                    }
+                  : undefined,
                 content: (
                   <div className="space-y-4">
                     <div>
                       <Label htmlFor="plan-status-filter" className="mb-1 block">
                         Status
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="plan-status-filter"
-                        value={status}
+                        value={splitMulti(status)}
                         onChange={(v) => {
-                          setStatus((v || 'active') as LoadingPlanStatus | 'active');
+                          setStatus(joinMulti(v));
                           setPagination((p) => ({ ...p, pageIndex: 0 }));
                         }}
                         options={STATUS_OPTIONS}
                         placeholder="Active (planning and sent)"
+                        clearable
                       />
                     </div>
                   </div>
