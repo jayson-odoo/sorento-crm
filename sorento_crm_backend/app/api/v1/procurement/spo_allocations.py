@@ -47,6 +47,15 @@ async def get_spo_last_receipt(
         "spo_date", description="spo_date | spo_quantity | gr_date | gr_quantity (nulls last)."
     ),
     dir: str = Query("desc", description="asc | desc."),
+    contact_id: Optional[str] = Query(
+        None,
+        description=(
+            "The contact this is asked on behalf of. Only rows on a location its "
+            "stock-visibility policy lets it see are returned (the same locations as its "
+            "stock lines); `availability` mode also withholds `warehouse`."
+        ),
+    ),
+    space_id: Optional[str] = Query(None, description="Respond.io workspace id for `contact_id`."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -93,14 +102,32 @@ async def get_spo_last_receipt(
             code="invalid_dir",
         )
     try:
-        rows = last_receipt_rows(
+        resolved_warehouse_ids = parse_uuid_list(warehouse_ids, param_name="warehouse_ids")
+        # CHAT-INCOMING-LOCATION-SCOPE: as the placed route (CHAT-PO-LOCATION-SCOPE), under a
+        # `contact_id` the locations its stock-visibility policy allows narrow `warehouse_ids`
+        # before the pick; an unresolvable contact fails closed with no rows.
+        policy = None
+        nothing_visible = False
+        if contact_id:
+            from app.services.eta_policy import resolve_request_contact
+            from app.services.stock_visibility import contact_location_scope, narrow_warehouse_ids
+
+            # Resolved once through the NULL-workspace fallback the chatbot admits a contact by.
+            policy, scope = contact_location_scope(db, resolve_request_contact(db, contact_id, space_id))
+            if scope is not None:
+                resolved_warehouse_ids = narrow_warehouse_ids(resolved_warehouse_ids, scope)
+                nothing_visible = not resolved_warehouse_ids
+        rows = [] if nothing_visible else last_receipt_rows(
             db,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
-            warehouse_ids=parse_uuid_list(warehouse_ids, param_name="warehouse_ids"),
+            warehouse_ids=resolved_warehouse_ids,
             top_n=top_n,
             sort=sort,
             dir=dir,
         )
+        if policy is not None and policy.mode == "availability":
+            # `availability` names no location at all.
+            rows = [{**r, "warehouse": None} for r in rows]
         from fastapi.encoders import jsonable_encoder
         from fastapi.responses import JSONResponse
 

@@ -1224,9 +1224,13 @@ def _guarded(db: Session, fn: Any, default: Any) -> Any:
 
 def _lookup_visibility(
     db: Session, contact_respond_id: str, space_id: Any
-) -> tuple[bool, bool, frozenset[str] | None]:
-    """(include_salespeople, include_customers, customer_ids) for the contact: the contact is resolved once and each
-    check runs in its own savepoint, so a database error in one drops only that block."""
+) -> tuple[bool, bool, frozenset[str] | None, list[str] | None]:
+    """(include_salespeople, include_customers, customer_ids, warehouse_scope) for the contact: the contact is resolved
+    once and each check runs in its own savepoint, so a database error in one drops only that block.
+
+    `warehouse_scope` (CHAT-INCOMING-LOCATION-SCOPE): the LOCATION list offers only the warehouses the contact's
+    stock-visibility policy allows. No contact id in play = None (unchanged); one that does not resolve, or whose
+    policy cannot be read, = [] (no location rows)."""
     from app.services.field_access import resolve_contact_with_null_workspace_fallback
 
     resolved = _guarded(
@@ -1240,7 +1244,16 @@ def _lookup_visibility(
     include_customers, customer_ids = (
         _guarded(db, lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
     )
-    return include_salespeople, include_customers, customer_ids
+
+    def _warehouse_scope():
+        from app.services.stock_visibility import contact_location_scope
+
+        if not contact_respond_id:
+            return None
+        return contact_location_scope(db, str(resolved) if resolved else None)[1]
+
+    warehouse_scope = _guarded(db, _warehouse_scope, [])
+    return include_salespeople, include_customers, customer_ids, warehouse_scope
 
 
 def _lookup_lines(
@@ -1257,11 +1270,14 @@ def _lookup_lines(
         # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
         pieces_ready = lookup_lists.prefetch(message, embed)
-        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        include_salespeople, include_customers, customer_ids, warehouse_scope = _lookup_visibility(
+            db, contact_respond_id, space_id
+        )
         with db.begin_nested():
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+                warehouse_scope=warehouse_scope,
             )
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)
@@ -1309,13 +1325,16 @@ def _span_prep(
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
     try:
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
-        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        include_salespeople, include_customers, customer_ids, warehouse_scope = _lookup_visibility(
+            db, contact_respond_id, space_id
+        )
         with db.begin_nested():
             from app.services.product_spec_registry import active_registry
 
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
                 include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+                warehouse_scope=warehouse_scope,
             )
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)

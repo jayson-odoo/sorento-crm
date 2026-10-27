@@ -1595,7 +1595,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "asc | desc (default desc); nulls last; `top_n` still means lines per product / "
             "lines overall.\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies and to the locations its stock answers may "
+            "show; omit both for all-company results."
         ),
         "/api/v1/procurement/spo-allocations/last-receipt",
         (),
