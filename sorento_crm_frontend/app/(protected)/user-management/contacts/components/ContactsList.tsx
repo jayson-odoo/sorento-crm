@@ -40,6 +40,7 @@ import { apiFetch } from '@/lib/api';
 import type { RespondContact } from '../types/contact.types';
 import { formatDate } from '@/lib/helpers';
 import { toast } from '@/lib/toast';
+import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import BulkLinkCustomersDialog from './BulkLinkCustomersDialog';
 import ContactCreateDialog from './ContactCreateDialog';
 import ContactDeleteDialog from './ContactDeleteDialog';
@@ -790,6 +791,28 @@ export default function ContactsList() {
     setRowSelection({});
   };
 
+  // Export under "Select all": the page's rows are not the selection, so build the file from
+  // `matching`, reading each chosen column the way the toolbar's own page export does.
+  const exportMatching = async (chosen: string[]) => {
+    const rows = matching ?? [];
+    const data = rows.map((contact, i) => {
+      const out: Record<string, unknown> = {};
+      for (const id of chosen) out[id] = table.getColumn(id)?.accessorFn?.(contact, i);
+      return out;
+    });
+    const cols: ColumnOption[] = chosen.map((id) => {
+      const def = table.getColumn(id)?.columnDef;
+      const title = def?.meta?.headerTitle;
+      return {
+        key: id,
+        label: title ?? (typeof def?.header === 'string' ? def.header : id),
+        selected: true,
+      };
+    });
+    await generateExcelFile(data, cols, 'contacts_export.xlsx');
+    toast.success(`Exported ${rows.length} row(s)`);
+  };
+
   const selectAllMatchingRows = async () => {
     try {
       const res = await fetchContactsPage({ ...listParams, pageIndex: 0, pageSize: 1000 });
@@ -874,7 +897,10 @@ export default function ContactsList() {
                 className="w-64"
               />
             }
-            exportConfig={{ filename: 'contacts_export.xlsx' }}
+            exportConfig={{
+              filename: 'contacts_export.xlsx',
+              allRecords: { onExport: exportMatching },
+            }}
             selectAllMatching={{
               total: data?.pagination?.total ?? 0,
               loadedCount: pageContacts.length,
