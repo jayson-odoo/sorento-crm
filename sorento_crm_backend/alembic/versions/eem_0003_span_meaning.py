@@ -6,7 +6,7 @@ the semantic bridge. Idempotent: the same template, or a version with this commi
 Downgrade removes only the unlabelled version this migration made.
 
 Revision ID: eem_0003_span_meaning
-Revises: eem_0002_span_version_on_diet
+Revises: gc_idx_0001_spo_from_po_key
 """
 import logging
 
@@ -17,7 +17,7 @@ from sqlalchemy.orm import Session
 from app.services.chatbot.head.span_extract import MEANING_PARAGRAPH
 
 revision = "eem_0003_span_meaning"
-down_revision = "eem_0002_span_version_on_diet"
+down_revision = "gc_idx_0001_spo_from_po_key"
 branch_labels = None
 depends_on = None
 
