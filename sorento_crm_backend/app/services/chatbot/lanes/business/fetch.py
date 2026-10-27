@@ -3071,6 +3071,18 @@ def _sole_subject_question(envelope: dict[str, Any], args: Any) -> str | None:
     return f"{labels}: {words}. Which customer or sales agent do you want?"
 
 
+def _with_not_applied(text: str, words: list[str]) -> str:
+    """REPORT-UNIFY (plan 2.4): the parsed filters the route has no param for, said once under the header: they
+    join the presenter's own "Not applied:" line when it printed one, else a line of their own after the header."""
+    lines = text.split("\n")
+    for i, line in enumerate(lines):
+        if line.startswith("Not applied:"):
+            lines[i] = line + "; " + "; ".join(words)
+            return "\n".join(lines)
+    lines.insert(1, "Not applied: " + "; ".join(words))
+    return "\n".join(lines)
+
+
 def _without_row_offers(text: str) -> str:
     for offer in _ROW_PICK_OFFERS:
         text = text.replace("\n\n" + offer, "")
@@ -3090,6 +3102,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
     note = semantic_input.get("report_ask_note") if isinstance(semantic_input, dict) else None
     if note and text:
         text = f"{note}\n\n{text}"
+    unapplied = semantic_input.get("report_ask_not_applied") if isinstance(semantic_input, dict) else None
+    if unapplied and text:
+        text = _with_not_applied(text, [jsc.js_string(u) for u in jsc.array(unapplied)])
     # REPORT-DRILLDOWN: the rows the ranking printed, with their keys, ride on the frame
     # (`shown`), so "these agents" next turn means exactly them. Never a route param.
     drill = envelope.get("drill_rows")

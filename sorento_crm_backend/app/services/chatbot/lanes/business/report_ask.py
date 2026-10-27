@@ -1691,6 +1691,31 @@ def invoiced_location_line(args: dict[str, Any]) -> str | None:
     return None
 
 
+#: The entity kinds a report ask turns into a route param (a customer, product, brand, category, sales agent,
+#: location or spec). Any other kind the message named has no param.
+_APPLIED_HINTS = frozenset(
+    {"customer", "product", "brand", "category", "product_type", "sales_agent", "warehouse", "specification", "spec"}
+)
+
+
+def unapplied_words(parse_output: dict[str, Any], args: dict[str, Any]) -> list[str]:
+    """REPORT-UNIFY (plan 2.4, P11): the words of a parsed filter the route has no param for, each as the
+    "Not applied" text (`a/c 3 (no account filter)`). An account number on a customer the ask did not
+    narrow to, and any entity kind the report does not filter by."""
+    out: list[str] = []
+    for e in jsc.array(parse_output.get("entities")):
+        if not isinstance(e, dict) or e.get("current_message") is False:
+            continue
+        hint = jsc.js_string(e.get("hint") or "").strip().lower()
+        raw = " ".join(jsc.js_string(e.get("raw") or "").split())
+        account = e.get("account")
+        if isinstance(account, int) and not isinstance(account, bool) and account >= 1 and not args.get("customer_ids"):
+            out.append(f"a/c {account} (no account filter)")
+        elif hint and hint not in _APPLIED_HINTS and raw:
+            out.append(f"{raw} (no {hint.replace('_', ' ')} filter)")
+    return list(dict.fromkeys(out))
+
+
 def error_line(envelope: Any) -> str | None:
     """A route refusal said as its own message (403: `report_dimension_not_allowed`,
     `customer_not_permitted`, `sales_report_not_enabled`), a 404 as `I couldn't find that

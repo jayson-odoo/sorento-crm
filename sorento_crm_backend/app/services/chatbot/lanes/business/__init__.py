@@ -2228,6 +2228,9 @@ def run_fetch(
         location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
         if location_line:
             return _fixed_reply(location_line)
+        unapplied = report_ask.unapplied_words(parse_output, semantic_input["report_ask_args"])
+        if unapplied:
+            semantic_input["report_ask_not_applied"] = unapplied
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
         if settled.extras.get("detail"):
