@@ -410,7 +410,7 @@ def test_consonant_skeleton_matches_a_dropped_vowel_in_a_multiword_label():
 
 
 def test_a_two_consonant_span_word_does_not_match_on_the_length_rule_alone():
-    res = _one("lm", "brand", [R("brand", "t1", "ZZLIM")])
+    res = _one("lm", "brand", [R("brand", "t1", "laomeiu")])
     assert res.status != "resolved", res
 
 
@@ -424,7 +424,7 @@ def test_changed_vowels_do_not_tie_surnames():
 
 def test_a_skeleton_match_never_beats_a_closer_one_edit_row():
     rows = [R("category", "k1", "ZZ Carton Box"), R("category", "k2", "ZZ Shower Curtain")]
-    res = _one("zzcartn", "category", rows)
+    res = _one("cartn", "category", rows)
     assert res.candidates and res.candidates[0].row.key == "k1" and "k2" not in {c.row.key for c in res.candidates}, res
 
 
