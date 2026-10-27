@@ -30,9 +30,12 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 
 @contextmanager
-def _decisions_hold_nothing() -> Iterator[None]:
+def _decisions_hold_nothing(what_if: Tuple[Tuple[str, str, str], ...] = ()) -> Iterator[None]:
     """Run B: the shared hold predicate matches no RESERVE row, and Stock Debt hands each
-    Reserve to the walk as a route instead. Restored on exit."""
+    Reserve to the walk as a route instead. Restored on exit.
+
+    `what_if`: extra routes `(core line id, warehouse id, warehouse code)` as if CS had
+    planned that line "Reserve from <bin>" for its whole open quantity (crew, 27 Oct)."""
     from app.models.inventory import Warehouse
     from app.models.project_so import (
         ALLOC_RESERVE_SOURCES,
@@ -107,6 +110,15 @@ def _decisions_hold_nothing() -> Iterator[None]:
                     kind=KIND_ON_HAND, warehouse=code, route=True,
                 )
             )
+        for line_key, warehouse_id, code in what_if:
+            if line_key in line_keys:
+                out.append(
+                    Hold(
+                        line_key=line_key, supply_key=f"on_hand:{warehouse_id}",
+                        # The walk caps a route at the line's own need.
+                        qty=float("inf"), kind=KIND_ON_HAND, warehouse=code, route=True,
+                    )
+                )
         return out
 
     ProjectSupplyService._hold_query = no_holds
@@ -188,6 +200,8 @@ def _hold_totals(db, product_ids: List[str]) -> Dict[str, object]:
         by_kind[kind] += float(qty or 0)
         out["qty"] = float(out["qty"]) + float(qty or 0)
     out["by_kind"] = dict(by_kind)
+    out["reserve_released"] = by_kind.get("reserve", 0.0)
+    out["borrow_kept"] = by_kind.get("borrow", 0.0)
     out["orders"] = len({so for _s, so, _l, _q in rows if so})
     out["lines"] = len({line for _s, _so, line, _q in rows})
     return out
@@ -227,6 +241,9 @@ def main() -> None:
                         help="SO number to print in full (repeatable)")
     parser.add_argument("--csv", help="write every changed line to this CSV")
     parser.add_argument("--company", default="SRT", help="company code the page reads as")
+    parser.add_argument("--what-if", action="append", default=[], metavar="SO:LINE:BIN",
+                        help="also walk run B with this line planned 'Reserve from BIN' "
+                             "(core line no, e.g. SO426986:16:BRW); repeatable")
     args = parser.parse_args()
     focus_products = set(args.product or ["CB4702"])
     focus_sos = set(args.so or ["SO400884", "SO426986"])
@@ -252,13 +269,35 @@ def main() -> None:
         if not company_id:
             raise SystemExit(f"no company with code {args.company}")
         with company_scope(db, frozenset({str(company_id)})):
-            report(db, focus_products=focus_products, focus_sos=focus_sos, csv_path=args.csv)
+            report(db, focus_products=focus_products, focus_sos=focus_sos, csv_path=args.csv,
+                   what_if=args.what_if)
     finally:
         db.rollback()
         db.close()
 
 
-def report(db, *, focus_products, focus_sos, csv_path=None) -> list:
+def _resolve_what_if(db, specs) -> Tuple[Tuple[str, str, str], ...]:
+    """`SO:LINE:BIN` -> (core line id, warehouse id, warehouse code); LINE is the core line no."""
+    from app.models.inventory import Warehouse
+    from app.models.order import SalesOrder, SalesOrderLine
+
+    out = []
+    for spec in specs:
+        so_number, line_no, code = spec.split(":")
+        line_id = (
+            db.query(SalesOrderLine.id)
+            .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
+            .filter(SalesOrder.so_number == so_number, SalesOrderLine.line_no == int(line_no))
+            .scalar()
+        )
+        warehouse_id = db.query(Warehouse.id).filter(Warehouse.warehouse_code == code).scalar()
+        if not line_id or not warehouse_id:
+            raise SystemExit(f"--what-if {spec}: line or bin not found")
+        out.append((str(line_id), str(warehouse_id), code))
+    return tuple(out)
+
+
+def report(db, *, focus_products, focus_sos, csv_path=None, what_if=()) -> list:
     """The whole dry run on an open session; returns the changed lines. Writes nothing."""
     from app.services.scm.stock_debt_service import StockDebtService
 
@@ -267,7 +306,10 @@ def report(db, *, focus_products, focus_sos, csv_path=None) -> list:
     ids = [pid for pid, _c, _n in products]
     print(f"Products with a decision hold today: {len(products)}")
     totals = _hold_totals(db, ids) if ids else {}
-    print(f"Decision holds released by the change: {totals}")
+    print(f"Decision holds today: {totals}")
+    if totals:
+        print(f"  Reserve released by the change: {totals['reserve_released']:.2f}; "
+              f"Borrow kept holding (owner Q3): {totals['borrow_kept']:.2f}")
     if not ids:
         return []
 
@@ -275,6 +317,10 @@ def report(db, *, focus_products, focus_sos, csv_path=None) -> list:
     before = _lines(StockDebtService(db)._assignments(products, span, view=True))
     with _decisions_hold_nothing():
         after = _lines(StockDebtService(db)._assignments(products, span, view=True))
+    what_if_after = None
+    if what_if:
+        with _decisions_hold_nothing(_resolve_what_if(db, what_if)):
+            what_if_after = _lines(StockDebtService(db)._assignments(products, span, view=True))
 
     changed = []
     for key in sorted(set(before) | set(after)):
@@ -328,6 +374,19 @@ def report(db, *, focus_products, focus_sos, csv_path=None) -> list:
               f"{b.get('status')} assigned {b.get('assigned')} short {b.get('short')} "
               f"[{b.get('sources')}]")
 
+    if what_if_after is not None:
+        print(f"\nWhat-if {', '.join(what_if)}: run B with those lines also planned from the "
+              "named bin (focus lines only), before | run B | what-if")
+        for key in sorted(before, key=lambda k: (codes.get(before[k]["product_id"], ""),
+                                                 str(before[k]["required"]))):
+            a, b, c = before[key], after.get(key, {}), what_if_after.get(key, {})
+            if codes.get(a["product_id"]) not in focus_products and a["so"] not in focus_sos:
+                continue
+            print(f"  {codes.get(a['product_id'])} {a['so']} L{a['line_no']} due {a['required']} "
+                  f"open {a['open']:g} | {a['status']} short {a['short']:g} | "
+                  f"{b.get('status')} short {b.get('short')} | "
+                  f"{c.get('status')} short {c.get('short')} [{c.get('sources')}]")
+
     if csv_path:
         with open(csv_path, "w", newline="") as handle:
             writer = csv.writer(handle)
@@ -335,12 +394,14 @@ def report(db, *, focus_products, focus_sos, csv_path=None) -> list:
                 "product", "so", "line", "location", "required", "open",
                 "status_before", "assigned_before", "short_before",
                 "status_after", "assigned_after", "short_after",
+                "sources_before", "sources_after",
             ])
             for _key, a, b in changed:
                 writer.writerow([
                     codes.get(a["product_id"]), a["so"], a["line_no"], a["warehouse"],
                     a["required"], a["open"], a["status"], a["assigned"], a["short"],
                     b["status"], b["assigned"], b["short"],
+                    a["sources"], b["sources"],
                 ])
         print(f"\nWrote {len(changed)} rows to {csv_path}")
     return changed
