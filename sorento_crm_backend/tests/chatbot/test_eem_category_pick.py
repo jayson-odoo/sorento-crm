@@ -24,6 +24,7 @@ from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services import product_class_signal
 from tests._pg_fixture import blank_session
 from tests.chatbot.conftest import session_factory  # noqa: F401
+from tests.chatbot.test_engine import stub_access  # noqa: F401
 from tests.chatbot.test_lookup_lists_engine import _fresh_caches  # noqa: F401
 
 WC_CODES = ["BRT-WC", "CB-WC", "IDC-WC", "M-WC", "SRT-WC"]
@@ -341,3 +342,65 @@ def test_ac_cp_10_turn_language_passes_the_parsed_value_through():
     assert engine_mod._turn_language(user_turn, {"reply_language": "zh"}, None, parsed="en") == "en"
     assert engine_mod._turn_language(user_turn, {"reply_language": "zh"}, None, parsed=None) == "zh"
     assert engine_mod._turn_language(user_turn, {"reply_language": "zh"}, None) == "zh"
+
+
+# ------------------------------------------------------------------------------------------------ D' base schema + turn
+def test_ac_cp_9_a_non_closed_lists_template_with_the_language_sentence_sets_message_language(session_factory, monkeypatch):
+    config = _config_for(session_factory, monkeypatch, "Rules {{current_date}}.\n" + parser_mod.LANGUAGE_ASK + "\n")
+    assert config.message_language is True
+    assert config.json_schema is None  # not a closed-lists prompt: the schema is the base one at parse time
+    assert "message_language" in parser_mod._base_schema(config)["properties"]
+
+
+def test_ac_cp_9_a_template_without_the_sentence_has_message_language_false(session_factory, monkeypatch):
+    config = _config_for(session_factory, monkeypatch, "Rules {{current_date}}.\n")
+    assert getattr(config, "message_language", "missing") is False
+    assert "message_language" not in parser_mod._base_schema(config)["properties"]
+
+
+def _bare_config(**kw):
+    return parser_mod.ParserConfig(system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test",
+                                   api_key="sk-test", **kw)
+
+
+def test_ac_cp_9_base_schema_carries_message_language_iff_the_config_flag():
+    on = parser_mod._base_schema(_bare_config(message_language=True))
+    off = parser_mod._base_schema(_bare_config())
+    assert "message_language" in on["properties"] and "message_language" in on["required"]
+    assert "message_language" not in off["properties"] and "message_language" not in off["required"]
+
+
+def _language_console(session_factory, monkeypatch, stub_access, phone, saved=None):
+    from sqlalchemy import text
+
+    from tests.chatbot._r9_engine_console import EngineConsole
+
+    c = EngineConsole(session_factory, monkeypatch, stub_access, phone=phone)
+    if saved:
+        db = session_factory()
+        db.execute(text("UPDATE respond_contacts SET chatbot_profile = CAST(:p AS jsonb)"),
+                   {"p": '{"language": "%s"}' % saved})
+        db.commit()
+    monkeypatch.setattr(parser_mod, "resolve_config",
+                        lambda db, *, current_date, override_version_id=None: _bare_config(message_language=True))
+    return c
+
+
+def test_ac_cp_10_turn_a_parsed_en_after_a_zh_conversation_replies_in_english(session_factory, monkeypatch, stub_access):
+    from tests.chatbot._r9_engine_console import product, stock
+
+    c = _language_console(session_factory, monkeypatch, stub_access, "+60000009401")
+    c.say("SRTWC286-SH 有货吗", stock(product("SRTWC286-SH"), message_language="zh"))
+    assert c.state["reply_language"] == "zh"
+    c.say("SRTWC286-SH 2", stock(product("SRTWC286-SH", 2), message_language="en"))
+    assert c.state["reply_language"] == "en"
+
+
+def test_ac_cp_10_turn_a_parsed_null_keeps_the_saved_language_over_the_conversation(session_factory, monkeypatch, stub_access):
+    from tests.chatbot._r9_engine_console import product, stock
+
+    c = _language_console(session_factory, monkeypatch, stub_access, "+60000009402", saved="ms")
+    c.say("SRTWC286-SH 有货吗", stock(product("SRTWC286-SH"), message_language="zh"))
+    assert c.state["reply_language"] == "zh"
+    c.say("SRTWC286-SH 2", stock(product("SRTWC286-SH", 2), message_language=None))
+    assert c.state["reply_language"] == "ms"
