@@ -1,7 +1,8 @@
 # PLAN: Stock position report (all suppliers)
 
-Status: Plan, behaviour card posted, waiting on owner answers (Q1-Q5). Track: standard (new endpoint +
-page, no migration expected); confirmed once Q1 is answered.
+Status: Review (built on the recommended answers to Q1-Q5 while the owner's answers are pending; owner
+review of the mock 27 Oct: warehouse headers carry the code alone). Track: standard (new endpoint + page, no
+migration, no RBAC change: reuses the Stock Status read permissions).
 
 Lane: STOCK-POSITION-REPORT. Owner request 27 Oct 2026: reproduce the supplier stock sheet ("<SUPPLIER> STOCK AS AT
 <date>") inside the CRM for ALL suppliers in one report, one row per item code, with a Supplier column.
@@ -62,3 +63,20 @@ transferred to SPO, and 12 months of SO lines summing 3,408 (avg 284) with an 85
 ## Open questions (posted as crew-ask)
 
 Q1 where, Q2 outstanding dealer, Q3 sales basis, Q4 supplier rule, Q5 warehouse columns + PL in totals.
+
+## Built (27 Oct)
+
+- `GET /api/v1/inventory/stock-position` and `/export` (`app/api/v1/inventory/stock_position.py`), service
+  `app/services/stock_position_service.py`. Sorting, filtering and paging all happen on the server, over rows
+  that are fully computed. Sort keys: `item_code`, `description`, `supplier_name`, `brand_name`,
+  `wh:<code>`, and each figure key. `sales_basis` = `so_ordered` (default) | `invoiced` (Q3: switchable).
+- Shared helpers: `stock_status_service._spo_rows` / `incoming_pl_by_product` take a product-id list (None =
+  every product) and `po_outstanding_clauses` was extracted, so the single-item panel calls the same code
+  with one id. `container_request_service.history_window` / `ordered_qty_by_month` were pulled out of the
+  loading plan's `history`.
+- FE: Inventory > Stock position (`app/(protected)/inventory-management/stock-position/`), a DataGrid with
+  the item code pinned and a row link to Stock status. Filters: supplier, brand, warehouse, sales basis.
+  Export to Excel comes from the server workbook.
+- Warehouse filter: keeps the items that hold stock in the chosen warehouse; the columns stay whole.
+- Tests: `tests/scm/test_stock_position.py` (16, seeded per column), vitest `StockPositionGrid.test.tsx`,
+  `stockPositionService.test.ts`.
