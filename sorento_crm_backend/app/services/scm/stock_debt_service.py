@@ -2637,7 +2637,8 @@ class StockDebtService:
         LINE, falling back to the manually-flagged primary product supplier, else neither.
 
         The window (newest `PurchaseOrder.issue_date`, `PurchaseOrderLine.created_at`
-        breaking a tie) is `po_last_cost_service.last_cost_rows`'s own pick key, reused
+        breaking a tie, then po_number, then line id, so an exact tie never falls to the
+        query plan) is `po_last_cost_service.last_cost_rows`'s own pick key, reused
         rather than re-derived - the same "which PO line answers for this product" question,
         one PARTITION BY `product_id` instead of `(product_id, warehouse_id)` because the
         board asks per PRODUCT, not per bin. Cancelled POs are skipped (A1); a cancelled
@@ -2657,6 +2658,8 @@ class StockDebtService:
                 order_by=(
                     PurchaseOrder.issue_date.desc().nulls_last(),
                     PurchaseOrderLine.created_at.desc(),
+                    PurchaseOrder.po_number.desc(),
+                    PurchaseOrderLine.id.desc(),
                 ),
             )
             .label("rn")
