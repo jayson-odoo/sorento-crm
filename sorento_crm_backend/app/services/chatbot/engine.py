@@ -1365,7 +1365,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
         "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
         "provider": config.provider if config else None, "model": config.model if config else None,
         "model_source": config.model_source if config else None,
-        "embedding_model": getattr(prep.embed, "model", None) if prep.embed is not None else None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
+        "embedding_model": None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
     }
     if answer is not None and answer.usage and not dry_run:
@@ -1384,6 +1384,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
             try:
                 all_rows = [*prep.rows, *prep.spec_key_rows]
                 embed = lookup_lists.usable_embedder(all_rows, prep.embed)
+                event["embedding_model"] = getattr(embed, "model", None) if embed is not None else None
                 resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
                 # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
                 # resolved as their own untyped span, one level only.

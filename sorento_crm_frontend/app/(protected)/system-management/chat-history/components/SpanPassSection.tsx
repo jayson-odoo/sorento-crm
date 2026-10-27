@@ -32,7 +32,7 @@ export function SpanPassSection({
         {[
           model || 'No span model',
           spanExtract.model_source,
-          spanExtract.embedding_model,
+          spanExtract.embedding_model ?? (spanExtract.embedding_model === null && !spanExtract.fallback ? 'spelling only' : null),
           `${spanExtract.ms} ms`,
           `${tokens.prompt_tokens ?? 0} in`,
           `${tokens.completion_tokens ?? 0} out`,

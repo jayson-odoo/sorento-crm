@@ -378,6 +378,8 @@ def _resolve_texts(spans: Sequence[Span], rows: Sequence[LookupRow], embed: Embe
             for i in set(scored) | {i for (n, i) in meaning if n == name and span.text in meaning[(n, i)]}:
                 row = scored.get(i) or _RowScore(index.rows[i])
                 row.meaning = max(0.0, meaning.get((name, i), {}).get(span.text, 0.0))
+                if floors["meaning"] > 1.0:
+                    row.meaning = 0.0  # the list's meaning is off for this model: no candidate carries it
                 if not (row.spell >= floors["spell"] or row.partial >= floors["partial"] or row.meaning >= floors["meaning"]):
                     continue
                 signals = (

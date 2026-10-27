@@ -727,6 +727,8 @@ def _key(text: str, model: str = EMBED_MODEL) -> tuple[str, str]:
 
 #: Gemini's batchEmbedContents takes at most 100 texts per request.
 GEMINI_EMBED_CHUNK = 100
+#: The vector size the meaning floors were calibrated on (native is 3072; `GeminiProvider.embed` also sizes down).
+GEMINI_EMBED_DIMENSIONS = 1536
 
 
 def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
@@ -827,7 +829,14 @@ def gemini_embedder(api_key: str, model: str) -> Embedder:
             "POST",
             f"models/{model}:batchEmbedContents",
             json_body={
-                "requests": [{"model": f"models/{model}", "content": {"parts": [{"text": t}]}} for t in chunk]
+                "requests": [
+                    {
+                        "model": f"models/{model}",
+                        "content": {"parts": [{"text": t}]},
+                        "outputDimensionality": GEMINI_EMBED_DIMENSIONS,
+                    }
+                    for t in chunk
+                ]
             },
             timeout=EMBED_TIMEOUT,
         )
