@@ -976,7 +976,8 @@ def _bound_by_id(db: Any, hint: str, word: str) -> tuple[list[str], list[str]] |
 
 
 def _word_filters(
-    db: Any, parse_output: dict[str, Any], pairs: tuple[tuple[str, str], ...] = _WORD_PARAMS
+    db: Any, parse_output: dict[str, Any], pairs: tuple[tuple[str, str], ...] = _WORD_PARAMS, *,
+    agent_filter: bool = True,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The brand / sales agent / category ids the verdict's `report_ask_words` resolve to, or
     the one line to say instead. Shared by a fresh ask and a ranking refine."""
@@ -1017,6 +1018,8 @@ def _word_filters(
                 return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
             distinct = {" ".join(n.split()).casefold(): " ".join(n.split()) for n in reversed(names)}
             if hint == "sales_agent" and len({business_services._code_stem(n) for n in names}) > 1:
+                if not agent_filter:
+                    return None, DEALER_REFUSAL  # the route refuses this contact the agent dimension: no list of agents
                 # H3: several DIFFERENT agents answer to the word (accounts of one person share a code stem and
                 # stay one person's union, below): the person picks one, agents only, and nothing runs yet.
                 out["sales_agent_pick"] = list(dict(zip(found, names)).items())
@@ -1080,7 +1083,7 @@ def _without_carried_products(parse_output: dict[str, Any], entities: Any) -> li
 
 
 def _fresh_args(
-    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False
+    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The route params a fresh ask names (every one but the period and top_n), or the one
     line to say instead of running. `dealer`: the turn's contact is customer-scoped."""
@@ -1107,7 +1110,7 @@ def _fresh_args(
     if parse_output.get("self_reference") is True:
         args["mine"] = True
 
-    filters, line = _word_filters(db, parse_output)
+    filters, line = _word_filters(db, parse_output, agent_filter=agent_filter)
     if filters is None:
         return None, line
     args.update(filters)
@@ -1256,7 +1259,7 @@ def _detail_outcome(db: Any, frame: dict[str, Any], detail: dict[str, Any]) -> r
 
 
 def settle(
-    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False
+    db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True
 ) -> tuple[rf.Outcome | None, str | None]:
     """Every required field settled, or the line to send instead of running. Returns
     `(outcome, None)` (send `outcome.reply` with `outcome.slot` unless `outcome.done`), or
@@ -1421,7 +1424,7 @@ def settle(
         holding = True
         parse_output = {**parse_output, "ranking_refine": False}
 
-    args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
+    args, line = _fresh_args(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter)
     if args is None:
         return None, line
     named = {

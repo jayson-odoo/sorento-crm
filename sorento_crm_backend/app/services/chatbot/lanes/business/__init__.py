@@ -2222,8 +2222,12 @@ def run_fetch(
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_ranking_override"}}
         # 1b fix round F1: a customer-scoped (dealer) turn is refused a staff breakdown
         # before any agent or location word is resolved.
+        # Security S3: a contact the route refuses the agent dimension (no reveal for this basis: a salesperson narrowed to
+        # their own book) is never offered the list of agents to pick from.
+        _attrs = (ctx.get("access") or {}).get("attributes") if isinstance(ctx.get("access"), dict) else None
+        _agent_filter = report_ask.grant_key(parse_output) in set(_attrs) if isinstance(_attrs, (list, tuple, set, frozenset)) else False
         settled, line = report_ask.settle(
-            db, parse_output, entities, dealer=bool(customer_scope.get("enforced"))
+            db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter
         )
         if trace is not None:
             trace.add(
