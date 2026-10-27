@@ -31,10 +31,10 @@ def _supplier(db, name) -> Supplier:
 def _line(db, product, supplier, issued, *, po_number=None, status="active", created=None,
           removed=False, line_id=None) -> PurchaseOrderLine:
     po = PurchaseOrder(id=str(uuid.uuid4()), po_number=po_number or f"{MARKER}-{uuid.uuid4().hex[:8]}",
-                       supplier_id=supplier.id, issue_date=issued, status=status)
+                       supplier_id=supplier.id if supplier else None, issue_date=issued, status=status)
     db.add(po)
     db.flush()
-    line = PurchaseOrderLine(id=str(uuid.uuid4()), purchase_order_id=po.id, product_id=product.id,
+    line = PurchaseOrderLine(id=line_id or str(uuid.uuid4()), purchase_order_id=po.id, product_id=product.id,
                              qty_ordered=1, qty_received=0, line_status="open", removed_unreferenced=removed,
                              created_at=created or datetime(2026, 1, 1, 9, 0))
     db.add(line)
@@ -72,9 +72,10 @@ def test_ties_break_on_line_created_then_po_number_and_undated_po_last(scm_app):
     # A: same issue date, the later-created line wins.
     _line(db, a, s1, day, created=datetime(2026, 5, 1, 10))
     _line(db, a, s2, day, created=datetime(2026, 5, 1, 9))
-    # B: same date and created_at, the higher PO number wins.
-    _line(db, b, s1, day, po_number=f"{MARKER}-PO-0002")
-    _line(db, b, s2, day, po_number=f"{MARKER}-PO-0001")
+    # B: same date and created_at, the higher PO number wins. The losing line carries the HIGHER
+    # line id, so the next key down would pick it: only `po_number` can make this s1.
+    _line(db, b, s1, day, po_number=f"{MARKER}-PO-0002", line_id="00000000-0000-4000-8000-000000000001")
+    _line(db, b, s2, day, po_number=f"{MARKER}-PO-0001", line_id="ffffffff-ffff-4fff-bfff-ffffffffffff")
     # (The line id breaks a tie inside ONE PO only: a PO number is unique per company and a PO
     # has one supplier, so that key keeps the pick stable but cannot change the supplier.)
     # An undated PO never beats a dated one.
@@ -84,6 +85,20 @@ def test_ties_break_on_line_created_then_po_number_and_undated_po_last(scm_app):
 
     got = last_po_supplier_ids(db, [a.id, b.id, d.id])
     assert got == {str(a.id): str(s1.id), str(b.id): str(s1.id), str(d.id): str(s2.id)}
+
+
+def test_a_po_with_no_supplier_is_skipped_the_next_newest_names_it(scm_app):
+    """The low stock report's rule before the helper (its SQL inner-joined suppliers): a newest
+    PO whose supplier is unset does not blank the column, the next-newest PO's supplier stands."""
+    from app.services.scm.last_po_supplier import last_po_supplier_ids
+
+    db, w = _setup(scm_app)
+    p, q = w.product("A"), w.product("B")
+    s = _supplier(db, "named")
+    _line(db, p, s, date(2025, 1, 1))
+    _line(db, p, None, date(2026, 1, 1))
+    _line(db, q, None, date(2026, 1, 1))  # only a supplier-less PO: no supplier
+    assert last_po_supplier_ids(db, [p.id, q.id]) == {str(p.id): str(s.id)}
 
 
 def test_no_po_means_no_supplier_whatever_the_product_links_say(scm_app):

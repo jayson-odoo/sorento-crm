@@ -193,7 +193,7 @@ def build_rows(db: Session, *, sales_basis: str = "so_ordered", as_of: Optional[
     } if figures else {}
     brands = dict(db.query(Brand.id, Brand.brand_name).all()) if products else {}
     # Q4 (owner ruling 27 Oct): the LAST PO's supplier, the one rule the low stock report reads.
-    supplier_of = last_po_supplier.last_po_supplier_ids(db, None) if products else {}
+    supplier_of = last_po_supplier.last_po_supplier_ids(db, list(products)) if products else {}
     suppliers = {
         str(s.id): s for s in db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name).all()
     } if supplier_of else {}

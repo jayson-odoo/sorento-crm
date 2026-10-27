@@ -22,7 +22,9 @@ WHAT IT DOES
 ------------
 For each product with at least one purchase-order line, finds the supplier of its NEWEST
 PO line (`purchase_orders.issue_date` desc, NULLs last, `created_at` desc as the
-tiebreak - the same ordering `_last_po_supplier_map` uses). Per product:
+tiebreak - the order `_last_po_supplier_map` used until 27 Oct; that function now reads
+`scm/last_po_supplier.py`, whose exact-tie keys differ, and moving this script onto it is a named
+follow-up of STOCK-POSITION-REPORT). Per product:
 
 * If a `product_suppliers` link to that supplier already exists, it is promoted:
   `is_primary_supplier` set True (a "promoted" link).
@@ -71,10 +73,11 @@ The product's PRIMARY pair (the one whose `is_primary_supplier` is set True, eve
 else cleared) is the pair with the newest PO line - the same product this script would
 name without the flag. When two different suppliers tie on BOTH `issue_date` AND
 `created_at` (measured live: a same-transaction import can do this), `supplier_id` is
-the final deterministic tiebreak, applied identically here, in `_last_po_suppliers` and
-in `summary_order_service._last_po_supplier_map` (review addendum, 10 Sep 2026) - so the
-flag on, the flag off, and the order sheet's Supplier column never disagree on a tied
-product. The DEFAULT supplier is only ever linked when it IS that primary pair; a
+the final deterministic tiebreak, applied identically here and in `_last_po_suppliers`
+(review addendum, 10 Sep 2026) - so the flag on and the flag off never disagree on a tied
+product. The order sheet's Supplier column moved to `scm/last_po_supplier.py` on 27 Oct
+and can differ from this script on an exact same-day tie only, until this script moves.
+The DEFAULT supplier is only ever linked when it IS that primary pair; a
 non-primary DEFAULT pair is skipped entirely (never created as a secondary link), and an
 existing non-primary DEFAULT link is deleted, same rule as without the flag.
 
@@ -135,8 +138,8 @@ from app.services.rules.product_rules import resolve_standard_lead_time_days
 
 def _last_po_suppliers(db) -> List[Tuple[str, str, str, str]]:
     """``[(product_id, product_code, supplier_id, supplier_code)]`` - one row per product
-    with non-cancelled PO history, the supplier of its newest PO line. Same ordering
-    `summary_order_service._last_po_supplier_map` uses; a cancelled PO does not exist for
+    with non-cancelled PO history, the supplier of its newest PO line (the low stock report's
+    order before 27 Oct, see the module docstring); a cancelled PO does not exist for
     this lookup (PLAN-product-supplier-all-po.md ruling 3) so it can never be the "newest"
     PO that names the product's supplier."""
     co, co_params = company_sql_predicate(db, "pol.company_id", param_prefix="bkfl")
@@ -208,8 +211,8 @@ def _po_supplier_pairs(db) -> List[Dict[str, Any]]:
 
 
 def _pick_primary(pairs: List[Dict[str, Any]]) -> Dict[str, Any]:
-    """The pair with the newest PO line, same ordering `_last_po_suppliers` /
-    `summary_order_service._last_po_supplier_map` use (``issue_date`` desc, NULLs last,
+    """The pair with the newest PO line, same ordering `_last_po_suppliers` uses
+    (``issue_date`` desc, NULLs last,
     ``created_at`` desc, then ``supplier_id`` desc as the FINAL deterministic tiebreak -
     two different suppliers can share both an ``issue_date`` and a ``created_at`` from
     the same-transaction import, e.g. two lines of one PO split across suppliers, and

@@ -485,3 +485,14 @@ def test_export_writes_only_the_warehouse_columns_the_user_shows_totals_unchange
     assert c_row[header.index("Total stock")] == 777  # MWH's 85 still counts
     # A code the report does not have is ignored rather than refused.
     assert TestClient(app).get(f"{URL}/export", params={"wh": ["NOPE"]}).status_code == 200
+
+
+def test_export_with_every_warehouse_hidden_writes_no_warehouse_column(scm_app):
+    from openpyxl import load_workbook
+
+    app, db, w = _setup(scm_app)
+    _sheet_world(db, w)
+    r = TestClient(app).get(f"{URL}/export", params={"wh": [""]})
+    assert r.status_code == 200, r.text
+    header = next(load_workbook(io.BytesIO(r.content)).active.iter_rows(values_only=True))
+    assert header[:4] == ("Item code", "Supplier", "Brand", "Incoming BRW")

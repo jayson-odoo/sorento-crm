@@ -7,7 +7,9 @@ The supplier on the product's NEWEST purchase-order line:
 * newest = `purchase_orders.issue_date` desc (an undated PO last), then the line's `created_at`
   desc, then `po_number` desc, then the line id desc. The last two are STOCKDEBT-PERF's
   tiebreak (#1901): an exact tie never falls to the query plan;
-* a cancelled PO does not exist for this lookup (PLAN-product-supplier-all-po.md ruling 3);
+* a cancelled PO does not exist for this lookup (PLAN-product-supplier-all-po.md ruling 3), and
+  neither does a PO with no supplier: the next-newest PO names it (the low stock report's rule,
+  whose SQL inner-joined `suppliers`);
 * a removed line counts in nothing (AC-REMOVED-KEEP-CANCELLED);
 * a product with no PO line gets no entry. `product_suppliers` plays no part: on the live data
   nearly every link names the DEFAULT supplier (`summary_order_service._last_po_supplier_map`'s
@@ -15,7 +17,8 @@ The supplier on the product's NEWEST purchase-order line:
 
 Readers: the stock position report, the low stock report's Supplier column
 (`summary_order_service._last_po_supplier_map`). Stock Debt's `_last_supplier_map` asks the same
-question with this ordering (#1901) and moves onto this helper once #1901 merges.
+question with this ordering (#1901) and moves onto this helper once #1901 merges (it then skips a
+supplier-less PO as well, where today it would answer "no supplier" for that product).
 
 Not yet on this rule (named, not changed in this lane): `supply_origin` and
 `scripts/backfill_product_supplier_from_last_po.py`, which repeat the older
@@ -55,13 +58,14 @@ def last_po_supplier_ids(db: Session, product_ids: Optional[Sequence[str]]) -> d
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .filter(
             PurchaseOrder.status != "cancelled",
+            PurchaseOrder.supplier_id.isnot(None),
             PurchaseOrderLine.removed_unreferenced.is_(False),
         )
     )
     if product_ids is not None:
         numbered = numbered.filter(PurchaseOrderLine.product_id.in_(list(product_ids)))
-    # Company scope stated on both tables: `.subquery()` loses the criteria the session's
-    # listener adds to a top-level ORM query (Stock Debt's `_last_supplier_map` does the same).
+    # Company scope stated on both tables, as Stock Debt's `_last_supplier_map` does: the session
+    # listener scopes this query today, and the explicit predicate keeps the rule independent of it.
     for model in (PurchaseOrderLine, PurchaseOrder):
         predicate = build_company_predicate(model, get_company_scope(db))
         if predicate is not None:
@@ -70,6 +74,6 @@ def last_po_supplier_ids(db: Session, product_ids: Optional[Sequence[str]]) -> d
     return {
         str(pid): str(sid)
         for pid, sid in db.query(numbered.c.product_id, numbered.c.supplier_id)
-        .filter(numbered.c.rn == 1, numbered.c.supplier_id.isnot(None))
+        .filter(numbered.c.rn == 1)
         .all()
     }

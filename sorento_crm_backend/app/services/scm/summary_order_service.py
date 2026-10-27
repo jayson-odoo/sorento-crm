@@ -62,7 +62,8 @@ from app.models.scm import (
 from app.services.company_scope_sql import company_sql_predicate
 from app.services.error_handler import AppException
 from app.services.project_order_inquiry_service import project_customer_label
-from app.services.scm import cover_service, last_po_supplier, plan_grain, po_book_service
+from app.services.scm import cover_service, plan_grain, po_book_service
+from app.services.scm import last_po_supplier as last_po_rule
 from app.services.scm.coverage_service import CoverageService
 from app.services.scm.demand import (
     ACTIVE_DECISION_STATE,
@@ -926,12 +927,13 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
     effectively every row. Of the 5,353 products with PO history, only 1 has a
     `product_suppliers` link that already agrees with its own last PO.
 
-    The newest PO line for the product (`scm/last_po_supplier.py`, the one rule Stock Debt and
-    the stock position report read too: `issue_date` desc, NULLs last, then the line's
-    `created_at`, `po_number` and line id desc) names who it was actually bought from last,
-    which is the buyer's own reading of "Supplier". Until 27 Oct this query broke an exact tie
-    on `po.created_at` then `supplier_id`, as `backfill_product_supplier_from_last_po.py`
-    still does: the two can disagree on an exact same-day tie only. A cancelled PO does not exist for this lookup
+    The newest PO line for the product (`scm/last_po_supplier.py`, the one rule the stock
+    position report reads too and Stock Debt moves onto after #1901: `issue_date` desc, NULLs
+    last, then the line's `created_at`, `po_number` and line id desc) names who it was
+    actually bought from last, which is the buyer's own reading of "Supplier". Until 27 Oct
+    this query broke an exact tie on `po.created_at` then `supplier_id`, as
+    `backfill_product_supplier_from_last_po.py` still does: the two can disagree on an exact
+    same-day tie only. A cancelled PO does not exist for this lookup
     (PLAN-product-supplier-all-po.md ruling 3, 10 Sep 2026) - it can never be the
     "newest" PO that names the Supplier column, so this stays in agreement with
     `backfill_product_supplier_from_last_po.py --all-suppliers`, which excludes cancelled
@@ -949,7 +951,7 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
     """
     # The newest-PO-line pick is the shared rule (`scm/last_po_supplier.py`, owner ruling 27 Oct:
     # one "last PO supplier" for Stock Debt, this report and the stock position report).
-    last = last_po_supplier.last_po_supplier_ids(db, [str(p) for p in product_ids])
+    last = last_po_rule.last_po_supplier_ids(db, [str(p) for p in product_ids])
     if not last:
         return {}
     names = dict(

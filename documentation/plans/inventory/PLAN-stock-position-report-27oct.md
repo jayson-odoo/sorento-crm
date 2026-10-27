@@ -14,7 +14,7 @@ UAC: `documentation/plans/inventory/stock-position-report-acceptance-criteria.md
 
 | Column | Source today | New? |
 | --- | --- | --- |
-| Supplier | `product_suppliers.is_primary_supplier` (`app/models/procurement.py:114`) | rule only (Q4) |
+| Supplier | the last PO's supplier, `scm/last_po_supplier.py` (shared with the low stock report; Q4) | shared helper extracted |
 | Brand | `products.brand_id` (`app/models/product.py:252`) | no |
 | One column per warehouse | on hand per warehouse, `stock_status_service.stock_status` (`app/services/stock_status_service.py:115-120`, reads `Stock.quantity_on_hand`); pool vs project by `pool_predicate.is_site_pool` (`app/services/scm/pool_predicate.py:75`) | dynamic column set only |
 | Incoming BRW (open SPO to the pool) | `stock_status_service._spo_rows` (`:299`), allocated less received over `spo_supply.open_incoming_clauses()` (`app/services/scm/spo_supply.py:58`), split where the SPO row's warehouse `is_site_pool` | split only |
@@ -86,6 +86,12 @@ transferred to SPO, and 12 months of SO lines summing 3,408 (avg 284) with an 85
   per-user column preferences (listing key = the page path). The grid mounts once the warehouse columns are
   known, so a saved choice applies to them. Export to Excel writes only the shown warehouse columns (`wh`).
   Hiding a column does not take that warehouse out of Total stock (a display choice, not a filter).
+  Known limit (review round 2, S2): the shared column-preferences hook saves visibility for the columns
+  present at save time, so a hidden warehouse that holds no stock on the day of a later column change loses
+  its "hidden" entry and comes back visible when it holds stock again. Rare (a warehouse column only leaves
+  when that warehouse is empty everywhere); fixing it is a change to the shared hook
+  (`lib/listing-column-preferences/useListingColumnPreferences.ts`: carry saved entries for absent ids),
+  left for a follow-up rather than widened into this lane.
 - Side effect kept from round 1: an open SPO to an INACTIVE site-pool warehouse still counts in Incoming BRW
   (an SPO is supply until the book closes it, `spo_supply`), while that warehouse's on-hand is no column.
 
@@ -100,7 +106,8 @@ the live item count, which the hand test will show.
 - `GET /api/v1/inventory/stock-position` and `/export` (`app/api/v1/inventory/stock_position.py`), service
   `app/services/stock_position_service.py`. Sorting, filtering and paging all happen on the server, over rows
   that are fully computed. Sort keys: `item_code`, `description`, `supplier_name`, `brand_name`,
-  `wh:<code>`, and each figure key. `sales_basis` = `so_ordered` (default) | `invoiced` (Q3: switchable).
+  `wh:<code>`, and each figure key. Round 1 had a `sales_basis` switch; Q3 (owner, 27 Oct) removes it: one
+  shared sales calculation, `invoiced_sales.quantity_by_product_month` (#1916).
 - Shared helpers: `stock_status_service._spo_rows` / `incoming_pl_by_product` take a product-id list (None =
   every product) and `po_outstanding_clauses` was extracted, so the single-item panel calls the same code
   with one id. `container_request_service.history_window` / `ordered_qty_by_month` were pulled out of the
