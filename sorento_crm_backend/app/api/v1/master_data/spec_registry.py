@@ -643,10 +643,6 @@ async def products_carrying_spec(
         .filter(Product.is_active.is_(True))
     )
     values = multi_text(value)
-    # The Value options are counted BEFORE the value filter, so picking one leaves the others on offer.
-    base_all_values = base
-    if values:
-        base = base.filter(stored_value.in_(values))
     if q and q.strip():
         # Searched in the database rather than in the page, because the list is
         # paginated: filtering the hundred rows on screen would report "no matches" for
@@ -660,6 +656,11 @@ async def products_carrying_spec(
                 ProductSpecifications.provenance[spec_key]["evidence"].astext.ilike(needle),
             )
         )
+    # The Value options follow the search box but are counted BEFORE the value filter, so picking one
+    # leaves the others on offer.
+    base_all_values = base
+    if values:
+        base = base.filter(stored_value.in_(values))
 
     # Counted over `base` before `class_label`/`source` narrow it further, so the
     # dropdown options describe everything there is to pick, not just what is already
