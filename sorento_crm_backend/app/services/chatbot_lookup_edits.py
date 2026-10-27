@@ -15,6 +15,8 @@ import logging
 from dataclasses import dataclass
 
 MARKER = "== LOOKUP LISTS =="
+#: ENTITY-EXTRACT-MATCH S2: the line that switches a version to the span pass (`head/span_extract.py`) instead of the n-gram lookup.
+SPAN_MARKER = "== LOOKUP SPANS =="
 
 logger = logging.getLogger("alembic.runtime.migration")
 
