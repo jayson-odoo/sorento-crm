@@ -21,6 +21,7 @@ from app.schemas.auth import (
     VerifyResetTokenRequest, VerifyResetTokenResponse,
     SessionInfo, MessageResponse,
     PhoneRequestCodeRequest, PhoneRequestCodeResponse, PhoneVerifyRequest,
+    PortalLinkRequest,
     SetPasswordRequest,
 )
 from app.dependencies import get_current_user, get_actor_user_id
@@ -648,6 +649,41 @@ def phone_verify(payload: PhoneVerifyRequest, request: Request, db: Session = De
         # Redis down: fail open on the count, not on the refusal itself.
         content = {"code": "CODE_WRONG", "message": "That code is not right."}
     return JSONResponse(status_code=status.HTTP_401_UNAUTHORIZED, content=content)
+
+
+@router.post("/portal-link", response_model=LoginResponse)
+def portal_link(payload: PortalLinkRequest, request: Request, db: Session = Depends(get_db)):
+    """A portal token verified in the last 120 s becomes a CRM session for the
+    contact's linked user (PORTAL-P1-SESSION-LINK). Every refusal answers the
+    same 401 body, so the route says nothing about why.
+
+    Per-IP limit as on the other unauthenticated routes (NextAuth forwards the
+    browser's address, `forwardedForHeader`). The token itself carries 240 bits,
+    so the limit is a brake on noise, not the guessing bound.
+    """
+    from app.services import phone_signin_service as svc
+    from app.services import rate_limit
+
+    ip = client_ip(request)
+    gate = rate_limit.hit(
+        "portal_link", ip,
+        limit=app_settings.rate_limit_portal_otp_max,
+        window_seconds=app_settings.rate_limit_portal_otp_window_seconds,
+    )
+    if not gate.allowed:
+        return _rate_limited_response(gate.retry_after_seconds or app_settings.rate_limit_portal_otp_window_seconds)
+
+    login_response = svc.exchange_portal_token(
+        db, payload.portal_token,
+        user_agent=request.headers.get("user-agent"),
+        ip_address=ip,
+    )
+    if login_response is None:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Portal link sign-in refused.",
+        )
+    return login_response
 
 
 @router.post("/password", response_model=MessageResponse)

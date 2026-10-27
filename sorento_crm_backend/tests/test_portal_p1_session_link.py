@@ -336,9 +336,6 @@ def _refusal_case(db, case: str) -> tuple[str, User | None]:
         user.contact_number = _digits()
         db.commit()
         return _verified_token(db, contact, ws).token, user
-    if case == "two_users":
-        _user(db, phone=contact.phone_number, contact_id=contact.id)
-        return _verified_token(db, contact, ws).token, user
     return _verified_token(db, contact, ws).token, user
 
 
@@ -357,7 +354,6 @@ def _refusal_case(db, case: str) -> tuple[str, User | None]:
         "trashed",
         "integration",
         "phone_mismatch",
-        "two_users",
     ],
 )
 def test_ac4_refusals_share_one_401_body(case):

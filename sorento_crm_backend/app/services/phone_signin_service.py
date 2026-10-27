@@ -90,6 +90,18 @@ def mask(num: str) -> Optional[str]:
     return PortalService._mask_phone(num)
 
 
+def _eligible_user_clauses() -> tuple:
+    """Who may sign in by phone or by portal link: ACTIVE, not trashed, not an
+    integration, with a linked WhatsApp contact. Shared by :func:`find_eligible`
+    and :func:`eligible_user_for_contact` so the two cannot drift."""
+    return (
+        User.status == "ACTIVE",
+        User.is_trashed.is_(False),
+        User.is_integration.is_(False),
+        User.respond_contact_id.isnot(None),
+    )
+
+
 def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]]:
     """Resolve a normalised number to exactly one eligible user, or ``None``.
 
@@ -106,13 +118,7 @@ def find_eligible(db: Session, num: str) -> Optional[tuple[User, RespondContact]
     """
     users = (
         db.query(User)
-        .filter(
-            User.contact_number.in_([num, f"+{num}"]),
-            User.status == "ACTIVE",
-            User.is_trashed.is_(False),
-            User.is_integration.is_(False),
-            User.respond_contact_id.isnot(None),
-        )
+        .filter(User.contact_number.in_([num, f"+{num}"]), *_eligible_user_clauses())
         .limit(2)
         .all()
     )
@@ -440,5 +446,119 @@ def attempt_verify(
         user_agent=user_agent,
         ip_address=ip_address,
         auth_method="phone_otp",
+    )
+    return build_login_response(db, user, session_row)
+
+
+# --------------------------------------------------------------------------- #
+# Portal link -> CRM session (PORTAL-P1-SESSION-LINK)                          #
+# --------------------------------------------------------------------------- #
+# A portal token verified this recently may be exchanged once for a CRM session.
+# The verify card calls the exchange right after `verify-otp` answers, so two
+# minutes covers a slow network with room to spare.
+PORTAL_LINK_WINDOW_SECONDS = 120
+_PORTAL_LINK_CLAIM_TTL_SECONDS = PORTAL_LINK_WINDOW_SECONDS + 60
+
+
+def eligible_user_for_contact(db: Session, contact_id: str) -> Optional[User]:
+    """The ONE eligible user linked to this contact, or ``None``.
+
+    Same rule as :func:`find_eligible`, keyed on the contact instead of a typed
+    number (``uq_users_respond_contact_id`` allows one user per contact): the
+    user is eligible and the user's own number still matches the contact's (a stale link after a
+    phone change is refused, plan 5.3 "lost phone"). Drives both the exchange
+    and the ``has_user`` flag on slug-info / token-info, so the card only asks
+    for a session the exchange will grant.
+    """
+    if not contact_id:
+        return None
+    user = (
+        db.query(User)
+        .filter(User.respond_contact_id == contact_id, *_eligible_user_clauses())
+        .first()
+    )
+    if user is None:
+        return None
+    contact = db.query(RespondContact).filter(RespondContact.id == contact_id).first()
+    if contact is None:
+        return None
+    contact_num = normalize_msisdn(contact.phone_number)
+    if not contact_num or normalize_msisdn(user.contact_number) != contact_num:
+        return None
+    return user
+
+
+def _claim_portal_link(contact_id: str, verified_at) -> bool:
+    """One OTP verification mints at most one session (security review decision).
+
+    `verify_otp` stamps every unverified token of the contact with the same
+    ``verified_at``, so the claim is keyed on (contact, verified_at), not on the
+    token: the fresh token and the admin-sent link verified by the same code
+    share one claim. ``SET NX`` is atomic, so two parallel exchanges cannot both
+    win. The claim only has to outlive the 120 s window, which is why Redis (with
+    a TTL) holds it rather than a column. No Redis means no claim, so the
+    exchange fails closed: the portal still works, the person just gets no CRM
+    session this time.
+    """
+    r = _redis()
+    if r is None:
+        return False
+    key = f"portal_link:claim:{contact_id}:{verified_at.isoformat()}"
+    try:
+        return bool(r.set(key, "1", nx=True, ex=_PORTAL_LINK_CLAIM_TTL_SECONDS))
+    except Exception as e:  # noqa: BLE001
+        logger.warning("Portal link: Redis claim failed (%s); refusing.", e)
+        return False
+
+
+def exchange_portal_token(
+    db: Session,
+    token_value: str,
+    *,
+    user_agent: Optional[str],
+    ip_address: Optional[str],
+) -> Optional[LoginResponse]:
+    """A portal token verified in the last 120 s becomes a `portal_link` CRM
+    session for the contact's eligible user. ``None`` for every refusal, so the
+    router answers one 401 body whatever the reason.
+
+    Refused: unknown, revoked, expired or unverified token (``resolve_token``),
+    an admin "view as contact" token, a verification older than the window
+    (``verified_at`` against the same ``_utcnow`` that ``verify_otp`` stamps it
+    with, never the DB-default ``created_at``), no eligible user, or a claim
+    already spent by this verification.
+    """
+    from datetime import timedelta
+
+    from app.services.portal_service import PortalAuthError
+    from app.services.user_session_service import mint_session
+
+    try:
+        token = PortalService(db).resolve_token(token_value or "")
+    except PortalAuthError:
+        return None
+    if bool(getattr(token, "is_impersonation", False)):
+        return None
+    verified_at = token.verified_at
+    now = _utcnow()
+    if verified_at is None or verified_at < now - timedelta(seconds=PORTAL_LINK_WINDOW_SECONDS):
+        return None
+
+    user = eligible_user_for_contact(db, token.contact_id)
+    if user is None:
+        return None
+    if not _claim_portal_link(token.contact_id, verified_at):
+        return None
+
+    user.last_sign_in_at = now
+    db.add(user)
+    db.commit()
+
+    session_row = mint_session(
+        db,
+        str(user.id),
+        user_agent=user_agent,
+        ip_address=ip_address,
+        auth_method="portal_link",
     )
     return build_login_response(db, user, session_row)

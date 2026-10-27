@@ -229,6 +229,9 @@ class PortalTokenInfoResponse(BaseModel):
     name: Optional[str] = None
     masked_phone: Optional[str] = None
     whatsapp_number: Optional[str] = None
+    # PORTAL-P1-SESSION-LINK: the contact has one eligible CRM user, so the verify card also
+    # opens a CRM session after the code. A boolean only: no user id, email or name leaks.
+    has_user: bool = False
 
 
 @router.get("/token-info", response_model=PortalTokenInfoResponse)
@@ -264,6 +267,7 @@ def portal_token_info(token: str, db: Session = Depends(get_db)):
         name=hint.get("name"),
         masked_phone=hint.get("masked_phone"),
         whatsapp_number=hint.get("whatsapp_number"),
+        has_user=_contact_has_user(db, row.contact_id),
     )
 
 
@@ -273,6 +277,14 @@ class PortalSlugInfoResponse(BaseModel):
     name: Optional[str] = None
     masked_phone: Optional[str]
     whatsapp_number: Optional[str]
+    has_user: bool = False
+
+
+def _contact_has_user(db: Session, contact_id: str) -> bool:
+    """Same eligibility as the `/auth/portal-link` exchange (PORTAL-P1-SESSION-LINK)."""
+    from app.services.phone_signin_service import eligible_user_for_contact
+
+    return eligible_user_for_contact(db, contact_id) is not None
 
 
 @router.get("/slug-info/{slug}", response_model=PortalSlugInfoResponse)
@@ -284,7 +296,8 @@ def portal_slug_info(slug: str = Path(..., min_length=4, max_length=32), db: Ses
     own WhatsApp (cooldown + daily cap enforced in request_otp). 404 carries
     no detail - never confirm revoked-vs-missing.
     """
-    return PortalSlugInfoResponse(**PortalService(db).slug_info(slug))
+    info = PortalService(db).slug_info(slug)
+    return PortalSlugInfoResponse(**info, has_user=_contact_has_user(db, info["contact_id"]))
 
 
 @router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)

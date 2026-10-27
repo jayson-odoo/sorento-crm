@@ -49,6 +49,12 @@ class PhoneVerifyRequest(BaseModel):
     code: str = Field(..., pattern=r"^\d{6}$")
 
 
+class PortalLinkRequest(BaseModel):
+    """POST /api/v1/auth/portal-link (PORTAL-P1-SESSION-LINK): a just-verified portal token."""
+
+    portal_token: str = Field(..., max_length=255)
+
+
 class SetPasswordRequest(BaseModel):
     """POST /api/v1/auth/password (identity S1, plan 5.3)."""
 
