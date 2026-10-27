@@ -44,3 +44,9 @@ describe('projectCodeLabel on a rejected registration (review round 3)', () => {
     expect(projectCodeLabel({ project_code: 'PPF2610005', approval_state: 'approved' })).toBe('PPF2610005');
   });
 });
+
+describe('projectCodeLabel on a resubmitted registration (RESUBMITTED-STATUS)', () => {
+  it('reads Resubmitted where the code would be', () => {
+    expect(projectCodeLabel({ project_code: null, approval_state: 'resubmitted' })).toBe('Resubmitted');
+  });
+});

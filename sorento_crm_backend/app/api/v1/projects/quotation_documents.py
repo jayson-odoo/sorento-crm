@@ -553,7 +553,7 @@ async def revise_quotation_approval(
         validate_uuid_path(document_id, resource="Quotation")
         _editable_project(db, project_id, current_user)
         document = svc.get_document_or_404(db, project_id, document_id)
-        was_pending = approvals.current_key(db, document) == approvals.STATUS_PENDING
+        was_pending = approvals.current_key(db, document) in approvals.AWAITING_KEYS
         approvals.revise_approval(db, document, current_user["id"], payload.reason)
         reason = " ".join((payload.reason or "").split())
         db.commit()

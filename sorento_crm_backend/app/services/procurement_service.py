@@ -56,6 +56,7 @@ from app.schemas.procurement import (
     SPODocument, SPODocumentLine, SPODocumentRow, SPODocumentContainer,
     refuse_missing_sponsorship_unit_prices,
 )
+from app.services import submission_status
 from app.services.error_handler import (
     AppException,
     handle_not_found,
@@ -6172,6 +6173,11 @@ class StockInquiryService:
             )
         if new_status is None:
             new_status = "new"
+        if new_status == submission_status.SI_REVIEW_STAGE:
+            # Answering the rejection into the review stage is a resubmission
+            # (RESUBMITTED-STATUS). `new` is not a submission yet and
+            # `pending_purchasing` skips the review stage, so both keep their name.
+            new_status = submission_status.RESUBMITTED
 
         column_keys = {a.key for a in inspect(inquiry).mapper.column_attrs}
         immutable = {"id", "created_at", "inquiry_number", "updated_at"}
@@ -6958,7 +6964,9 @@ class StockInquiryService:
     ) -> StockInquiry:
         """Move inquiry from pending_project_sales to pending_purchasing."""
         inquiry = self.get_inquiry(inquiry_id)
-        if inquiry.status != "pending_project_sales":
+        if not submission_status.is_awaiting_review(
+            inquiry.status, submission_status.SI_REVIEW_STAGE
+        ):
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot approve when status is {inquiry.status}. Expected: pending_project_sales.")
         inquiry.status = "pending_purchasing"
@@ -7032,7 +7040,9 @@ class StockInquiryService:
         """Move inquiry from pending_project_sales to rejected."""
         from datetime import datetime, timezone
         inquiry = self.get_inquiry(inquiry_id)
-        if inquiry.status != "pending_project_sales":
+        if not submission_status.is_awaiting_review(
+            inquiry.status, submission_status.SI_REVIEW_STAGE
+        ):
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_project_sales.")
         inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()
@@ -8782,6 +8792,17 @@ class PurchaseRequestService:
                 if updated
                 else "A new request has been created and requires your review."
             )
+        resubmitted = integration_action == "resubmitted"
+        if resubmitted:
+            # A portal submit answering a rejection (RESUBMITTED-STATUS).
+            noun = {
+                "purchase_request": "purchase request",
+                "sponsorship_form": "sponsorship form",
+            }.get(rt, "request")
+            title = f"{noun[0].upper()}{noun[1:]} resubmitted"
+            kind_sentence = (
+                f"A previously rejected {noun} has been resubmitted and requires your review."
+            )
         base_url = (base_url_override or "").strip().rstrip("/")
         if not base_url:
             base_url = (settings.frontend_base_url or "").strip().rstrip("/")
@@ -8817,7 +8838,11 @@ class PurchaseRequestService:
         title = rendered["subject"]
         body_plain = rendered["body_text"]
         body_html = rendered["body_html"]
-        event_type = "external_updated" if updated else "external_created"
+        event_type = (
+            "external_resubmitted"
+            if resubmitted
+            else ("external_updated" if updated else "external_created")
+        )
         notif_type = "purchase_request_updated" if updated else "purchase_request_created"
         notif_svc = NotificationService(self.db)
         first_uid = user_ids[0]
@@ -9169,6 +9194,16 @@ class PurchaseRequestService:
                 )
             elif status_val in ("pending", "approved", "rejected"):
                 q = q.filter(PurchaseRequestHeader.approval_status == status_val)
+            elif status_val == "resubmitted":
+                # A lifecycle status, not an approval one: what the list pill reads
+                # while no approval decision has been recorded since the resubmit.
+                q = q.filter(
+                    PurchaseRequestHeader.status == "resubmitted",
+                    or_(
+                        PurchaseRequestHeader.approval_status.is_(None),
+                        PurchaseRequestHeader.approval_status == "",
+                    ),
+                )
 
         sort_map = {
             "submitted_at": PurchaseRequestHeader.submitted_at,

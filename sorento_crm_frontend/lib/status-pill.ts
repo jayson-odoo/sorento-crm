@@ -9,6 +9,9 @@ const STATUS_PILL_CLASS: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
   new: 'bg-muted text-muted-foreground',
   submitted: 'bg-sky-100 text-sky-800',
+  // Submitted again after a rejection. Still back with us and wanting a decision,
+  // so it stays in the sky family, one step over so an appeal is told apart.
+  resubmitted: 'bg-cyan-100 text-cyan-800',
   pending: 'bg-amber-100 text-amber-800',
   pending_approval: 'bg-amber-100 text-amber-800',
   pending_project_sales: 'bg-amber-100 text-amber-800',

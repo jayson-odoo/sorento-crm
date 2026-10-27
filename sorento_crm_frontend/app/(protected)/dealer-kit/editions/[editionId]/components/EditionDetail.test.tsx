@@ -79,6 +79,7 @@ const mockPublish = vi.mocked(publishEdition);
 const LABELS: Record<EditionStatus, string> = {
   draft: 'Draft',
   pending_approval: 'Pending approval',
+  resubmitted: 'Resubmitted',
   approved: 'Approved',
   rejected: 'Rejected',
   done: 'Done',
@@ -401,5 +402,25 @@ describe('EditionDetail, what changed since last time', () => {
     const counts = await screen.findByTestId('dk-ed-change-counts');
     expect(counts).toHaveTextContent(/no longer available/i);
     expect(screen.queryByTestId('dk-ed-dropped')).toBeNull();
+  });
+});
+
+describe('EditionDetail, a resubmitted Edition (RESUBMITTED-STATUS)', () => {
+  it('pairs Approve with Reject exactly as it does while pending', async () => {
+    mockGet.mockResolvedValue(edition('resubmitted'));
+
+    renderDetail();
+    await screen.findByText('Spring 2026');
+
+    expect(headerActions()).toEqual(['Approve', 'Reject']);
+  });
+
+  it('offers Resubmit for approval on a reopened Edition that still carries its reason', async () => {
+    mockGet.mockResolvedValue(edition('draft', { rejectionReason: 'Prices on page 4 are wrong' }));
+
+    renderDetail();
+    await screen.findByText('Spring 2026');
+
+    expect(headerActions()).toEqual(['Resubmit for approval']);
   });
 });

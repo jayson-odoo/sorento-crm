@@ -269,6 +269,28 @@ describe('who sees which next action', () => {
     ).toBeInTheDocument();
   });
 
+  it('treats a resubmitted application like a submitted one (RESUBMITTED-STATUS)', () => {
+    state.data = detail({ status: 'resubmitted', status_label: 'Resubmitted' });
+    state.userId = 'u-approver';
+    state.perms = new Set(['procurement.new_product_applications.approve']);
+    render(<Page />);
+    expect(button(/^approve$/i)).toBeInTheDocument();
+    expect(button(/^reject$/i)).toBeInTheDocument();
+    expect(
+      screen.getByText(
+        /Locked: Revise to change it; it goes back to Draft and needs approval again\./,
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it('labels the applicant\'s send button Resubmit on a rejected application', () => {
+    state.data = detail({ status: 'rejected', status_label: 'Rejected', reject_reason: 'x' });
+    state.perms = new Set(['procurement.new_product_applications.create']);
+    render(<Page />);
+    expect(button(/^resubmit$/i)).toBeInTheDocument();
+    expect(button(/^submit$/i)).not.toBeInTheDocument();
+  });
+
   it('asks for a reason before Reject goes through', async () => {
     state.data = detail({ status: 'submitted', status_label: 'Submitted' });
     state.userId = 'u-approver';
@@ -321,7 +343,8 @@ describe('a portal-sourced application on the staff side', () => {
     expect(
       screen.queryByRole('link', { name: 'Edit' }),
     ).not.toBeInTheDocument();
-    expect(button(/^submit$/i)).toBeInTheDocument();
+    // A rejected application goes back as a resubmission (RESUBMITTED-STATUS).
+    expect(button(/^resubmit$/i)).toBeInTheDocument();
   });
 });
 

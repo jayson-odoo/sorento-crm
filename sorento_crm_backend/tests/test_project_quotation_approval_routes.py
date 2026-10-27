@@ -252,6 +252,7 @@ def test_the_approval_graph_is_readable_by_anyone_who_can_see_a_project(api):
         "draft",
         "rejected",
         "pending_approval",
+        "resubmitted",
         "approved",
         "issued",
     }
@@ -362,7 +363,8 @@ def test_reject_requires_a_reason_and_hands_it_back_on_the_document(api):
         json={"to_status_id": _status_id(db, "pending_approval")},
     )
     assert again.status_code == 200, again.text
-    assert again.json()["approval_status_key"] == "pending_approval"
+    # RESUBMITTED-STATUS (owner, 27 Oct): the resubmit lands on its own rung.
+    assert again.json()["approval_status_key"] == "resubmitted"
     assert again.json()["approval_rejected_reason"] is None
 
 
