@@ -239,8 +239,13 @@ def _strip_entity_stopwords(token: str) -> str:
     if " " not in raw:
         return token
     parts = [p for p in raw.split() if p]
-    kept = [p for p in parts if p.lower().strip(_TOKEN_PUNCT_STRIP) not in _ENTITY_STOPWORDS]
-    cleaned = " ".join(kept).strip()
+    # Only the ends: a noise word INSIDE a name ("ZZT RANK CUSTOMER SDN BHD") is part of that name.
+    noise = [p.lower().strip(_TOKEN_PUNCT_STRIP) in _ENTITY_STOPWORDS for p in parts]
+    first = next((i for i, n in enumerate(noise) if not n), None)
+    if first is None:
+        return token
+    last = max(i for i, n in enumerate(noise) if not n)
+    cleaned = " ".join(parts[first : last + 1]).strip()
     return cleaned or token
 
 
