@@ -217,7 +217,12 @@ def test_headers_single_value_still_reads(client, world, param, val):
 @pytest.mark.parametrize("param,val", HEADER_FILTERS)
 def test_headers_comma_joined_is_a_union(client, world, param, val):
     o = world[2]
-    got = _header_ids(client, world, [(param, f"{val(o, 'a')},{val(o, 'c')}")])
+    if param == "project":
+        # Free-text titles ride repeated params (a title may hold a comma), never comma-joined.
+        pairs = [(param, val(o, "a")), (param, val(o, "c"))]
+    else:
+        pairs = [(param, f"{val(o, 'a')},{val(o, 'c')}")]
+    got = _header_ids(client, world, pairs)
     assert got == {o["a"]["inquiry"].id, o["c"]["inquiry"].id}
 
 
