@@ -37,6 +37,7 @@ export and a snapshot show stays identical.
 - AC-SDP-B3: Holds are bucketed by product once per pass, not filtered from the full list once
   per product (perf, measured by the harness, not a CI assertion).
 - AC-SDP-B4: Same equality bar as PR1: side-by-side harness, zero differences vs PR1's head.
+
 ## PR3: read ids as text on the board's heavy reads (D), branch crew/stockdebt-perf-c stacked on PR2
 
 Measured on the dev copy (PR2 head, default view): 233k UUID cells fetched per request, each
