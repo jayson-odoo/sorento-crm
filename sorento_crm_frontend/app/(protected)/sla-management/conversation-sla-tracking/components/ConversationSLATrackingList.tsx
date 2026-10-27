@@ -25,7 +25,7 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
@@ -598,7 +598,7 @@ export default function ConversationSLATrackingList() {
                     renderTriggerLabel={(chosen) =>
                       chosen.length ? (
                         <span className="block truncate">
-                          {multiChipLabel('Assignee', chosen.map((o) => o.label))}
+                          {multiChipLabel('Assignee', idFilterLabels(chosen))}
                         </span>
                       ) : (
                         <span className="text-muted-foreground">Assignee: any</span>

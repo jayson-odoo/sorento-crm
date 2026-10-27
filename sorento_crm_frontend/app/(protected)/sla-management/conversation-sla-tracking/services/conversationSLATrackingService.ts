@@ -437,6 +437,8 @@ export interface TeamPendingItem extends MyPendingSLAItem {
 
 export interface TeamPendingResponse {
   data: TeamPendingItem[];
+  /** Every team the caller can see, before any filter, for the Team filter's options. */
+  teams: { id: string; name: string }[];
   total: number;
   page: number;
   limit: number;

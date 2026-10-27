@@ -272,7 +272,7 @@ export default function ChatHistoryPage() {
 
   // Called as a function, not mounted as a component: a component declared here would remount on
   // every render and close the open Filters menu each time a filter changed.
-  const GridToolbar = () => {
+  const renderGridToolbar = () => {
     const applySearch = () => {
       setSearchQuery(inputValue);
       resetPage();
@@ -444,7 +444,7 @@ export default function ChatHistoryPage() {
           }
         >
           <Card>
-            {GridToolbar()}
+            {renderGridToolbar()}
             <CardTable>
               <DataGridTable />
             </CardTable>

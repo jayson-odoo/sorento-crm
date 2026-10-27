@@ -462,6 +462,7 @@ export default function TopicAuditScreen() {
                     options={subjectOptions}
                     clearable
                     placeholder="All subjects"
+                    aria-label="Subject"
                   />
                 </div>
               </div>

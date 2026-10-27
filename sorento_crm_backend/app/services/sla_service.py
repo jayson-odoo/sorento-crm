@@ -1553,11 +1553,26 @@ class ConversationSLATrackingService:
         from sqlalchemy.orm import joinedload
         from app.models.user import User
 
+        from app.models.access import Team
+
         visible_team_ids = self._visible_team_ids(user_id)
+        # Every team the caller can see, before any filter narrows the rows, so the Team filter's
+        # options do not shrink once a filter is on.
+        teams = (
+            [
+                {"id": str(t.id), "name": t.name}
+                for t in self.db.query(Team)
+                .filter(Team.id.in_(list(visible_team_ids)))
+                .order_by(Team.name)
+                .all()
+            ]
+            if visible_team_ids
+            else []
+        )
         member_ids = self._members_of_teams(visible_team_ids)
         member_ids.discard(str(user_id))  # exclude self
         if not member_ids:
-            return {"data": [], "total": 0, "page": page, "limit": limit}
+            return {"data": [], "total": 0, "page": page, "limit": limit, "teams": teams}
 
         # Optional team filter: restrict to members of that single team (must be in
         # the visible set, else it yields nothing).
@@ -1570,7 +1585,7 @@ class ConversationSLATrackingService:
             assignee = [assignee] if isinstance(assignee, str) else assignee
             member_ids = {m for m in member_ids if m in {str(a) for a in assignee}}
         if not member_ids:
-            return {"data": [], "total": 0, "page": page, "limit": limit}
+            return {"data": [], "total": 0, "page": page, "limit": limit, "teams": teams}
 
         base = (
             self.db.query(ConversationSLATracking)
@@ -1660,7 +1675,7 @@ class ConversationSLATrackingService:
             start = max(0, (page - 1) * limit)
             data = data[start : start + limit]
 
-        return {"data": data, "total": total, "page": page, "limit": limit}
+        return {"data": data, "total": total, "page": page, "limit": limit, "teams": teams}
 
     def _push_respond_assignee(
         self, tracking: ConversationSLATracking, new_respond_user_id: Optional[str]

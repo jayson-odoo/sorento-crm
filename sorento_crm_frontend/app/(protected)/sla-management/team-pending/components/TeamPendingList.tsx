@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
@@ -69,13 +69,12 @@ export default function TeamPendingList() {
 
   const rows = useMemo(() => data?.data ?? [], [data]);
 
-  // Team filter options: distinct {team_id, team_label} from the rows loaded so far. A filter
-  // narrows the rows, so teams once seen are kept: choosing one team must not hide the others.
-  const seenTeams = useRef(new Map<string, string>());
-  const teamOptions = useMemo(() => {
-    rows.forEach((r) => seenTeams.current.set(r.team_id, r.team_label));
-    return Array.from(seenTeams.current.entries()).map(([id, label]) => ({ id, label }));
-  }, [rows]);
+  // Team filter options: every team the caller can see, from the server, so a filter that
+  // narrows the rows never narrows the options.
+  const teamOptions = useMemo(
+    () => (data?.teams ?? []).map((t) => ({ id: t.id, label: t.name })),
+    [data],
+  );
 
   const mutatingId =
     (takeoverMutation.isPending && takeoverMutation.variables?.id) ||
