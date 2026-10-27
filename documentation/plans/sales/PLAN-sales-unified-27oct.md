@@ -167,11 +167,6 @@ As built (each one a thing the kernel could not express):
   Channel filter). The Excel month sheets are the kernel's detail-per-month sheets; a pivot per
   month is the screen with that month as the period.
 
-- **None for the blocks, the YTD or the Report total.** Blocks are `sheet_per` on the Channel
-  param; YTD is the period; the AutoCount-only total is the Channel filter with the non-AutoCount
-  buckets unticked.
-- **`Column.agg = "count_distinct"`** if the kernel lacks it, for Top selling's Documents column
-  (checked during the build; dropped from the report if it needs more than that).
 
 ### 2.9 Round 3: fix the sales order type at the source (crew finding, 27 Oct)
 
