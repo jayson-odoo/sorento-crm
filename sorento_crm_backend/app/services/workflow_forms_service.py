@@ -11,6 +11,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, desc, func, or_
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.multi_value import multi_values
 from app.models.user import UserRoleAssignment
 from app.models.workflow_forms import (
     WorkflowFormDefinition,
@@ -574,7 +575,7 @@ class WorkflowFormsService:
         page: int = 1,
         limit: int = 50,
         definition_id: Optional[str] = None,
-        state_code: Optional[str] = None,
+        state_code: Optional[Any] = None,
         query: Optional[str] = None,
         sort_field: str = "updated_at",
         sort_dir: str = "desc",
@@ -587,8 +588,9 @@ class WorkflowFormsService:
         filters = []
         if definition_id:
             filters.append(WorkflowSubmission.definition_id == definition_id)
-        if state_code and state_code.strip():
-            filters.append(WorkflowSubmission.current_state_code == state_code.strip())
+        codes = multi_values(state_code)
+        if codes:
+            filters.append(WorkflowSubmission.current_state_code.in_(codes))
         if query and query.strip():
             like = f"%{query.strip()}%"
             q = q.outerjoin(
