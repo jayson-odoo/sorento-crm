@@ -31,6 +31,7 @@ the owner wants it there.
 """
 from __future__ import annotations
 
+import dataclasses
 from typing import Any, List, Optional
 
 import sqlalchemy as sa
@@ -77,14 +78,27 @@ _BY_DOC_NUMBER = (
 CHANNEL_EXPR = sa.func.coalesce(_BY_LINE_LINK, SalesOrder.demand_class, _BY_DOC_NUMBER)
 
 
-def _fixed_filters() -> List[Any]:
-    """The predicates that define which DO lines exist at all (AC-SR-20)."""
-    return [
+#: The pending-delivery variant (REPORT-UNIFY): the same DO lines, only those of a DO not yet delivered.
+PENDING_KEY = "delivery_order_lines_pending"
+
+
+def _fixed_filters(ctx: Any) -> List[Any]:
+    """The predicates that define which DO lines exist at all (AC-SR-20); the pending variant
+    adds `order_service`'s own "not delivered" predicate (a delivered status with no date is NOT
+    delivered)."""
+    preds: List[Any] = [
         Order.is_cancelled.is_(False),
         Order.deleted_at.is_(None),
         Order.order_date.isnot(None),
         ~Order.order_number.like("REP%"),
     ]
+    if ctx.definition.key == PENDING_KEY:
+        from app.services import order_service
+
+        pending = order_service._outstanding_clause(order_service._delivered_status_ids(ctx.db))
+        if pending is not None:
+            preds.append(pending)
+    return preds
 
 
 def _do_level_filters(ctx: Any) -> List[Any]:
@@ -148,7 +162,7 @@ def _line_amounts(ctx: Any) -> Any:
         )
         .select_from(OrderLine)
         .join(Order, Order.id == OrderLine.order_id)
-        .where(sa.and_(*_fixed_filters(), *_do_level_filters(ctx)))
+        .where(sa.and_(*_fixed_filters(ctx), *_do_level_filters(ctx)))
         .subquery("do_lines")
     )
     share = sa.case(
@@ -194,7 +208,7 @@ def _base(ctx: Any) -> sa.Select:
         .outerjoin(Warehouse, Warehouse.id == OrderLine.warehouse_id)
         .outerjoin(SalesOrder, SalesOrder.id == Order.sales_order_id)
         .outerjoin(SalesAgent, SalesAgent.id == SalesOrder.sales_agent_id)
-        .where(sa.and_(*_fixed_filters()))
+        .where(sa.and_(*_fixed_filters(ctx)))
     )
 
 
@@ -317,4 +331,13 @@ DEFINITION = reg.ReportDefinition(
     module_key="order_management",
 )
 
+#: Delivery order lines of DOs not yet delivered: the chatbot's `pending_delivery` basis (never
+#: registered on the Reports screen). The columns, base and params are the delivered ones.
+PENDING_DATASET = dataclasses.replace(DATASET, key=PENDING_KEY)
+PENDING_DEFINITION = dataclasses.replace(
+    DEFINITION, key=PENDING_KEY, title="Pending delivery", dataset=PENDING_DATASET,
+    pivot=reg.PivotLayout(title="Pending delivery"),
+)
+
 reg.validate(DEFINITION)
+reg.validate(PENDING_DEFINITION)

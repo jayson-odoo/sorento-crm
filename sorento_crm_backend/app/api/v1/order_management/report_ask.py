@@ -34,7 +34,7 @@ from app.services import contact_asker
 from app.schemas.report_ask import ReportAskChatResponse, ReportAskResponse
 from app.services.contact_brand_scope import contact_brand_scope
 from app.services.error_handler import AppException, handle_not_found
-from app.services.reports import ask
+from app.services.reports import ask, spec_set
 from app.services.sales_report_service import TOP_SELLING_N_CEILING, _resolve_products
 from app.services.uuid_list_param import parse_uuid_list
 
@@ -59,7 +59,7 @@ _PARAMS = frozenset(
     {
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
-        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine",
+        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine", "spec",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -213,12 +213,18 @@ def _response(data: dict) -> JSONResponse:
 @router.get("/report-ask")
 def report_ask(
     request: Request,
-    date_from: Optional[date] = Query(None, description="First day of the period (ISO). Required."),
-    date_to: Optional[date] = Query(None, description="Last day of the period (ISO). Required."),
+    date_from: Optional[date] = Query(
+        None, description="First day of the period (ISO). Required, except on outstanding / pending_delivery / unpaid."
+    ),
+    date_to: Optional[date] = Query(
+        None, description="Last day of the period (ISO). Required, except on outstanding / pending_delivery / unpaid."
+    ),
     basis: str = Query(
         DEFAULT_BASIS,
-        description="delivered | ordered | outstanding. All three rank sales order lines (the SO's own agent), "
-        "dated by the line's required date, else the SO date.",
+        description="delivered | ordered | outstanding | pending_delivery | unpaid. The first three rank sales order "
+        "lines (the SO's own agent), dated by the line's required date, else the SO date; pending_delivery ranks the "
+        "lines of delivery orders not yet delivered (by DO date); unpaid sums what posted invoices still owe (by "
+        "document date; no product, place or channel axis).",
     ),
     measure: str = Query(
         "amount",
@@ -226,7 +232,8 @@ def report_ask(
     ),
     group_by: Optional[str] = Query(
         None,
-        description="customer | product | brand | category | sales_agent | location | channel | month. Absent = one total.",
+        description="customer | product | brand | category | sales_agent | location | channel | month | spec:<key>. "
+        "Absent = one total.",
     ),
     top_n: Optional[int] = Query(None, description=f"1 to {TOP_SELLING_N_CEILING}. Required with group_by."),
     sort: str = Query("desc", description="desc (top) | asc (bottom)."),
@@ -247,6 +254,11 @@ def report_ask(
         None, description="previous_period (the same number of days just before) | last_year (the same dates)."
     ),
     mine: bool = Query(False, description="A salesperson's own customers only."),
+    spec: Optional[list[str]] = Query(
+        None,
+        description="key:value product spec; the same key repeated = any of, different keys = all of. "
+        "Applied through the spec registry (a number may carry its unit).",
+    ),
     subjects: Optional[list[str]] = Query(None, description="Chat only: subject (domain) codes."),
     askers: Optional[list[str]] = Query(None, description="Chat only: dealer | salesperson | staff | unclassified."),
     contact_id: Optional[str] = Query(None, description="Respond.io contact id. Required with space_id."),
@@ -280,6 +292,10 @@ def report_ask(
         if key not in _PARAMS:
             raise _unprocessable(f"Unknown parameter '{key}'", "unknown_param", key)
 
+    # An outstanding basis may leave the period off (both dates or neither): absent = every date.
+    all_dates = (basis or "").strip().lower() in ask.OPEN_BASES and date_from is None and date_to is None
+    if all_dates:
+        date_from, date_to = date(_MIN_YEAR, 1, 1), date(_MAX_YEAR, 12, 31)
     if date_from is None or date_to is None:
         raise _unprocessable("date_from and date_to are required", "period_required")
     if not all(_MIN_YEAR <= d.year <= _MAX_YEAR for d in (date_from, date_to)):
@@ -288,6 +304,10 @@ def report_ask(
         )
     if date_from > date_to:
         raise _unprocessable("date_from is after date_to", "date_range_inverted")
+    try:
+        spec_terms = spec_set.parse(spec or [])
+    except ValueError as exc:
+        raise _unprocessable(f"'{exc}' is not key:value", "invalid_spec", "spec") from exc
 
     basis_norm = (basis or "").strip().lower()
     if basis_norm not in ask.CATALOGUE["sales"]:
@@ -299,11 +319,17 @@ def report_ask(
     if sort_norm not in ("desc", "asc"):
         raise _unprocessable(f"Unknown sort '{sort}'", "unknown_sort", _allowed(("desc", "asc")))
     group_norm = (group_by or "").strip().lower() or None
-    if group_norm is not None and group_norm not in ask.CATALOGUE["sales"][basis_norm]["dimensions"]:
-        raise _unprocessable(
-            f"Unknown group_by value '{group_by}'", "unknown_group_by",
-            _allowed(ask.CATALOGUE["sales"][basis_norm]["dimensions"]),
-        )
+    dimensions = ask.CATALOGUE["sales"][basis_norm]["dimensions"]
+    spec_group = group_norm is not None and group_norm.startswith(ask.SPEC_GROUP)
+    spec_key = group_norm[len(ask.SPEC_GROUP):] if spec_group else None
+    spec_rows = spec_set.registry(db) if spec_group else {}
+    if group_norm is not None and not (
+        ("product" in dimensions and spec_key in spec_rows) if spec_group else group_norm in dimensions
+    ):
+        raise _unprocessable(f"Unknown group_by value '{group_by}'", "unknown_group_by", _allowed(dimensions))
+    if spec_group and measure_norm in ask.COUNT_MEASURES:
+        # Distinct counts do not add up across the products of a group.
+        raise _unprocessable("A spec breakdown ranks by amount or qty", "unknown_measure", _allowed(ask.MEASURES))
     if group_norm is not None and top_n is None:
         raise _unprocessable("A ranking needs top_n", "top_n_required")
     if top_n is not None and not 1 <= top_n <= TOP_SELLING_N_CEILING:
@@ -311,6 +337,8 @@ def report_ask(
     compare_norm = (compare_to or "").strip().lower() or None
     if compare_norm is not None and compare_norm not in ask.COMPARE_TO:
         raise _unprocessable(f"Unknown compare_to '{compare_to}'", "unknown_compare_to", _allowed(ask.COMPARE_TO))
+    if compare_norm is not None and all_dates:
+        raise _unprocessable("compare_to needs a period", "period_required", "date_from, date_to")
     if compare_norm is not None and (group_by or "").strip().lower() == "month":
         # Rows are matched by name and a month's name is its month: nothing would match.
         raise _unprocessable("compare_to does not apply to a month breakdown", "compare_by_month", "compare_to")
@@ -372,6 +400,17 @@ def report_ask(
     brand_scope = contact_brand_scope(db, contact_id, space_id)
     if brand_scope:
         set_brand_scope(db, brand_scope)
+        if basis_norm == "unpaid":
+            # A document has no brand: a brand-scoped contact cannot be held to its brands here.
+            raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
+    per_document = basis_norm == "unpaid"
+    hidden: set[str] = set()
+    if (spec_terms and not per_document) or spec_group:
+        from app.services.spec_visibility import contact_hidden_keys
+
+        hidden = contact_hidden_keys(db, contact_id, space_id)
+    if spec_group and spec_key in hidden:
+        raise _unprocessable(f"Unknown group_by value '{group_by}'", "unknown_group_by", _allowed(dimensions))
 
     common = {
         "basis": basis_norm,
@@ -379,9 +418,9 @@ def report_ask(
         "measure": measure_norm,
         "sort": sort_norm,
         "group_by": group_norm,
-        "group_label": ask.GROUP_LABELS[group_norm] if group_norm else None,
-        "date_from": date_from.isoformat(),
-        "date_to": date_to.isoformat(),
+        "group_label": spec_rows[spec_key].label if spec_group else ask.GROUP_LABELS[group_norm] if group_norm else None,
+        "date_from": None if all_dates else date_from.isoformat(),
+        "date_to": None if all_dates else date_to.isoformat(),
     }
 
     from app.services import rate_limit
@@ -415,7 +454,7 @@ def report_ask(
         if outside:
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
 
-    if scoped is None and resolved and not narrowed and group_norm in ("product", "category"):
+    if scoped is None and resolved and not narrowed and (group_norm in ("product", "category") or spec_group):
         # REPORT-SMART-L R1: an item / category ranking is refused to a contact that is neither staff, linked
         # to a customer nor narrowed to a salesperson's own book (a granted salesperson without `mine` is not), as the top selling route refuses it (`orders.py`).
         from app.services import contact_customer_scope as scope_mod
@@ -485,23 +524,43 @@ def report_ask(
         channel=channel_norm,
         card_agents=card_agents,
     )
+    not_applied: list[dict[str, str]] = []
+    spec_ids: Optional[list[str]] = None
+    if per_document:
+        # A document has no product, place or channel: those words are answered under `not_applied`.
+        not_applied = [{"filter": "spec", "value": f"{k}:{v}", "reason": "per_document"} for k, v in spec_terms]
+        for entry in [e for e in echo if e["key"] in ask.PER_DOCUMENT_FILTERS]:
+            echo.remove(entry)
+            not_applied.append({"filter": entry["key"], "value": ", ".join(entry["values"]), "reason": "per_document"})
+    elif spec_terms:
+        spec_ids, spec_values, not_applied = spec_set.resolve(db, spec_terms, hidden, grants)
+        if spec_values:
+            echo.append({"key": "spec", "label": ask.FILTER_LABELS["spec"], "values": spec_values})
+        if spec_ids is not None:
+            # ANDed with the named products, never widening them (an empty AND is zero rows in `run_ask`).
+            product_filter = spec_ids if product_filter is None else [i for i in product_filter if i in set(spec_ids)]
     if narrowed:
         echo.append({"key": "book", "label": _BOOK_LABEL, "values": [_BOOK_VALUE]})
+    if spec_ids is not None and not spec_ids:
+        return _response(
+            {**ask._empty("no_products", "No product has that specification."), **common, "filters": echo,
+             "not_applied": not_applied}
+        )
 
     filters: dict[str, list[str]] = {}
     if customers or narrowed:
         filters["customer"] = customers
-    if product_filter is not None:
+    if product_filter is not None and not per_document:
         filters["product"] = product_filter
-    if brands:
+    if brands and not per_document:
         filters["brand"] = brands
-    if categories:
+    if categories and not per_document:
         filters["category"] = categories
     if agents:
         filters["sales_agent"] = agents
     if card_agents:
         filters["customer_agent"] = card_agents
-    if channel_norm:
+    if channel_norm and not per_document:
         filters["channel"] = [channel_norm]
 
     from app.services.stock_visibility import resolve_policy
@@ -551,7 +610,7 @@ def report_ask(
             _fill = None
         if _fill is not None:
             data = {**data, "sales_agent_fill_rate": _fill}
-    return _response({**data, **common, "filters": echo})
+    return _response({**data, **common, "filters": echo, "not_applied": not_applied})
 
 
 # ----------------------------------------------------------------------- chat (CA-3)
