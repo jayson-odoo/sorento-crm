@@ -116,3 +116,22 @@ def test_so_totals_skip_a_marked_line_and_still_count_other_cancelled_lines(db, 
              status="cancelled")
     db.commit()
     assert _totals(db, prod) == (2, 13, 3), "an unmarked cancelled line counts as today"
+
+
+# ------------------------------------------------- SCM PO detail: figures vs line list
+def test_po_detail_figures_skip_a_marked_line_but_the_line_still_shows(env):
+    from app.services.scm.purchase_order_service import PurchaseOrderService
+
+    w = _push_po(env)
+    env.db.expire_all()
+    before = PurchaseOrderService(env.db).get_one(w.header_id)
+    assert before["line_count"] == 2
+
+    _repush_without_a(env, w)
+
+    env.db.expire_all()
+    after = PurchaseOrderService(env.db).get_one(w.header_id)
+    shown = {str(line["id"]): line for line in after["lines"]}
+    assert w.line_a in shown, "the removed line stays visible, as Cancelled"
+    assert after["line_count"] == 1
+    assert float(after["total_qty"]) == float(before["total_qty"]) / 2
