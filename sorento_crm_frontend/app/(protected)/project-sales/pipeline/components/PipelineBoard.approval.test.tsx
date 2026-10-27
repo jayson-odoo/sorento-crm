@@ -201,3 +201,19 @@ describe('PipelineBoard: nothing moves in or out of the two lanes (RW12)', () =>
     expect(onMove).toHaveBeenCalledWith('p1', 's2');
   });
 });
+
+describe('PipelineBoard: a resubmitted registration (RESUBMITTED-STATUS)', () => {
+  it('waits in the Awaiting approval lane, wearing its own Resubmitted pill', () => {
+    render(
+      <PipelineBoard
+        statuses={STATUSES}
+        projects={[PENDING(), PENDING({ id: 'p-resub', title: 'Resubmitted Tower', approval_state: 'resubmitted' })]}
+        onMove={vi.fn()}
+      />,
+    );
+    const awaiting = lane('Awaiting approval');
+    expect(within(awaiting).getByText('Resubmitted Tower')).toBeInTheDocument();
+    expect(within(awaiting).getByText('Pending Tower')).toBeInTheDocument();
+    expect(within(card('Resubmitted Tower')).getByText('Resubmitted')).toBeInTheDocument();
+  });
+});

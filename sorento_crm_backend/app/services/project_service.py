@@ -52,16 +52,20 @@ APPROVE_REGISTRATIONS_PERMISSION = "projects.registrations.approve"
 
 
 REJECTED_LABEL = "Rejected"
+RESUBMITTED_LABEL = "Resubmitted"
 
 
 def project_label(project) -> str:
-    """The project's code; while it has none, "Rejected" for a refused registration and
-    "Awaiting approval" for any other."""
+    """The project's code; while it has none, "Rejected" for a refused registration,
+    "Resubmitted" for one sent back after a rejection, and "Awaiting approval" for any other."""
     code = (getattr(project, "project_code", None) or "").strip()
     if code:
         return code
-    if getattr(project, "approval_state", None) == APPROVAL_REJECTED:
+    state = getattr(project, "approval_state", None)
+    if state == APPROVAL_REJECTED:
         return REJECTED_LABEL
+    if state == APPROVAL_RESUBMITTED:
+        return RESUBMITTED_LABEL
     return AWAITING_APPROVAL_LABEL
 
 

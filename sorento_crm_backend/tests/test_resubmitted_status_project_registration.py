@@ -69,3 +69,12 @@ def test_an_approver_may_edit_a_resubmitted_registration_like_a_pending_one(worl
         f"{STAFF}/{rid}", json={"title": "CADANGAN BLOK BETA PHASE TWO"}
     )
     assert res.status_code == 200, res.text
+
+
+def test_project_label_reads_resubmitted_where_the_code_would_be():
+    from types import SimpleNamespace
+
+    from app.services.project_service import project_label
+
+    assert project_label(SimpleNamespace(project_code=None, approval_state="resubmitted")) == "Resubmitted"
+    assert project_label(SimpleNamespace(project_code=None, approval_state="pending")) == "Awaiting approval"
