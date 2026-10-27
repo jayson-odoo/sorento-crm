@@ -1255,6 +1255,7 @@ def _lookup_lines(
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
     resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
     database error in one drops only that block (fail closed)."""
+    group = bool(getattr(config, "category_pick", False))
     try:
         # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
@@ -1263,7 +1264,7 @@ def _lookup_lines(
         with db.begin_nested():
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
-                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group,
             )
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)
@@ -1283,7 +1284,7 @@ def _lookup_lines(
                 for h in hits[name]
             ],
         }
-        return lookup_lists.render(hits, group_categories=bool(getattr(config, "category_pick", False))), event
+        return lookup_lists.render(hits, group_categories=group), event
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
         return [], {"pieces": [], "hits": [], "failed": True}
@@ -1320,7 +1321,7 @@ def _span_prep(
 
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
-                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group_categories,
             )
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
@@ -1358,7 +1359,9 @@ def start_lookup_warm(session_factory: Any = None) -> threading.Thread | None:
                 return
             from app.services import product_spec_registry
 
-            rows = lookup_lists.load_rows(db, include_salespeople=True, include_customers=True, customer_ids=None)
+            rows = lookup_lists.load_rows(
+                db, include_salespeople=True, include_customers=True, customer_ids=None, group_categories=False,
+            )
             spec_keys = list_resolver.spec_key_rows(product_spec_registry.active_registry(db))
             db.rollback()
             db.close()
@@ -8660,6 +8663,7 @@ def _run_stages_body(  # noqa: PLR0915
             fallback=fallback_ctx,
             chat_console=_chat_console(envelope),
             user_turn=user_turn,
+            parsed_language=parsed_language,
         )
 
     return TurnResult(
@@ -10048,6 +10052,7 @@ def _run_casual_lane(
     fallback: Any = None,
     chat_console: bool = False,
     user_turn: Any,
+    parsed_language: Any = language_mod.NOT_PARSED,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -10106,7 +10111,7 @@ def _run_casual_lane(
             answer_shape = said.shape
             text = said.text
             if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
-                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language)
+                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language, parsed_language)
                 ack = said.text.strip()
                 # AC-MEM081: an ack stating a figure, code, price or date its own
                 # input never had is replaced by the canned one for the language.
@@ -10147,7 +10152,7 @@ def _run_casual_lane(
             logger.warning("chatbot turn %s: clarifier usage log failed", turn_id, exc_info=True)
     if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
         # The history list needs no model: behind the canned ack it still answers.
-        reply_language = _fallback_language(user_turn, fallback, remembered_before, None)
+        reply_language = _fallback_language(user_turn, fallback, remembered_before, None, parsed_language)
         text = fallback_mod.compose(
             fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
         )
@@ -11097,12 +11102,17 @@ def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: b
 
 
 def _fallback_language(
-    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
+    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None,
+    parsed: Any = language_mod.NOT_PARSED,
 ) -> str:
-    """The fallback reply's language: one the contact STATED this turn, then the message's own
-    words (`UserTurn.typed_line`, what they typed), the clarifier's reading, the conversation's
-    last language, the saved fact."""
+    """The fallback reply's language: one the contact STATED this turn, then (a parsed turn) the parser's own
+    reading of the message and the saved fact, else the message's own words (`UserTurn.typed_line`, what they
+    typed), the clarifier's reading, the conversation's last language, the saved fact."""
     stated = next((s.get("value") for s in fallback.noted if s.get("key") == "language"), None)
+    if parsed is not language_mod.NOT_PARSED:
+        return fallback_mod.pick_language(
+            stated, parsed, fallback.saved_language, (remembered_before or {}).get("reply_language"),
+        )
     return fallback_mod.pick_language(
         stated,
         language_mod.detect(user_turn.typed_line),
