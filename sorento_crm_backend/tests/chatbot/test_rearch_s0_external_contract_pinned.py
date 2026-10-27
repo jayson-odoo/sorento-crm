@@ -11,6 +11,10 @@ One deliberate change since the capture: CHAT-SPEED (18 Oct 2026) added `respond
 `Envelope.ingress` for turns the CRM's own respond.io webhook starts. Additive; no n8n
 caller sends it, and nothing else in the contract moved.
 
+Also deliberate: WA-USERNAME-CONTACTS (27 Oct 2026) added four `branch_kind` values to
+`TurnResponse` (`phone_ask`, `phone_linked`, `phone_ignored`, `phone_handoff`), as AI-ALLOWED-GATE
+(`ai_not_allowed`) and SALES-TARGET-CHAT (`log_opportunity`) did before it. Additive enum members only.
+
 THIS AC IS EXPECTED GREEN RIGHT NOW, by design - it is the guard that later S0/S2/S3
 slices must not silently reshape the outer-loop contract, not a red waiting on new work.
 Said explicitly per the brief's own instruction.
