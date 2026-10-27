@@ -2167,10 +2167,12 @@ def run_fetch(
         and _office_staff(db, contact_id, space_id)
     )
     slot_open = parse_output.get("required_ask") if isinstance(parse_output.get("required_ask"), dict) else {}
-    if sales_analysis_ask and slot_open.get("ask") != sales_company_ask.ASK_NAME:
+    axis_drawn = jsc.js_string(parse_output.get("group_by") or "") in fetch_mod.SALES_ANALYSIS_GROUP_BY
+    if sales_analysis_ask and slot_open.get("ask") != sales_company_ask.ASK_NAME and (axis_drawn or slot_open):
         # SALES-TOTAL-ASK (owner ruling 27 Oct 2026, "total sales should ask"): a sales total naming no basis
         # is asked the ranking's own line, Invoiced first, before anything runs; never defaulted. The answer
         # runs the first message's own ask; outstanding, which the analysis has not, is the report ask's total.
+        # An axis the analysis cannot draw is said first (below), never asked a basis it would not use.
         settled = sales_basis_ask.settle(db, parse_output)
         if settled is not None:
             if trace is not None:
