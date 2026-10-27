@@ -158,3 +158,11 @@ Why: today the list vectors are embedded lazily by the first turn (`lookup_lists
   `tests/conftest.py` turns it off like `CHATBOT_INBOX_SWEEPER_ENABLED`. The warm reads row texts only, in its own
   read session with company scope None (all companies; the texts go only to the per-process vector cache and to the
   same embedding provider a turn already sends them to), and closes the session before embedding.
+- **AC-S3-13 [BE]** (measured 27 Oct 11:2x: a 4,652-text warm on gemini-embedding-001 got HTTP 429 part-way, twice,
+  even paced at one 100-text request per 3 s; one request right after succeeded, so it is a per-minute limit, about
+  30k tokens a minute on the org key by estimate, UNVERIFIED) The background warm (`fill`) retries a chunk that hits a
+  rate limit (Gemini 429, or an OpenAI RateLimitError) after 15, 30 and 60 s, then gives up on that chunk; chunks
+  already stored stay cached; other errors are not retried. The turn path never retries and never sleeps.
+- **AC-S3-14 [BE]** A finished warm logs one INFO line naming the embedder model, the texts cached and the seconds
+  taken ("lookup lists warm: N texts cached on <model> in S s"), so the copy's log shows which embedder is live; a
+  failed warm logs a WARNING.
