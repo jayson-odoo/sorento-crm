@@ -10,7 +10,8 @@ first message's own ask with the basis picked; a named basis runs straight away.
 * T2 lane: a named basis (`sales_basis` or the report key `basis`) runs, no question.
 * T3 engine: "total sales Jan 2026" asks; "1" runs invoiced over Jan 2026.
 * T4 engine: "invoiced" (the parser's `basis`) and "delivered" (`sales_basis`) answer it.
-* T5 engine: "outstanding" runs the report ask's outstanding total, never `crm_sales_analysis`.
+* T5 engine: "outstanding" runs the report ask's outstanding orders by channel (the analysis's own rows),
+  never `crm_sales_analysis`.
 * T6 engine: a contact in two companies is asked the basis, then the company, then it runs with both.
 
 Engine harness: `test_sales_analysis_company_pick.Chat` (real `engine.run_turn`, Postgres; parser,
@@ -72,7 +73,7 @@ def test_t1_a_total_with_no_basis_is_asked_never_run(session_factory):
     result, captured = _lane(**JAN_2026)
     assert captured == [], f"no figure before the basis is answered: {captured}"
     assert BASIS_QUESTION in repr(result), f"the ranking's own basis line: {result}"
-    slot = result.get("required_ask") or {}
+    slot = (result.get("fetch") or {}).get("required_ask") or {}
     assert slot.get("ask") == "sales_basis" and slot.get("asking") == "basis", slot
     assert [o[0] for o in slot.get("options") or []] == ["invoiced", "delivered", "ordered", "outstanding"], slot
 
@@ -175,7 +176,7 @@ def test_t5_outstanding_runs_the_report_ask_never_the_analysis(one):
     assert _calls(captured, ANALYSIS) == [], f"the analysis has no outstanding basis: {captured}"
     asks = _calls(captured, "crm_report_ask")
     assert asks, f"the report ask's outstanding total runs: {captured}"
-    assert asks[0].get("basis") == "outstanding" and not asks[0].get("group_by"), asks[0]
+    assert asks[0].get("basis") == "outstanding" and asks[0].get("group_by") == "channel", asks[0]
     assert asks[0].get("date_from") == "2026-01-01" and asks[0].get("date_to") == "2026-01-31", asks[0]
 
 
