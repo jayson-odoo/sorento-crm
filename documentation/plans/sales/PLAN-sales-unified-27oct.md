@@ -1,7 +1,7 @@
 # PLAN: Sales unified (one sales definition + AutoCount-matching reports)
 
-Status: Build, round 2 (27 Oct 2026): card approved (Lavish 16:12, Q2 to Q5 (a)); Q1 re-ruled (b)
-at 16:2x, card re-cut below. Track: full (size L: migration, new permission slug, finance
+Status: Build, round 3 (27 Oct 2026): card approved (Lavish 16:12, Q2 to Q5 (a)); Q1 re-ruled (b)
+at 16:2x; round 3 (section 2.9) fixes the sales order type at the source, Q6 to Q10 open. Track: full (size L: migration, new permission slug, finance
 figures). crew-lane: SALES-UNIFIED.
 UAC: `sales-unified-27oct-acceptance-criteria.md` alongside. Mock: `mockups/sales-unified-27oct.html`.
 
@@ -153,6 +153,56 @@ None open. Round 1 Q1 to Q5 are ruled (section 0).
 - **`Column.agg = "count_distinct"`** if the kernel lacks it, for Top selling's Documents column
   (checked during the build; dropped from the report if it needs more than that).
 
+### 2.9 Round 3: fix the sales order type at the source (crew finding, 27 Oct)
+
+Crew measured January 2026 Sorento on the dev clone (relayed on the PR): AutoCount sends no order
+type on 4,979 of 5,000 SOs, so the agent's class decides; `sales_agents.demand_class` is hand-typed,
+current-only, undated (`app/services/scm/sales_agent_service.py:224`); an SO's class is stamped once
+at ingest (`app/services/document_ingest_service.py:1178`) and an agent change only fills blank SOs
+(`sales_agent_service.py:145-171`); invoices copy their SO's class. Result: Project matches AutoCount
+within RM 1,245, Dealer is RM 1.76M over because agents in neither AutoCount list (five codes) fall
+into `retail` = Dealer, one agent is `retail` by migration 427 but Project in AutoCount, 13
+dealer-suffix codes have no class, and two agents have a few SOs stamped `project`.
+
+The owner's ruling stands (the type comes from the SO), so this lane fixes the SO's type:
+
+1. **Agent class becomes dated data** (Q6): an agent's class from a month, to a month.
+2. **A third, visible class for agents in neither list** (Q7), next to Set apart (a report-level
+   customer list, unchanged).
+3. **An SO's class follows the agent class in effect on the SO date** (Q8): re-derived when the
+   agent's dated class changes, not stamped forever; an order type AutoCount states still wins.
+   A dry-run backfill reports every SO whose class would change (count and RM per agent per
+   month) before anything is written.
+4. **Data proposal** (Q10): the one agent to `project`, the 13 blank dealer-suffix codes to
+   `retail`, applied by the owner (crew SQL after the dry run), not committed in code.
+
+Questions (crew-ask):
+- **Q6** Where the dated class lives: (a) new `sales.agent_classes` (agent, class, from month, to
+  month; one open row per agent; a Class history grid on the Sales Agents detail); (b) reuse
+  `sales.team_members` with a Dealer team and a Project team; (c) a class plus a since-month on
+  `sales_agents`. **Recommend (a)**: (b) allows one open team per agent, so a Dealer "team" would
+  pull agents out of their real sales team; (c) remembers one change only, so a second move rewrites
+  the past.
+- **Q7** Agents in neither AutoCount list: (a) a third class `other`, shown "Other" everywhere,
+  never counted as Dealer; (b) keep them Dealer. **Recommend (a)** (pending the owner's word on
+  "Other"): it keeps Dealer equal to the AutoCount Dealer figure and nothing is hidden. Side
+  effect: SCM fulfilment priority weighs only `retail` and `project`
+  (`app/services/scm/demand_class.py` docstring: a third class drops out of ranking), so `other`
+  is weighed as `retail` in priority (one mapping in `scm/priority.py`), keeping fulfilment as it
+  is today.
+- **Q8** Keeping SOs right: (a) the stored `sales_orders.demand_class` is re-derived (stated order
+  type, else the agent's class on the SO date, else nothing) at ingest and whenever an agent's dated
+  class changes for the months it covers; every reader (SCM, reports, chatbot) keeps reading the
+  column; (b) compute it at read time everywhere. **Recommend (a)**: one column many readers
+  already use, re-derived where it can go stale. The customer-segment rung is dropped for SOs (the
+  "never guessed" rule): an SO with no stated type and no agent class is "Type not set".
+- **Q9** Invoices: (a) the report reads the SO class through the chain at run time (built in
+  round 2), so a re-derived SO moves its invoices at once; the stored
+  `billing_documents.demand_class` stops being read by sales figures. **Recommend (a)**.
+- **Q10** The data fix (the one agent to `project`, 13 codes to `retail`): (a) crew SQL on the
+  owner's copy after the dry run, then the owner checks the tally; (b) a data migration. **Recommend
+  (a)**: business data, owner-confirmed, kept out of code.
+
 ## 3. Slices (one lane, commits on this branch)
 
 1. **S1 schema + ingest**: one migration (`customers.autocount_debtor_type`,
@@ -164,6 +214,8 @@ None open. Round 1 Q1 to Q5 are ruled (section 0).
 3. **S3 reports**: Sales by debtor type and Top selling items definitions; Yearly comparison
    default Invoiced; sidebar entries.
 4. **S4 other figures**: chatbot / MCP routes on the definitions (2.6), relabels.
+6. **S6 SO type at the source** (round 3, after Q6 to Q10): dated agent classes, `other`, SO
+   re-derivation with a dry-run backfill, Sales Agents class history grid.
 5. **S5 tally**: seeded fictional fixtures (AC-28) plus `scripts/sales_unified_tally.py`, a
    read-only script crew runs on the owner's copy: per bucket per month, with the AutoCount
    agent-list figures beside it and the gap.

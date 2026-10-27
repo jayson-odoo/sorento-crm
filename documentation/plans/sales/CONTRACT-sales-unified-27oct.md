@@ -48,8 +48,9 @@ SQL expression builders over `BillingDocument` (and, for lines, `BillingDocument
 A billing document traces to sales order S (same company) when one of its lines:
 - has `sales_order_line_id` on a line of S; or
 - has `from_doc_type = 'SO'` and `from_doc_no = S.so_number`; or
-- has `from_doc_type = 'DO'` and `from_doc_no` = the `order_number` of a live DO (`orders`,
-  `deleted_at IS NULL`, `is_cancelled = false`) that delivers S (a DO line with
+- has `from_doc_type = 'DO'` and `from_doc_no` = the `order_number` of a DO of the same company
+  with `deleted_at IS NULL` (cancelled DOs still count on this side, as
+  `document_relations.relations_for_billing_document` does) that delivers S (a DO line with
   `sales_order_line_id` on S, a DO line with `from_doc_no = S.so_number` and `from_doc_type` 'SO'
   or NULL, or the DO header `sales_order_id = S.id`).
 A credit or debit note none of whose lines trace inherits the sales orders of its
@@ -105,7 +106,7 @@ A credit or debit note none of whose lines trace inherits the sales orders of it
   `invoiced`; on invoiced the rows come from `engine.run` of `top_selling_items` (rows `item`)
   with `customer_ids`, `category_ids`, `sales_agent_ids`, `brand_ids`, `channel`, `date_from`,
   `date_to` mapped onto its params; `group=category` on invoiced -> 422 `group_needs_order_basis`.
-- `PATCH /api/v1/companies/{id}` accepts `sales_agent_source`.
+- `PUT /api/v1/system/companies/{id}` (and POST) accept `sales_agent_source` (absent = unchanged).
 - Customers push: `market_segment_code` also writes `autocount_debtor_type` (upper, trimmed).
 
 ## 7. The chatbot's report ask (`crm_report_ask`, `GET /api/v1/order-management/report-ask`)
