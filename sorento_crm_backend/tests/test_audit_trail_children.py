@@ -84,20 +84,30 @@ def test_without_flag_only_the_record_itself(seeded):
     assert items[0].entity_type == "complaint"
 
 
-def test_route_names_child_rows_by_their_product_code(seeded, monkeypatch):
-    db, complaint_id, _ = seeded
+def _get(db, monkeypatch, **params):
     monkeypatch.setattr(audit_routes, "_is_audit_admin", lambda db, uid: True)
     app.dependency_overrides[get_db] = lambda: db
     app.dependency_overrides[get_current_user_or_api_key] = lambda: {"id": str(uuid.uuid4())}
     try:
-        res = TestClient(app).get(
-            "/api/v1/audit/logs/", params={"entity_type": "complaint", "entity_id": complaint_id}
-        )
+        res = TestClient(app).get("/api/v1/audit/logs/", params=params)
     finally:
         app.dependency_overrides.pop(get_db, None)
         app.dependency_overrides.pop(get_current_user_or_api_key, None)
     assert res.status_code == 200, res.text
-    rows = res.json()["data"]
+    return res.json()["data"]
+
+
+def test_route_without_the_flag_returns_only_the_record(seeded, monkeypatch):
+    """Other readers (the Packing List Timeline, the admin Audit Logs screen) send
+    entity_type + entity_id too and render every row as the record itself."""
+    db, complaint_id, _ = seeded
+    rows = _get(db, monkeypatch, entity_type="complaint", entity_id=complaint_id)
+    assert [r["entity_type"] for r in rows] == ["complaint"]
+
+
+def test_route_names_child_rows_by_their_product_code(seeded, monkeypatch):
+    db, complaint_id, _ = seeded
+    rows = _get(db, monkeypatch, entity_type="complaint", entity_id=complaint_id, include_children="true")
     assert len(rows) == 3
     children = [r for r in rows if r["entity_type"] == "complaint_product_lines"]
     # The UPDATE carries only the quantity; it is still named by the line's product code.
@@ -106,3 +116,23 @@ def test_route_names_child_rows_by_their_product_code(seeded, monkeypatch):
     # The summary is still served; the FE lists the field diff under it.
     assert header["description"] == "status: rejected → submitted"
     assert header["new_values"]["product_code"] == "CWCY604"
+
+
+def test_child_named_from_the_live_row_when_no_audit_row_on_the_page_carries_it(monkeypatch):
+    """An UPDATE of a line carries only what changed; with no INSERT on the page the
+    product code is read from the line itself."""
+    from app.models.complaints import Complaint, ComplaintProductLine
+
+    with blank_session() as db:
+        # No audited INSERT of the line, so nothing on the page carries its product code.
+        db.info["skip_audit_entity_types"] = {"complaint", "complaint_product_lines"}
+        complaint = Complaint(id=str(uuid.uuid4()), complaint_number="ZZT-CMP-1", status="submitted")
+        db.add(complaint)
+        db.flush()
+        line = ComplaintProductLine(id=str(uuid.uuid4()), complaint_id=complaint.id, product_code="ZZT-LIVE-1")
+        db.add(line)
+        db.flush()
+        _row(db, entity_type="complaint_product_lines", entity_id=line.id, action="UPDATE",
+             old={"quantity": "1"}, new={"quantity": "4"}, root=("complaint", complaint.id), minute=5)
+        rows = _get(db, monkeypatch, entity_type="complaint", entity_id=complaint.id, include_children="true")
+    assert [r["entity_label"] for r in rows] == ["Product line ZZT-LIVE-1"]

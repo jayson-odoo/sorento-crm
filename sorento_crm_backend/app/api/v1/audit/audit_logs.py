@@ -262,6 +262,10 @@ async def get_audit_logs(
     trace_id: Optional[str] = Query(None, description="Filter by request correlation id (groups a multi-row change)"),
     changed_from: Optional[datetime] = Query(None, description="Filter changed_at >= (ISO); e.g. a day bar drill-down"),
     changed_to: Optional[datetime] = Query(None, description="Filter changed_at <= (ISO)"),
+    include_children: bool = Query(
+        False,
+        description="With entity_type + entity_id: also the record's child rows (e.g. a complaint's product lines)",
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -280,8 +284,7 @@ async def get_audit_logs(
         changed_to=changed_to,
         page=page,
         limit=limit,
-        # A record's trail (a detail page's history panel) also shows its child rows.
-        include_children=bool(entity_type and entity_id),
+        include_children=include_children,
     )
     user_ids = list(
         {str(it.user_id) for it in items if it.user_id is not None}
@@ -302,7 +305,7 @@ async def get_audit_logs(
 
     record_labels = entity_labels(db, items)
     status_labels = _status_labels(db, items)
-    if entity_type and entity_id:
+    if include_children and entity_type and entity_id:
         record_labels.update(_child_labels(db, items, entity_type, entity_id))
     data = []
     for it in items:

@@ -192,4 +192,25 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     renderTrail();
     expect(screen.getByTestId('audit-action').textContent).toBe('update');
   });
+
+  it('a status_id move under an unrelated stored description is still listed', () => {
+    mockEntries([
+      entry({
+        entity_type: 'purchase_request',
+        description: 'Approved by procurement',
+        old_values: { status_id: 'f0000000-0000-4000-8000-000000000005' },
+        new_values: { status_id: 'f0000000-0000-4000-8000-000000000006' },
+      }),
+    ]);
+    render(<AuditTrail entityType="purchase_request" entityId={COMPLAINT_ID} />);
+    const lines = screen.getAllByTestId('audit-change-line').map((li) => li.textContent);
+    expect(lines).toEqual(['Approved by procurement', 'Status changed']);
+  });
+
+  it('a page whose rows are all bookkeeping says so instead of "no history"', () => {
+    mockEntries([entry({ old_values: { updated_at: '1' }, new_values: { updated_at: '2' } })]);
+    renderTrail();
+    expect(screen.getByText('No field changes to show.')).toBeInTheDocument();
+    expect(screen.queryByText('No audit history for this record.')).not.toBeInTheDocument();
+  });
 });

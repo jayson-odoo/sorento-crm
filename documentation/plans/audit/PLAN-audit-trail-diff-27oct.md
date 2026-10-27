@@ -29,12 +29,26 @@ alongside `status: rejected -> submitted`, and the record's Audit Trail showed o
    changed" is noise to the reader; the row carries nothing they can act on).
 2. `list_audit_logs(include_children=True)`: with `entity_type` + `entity_id` set, also match
    rows whose `root_entity_type/root_entity_id` is the record (uses `ix_audit_logs_root_entity`).
-   The per-record trail path in `audit_logs.py` passes it. Child rows render with the child's
-   kind and identifying field (e.g. "Product line CWCY604 added").
+   `GET /api/v1/audit/logs` takes it as an explicit opt-in query param (default false), sent only
+   by `services/auditService.ts` (the AuditTrail reader): the Packing List Timeline and the admin
+   Audit Logs screen send entity_type + entity_id too and must keep getting the record only.
+   Child rows are labelled server side ("Product line CWCY604") from the newest audit row that
+   carries an identifying field, else the live child row. AuditTrail reads up to 200 rows,
+   since child rows now share the page.
+3. Owner + Kay add-on (27 Oct ~19:31): an UPDATE moving rejected -> submitted (raw `status`,
+   `approval_status`, `order_status`, or a status-engine summary "Rejected → Submitted") heads its
+   row "Resubmitted by <actor>", field changes listed under it. Derived from the transition, so
+   existing history reads that way with no data change. No new status (a separate lane adds one).
 
 ## Tests
 
 - Backend: `tests/test_audit_trail_children.py` (child row on the parent's trail, other record's
   child excluded, flag off keeps old behaviour).
-- Frontend: `components/audit/AuditTrail.test.tsx` on the two resubmit shapes (status + long
-  text append; status + product code), bookkeeping-only row hidden, child row line.
+- Backend: also the route without the flag returns the record only, and a child named from its
+  live row.
+- Frontend: `components/audit/AuditTrail.diff.test.tsx` on the two resubmit shapes (status + long
+  text append; status + product code), the Resubmitted heading (raw status and status engine),
+  bookkeeping-only row hidden, child row lines, id-valued field, status_id under an unrelated
+  description, all-hidden page.
+
+UAC: `audit-trail-diff-acceptance-criteria.md`.

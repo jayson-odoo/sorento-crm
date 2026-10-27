@@ -19,9 +19,12 @@ import type { AuditLogEntry } from '@/types/audit.types';
 const STATUS_SUMMARY_KEYS = ['status', 'approval_status', 'order_status'];
 
 function summaryCovers(change: AuditFieldChange, entry: AuditLogEntry, summary: string): boolean {
-  if (change.key === 'status_id') return true;
+  // The status-engine summary names the labels: "Status: Draft → Submitted".
+  if (change.key === 'status_id') return /^Status(:| changed to)/.test(summary);
   if (!STATUS_SUMMARY_KEYS.includes(change.key)) return false;
-  return summary.endsWith(`→ ${formatAuditValue(entry.new_values?.[change.key])}`);
+  const to = entry.new_values?.[change.key];
+  // The backend prints a cleared value as "None".
+  return summary.endsWith(`→ ${to == null ? 'None' : formatAuditValue(to)}`);
 }
 
 type ChangeLine = { text: string } | { label: string; before: string; after: string };
@@ -49,6 +52,8 @@ function collectChangeLines(entry: AuditLogEntry, childName: string | null): Cha
   return lines;
 }
 
+const TRAIL_LIMIT = 200;
+
 interface AuditTrailProps {
   entityType: string;
   entityId: string;
@@ -56,7 +61,8 @@ interface AuditTrailProps {
 }
 
 export default function AuditTrail({ entityType, entityId, title = 'Audit Trail' }: AuditTrailProps) {
-  const { data, isLoading } = useAuditLogs(entityType, entityId);
+  // Child rows share the page, so a record's trail reads more than the default 50.
+  const { data, isLoading } = useAuditLogs(entityType, entityId, 1, TRAIL_LIMIT);
 
   if (isLoading) {
     return (
@@ -78,7 +84,7 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
       return { entry, lines: collectChangeLines(entry, childName) };
     })
     .filter((row) => row.lines.length > 0);
-  const empty = rows.length === 0;
+  const empty = data?.empty ?? true;
 
   return (
     <Card>
@@ -88,6 +94,8 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
       <CardContent>
         {empty ? (
           <p className="text-sm text-muted-foreground">No audit history for this record.</p>
+        ) : rows.length === 0 ? (
+          <p className="text-sm text-muted-foreground">No field changes to show.</p>
         ) : (
           <ul className="space-y-4">
             {rows.map(({ entry, lines }) => (
