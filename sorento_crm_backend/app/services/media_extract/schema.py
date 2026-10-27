@@ -118,13 +118,45 @@ class MediaExtractionParseError(ValueError):
     """The provider returned something that is not a JSON object at all."""
 
 
+# How much of the provider's raw output a parse error carries. Enough to see what
+# the model did instead of answering (a refusal, a cut-off object, a list), small
+# enough to sit on the job's `error` column. It is model text about a product
+# photo, never the image itself.
+RAW_SNIPPET_CHARS = 300
+
+
+def raw_snippet(content: Optional[str]) -> str:
+    text = (content or "").strip()
+    if len(text) <= RAW_SNIPPET_CHARS:
+        return text
+    return text[:RAW_SNIPPET_CHARS] + "..."
+
+
+def _unwrap(data: Any) -> Any:
+    """A JSON value that is not an object, read as the object it stands for.
+
+    Prod 27 Oct: a photo came back as `[{...}]` and the whole turn failed. A
+    list yields its first object. `null`, a list with no object in it and a bare
+    string (prose the model put in quotes) yield `{}`, which `parse_extraction`
+    turns into the ordinary "nothing read" reply. Numbers and booleans are left
+    alone so the caller still raises: nothing sensible degrades from `42`.
+    """
+    if isinstance(data, list):
+        return next((item for item in data if isinstance(item, dict)), {})
+    if data is None or isinstance(data, str):
+        return {}
+    return data
+
+
 def parse_provider_json(content: str) -> dict[str, Any]:
     """Decode the provider's text into a JSON object.
 
-    Tolerates the code fence some models emit despite `response_format`, and
-    falls back to the first `{...}` span in the string. Mirrors
-    `ai_extract._parse_json`, minus its AppException coupling: this runs in the
-    worker, where the outcome is a failed job rather than an HTTP status.
+    Tolerates the code fence some models emit despite `response_format`, falls
+    back to the first `{...}` span in the string, and degrades a non-object
+    value per `_unwrap`. Mirrors `ai_extract._parse_json`, minus its
+    AppException coupling: this runs in the worker, where the outcome is a
+    failed job rather than an HTTP status. Every error carries the start of the
+    raw output, because the job's `error` column is the only record of it.
     """
     text = (content or "").strip()
     if not text:
@@ -139,17 +171,21 @@ def parse_provider_json(content: str) -> dict[str, Any]:
         start, end = text.find("{"), text.rfind("}")
         if start == -1 or end == -1 or end <= start:
             raise MediaExtractionParseError(
-                f"The vision model returned non-JSON content: {exc}"
+                f"The vision model returned non-JSON content: {exc}. "
+                f"Raw output: {raw_snippet(content)!r}"
             ) from exc
         try:
             data = json.loads(text[start : end + 1])
         except json.JSONDecodeError as inner:
             raise MediaExtractionParseError(
-                f"The vision model returned non-JSON content: {inner}"
+                f"The vision model returned non-JSON content: {inner}. "
+                f"Raw output: {raw_snippet(content)!r}"
             ) from inner
+    data = _unwrap(data)
     if not isinstance(data, dict):
         raise MediaExtractionParseError(
-            "The vision model returned a non-object JSON value."
+            "The vision model returned a non-object JSON value. "
+            f"Raw output: {raw_snippet(content)!r}"
         )
     return data
 

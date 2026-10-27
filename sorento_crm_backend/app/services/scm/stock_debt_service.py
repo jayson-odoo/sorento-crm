@@ -2642,6 +2642,8 @@ class StockDebtService:
             .filter(
                 PurchaseOrderLine.product_id.in_(product_ids),
                 PurchaseOrder.status != "cancelled",
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                PurchaseOrderLine.removed_unreferenced.is_(False),
             )
         )
         # COMPANY SCOPE, EXPLICITLY, on BOTH tables named in this branch (belt-and-braces,
