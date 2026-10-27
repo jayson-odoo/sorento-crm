@@ -45,9 +45,9 @@ One data migration, `sorento_crm_backend/alembic/versions/oitc_0001_fake_reconfi
 
 ## Out of scope
 
-- 2 sheet rows at one other upload's stamp also sit 8 h after their birth, but that upload
-  created no header, so it left no fake reconfirm and is not one of the two 20 Sep uploads the
-  owner approved. Their acknowledged time stays 8 h late; a new crew ask if it should move.
+- 2 sheet rows at one other upload's stamp also sit 8 h after their birth, but no reconfirm row
+  sits at that stamp (crew dry run), so it put no fake event on the trail, and it is not one of
+  the two 20 Sep uploads the owner approved. Their acknowledged time stays 8 h late; a new crew ask if it should move.
 
 ## Nothing re-creates it
 
