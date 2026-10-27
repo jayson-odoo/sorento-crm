@@ -390,7 +390,7 @@ def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
     return {**verdict, "group_by": None}
 
 
-def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
+def by_capability(verdict: dict[str, Any], *, subject: bool = False) -> dict[str, Any]:
     """Engine seam, before grounding (REPORT-SMART-1021 step 2, REPORT-UNIFY Q1): every sales figure ask
     (`SALES_STATUSES`, any axis the report ask has or none) and every outstanding ask that holds a filter or an
     axis (`as_outstanding`) is a sales ranking, read whole by `settle`: its filters, period, count, metric and
@@ -401,8 +401,11 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     if status == "top_selling":
         return from_top_selling(verdict)
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    if (answer.get("mode") == "pick" and jsc.array(answer.get("picked"))) or jsc.array(verdict.get("reference_positions")):
+        return verdict  # a pick of a position on an open roster answers it, whatever report type the parser also read
     if status in OUTSTANDING_STATUSES:
-        return as_outstanding(verdict)
+        return as_outstanding(verdict, subject=subject)
     if status not in SALES_STATUSES:
         return verdict  # an order / PO list keeps its own grouping; only the report ask's statuses are typed
     verdict = typed_group_by(verdict)  # R6: a null `by_words` names no axis, so the guess routes nothing
@@ -424,13 +427,14 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
-def as_outstanding(verdict: dict[str, Any]) -> dict[str, Any]:
+def as_outstanding(verdict: dict[str, Any], *, subject: bool = False) -> dict[str, Any]:
     """REPORT-UNIFY (Q1, Q2): an outstanding ask that holds a filter or an axis is the report ask's, its kind (the
     basis: undelivered orders, pending delivery or unpaid invoices) the parser's `basis` or the one a
     sales / delivery order document status names; none named is asked, never defaulted. One that holds neither
-    stays the order list. Parser fields only."""
+    stays the order list. `subject`: the caller resolved a row (a named word, or a linked contact's own accounts).
+    Parser fields only."""
     entities = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)]
-    held = any(jsc.js_string(e.get("hint") or "").strip().lower() in _FILTER_HINTS for e in entities)
+    held = subject or any(jsc.js_string(e.get("hint") or "").strip().lower() in _FILTER_HINTS for e in entities)
     verdict = typed_group_by(verdict)
     if not (held or jsc.js_string(verdict.get("group_by") or "").strip().lower() in GROUP_BY):
         return verdict
@@ -1042,6 +1046,13 @@ def _fresh_args(
         # same ones `crm_sales_report` read its prefix off); the engine marks it, never the parser.
         kinds = kinds | {"product"}
     customer_ids = _gate_ids(entities, "customer") if "customer" in kinds else []
+    if not customer_ids:
+        # The engine's scope rows: a linked contact's own accounts ("my ...", or a dealer's ask naming no customer).
+        customer_ids = [
+            u for u in _gate_ids([e for e in jsc.array(entities) if isinstance(e, dict) and e.get("scope")], "customer")
+        ]
+    if "customer" in kinds and not customer_ids and _gate_ids(entities, "product"):
+        kinds = kinds | {"product"}  # a word hinted customer that only resolved as a product (the resolver's own fallback)
     if customer_ids:
         args["customer_ids"] = customer_ids
     if "product" in kinds:
@@ -1089,7 +1100,7 @@ def _given_choices(args: dict[str, Any]) -> dict[str, Any]:
     and a month trend show both measures, so they are never asked the metric (settled as None);
     the basis is always asked unless named. Anything not named is left out, so it is asked."""
     given: dict[str, Any] = {}
-    if not args.get("group_by") or args.get("group_by") == "month" or args.get("basis") in OUTSTANDING_KINDS:
+    if not args.get("group_by") or args.get("group_by") == "month":
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
     elif args.get("measure"):
         given["metric"] = rf.Resolved("ok", value=args["measure"], label=args["measure"])
@@ -1329,6 +1340,14 @@ def settle(
     args, line = _fresh_args(db, parse_output, entities, dealer=dealer)
     if args is None:
         return None, line
+    named = {
+        jsc.js_string(e.get("hint") or "").strip().lower()
+        for e in jsc.array(parse_output.get("entities"))
+        if isinstance(e, dict) and e.get("current_message") is not False
+    } & _FILTER_HINTS
+    if named and parse_output.get("capability_from") and not set(args) - _NON_FILTER_ARGS and not held_product:
+        # A sales total or outstanding ask that NAMED a subject which resolved to no filter would run over everything.
+        return None, CATALOGUE_LINE
     if held_product and not (args.get("product_code") or args.get("product_ids")):
         args.update(held_product)
     if held_channel and not args.get("channel"):
@@ -1357,6 +1376,9 @@ def settle(
     if args.get("compare_to") and args.get("group_by") == "month":
         return None, COMPARE_BY_MONTH_LINE
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
+    if parse_output.get("capability_from") == "outstanding" and args.get("basis") in OUTSTANDING_KINDS:
+        # An outstanding ask that named its kind shows both measures (no "by quantity or by amount?").
+        given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
     period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or held_period
     if period is not None and (parse_output.get("ranking_refine") is not True or args.get("group_by")):
         # A refine with no ranking held has nothing to refine: it is a fresh ask, and a

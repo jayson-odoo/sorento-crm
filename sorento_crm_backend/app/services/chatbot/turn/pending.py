@@ -119,6 +119,10 @@ def ask(
 _HELD_RANKING_KEYS = (
     "group_by", "top_n", "measure", "basis", "rank_direction", "rank_by", "rank_group", "date_filter_start",
     "date_filter_end",
+    # REPORT-UNIFY: a sales total or outstanding ask is this ask too; its channel, its kind (`capability_from`), the
+    # brand / agent / category / spec words and the comparison ride the pick like the rest.
+    "sales_channel", "capability_from", "report_breakdown", "self_reference", "compare_to", "report_ask_words",
+    "report_ask_spec",
 )
 
 

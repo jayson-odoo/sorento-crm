@@ -300,6 +300,9 @@ def _capturing_mcp(response: Any = None):
             return response
         if name == "crm_outstanding_report":
             return _present_response()(name, json.dumps(_report_route_body(response, args)))
+        if name == "crm_report_ask":
+            # REPORT-UNIFY (Q1): the sales and outstanding asks' tool; its route body goes through the presenter too.
+            return _present_response()(name, json.dumps(response))
         if name == "crm_sales_report":
             # Same reason as the `crm_outstanding_report` branch above: the lane reads
             # the PRESENTER's envelope (`has_result`, `response`, `options`), never the
