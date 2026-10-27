@@ -4,59 +4,67 @@ Plan: `documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md`. Templates: `in
 grows with the drills (plan section 12); today it holds the witness sections. Placeholders only:
 no addresses, hostnames or secrets here.
 
-## The witness today: the shared-service box
+## Where the three voters are today
 
-Owner ruling 27 Oct: the third etcd voter runs on the shared-service box for now.
+Owner ruling 27 Oct about 23:55: everything stays in Malaysia for now.
 
-- Runs: `infra/templates/witness/compose.witness.yml` (etcd only) in its own directory, next to
-  that box's own stack, joined to the WireGuard mesh as the third peer.
-- Firewall: `infra/templates/host/docker-user.nft` on that box too, with every one of its app
-  networks in `<N8N_SUBNETS>`, so none of its containers can reach 2379/2380.
-- Checks: `ETCD_ONLY=1 PROJECT_DIR=<witness dir> COMPOSE_FILES="-f compose.witness.yml"
-  infra/scripts/ha-checks.sh` every 5 minutes, pinging its own Healthchecks check.
-- **Known limitation**: the shared-service box is in MALAYSIA, like the KL CRM box (owner, 27 Oct).
-  A Malaysia-wide outage takes out 2 of the 3 voters at once, so India will NOT take over
-  automatically: it waits as a healthy replica, every node's `/api/v1/health/role` answers 503,
-  and the CRM is down until someone runs the forced promotion below. The same happens if KL dies
-  while the shared-service box is mid-deploy or rebooting (then it resolves by itself once that
-  box is back). Moving the witness off-region (last section) removes both. Full case table: plan
-  section 10, "Known limitation: the witness is in Malaysia".
+- Node A: the CRM box (primary today).
+- Node B: the n8n KVM 8, also in Malaysia (standby; it keeps running n8n).
+- Witness: the shared-service box (`chat.foundryx.my`), Malaysia: etcd only,
+  `infra/templates/witness/compose.witness.yml` in its own directory next to that box's own
+  stack, joined to the WireGuard mesh; `infra/templates/host/docker-user.nft` loaded there too,
+  with every one of its app networks in `<N8N_SUBNETS>`; checks with `ETCD_ONLY=1 PROJECT_DIR=<witness
+  dir> COMPOSE_FILES="-f compose.witness.yml" infra/scripts/ha-checks.sh` every 5 minutes.
 
-## Forced promotion when Malaysia is down
+**Known limitation**: all three are in Malaysia (provider not confirmed; hPanel suggests Hostinger
+for the two VPSs). Any ONE box failing is handled automatically. A Malaysia-wide or provider-wide
+outage takes all three down together: nothing is left to fail over to, and the CRM is down until
+Malaysia returns, or until the disaster restore below. Plan section 10 has the case table.
 
-Only when KL AND the witness are unreachable and India is a healthy replica. `patronictl
-failover` does not work here: it writes to etcd, and etcd has no majority.
+## Forced promotion when two voters are down
 
-1. Confirm: `scripts/ops/cf-proxy.py status` (not a Cloudflare outage), the KL and witness boxes
-   unreachable from India over the tunnel and from outside, Hostinger status page.
-2. Fence first. In Cloudflare, disable the `kl` pool (so KL cannot take traffic when it comes
-   back). In hPanel, Stop the KL VPS and the shared-service box's witness if the panel still
-   answers. If it does not: on India, firewall the tunnel to KL and the witness
-   (`nft add rule inet sorento_ha_guard input ip saddr { $KL_WG_IP, $WITNESS_WG_IP } drop` and
-   the same in `forward`), so they cannot rejoin when the network returns.
-3. On India: stop etcd, then start it ONCE with `--force-new-cluster` (same data dir; it becomes a
-   one-member cluster keeping the data), then normally. `etcdctl member list` shows only `in`.
-4. Patroni on India sees the old leader key expire and promotes itself (or
-   `patronictl failover --candidate in --force` now that etcd answers). Check
-   `curl -s localhost:8008/primary` is 200, then `/api/v1/health/role` 200; the role watcher
-   starts workers; the LB moves traffic to the `in` pool.
-5. When Malaysia is back: keep the KL box and the witness FENCED. Wipe KL's and the witness's etcd
-   data dirs, re-add them to India's cluster one at a time (`etcdctl member add ... --learner`,
-   start with `ETCD_INITIAL_CLUSTER_STATE=existing`, `member promote`), then start KL's Patroni:
-   it rejoins as a replica (`pg_rewind` or re-seed). Lift the fence and re-enable the `kl` pool
-   only when `patronictl list` shows exactly one leader (India). The 04:00 switchback then moves
-   the primary home after 24 h healthy.
+When the primary AND the witness are both down (for example node A dies while the shared-service
+box is mid-deploy) and the other node is a healthy replica, Patroni may not promote it: there is no
+majority. If waiting for the witness to return is not acceptable:
 
-Data: writes that reached KL but not India before the outage (normally under a second) are lost,
-and are discarded when KL is rewound.
+1. Confirm both are really down (`scripts/ops/cf-proxy.py status` rules out Cloudflare; the boxes
+   do not answer over the tunnel or from outside).
+2. Fence first. In Cloudflare, disable the dead primary's pool. In hPanel, Stop the dead primary
+   if the panel answers; if not, on the surviving node firewall the tunnel to it and to the
+   witness (`nft add rule inet sorento_ha_guard input ip saddr { <DEAD_NODE_WG_IP>,
+   <WITNESS_WG_IP> } drop`, and the same in `forward`), so they cannot rejoin the old cluster.
+3. On the surviving node: stop etcd, start it ONCE with `--force-new-cluster` (same data dir;
+   it becomes a one-member cluster keeping the data), then normally.
+4. Patroni there promotes itself once the old leader key expires (or `patronictl failover
+   --candidate <survivor> --force`, which works now that etcd answers). Check
+   `curl -s localhost:8008/primary` is 200 and `/api/v1/health/role` is 200.
+5. When the others return: keep them fenced; wipe their etcd data dirs; re-add them one at a time
+   (`etcdctl member add ... --learner`, start with `ETCD_INITIAL_CLUSTER_STATE=existing`,
+   `member promote`); start the old primary's Patroni (it rejoins as a replica via `pg_rewind` or
+   re-seed). Lift the fence and re-enable its pool only when `patronictl list` shows exactly one
+   leader.
+
+Writes that reached the old primary but not the survivor (normally under a second) are lost.
+
+## Disaster restore (Malaysia-wide outage)
+
+All three voters are down; there is no standby to promote. Only if the outage is long enough to
+justify it (owner's call): provision a VPS in another region from the infra repo, restore the
+newest WAL-G base backup plus WAL from R2 (`wal-g backup-fetch`, then recovery to the latest
+point: RPO about 60 s, `archive_timeout`), start it as a single-node Patroni cluster with its own
+etcd, point Cloudflare at it (`scripts/ops/cf-proxy.py` or the LB pool), and add its egress
+address to the OpenAI allowlist. Hours, not minutes. When Malaysia returns, the old nodes are
+rebuilt as replicas of the new primary (fenced first, as above).
 
 ## Move the witness
 
 Config only, no downtime, quorum kept the whole time (etcd learner: the new member does not
-vote until it is promoted). Example: shared-service box (`witness-ss`) to a Hetzner EU VPS
+vote until it is promoted). This is how the witness leaves Malaysia later; the standby can move
+region the same way (Hostinger "Change location", then Patroni seeds a fresh replica; plan
+section 3). Example: shared-service box (`witness-ss`) to a Hetzner EU VPS
 (`witness-hz`).
 
-1. New box: WireGuard peer added on it, on KL and on India (the old witness stays for now);
+1. New box: WireGuard peer added on it, on node A and node B (the old witness stays for now);
    `docker-user.nft` loaded.
 2. Certs, minted OFFLINE with the private CA (`ca.key` never on a box): `peer` and `server`
    with the new `<NEW_WITNESS_WG_IP>` in the SAN, plus `healthcheck`. Copy to `/etc/etcd/pki`.
@@ -72,11 +80,11 @@ vote until it is promoted). Example: shared-service box (`witness-ss`) to a Hetz
    ha-checks crons for these minutes or expect one alert.
 6. `etcdctl member remove <witness-ss id>`, then on the shared-service box
    `docker compose -f compose.witness.yml down` and remove its WireGuard peer and certs.
-7. On KL and India: edit `/etc/sorento-ha/ha-members.env` (`WITNESS_NAME`, `WITNESS_WG_IP`,
+7. On node A and node B: edit `/etc/sorento-ha/ha-members.env` (`WITNESS_NAME`, `WITNESS_WG_IP`,
    `PATRONI_ETCD3_HOSTS`) and `/etc/sorento-ha/ha-members.nft`, reload nft
    (`nft -f docker-user.nft`). Patroni discovers etcd members from the cluster itself, so no
    Patroni restart is needed (the new env applies at its next planned restart; unverified, the
    step-8 check proves it).
 8. Check: `patronictl list` shows the leader and the replica unchanged; `etcdctl member list`
-   shows kl, in, witness-hz; `ha-checks.sh` green on all three; then plan drill 5 (stop the new
+   shows crm-a, crm-b, witness-hz; `ha-checks.sh` green on all three; then plan drill 5 (stop the new
    witness: nothing changes, an alert fires).

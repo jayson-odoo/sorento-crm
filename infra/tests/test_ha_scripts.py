@@ -252,11 +252,11 @@ IN_WINDOW = 1793041320 + 3600
 DAY = 24 * 3600
 
 
-def _members(kl_role="Replica", kl_state="streaming", kl_lag=0, leader="in"):
+def _members(kl_role="Replica", kl_state="streaming", kl_lag=0, leader="crm-b"):
     import json
 
-    rows = [{"Member": "kl", "Role": kl_role, "State": kl_state, "Lag in MB": kl_lag}]
-    if leader != "kl":
+    rows = [{"Member": "crm-a", "Role": kl_role, "State": kl_state, "Lag in MB": kl_lag}]
+    if leader != "crm-a":
         rows.append({"Member": leader, "Role": "Leader", "State": "running"})
     return json.dumps(rows)
 
@@ -280,7 +280,7 @@ esac
     state = tmp_path / "state"
     project = tmp_path / "project"
     project.mkdir()
-    return {**e, "STATE_DIR": str(state), "PROJECT_DIR": str(project)}, log, state / "kl-healthy-since"
+    return {**e, "STATE_DIR": str(state), "PROJECT_DIR": str(project)}, log, state / "crm-a-healthy-since"
 
 
 def _switches(log):
@@ -294,7 +294,7 @@ def test_switchback_after_24h_healthy_inside_the_window(sb):
     r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
     assert r.returncode == 0, r.stdout + r.stderr
     sw = _switches(log)
-    assert len(sw) == 1 and "--leader in --candidate kl --force" in sw[0]
+    assert len(sw) == 1 and "--leader crm-b --candidate crm-a --force" in sw[0]
     assert not marker.exists()
 
 
@@ -387,7 +387,7 @@ def test_nothing_when_kl_already_leads(sb):
     e, log, marker = sb
     marker.parent.mkdir()
     marker.write_text(str(IN_WINDOW - 3 * DAY))
-    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(kl_role="Leader", kl_state="running", leader="kl"))
+    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(kl_role="Leader", kl_state="running", leader="crm-a"))
     assert _switches(log) == []
     assert not marker.exists()
 

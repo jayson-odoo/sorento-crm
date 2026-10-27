@@ -1,24 +1,25 @@
 #!/usr/bin/env bash
-# Automatic switchback to KL (HA-TIER1-N8N-BOX, owner ruling O3 (a), 27 Oct).
+# Automatic switchback to node A, the CRM box (HA-TIER1-N8N-BOX, owner ruling O3 (a), 27 Oct).
 # Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md section 2 "Failback".
 #
-# Cron every 5 minutes on the KL node. After a failover to India, KL rejoins as a replica on its
-# own; this moves the primary back to KL with a planned `patronictl switchover` (a 5-15 s write
+# Cron every 5 minutes on node A. After a failover to node B (the KVM 8, which also runs n8n), A
+# rejoins as a replica on its own; this moves the primary back to A, so the CRM and n8n again run
+# on separate boxes, with a planned `patronictl switchover` (a 5-15 s write
 # pause, no data loss) only when ALL hold:
-#   - KL is a streaming replica at most MAX_LAG_MB behind, and has been continuously so for
+#   - node A is a streaming replica at most MAX_LAG_MB behind, and has been continuously so for
 #     HEALTHY_HOURS (Patroni's "Lag in MB" is up to 10 s stale, so a write burst reads a few MB;
 #     Patroni refuses a lagging candidate at switchover time anyway);
 #   - the leader is another member and the cluster is not paused (maintenance mode);
 #   - the local time in SWITCH_TZ is inside the window starting SWITCH_AT (default 04:00 MYT,
 #     clear of the 03:00 nightly pg_dump in documentation/runbooks/backups.md).
-# Any unhealthy reading resets the clock (marker file). Never acts while KL already leads.
+# Any unhealthy reading resets the clock (marker file). Never acts while node A already leads.
 #
-# Env (optional): HOME_MEMBER (kl), HEALTHY_HOURS (24), MAX_LAG_MB (16), SWITCH_AT (04:00),
+# Env (optional): HOME_MEMBER (crm-a), HEALTHY_HOURS (24), MAX_LAG_MB (16), SWITCH_AT (04:00),
 # WINDOW_MIN (10), SWITCH_TZ (Asia/Kuala_Lumpur), STATE_DIR, PROJECT_DIR, COMPOSE_FILES,
 # DB_SERVICE, PATRONI_CLUSTER_URL, NOW (tests: epoch).
 set -uo pipefail
 
-HOME_MEMBER="${HOME_MEMBER:-kl}"
+HOME_MEMBER="${HOME_MEMBER:-crm-a}"
 HEALTHY_HOURS="${HEALTHY_HOURS:-24}"
 MAX_LAG_MB="${MAX_LAG_MB:-16}"
 SWITCH_AT="${SWITCH_AT:-04:00}"

@@ -1,5 +1,5 @@
-# Patroni config for BOTH CRM nodes (KL and IN). Only the env differs per node:
-#   PATRONI_NAME=kl|in, PATRONI_RESTAPI_CONNECT_ADDRESS=<THIS_WG_IP>:8008,
+# Patroni config for BOTH CRM nodes (A = CRM box, B = KVM 8). Only the env differs per node:
+#   PATRONI_NAME=crm-a|crm-b, PATRONI_RESTAPI_CONNECT_ADDRESS=<THIS_WG_IP>:8008,
 #   PATRONI_POSTGRESQL_CONNECT_ADDRESS=<THIS_WG_IP>:5432, plus the passwords below.
 # Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md section 2 (timings table).
 scope: sorento-crm
@@ -11,7 +11,7 @@ restapi:
   # Unsafe endpoints (POST/PATCH: failover, switchover, restart, config) need this login:
   # PATRONI_RESTAPI_USERNAME / PATRONI_RESTAPI_PASSWORD from patroni.env. GETs (/primary,
   # /cluster, /liveness) stay open for HAProxy, the role watcher and ha-checks.
-  # Without this login anything that reaches the port (n8n's Code nodes on the India box
+  # Without this login anything that reaches the port (n8n's Code nodes on node B (the KVM 8, which also runs n8n)
   # included) could POST a failover.
   authentication:
     username: patroni-admin
@@ -20,8 +20,8 @@ restapi:
   # real guard is templates/host/docker-user.nft).
   allowlist:
     - 127.0.0.1
-    - <KL_WG_IP>
-    - <IN_WG_IP>
+    - <A_WG_IP>
+    - <B_WG_IP>
 
 etcd3:
   # hosts: from PATRONI_ETCD3_HOSTS in /etc/sorento-ha/ha-members.env (the one place the voters
@@ -40,7 +40,7 @@ bootstrap:
     retry_timeout: 10
     maximum_lag_on_failover: 16777216     # 16 MB: further behind = no automatic promotion
     failsafe_mode: true
-    synchronous_mode: false               # async: India RTT stays off the commit path
+    synchronous_mode: false               # async by default; same-region RTT makes sync viable, see plan section 3
     postgresql:
       use_pg_rewind: true
       remove_data_directory_on_rewind_failure: true
@@ -99,11 +99,11 @@ postgresql:
     - host    all          postgres     0.0.0.0/0               reject
     - host    all          <APP_DB_USER>,<PGBOUNCER_AUTH_USER>  127.0.0.1/32   scram-sha-256
     - host    all          <APP_DB_USER>,<PGBOUNCER_AUTH_USER>  <CRM_COMPOSE_SUBNET_24>  scram-sha-256
-    - host    replication  replicator   <KL_WG_IP>/32           scram-sha-256
-    - host    replication  replicator   <IN_WG_IP>/32           scram-sha-256
-    - host    all          rewinder     <KL_WG_IP>/32           scram-sha-256
-    - host    all          rewinder     <IN_WG_IP>/32           scram-sha-256
-    # n8n's sorento-crm-db credential reaches KL's pgbouncer via the India HAProxy over the
+    - host    replication  replicator   <A_WG_IP>/32           scram-sha-256
+    - host    replication  replicator   <B_WG_IP>/32           scram-sha-256
+    - host    all          rewinder     <A_WG_IP>/32           scram-sha-256
+    - host    all          rewinder     <B_WG_IP>/32           scram-sha-256
+    # n8n's sorento-crm-db credential reaches node A's pgbouncer via node B's HAProxy over the
     # tunnel; pgbouncer then connects locally, so no extra Postgres rule is needed for it.
 
 # Arms only if the container's postgres user can open /dev/watchdog: the host needs softdog

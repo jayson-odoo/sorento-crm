@@ -7,7 +7,7 @@ section 1, "Still open"); they belong in a PRIVATE repo, proposed name `sorento-
 repo exists, this directory moves there and is deleted here. Nothing in this directory is read by
 the app, the CI or `scripts/blue_green_deploy.sh`.
 
-Rules: placeholders only (`<KL_WG_IP>`, `<IN_WG_IP>`, `<WITNESS_WG_IP>`, `<CRM_PUBLIC_HOST>`,
+Rules: placeholders only (`<A_WG_IP>`, `<B_WG_IP>`, `<WITNESS_WG_IP>`, `<CRM_PUBLIC_HOST>`,
 `<R2_BUCKET>`). No addresses, private hostnames, passwords or keys, here or in the private repo:
 secrets stay in env files on the boxes.
 
@@ -17,8 +17,8 @@ secrets stay in env files on the boxes.
 sorento-infra/
   README.md                       what runs where, how to apply
   nodes/
-    crm/                          the SAME files on both CRM nodes (KL and IN); per-node env only
-      docker-compose.yml          captured from the KL box (backend_blue/green, frontend, worker,
+    crm/                          the SAME files on both CRM nodes (A = CRM box, B = KVM 8); per-node env only
+      docker-compose.yml          captured from the CRM box (node A) (backend_blue/green, frontend, worker,
                                   worker_fast, db, redis, mcp, pgbouncer)
       compose.ha.yml              from templates/compose.ha.yml
       patroni.yml                 from templates/patroni/patroni.yml
@@ -28,7 +28,7 @@ sorento-infra/
       .deploy.env.example         names only, no values
       nginx/  caddy/              captured from the box
       systemd/role-watcher.service
-    in-extra/                     India box only
+    in-extra/                     node B (KVM 8) only
       haproxy.cfg                 n8n + MCP follow the primary
       n8n/                        the existing n8n compose, unchanged
     witness/                      shared-service box today, Hetzner EU later (config only)
@@ -47,12 +47,12 @@ sorento-infra/
 | `templates/patroni/Dockerfile` | Postgres 17 + pgvector + Patroni + WAL-G image |
 | `templates/etcd/etcd.env.template` | etcd member env for the three voters, WAN timeouts |
 | `templates/compose.ha.yml` | HA override for both CRM nodes: Patroni `db`, workers behind profile `promoted`, `SKIP_MIGRATIONS`, autoheal, etcd |
-| `templates/haproxy/haproxy.cfg` | India box: n8n API and DB traffic to whichever node leads |
+| `templates/haproxy/haproxy.cfg` | node B (KVM 8): n8n API and DB traffic to whichever node leads |
 | `templates/ha-members.env.example` | the ONE place the three voters are named (witness movable by config) |
 | `templates/host/ha-members.nft` | the same addresses for the container firewall |
 | `templates/host/docker-user.nft` | container firewall: n8n / shared-service apps cannot reach the control plane |
 | `templates/witness/compose.witness.yml` | the witness: etcd only (shared-service box today) |
-| `scripts/switchback.sh` | automatic move of the primary back to KL (04:00 MYT, 24 h healthy) |
+| `scripts/switchback.sh` | automatic move of the primary back to node A, the CRM box (04:00 MYT, 24 h healthy) |
 | `templates/walg.env.example` | WAL-G env names for Cloudflare R2 (values on the box only) |
 | `templates/wireguard/wg0.conf.template` | three-member mesh, if the tailnet is not used |
 | `templates/systemd/role-watcher.service` | runs the role watcher |

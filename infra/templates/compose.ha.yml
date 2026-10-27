@@ -1,4 +1,4 @@
-# HA override for BOTH CRM nodes (KL and IN):
+# HA override for BOTH CRM nodes (A = CRM box, B = KVM 8):
 #   docker compose -f docker-compose.yml -f compose.ha.yml up -d
 # Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md sections 2 and 8b.
 #

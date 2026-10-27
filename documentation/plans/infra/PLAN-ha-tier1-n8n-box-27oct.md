@@ -1,25 +1,35 @@
 # PLAN: HA plan v2, Tier 1 on the n8n box with automatic failover (HA-TIER1-N8N-BOX)
 
 Status: plan + code guards + templates in review, PR #1915. Owner rulings D1-D5, O1, O2 and O3
-recorded 27 Oct (section 10): witness on the shared-service box for now, movable by config. Track: docs + infra
-templates + two small backend guards (health role endpoint, scheduler leader guard). No migration,
-no auth/RBAC change, no new ingest surface: small fix track for the code slice.
+recorded 27 Oct (section 10); D2 REVISED 27 Oct about 23:55: everything stays in Malaysia for now
+(standby on the n8n KVM 8, witness on the shared-service box), off-region later by config + runbook.
+Track: docs + infra templates + two small backend guards (health role endpoint, scheduler leader
+guard). No migration, no auth/RBAC change, no new ingest surface: small fix track for the code slice.
 
 Supersedes the Tier 1 section of the 14 Oct crew HA plan (crew report `HA-PLAN-14oct.md` and the
 owner plan page; neither is in this repo, so section 0 restates what this plan builds on). Tier 0
 lanes are cited by PR.
 
-Owner brief (27 Oct): the n8n box (Hostinger KVM 8, already paid, in KL) is mostly idle because
-most mechanisms moved into the CRM. Reuse it as the HA node behind a load balancer, moving its
-region if that buys real HA. Follow-ups the same afternoon: (1) can both servers serve at the same
-time so load is shared; (2) the CRM box is a KVM 4 at 121/200 GB disk, about 24% CPU and 56% memory,
-of which about 39 GB is 8 pre-migrate dumps. Rulings the same evening (section 10): active-passive,
-standby in INDIA ("in case SEA got problem"), no webhook buffer, Cloudflare LB + R2, and AUTOMATIC
-failover: "it should happen automatically, that's the point of HA, I want our system to have 0%
-downtime as much as possible by maintaining itself automatically".
+Owner brief (27 Oct): the n8n box (Hostinger KVM 8, already paid, in Malaysia) is mostly idle
+because most mechanisms moved into the CRM. Reuse it as the HA node behind a load balancer.
+Follow-ups the same afternoon: (1) can both servers serve at the same time so load is shared; (2)
+the CRM box is a KVM 4 at 121/200 GB disk, about 24% CPU and 56% memory, of which about 39 GB is 8
+pre-migrate dumps. Rulings the same evening (section 10): active-passive, no webhook buffer,
+Cloudflare LB + R2, and AUTOMATIC failover: "it should happen automatically, that's the point of
+HA, I want our system to have 0% downtime as much as possible by maintaining itself
+automatically". The standby was first ruled to India, then (23:55) kept in Malaysia for now.
+
+**What this covers, plainly**: any ONE of the three boxes failing (the CRM box, the KVM 8, the
+shared-service box), automatically, in about 1-1.5 minutes. **What it does not**: a Malaysia-wide
+or provider-wide outage takes all three boxes down together; there is nothing left to fail over
+to, and recovery is the off-site restore in section 11 (hours). Moving the standby and the witness
+out of Malaysia later is a config + runbook change, not a redesign (section 3).
+
+Node names used below and in `infra/`: **node A** = the CRM box (srv1250216, primary today),
+**node B** = the n8n KVM 8 (standby, keeps running n8n), **witness** = the shared-service box.
 
 Rules for this lane and its follow-ups: no addresses, private hostnames or secrets in the repo
-(placeholders only: `<CRM_PUBLIC_HOST>`, `<KL_WG_IP>`, `<IN_WG_IP>`, `<WITNESS_WG_IP>`); no prod
+(placeholders only: `<CRM_PUBLIC_HOST>`, `<A_WG_IP>`, `<B_WG_IP>`, `<WITNESS_WG_IP>`); no prod
 access. "Unverified" marks every fact this sandbox could not check; crew or the owner confirms them.
 
 ---
@@ -63,25 +73,26 @@ Still open after Tier 0 (all carried into Tier 1 below):
 
 ## 2. Target topology (Tier 1: active-passive, automatic failover)
 
-Three members, three locations, so a majority (2 of 3) always decides who is primary:
+Three voters, so a majority (2 of 3) always decides who is primary. All three are in Malaysia for
+now (section 3):
 
 ```
                  Cloudflare (proxy + Load Balancing, monitor GET /api/v1/health/role)
-                    | pool "kl" (preferred)            | pool "in" (fallback)
+                    | pool "node-a" (preferred)        | pool "node-b" (fallback)
                     v                                  v
-  KL node: CRM box (KVM 4)                     IN node: n8n box (KVM 8, moved to India)
+  Node A: CRM box (KVM 4)                      Node B: n8n box (KVM 8)
   nginx -> backend colour, frontend            nginx -> backend colour, frontend (warm)
   Patroni + Postgres 17 + pgvector             Patroni + Postgres 17 + pgvector
      (leader today)          ==== async WAL stream ====>   (replica today)
   etcd member 1                                etcd member 2
   role-watcher: workers + scheduler            role-watcher: workers + scheduler
      run only while the local DB leads            run only while the local DB leads
-  Redis (local)                                Redis (local), n8n + its Postgres, MCP
+  Redis (local)                                Redis (local), n8n + its Postgres, MCP, HAProxy
          \                                          /
           \______ WAL-G archive (both nodes) ______/----> Cloudflare R2 (off-site, PITR)
 
-                 Witness: small VPS in a THIRD location outside SEA and India
-                 etcd member 3 only (no Postgres, no app). Cheap, about 1 vCPU / 1 GB.
+                 Witness: the shared-service box (owner ruling O1, for now)
+                 etcd member 3 only (no Postgres, no CRM app)
 
   <====== WireGuard mesh (3 peers): etcd 2379-2380, Patroni REST 8008, Postgres 5432, SSH 22 ======>
 ```
@@ -96,8 +107,8 @@ failover needs no edit anywhere.
   would promote itself); a third voter makes it safe, because only the side that still reaches a
   majority may hold the leader key.
 - Why the Cloudflare LB cannot be the tie-breaker: it only routes users to whichever node
-  answers its health check; it cannot stop a cut-off KL Postgres from accepting writes or tell
-  India it may promote, so with the LB alone both sides of a network cut would act as primary.
+  answers its health check; it cannot stop a cut-off node A Postgres from accepting writes or
+  tell node B it may promote, so with the LB alone both sides of a network cut would act as primary.
   The vote has to happen next to the databases, which is what the witness is for.
 - **Patroni + etcd** (recommended): the most used Postgres HA manager; the leader key in etcd has a
   TTL, the leader must renew it every loop, and a leader that cannot renew it DEMOTES ITSELF before
@@ -123,8 +134,8 @@ failover needs no edit anywhere.
 | `wal_log_hints` | on | required by `pg_rewind` |
 | `failsafe_mode` | true | if etcd itself is unreachable (for example the witness AND the etcd on one node are down) but the leader still reaches every Patroni member, it keeps running instead of demoting |
 | `watchdog.mode` | `automatic` | Linux softdog: if Patroni itself hangs, the box reboots before the TTL ends, so a frozen old primary cannot keep accepting writes. Arms ONLY after the host prep in `infra/templates/host/` (softdog loaded, udev rule giving the container's postgres uid the device); until the Patroni log shows "watchdog activated" the TTL self-demotion is the only fence. Then `required` |
-| `synchronous_mode` | false | async (section 3: India RTT would be paid on every commit) |
-| etcd `heartbeat-interval` / `election-timeout` | 300 ms / 3000 ms | WAN between KL, India and the witness |
+| `synchronous_mode` | false | async today; with both nodes in one Malaysian site the RTT is likely under 1 ms, so non-strict synchronous mode (RPO 0 while both are up, async when the replica is down) becomes cheap: crew turns it on with `patronictl edit-config` once the measured RTT is under 2 ms (section 3) |
+| etcd `heartbeat-interval` / `election-timeout` | 300 ms / 3000 ms | conservative; kept so a later off-region witness or standby needs no retuning |
 
 Detection to promotion: up to `ttl` (30 s) for the old leader key to expire plus a few seconds to
 promote. The Cloudflare monitor then needs its interval x consecutive failures to move traffic
@@ -137,8 +148,9 @@ Patroni (`GET http://127.0.0.1:8008/primary`, 200 only on the leader). Two readi
 leader: `docker compose --profile promoted up -d --no-deps worker worker_fast` when fewer than
 both are running (`--no-deps`, so it can never recreate the Patroni `db` or pgbouncer). Two
 readings as not-leader: `stop worker worker_fast` on every tick (idempotent, so an unreadable
-`ps` or a worker stuck restarting can never stay up on a replica). So after an automatic failover the India node starts
-its workers and scheduler within about 10 s of promotion, and the demoted KL node stops its own.
+`ps` or a worker stuck restarting can never stay up on a replica). So after an automatic
+failover node B starts its workers and scheduler within about 10 s of promotion, and the demoted
+node A stops its own.
 Defence in depth: the scheduler leader guard (section 8) refuses to start on a replica and, with
 `SCHEDULER_LEADER_DATABASE_URL`, holds a lock so two schedulers can never run against one primary
 even if the watcher misfires.
@@ -148,14 +160,14 @@ even if the watcher misfires.
 - **App on each node**: its LOCAL Postgres through its local pgbouncer. A node serves users only
   while its own DB leads (the LB checks `/api/v1/health/role`), so it never pays cross-site
   per-statement latency (section 4).
-- **n8n and MCP** (India box): n8n maps `<CRM_DOMAIN>` and `crm-private.internal` to
+- **n8n and MCP** (node B): n8n maps `<CRM_DOMAIN>` and `crm-private.internal` to
   `CRM_PRIVATE_IP` and uses :443 (API), :8765 (MCP) and :6432 (DB credential `sorento-crm-db`)
   (`documentation/runbooks/n8n-private-path.md:400-410`). A local HAProxy
   (`infra/templates/haproxy/haproxy.cfg`, host networking) listens on exactly those three ports
-  on one bridge address, each with two backends (the local node and KL over the tunnel), all
+  on one bridge address, each with two backends (the local node and node A over the tunnel), all
   checked on that node's Patroni `/primary`, so the three move together. `CRM_PRIVATE_IP` is set
   to the HAProxy address ONCE; after that a failover needs no `.env` flip (replaces the manual
-  step of `documentation/runbooks/n8n-private-path.md:641-663`). The India nginx must then bind
+  step of `documentation/runbooks/n8n-private-path.md:641-663`). Node B's nginx must then bind
   the public address only, not `0.0.0.0:443`.
 - **Redis**: local per node. On failover the dead node's queued RQ jobs are lost; import rows left
   `queued` or `processing` are settled by the existing orphan reconcile
@@ -183,33 +195,34 @@ from this sandbox, crew confirms in hPanel). Same family as the CRM box: KVM 4 =
 | Workers after promotion | +0.3 GB | same line |
 | n8n + its Postgres | unverified (crew: `docker stats` on the n8n box) | |
 
-Fits 32 GB with a wide margin even if n8n uses 4-6 GB. After a failover the India node is BIGGER
-than today's primary. The KL node gains only Patroni + etcd (~0.3 GB) on its 16 GB. Witness: etcd
-alone, under 0.5 GB.
+Fits 32 GB with a wide margin even if n8n uses 4-6 GB. After a failover node B is BIGGER than
+today's primary. Node A gains only Patroni + etcd (~0.3 GB) on its 16 GB. Witness: etcd alone,
+under 0.5 GB, on the shared-service box (its own spare capacity unverified; crew: `free -m`,
+`df -h` there).
 
 ### Network
 
 - WireGuard full mesh between the three members (`infra/templates/wireguard/wg0.conf.template`),
   or the tailnet from HA-N8N-PRIVATE-PATH if applied (WireGuard underneath).
 - Over the tunnel only: etcd 2379/2380 (all three); between the two CRM nodes Patroni REST 8008
-  and Postgres 5432; from the India HAProxy to KL 443, 8765 and 6432; SSH 22. Nothing of this on
+  and Postgres 5432; from node B's HAProxy to node A 443, 8765 and 6432; SSH 22. Nothing of this on
   a public interface. Postgres rules are `host` (not `hostssl`): the link is already WireGuard.
 - Control plane auth: Patroni's unsafe REST calls (failover, switchover, restart, config) need a
   login (the image refuses to start without the password), and etcd runs with auth on (a
   `patroni` user limited to the `/sorento/` prefix) and TLS with a private CA on both the client
   and the peer port (`etcdctl auth` alone leaves the raft port 2380 open).
-- Container firewall (`infra/templates/host/docker-user.nft`) on the India box and the witness:
-  binding to 127.0.0.1 + the tunnel address does NOT keep local containers out, and n8n's traffic
-  to KL is masqueraded to the India tunnel address, so KL would see it as the India node. The
+- Container firewall (`infra/templates/host/docker-user.nft`) on node B and the witness: binding
+  to 127.0.0.1 + the tunnel address does NOT keep local containers out, and n8n's traffic to node
+  A is masqueraded to node B's tunnel address, so node A would see it as node B. The
   rules let n8n's subnets reach only the HAProxy address (443, 8765, 6432) and drop everything
   else toward the members and the 2379/2380/5432/8008 ports. Drill 9 proves it.
 - Postgres superuser over the local socket only; the app and pgbouncer roles only from the pinned
   CRM compose subnet (`pg_hba` in `patroni.yml`).
-- n8n's three ports need clash-free binds before HAProxy starts: India's nginx (443 and MCP's
-  8765) on the public address only, India's pgbouncer on 127.0.0.1 only, and KL's pgbouncer and
-  MCP also on `<KL_WG_IP>` (details in `infra/templates/haproxy/haproxy.cfg`).
+- n8n's three ports need clash-free binds before HAProxy starts: node B's nginx (443 and MCP's
+  8765) on the public address only, node B's pgbouncer on 127.0.0.1 only, and node A's pgbouncer
+  and MCP also on `<A_WG_IP>` (details in `infra/templates/haproxy/haproxy.cfg`).
 - Public on the two CRM nodes: 80/443 limited to Cloudflare ranges (the HA-SEC-EDGE rules), 22
-  key-only. The India node needs the same edge rules before it joins the LB. Witness: 22 + the
+  key-only. Node B needs the same edge rules before it joins the LB. Witness: 22 + the
   WireGuard UDP port only.
 
 ### Replication and PITR
@@ -217,11 +230,13 @@ alone, under 0.5 GB.
 - **Postgres 17 + pgvector** on both nodes, the same image tag (prod uses `pgvector/pgvector:pg17`
   or `postgres:17`, `documentation/runbooks/backups.md:121`; crew confirms the tag). Physical
   streaming replication copies pgvector indexes as-is.
-- Patroni seeds the India replica itself (`pg_basebackup` from the leader) when it first joins, and
+- Patroni seeds node B's replica itself (`pg_basebackup` from the leader) when it first joins, and
   creates a replication slot per member automatically (`use_slots`; dropped when that member's key
   expires), with `max_slot_wal_keep_size = 20GB`, so a dead replica can never fill the leader's
   disk.
-- **WAL-G** to a dedicated Cloudflare R2 bucket from whichever node leads (archive settings live in
+- **WAL-G** to a dedicated Cloudflare R2 bucket, created with a location hint OUTSIDE Asia
+  Pacific (for example Western Europe), so a Malaysia or regional problem cannot reach the backups
+  the disaster restore needs; written from whichever node leads (archive settings live in
   the Patroni config, so they move with the leader): `archive_command = 'wal-g wal-push %p'`,
   `archive_timeout = 60`, nightly `wal-g backup-push` from the leader (cron on both nodes, the
   script exits on a replica), retention 7 full + WAL. Replicas use `wal-g wal-fetch` as their
@@ -231,71 +246,67 @@ alone, under 0.5 GB.
 
 ### Failback
 
-Automatic for the database: when the KL node comes back, Patroni rejoins it as a replica of the
-India leader (`pg_rewind`, or a full re-seed if that fails). It is not automatically promoted back
-(that would flap). Owner ruling O3 (a): the primary moves back to KL AUTOMATICALLY.
-`infra/scripts/switchback.sh` (cron every 5 minutes on the KL node) runs `patronictl switchover
---leader <current> --candidate kl` only when KL has been a streaming replica at most 16 MB behind
-for 24 h in a row (any other reading resets the clock; Patroni's lag figure is up to 10 s stale, so
-exactly 0 would let a busy week postpone it forever), the cluster is not paused, and the time is
-inside 04:00-04:10 MYT: a 5-15 s write pause at night, no data loss. The owner said 03:00; the
-window is one hour later because the nightly `pg_dump` runs at 03:00
-(`documentation/runbooks/backups.md:207`) and a switchover restarts the database it reads from.
-Tests: `infra/tests/test_ha_scripts.py`.
+Automatic for the database: when node A comes back, Patroni rejoins it as a replica of node B
+(`pg_rewind`, or a full re-seed if that fails). It is not automatically promoted back (that would
+flap). Owner ruling O3 (a): the primary moves back to node A AUTOMATICALLY, so the CRM and n8n run
+on separate boxes again. `infra/scripts/switchback.sh` (cron every 5 minutes on node A) runs
+`patronictl switchover --leader <current> --candidate crm-a` only when node A has been a streaming
+replica at most 16 MB behind for 24 h in a row (any other reading resets the clock; Patroni's lag
+figure is up to 10 s stale, so exactly 0 would let a busy week postpone it forever), the cluster
+is not paused, and the time is inside 04:00-04:10 MYT: a 5-15 s write pause at night, no data
+loss. The owner said 03:00; the window is one hour later because the nightly `pg_dump` runs at
+03:00 (`documentation/runbooks/backups.md:207`) and a switchover restarts the database it reads
+from. Tests: `infra/tests/test_ha_scripts.py`.
 
-## 3. Location (owner ruling D2: India)
+## 3. Location (owner ruling D2, revised 27 Oct about 23:55: Malaysia for now)
 
-- **Primary stays where the CRM box is: Malaysia** (owner, 27 Oct about 23:50: all three boxes,
-  the CRM box, the n8n KVM 8 and the shared-service box, are in Malaysia today; provider not
-  stated, hPanel suggests Hostinger for the two VPSs, unconfirmed).
-- **Standby: Hostinger VPS, location "India" = Mumbai.** Hostinger's support page lists India among
-  the VPS locations in Asia (with Indonesia and Malaysia), and Hostinger's own blog announced its
-  Mumbai data centre; that the VPS location is that Mumbai site comes from third-party reviews
+Facts (owner, 27 Oct about 23:50): all three boxes, node A (the CRM box), node B (the n8n KVM 8)
+and the witness (the shared-service box), are in **Malaysia**. Provider not stated; hPanel suggests
+Hostinger for the two VPSs (unconfirmed). Ruling: keep the standby AND the witness in Malaysia for
+now.
+
+- **Standby on a separate box from the primary**: yes, node B is a different VPS from node A.
+- **A different data centre or provider zone**: Hostinger's VPS location list shows ONE Malaysia
+  location and no zones within it
   ([Hostinger server locations](https://www.hostinger.com/support/1583267-where-are-hostinger-servers-located/),
-  [Hostinger India VPS review](https://hostadvice.com/hosting-company/hostinger-reviews/hostinger-india-hosting-review/)).
-  Unverified until the hPanel "Change location" dialog shows it.
-- **Witness: outside SEA and India**, so an SEA-wide problem leaves India + witness = a majority and
-  India promotes; an India problem leaves KL + witness; a witness problem changes nothing. A witness
-  in Singapore or Jakarta would fail exactly the case the owner named, so not there. Recommended:
-  Europe (Hostinger KVM 1 in a European location, same account and billing; or Hetzner, an
-  independent provider, so one provider's account or billing problem cannot take two of three
-  voters). Owner ruling O1: the shared-service box for now, location unverified, with the
-  known limit in section 10; moving it to Europe later is config only.
+  unverified from this sandbox). So, as far as public pages show, **a second Malaysian DC does
+  not exist at Hostinger**: nodes A and B (and the witness, if it is on Hostinger) most likely sit
+  in the same facility, on the same provider network. What crew can still do at no cost: ask
+  Hostinger support to confirm the two VPSs run on different physical hosts (and to keep them
+  apart). That protects against one host failing, not against the facility or provider network.
+- **What this covers**: any one box failing (hardware, host, OOM, disk, a bad deploy on one box,
+  its Postgres or Patroni crashing), automatically, about 1-1.5 minutes (section 11).
+- **What it does not**: a Malaysia-wide, facility-wide or Hostinger-network outage takes all three
+  boxes down together. No automatic failover is possible because nothing is left to fail over to;
+  the CRM is down until Malaysia returns, or until the off-site disaster restore (section 11,
+  hours, RPO about 60 s) brings it up elsewhere. Section 10 has the case table.
 
-### Latency and what users feel
+Latency with everything in one Malaysian site (unverified; crew measures `mtr -rwc 100 <B_WG_IP>`
+from node A over the tunnel): RTT likely well under 1-2 ms. Consequences:
 
-| Path | Expected RTT | Status |
-|---|---|---|
-| KL node to India node | 60-100 ms | unverified; public tables put Yangon to Mumbai at about 127 ms ([WonderNetwork](https://wondernetwork.com/pings/Yangon/Mumbai)) and SEA routes to Mumbai usually go via Singapore. Crew measures: `mtr -rwc 100 <IN_WG_IP>` from the KL box over the tunnel, right after the move |
-| KL or India to a European witness | 150-250 ms | unverified; only etcd votes cross it, the timeouts in section 2 allow for it |
-| Malaysian user to Cloudflare | unchanged | the POP is local whichever origin serves |
+- Replication lag stays tiny; non-strict synchronous replication (RPO 0 while both nodes are up)
+  becomes cheap and can be switched on by config once the RTT is measured (section 2 table).
+- Users feel nothing different after a failover (same region, same Cloudflare POP).
+- n8n reaches node A over the tunnel at about today's same-site speed.
+- Active-active Phase C (section 4) becomes technically feasible at this RTT; it is still not
+  needed at today's load.
 
-Async replication lag at that RTT: WAL leaves the primary as it is written, so the replica is about
-half an RTT plus replay behind, normally well under a second at our write rate; bulk imports and
-migrations can push it to seconds. Patroni will not promote a replica more than 16 MB behind
-(section 2). Synchronous replication (RPO 0) would add the full RTT to every commit, and some
-requests commit several times, so it stays off (trigger to revisit: a lost-write incident).
+### Later: off-region (config + runbook, no redesign)
 
-What users feel after a failover to India:
+Kept from the earlier India ruling, for when the owner wants a Malaysia outage covered:
 
-- **During the failover**: about 1-2 minutes of errors or timeouts (section 11 RTO). Staff stay
-  signed in (sessions are Postgres rows). A save in flight at that moment fails and has to be
-  retried. Writes from the last moment before the crash that had not reached the replica (normally
-  under a second) are lost.
-- **After it**: every request pays one extra Cloudflare-to-origin RTT, about 60-100 ms (Cloudflare
-  keeps warm connections to the origin, so no extra TLS handshakes). Database work is local on the
-  India node, so Stock Debt's 45-150 statements cost the same as today. A page that makes 3-5
-  sequential API calls feels about 0.2-0.5 s slower. The bot gets slightly faster: n8n and the CRM
-  are then on the same box.
-- **While KL is primary (normal)**: n8n on the India box reaches the CRM over the tunnel, about
-  60-100 ms per call instead of today's same-site hop; a chatbot turn makes a few such calls, so
-  about 0.2-0.5 s per turn. Accepted cost of putting the standby where an SEA problem cannot reach
-  it; it disappears when the direct-ingress gap plan moves the sends into the CRM (section 6).
-
-Owner clicks: hPanel, VPS (the n8n one), Settings, "Change location", India. Take an n8n backup
-first; the VPS gets a NEW public address (whether the disk carries over is unverified), so update
-the n8n DNS record, any respond.io webhook URL that names the n8n host by address, and the
-allowlists in section 9. Move BEFORE seeding the replica.
+- **Witness first** (cheapest, biggest gain toward region HA): move it to a third region outside
+  Malaysia, e.g. Hetzner EU (about EUR 4-5/month), with `documentation/runbooks/ha-failover.md`
+  "Move the witness". Alone it does not cover a Malaysia outage (both CRM nodes are still there),
+  but it is the prerequisite.
+- **Then the standby**: hPanel, VPS (the n8n one), Settings, "Change location" (India = Mumbai per
+  third-party reviews, unverified); Patroni re-seeds the replica after the move, the WireGuard
+  peer and `ha-members.env` get the new address, and the allowlists in section 9 get the new
+  egress address. Expected then: RTT 60-100 ms (unverified), about 60-100 ms more per request
+  after a failover, about 0.2-0.5 s more per bot turn while node A leads; synchronous replication
+  goes back off.
+- With both moved, every row of the section 10 case table becomes "automatic" or "nothing
+  changes", including a Malaysia-wide outage.
 
 ## 4. Can both servers take load at the same time? (owner question 1)
 
@@ -315,8 +326,9 @@ Why not full active-active today:
   | 20 ms (KL - Jakarta) | 0.9-3.0 s |
   | 70 ms (KL - Mumbai) | 3.2-10.5 s |
 
-  The region that makes HA real (different sites) is exactly what makes cross-node DB access slow.
-  So the standby should talk to its LOCAL replica, never chat with the remote primary.
+  With both nodes in Malaysia now (section 3) the first row applies; the off-region option would
+  move it to the last row. Either way the standby talks to its LOCAL replica and never chats with
+  the remote primary.
 - **Redis is single-node** (RQ queues, the chatbot per-contact drain mutex
   `chatbot:drain:{contact}` at `sorento_crm_backend/app/services/chatbot/inbox_queue.py:444`, the
   reconcile lock at `sorento_crm_backend/app/tasks/chat_reconcile_tasks.py:20`, rate limits). The
@@ -344,9 +356,10 @@ Phased path (recommended):
   write (save then reload) stays on the primary. Trigger: primary CPU above 60% sustained for a
   week, or one of those pages' p95 over 3 s from load, not from code. Cost: one nginx block and
   the lag check, no LB change.
-- **Phase C (not recommended): both nodes take any request.** Only if both boxes are in the same
-  site (RTT under 1 ms) AND Phase B is not enough. Needs both nodes on one Redis, every write over
-  the tunnel, and gives up the site separation that is the point of Tier 1.
+- **Phase C (not recommended now): both nodes take any request.** Only if both boxes are in the
+  same site (RTT under 1 ms; true for now, section 3) AND Phase B is not enough. Needs both nodes
+  on one Redis and every write over the tunnel, and it would have to be undone the day the
+  standby moves off-region.
 
 Cloudflare LB note: its "random"/weighted steering CAN split traffic across both pools; the
 reason not to is the database, not the LB.
@@ -354,7 +367,7 @@ reason not to is the database, not the LB.
 ## 5. Cloudflare Load Balancing
 
 - One load balancer on `<CRM_PUBLIC_HOST>` (and the frontend host if separate), steering "off"
-  (failover order): pool `kl` first, pool `in` as fallback. One endpoint per pool.
+  (failover order): pool `node-a` first, pool `node-b` as fallback. One endpoint per pool.
 - Monitor: HTTPS `GET /api/v1/health/role`, expect 200, `Host` header = the public host, 2
   consecutive failures. `/health` on the public host is answered by nginx itself
   (`sorento_crm_backend/app/main.py:688-690`), so the monitor must use the `/api/v1/...` path.
@@ -368,7 +381,8 @@ reason not to is the database, not the LB.
   plan minimum, so on a Business zone it may be free. Owner confirms the figure on the dashboard
   (Traffic, Load Balancing, add-on settings) before buying
   ([Cloudflare LB monitors](https://developers.cloudflare.com/load-balancing/monitors/create-monitor/)).
-  Check location: one, in Asia.
+  Check location: one, in Asia. (With every origin in Malaysia, Cloudflare itself stays outside
+  the failure domain; a Malaysia outage leaves both pools unhealthy and the LB serves errors.)
 - `scripts/ops/cf-proxy.py` (HA-MONITOR) stays the escape for "Cloudflare itself is down"; with the
   LB in place its runbook step must point the DNS-only record at whichever node leads
   (`patronictl list` names it).
@@ -421,9 +435,8 @@ the healthier box and (b) the gap plan already moves sends into the CRM; once th
 carries the SLA escalation schedule and the non-chatbot webhooks, which the CRM scheduler can take
 over (trigger: gap plan slice 6 merged).
 
-With the KVM 8 in India, n8n's calls into the KL primary cross the tunnel (section 3, about
-0.2-0.5 s per bot turn) and its CRM endpoint follows the primary through the local HAProxy
-(section 2).
+n8n's CRM endpoint follows the primary through node B's HAProxy (section 2); with both boxes in
+Malaysia its calls to node A cost about what they cost today.
 
 ## 7. Disk sizing (owner question 2)
 
@@ -456,7 +469,7 @@ Recommended:
 | n8n + its DB + executions | 0 | unverified (crew: `du` on the n8n volume) |
 
 Witness: etcd data only, under 1 GB; the smallest VPS disk is plenty. Both CRM nodes need the same
-headroom, since either can lead: the KL column applies to the India node while it leads.
+headroom, since either can lead: the CRM box column applies to node B while it leads.
 
 With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 121 GB today; the KVM
 8 needs about 30 GB + D + n8n, a fraction of 400 GB.
@@ -495,14 +508,14 @@ With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 12
    - `templates/etcd/etcd.env.template` (all three members, WAN timeouts).
    - `templates/compose.ha.yml` (Patroni replaces the `db` service; workers behind profile
      `promoted`; `SKIP_MIGRATIONS` defaults to 0, a non-leading node must start with 1).
-   - `templates/haproxy/haproxy.cfg` (n8n's API, MCP and DB ports on the India box follow the primary).
+   - `templates/haproxy/haproxy.cfg` (n8n's API, MCP and DB ports on node B follow the primary).
    - `templates/host/` (softdog + udev rule so the watchdog actually arms; `docker-user.nft`, the container firewall).
    - `templates/walg.env.example`, `templates/wireguard/wg0.conf.template` (three-peer mesh).
    - `scripts/role-watcher.sh` + `templates/systemd/role-watcher.service`: workers and scheduler
      run only on the leader.
    - `scripts/ha-checks.sh`: disk, etcd members, exactly one Patroni leader, WAL, lag, archive,
      backup age, pinging Healthchecks; prunes old pre-migrate dumps when disk is high.
-   - `scripts/switchback.sh`: the automatic move back to KL (O3).
+   - `scripts/switchback.sh`: the automatic move back to node A (O3).
    - Shell tests for the three scripts: `infra/tests/test_ha_scripts.py`
      (`python3 -m pytest infra/tests -q`).
 
@@ -514,7 +527,7 @@ offload on its trigger (section 4).
 
 | Failure | What heals it, with no human | Where |
 |---|---|---|
-| Primary box or its Postgres dies | Patroni promotes the India replica after the leader key expires (about 30-40 s); the role watcher starts workers + scheduler there; the LB moves traffic; HAProxy moves n8n | section 2, 5 |
+| Primary box or its Postgres dies | Patroni promotes the other node's replica after the leader key expires (about 30-40 s); the role watcher starts workers + scheduler there; the LB moves traffic; HAProxy moves n8n | section 2, 5 |
 | Network cut isolates the primary | it cannot renew the leader key and demotes itself before the TTL ends; the side with the majority promotes | Patroni |
 | Patroni itself hangs on the primary | watchdog reboots the box before the TTL ends (once the host prep has armed it) | `watchdog` in `patroni.yml`, `infra/templates/host/` |
 | Postgres crashes but the box is fine | Patroni restarts it in place (failover only if it stays down past the TTL) | Patroni |
@@ -525,14 +538,15 @@ offload on its trigger (section 4).
 | Scheduler lost its lock (Postgres restart, demotion) | worker exits, restarts, re-takes or refuses | section 8 |
 | Disk filling with pre-migrate dumps | `ha-checks.sh` keeps the newest 2 when disk use passes 85%, and alerts | `infra/scripts/ha-checks.sh` |
 | WAL piling up, replica lagging, member missing, base backup older than 26 h, archive stalled | `ha-checks.sh` alerts through Healthchecks.io (outside our servers, as HA-MONITOR) | same |
-| After a failover, KL back and healthy for 24 h | `switchback.sh` moves the primary back at 04:00 MYT | O3 |
-| Witness dies | nothing to heal: KL + India are still a majority; `ha-checks.sh` alerts | etcd |
+| After a failover, node A back and healthy for 24 h | `switchback.sh` moves the primary back at 04:00 MYT | O3 |
+| Witness dies | nothing to heal: nodes A + B are still a majority; `ha-checks.sh` alerts | etcd |
+| Malaysia-wide outage | **nothing heals it**: all three boxes are down; off-site restore by a human (section 11) | R2 |
 
 ## 9. Owner-side steps (crew/owner apply; nothing here touches prod from the lane)
 
 1. Private infra repo `sorento-infra` (layout in `infra/README.md`; the templates move there).
    Prod compose, nginx, Caddy, `.deploy.env.example` captured from the box. No secrets.
-2. Move the KVM 8 to India (section 3). Set up the witness on the shared-service box (O1:
+2. Set up the witness on the shared-service box (O1:
    `infra/templates/witness/compose.witness.yml`, its firewall and WireGuard peer, runbook
    `documentation/runbooks/ha-failover.md`).
 3. WireGuard mesh between the three (or confirm the tailnet reaches all three).
@@ -541,7 +555,7 @@ offload on its trigger (section 4).
 5b. Before Patroni first starts: certs from a private CA minted OFFLINE (only `ca.crt` and each box's own certs go on the boxes, `ca.key` never; the db container mounts only Patroni's client cert), etcd
    auth on (commands and order in `templates/etcd/etcd.env.template`), the Patroni REST and etcd
    passwords in each node's `patroni.env`, and the container firewall
-   (`templates/host/docker-user.nft`) loaded on the India box and the witness.
+   (`templates/host/docker-user.nft`) loaded on node B and the witness.
 6. Adopt the prod Postgres into Patroni (Patroni's documented "convert a standalone" path) in one
    planned window, about 1-2 minutes of downtime for the restart that also turns on
    `wal_log_hints` and archiving. Before the first start:
@@ -557,12 +571,13 @@ offload on its trigger (section 4).
    Later changes to the `bootstrap.dcs` block take effect only through `patronictl edit-config`
    (bootstrap is read once); that belongs in the `ha-failover.md` runbook.
 7. Ship the release follow-up (both nodes deployed, `SKIP_MIGRATIONS=1` on the non-leader) BEFORE
-   starting the India stack, then start it: Patroni seeds the replica itself; the role watcher
+   starting node B's stack, then start it: Patroni seeds the replica itself; the role watcher
    keeps its workers off.
-8. Allowlists: add the India box's egress address to the OpenAI API key's IP allowlist (OpenAI
+8. Allowlists: add node B's egress address to the OpenAI API key's IP allowlist (OpenAI
    dashboard, project / API keys, allowed IPs), and to any other provider with one (Respond.io API,
    AutoCount: crew checks). Without this a failover works but the bot fails.
-9. Cloudflare: buy Load Balancing, create the monitor + pools `kl`, `in` + the LB (section 5).
+9. Cloudflare: buy Load Balancing, create the monitor + pools `node-a`, `node-b` + the LB (section 5).
+9b. Ask Hostinger support to confirm nodes A and B run on different physical hosts (section 3).
 10. Healthchecks.io checks for `ha-checks.sh` on both CRM nodes and the witness.
 11. Drills 1-3 of section 12 before calling Tier 1 done.
 
@@ -571,7 +586,9 @@ offload on its trigger (section 4).
 Owner rulings, 27 Oct about 19:35 (recorded verbatim where quoted):
 
 - **D1 Topology: (a) active-passive** warm standby now; read offload (Phase B) later on its trigger.
-- **D2 Region: India** for the standby, "in case SEA got problem". Section 3.
+- **D2 Region: Malaysia for now** (revised 27 Oct about 23:55; first ruled India "in case SEA got
+  problem"). Standby on node B, a separate box in Malaysia; witness on the shared-service box,
+  Malaysia. Off-region later by config + runbook (section 3).
 - **D3 Webhook buffer: (a) none for Tier 1.** Automatic failover puts the usual outage inside
   respond.io's roughly 3-minute retry window (section 11 RTO); anything missed is backfilled by the
   CRM's `chat_history_reconcile`. Revisit a Cloudflare Worker + Queue if a drill shows lost events.
@@ -583,51 +600,40 @@ Owner rulings, 27 Oct about 19:35 (recorded verbatim where quoted):
   (section 2), not by a human.
 
 - **O2 LB check interval: (b) 15 s checks** (27 Oct about 19:45). Cost in section 5 and 11.
-- **O3 Moving the primary back to KL: (a) automatic** after 24 h healthy and caught up (27 Oct
+- **O3 Moving the primary back to node A: (a) automatic** after 24 h healthy and caught up (27 Oct
   about 19:45). Window 04:00 MYT, not the 03:00 asked, to stay clear of the 03:00 nightly
   `pg_dump` (section 2 "Failback"). `infra/scripts/switchback.sh`, section 2 "Failback".
 
 - **O1 Witness host: (c) the shared-service box, FOR NOW** (owner, 27 Oct about 23:30), built so
-  it can move to a Hetzner EU VPS later by config only: the three voters are named in one file
+  it can move off-region (e.g. Hetzner EU) later by config only: the three voters are named in one file
   (`infra/templates/ha-members.env.example`, mirrored for the firewall in
   `infra/templates/host/ha-members.nft`); the witness runs `infra/templates/witness/compose.witness.yml`;
   the move is `documentation/runbooks/ha-failover.md` "Move the witness" (etcd learner add,
   promote, remove; no downtime, quorum kept).
-  - **Known limitation, accepted for now** (locations confirmed by the owner 27 Oct about 23:50:
-    the shared-service box is in MALAYSIA, like the CRM box). See "Known limitation: the witness
-    is in Malaysia" below for exactly what fails and when.
+  - **Known limitation, accepted for now**: all three voters are in Malaysia (owner, 27 Oct about
+    23:50). See "Known limitation: everything is in Malaysia" below for exactly what fails and
+    when.
   - Moving it off-region stays a config-only change (runbook "Move the witness"); crew raises the
     move with the owner.
 
-### Known limitation: the witness is in Malaysia
+### Known limitation: everything is in Malaysia
 
-While the witness runs on the shared-service box, two of the three voters (the KL CRM box and the
-witness) are in Malaysia. What that means, case by case, once the KVM 8 is in India:
+Nodes A and B and the witness are all in Malaysia, most likely in the same Hostinger facility
+(section 3). Case by case:
 
 | Event | Voters left | What happens |
 |---|---|---|
-| KL CRM box dies (hardware, OOM, its VPS host) and the shared-service box is up | India + witness (2 of 3) | **automatic failover works** (about 1-1.5 minutes) |
-| Shared-service box down alone (its deploy, reboot, incident) | KL + India | nothing changes; alert |
-| India box down alone | KL + witness | nothing changes; alert |
-| Malaysia vs India link cut, both regions up | KL + witness | KL stays primary (correct); India waits as a replica |
-| **Malaysia-wide outage** (the "SEA got problem" case: region, provider network, upstream link) | India only (1 of 3) | **NO automatic failover.** India is a healthy replica, but without a majority Patroni may not promote it, and `/api/v1/health/role` answers 503 on every node, so the CRM is DOWN until a human acts (runbook "Forced promotion when Malaysia is down"): about 15-30 minutes in practice |
-| **KL dies while the shared-service box is mid-deploy or rebooting** | India only | **NO automatic failover** until the shared-service box is back; then automatic |
+| Node A dies (hardware, host, OOM, disk, its Postgres) | B + witness (2 of 3) | **automatic failover** to node B, about 1-1.5 minutes |
+| Node B dies | A + witness | nothing changes for users; n8n is down with its box (section 6); alert |
+| Shared-service box down alone (its deploy, reboot, incident) | A + B | nothing changes; alert |
+| **Node A dies while the shared-service box is mid-deploy or rebooting** | B only (1 of 3) | **NO automatic failover** until the shared-service box is back (then automatic); or a human forces it (runbook "Forced promotion when two voters are down") |
+| **Malaysia-wide, facility-wide or Hostinger-network outage** | none | **everything is down**: all three boxes at once, nothing to fail over to. The CRM is down until Malaysia returns, or a human runs the off-site disaster restore (section 11: hours, RPO about 60 s) |
 
-Two consequences the owner should know:
+Fix for the last two rows (config + runbook, section 3 "Later: off-region"): move the witness out
+of Malaysia (fixes the mid-deploy row), then the standby (fixes the Malaysia row).
 
-- The forced promotion is the riskiest step in the whole design: India has to be made a
-  one-member etcd cluster by hand, and when Malaysia comes back the KL box and the witness still
-  form a majority of the OLD cluster and could keep KL as a second primary. The runbook therefore
-  disables KL's Cloudflare pool first and fences KL and the witness before their network returns.
-  This is exactly the risk an off-region witness removes.
-- Until the KVM 8 has moved to India, all three boxes are in Malaysia: Tier 1 then protects only
-  against a single box failing, not a Malaysia outage.
-
-Fix (config only, no redesign, no downtime): move the witness to a third region outside
-Malaysia and India (Hetzner EU, about EUR 4-5/month), runbook "Move the witness". With that, every
-row above becomes "automatic failover works" or "nothing changes".
-
-### O1 (c): the shared-service box as the witness (analysis behind the ruling)
+### O1 (c): the shared-service box as the witness (analysis behind the ruling, written while the
+standby was still ruled to India)
 
 What the repo says about the box (no provider, plan size, region or load is recorded anywhere):
 
@@ -685,8 +691,7 @@ month buys a voter that nothing else restarts.
 | 15 s checks (O2 b) | about $15 more, possibly $0 on a Business zone | Cloudflare pricing page via search, unverified; owner confirms on the dashboard |
 | Witness: shared-service box for now (O1 c) | $0 (about EUR 4-5 once moved to Hetzner EU) | moving price unverified |
 | R2 for WAL-G: 7 compressed fulls + WAL, about 50-150 GB at $0.015/GB (10 GB free); about 50-100k writes, inside the free million | about $1-3 | depends on DB size D, unverified |
-| India region for the KVM 8 | $0 expected | unverified (Hostinger may charge for a location change) |
-| **Total** | **about $21-23** now, about $26-28 after the witness move (about $5 less if 15 s checks are included in the zone plan) | |
+| **Total** | **about $21-23** now (about $5 less if 15 s checks are included in the zone plan); about $26-28 once the witness moves off-region | |
 
 ### Effort
 
@@ -694,9 +699,9 @@ month buys a voter that nothing else restarts.
 |---|---|---|
 | This plan + code guards + templates (PR #1915) | lane | 1.5 |
 | Private infra repo, prod compose captured | crew + owner | 0.5 |
-| Region move, witness, WireGuard mesh, etcd | owner (clicks) + crew | 1 |
+| Witness on the shared-service box, WireGuard mesh, etcd | crew | 1 |
 | Patroni image, adopt prod Postgres (planned window), WAL-G | crew with owner at the box | 1.5-2 |
-| India node stack, role watcher, HAProxy for n8n, autoheal, ha-checks | lane + crew | 1 |
+| Node B stack, role watcher, HAProxy for n8n, autoheal, ha-checks | lane + crew | 1 |
 | Release deploys both nodes; migrations only on the leader | lane | 1-1.5 |
 | Cloudflare LB + monitors + drills 1-3 | owner + crew | 1 |
 | **Total** | | **about 7.5-8.5** |
@@ -707,13 +712,14 @@ month buys a voter that nothing else restarts.
 |---|---|---|
 | Unplanned: primary box dies | hours (rebuild from the nightly dump) | about 40 s to promotion plus about 30 s for the LB (15 s checks): about 1-1.5 minutes |
 | Planned switchover | n/a | 5-15 s write pause |
+| Malaysia-wide outage | hours | unchanged: hours (off-site restore from R2 to a VPS outside Malaysia, by a human); RPO about 60 s |
 | Deploy | zero downtime (blue/green) | unchanged |
 | RPO unplanned | up to 24 h | normally under 1 s of commits; at most 16 MB of WAL (else no automatic promotion). Commits the old primary had not replicated are discarded when it rejoins (rewind, or the automatic wipe and re-seed); they survive only in the WAL-G archive if they were archived before the crash |
 | RPO from backups (PITR) | 24 h | about 60 s (`archive_timeout`) |
 
 "0% downtime" honestly: deploys and planned moves are already near zero; an unplanned box loss
-becomes about 1-1.5 minutes instead of hours, inside respond.io's roughly 3-minute retry window. Lower than that needs synchronous replication and
-active-active, which section 4 and section 3 rule out for this latency.
+becomes about 1-1.5 minutes instead of hours, inside respond.io's roughly 3-minute retry window.
+A Malaysia-wide outage is NOT covered while everything is in Malaysia (section 10).
 
 ### What still needs a human
 
@@ -721,9 +727,13 @@ active-active, which section 4 and section 3 rule out for this latency.
    own (that would silently lose more than a few seconds). A human picks: wait for the old
    primary, or `patronictl failover --force` and accept the loss. `ha-checks.sh` alerts on lag long
    before this.
-2. Two of the three members are down at once: no majority, so no automatic promotion, by design.
-   With the witness in Malaysia this includes **any Malaysia-wide outage** (section 10, "Known
-   limitation"). A human runs the forced promotion in `documentation/runbooks/ha-failover.md`.
+2. Two of the three members are down at once (for example node A while the shared-service box
+   is mid-deploy): no majority, so no automatic promotion, by design. A human runs the forced
+   promotion in `documentation/runbooks/ha-failover.md`.
+2b. A Malaysia-wide outage: all three boxes down. A human decides whether to run the off-site
+   disaster restore (`documentation/runbooks/ha-failover.md` "Disaster restore"): WAL-G from R2
+   onto a VPS outside Malaysia, Cloudflare pointed at it, the OpenAI allowlist extended. Hours,
+   RPO about 60 s.
 3. A member is gone for good (VPS deleted, disk lost): provision a replacement from the infra repo;
    Patroni then re-seeds it on its own. A lost etcd member also needs `etcdctl member remove/add`
    and a start with `ETCD_INITIAL_CLUSTER_STATE=existing` (`templates/etcd/etcd.env.template`).
@@ -735,8 +745,8 @@ active-active, which section 4 and section 3 rule out for this latency.
 
 ### Risks
 
-- etcd across 150-250 ms links: tuned timeouts (section 2); a flapping link to the witness costs
-  nothing while KL and India see each other. Drill 4 tests it.
+- All three voters in one region and most likely one facility (section 3): the accepted limitation
+  of this ruling.
 - Watchdog in containers needs the host prep (`infra/templates/host/`); until the Patroni log shows
   "watchdog activated", the TTL self-demotion is the only fence.
 - The failover control plane (Patroni REST, etcd) is itself an attack surface. Security review of
@@ -748,7 +758,7 @@ active-active, which section 4 and section 3 rule out for this latency.
   `alembic upgrade head` against a read-only replica and the container fails to start).
 - Replication slots filling a disk: `max_slot_wal_keep_size`, plus the WAL alert.
 - n8n stays a single point of failure for bot sends while it carries them (section 6); it sits on
-  the India node, which survives an SEA problem.
+  node B.
 - Forgotten allowlists: the failover works but the bot fails. Drill 2 catches it.
 - Async replication: a crash can lose the last fraction of a second of commits.
 
@@ -756,15 +766,15 @@ active-active, which section 4 and section 3 rule out for this latency.
 
 | # | When | What | Pass |
 |---|---|---|---|
-| 1 | before go-live, then monthly | `patronictl switchover` KL to India and back in a quiet window | write pause under 15 s each way; LB follows; workers move; `/api/v1/health/role` 200 on exactly one node |
-| 2 | before go-live, then quarterly | hard stop of the KL VPS in hPanel (unplanned failover) | India promoted within 60 s; LB moved within about 30 s after that; bot answers a test WhatsApp; OpenAI calls succeed from India; respond.io messages from the gap backfilled by reconcile |
-| 3 | after drill 2 | start KL again | it rejoins as a replica with no human step; lag back to under 1 s |
-| 4 | before go-live, then quarterly | cut the tunnel on KL only (firewall rule) | KL demotes itself within 30 s; India promotes; never two primaries (`patronictl list`, both role endpoints) |
+| 1 | before go-live, then monthly | `patronictl switchover` node A to node B and back in a quiet window | write pause under 15 s each way; LB follows; workers move; `/api/v1/health/role` 200 on exactly one node |
+| 2 | before go-live, then quarterly | hard stop of the node A VPS in hPanel (unplanned failover) | node B promoted within 60 s; LB moved within about 30 s after that; bot answers a test WhatsApp; OpenAI calls succeed from node B; respond.io messages from the gap backfilled by reconcile |
+| 3 | after drill 2 | start node A again | it rejoins as a replica with no human step; lag back to under 1 s |
+| 4 | before go-live, then quarterly | cut the tunnel on node A only (firewall rule) | node A demotes itself within 30 s; node B promotes; never two primaries (`patronictl list`, both role endpoints) |
 | 5 | quarterly | stop the witness | nothing changes; alert fires |
 | 6 | monthly | `scripts/ops/restore-test.sh` + a WAL-G PITR restore to a chosen minute in a throwaway container | restore finishes; row counts match |
 | 7 | monthly | `ha-checks.sh` with a lowered threshold | Healthchecks alert reaches the owner |
-| 8 | after drill 2, at the next 04:00 MYT past 24 h | leave `switchback.sh` alone | primary back on KL with a write pause under 15 s; LB, workers and n8n follow |
+| 8 | after drill 2, at the next 04:00 MYT past 24 h | leave `switchback.sh` alone | primary back on node A with a write pause under 15 s; LB, workers and n8n follow |
 | 9 | before go-live, then after every infra change | from INSIDE an n8n container: `curl -m 3` to 8008, 2379, 2380 and 5432 on each of the three tunnel addresses | every one times out; only the HAProxy address answers on 443, 8765 and 6432 |
-| 10 | quarterly, while the witness is in Malaysia | tabletop of "Forced promotion when Malaysia is down", plus the etcd `--force-new-cluster` step on a throwaway copy | the on-call person can run it from the runbook alone; nothing is tried on prod |
+| 10 | quarterly | tabletop of "Forced promotion when two voters are down" and "Disaster restore", plus the etcd `--force-new-cluster` step and a WAL-G restore onto a throwaway VPS outside Malaysia | the on-call person can run both from the runbook alone; nothing is tried on prod |
 
 Each drill's numbers go into `documentation/runbooks/` (follow-up runbook `ha-failover.md`).
