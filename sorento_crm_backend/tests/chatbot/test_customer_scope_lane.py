@@ -447,7 +447,10 @@ class TestSelfReference:
             session_factory, monkeypatch, _ask(self_reference=True), "what's my outstanding",
             mcp_response=REPORT_HIT,
         )
-        assert with_calls == without_calls
+        # REPORT-UNIFY: the report ask carries `mine` whenever the ask says "my" (REPORT-SMART-L), and the route
+        # narrows on it only for a salesperson with a book of its own (`report_ask.py` `narrowed`), so a contact with
+        # no link and no book gets the same figures and the same reply either way.
+        assert [(n, {k: v for k, v in a.items() if k != "mine"}) for n, a in with_calls] == without_calls
         assert with_reply == without_reply
 
     def test_staff_with_a_link_and_my_uses_the_link(self, session_factory, monkeypatch) -> None:
