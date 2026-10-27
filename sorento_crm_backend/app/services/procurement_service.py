@@ -56,6 +56,7 @@ from app.schemas.procurement import (
     SPODocument, SPODocumentLine, SPODocumentRow, SPODocumentContainer,
     refuse_missing_sponsorship_unit_prices,
 )
+from app.services import submission_status
 from app.services.error_handler import (
     AppException,
     handle_not_found,
@@ -6172,6 +6173,11 @@ class StockInquiryService:
             )
         if new_status is None:
             new_status = "new"
+        if new_status == submission_status.SI_REVIEW_STAGE:
+            # Answering the rejection into the review stage is a resubmission
+            # (RESUBMITTED-STATUS). `new` is not a submission yet and
+            # `pending_purchasing` skips the review stage, so both keep their name.
+            new_status = submission_status.RESUBMITTED
 
         column_keys = {a.key for a in inspect(inquiry).mapper.column_attrs}
         immutable = {"id", "created_at", "inquiry_number", "updated_at"}
@@ -6958,7 +6964,9 @@ class StockInquiryService:
     ) -> StockInquiry:
         """Move inquiry from pending_project_sales to pending_purchasing."""
         inquiry = self.get_inquiry(inquiry_id)
-        if inquiry.status != "pending_project_sales":
+        if not submission_status.is_awaiting_review(
+            inquiry.status, submission_status.SI_REVIEW_STAGE
+        ):
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot approve when status is {inquiry.status}. Expected: pending_project_sales.")
         inquiry.status = "pending_purchasing"
@@ -7032,7 +7040,9 @@ class StockInquiryService:
         """Move inquiry from pending_project_sales to rejected."""
         from datetime import datetime, timezone
         inquiry = self.get_inquiry(inquiry_id)
-        if inquiry.status != "pending_project_sales":
+        if not submission_status.is_awaiting_review(
+            inquiry.status, submission_status.SI_REVIEW_STAGE
+        ):
             from app.services.error_handler import handle_validation_error
             raise handle_validation_error(f"Cannot reject when status is {inquiry.status}. Expected: pending_project_sales.")
         inquiry_number = (display_document_number(inquiry) or str(inquiry.id)).strip()

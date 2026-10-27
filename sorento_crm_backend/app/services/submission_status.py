@@ -20,6 +20,9 @@ RESUBMITTED = "resubmitted"
 
 AWAITING_REVIEW: tuple[str, ...] = (SUBMITTED, RESUBMITTED)
 
+# The review stage of each stage-based form, i.e. the stage `resubmitted` stands in for.
+SI_REVIEW_STAGE = "pending_project_sales"
+
 
 def status_on_submit(was_rejected: bool, stage: str = SUBMITTED) -> str:
     return RESUBMITTED if was_rejected else stage
