@@ -57,6 +57,7 @@ def client(db, state, monkeypatch):
     db.add(actor)
     db.flush()
     principal = {"id": actor.id, "email": actor.email}
+    state["actor_id"] = actor.id
 
     def _override_db():
         yield db
@@ -200,6 +201,44 @@ def test_company_outside_the_viewers_reach_matches_nothing(client, state, seeded
 
 def test_malformed_company_value_is_422(client, seeded):
     assert _list(client, {"company": "not-a-uuid"}).status_code == 422
+
+
+def _grant(db, user_id, *company_ids):
+    from app.models.company import UserCompany
+
+    for company_id in company_ids:
+        db.add(UserCompany(user_id=user_id, company_id=company_id))
+    db.flush()
+
+
+def test_column_and_filter_reach_every_granted_company_not_just_the_active_one(client, db, state, seeded):
+    """The list is company-less: a viewer working in Sorento who also holds Mocha sees Mocha."""
+    state["scope"] = frozenset({SORENTO})
+    _grant(db, state["actor_id"], SORENTO, MOCHA_ID)
+    body = _list(client, {"query": seeded["tag"]}).json()
+    by_id = {row["id"]: row for row in body["data"]}
+    assert by_id[seeded["mocha"].id]["customer_companies"] == [_name(db, MOCHA_ID)]
+    ids = _ids(_list(client, {"query": seeded["tag"], "company": MOCHA_ID}))
+    assert ids == {seeded["both"].id, seeded["mocha"].id}
+
+
+def test_a_link_stamped_with_another_company_than_its_customer_never_leaks_that_customers_company(
+    client, db, state
+):
+    """Nothing enforces a link's company matching its customer's; the filter checks both sides,
+    as the Companies sort does, so a Sorento-only viewer learns nothing about a Mocha customer."""
+    tag = unique_code("X")
+    contact = _contact(db, f"{tag}-odd")
+    mocha_customer = _customer(db, MOCHA_ID)
+    db.add(
+        RespondContactCustomer(
+            contact_id=contact.id, customer_id=mocha_customer.id, company_id=SORENTO, source="manual"
+        )
+    )
+    db.flush()
+    state["scope"] = frozenset({SORENTO})
+    _grant(db, state["actor_id"], SORENTO)
+    assert _ids(_list(client, {"query": tag, "company": MOCHA_ID})) == set()
 
 
 # --- Server-side sort ---------------------------------------------------------------------
