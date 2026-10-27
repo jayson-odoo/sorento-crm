@@ -79,7 +79,14 @@ describe('TurnDetailDrawer Span pass section', () => {
       data: detail({
         span_extract: {
           spans: [
-            { text: 'frg', type: 'spec', status: 'close', close: 2, residual: true },
+            {
+              text: 'frg',
+              type: 'spec',
+              status: 'ambiguous',
+              close: 2,
+              residual: true,
+              candidates: [{ list: 'spec', label: 'Finish: French Gold', score: 0.9, signal: 'spell' }],
+            },
             { text: 'ZZT brand', type: 'brand', status: 'exact', close: 1, residual: false },
           ],
           rows_rendered: 3,
@@ -91,6 +98,11 @@ describe('TurnDetailDrawer Span pass section', () => {
           model_source: 'label',
           ms: 120,
           matched_rows: ['Finish: French Gold'],
+          near_exact: [{ list: 'brand', label: 'ZZALFA', spelling: 1, source: 'near_exact' }],
+          final_block: {
+            spec: [{ label: 'Finish: French Gold', source: 'span' }],
+            brand: [{ label: 'ZZALFA', source: 'near_exact' }],
+          },
         },
       }),
       isLoading: false,
@@ -103,6 +115,12 @@ describe('TurnDetailDrawer Span pass section', () => {
     expect(body).toHaveTextContent('ZZT brand');
     expect(body).toHaveTextContent('residual');
     expect(body).toHaveTextContent('Finish: French Gold');
+    expect(body).toHaveTextContent('spell');
+    expect(body).toHaveTextContent('Added from the message spelling');
+    expect(body).toHaveTextContent('ZZALFA');
+    expect(body).toHaveTextContent('Handed to the parser');
+    expect(screen.getByTestId('final-source-span')).toHaveTextContent('Finish: French Gold');
+    expect(screen.getByTestId('final-source-near_exact')).toHaveTextContent('ZZALFA');
     expect(body).not.toHaveTextContent('fell back');
   });
 
@@ -120,6 +138,8 @@ describe('TurnDetailDrawer Span pass section', () => {
           model_source: null,
           ms: 0,
           matched_rows: [],
+          near_exact: [],
+          final_block: {},
         },
       }),
       isLoading: false,

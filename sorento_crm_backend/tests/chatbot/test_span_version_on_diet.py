@@ -119,7 +119,10 @@ def _row(trace):
 
 SPAN_EVENT = {
     "kind": "span_extract", "at": NOW.isoformat(),
-    "spans": [{"text": "frg", "type": "spec", "status": "close", "close": 2, "residual": True}],
+    "spans": [{"text": "frg", "type": "spec", "status": "close", "close": 2, "residual": True,
+               "candidates": [{"list": "spec", "label": "Finish: French Gold", "score": 0.9, "signal": "spell"}]}],
+    "near_exact": [{"list": "brand", "label": "Brand: ZZT", "spelling": 1.0, "source": "near_exact"}],
+    "final_block": {"brand": [{"label": "Brand: ZZT", "source": "near_exact"}]},
     "rows_rendered": 3, "near_exact_rows": 1, "fallback": False, "fallback_reason": None,
     "provider": "openai", "model": "gpt-x", "model_source": "label", "ms": 120,
 }
@@ -140,11 +143,13 @@ def test_trace_detail_exposes_the_span_pass_with_the_rows_shown():
     assert se["rows_rendered"] == 3 and se["near_exact_rows"] == 1 and se["fallback"] is False
     assert (se["provider"], se["model"], se["model_source"], se["ms"]) == ("openai", "gpt-x", "label", 120)
     assert se["matched_rows"] == ["Finish: French Gold", "Brand: ZZT"]
+    assert se["near_exact"] == SPAN_EVENT["near_exact"] and se["final_block"] == SPAN_EVENT["final_block"]
 
 
 def test_trace_detail_span_fallback_shape_and_absent_event():
-    fb = {**SPAN_EVENT, "spans": [], "fallback": True, "fallback_reason": "unreadable"}
+    fb = {**{k: v for k, v in SPAN_EVENT.items() if k not in ("near_exact", "final_block")}, "spans": [], "fallback": True, "fallback_reason": "unreadable"}
     lookup = {"kind": "lookup_lists", "at": NOW.isoformat(), "pieces": ["x"], "fallback": True, "hits": []}
     se = compose_trace_detail(_row([fb, lookup]))["span_extract"]
     assert se["fallback"] is True and se["fallback_reason"] == "unreadable" and se["matched_rows"] == []
+    assert se["near_exact"] == [] and se["final_block"] == {}
     assert compose_trace_detail(_row([LOOKUP_EVENT]))["span_extract"] is None

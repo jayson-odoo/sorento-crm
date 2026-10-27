@@ -770,3 +770,26 @@ def test_audit_the_trace_names_why_it_fell_back(session_factory, seeded, stub_ac
     assert len(ev) == 1 and "fallback_reason" in ev[0], ev
     assert ev[0]["fallback_reason"] == reason, ev[0]
     assert ev[0]["fallback"] is (reason is not None)
+
+
+# ---------------------------------------------------------------------------------------------- drawer detail
+def test_trace_event_carries_per_span_candidates_the_near_exact_union_and_the_final_block_sources(
+    session_factory, seeded, stub_access, monkeypatch
+):
+    db = session_factory()
+    db.add_all([Brand(id=str(uuid.uuid4()), brand_code=f"ZZ{n[2]}", brand_name=n, is_active=True, company_id=DEFAULT_COMPANY_ID)
+                for n in ("ZZALFA", "ZZBRAVO", "ZZCHARLIE", "ZZDELTA")])
+    db.commit()
+    r = run(session_factory, stub_access, monkeypatch, text_body="zzalfa zzbravo zzcharlie zzdelta stock",
+            span=spans_json(("ZZDELTA", "brand")))
+    e = trace_events(session_factory, r)[0]
+    cands = e["spans"][0]["candidates"]
+    assert cands and cands[0]["label"].startswith("ZZDELTA") and cands[0]["list"] == "brand", cands
+    assert set(cands[0]) == {"list", "label", "score", "signal"} and cands[0]["signal"] in ("exact", "spell", "partial", "meaning")
+    near = e["near_exact"]
+    assert near and all(n["source"] == "near_exact" and set(n) == {"list", "label", "spelling", "source"} for n in near), near
+    assert not any(n["label"].startswith("ZZDELTA") for n in near), near
+    assert len(near) == e["near_exact_rows"]
+    block = e["final_block"]["brand"]
+    assert [b["source"] for b in block][0] == "span" and block[0]["label"].startswith("ZZDELTA"), block
+    assert len(block) == ll.TOP_K["brand"] and {b["source"] for b in block[1:]} == {"near_exact"}, block
