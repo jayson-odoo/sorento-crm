@@ -12,7 +12,7 @@ missing; ``scripts/ensure_goods_chain_indexes.py`` (run in the background by ``s
 retries it. All of it lives in ``app/utils/online_index.py``.
 
 Revision ID: bfd_idx_0001_billing_from_doc_no
-Revises: pp2_0001_view_own_perms
+Revises: sales_unified_0002
 """
 from __future__ import annotations
 
@@ -22,7 +22,7 @@ from alembic import op
 from app.utils import online_index
 
 revision = "bfd_idx_0001_billing_from_doc_no"
-down_revision = "pp2_0001_view_own_perms"
+down_revision = "sales_unified_0002"
 branch_labels = None
 depends_on = None
 
