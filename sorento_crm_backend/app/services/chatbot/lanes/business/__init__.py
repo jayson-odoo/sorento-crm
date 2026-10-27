@@ -1872,6 +1872,13 @@ def run_fetch(
         # category ranking is the sales ranking on the report engine, never `crm_top_selling_report`.
         parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
         order_status_raw = report_ask.ASK_NAME
+    if domain in contracts.ORDER_OR_SALES_DOMAINS and order_status_raw not in (report_ask.ASK_NAME, "top_selling"):
+        # REPORT-UNIFY (Q1): every sales total or breakdown and every outstanding ask that holds a filter or an
+        # axis is the report ask. The engine seam (`report_ask.by_capability`) converts it before grounding; this is
+        # the same conversion for a verdict that skipped it (a live session, a direct call).
+        routed = report_ask.by_capability(parse_output)
+        if routed.get("order_status") == report_ask.ASK_NAME:
+            parse_output, order_status_raw = report_ask.take_words(routed, ""), report_ask.ASK_NAME
 
     # -- whole-domain grant gate (D6, PLAN-chatbot-last-purchase-cost.md) --------
     # A domain in `DOMAIN_GRANT_REQUIRED` is refused OUTRIGHT without the grant, before
@@ -2106,129 +2113,16 @@ def run_fetch(
                 trace.add("report_period", {"unreadable": True, "order_status": order_status_raw})
             return _fixed_reply(report_ask.UNREADABLE_PERIOD_LINE)
 
-    has_customer = (
-        any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities)
-        if isinstance(entities, list)
-        else False
-    )
-    # #1262 slice 9 (F1a), AC-S9-4: a brand alone is a valid subject for the
-    # outstanding report. Resolved here (not merely hinted): SF4 (review round, 26
-    # Sep 2026) - "brand XYZ" naming an unlisted word must never count as a subject,
-    # so this must test the RESOLVED `outstanding_brand_ids` (the SAME live lookup
-    # `_resolve_report_product_and_location` performs, called early here so its
-    # result is ready before the subject gate below reads it), never any
-    # brand-hinted entity regardless of whether it matched a live brand.
-    _resolve_outstanding_brand_ids(parse_output, semantic_input, db=db)
-    has_brand = bool(semantic_input.get("outstanding_brand_ids"))
-    # #1262 slice 2 (F1c): a carried customer id is a subject only when it is a real
-    # uuid - a kind-pick's printed label ("Sorento (customer)") riding on this same
-    # key is not a resolved customer, and must never count as one here either.
-    raw_carried_customer_ids = jsc.array(parse_output.get("outstanding_carried_customer_ids"))
-    carried_customer_ids = [u for u in raw_carried_customer_ids if fetch_mod.is_uuid(u)]
-    carried_customer_unusable = bool(raw_carried_customer_ids) and not carried_customer_ids
-    # R13: on an ANSWERING turn the subject is whatever the stored filters carry - the
-    # product code, the customer ids, or both - and neither needs resolving again: they
-    # were resolved on the turn that asked.
-    carried_subject = (
-        bool(jsc.truthy(parse_output.get("outstanding_carried_product_code")))
-        or bool(jsc.array(parse_output.get("outstanding_carried_product_codes")))
-        or bool(carried_customer_ids)
-    )
-    if (
-        order_status_raw == "sales_report"
-        and domain in contracts.ORDER_OR_SALES_DOMAINS
-        and not has_own_accounts
-        and not (has_product or has_customer or carried_subject)
-        and (has_brand or typed_brand_words(parse_output))
-        and _office_staff(db, contact_id, space_id)
-    ):
-        # Chat fix PR-B S10 (review): a staff sales total naming only a brand has no subject
-        # for `crm_sales_report` (422, "could not fetch"); the report engine totals a brand's
-        # sales (`crm_report_ask`, no axis), so it is that ask, with its words and questions.
-        parse_output = report_ask.take_words(
-            {**parse_output, "order_status": report_ask.ASK_NAME, "group_by": None}, ""
-        )
-        order_status_raw = report_ask.ASK_NAME
-    if (
-        domain == "order"
-        and not (has_product or has_customer or has_brand or carried_subject)
-        and carried_customer_unusable
-        and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
-    ):
-        # AC-S2-3: the ONLY subject this turn has is an unusable stored customer (the
-        # label, never re-typed) - never run the report over no customer at all
-        # ("Customer: all"); ask, with no tool call.
-        return _which_customer_ask()
-    if (
-        domain == "order"
-        and (has_product or has_customer or has_brand or carried_subject)
-        and (order_status_raw == "outstanding" or order_status_raw in fetch_mod.ORDER_STATUS_TO_SCOPE)
-    ):
-        tool_name = "crm_outstanding_report"
-        tool_item = {"name": tool_name, "_tool_pick": {"source": "outstanding_override"}}
-
-        # -- AC-1119/S4c/D5/R17 (ruling 3): product-code + location resolution, the
-        # ONE seam shared with `crm_sales_report` below. --------------------------- #
-        _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
-
-        # -- R19: the NAMES for the question's own `Customer:` line ------------ #
-        # Worked out once, here, and stored on both filter builders. The ids are uuids
-        # and a uuid never reaches a customer's screen, so the question has to carry the
-        # names the resolution already produced - this turn's, when the gate resolved a
-        # customer, and otherwise the ones the CARRIED entities still hold (an answering
-        # or refining turn resolves nothing of its own; the report's own header is built
-        # from the ids by the route, which has the `customers` table to read).
-
-        # -- D13: the sales_orders.outstanding field-reveal gate, before any fetch -- #
-        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
-        granted_raw = access_ctx.get("attributes")
-        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
-        has_so_grant = _OUTSTANDING_SO_GRANT in granted
-
-        # S4 point 3 (AC-1130): bare "outstanding" + the grant arms the scope
-        # question instead of fetching. `outstanding_scope_ask_candidate` is a
-        # PURELY SYNTACTIC flag `head/output_exchange.py::_post_process` sets
-        # BEFORE resolve+gate even runs (domain/product/bare-order_status, no
-        # grant knowledge there) - the grant check happens HERE, the only place
-        # that already reads `ctx.access`, so a direct `run_fetch` call (this
-        # module's own tests) that never went through that step just fetches,
-        # which is what `TestToolPick` pins.
-        if (
-            order_status_raw == "outstanding"
-            and jsc.truthy(parse_output.get("outstanding_scope_ask_candidate"))
-            and has_so_grant
-        ):
-            return _outstanding_scope_ask(entities, semantic_input, db=db)
-
-        scope = fetch_mod.ORDER_STATUS_TO_SCOPE.get(order_status_raw, "both")
-        so_refused = False
-        if scope in ("so", "both") and not has_so_grant:
-            scope = "do"
-            # AC-1140 vs AC-1141: a BARE "outstanding" silently redirects to `do` (no
-            # question was ever asked, so there is nothing to refuse); an EXPLICIT SO
-            # ask ("so_outstanding" / "outstanding_both") gets the refusal line.
-            so_refused = order_status_raw != "outstanding"
-        semantic_input["outstanding_scope"] = scope
-        semantic_input["outstanding_so_refused"] = so_refused
-    elif order_status_raw == contracts.SALES_TARGET_STATUS and domain in contracts.ORDER_OR_SALES_DOMAINS:
+    if order_status_raw == contracts.SALES_TARGET_STATUS and domain in contracts.ORDER_OR_SALES_DOMAINS:
         # SALES-TARGET-CHAT: the target ask has its own tool; the route scopes the contact
         # (its links or its agents) and the grant was checked above, before any pick.
         tool_name = _SALES_TARGET_TOOL
         # The injected scope links are not a named customer: only one the person named goes.
         entities = [e for e in entities if not (isinstance(e, dict) and e.get("scope"))]
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_target_override"}}
-    elif (order_status_raw == "sales_analysis" and not has_own_accounts) or (
-        # Chat fix PR-B S10 (AC-B16, R03/R23): a staff sales report naming no product, no
-        # customer and no brand has no subject for `crm_sales_report` (422
-        # `subject_required`, "I could not fetch sales"): it is the company's sales for
-        # the period, the sales analysis. A customer-scoped contact keeps its links, and
-        # only an OFFICE STAFF contact is rerouted (security review: never on "no links").
-        order_status_raw == "sales_report"
-        and domain in contracts.ORDER_OR_SALES_DOMAINS
-        and not has_own_accounts
-        and not (has_product or has_customer or has_brand or carried_subject or typed_brand_words(parse_output))
-        and _office_staff(db, contact_id, space_id)
-    ):
+    elif order_status_raw == "sales_analysis" and not has_own_accounts:
+        # REPORT-UNIFY (Q1): only the Yearly comparison file is left here (`group_by` year, the one axis the
+        # report ask has not); every other sales analysis is the report ask's (`report_ask.by_capability`).
         # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS (a company's sales by
         # month, by year, by channel) is the reports kernel's own query, answered as the
         # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
@@ -2268,70 +2162,6 @@ def run_fetch(
                     semantic_input[key] = value
         tool_name = _SALES_ANALYSIS_TOOL
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_analysis_override"}}
-    elif (
-        domain in contracts.ORDER_OR_SALES_DOMAINS
-        and (has_product or has_customer or carried_subject)
-        and order_status_raw == "sales_report"
-    ) or (order_status_raw == "sales_analysis" and has_own_accounts):
-        # S4 wiring point 3 (AC-1650): domain "order" + a resolved product OR
-        # customer + `order_status: "sales_report"` picks THIS tool - one more
-        # branch beside the outstanding override above, never `tools[0]`. R7
-        # (PLAN-prompt-dynamic-30sep D9): the `sales` domain is the same ask.
-        #
-        # CHATBOT-SELFREF-SCOPE B2 (production, 30 Sep 2026): a CUSTOMER-SCOPED contact
-        # asking for "my sales this month" is parsed as a sales ANALYSIS, but that is a
-        # company's own totals (`/api/v1/sales/analysis` refuses any contact linked to a
-        # customer account, AC-S1-23), so the ask went out as `crm_sales_analysis` and
-        # came back with nothing. Its sales figures are its linked customers' (parent
-        # plan Q6a, Q8a): the customer-facing report, over the links, the way every
-        # other sales ask of a scoped contact runs. Its reply is TEXT (the presenter's
-        # month blocks), never a file.
-        tool_name = "crm_sales_report"
-        if fetch_mod.is_mixed_code_set(fetch_mod.outstanding_product_codes(entities, semantic_input)):
-            # REPORT-SMART-L S2 (D): a word that fanned out to unrelated codes is asked about, never
-            # frozen on the first of them; a shared-prefix family keeps sending its prefix.
-            from app.services.chatbot.lanes.business.report_ask import MIXED_PRODUCTS_LINE
-
-            return _fixed_reply(MIXED_PRODUCTS_LINE)
-        if order_status_raw == "sales_analysis":
-            tool_item = {"name": tool_name, "_tool_pick": {"source": "customer_scope_sales_report"}}
-            # A linked STAFF contact is not forced by the engine (not enforced), so its
-            # links may not have been handed over as entities ("sales this month" with no
-            # "my" resolves no customer at all): the links are the report's subject either
-            # way, or the route answers 422 `subject_required`.
-            if not any(isinstance(e, dict) and e.get("entity_type") == "customer" for e in entities):
-                entities = [
-                    *[e for e in entities if isinstance(e, dict)],
-                    *[
-                        {"uuid": cid, "entity_type": "customer", "code": code or name, "display_name": name, "scope": True}
-                        for cid, name, code in (customer_scope.get("linked") or [])
-                    ],
-                ]
-            if trace is not None:
-                trace.add(
-                    "customer_scope",
-                    {
-                        "decision": "sales_analysis_answered_as_sales_report",
-                        "reason": "company_sales_analysis_is_not_a_linked_contacts_figure",
-                        "ids": list(customer_scope["ids"]),
-                    },
-                )
-        else:
-            tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_report_override"}}
-
-        # -- S4 wiring point 4 (AC-1651): the gate, BEFORE any fetch. There is no
-        # fallback scope here (unlike D13's SO/DO redirect above), so the absence
-        # of the grant refuses the WHOLE ask, with no fetch and nothing armed. -- #
-        access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
-        granted_raw = access_ctx.get("attributes")
-        granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
-        if _SALES_REPORT_GRANT not in granted:
-            return _sales_report_not_enabled()
-
-        # -- AC-1119/S4c/D5/R17 (ruling 3): the SAME product-code + location
-        # resolution the outstanding override above uses, fixed once at this one
-        # seam for both tools. --------------------------------------------------- #
-        _resolve_report_product_and_location(parse_output, entities, semantic_input, db=db)
     elif domain == chat_report.DOMAIN and chat_report.is_chat_report(parse_output):
         # CA-3 (PLAN-chat-analytics-ca3-chat-dataset-10oct.md slice 5): what customers ask
         # the bot, `crm_report_ask` with `dataset=chat`. The reveal was checked above; every

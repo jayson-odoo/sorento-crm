@@ -63,7 +63,7 @@ GROUP_BY = {
 
 #: The parser's other report types (`order_status`): one that fills no open field of the sales
 #: ranking question is a new ask, not its answer (chat fix PR-B S2c, `names_its_own_ask`).
-OTHER_REPORTS = frozenset({"top_selling", "sales_report", "sales_analysis"})
+OTHER_REPORTS = frozenset({"top_selling", "sales_report", "sales_analysis", "outstanding"})
 
 #: The entity hints `take_words` moves, and the noun each is said with when it names nothing.
 WORD_HINTS = {"brand": "brand", "sales_agent": "sales agent", "category": "category"}
@@ -207,7 +207,16 @@ def _resolve_top_n(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
 METRIC_FROM_RANK_BY = {"quantity": "qty", "amount": "amount"}
 #: The report ask's bases, in the order the basis question lists them (SALES-UNIFIED: invoiced
 #: is the one sales definition, `reports.ask.CATALOGUE["sales"]["invoiced"]`).
-BASES = ("invoiced", "delivered", "ordered", "outstanding")
+BASES = ("invoiced", "delivered", "ordered", "outstanding", "pending_delivery", "unpaid")
+#: REPORT-UNIFY (owner ruling Q2): the three things "outstanding" can mean, each a basis of the report ask.
+#: Never defaulted: an outstanding ask whose parse names none is asked `KIND_QUESTION`. They take no period
+#: (absent = every date).
+OUTSTANDING_KINDS = ("outstanding", "pending_delivery", "unpaid")
+KIND_QUESTION = "Undelivered orders, pending delivery or unpaid invoices?"
+#: The parser's outstanding document statuses that already name their kind: a sales order backlog, a delivery
+#: order backlog. `outstanding_both` and the bare `outstanding` name none.
+STATUS_KIND = {"so_outstanding": "outstanding", "do_outstanding": "pending_delivery"}
+OUTSTANDING_STATUSES = frozenset({"outstanding", "outstanding_both", *STATUS_KIND})
 #: The measures the parser's `measure` may name: the two sums and (REPORT-SMART-1021) the
 #: counts (`reports.ask.COUNT_MEASURES`: customers, orders, products).
 METRICS = ("qty", "amount", "customers", "orders", "products")
@@ -238,17 +247,22 @@ def _resolve_metric(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved
 
 
 def _resolve_basis(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
-    """An answering turn's basis: the PARSER's own reading of the reply (`reply_basis`)."""
+    """An answering turn's basis: the PARSER's own reading of the reply (`reply_basis`); the kind question
+    (an outstanding ask) takes one of the three kinds only."""
     basis = extras.get("reply_basis")
-    return rf.Resolved("ok", value=basis, label=basis) if basis in BASES else rf.Resolved("unknown")
+    allowed = OUTSTANDING_KINDS if extras.get("kind_ask") else BASES
+    return rf.Resolved("ok", value=basis, label=basis) if basis in allowed else rf.Resolved("unknown")
 
 
-def _metric_question() -> str:
+def _metric_question(_extras: dict[str, Any]) -> str:
     asked = ranking_ask.next_question(metric_settled=False, basis_settled=False, basis_line=ranking_ask.RANKING_BASIS_LINE)
     return asked[1] if asked else ranking_ask.METRIC_LINE
 
 
-def _basis_question() -> str:
+def _basis_question(extras: dict[str, Any]) -> str:
+    """The basis line; an outstanding ask (`kind_ask`) asks which KIND instead (Q2)."""
+    if extras.get("kind_ask"):
+        return KIND_QUESTION
     asked = ranking_ask.next_question(metric_settled=True, basis_settled=False, basis_line=ranking_ask.RANKING_BASIS_LINE)
     return asked[1] if asked else ranking_ask.RANKING_BASIS_LINE
 
@@ -293,18 +307,14 @@ SALES_RANKING_ASK = rf.register(rf.AskType(
 # --------------------------------------------------------------------------- #
 
 
-#: REPORT-SMART-1021 capability table: the axes (the parser's `group_by`, "" for none) each
-#: other report kind's own tool can draw. The parser names the kind and the axis; CODE picks
-#: the tool from both (owner 15 Oct 2026: "not very smart and dynamic"). An axis the kind's
-#: tool cannot draw but `crm_report_ask` can (`GROUP_BY`) is this ask's.
-CAN_DRAW = {
-    # `crm_sales_analysis`: the company's totals by channel, month or year
-    # (`fetch.SALES_ANALYSIS_GROUP_BY`).
-    "sales_analysis": frozenset({"", "year", "month"}),
-    # `crm_sales_report`: one subject's sales, month by month.
-    "sales_report": frozenset({"", "month"}),
-    # (`top_selling` is no longer here: every item / category ranking is the report ask's, `from_top_selling`.)
-}
+#: REPORT-UNIFY (owner ruling Q1): every sales total and breakdown the parser labels `sales_report` or
+#: `sales_analysis` is the report ask's, by whatever axis (`GROUP_BY`) and with no axis at all. An axis outside
+#: `GROUP_BY` (the Yearly comparison's `year`) stays on `crm_sales_analysis`, its Excel file. (`top_selling` is the
+#: report ask's too: `from_top_selling`.)
+SALES_STATUSES = frozenset({"sales_analysis", "sales_report"})
+#: The entity kinds that are a filter of the report ask (an outstanding ask holding none of these, and no axis, is an
+#: order list, not a report).
+_FILTER_HINTS = frozenset({"customer", "product", "brand", "category", "sales_agent", "warehouse", "specification"})
 #: A breakdown the parser did not read as a ranking (a sales analysis or report by an axis,
 #: "sales for all agents") lists every row, never asked "how many": up to this many.
 BREAKDOWN_TOP_N = 100
@@ -381,25 +391,23 @@ def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
 
 
 def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
-    """Engine seam, before grounding (REPORT-SMART-1021 step 2): a sales figure ask whose
-    `group_by` its kind's tool cannot draw (`CAN_DRAW`) but the report ask can, or whose
-    `measure` is a count (step 3: only the report ask counts), is a sales ranking, read whole
-    by `settle`: its filters, period, count, metric and basis, with every missing one asked in
-    one numbered reply. A breakdown (no count, no direction, from a kind that is not a
-    ranking) lists every row. Parser fields only; anything else is unchanged."""
+    """Engine seam, before grounding (REPORT-SMART-1021 step 2, REPORT-UNIFY Q1): every sales figure ask
+    (`SALES_STATUSES`, any axis the report ask has or none) and every outstanding ask that holds a filter or an
+    axis (`as_outstanding`) is a sales ranking, read whole by `settle`: its filters, period, count, metric and
+    basis, with every missing one asked in one numbered reply. A breakdown (no count, no direction, from a kind
+    that is not a ranking) lists every row. Parser fields only; anything else is unchanged."""
     # Engine keys only this seam writes: never taken from the parser's own emission.
     verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
     if status == "top_selling":
         return from_top_selling(verdict)
-    if status not in CAN_DRAW:
+    if status in OUTSTANDING_STATUSES:
+        return as_outstanding(verdict)
+    if status not in SALES_STATUSES:
         return verdict  # an order / PO list keeps its own grouping; only the report ask's statuses are typed
     verdict = typed_group_by(verdict)  # R6: a null `by_words` names no axis, so the guess routes nothing
     raw_group = jsc.js_string(verdict.get("group_by") or "").strip().lower()
     if raw_group and raw_group not in GROUP_BY:
-        return verdict
-    counted = verdict.get("measure") in METRICS[2:]
-    if raw_group in CAN_DRAW[status] and not counted:
         return verdict
     out = {
         **{k: v for k, v in verdict.items() if k not in ("status", "document")},
@@ -413,6 +421,29 @@ def by_capability(verdict: dict[str, Any]) -> dict[str, Any]:
         # Review B2: a flag, never a count on the verdict. Only a FRESH ask with no count of its
         # own reads it (`settle`); an answer to an open question or a refine never does.
         out["report_breakdown"] = True
+    return out
+
+
+def as_outstanding(verdict: dict[str, Any]) -> dict[str, Any]:
+    """REPORT-UNIFY (Q1, Q2): an outstanding ask that holds a filter or an axis is the report ask's, its kind (the
+    basis: undelivered orders, pending delivery or unpaid invoices) the parser's `basis` or the one a
+    sales / delivery order document status names; none named is asked, never defaulted. One that holds neither
+    stays the order list. Parser fields only."""
+    entities = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)]
+    held = any(jsc.js_string(e.get("hint") or "").strip().lower() in _FILTER_HINTS for e in entities)
+    verdict = typed_group_by(verdict)
+    if not (held or jsc.js_string(verdict.get("group_by") or "").strip().lower() in GROUP_BY):
+        return verdict
+    status = jsc.js_string(verdict.get("order_status") or "").strip()
+    kind = verdict.get("basis") if verdict.get("basis") in OUTSTANDING_KINDS else STATUS_KIND.get(status)
+    out = {
+        **{k: v for k, v in verdict.items() if k not in ("status", "document", "basis")},
+        **SALES_RANKING_ASK.reroute,
+        "capability_from": "outstanding",
+        "report_breakdown": verdict.get("rank_direction") not in ("top", "bottom"),
+    }
+    if kind:
+        out["basis"] = kind
     return out
 
 
@@ -441,6 +472,18 @@ def drop_field_words(verdict: dict[str, Any]) -> dict[str, Any]:
     return verdict if len(kept) == len(entities) else {**verdict, "entities": kept}
 
 
+def _spec_term(entity: dict[str, Any]) -> str | None:
+    """`key:value` of a specification entity the parser read whole (a key and a value), the route's `spec` param;
+    None for any other entity. Grounding re-derives specs from the raw words and may drop it, so it is held out."""
+    if jsc.js_string(entity.get("hint") or "").strip().lower() != "specification":
+        return None
+    key, value = jsc.js_string(entity.get("spec_key") or "").strip(), entity.get("spec_value")
+    if not key or value in (None, ""):
+        return None
+    word = "yes" if value is True else "no" if value is False else jsc.js_string(value).strip()
+    return f"{key}:{word}{jsc.js_string(entity.get('spec_unit') or '').strip()}" if word else None
+
+
 def hold_words(verdict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """Engine seam before grounding, a `sales_ranking` verdict: its brand, sales agent and
     category entities, held out of the descriptor grounding and handed back after it."""
@@ -451,7 +494,7 @@ def hold_words(verdict: dict[str, Any]) -> tuple[dict[str, Any], list[dict[str, 
         return verdict, []
     held = [
         e for e in entities
-        if isinstance(e, dict) and jsc.js_string(e.get("hint") or "").strip().lower() in WORD_HINTS
+        if isinstance(e, dict) and (jsc.js_string(e.get("hint") or "").strip().lower() in WORD_HINTS or _spec_term(e))
     ]
     if not held:
         return verdict, []
@@ -469,8 +512,14 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
         return verdict
     kept: list[Any] = []
     words: dict[str, list[str]] = {hint: [] for hint in WORD_HINTS}
+    specs: list[str] = []
     for e in verdict.get("entities") or []:
         if not isinstance(e, dict):
+            continue
+        term = _spec_term(e)
+        if term:
+            if e.get("current_message") is not False and term not in specs:
+                specs.append(term)
             continue
         hint = jsc.js_string(e.get("hint") or "").strip().lower()
         raw = " ".join(jsc.js_string(e.get("raw") or "").split())
@@ -482,7 +531,7 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
             continue
         if raw and e.get("current_message") is not False and raw not in words[hint]:
             words[hint].append(raw)
-    return {**verdict, "entities": kept, "report_ask_words": words}
+    return {**verdict, "entities": kept, "report_ask_words": words, "report_ask_spec": specs}
 
 
 def typed_group_by(verdict: dict[str, Any]) -> dict[str, Any]:
@@ -640,7 +689,7 @@ def restates_the_ask(verdict: dict[str, Any]) -> bool:
     return "new_subject" in ops
 
 
-#: The report kinds with no count of their own (`CAN_DRAW`: a total, or by month / year). A sales analysis naming a
+#: The report kinds with no count of their own (a total, or by month). A sales analysis naming a
 #: product or customer reads as a sales report before this seam (`turn_runtime`, SALES-COMPANY-PICK round 2).
 _COUNTLESS_REPORTS = frozenset({"sales_analysis", "sales_report"})
 
@@ -980,6 +1029,9 @@ def _fresh_args(
             return None, line
         args.update(product_args)
 
+    if jsc.array(parse_output.get("report_ask_spec")):
+        args["spec"] = [jsc.js_string(t) for t in jsc.array(parse_output["report_ask_spec"])]
+
     codes: list[str] = []
     for e in _current_entities(parse_output, "warehouse"):
         token = jsc.js_string(e.get("raw") or e.get("canonical_code") or "").strip()
@@ -1016,7 +1068,7 @@ def _given_choices(args: dict[str, Any]) -> dict[str, Any]:
     and a month trend show both measures, so they are never asked the metric (settled as None);
     the basis is always asked unless named. Anything not named is left out, so it is asked."""
     given: dict[str, Any] = {}
-    if not args.get("group_by") or args.get("group_by") == "month":
+    if not args.get("group_by") or args.get("group_by") == "month" or args.get("basis") in OUTSTANDING_KINDS:
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
     elif args.get("measure"):
         given["metric"] = rf.Resolved("ok", value=args["measure"], label=args["measure"])
@@ -1272,6 +1324,7 @@ def settle(
         and not dealer  # the route forces a dealer's links, so a plain total can never widen
         and not args.get("group_by")
         and not set(args) - _NON_FILTER_ARGS
+        and not parse_output.get("capability_from")  # a sales / outstanding total with no filter is the company's own
     ):
         # Not a valid ask: no axis and nothing to total. Say what can be ranked and open nothing.
         return None, CATALOGUE_LINE
@@ -1289,6 +1342,11 @@ def settle(
         # period alone never runs a total (it asks). One that names its own axis (R5 row 7) keeps its period.
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
+    if parse_output.get("capability_from") == "outstanding":
+        extras["kind_ask"] = True  # the basis question is the three kinds (Q2)
+    if period is None and (args.get("basis") in OUTSTANDING_KINDS or extras.get("kind_ask")):
+        # An outstanding kind takes no period: none named means every date (the route's own reading).
+        given["period"] = rf.Resolved("ok", value={"from": None, "to": None}, label="all dates")
     if across_all and frame.get("group_by") in AXIS_NOUNS and _drill_source(frame):
         # Owner ruling B: after a ranking, a new axis runs across all, and the header line says so.
         extras["note"] = f"Across all {AXIS_NOUNS[frame['group_by']][1]}"
@@ -1538,8 +1596,9 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
         if settled:
             args[key] = settled
     period = _dict(_dict(outcome.values.get("period")).get("value"))
-    args["date_from"] = period.get("from")
-    args["date_to"] = period.get("to")
+    if period.get("from") and period.get("to"):  # an outstanding kind with no period sends none (every date)
+        args["date_from"] = period["from"]
+        args["date_to"] = period["to"]
     top_n = (outcome.values.get("top_n") or {}).get("value")
     if args.get("group_by") and isinstance(top_n, int):
         args["top_n"] = top_n

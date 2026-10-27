@@ -72,7 +72,7 @@ ALL_WORDS = frozenset({"all", "any", "everything", "every", "semua", "全部", "
 ENGINE_KEYS = frozenset(
     {
         "required_ask", "required_ask_reply", "required_ask_answer", "low_stock_frame",
-        "report_ask_words", "sales_ranking_frame", "ranking_pick", "ranking_detail",
+        "report_ask_words", "report_ask_spec", "sales_ranking_frame", "ranking_pick", "ranking_detail",
         # the channel the parser read off an answering reply (`answer_drops` removes `sales_channel` itself)
         "required_ask_channel",
         # V1-DOC-SCOPE: who may see any customer's documents is the engine's call alone.
@@ -112,8 +112,9 @@ class FieldSpec:
     allow_all: bool = True
     required: bool = True
     #: A question another module owns (the rankings' metric and basis lines,
-    #: `lanes/business/ranking_ask`), read when it is asked and laid over `question`.
-    question_fn: Callable[[], str] | None = None
+    #: `lanes/business/ranking_ask`), read when it is asked (with the ask's carried extras, so the
+    #: line can follow what the ask is about) and laid over `question`.
+    question_fn: Callable[[dict[str, Any]], str] | None = None
     #: An OPTIONAL field whose word the message named but nothing matched is said and
     #: asked once (LOWSTOCK-SEMANTIC Q3); a second miss settles it as "no filter" and the
     #: miss is kept on the value (`missed`) so the reply can say so. False: dropped quietly.
@@ -194,8 +195,8 @@ def _is_all(text: str, spec: FieldSpec) -> bool:
     return word in ALL_WORDS or word in {f"all {spec.noun}", f"all {_plural(spec.noun)}"}
 
 
-def _live(spec: FieldSpec) -> FieldSpec:
-    return replace(spec, question=spec.question_fn()) if spec.question_fn else spec
+def _live(spec: FieldSpec, extras: dict[str, Any] | None = None) -> FieldSpec:
+    return replace(spec, question=spec.question_fn(extras or {})) if spec.question_fn else spec
 
 
 def _miss_line(word: str, spec: FieldSpec, note: str = "") -> str:
@@ -217,13 +218,15 @@ def _named(given: dict[str, Any] | None, name: str) -> bool:
     return isinstance(word, Resolved) or (isinstance(word, str) and bool(word.strip()))
 
 
-def _others_open(ask: AskType, spec: FieldSpec, values: dict, given: dict[str, Any] | None) -> list[FieldSpec]:
+def _others_open(
+    ask: AskType, spec: FieldSpec, values: dict, given: dict[str, Any] | None, extras: dict[str, Any] | None = None
+) -> list[FieldSpec]:
     """An `ask_all` ask: every OTHER required field still open (not settled, no word given),
     in the ask's order. Empty for any other ask."""
     if not ask.ask_all:
         return []
     return [
-        _live(s) for s in ask.fields
+        _live(s, extras) for s in ask.fields
         if s.required and s.name != spec.name and s.name not in values and not _named(given, s.name)
     ]
 
@@ -232,10 +235,12 @@ def _numbered(specs: list[FieldSpec]) -> str:
     return "\n".join(f"{i}. {s.question}" for i, s in enumerate(specs, start=1))
 
 
-def _question(ask: AskType, spec: FieldSpec, values: dict, given: dict[str, Any] | None) -> str:
+def _question(
+    ask: AskType, spec: FieldSpec, values: dict, given: dict[str, Any] | None, extras: dict[str, Any] | None = None
+) -> str:
     """The open field's question, or, for an `ask_all` ask with others open, every open
     field's question in one numbered reply."""
-    others = _others_open(ask, spec, values, given)
+    others = _others_open(ask, spec, values, given, extras)
     return _numbered([spec, *others]) if others else spec.question
 
 
@@ -292,7 +297,7 @@ def collect(
             return Outcome(values=values, reply=ask.cancelled, slot=None, extras=carried, cancelled=True)
         spec = specs.get(jsc.js_string(slot.get("asking")))
         if spec is not None:
-            spec = _live(spec)
+            spec = _live(spec, carried)
             options = list(slot.get("options") or [])
             if isinstance(reply, Resolved):
                 # The caller already read the answer (the parser's own words, resolved).
@@ -328,10 +333,10 @@ def collect(
                 # numbered pick shows its list again).
                 again = _pick_line(spec, options) if options else spec.question
                 reply_line = _miss_line(word, spec, got.note) if word else again
-                if not options and _others_open(ask, spec, values, given):
+                if not options and _others_open(ask, spec, values, given, carried):
                     # `ask_all` with several open: the reply may have meant any of them, so
                     # it is not named as one field's miss; every open field is asked again.
-                    asked = _question(ask, spec, values, given)
+                    asked = _question(ask, spec, values, given, carried)
                     reply_line = f"{got.note}\n\n{asked}" if got.note else asked
                 return Outcome(values=values, reply=reply_line,
                                slot=_slot(ask, values, carried, asking=spec.name, options=options, misses=misses),
@@ -340,7 +345,7 @@ def collect(
     for spec in ask.fields:
         if spec.name in values:
             continue
-        spec = _live(spec)
+        spec = _live(spec, carried)
         word = (given or {}).get(spec.name)
         if word == ALL and spec.allow_all:
             values[spec.name] = {"value": ALL, "label": ALL}
@@ -366,7 +371,7 @@ def collect(
                            slot=_slot(ask, values, carried, asking=spec.name), extras=carried)
         if not spec.required:
             continue
-        return Outcome(values=values, reply=_question(ask, spec, values, given),
+        return Outcome(values=values, reply=_question(ask, spec, values, given, carried),
                        slot=_slot(ask, values, carried, asking=spec.name), extras=carried)
     return Outcome(values=values, extras=carried)
 
