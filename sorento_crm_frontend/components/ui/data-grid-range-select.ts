@@ -151,26 +151,29 @@ function rowIdAt(target: EventTarget | null, tableEl: Element | null): string | 
 }
 
 /**
- * Native, non-passive listeners attached once, before any touch starts: Chrome and iOS ignore
- * preventDefault from a touchmove listener added after touchstart, and React's onTouchMove is
- * passive. They act only while a held touch drag is live (scroll lock) or a touch press is
- * down (Android long-press menu).
+ * Native, non-passive listeners on the row boxes only (see `touchGuardRef`): Chrome and iOS
+ * ignore preventDefault from a touchmove listener added after touchstart, and React's
+ * onTouchMove is passive. They act only while a held touch drag is live (scroll lock) or a
+ * touch press is down (Android long-press menu). Module-level functions, so attaching the same
+ * box twice is a no-op.
  */
-let touchGuardsOn = false;
+function blockTouchScroll(event: TouchEvent) {
+  if (drag?.touch && drag.live && event.cancelable) event.preventDefault();
+}
 
-function ensureTouchGuards() {
-  if (touchGuardsOn || typeof document === 'undefined') return;
-  touchGuardsOn = true;
-  document.addEventListener(
-    'touchmove',
-    (event) => {
-      if (drag?.touch && drag.live && event.cancelable) event.preventDefault();
-    },
-    { passive: false },
-  );
-  document.addEventListener('contextmenu', (event) => {
-    if (drag?.touch) event.preventDefault();
-  });
+function blockTouchContextMenu(event: Event) {
+  if (drag?.touch) event.preventDefault();
+}
+
+/** Ref callback for a row box; the cleanup removes both listeners when the box goes away. */
+function touchGuardRef(el: HTMLElement | null) {
+  if (!el) return;
+  el.addEventListener('touchmove', blockTouchScroll, { passive: false });
+  el.addEventListener('contextmenu', blockTouchContextMenu);
+  return () => {
+    el.removeEventListener('touchmove', blockTouchScroll);
+    el.removeEventListener('contextmenu', blockTouchContextMenu);
+  };
 }
 
 function onDragMove(event: PointerEvent) {
@@ -237,9 +240,9 @@ function focusRowBox(tableEl: Element | null, id: string) {
 export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TData>) {
   const table = tableArg as Table<unknown>;
   const row = rowArg as Row<unknown>;
-  ensureTouchGuards();
 
   return {
+    ref: touchGuardRef,
     [ROW_ID_ATTR]: row.id,
 
     onClick: (event: React.MouseEvent) => {
