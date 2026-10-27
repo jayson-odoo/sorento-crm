@@ -389,3 +389,37 @@ def test_exact_row_beats_longer_row_containing_it():
     ]
     res = _one("length", None, rows)
     assert res.status == "resolved" and res.candidates[0].row.key == "k1"
+
+
+# F1: a span word matches a row word with the same consonant skeleton (typos that drop vowels)
+SKEL = [
+    R("brand", "s1", "ZZSORENTO"),
+    R("category", "s2", "Flush type ZZWashdown"),
+    R("brand", "s3", "ZZOMEGA"),
+]
+
+
+def test_consonant_skeleton_matches_a_dropped_vowel_brand():
+    res = _one("zzsrnto", "brand", SKEL)
+    assert res.status == "resolved" and res.candidates[0].row.key == "s1", res
+
+
+def test_consonant_skeleton_matches_a_dropped_vowel_in_a_multiword_label():
+    res = _one("zzwshdwn", "category", SKEL)
+    assert res.status == "resolved" and res.candidates[0].row.key == "s2", res
+
+
+def test_a_two_consonant_skeleton_does_not_match():
+    res = _one("zz", "brand", [R("brand", "t1", "zoo")])
+    assert res.status != "resolved", res
+
+
+def test_a_different_first_letter_does_not_match():
+    res = _one("rstq", "brand", [R("brand", "u1", "arstq")])
+    assert res.status != "resolved", res
+
+
+def test_an_exact_row_still_beats_a_skeleton_match():
+    rows = [R("brand", "e1", "ZZSORENTO"), R("brand", "e2", "ZZSRNTO")]
+    res = _one("zzsrnto", "brand", rows)
+    assert res.candidates[0].row.key == "e2" and res.candidates[0].signal == "exact", res
