@@ -13,6 +13,7 @@ offered (their exact path runs after the parser).
 from __future__ import annotations
 
 import hashlib
+import logging
 import re
 import threading
 import time
@@ -21,6 +22,8 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from app.services.chatbot.head import candidates
 from app.services.chatbot_lookup_edits import MARKER, SPAN_MARKER
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -731,6 +734,17 @@ GEMINI_EMBED_CHUNK = 100
 GEMINI_EMBED_DIMENSIONS = 1536
 
 
+#: Waits (seconds) before each retry of a warm chunk the provider rate-limited; a per-minute burst limit clears in one.
+WARM_RETRY_WAITS = (15, 30, 60)
+_sleep = time.sleep
+
+
+def _rate_limited(exc: Exception) -> bool:
+    """A provider 429 (`GeminiHTTPError.status_code`, read by attribute so the provider is not imported here) or an SDK
+    error whose class name says rate limit."""
+    return getattr(exc, "status_code", None) == 429 or "RateLimit" in type(exc).__name__
+
+
 def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
     """A row-vector embedder over `request` (texts -> raw vectors): vectors cached per process by (model, sha1 of
     text) as unit float32, the uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget. `matrix`
@@ -761,12 +775,21 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
 
     def fill(texts: list[str]) -> None:
         """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
-        total deadline; chunks are kept as they complete."""
+        total deadline; chunks are kept as they complete. A rate-limited chunk is waited out (`WARM_RETRY_WAITS`),
+        then the error is re-raised; a large warm is back-to-back requests and trips the per-minute limit."""
         with _store_lock:
             todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
         for i in range(0, len(todo), chunk_size):
             chunk = todo[i : i + chunk_size]
-            store(chunk, request(chunk))
+            for wait in (*WARM_RETRY_WAITS, None):
+                try:
+                    raw = request(chunk)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    if wait is None or not _rate_limited(exc):
+                        raise
+                    _sleep(wait)
+            store(chunk, raw)
 
     def matrix(texts: list[str]):
         import numpy as np
@@ -902,10 +925,15 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
     texts = row_texts(rows)
 
     def run() -> None:
+        started = time.monotonic()
         try:
             getattr(embed, "fill", embed)(texts)
+            logger.info(
+                "lookup lists warm: %d texts cached on %s in %.1f s",
+                len(texts), getattr(embed, "model", "?"), time.monotonic() - started,
+            )
         except Exception:  # noqa: BLE001 - advisory
-            pass
+            logger.warning("lookup lists warm failed", exc_info=True)
         finally:
             _warm_lock.release()
 
