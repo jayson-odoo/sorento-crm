@@ -122,6 +122,13 @@ describe('A. Shift+click ticks a range', () => {
     expect(selected()).toBe('r1,r5,r6');
   });
 
+  it('keeps an already ticked target ticked instead of toggling it off', () => {
+    render(<Harness initial={{ r5: true }} />);
+    fireEvent.click(box(2));
+    fireEvent.click(box(5), { shiftKey: true });
+    expect(selected()).toBe('r2,r3,r4,r5');
+  });
+
   it('toggles just the one box when nothing was clicked before', () => {
     render(<Harness />);
     fireEvent.click(box(3), { shiftKey: true });

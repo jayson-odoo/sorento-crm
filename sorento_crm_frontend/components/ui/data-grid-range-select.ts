@@ -170,10 +170,10 @@ export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TDat
       event.preventDefault();
       const rows = rowsOf(table);
       const here = rows.findIndex((r) => r.id === row.id);
-      const there = Math.max(0, Math.min(rows.length - 1, here + (event.key === 'ArrowDown' ? 1 : -1)));
-      const next = rows[there];
+      // Past either end there is no next row: focus stays where it is.
+      const next = rows[here + (event.key === 'ArrowDown' ? 1 : -1)];
       const tableEl = (event.currentTarget as Element).closest('table');
-      if (!next || there === here) return;
+      if (!next) return;
       if (event.shiftKey) {
         const anchorId = anchors.get(table);
         const anchor = anchorId ? rows.find((r) => r.id === anchorId) : undefined;
