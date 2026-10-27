@@ -370,7 +370,7 @@ class TestUpload:
                 assert _upload(client).status_code == 403
         assert self._counts(api.db) == before
 
-    def test_success_queues_a_reading_and_stores_the_pdf_in_its_folder(self, api) -> None:
+    def test_success_queues_a_reading_and_stores_the_pdf_in_the_root_folder(self, api) -> None:
         from app.models.resources import Attachment, AttachmentDirectory
 
         api.as_user(EDITOR_ID)
@@ -396,7 +396,7 @@ class TestUpload:
         reading = api.db.query(CataloguePhotoReading).filter_by(id=body["id"]).one()
         assert str(reading.directory_id) == str(folder.id)
         pdf = api.db.query(Attachment).filter_by(id=str(reading.pdf_attachment_id)).one()
-        assert str(pdf.directory_id) == str(folder.id)
+        assert str(pdf.directory_id) == str(root.id)
         assert pdf.original_filename == "zzt-catalogue.pdf"
 
 
