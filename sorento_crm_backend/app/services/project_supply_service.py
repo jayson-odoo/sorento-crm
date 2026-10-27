@@ -5530,7 +5530,14 @@ class ProjectSupplyService:
         # read here at all - the change batch is the only thing that supersedes an active
         # revision now, and `_write_decision` below finds this one still active and
         # supersedes it in the same transaction the new composition is written in.
-        carried_holds = self._frozen_by_line(self.active_decision(str(order.id)))
+        active = self.active_decision(str(order.id))
+        carried_holds = self._frozen_by_line(active)
+        # The shortfall each line's revision recorded, so the credit is what was HELD
+        # (`_carried_component_qty`), not what was asked.
+        for snapshot in (active.line_snapshots or []) if active is not None else []:
+            held = carried_holds.get(str(snapshot.get("project_line_id") or ""))
+            if held is not None and snapshot.get("stock_short"):
+                held["stock_short"] = list(snapshot["stock_short"])
         self._lock_stock(payload_lines, lines)
 
         named = {str(entry.project_line_id) for entry in payload_lines}
@@ -6016,9 +6023,10 @@ class ProjectSupplyService:
         (PLAN-so-book-diff-replanning.md section 10, defect A). `kind`/`source_warehouse_id`
         /`donor_project_id` are the same keys `_snapshot` freezes a component under.
         """
-        components = (carried_holds.get(line_id) or {}).get("components") or []
+        snapshot = carried_holds.get(line_id) or {}
         total = _ZERO
-        for component in components:
+        locations: set = set()
+        for component in snapshot.get("components") or []:
             if str(component.get("kind") or "") != kind:
                 continue
             if str(component.get("source_warehouse_id") or "") != warehouse_id:
@@ -6028,7 +6036,21 @@ class ProjectSupplyService:
             ) != (donor_project_id or ""):
                 continue
             total += _dec(component.get("qty"))
-        return total
+            locations.add(str(component.get("source_location") or ""))
+        # CONFIRM-DOUBLE-ROWS (owner, 28 Oct 2026): net of what that revision recorded
+        # SHORT there (OI-CLOSED-LINE). The component froze what was ASKED but only what
+        # existed was held, so crediting the asked quantity let a repeat press of the same
+        # decision skip the recheck and write in full what the first press found short.
+        short = sum(
+            (
+                _dec(entry.get("short"))
+                for entry in snapshot.get("stock_short") or []
+                if str(entry.get("kind") or "") == kind
+                and str(entry.get("location") or "") in locations
+            ),
+            _ZERO,
+        )
+        return max(total - short, _ZERO)
 
     def _check_line(
         self,
