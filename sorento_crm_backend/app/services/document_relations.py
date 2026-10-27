@@ -354,6 +354,33 @@ VIEW_SLUGS = {
 }
 
 
+def can_view(db: Session, user_id: str, kind: str) -> bool:
+    """Whether the viewer may open records of `kind`: its view slug, and (under the strict
+    module guard) its module enabled, the same two checks `require_permission` makes."""
+    from app.config import settings
+    from app.services.user_service import UserPermissionService
+
+    perms = UserPermissionService(db)
+    slug = VIEW_SLUGS[kind]
+    if not perms.check_user_has_permission(user_id, slug):
+        return False
+    if not getattr(settings, "module_guard_strict", False):
+        return True
+    if perms.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+        return True
+    from app.modules.runtime.installer import (
+        DEFAULT_TENANT_ID,
+        is_module_enabled,
+        tenant_has_any_module_row,
+    )
+    from app.modules.runtime.permission_module_map import module_for_permission
+
+    module = module_for_permission(slug)
+    if module and tenant_has_any_module_row(db, DEFAULT_TENANT_ID):
+        return is_module_enabled(db, DEFAULT_TENANT_ID, module)
+    return True
+
+
 def related_response(
     db: Session,
     user_id: str,
@@ -364,11 +391,8 @@ def related_response(
 ) -> dict[str, Any]:
     """The `/related` body: each kind nulled when the viewer lacks its view slug, plus the
     visible rows as one table sorted server side."""
-    from app.services.user_service import UserPermissionService
-
-    perms = UserPermissionService(db)
     masked = {
-        key: (relations[key] if perms.check_user_has_permission(user_id, VIEW_SLUGS[kind]) else None)
+        key: (relations[key] if can_view(db, user_id, kind) else None)
         for kind, key in KIND_KEYS.items()
     }
     return {**masked, "rows": related_table(masked, sort=sort, dir=dir)}

@@ -105,11 +105,11 @@ def agent_options(
 @router.get("/{document_id}")
 def get_billing_document(
     document_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     try:
-        return svc.document_detail(db, svc.get_document_or_404(db, document_id))
+        return svc.document_detail(db, svc.get_document_or_404(db, document_id), user["id"])
     except Exception as exc:
         _reraise(db, exc)
 

@@ -1,5 +1,6 @@
 """Orders API routes."""
 import calendar
+import logging
 import re
 from datetime import datetime, time
 
@@ -1166,7 +1167,10 @@ def get_order_related(
     except HTTPException:
         raise
     except Exception as e:
-        raise handle_internal_error(str(e))
+        # Logged with its real text, answered generically (security review nit): a SQL error
+        # never reaches the caller.
+        logging.getLogger(__name__).error("Related documents failed for %s: %s", order_id, e, exc_info=True)
+        raise handle_internal_error()
 
 
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)

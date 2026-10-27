@@ -480,8 +480,54 @@ class TestBillingListFilters:
 
     def test_detail_related_carries_linked_delivery_orders(self, world, api):
         so, do, iv = _so427775(world)
-        related = _ok(api(BILL_VIEW).get(f"{self.LIST}/{iv.id}"))["related"]
+        related = _ok(api(*ALL).get(f"{self.LIST}/{iv.id}"))["related"]
         assert related["delivery_orders"] == [
             {"id": str(do.id), "doc_no": do.order_number, "doc_date": "2026-10-21"}
         ]
         assert [s["doc_no"] for s in related["sales_orders"]] == [so.so_number]
+
+
+    def test_detail_masks_orders_the_viewer_cannot_open(self, world, api):
+        """Security review should-fix: the record's own related orders follow the `/related`
+        mask, so a finance-only viewer gets no order ids it could not open."""
+        so, do, iv = _so427775(world)
+        related = _ok(api(BILL_VIEW).get(f"{self.LIST}/{iv.id}"))["related"]
+        assert related["delivery_orders"] == []
+        assert related["sales_orders"] == []
+        related = _ok(api(BILL_VIEW, DO_VIEW).get(f"{self.LIST}/{iv.id}"))["related"]
+        assert [d["doc_no"] for d in related["delivery_orders"]] == [do.order_number]
+        assert related["sales_orders"] == []
+        related = _ok(api(BILL_VIEW, SO_VIEW).get(f"{self.LIST}/{iv.id}"))["related"]
+        assert related["delivery_orders"] == []
+        assert [s["doc_no"] for s in related["sales_orders"]] == [so.so_number]
+
+    def test_another_companys_order_ids_filter_to_nothing(self, world, api):
+        so_b = world.so(f"{MARKER}-SO-XB", company_id=world.b)
+        do_b = world.do(f"{MARKER}-DO-XB", company_id=world.b, lines=[{"from_doc_no": so_b.so_number}])
+        world.doc(f"{MARKER}-IV-XB", company_id=world.b,
+                  lines=[{"from_doc_type": "DO", "from_doc_no": do_b.order_number}])
+        client = api(BILL_VIEW)
+        assert _ok(client.get(self.LIST, params={"sales_order_id": so_b.id}))["data"] == []
+        assert _ok(client.get(self.LIST, params={"delivery_order_id": do_b.id}))["data"] == []
+
+
+def test_mask_respects_module_enablement(world, monkeypatch):
+    """Security review nit: under the strict module guard a disabled module masks its kind even
+    for a holder of the view slug, as `require_permission` would refuse the record itself."""
+    from app.config import settings
+    from app.services import document_relations as rel
+    from app.services.user_service import UserPermissionService
+
+    monkeypatch.setattr(UserPermissionService, "check_user_has_permission", lambda self, uid, slug: True)
+    monkeypatch.setattr(UserPermissionService, "get_user_role_slugs", lambda self, uid: set())
+    monkeypatch.setattr(settings, "module_guard_strict", True, raising=False)
+    monkeypatch.setattr("app.modules.runtime.installer.tenant_has_any_module_row", lambda db, t: True)
+    monkeypatch.setattr(
+        "app.modules.runtime.installer.is_module_enabled", lambda db, t, module: module != "finance"
+    )
+    monkeypatch.setattr(
+        "app.modules.runtime.permission_module_map.module_for_permission",
+        lambda slug: slug.split(".")[0],
+    )
+    assert rel.can_view(world.db, "u-1", rel.BILLING_DOCUMENT) is False
+    assert rel.can_view(world.db, "u-1", rel.DELIVERY_ORDER) is True

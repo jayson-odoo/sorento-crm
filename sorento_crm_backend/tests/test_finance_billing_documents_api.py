@@ -533,7 +533,8 @@ class TestDetail:
 
     def test_related_notes_sales_orders_and_delivery_orders(self, world, api):
         iv, cn, dn = self._invoice_world(world)
-        related = api(VIEW).get(f"{LIST}/{iv.id}").json()["related"]
+        # DOC-RELATIONS: the related sales orders follow the SO view slug.
+        related = api(VIEW, "scm.dashboard.view").get(f"{LIST}/{iv.id}").json()["related"]
         assert set(related) >= {"notes", "sales_orders", "delivery_order_nos"}
         notes = {n["doc_no"]: n for n in related["notes"]}
         assert set(notes) == {"CN-REC", "DN-REC"}

@@ -228,7 +228,7 @@ def get_document_or_404(db: Session, document_id: str) -> BillingDocument:
     return doc
 
 
-def document_detail(db: Session, doc: BillingDocument) -> dict[str, Any]:
+def document_detail(db: Session, doc: BillingDocument, user_id: str) -> dict[str, Any]:
     lines = list(doc.lines)  # ordered by line_no
     line_ids = [line.sales_order_line_id for line in lines if line.sales_order_line_id]
     orders_by_line: dict[str, dict[str, str]] = {}
@@ -256,13 +256,23 @@ def document_detail(db: Session, doc: BillingDocument) -> dict[str, Any]:
         .all()
     )
     # DOC-RELATIONS: the same rule the `/related` table reads, so the two cannot disagree.
+    # Each kind masked by its own view slug, the `/related` rule (security review, DOC-RELATIONS):
+    # a finance-only viewer gets no order ids it could not open.
     linked = relations.relations_for_billing_document(db, doc)
-    sales_orders = [{"id": o["id"], "doc_no": o["doc_no"]} for o in linked["sales_orders"]]
+    sales_orders = (
+        [{"id": o["id"], "doc_no": o["doc_no"]} for o in linked["sales_orders"]]
+        if relations.can_view(db, user_id, relations.SALES_ORDER)
+        else []
+    )
     sales_orders.sort(key=lambda o: o["doc_no"])
-    delivery_orders = [
-        {"id": o["id"], "doc_no": o["doc_no"], "doc_date": o["doc_date"]}
-        for o in linked["delivery_orders"]
-    ]
+    delivery_orders = (
+        [
+            {"id": o["id"], "doc_no": o["doc_no"], "doc_date": o["doc_date"]}
+            for o in linked["delivery_orders"]
+        ]
+        if relations.can_view(db, user_id, relations.DELIVERY_ORDER)
+        else []
+    )
     delivery_order_nos = sorted(
         {
             line.from_doc_no
