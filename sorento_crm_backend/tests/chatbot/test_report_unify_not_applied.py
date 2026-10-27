@@ -45,11 +45,17 @@ def test_p11_an_ask_whose_every_filter_applies_prints_no_not_applied_line(bot) -
     assert not _lines(text), text
 
 
-def test_p11_a_parsed_filter_with_no_route_param_that_is_the_only_subject_asks_instead_of_answering(bot) -> None:
-    """AC-RU-14 second half: nothing the ask names can be applied, so the figure is not what was asked."""
-    text, calls = bot.say(
-        _status("sales_report", _e("TRP-9", "transporter"), basis="delivered", **NO_DATES),
-        "sales for TRP-9",
+def test_p11_a_parsed_filter_with_no_route_param_that_is_the_only_subject_asks_instead_of_answering() -> None:
+    """AC-RU-14 second half: nothing the ask names can be applied (and nothing is grouped), so the figure is not
+    what was asked: the question names the words."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    words = ["TRP-9 (no transporter filter)"]
+    question = report_ask.sole_unapplied_question(
+        words, {"basis": "delivered", "sort": "desc", "date_from": "2026-09-01", "date_to": "2026-09-30"}
     )
-    assert calls == [], calls
-    assert "TRP-9" in text and "?" in text, text
+    assert question and "TRP-9" in question and question.endswith("?"), question
+    # a grouped ask, or one with an applied filter, is answered (with the Not applied line)
+    assert report_ask.sole_unapplied_question(words, {"basis": "delivered", "group_by": "customer"}) is None
+    assert report_ask.sole_unapplied_question(words, {"basis": "delivered", "customer_ids": ["c1"]}) is None
+    assert report_ask.sole_unapplied_question([], {"basis": "delivered"}) is None

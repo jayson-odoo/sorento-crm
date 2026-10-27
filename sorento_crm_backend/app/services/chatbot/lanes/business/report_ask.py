@@ -1737,6 +1737,14 @@ def unapplied_words(parse_output: dict[str, Any], args: dict[str, Any]) -> list[
     return list(dict.fromkeys(out))
 
 
+def sole_unapplied_question(words: list[str], args: dict[str, Any]) -> str | None:
+    """REPORT-UNIFY (AC-RU-14, P11): every filter the message named has no route param and nothing is grouped, so
+    the figure would not be what was asked: the words are said and the subject asked, never answered."""
+    if not words or args.get("group_by") or set(args) - _NON_FILTER_ARGS - {"date_from", "date_to", "top_n"}:
+        return None
+    return f"{'; '.join(words)}. Which customer or sales agent do you want?"
+
+
 def error_line(envelope: Any) -> str | None:
     """A route refusal said as its own message (403: `report_dimension_not_allowed`,
     `customer_not_permitted`, `sales_report_not_enabled`), a 404 as `I couldn't find that

@@ -2241,6 +2241,9 @@ def run_fetch(
             return _fixed_reply(location_line)
         unapplied = report_ask.unapplied_words(parse_output, semantic_input["report_ask_args"])
         if unapplied:
+            sole = report_ask.sole_unapplied_question(unapplied, semantic_input["report_ask_args"])
+            if sole:
+                return _fixed_reply(sole)
             semantic_input["report_ask_not_applied"] = unapplied
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
