@@ -138,7 +138,7 @@ def test_ac_s3_10_a_fresh_turn_embedder_has_meaning_after_the_warm(world):
     assert fresh is not world.embedder
     assert ll.usable_embedder(rows, fresh) is fresh
     res = list_resolver.resolve([list_resolver.Span(SPAN, None)], world.rows, embed=fresh)[0]
-    assert res.matched_by == "meaning" and res.candidates[0].row.key == "c1", res
+    assert res.status == "resolved" and res.candidates[0].signal == "meaning" and res.candidates[0].row.key == "c1", res
 
 
 # 3. AC-S3-9 / AC-S3-12: widest visibility, spec-name rows, scope None
