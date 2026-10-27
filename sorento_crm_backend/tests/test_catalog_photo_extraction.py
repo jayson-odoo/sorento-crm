@@ -56,7 +56,7 @@ def _pdf(pages: list[dict]) -> bytes:
     for spec in pages:
         page = doc.new_page(width=PAGE_W, height=PAGE_H)
         for rect, stream in spec.get("images", []):
-            page.insert_image(pymupdf.Rect(*rect), stream=stream)
+            page.insert_image(pymupdf.Rect(*rect), stream=stream, keep_proportion=False)
         for x, y, text in spec.get("texts", []):
             page.insert_text((x, y), text, fontsize=9)
     data = doc.tobytes()
