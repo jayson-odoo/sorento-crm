@@ -188,3 +188,55 @@ def test_t6_two_companies_basis_then_company_then_both_ride(two):
     _result, captured = two.say(_answer(open_question_answer=_pick(2), order_status=None), "2")
     args = _ran(captured, "ordered")
     assert args.get("company") == "Mocha", args
+
+
+# --------------------------------------------------------------------------- #
+# Review round (reviewer findings 1 to 3)
+# --------------------------------------------------------------------------- #
+
+
+def test_t7_outstanding_named_on_a_fresh_total_is_never_the_analysis(session_factory):
+    """Finding 2: "outstanding" named up front runs the report ask too, never the analysis with no basis (the
+    route would default it to invoiced)."""
+    _result, captured = _lane(**JAN_2026, basis="outstanding")
+    assert ANALYSIS not in [name for name, _ in captured], captured
+
+
+def test_t8_the_first_messages_axes_win_over_the_answers_own_parse(one):
+    """Finding 3 (crew re-verify E2's rule for the company question): a declared answer parsed with an axis, a
+    channel and a period of its own runs the FIRST message's ask: January, no channel, the channel rows."""
+    _ask(one)
+    _result, captured = one.say(
+        _answer(open_question_answer=_pick(1), group_by="customer", sales_channel="project",
+                date_filter_start="2026-02-01", date_filter_end="2026-02-28"),
+        "1",
+    )
+    args = _ran(captured, "invoiced")
+    assert args.get("rows") == "channel" and not args.get("channel"), args
+
+
+def test_t9_a_new_total_while_the_question_is_open_is_its_own_ask(one):
+    """Finding 1: "total delivered sales Feb 2026" while the basis question is open runs February, delivered;
+    never the open question's January."""
+    _ask(one)
+    _result, captured = one.say(
+        _total(sales_basis="delivered", date_filter_start="2026-02-01", date_filter_end="2026-02-28"),
+        "total delivered sales Feb 2026",
+    )
+    calls = _calls(captured, ANALYSIS)
+    assert calls and calls[0].get("basis") == "delivered", captured
+    assert calls[0].get("date_from") == "2026-02-01" and calls[0].get("date_to") == "2026-02-28", calls[0]
+
+
+def test_t10_a_ranking_while_the_question_is_open_is_never_read_as_the_basis(one):
+    """Finding 1: "top 5 dealers in feb 2026" is a ranking of its own, not a miss on the basis question."""
+    _ask(one)
+    result, captured = one.say(
+        _answer(order_status="sales_ranking", group_by="customer", top_n=5, domain_in_message=True,
+                entity_op="replace_combine", date_filter_start="2026-02-01", date_filter_end="2026-02-28"),
+        "top 5 dealers in feb 2026",
+    )
+    assert _calls(captured, ANALYSIS) == [], captured
+    assert "which basis" not in _reply(result), _reply(result)
+    question = one.next_open_question() or {}
+    assert question.get("about") != "sales_basis", question

@@ -2168,7 +2168,8 @@ def run_fetch(
     )
     slot_open = parse_output.get("required_ask") if isinstance(parse_output.get("required_ask"), dict) else {}
     axis_drawn = jsc.js_string(parse_output.get("group_by") or "") in fetch_mod.SALES_ANALYSIS_GROUP_BY
-    if sales_analysis_ask and slot_open.get("ask") != sales_company_ask.ASK_NAME and (axis_drawn or slot_open):
+    answering_basis = slot_open.get("ask") == sales_basis_ask.ASK_NAME
+    if sales_analysis_ask and slot_open.get("ask") != sales_company_ask.ASK_NAME and (axis_drawn or answering_basis):
         # SALES-TOTAL-ASK (owner ruling 27 Oct 2026, "total sales should ask"): a sales total naming no basis
         # is asked the ranking's own line, Invoiced first, before anything runs; never defaulted. The answer
         # runs the first message's own ask; outstanding, which the analysis has not, is the report ask's total.
@@ -2183,12 +2184,12 @@ def run_fetch(
             answered = sales_basis_ask.run_input(settled)
             parse_output = {**parse_output, **answered, "required_ask": None, "order_status": "sales_analysis"}
             semantic_input.update(answered)
-            if answered["sales_basis"] == "outstanding":
-                parse_output, order_status_raw, sales_analysis_ask = (
-                    sales_basis_ask.as_report_ask(parse_output), report_ask.ASK_NAME, False
-                )
         else:
             semantic_input["sales_basis"] = sales_basis_ask.named_basis(parse_output)
+        if semantic_input.get("sales_basis") == "outstanding":
+            parse_output, order_status_raw, sales_analysis_ask = (
+                sales_basis_ask.as_report_ask(parse_output), report_ask.ASK_NAME, False
+            )
     if (
         domain == "order"
         and not (has_product or has_customer or has_brand or carried_subject)
