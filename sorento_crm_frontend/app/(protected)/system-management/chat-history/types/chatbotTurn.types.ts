@@ -527,6 +527,16 @@ export interface IndexMatch {
   looked_up: { what: string; details: string[] } | null;
 }
 
+export interface SpanExtractCandidate {
+  list: string;
+  label: string;
+  score: number;
+  /** exact / spell / partial / meaning (an embedding hit). */
+  signal: string;
+}
+
+export type SpanExtractSource = 'span' | 'near_exact' | 'held' | 'number';
+
 export interface SpanExtractSpan {
   text: string;
   type: string | null;
@@ -534,6 +544,7 @@ export interface SpanExtractSpan {
   /** Close rows before the top-K cut. */
   close?: number;
   residual?: boolean;
+  candidates?: SpanExtractCandidate[];
 }
 
 /** The span pass of a turn; null/absent when the turn ran no span pass. */
@@ -549,6 +560,10 @@ export interface SpanExtract {
   ms: number;
   /** Labels of the lookup rows the parser was shown. */
   matched_rows: string[];
+  /** Rows added from today's near-exact lookup. */
+  near_exact?: { list: string; label: string; spelling: number; source: SpanExtractSource }[];
+  /** The block handed to the parser: per list, each row with where it came from, in render order. */
+  final_block?: Record<string, { label: string; source: SpanExtractSource }[]>;
 }
 
 export interface TurnDetail {

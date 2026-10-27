@@ -691,6 +691,8 @@ def _span_extract(records: list[dict[str, Any]]) -> dict[str, Any] | None:
         "model_source": event.get("model_source"),
         "ms": event.get("ms") or 0,
         "matched_rows": shown,
+        "near_exact": [n for n in event.get("near_exact") or [] if isinstance(n, dict)],
+        "final_block": event.get("final_block") if isinstance(event.get("final_block"), dict) else {},
     }
 
 

@@ -1,7 +1,14 @@
 'use client';
 
-import { Badge } from '@/components/ui/badge';
-import type { SpanExtract } from '../types/chatbotTurn.types';
+import { Badge, type BadgeProps } from '@/components/ui/badge';
+import type { SpanExtract, SpanExtractSource } from '../types/chatbotTurn.types';
+
+const SOURCE_VARIANT: Record<SpanExtractSource, BadgeProps['variant']> = {
+  span: 'primary',
+  near_exact: 'warning',
+  held: 'success',
+  number: 'secondary',
+};
 
 /** The span pass of a turn, in the Index match section's own heading, chip and muted-text styles. */
 export function SpanPassSection({ spanExtract }: { spanExtract: SpanExtract }) {
@@ -37,10 +44,58 @@ export function SpanPassSection({ spanExtract }: { spanExtract: SpanExtract }) {
             ))}
           </div>
         )}
+        {spanExtract.spans.some((s) => s.candidates?.length) && (
+          <ul className="space-y-1 pt-1" data-testid="span-candidates">
+            {spanExtract.spans.map((s, i) =>
+              s.candidates?.length ? (
+                <li key={i} className="min-w-0">
+                  <span className="font-medium">{s.text}</span>
+                  <span className="text-muted-foreground"> matched </span>
+                  {s.candidates.map((c, j) => (
+                    <span key={j} className="me-1 inline-flex items-center gap-1" title={c.label}>
+                      <span>{c.label}</span>
+                      <Badge variant="secondary" size="sm">
+                        {c.signal}
+                      </Badge>
+                    </span>
+                  ))}
+                </li>
+              ) : null,
+            )}
+          </ul>
+        )}
       </div>
+      {(spanExtract.near_exact?.length ?? 0) > 0 && (
+        <div className="space-y-1 text-xs" data-testid="span-near-exact">
+          <div className="text-2xs font-medium text-muted-foreground">Added from the message spelling</div>
+          <div className="flex flex-wrap gap-1">
+            {spanExtract.near_exact?.map((n, i) => (
+              <Badge key={i} variant={SOURCE_VARIANT.near_exact} size="sm">
+                {n.label}
+              </Badge>
+            ))}
+          </div>
+        </div>
+      )}
       <div className="space-y-1 text-xs">
-        <div className="text-2xs font-medium text-muted-foreground">Rows shown to the parser</div>
-        {spanExtract.matched_rows.length === 0 ? (
+        <div className="text-2xs font-medium text-muted-foreground">Handed to the parser</div>
+        {Object.keys(spanExtract.final_block ?? {}).length > 0 ? (
+          <div className="space-y-1">
+            {Object.entries(spanExtract.final_block ?? {}).map(([list, rows]) => (
+              <div key={list} className="flex flex-wrap items-center gap-1">
+                <span className="text-muted-foreground">{list}</span>
+                {rows.map((r, i) => (
+                  <span key={i} data-testid={`final-source-${r.source}`} className="inline-flex items-center gap-1">
+                    <span>{r.label}</span>
+                    <Badge variant={SOURCE_VARIANT[r.source]} size="sm">
+                      {r.source === 'near_exact' ? 'spelling' : r.source}
+                    </Badge>
+                  </span>
+                ))}
+              </div>
+            ))}
+          </div>
+        ) : spanExtract.matched_rows.length === 0 ? (
           <p className="text-muted-foreground">No rows were shown.</p>
         ) : (
           <ul className="space-y-0.5">
