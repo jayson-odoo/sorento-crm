@@ -66,6 +66,11 @@ def _permissions(monkeypatch):
         "check_user_has_permission",
         lambda self, uid, slug: slug in _GRANTS,
     )
+    # The read gate takes `view` or `view_own` (`require_any_permission`), which reads the
+    # whole set; production answers both methods from the same grants.
+    monkeypatch.setattr(
+        UserPermissionService, "get_user_permission_slugs", lambda self, uid: list(_GRANTS)
+    )
     monkeypatch.setattr(
         UserPermissionService, "get_user_role_slugs", lambda self, uid: set()
     )
