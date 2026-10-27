@@ -392,7 +392,9 @@ def test_b5_near_miss_another_ask_in_between_drops_the_held_report(console) -> N
     from tests.chatbot.test_report_ask_lane import CUSTOMER_NAME, _order_ask
 
     _t1(console)
-    console.say(_order_ask(_e(CUSTOMER_NAME, "customer")), f"orders for {CUSTOMER_NAME}")
+    # (A customer word now resolves for this non-staff contact and is refused without a fetch, which holds the report
+    # on screen; the in-between ask here names none, so it is the order lane's own "needs a filter" turn.)
+    console.say(_order_ask(), "orders")
     text, calls = console.say(_refine(order_status=None, sales_channel="project"), "project only")
     assert calls == [], (text, calls)
 
