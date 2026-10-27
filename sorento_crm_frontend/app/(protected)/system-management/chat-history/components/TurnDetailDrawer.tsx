@@ -94,7 +94,7 @@ function Sections({ detail }: { detail: TurnDetail }) {
       </Section>
       {detail.span_extract && (
         <Section title="Span pass" testId="section-span-pass">
-          <SpanPassSection spanExtract={detail.span_extract} />
+          <SpanPassSection spanExtract={detail.span_extract} promptText={detail.prompt_text ?? null} />
         </Section>
       )}
       <Section title="Apply" testId="section-apply">

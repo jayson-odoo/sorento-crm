@@ -558,6 +558,7 @@ export interface SpanExtract {
   model: string | null;
   model_source: string | null;
   ms: number;
+  tokens?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cached_tokens?: number };
   /** Labels of the lookup rows the parser was shown. */
   matched_rows: string[];
   /** Rows added from today's near-exact lookup. */

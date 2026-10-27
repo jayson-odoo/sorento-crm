@@ -1,6 +1,12 @@
 'use client';
 
 import { Badge, type BadgeProps } from '@/components/ui/badge';
+import {
+  Collapsible,
+  CollapsibleContent,
+  CollapsibleTrigger,
+} from '@/components/ui/collapsible';
+import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
 import type { SpanExtract, SpanExtractSource } from '../types/chatbotTurn.types';
 
 const SOURCE_VARIANT: Record<SpanExtractSource, BadgeProps['variant']> = {
@@ -11,9 +17,28 @@ const SOURCE_VARIANT: Record<SpanExtractSource, BadgeProps['variant']> = {
 };
 
 /** The span pass of a turn, in the Index match section's own heading, chip and muted-text styles. */
-export function SpanPassSection({ spanExtract }: { spanExtract: SpanExtract }) {
+export function SpanPassSection({
+  spanExtract,
+  promptText = null,
+}: {
+  spanExtract: SpanExtract;
+  promptText?: string | null;
+}) {
+  const model = [spanExtract.provider, spanExtract.model].filter(Boolean).join(' / ');
+  const tokens = spanExtract.tokens ?? {};
   return (
     <div className="space-y-3" data-testid="span-pass">
+      <p className="text-xs text-muted-foreground" data-testid="span-pass-call">
+        {[
+          model || 'No span model',
+          spanExtract.model_source,
+          `${spanExtract.ms} ms`,
+          `${tokens.prompt_tokens ?? 0} in`,
+          `${tokens.completion_tokens ?? 0} out`,
+        ]
+          .filter(Boolean)
+          .join(' | ')}
+      </p>
       {spanExtract.fallback && (
         <p className="text-xs text-muted-foreground">
           The span pass fell back to the plain word lookup
@@ -107,6 +132,18 @@ export function SpanPassSection({ spanExtract }: { spanExtract: SpanExtract }) {
           </ul>
         )}
       </div>
+      {promptText && (
+        <Collapsible>
+          <CollapsibleTrigger className="text-xs text-primary underline-offset-2 hover:underline">
+            Prompt text sent to the parser
+          </CollapsibleTrigger>
+          <CollapsibleContent>
+            <div className="mt-1 overflow-x-auto">
+              <SearchableCode text={promptText} />
+            </div>
+          </CollapsibleContent>
+        </Collapsible>
+      )}
     </div>
   );
 }
