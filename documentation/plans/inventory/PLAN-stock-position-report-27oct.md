@@ -8,6 +8,7 @@ Lane: STOCK-POSITION-REPORT. Owner request 27 Oct 2026: reproduce the supplier s
 <date>") inside the CRM for ALL suppliers in one report, one row per item code, with a Supplier column.
 
 Mock: `documentation/plans/inventory/mockups/stock-position-report.html` (static, for review).
+UAC: `documentation/plans/inventory/stock-position-report-acceptance-criteria.md`.
 
 ## Column map (each column -> the code that already computes it)
 
@@ -60,9 +61,33 @@ land with 60 of it on an SPO (counts 40), dealer SO lines owing 70, a supplier P
 transferred to SPO, and 12 months of SO lines summing 3,408 (avg 284) with an 850 month. B and C likewise
 (B: 12-month sum 2,172; C: 1,116).
 
-## Open questions (posted as crew-ask)
+## Decisions (Q1-Q5)
 
-Q1 where, Q2 outstanding dealer, Q3 sales basis, Q4 supplier rule, Q5 warehouse columns + PL in totals.
+Posted as a crew-ask on PR #1913. The owner has NOT answered yet. The lane is built on the recommendation
+for each question (crew instruction, 27 Oct), and each one is a single place in the code to change if the
+answer differs. Only owner ruling so far: Lavish's mock review, "don't need the stock word" (warehouse headers
+are the code alone).
+
+- **Q1 where (recommended a):** a dedicated Inventory > Stock position DataGrid and endpoint, not a
+  reporting-engine report (reasons under "Where it lives").
+- **Q2 Outstanding dealer (recommended a):** dealer SO still owed (`so_outstanding_clauses`, demand class not
+  `project`, NULL counted as dealer), printed NEGATIVE as the sheet prints it. Not "total stock minus dealer SO".
+- **Q3 sales basis (recommended a, switchable):** `so_ordered` = SO quantity ordered by order date over every
+  channel (the loading plan's history). `invoiced` = IV + CS + DN - CN line quantity by document date, posted
+  documents only. A filter on the page picks one.
+- **Q4 supplier:** the primary supplier; else the only linked supplier; else none (shown "-"). The supplier
+  filter matches the supplier shown.
+- **Q5 columns and totals:** one column per ACTIVE SITE-POOL warehouse holding stock for any item. Project
+  bins and inactive locations get no column and are not in Total stock. The packing-list column is in neither
+  total (sheet: 352 + 880 = 1232). Excel export is included.
+- Side effect of Q5: an open SPO to an INACTIVE site-pool warehouse still counts in Incoming BRW (an SPO is
+  supply until the book closes it, `spo_supply`), while that warehouse's on-hand is no column.
+
+## Performance
+
+Every request computes every item, then filters, sorts and pages in Python. Measured in the sandbox only
+(3 items, 43 ms). No prod-copy measurement yet. Trigger for moving the work into SQL: a page load over ~2 s on
+the live item count, which the hand test will show.
 
 ## Built (27 Oct)
 
@@ -77,6 +102,7 @@ Q1 where, Q2 outstanding dealer, Q3 sales basis, Q4 supplier rule, Q5 warehouse 
 - FE: Inventory > Stock position (`app/(protected)/inventory-management/stock-position/`), a DataGrid with
   the item code pinned and a row link to Stock status. Filters: supplier, brand, warehouse, sales basis.
   Export to Excel comes from the server workbook.
-- Warehouse filter: keeps the items that hold stock in the chosen warehouse; the columns stay whole.
+- Warehouse filter: offers the report's own warehouse columns; keeps the items holding stock there; the
+  columns stay whole. A value that is not an id matches nothing. An unknown `wh:<code>` sort is 422.
 - Tests: `tests/scm/test_stock_position.py` (16, seeded per column), vitest `StockPositionGrid.test.tsx`,
   `stockPositionService.test.ts`.

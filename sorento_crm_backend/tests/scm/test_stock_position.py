@@ -200,9 +200,17 @@ def test_another_companys_warehouse_is_no_column_and_its_stock_no_figure(scm_app
                  company_id=theirs))
     db.flush()
 
+    # Documents of OUR company bound to THEIR warehouse: the warehouse check is the only guard,
+    # since the company scope lets these rows through.
+    _so(db, p, other, 40)
+    _po(db, w, p, other, 30)
+    _spo(db, w, p, other, 20)
+
     body = _get(app)
     assert [x["code"] for x in body["warehouses"]] == ["MINE"]
-    assert _row(body, p)["stock"] == {"MINE": 3}
+    r = _row(body, p)
+    assert r["stock"] == {"MINE": 3}
+    assert (r["outstanding_dealer"], r["outstanding_po"], r["incoming_pool"], r["incoming_project"]) == (0, 0, 0, 0)
 
 
 # ------------------------------------------------------------------ incoming
@@ -234,6 +242,20 @@ def test_packing_list_open_is_what_no_spo_carries_and_stays_out_of_total_incomin
     r = _row(_get(app), p)
     assert r["packing_list_open"] == (30 - 12) + (20 - 5)
     assert r["total_incoming"] == 17  # the two SPO rows; the packing lists are not added
+
+
+def test_packing_list_netting_is_per_item_on_a_shipment_carrying_two(scm_app):
+    app, db, w = _setup(scm_app)
+    a, b = w.product("A"), w.product("B")
+    brw = _wh(db, "BRW")
+    ship = _shipment(db, w)
+    _pl_line(db, ship, a, 30)
+    _pl_line(db, ship, b, 20)
+    _spo(db, w, a, brw, 25, shipment=ship)  # on A only: B's 20 is still on no SPO
+
+    body = _get(app)
+    assert _row(body, a)["packing_list_open"] == 5
+    assert _row(body, b)["packing_list_open"] == 20
 
 
 # ------------------------------------------------------------------ outstanding
@@ -357,6 +379,9 @@ def test_brand_item_code_and_warehouse_filters(scm_app):
     filtered = _get(app, warehouse_id=mwh.id)
     assert [r["product_id"] for r in filtered["data"]] == [str(b.id)]
     assert [x["code"] for x in filtered["warehouses"]] == ["BRW", "MWH"]
+    assert [x["id"] for x in filtered["warehouses"]] == [str(brw.id), str(mwh.id)]
+    # A value that is no id matches nothing rather than failing.
+    assert _get(app, warehouse_id="nope")["data"] == []
 
 
 def test_every_column_sorts_on_the_server_and_pages(scm_app):
@@ -379,6 +404,7 @@ def test_every_column_sorts_on_the_server_and_pages(scm_app):
     assert [r["product_id"] for r in page["data"]] == [str(a.id)]
     assert page["pagination"] == {"page": 2, "limit": 2, "total": 3, "total_pages": 2}
     assert TestClient(app).get(URL, params={"sort": "nope"}).status_code == 422
+    assert TestClient(app).get(URL, params={"sort": "wh:NOPE"}).status_code == 422
 
 
 def test_items_with_nothing_to_show_are_not_rows(scm_app):

@@ -21,18 +21,16 @@ import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
-import { useQuery } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import { getSuppliersSelect } from '@/services/supplierSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
-import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
 import { useStockPosition } from '../hooks/useStockPosition';
 import { exportStockPosition } from '../services/stockPositionService';
 import type { SalesBasis, StockPositionRow } from '../services/stockPosition.types';
 
 const QTY = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
 
-/** A quantity as the sheet prints it: whole units, thousands separated, a blank for none. */
+/** A quantity as the sheet prints it: whole units, thousands separated, 0 for none. */
 export function formatQty(value: number | null | undefined): string {
   if (!value) return '0';
   return QTY.format(value);
@@ -79,10 +77,6 @@ export default function StockPositionGrid() {
   const [exporting, setExporting] = useState(false);
 
   const { data: brands } = useBrandSelectQuery();
-  const { data: warehousesData } = useQuery({
-    queryKey: ['warehouses-select-stock-position'],
-    queryFn: () => getWarehouses({ pageIndex: 0, pageSize: 100, sorting: [], searchQuery: '', is_active: true }),
-  });
 
   const filters = {
     supplierId: supplier?.value,
@@ -228,7 +222,7 @@ export default function StockPositionGrid() {
                   resetPage();
                 }}
                 isSettling={isSearchInFlight(searchSettling, isFetching, searchQuery)}
-                placeholder="Search item code..."
+                placeholder="Search item code or description..."
                 className="w-full sm:w-64"
               />
             }
@@ -276,11 +270,8 @@ export default function StockPositionGrid() {
                         setWarehouseId(v);
                         resetPage();
                       }}
-                      options={(warehousesData?.data ?? []).map((w) => ({
-                        value: w.id,
-                        label: w.warehouse_code ?? w.warehouse_name ?? '',
-                        description: w.warehouse_name ?? undefined,
-                      }))}
+                      // The report's own warehouse columns: any other location could never match.
+                      options={(data?.warehouses ?? []).map((w) => ({ value: w.id, label: w.code }))}
                       placeholder="All warehouses"
                       clearable
                       triggerClassName="mt-1"
@@ -290,7 +281,10 @@ export default function StockPositionGrid() {
                     <Label>Monthly sales from</Label>
                     <SearchableSelect
                       value={salesBasis}
-                      onChange={(v) => setSalesBasis((v as SalesBasis) || 'so_ordered')}
+                      onChange={(v) => {
+                        setSalesBasis((v as SalesBasis) || 'so_ordered');
+                        resetPage();
+                      }}
                       options={SALES_BASIS_OPTIONS}
                       triggerClassName="mt-1"
                     />

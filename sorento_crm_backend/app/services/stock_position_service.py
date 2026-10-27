@@ -39,6 +39,7 @@ from app.models.product import Brand, Product
 from app.services.error_handler import AppException
 from app.services.scm.container_request_service import _series, history_window, ordered_qty_by_month
 from app.services.scm.pool_predicate import PROJECT_SEGMENT, is_site_pool
+from app.services.scm.supplier_scope import is_uuid
 from app.services.stock_status_service import (
     _spo_rows,
     incoming_pl_by_product,
@@ -248,16 +249,17 @@ def build_rows(db: Session, *, sales_basis: str = "so_ordered", as_of: Optional[
             rows.append(row)
 
     columns = sorted(
-        ({"code": warehouses[wid].warehouse_code} for wid in used_columns), key=lambda c: c["code"] or ""
+        ({"id": wid, "code": warehouses[wid].warehouse_code} for wid in used_columns),
+        key=lambda c: c["code"] or "",
     )
     return {"warehouses": columns, "rows": rows, "sales_basis": sales_basis}
 
 
-def _sort_key(sort: str):
+def _sort_key(sort: str, codes: set[str]):
     if sort in _TEXT_SORTS:
         # Blank last on either direction is not asked for; a blank reads as "" and sorts first asc.
         return lambda r: ((r[sort] or "").lower(), r["item_code"] or "")
-    if sort.startswith(WAREHOUSE_SORT_PREFIX):
+    if sort.startswith(WAREHOUSE_SORT_PREFIX) and sort[len(WAREHOUSE_SORT_PREFIX):] in codes:
         code = sort[len(WAREHOUSE_SORT_PREFIX):]
         return lambda r: (r["stock"].get(code, 0.0), r["item_code"] or "")
     if sort in {k for k, _ in FIGURE_COLUMNS}:
@@ -278,8 +280,9 @@ def stock_position(
     as_of: Optional[date] = None,
 ) -> dict:
     """The filtered, sorted row set (unpaged) and its warehouse columns."""
-    key = _sort_key(sort or "item_code")
     built = build_rows(db, sales_basis=sales_basis, as_of=as_of)
+    # A warehouse sort names one of THIS result's columns; any other is as unknown as `sort=nope`.
+    key = _sort_key(sort or "item_code", {c["code"] for c in built["warehouses"]})
     rows = built["rows"]
     if query:
         needle = query.strip().lower()
@@ -292,10 +295,12 @@ def stock_position(
         wanted = set(brand_ids)
         rows = [r for r in rows if r["brand_id"] in wanted]
     if warehouse_ids:
+        # A value that is not an id matches nothing (the query string is the caller's typo,
+        # not a server error), the same rule `ordered_qty_by_month` follows.
+        ids = [w for w in warehouse_ids if is_uuid(w)]
         codes = {
-            code for (code,) in db.query(Warehouse.warehouse_code)
-            .filter(Warehouse.id.in_(warehouse_ids)).all()
-        }
+            code for (code,) in db.query(Warehouse.warehouse_code).filter(Warehouse.id.in_(ids)).all()
+        } if ids else set()
         rows = [r for r in rows if any(r["stock"].get(code) for code in codes)]
     rows.sort(key=key, reverse=(direction == "desc"))
     return {**built, "rows": rows}

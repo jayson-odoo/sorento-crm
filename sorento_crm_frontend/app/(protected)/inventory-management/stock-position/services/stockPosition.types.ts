@@ -26,7 +26,8 @@ export interface StockPositionRow {
 
 export interface StockPositionResponse {
   data: StockPositionRow[];
-  warehouses: { code: string }[];
+  /** The warehouse columns: active site-pool warehouses holding stock, by code. */
+  warehouses: { id: string; code: string }[];
   sales_basis: SalesBasis;
   pagination: { page: number; limit: number; total: number; total_pages: number };
 }

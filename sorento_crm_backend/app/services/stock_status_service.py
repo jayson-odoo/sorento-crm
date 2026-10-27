@@ -26,6 +26,7 @@ PO and SPO use the predicates every other screen uses (`OPEN_PO_STATUSES`,
 from __future__ import annotations
 
 import re
+import uuid
 from collections import defaultdict
 from datetime import date
 from decimal import Decimal
@@ -378,7 +379,8 @@ def _spo_rows(db: Session, product_ids: Optional[list[str]], eta_delay_visible: 
 
 def _incoming_pl(db: Session, product_id: str, spos: list[dict], eta_delay_visible: bool) -> list[dict]:
     """Packing lists still to land, net of the open SPO rows (`spos`, the SPO column) on them (R3)."""
-    return incoming_pl_by_product(db, [product_id], spos, eta_delay_visible).get(str(product_id), [])
+    # Keyed by Postgres's canonical (lowercase) form, which an upper-case id the caller passed is not.
+    return incoming_pl_by_product(db, [product_id], spos, eta_delay_visible).get(str(uuid.UUID(product_id)), [])
 
 
 def incoming_pl_by_product(

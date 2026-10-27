@@ -26,9 +26,6 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query', () => ({
   useBrandSelectQuery: () => ({ data: [] }),
 }));
-vi.mock('@/app/(protected)/inventory-management/warehouses/services/warehouseService', () => ({
-  getWarehouses: async () => ({ data: [] }),
-}));
 vi.mock('@/services/supplierSelectService', () => ({ getSuppliersSelect: async () => [] }));
 
 const hook = vi.hoisted(() => ({ useStockPosition: vi.fn() }));
@@ -65,7 +62,7 @@ function withRows(rows: StockPositionRow[], codes = ['BRW', 'DC1']) {
   hook.useStockPosition.mockReturnValue({
     data: {
       data: rows,
-      warehouses: codes.map((code) => ({ code })),
+      warehouses: codes.map((code) => ({ id: `w-${code}`, code })),
       sales_basis: 'so_ordered',
       pagination: { page: 1, limit: 50, total: rows.length, total_pages: 1 },
     },
