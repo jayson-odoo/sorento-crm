@@ -1,6 +1,6 @@
 # PLAN: REPORT-UNIFY (finish `crm_report_ask` for every sales and outstanding ask)
 
-Status: Build (slice 1 engine, red-first). The owner answered the card on 27 Oct ~19:15 (section 0).
+Status: Build. Slice 1 (engine) green at 362d1d4e+; slice 2 (chatbot routing) red tests in. The owner answered the card on 27 Oct ~19:15 (section 0).
 Track: full (size L). Three stacked slices on one lane branch, one PR (#1922).
 UAC: `report-unify-27oct-acceptance-criteria.md`.
 
@@ -98,6 +98,13 @@ Confirmed by SALES-UNIFIED (crew-note 6440275524 on #1922):
 - **Malformed input:** a `spec` with no colon is 422 `invalid_spec`. `spec` on the chat dataset is 422
   `unknown_param`.
 - **Period on an outstanding basis:** both dates or neither. Only one is 422 `period_required`.
+- **Brand-scoped contacts on `unpaid`:** a contact limited to some brands is refused `unpaid`, with 403
+  `report_dimension_not_allowed`. A billing document carries no brand, so the brand scope cannot narrow it, and the
+  refusal fails closed instead of showing the unscoped total.
+- **`group_by=spec:<key>` with a count measure** (customers / orders / products) is 422 `unknown_measure`, because
+  distinct counts do not add across a group's products.
+- **Echo with no period:** on an outstanding kind asked with no period, the body's `date_from` / `date_to` are
+  `null`. The slice 2 lane prints "all dates".
 - A spec set that is non-empty but has an empty intersection with `product_ids` answers `status=ok` with zero rows,
   as the existing AND does. Only a spec matching no product at all is `no_products`.
 

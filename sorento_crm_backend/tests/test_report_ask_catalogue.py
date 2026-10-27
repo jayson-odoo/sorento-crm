@@ -49,11 +49,13 @@ def _definitions():
 
 
 def test_catalogue_has_the_three_bases():
+    """The three sales order line bases, plus REPORT-UNIFY's two other outstanding kinds (owner Q2,
+    27 Oct 2026), which read DO lines and billing documents (`tests/test_report_unify_outstanding_bases.py`)."""
     from app.services.reports.ask import CATALOGUE as _DATASETS
 
     CATALOGUE = _DATASETS["sales"]
 
-    assert set(CATALOGUE) == set(BASES), set(CATALOGUE)
+    assert set(CATALOGUE) == {*BASES, "pending_delivery", "unpaid"}, set(CATALOGUE)
 
 
 def test_the_basis_labels():
