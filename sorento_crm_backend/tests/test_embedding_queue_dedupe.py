@@ -81,19 +81,17 @@ def test_every_embedded_field_is_a_column_of_its_model():
     """A misspelt field would silently never count as a change."""
     from app.models.certificate import Certificate
     from app.models.marketing import Promotion, PromotionAttachment, PromotionProduct
-    from app.models.order import Customer, OrderLine, Transporter
-    from app.models.procurement import (
-        InboundShipment, InboundShipmentLine, PickingHeader, PickingLine, SPOAllocation,
-    )
+    from app.models.order import Customer, Transporter
+    from app.models.procurement import InboundShipment, PickingHeader, SPOAllocation
     from app.models.product import Product, ProductAttachment
 
     models = {
         "product": Product, "promotion": Promotion, "promotion_product": PromotionProduct,
         "promotion_attachment": PromotionAttachment, "product_attachment": ProductAttachment,
-        "inbound_shipment": InboundShipment, "inbound_shipment_line": InboundShipmentLine,
-        "spo_allocation": SPOAllocation, "picking_header": PickingHeader, "picking_line": PickingLine,
+        "inbound_shipment": InboundShipment,
+        "spo_allocation": SPOAllocation, "picking_header": PickingHeader,
         "certificate": Certificate, "order": Order, "order_status": OrderStatus,
-        "order_line": OrderLine, "customer": Customer, "transporter": Transporter,
+        "customer": Customer, "transporter": Transporter,
     }
     assert set(EMBEDDED_FIELDS) == set(models)
     for source_type, model in models.items():

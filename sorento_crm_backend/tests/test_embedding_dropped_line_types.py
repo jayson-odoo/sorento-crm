@@ -77,7 +77,7 @@ def test_backfill_all_no_longer_covers_the_line_types(db):
     from app.services.embedding_backfill_service import EmbeddingBackfillService
 
     result = EmbeddingBackfillService(db).run(source="all", dry_run=True)
-    covered = {r["source"] for r in result["results"]}
+    covered = {r["source"] for r in result["sources"]}
     assert covered and not covered & set(DROPPED)
 
 

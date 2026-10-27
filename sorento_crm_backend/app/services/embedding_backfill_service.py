@@ -12,8 +12,8 @@ from app.models.marketing import Promotion, PromotionProduct, PromotionAttachmen
 from app.models.resources import Attachment
 from app.models.forms import Form
 from app.models.list_query_metadata import ListQueryResource
-from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
-from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
+from app.models.procurement import InboundShipment, SPOAllocation, PickingHeader
+from app.models.order import Order, OrderStatus, Customer, Transporter
 from app.models.projects import Project
 from app.services.embedding_service import DEBTOR_SEED_ID_MAX, EmbeddingEventService, debtor_seed_id
 from app.services.mcp_tool_capability_service import build_capability_documents
@@ -23,10 +23,8 @@ BackfillSource = Literal[
     "promotion",
     "promotion_product",
     "inbound_shipment",
-    "inbound_shipment_line",
     "spo_allocation",
     "picking_header",
-    "picking_line",
     "product_attachment",
     "promotion_attachment",
     "attachment",
@@ -34,7 +32,6 @@ BackfillSource = Literal[
     "schema_doc",
     "order",
     "order_status",
-    "order_line",
     "customer",
     "transporter",
     "project",
@@ -70,10 +67,8 @@ class EmbeddingBackfillService:
             "promotion",
             "promotion_product",
             "inbound_shipment",
-            "inbound_shipment_line",
             "spo_allocation",
             "picking_header",
-            "picking_line",
             "product_attachment",
             "promotion_attachment",
             "attachment",
@@ -81,7 +76,6 @@ class EmbeddingBackfillService:
             "schema_doc",
             "order",
             "order_status",
-            "order_line",
             "customer",
             "transporter",
             "mcp_tool",
@@ -220,9 +214,6 @@ class EmbeddingBackfillService:
         if source == "inbound_shipment":
             rows = self.db.query(InboundShipment.id, InboundShipment.shipment_number, InboundShipment.created_at, InboundShipment.updated_at).order_by(InboundShipment.created_at.asc()).offset(offset).limit(limit).all()
             return [{"id": r.id, "source_key": r.shipment_number, "source_updated_at": r.updated_at or r.created_at} for r in rows]
-        if source == "inbound_shipment_line":
-            rows = self.db.query(InboundShipmentLine.id, InboundShipmentLine.created_at, InboundShipmentLine.updated_at).order_by(InboundShipmentLine.created_at.asc()).offset(offset).limit(limit).all()
-            return [{"id": r.id, "source_key": str(r.id), "source_updated_at": r.updated_at or r.created_at} for r in rows]
         if source == "spo_allocation":
             # R9: a hidden line is never queued for a fresh embed - a backfill
             # run must not undo the deactivation `process_embedding_queue_item`
@@ -241,9 +232,6 @@ class EmbeddingBackfillService:
         if source == "picking_header":
             rows = self.db.query(PickingHeader.id, PickingHeader.picking_number, PickingHeader.created_at, PickingHeader.updated_at).order_by(PickingHeader.created_at.asc()).offset(offset).limit(limit).all()
             return [{"id": r.id, "source_key": r.picking_number, "source_updated_at": r.updated_at or r.created_at} for r in rows]
-        if source == "picking_line":
-            rows = self.db.query(PickingLine.id, PickingLine.created_at, PickingLine.updated_at).order_by(PickingLine.created_at.asc()).offset(offset).limit(limit).all()
-            return [{"id": r.id, "source_key": str(r.id), "source_updated_at": r.updated_at or r.created_at} for r in rows]
         if source == "product_attachment":
             rows = self.db.query(ProductAttachment.id, ProductAttachment.created_at, ProductAttachment.updated_at).order_by(ProductAttachment.created_at.asc()).offset(offset).limit(limit).all()
             return [{"id": r.id, "source_key": str(r.id), "source_updated_at": r.updated_at or r.created_at} for r in rows]
@@ -256,9 +244,6 @@ class EmbeddingBackfillService:
         if source == "order_status":
             rows = self.db.query(OrderStatus.id, OrderStatus.status_code, OrderStatus.created_at).order_by(OrderStatus.created_at.asc()).offset(offset).limit(limit).all()
             return [{"id": r.id, "source_key": r.status_code, "source_updated_at": r.created_at} for r in rows]
-        if source == "order_line":
-            rows = self.db.query(OrderLine.id, OrderLine.created_at, OrderLine.updated_at).order_by(OrderLine.created_at.asc()).offset(offset).limit(limit).all()
-            return [{"id": r.id, "source_key": str(r.id), "source_updated_at": r.updated_at or r.created_at} for r in rows]
         if source == "mcp_tool":
             docs = build_capability_documents(include_planned=True)
             sliced = docs[offset: offset + limit]

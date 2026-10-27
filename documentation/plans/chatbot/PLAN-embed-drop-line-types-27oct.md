@@ -1,6 +1,6 @@
 # PLAN: stop embedding line-level source types (EMBED-DROP-LINE-TYPES)
 
-Status: in progress (Build). Track: small fix (no migration, no auth/RBAC change, no new ingest
+Status: in review. Track: small fix (no migration, no auth/RBAC change, no new ingest
 surface). Backend only. Follow-up to EMBED-QUEUE-DEDUPE (#1900), agreed by crew on 27 Oct 2026.
 
 ## Why

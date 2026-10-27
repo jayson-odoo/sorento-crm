@@ -17,15 +17,15 @@ from app.database import SessionLocal
 from app.models.base import set_company_scope
 from app.models.certificate import Certificate, CertificateProduct
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
-from app.services.embedding_change_listener import SUPERSEDED_ERROR
+from app.services.embedding_change_listener import DROPPED_SOURCE_TYPES, DROPPED_TYPE_ERROR, SUPERSEDED_ERROR
 from app.models.product import Product, ProductCategory, Brand
 from app.models.marketing import Promotion
 from app.models.marketing import PromotionProduct, PromotionAttachment
 from app.models.resources import Attachment
 from app.models.forms import Form
 from app.models.list_query_metadata import ListQueryResource, ListQueryField
-from app.models.procurement import InboundShipment, InboundShipmentLine, SPOAllocation, PickingHeader, PickingLine
-from app.models.order import Order, OrderStatus, OrderLine, Customer, Transporter
+from app.models.procurement import InboundShipment, SPOAllocation, PickingHeader
+from app.models.order import Order, OrderStatus, Customer, Transporter
 from app.models.product import ProductAttachment
 from app.models.conversation_frame import ConversationFrame
 from app.models.projects import APPROVAL_APPROVED, Project, ProjectParty, ProjectSalesProfile
@@ -49,12 +49,9 @@ _SOURCE_MODEL_FOR_COMPANY = {
     "product_attachment": ProductAttachment,
     "attachment": Attachment,
     "inbound_shipment": InboundShipment,
-    "inbound_shipment_line": InboundShipmentLine,
     "spo_allocation": SPOAllocation,
     "picking_header": PickingHeader,
-    "picking_line": PickingLine,
     "order": Order,
-    "order_line": OrderLine,
     "customer": Customer,
     "transporter": Transporter,
     "certificate": Certificate,
@@ -366,22 +363,6 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
         ).strip()
         return {"source_key": shipment.shipment_number, "title": shipment.shipment_number, "body_text": body, "visibility_scope": "internal", "source_updated_at": shipment.updated_at or shipment.created_at, "metadata": {"supplier_id": shipment.supplier_id, "access_levels": shipment.access_levels or []}}
 
-    if source_type == "inbound_shipment_line":
-        line = db.query(InboundShipmentLine).filter(InboundShipmentLine.id == source_id).first()
-        if not line:
-            raise ValueError(f"Inbound shipment line not found: {source_id}")
-        body = "\n".join(
-            [
-                "Source Type: Inbound Shipment Line",
-                f"Shipment ID: {line.shipment_id}",
-                f"Product ID: {line.product_id}",
-                f"Quantity Shipped: {line.quantity_shipped}",
-                f"Line Status: {line.line_status}",
-                f"Batch Number: {line.batch_number or ''}",
-            ]
-        ).strip()
-        return {"source_key": f"{line.shipment_id}:{line.product_id}", "title": "Inbound Shipment Line", "body_text": body, "visibility_scope": "internal", "source_updated_at": line.updated_at or line.created_at, "metadata": {"shipment_id": line.shipment_id, "product_id": line.product_id}}
-
     if source_type == "spo_allocation":
         row = db.query(SPOAllocation).filter(SPOAllocation.id == source_id).first()
         if not row:
@@ -413,22 +394,6 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             ]
         ).strip()
         return {"source_key": row.picking_number, "title": row.picking_number, "body_text": body, "visibility_scope": "internal", "source_updated_at": row.updated_at or row.created_at, "metadata": {"picking_type": row.picking_type}}
-
-    if source_type == "picking_line":
-        row = db.query(PickingLine).filter(PickingLine.id == source_id).first()
-        if not row:
-            raise ValueError(f"Picking line not found: {source_id}")
-        body = "\n".join(
-            [
-                "Source Type: Picking Line",
-                f"Picking Header ID: {row.picking_header_id}",
-                f"Product ID: {row.product_id}",
-                f"Quantity Expected: {row.quantity_expected}",
-                f"Quantity Picked: {row.quantity_picked}",
-                f"Condition: {row.picked_condition}",
-            ]
-        ).strip()
-        return {"source_key": f"{row.picking_header_id}:{row.product_id}", "title": "Picking Line", "body_text": body, "visibility_scope": "internal", "source_updated_at": row.updated_at or row.created_at, "metadata": {"spo_allocation_id": row.spo_allocation_id}}
 
     if source_type == "product_attachment":
         row = db.query(ProductAttachment).filter(ProductAttachment.id == source_id).first()
@@ -597,22 +562,6 @@ def _canonical_for_source(db: Session, source_type: str, source_id: str, payload
             ]
         ).strip()
         return {"source_key": row.status_code, "title": row.status_name, "body_text": body, "visibility_scope": "internal", "source_updated_at": row.created_at, "metadata": {"is_final_status": row.is_final_status}}
-
-    if source_type == "order_line":
-        row = db.query(OrderLine).filter(OrderLine.id == source_id).first()
-        if not row:
-            raise ValueError(f"Order line not found: {source_id}")
-        body = "\n".join(
-            [
-                "Source Type: Order Line",
-                f"Order ID: {row.order_id}",
-                f"Product ID: {row.product_id}",
-                f"Warehouse ID: {row.warehouse_id}",
-                f"Quantity: {row.quantity}",
-                f"Unit Price: {row.unit_price}",
-            ]
-        ).strip()
-        return {"source_key": f"{row.order_id}:{row.line_sequence}", "title": "Order Line", "body_text": body, "visibility_scope": "internal", "source_updated_at": row.updated_at or row.created_at, "metadata": {"line_sequence": row.line_sequence}}
 
     if source_type == "conversation_frame":
         row = db.query(ConversationFrame).filter(ConversationFrame.id == source_id).first()
@@ -847,6 +796,18 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         if queue_item.status in {"completed", "skipped"}:
             db.rollback()
             return {"status": queue_item.status, "queue_id": queue_id}
+        if queue_item.source_type in DROPPED_SOURCE_TYPES:
+            # Queued before this type stopped being embedded (or by the old colour during the
+            # blue/green overlap): never rebuilt, and its document leaves search.
+            db.query(EmbeddingDocument).filter(
+                EmbeddingDocument.source_type == queue_item.source_type,
+                EmbeddingDocument.source_id == queue_item.source_id,
+            ).update({"is_active": False}, synchronize_session=False)
+            queue_item.status = "skipped"
+            queue_item.processed_at = datetime.utcnow()
+            queue_item.last_error = DROPPED_TYPE_ERROR
+            db.commit()
+            return {"status": "skipped", "queue_id": queue_id}
         queue_item.status = "processing"
         _supersede_pending_duplicates(db, queue_item)
         db.commit()
