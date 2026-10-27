@@ -378,15 +378,13 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
         )
         if spans:
             # ENTITY-EXTRACT-MATCH S2: the span seam, as the engine runs it (the call itself after the session closes).
-            # No contact (""): the gold set is graded on the unscoped lookup lists. A made-up id resolves to nobody,
-            # which the LOCATION list fails closed on (CHAT-INCOMING-LOCATION-SCOPE) and would drop every location.
             span_prep = engine._span_prep(
-                db, user_turn.own_text, frozenset(), "", None, brands,
+                db, user_turn.own_text, frozenset(), "parser-gold", None, brands,
                 lookup_lists.held_values(_subject_values(held.get("subject"))), None,
             )
         elif lookup:
             lookup_lines, _event = engine._lookup_lines(
-                db, user_turn.own_text, config, frozenset(), "", None, brands,
+                db, user_turn.own_text, config, frozenset(), "parser-gold", None, brands,
                 lookup_lists.held_values(_subject_values(held.get("subject"))),
             )
     finally:
