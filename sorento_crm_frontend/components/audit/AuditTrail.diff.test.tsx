@@ -170,8 +170,9 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
 
   it('the real resubmitted status (RESUBMITTED-STATUS) heads the row "Resubmitted" too', () => {
     mockEntries([
+      // No summary on the row: the raw values alone must say it is a resubmit.
       entry({
-        description: 'status: rejected → resubmitted',
+        description: null,
         old_values: { status: 'rejected', product_code: 'CWCX604-P-RL-NEW' },
         new_values: { status: 'resubmitted', product_code: 'CWCY604' },
       }),

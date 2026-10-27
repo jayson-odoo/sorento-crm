@@ -73,6 +73,7 @@ import {
 } from '../services/complaintService';
 import { toast } from '@/lib/toast';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
+import { isAwaitingReview } from '@/lib/submission-status';
 import { recordActionItems } from '@/components/common/recordActions';
 import { useComplaintActions } from '../actions';
 import ComplaintNotifiableFieldDialog from './ComplaintNotifiableFieldDialog';
@@ -565,11 +566,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <Button
                 // Submitted / resubmitted = the technical team's response is the next
                 // action, so make it the primary CTA; otherwise it's a secondary edit.
-                variant={
-                  complaint.status === 'submitted' || complaint.status === 'resubmitted'
-                    ? 'primary'
-                    : 'outline'
-                }
+                variant={isAwaitingReview(complaint.status) ? 'primary' : 'outline'}
                 size="sm"
                 data-guide-target="complaint-management.complaints.tech-team.edit-response"
                 onClick={() => {

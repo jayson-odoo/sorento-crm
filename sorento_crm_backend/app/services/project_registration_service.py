@@ -755,7 +755,7 @@ def notify(db: Session, project: Project, event: str) -> int:
                 event_type=f"project_registration_{event}",
                 send_in_app=True,
                 # The approvers hear in-app only; the applicant is told by email as well.
-                send_email=event != "submitted",
+                send_email=event not in ("submitted", "resubmitted"),
                 send_whatsapp=False,
                 send_web_push=False,
             )

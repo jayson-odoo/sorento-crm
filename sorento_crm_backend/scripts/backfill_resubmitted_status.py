@@ -69,7 +69,7 @@ FORMS = {
     "purchase_request": (
         "SELECT t.id::text, t.request_number FROM purchase_requests t "
         "WHERE t.status = 'submitted' AND COALESCE(t.approval_status, '') = '' "
-        f"AND {_LATEST_STATUS_CHANGE.format(entity='purchase_requests')} = 'rejected'",
+        f"AND {_LATEST_STATUS_CHANGE.format(entity='purchase_request')} = 'rejected'",
         "purchase_requests",
         "status",
         "submitted",
@@ -77,7 +77,7 @@ FORMS = {
     "stock_inquiry": (
         "SELECT t.id::text, t.inquiry_number FROM stock_inquiries t "
         "WHERE t.status = 'pending_project_sales' "
-        f"AND {_LATEST_STATUS_CHANGE.format(entity='stock_inquiries')} = 'rejected'",
+        f"AND {_LATEST_STATUS_CHANGE.format(entity='stock_inquiry')} = 'rejected'",
         "stock_inquiries",
         "status",
         "pending_project_sales",

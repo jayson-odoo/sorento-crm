@@ -15,8 +15,9 @@ Additive only, idempotent, and safe on the shared dev DB that converges through 
 3. The Edition's one-open-per-page partial unique index is recreated with `resubmitted` among the
    open keys, so a resubmitted Edition still occupies its page's one open slot.
 
-Downgrade moves every record off `resubmitted` onto `submitted` / `pending_approval` first, so
-the narrower constraint and index can return.
+Downgrade moves every record off `resubmitted` back onto the stage it stood in for (submitted,
+pending_project_sales, pending, pending_approval) first, so the old code's gates still accept it
+and the narrower constraint and index can return.
 
 Plan: documentation/plans/forms/PLAN-resubmitted-status-27oct.md.
 
@@ -152,11 +153,20 @@ def upgrade() -> None:
     _recreate_edition_index(_EDITION_OPEN_NEW)
 
 
+# The free-text status columns, and the stage `resubmitted` stood in for on each.
+_FREE_TEXT_STAGES = (
+    ("complaints", "status", "submitted"),
+    ("purchase_requests", "status", "submitted"),
+    ("new_product_applications", "status", "submitted"),
+    ("stock_inquiries", "status", "pending_project_sales"),
+    ("projects.projects", "approval_state", "pending"),
+)
+
+
 def downgrade() -> None:
     bind = op.get_bind()
-    op.execute(
-        "UPDATE new_product_applications SET status = 'submitted' WHERE status = 'resubmitted'"
-    )
+    for table, column, stage in _FREE_TEXT_STAGES:
+        op.execute(f"UPDATE {table} SET {column} = '{stage}' WHERE {column} = 'resubmitted'")
     op.execute(
         "ALTER TABLE new_product_applications "
         "DROP CONSTRAINT IF EXISTS ck_new_product_applications_status"

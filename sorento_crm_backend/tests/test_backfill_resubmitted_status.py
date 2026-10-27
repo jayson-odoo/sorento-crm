@@ -13,6 +13,8 @@ from pathlib import Path
 import pytest
 from sqlalchemy import text
 
+from app.models.procurement import PurchaseRequestHeader, StockInquiry
+from app.services.audit_service import _audit_entity_type
 from tests._pg_fixture import blank_session
 
 _SPEC = importlib.util.spec_from_file_location(
@@ -73,7 +75,7 @@ def _request(conn, status: str, history: list[tuple[str, str]]) -> str:
     )
     start = datetime.utcnow() - timedelta(days=3)
     for step, (old, new) in enumerate(history):
-        _audit(conn, "purchase_requests", rid, old, new, start + timedelta(hours=step))
+        _audit(conn, _audit_entity_type(PurchaseRequestHeader), rid, old, new, start + timedelta(hours=step))
     return rid
 
 
@@ -85,7 +87,7 @@ def _inquiry(conn, status: str, history: list[tuple[str, str]]) -> str:
     )
     start = datetime.utcnow() - timedelta(days=3)
     for step, (old, new) in enumerate(history):
-        _audit(conn, "stock_inquiries", sid, old, new, start + timedelta(hours=step))
+        _audit(conn, _audit_entity_type(StockInquiry), sid, old, new, start + timedelta(hours=step))
     return sid
 
 

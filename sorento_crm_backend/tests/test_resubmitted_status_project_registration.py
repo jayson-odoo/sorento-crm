@@ -78,3 +78,29 @@ def test_project_label_reads_resubmitted_where_the_code_would_be():
 
     assert project_label(SimpleNamespace(project_code=None, approval_state="resubmitted")) == "Resubmitted"
     assert project_label(SimpleNamespace(project_code=None, approval_state="pending")) == "Awaiting approval"
+
+
+def test_resubmit_tells_the_approvers_in_app_only_like_a_first_submit(world):
+    _resubmitted(world)
+    assert world.sent_kw and all(kw.get("send_email") is False for kw in world.sent_kw)
+
+
+def test_a_resubmitted_registration_names_its_possible_duplicates(world):
+    from ._project_registration_support import SUB, as_contact, project
+
+    existing = project(world.db, world.company_id, "KILANG ALPHA LOT 9001 MUKIM TEBRAU", code="PRJ-ZZT-9001")
+    world.semantic.append((existing.id, 0.93))
+    rid = pending(world, title="CADANGAN PEMBINAAN GUDANG DI ATAS LOT 9001, MUKIM TEBRAU, JOHOR")
+    assert reject(world, rid, "Check the lot").status_code == 200
+    assert submit(world, rid).status_code == 200
+    assert registration(world, rid).approval_state == "resubmitted"
+    got = as_contact(world, world.a).get(f"{SUB}/{rid}").json()
+    assert got["possible_duplicates"] == [{"project_code": existing.project_code, "title": existing.title}]
+
+
+def test_the_list_tells_an_approver_they_may_edit_a_resubmitted_registration(world):
+    rid = _resubmitted(world)
+    res = as_user(world, world.coordinator).get(LIST, params={"limit": 100})
+    assert res.status_code == 200, res.text
+    row = next(r for r in res.json()["data"] if r["id"] == rid)
+    assert row["can_edit"] is True
