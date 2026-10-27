@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.schemas.list_query import ListSearchRequest
 from app.services.list_query_metadata_service import ListQueryMetadataService
 from app.services.marketing_service import PromotionService
+from app.utils.multi_value import multi_values
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
 from app.services.procurement_service import SupplierService
@@ -105,7 +106,8 @@ class ListQuerySearchService:
             limit=req.limit,
             query=req.quick_search,
             status=req.promotion_status,
-            user_type=req.promotion_access_level,
+            user_type=multi_values(req.promotion_access_level),
+            attachment_state=multi_values(req.promotion_attachment_state),
             sort_field=sort_field or "created_at",
             sort_dir=sort_dir or "desc",
             advanced_filter_clause=clause,

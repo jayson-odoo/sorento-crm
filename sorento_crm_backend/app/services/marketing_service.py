@@ -316,6 +316,31 @@ def clamp_discount_percent_for_db(value: Optional[float]) -> Optional[float]:
     return round(v, 2)
 
 
+
+def attachment_state_clause(attachment_state):
+    """The Promotions cleanup filter as one clause: one state, or several OR-ed (the set of
+    promotions in any of them). None when no known state is given."""
+    from sqlalchemy import exists as _sa_exists, and_ as _sa_and, or_ as _sa_or2
+
+    if not attachment_state:
+        return None
+    states = [attachment_state] if isinstance(attachment_state, str) else attachment_state
+    has_any_link = _sa_exists().where(PromotionAttachment.promotion_id == Promotion.id)
+    linked_to_trashed = _sa_exists().where(
+        _sa_and(
+            PromotionAttachment.promotion_id == Promotion.id,
+            PromotionAttachment.attachment_id == Attachment.id,
+            Attachment.is_deleted.is_(True),
+        )
+    )
+    by_state = {
+        "unlinked": ~has_any_link,
+        "linked_to_trashed": linked_to_trashed,
+        "unlinked_or_trashed": _sa_or2(~has_any_link, linked_to_trashed),
+    }
+    clauses = [by_state[s] for s in states if s in by_state]
+    return _sa_or2(*clauses) if clauses else None
+
 class PromotionService:
     """Service for promotion operations."""
     
@@ -542,28 +567,9 @@ class PromotionService:
                 q = q.filter(advanced_filter_clause)
             if subject_clause is not None:
                 q = q.filter(subject_clause)
-            if attachment_state:
-                from sqlalchemy import exists as _sa_exists, and_ as _sa_and, or_ as _sa_or2
-                has_any_link = _sa_exists().where(
-                    PromotionAttachment.promotion_id == Promotion.id
-                )
-                linked_to_trashed = _sa_exists().where(
-                    _sa_and(
-                        PromotionAttachment.promotion_id == Promotion.id,
-                        PromotionAttachment.attachment_id == Attachment.id,
-                        Attachment.is_deleted.is_(True),
-                    )
-                )
-                # Several states are OR-ed: the set of promotions in any of them.
-                states = [attachment_state] if isinstance(attachment_state, str) else attachment_state
-                by_state = {
-                    "unlinked": ~has_any_link,
-                    "linked_to_trashed": linked_to_trashed,
-                    "unlinked_or_trashed": _sa_or2(~has_any_link, linked_to_trashed),
-                }
-                clauses = [by_state[s] for s in states if s in by_state]
-                if clauses:
-                    q = q.filter(_sa_or2(*clauses))
+            clause = attachment_state_clause(attachment_state)
+            if clause is not None:
+                q = q.filter(clause)
             return q
 
         sort_key = (sort_field or "created_at").strip() or "created_at"
