@@ -118,6 +118,8 @@ class Column:
     #: How this dimension's blank bucket READS ("(no agent)"): it stays the blank bucket (last
     #: in every order, one row), only its label changes (SALES-UNIFIED).
     blank_label: Optional[str] = None
+    #: Resolvable by key (the engine and the report ask read it) but not offered in the screen's Columns menu.
+    hidden: bool = False
 
     def __post_init__(self) -> None:
         if self.agg not in AGGS:

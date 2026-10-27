@@ -397,6 +397,41 @@ def test_s8_an_open_screen_with_no_period_counts_every_date_as_the_bot_does(clie
     assert got[1] > september_only[1], "the 2024 row must be counted"
 
 
+@pytest.mark.parametrize("basis", list(KEYS))
+def test_d1_the_default_view_names_real_detail_columns_and_the_detail_grid_has_rows(client, db, basis) -> None:
+    """D1: the Detail tab is not blank: the default view lists detail columns, all in the catalog, and a run of
+    exactly those columns returns the seeded rows."""
+    _world(db)
+    meta = _meta(client, KEYS[basis]).json()
+    columns = meta["default_view"]["detail"]["columns"]
+    assert len(columns) >= 4, columns
+    assert set(columns) <= {c["key"] for c in meta["catalog"]}, columns
+    body = {"params": {"date_basis": "order_date", "period": PERIOD},
+            "view": {"params": {"date_basis": "order_date", "period": PERIOD},
+                     "detail": {"columns": columns, "order": columns},
+                     "pivot": {"rows": "month", "cols": "all", "measures": ["amount"]}}}
+    resp = client.post(f"/api/v1/reports/{KEYS[basis]}/run", json=body)
+    assert resp.status_code == 200, resp.text
+    assert resp.json()["layouts"]["detail"]["rows"], resp.text
+
+
+@pytest.mark.parametrize("basis", list(KEYS))
+def test_d2_no_two_catalog_columns_share_a_label(client, db, basis) -> None:
+    labels = [c["label"] for c in _meta(client, KEYS[basis]).json()["catalog"]]
+    assert len(labels) == len(set(labels)), sorted(l for l in labels if labels.count(l) > 1)
+
+
+def test_d2_invoiced_offers_no_location_column(client, db) -> None:
+    keys = {c["key"] for c in _meta(client, KEYS["invoiced"]).json()["catalog"]}
+    assert "location" not in keys
+
+
+def test_unpaid_offers_no_quantity_measure(client, db) -> None:
+    meta = _meta(client, KEYS["unpaid"]).json()
+    assert "qty" not in {c["key"] for c in meta["catalog"]}
+    assert "qty" not in meta["default_view"]["pivot"]["measures"]
+
+
 # ================================================================ unpaid on screen: customer / sales agent / month only
 
 

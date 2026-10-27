@@ -66,8 +66,8 @@ COLUMNS = (
     reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(BillingDocument.doc_date, "YYYY-MM"), size=110),
     reg.Column("all", "All", "text", "dimension", lambda c: sa.cast(sa.literal("all"), sa.Text), size=80),
     reg.Column("amount", "RM", "money", "measure", lambda c: BillingDocument.outstanding, size=130),
-    # No quantity on a document: the shared pivot reads one.
-    reg.Column("qty", "Qty", "integer", "measure", lambda c: sa.literal_column("0"), size=100),
+    # No quantity on a document: the shared pivot reads one, so it stays resolvable but is not offered.
+    reg.Column("qty", "Qty", "integer", "measure", lambda c: sa.literal_column("0"), size=100, hidden=True),
 )
 
 DATASET = reg.Dataset(
@@ -100,8 +100,8 @@ DEFINITION = reg.ReportDefinition(
     pivot=reg.PivotLayout(title="Unpaid invoices"),
     default_view={
         "params": {"date_basis": "order_date"},
-        "detail": {"columns": [], "order": []},
-        "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]},
+        "detail": {"columns": list(ap.UNPAID_DETAIL_COLUMNS), "order": list(ap.UNPAID_DETAIL_COLUMNS)},
+        "pivot": {"rows": "month", "cols": "all", "measures": ["amount"]},
     },
     workbook=reg.WorkbookSpec(company_name=""),
     module_key="finance",

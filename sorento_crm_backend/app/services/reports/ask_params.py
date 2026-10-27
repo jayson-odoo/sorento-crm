@@ -71,3 +71,9 @@ def spec_condition(ctx: Any, values: Sequence[str]) -> Optional[Any]:
     grants = ctx.company_grants
     ids, _echo, _not_applied = spec_set.resolve(ctx.db, terms, set(), None if grants is None else set(grants))
     return column.in_(ids) if ids else false()
+
+
+#: The Detail tab's default columns of the line-level asks (the Top selling items report's shape: what, who, how much).
+DETAIL_COLUMNS = ("month", "customer", "product", "sales_agent", "qty", "amount")
+#: An unpaid invoice has no product and no quantity.
+UNPAID_DETAIL_COLUMNS = ("month", "customer", "sales_agent", "amount")

@@ -15,6 +15,8 @@ the line's document. A line whose item code is not a CRM product still counts, u
 """
 from __future__ import annotations
 
+import dataclasses
+
 from typing import Any, List, Optional
 
 import sqlalchemy as sa
@@ -179,6 +181,17 @@ COLUMNS = (
     ),
 )
 
+#: The invoiced ask's own copy of the catalog for the "Sales & outstanding" screen: the report ask's keys replace the
+#: Top selling items report's twins (quantity, RM and documents are the same figures as qty, amount and orders), and an
+#: invoice line has no location. They stay resolvable, only out of the Columns menu; the other report is unchanged.
+_ASK_HIDDEN = frozenset({"quantity", "sales_value", "documents", "location"})
+ASK_COLUMNS = tuple(
+    dataclasses.replace(c, hidden=True) if c.key in _ASK_HIDDEN
+    else dataclasses.replace(c, label="Month of the year") if c.key == "month_of_year"
+    else c
+    for c in COLUMNS
+)
+
 DATASET = reg.Dataset(
     key="billing_document_lines",
     scope="company",
@@ -204,7 +217,7 @@ ASK_DEFINITION = reg.ReportDefinition(
     dataset=reg.Dataset(
         key="sales_invoiced_ask",
         scope="company",
-        columns=COLUMNS,
+        columns=ASK_COLUMNS,
         date_bases=DATASET.date_bases,
         base=_base,
         company_column=BillingDocument.company_id,
@@ -230,7 +243,7 @@ ASK_DEFINITION = reg.ReportDefinition(
     pivot=reg.PivotLayout(title="Invoiced sales"),
     default_view={
         "params": {"date_basis": "order_date"},
-        "detail": {"columns": [], "order": []},
+        "detail": {"columns": list(ap.DETAIL_COLUMNS), "order": list(ap.DETAIL_COLUMNS)},
         "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]},
     },
     workbook=reg.WorkbookSpec(company_name=""),

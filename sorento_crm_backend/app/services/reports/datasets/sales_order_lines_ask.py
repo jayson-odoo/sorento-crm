@@ -216,7 +216,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
         pivot=reg.PivotLayout(title=_TITLES[basis]),
         default_view={
             "params": {"date_basis": "order_date"},
-            "detail": {"columns": [], "order": []},
+            "detail": {"columns": list(ap.DETAIL_COLUMNS), "order": list(ap.DETAIL_COLUMNS)},
             "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]},
         },
         workbook=reg.WorkbookSpec(company_name=""),
