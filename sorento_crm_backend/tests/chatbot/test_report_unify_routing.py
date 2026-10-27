@@ -320,7 +320,9 @@ def test_p7_a_named_kind_runs_report_ask_with_the_customer_and_brand_kept_and_no
     """AC-RU-11 / P7 "<Customer C> any outstanding mocha item in sales order": the kind named in the message is
     not asked; basis = that kind; customer and brand ride along; no date is sent or asked."""
     text, calls = bot.say(
-        _status("outstanding", _customer(bot), _e("Sorento", "brand"), basis=kind, group_by=group_by, top_n=top_n, **NO_DATES),
+        # (A ranking by an axis names its measure, phase 3 S5: one question for everything missing, card section 3.)
+        _status("outstanding", _customer(bot), _e("Sorento", "brand"), basis=kind, group_by=group_by, top_n=top_n,
+                measure="amount" if group_by else None, **NO_DATES),
         f"{kind} for zzt rank customer sorento",
     )
     args = _only_report_ask(calls)
@@ -336,7 +338,8 @@ def test_p7_a_named_kind_runs_report_ask_with_the_customer_and_brand_kept_and_no
 def test_p12_dealers_outstanding_for_a_product_is_report_ask_by_customer(bot) -> None:
     """AC-RU-11 / P12 "dealers outstanding for srtub206": kind named (undelivered), product, by customer."""
     _text, calls = bot.say(
-        _status("outstanding", _e(PRODUCT_CODE, "product"), basis="outstanding", group_by="customer", top_n=10, **NO_DATES),
+        _status("outstanding", _e(PRODUCT_CODE, "product"), basis="outstanding", group_by="customer", top_n=10,
+                measure="amount", **NO_DATES),  # a ranking names its measure (phase 3 S5)
         "dealers outstanding for srtwt7408",
     )
     args = _only_report_ask(calls)

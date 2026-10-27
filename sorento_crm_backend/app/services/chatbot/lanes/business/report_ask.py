@@ -483,15 +483,20 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool 
 def as_outstanding(verdict: dict[str, Any], *, subject: bool = False) -> dict[str, Any]:
     """REPORT-UNIFY (Q1, Q2): an outstanding ask that holds a filter or an axis is the report ask's, its kind (the
     basis: undelivered orders, pending delivery or unpaid invoices) the parser's `basis` or the one a
-    sales / delivery order document status names; none named is asked, never defaulted. One that holds neither
-    stays the order list. `subject`: the caller resolved a row (a named word, or a linked contact's own accounts).
+    sales / delivery order document status names; none named is asked, never defaulted. A bare "outstanding"
+    (no filter, no axis, no document word) is the whole company figure of the kind asked (R4); a kind-named
+    document status that holds neither stays the order list. `subject`: the caller resolved a row (a named word, or a linked contact's own accounts).
     Parser fields only."""
     entities = [e for e in jsc.array(verdict.get("entities")) if isinstance(e, dict)]
     held = subject or any(jsc.js_string(e.get("hint") or "").strip().lower() in _FILTER_HINTS for e in entities)
     verdict = typed_group_by(verdict)
-    if not (held or jsc.js_string(verdict.get("group_by") or "").strip().lower() in GROUP_BY):
-        return verdict
     status = jsc.js_string(verdict.get("order_status") or "").strip()
+    # R4: a BARE outstanding (no filter, no axis, no document word naming a list) is the whole company figure of a kind,
+    # asked, never the order list. The kind-named document statuses (`so_outstanding`, `do_outstanding`) keep their
+    # list when they hold nothing.
+    bare = status in ("outstanding", "outstanding_both") and not jsc.array(verdict.get("document"))
+    if not (held or bare or jsc.js_string(verdict.get("group_by") or "").strip().lower() in GROUP_BY):
+        return verdict
     kind = verdict.get("basis") if verdict.get("basis") in OUTSTANDING_KINDS else STATUS_KIND.get(status)
     out = {
         **{k: v for k, v in verdict.items() if k not in ("status", "document", "basis")},
@@ -1491,16 +1496,23 @@ def settle(
     own = [c for c in jsc.array(companies) if isinstance(c, (list, tuple)) and len(c) == 3]
     if own and not dealer and parse_output.get("ranking_refine") is not True:
         # R1: the company the message (the parser's `sales_company`) names, among the contact's own; else, with two or
-        # more companies and no product or customer named, the company question.
+        # more companies and no named subject (a customer, product, brand, category, agent or spec), the company question.
         said = " ".join(jsc.js_string(parse_output.get("sales_company") or "").split()).casefold()
         named = next((c for c in own if said and said in (str(c[1]).casefold(), str(c[2]).casefold())), None)
         if named is not None:
             args["company"] = str(named[0])
-        elif len(own) > 1 and not any(args.get(k) for k in ("customer_ids", "product_code", "product_ids")):
+        elif len(own) > 1 and not any(
+            args.get(k) for k in ("customer_ids", "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "spec")
+        ):
             given["company"] = rf.Resolved("ambiguous", options=tuple((str(c[0]), str(c[1])) for c in own))
             company_names = [str(c[1]) for c in own]
-    if parse_output.get("capability_from") == "outstanding" and args.get("basis") in OUTSTANDING_KINDS:
-        # An outstanding ask that named its kind shows both measures (no "by quantity or by amount?").
+    if (
+        parse_output.get("capability_from") == "outstanding"
+        and args.get("basis") in OUTSTANDING_KINDS
+        and not args.get("group_by")
+    ):
+        # An outstanding TOTAL that named its kind shows both measures (no "by quantity or by amount?"); a ranking by an
+        # axis still asks what it ranks by (phase 3, S5).
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
     period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or held_period
     if period is not None and (parse_output.get("ranking_refine") is not True or args.get("group_by")):

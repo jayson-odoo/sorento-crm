@@ -798,6 +798,20 @@ def sales_figure_decision(
     return decision
 
 
+def _has_own_book(db: Any, contact_respond_id: Any, space_id: Any) -> bool:
+    """Is the turn's contact a live salesperson with a book of its own customers (`contact_asker.own_book`)? False when it
+    resolves to no one (fail closed)."""
+    from app.services import contact_asker
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    if db is None or not contact_respond_id or not str(contact_respond_id).strip():
+        return False
+    resolved = resolve_contact_with_null_workspace_fallback(
+        db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
+    )
+    return bool(resolved) and contact_asker.may_ask_sales_ranking(db, str(resolved), granted=False)[1] is not None
+
+
 def _office_staff(db: Any, contact_respond_id: Any, space_id: Any) -> bool:
     """Is the turn's contact office staff (an active office access type,
     `contact_customer_scope.is_office_staff`)? False when it resolves to no one (fail closed)."""
@@ -2250,6 +2264,11 @@ def run_fetch(
         if not settled.done:
             return _fixed_reply(settled.reply or "", required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        if semantic_input["report_ask_args"].get("mine") and not customer_scope.get("ids") and not _has_own_book(
+            db, contact_id, space_id
+        ):
+            # "My ..." from a contact with no link and no agent book names nothing to narrow to (AC-CS-24): ignored.
+            semantic_input["report_ask_args"].pop("mine")
         location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
         if location_line:
             return _fixed_reply(location_line)
