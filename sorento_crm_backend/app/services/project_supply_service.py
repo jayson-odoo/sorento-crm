@@ -91,6 +91,7 @@ from app.models.project_so import (
     ACK_AWAITING,
     ALLOC_SOURCE_BRW,
     ALLOC_SOURCE_GROUP_TAKE,
+    ALLOC_BORROW_SOURCES,
     ALLOC_RESERVE_SOURCES,
     ALLOC_SOURCE_ORDER,
     ALLOC_SOURCE_OTHER_LOCATION,
@@ -9797,8 +9798,11 @@ class ProjectSupplyService:
     ):
         """The one predicate for "this allocation row is holding stock right now".
 
-        A Reserve is a plan, not a hold (BOARD-NO-HOLD, owner 27 Oct 2026): only a Borrow
-        holds stock. The Reserve rows come from the same base, `_decision_allocation_query`.
+        A decision is a plan, not a hold (BOARD-NO-HOLD 27 Oct 2026 for a Reserve,
+        BORROW-NO-HOLD 28 Oct 2026 for a Borrow): no decision row holds stock, so the
+        Reserve and Borrow sources are both excluded from the base,
+        `_decision_allocation_query`. That base already leaves out Buy, so this query now
+        matches no row; the readers are kept for now and a later cleanup removes them.
 
         A hold counts when its allocation belongs to no decision (every row written before
         Stage 1C) or to an ACTIVE one; the LINES being replaced (`exclude_line_ids`, project
@@ -9822,7 +9826,11 @@ class ProjectSupplyService:
             product_ids,
             exclude_line_ids=exclude_line_ids,
             entities=entities,
-        ).filter(SOLineAllocation.source_type.notin_(ALLOC_RESERVE_SOURCES))
+        ).filter(
+            SOLineAllocation.source_type.notin_(
+                tuple(ALLOC_RESERVE_SOURCES) + tuple(ALLOC_BORROW_SOURCES)
+            )
+        )
 
     def _decision_allocation_query(
         self,
