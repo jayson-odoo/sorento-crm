@@ -25,7 +25,9 @@ import copy
 import hashlib
 import json
 import logging
+import os
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -1331,6 +1333,46 @@ def _span_prep(
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
+
+
+def start_lookup_warm(session_factory: Any = None) -> threading.Thread | None:
+    """ENTITY-EXTRACT-MATCH S3: warm the lookup vectors (widest visibility plus the spec names) on a daemon thread at
+    API start-up, so the first turn finds them cached. Process start had a no-meaning window of more than 70 s on
+    Gemini until the first turn's lazy warm filled the cache. Off with `CHATBOT_LOOKUP_WARM_ENABLED` (the test suite
+    turns it off). Advisory: every failure is logged and swallowed. Returns the thread, or None when off."""
+    if os.getenv("CHATBOT_LOOKUP_WARM_ENABLED", "1").strip().lower() in ("0", "false", "off", "no"):
+        return None
+    if session_factory is None:
+        from app.database import SessionLocal as session_factory
+
+    def _run() -> None:
+        db = None
+        try:
+            db = session_factory()
+            set_company_scope(db, None)
+            embed = lookup_lists.embedder(db)
+            if embed is None:
+                return
+            from app.services import product_spec_registry
+
+            rows = lookup_lists.load_rows(db, include_salespeople=True, include_customers=True, customer_ids=None)
+            spec_keys = list_resolver.spec_key_rows(product_spec_registry.active_registry(db))
+            db.rollback()
+            db.close()
+            db = None
+            lookup_lists.warm([*rows, *spec_keys], embed)
+        except Exception:  # noqa: BLE001 - advisory, the first turn's lazy warm takes over
+            logger.warning("chatbot: start-up lookup warm failed", exc_info=True)
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    thread = threading.Thread(target=_run, name="lookup-lists-startup-warm", daemon=True)
+    thread.start()
+    return thread
 
 
 def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
