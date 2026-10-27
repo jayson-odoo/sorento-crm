@@ -12,6 +12,7 @@ from app.services.integration_service import IntegrationLogService
 from app.schemas.integration import IntegrationLogResponse, IntegrationLogUpdateRequest, IntegrationLogCreate
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -21,9 +22,9 @@ logger = logging.getLogger(__name__)
 async def get_integration_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    status: Optional[str] = Query(None),
-    integration_channel: Optional[str] = Query(None),
-    business_table: Optional[str] = Query(None),
+    status: Optional[List[str]] = Query(None),
+    integration_channel: Optional[List[str]] = Query(None),
+    business_table: Optional[List[str]] = Query(None),
     business_id: Optional[str] = Query(None),
     created_from: Optional[datetime] = Query(None, description="Filter created_at >= (ISO); e.g. 24h drill-down"),
     created_to: Optional[datetime] = Query(None, description="Filter created_at <= (ISO)"),
@@ -39,9 +40,9 @@ async def get_integration_logs(
         result = service.list_integration_logs(
             page=page,
             limit=limit,
-            status=status,
-            integration_channel=integration_channel,
-            business_table=business_table,
+            status=multi_values(status),
+            integration_channel=multi_values(integration_channel),
+            business_table=multi_values(business_table),
             business_id=business_id,
             created_from=created_from,
             created_to=created_to,

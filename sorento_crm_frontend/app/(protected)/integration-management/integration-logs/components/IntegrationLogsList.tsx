@@ -24,7 +24,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { useIntegrationLogs, useRetryIntegrationLog } from '../hooks/useIntegrationLogs';
 import type { IntegrationLog } from '../types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
@@ -51,12 +52,12 @@ export default function IntegrationLogsList() {
   // Seed filters from the URL so a System Health drill-down (channel + failed +
   // last-24h) lands here pre-filtered.
   const [statusFilter, setStatusFilter] = useState<string>(
-    () => searchParams.get('status') ?? 'all',
+    () => searchParams.get('status') ?? '',
   );
   const [channelFilter, setChannelFilter] = useState<string>(
-    () => searchParams.get('integration_channel') ?? 'all',
+    () => searchParams.get('integration_channel') ?? '',
   );
-  const [tableFilter, setTableFilter] = useState<string>('all');
+  const [tableFilter, setTableFilter] = useState<string>('');
   const [createdFrom, setCreatedFrom] = useState<string>(
     () => searchParams.get('created_from') ?? '',
   );
@@ -70,9 +71,9 @@ export default function IntegrationLogsList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearchQuery(state.searchQuery);
-    setStatusFilter(state.filters.status ?? 'all');
-    setChannelFilter(state.filters.integration_channel ?? 'all');
-    setTableFilter(state.filters.business_table ?? 'all');
+    setStatusFilter(state.filters.status ?? '');
+    setChannelFilter(state.filters.integration_channel ?? '');
+    setTableFilter(state.filters.business_table ?? '');
     setCreatedFrom(state.filters.created_from ?? '');
     setCreatedTo(state.filters.created_to ?? '');
   });
@@ -93,9 +94,9 @@ export default function IntegrationLogsList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    status: statusFilter !== 'all' ? statusFilter : undefined,
-    integration_channel: channelFilter !== 'all' ? channelFilter : undefined,
-    business_table: tableFilter !== 'all' ? tableFilter : undefined,
+    status: statusFilter || undefined,
+    integration_channel: channelFilter || undefined,
+    business_table: tableFilter || undefined,
     created_from: createdFrom || undefined,
     created_to: createdTo || undefined,
     status_code: statusCode || undefined,
@@ -252,9 +253,9 @@ export default function IntegrationLogsList() {
   });
 
   const filtersActiveCount =
-    (statusFilter !== 'all' ? 1 : 0) +
-    (channelFilter !== 'all' ? 1 : 0) +
-    (tableFilter !== 'all' ? 1 : 0) +
+    (statusFilter ? 1 : 0) +
+    (channelFilter ? 1 : 0) +
+    (tableFilter ? 1 : 0) +
     (createdFrom || createdTo ? 1 : 0) +
     (statusCode || errorContains.length ? 1 : 0);
 
@@ -264,9 +265,9 @@ export default function IntegrationLogsList() {
   };
 
   const handleClearFilters = () => {
-    setStatusFilter('all');
-    setChannelFilter('all');
-    setTableFilter('all');
+    setStatusFilter('');
+    setChannelFilter('');
+    setTableFilter('');
     setCreatedFrom('');
     setCreatedTo('');
     clearCauseFilter();
@@ -283,8 +284,7 @@ export default function IntegrationLogsList() {
     'sla_tracking_update',
     'sla_escalation',
   ];
-  const extraChannel =
-    channelFilter !== 'all' && !KNOWN_CHANNELS.includes(channelFilter) ? channelFilter : null;
+  const extraChannels = splitMulti(channelFilter).filter((c) => !KNOWN_CHANNELS.includes(c));
 
   return (
     <DataGrid
@@ -305,9 +305,9 @@ export default function IntegrationLogsList() {
             searchQuery,
           },
           {
-            status: statusFilter !== 'all' ? statusFilter : undefined,
-            integration_channel: channelFilter !== 'all' ? channelFilter : undefined,
-            business_table: tableFilter !== 'all' ? tableFilter : undefined,
+            status: statusFilter || undefined,
+            integration_channel: channelFilter || undefined,
+            business_table: tableFilter || undefined,
             created_from: createdFrom || undefined,
             created_to: createdTo || undefined,
             status_code: statusCode || undefined,
@@ -370,45 +370,45 @@ export default function IntegrationLogsList() {
               activeCount: filtersActiveCount,
               content: (
                 <div className="space-y-3">
-                  <SearchableSelect
-                    value={statusFilter}
-                    onChange={setStatusFilter}
+                  <SearchableMultiSelect
+                    value={splitMulti(statusFilter)}
+                    onChange={(v) => setStatusFilter(joinMulti(v))}
                     options={[
-                      { value: 'all', label: 'All Status' },
+                      { value: 'failed', label: 'Failed' },
                       { value: 'pending', label: 'Pending' },
                       { value: 'processing', label: 'Processing' },
                       { value: 'success', label: 'Success' },
-                      { value: 'failed', label: 'Failed' },
                     ]}
                     placeholder="Status"
                     triggerClassName="w-full"
+                    clearable
                   />
-                  <SearchableSelect
-                    value={channelFilter}
-                    onChange={setChannelFilter}
+                  <SearchableMultiSelect
+                    value={splitMulti(channelFilter)}
+                    onChange={(v) => setChannelFilter(joinMulti(v))}
                     options={[
-                      { value: 'all', label: 'All Channels' },
                       { value: 'n8n', label: 'n8n' },
                       { value: 'sla_management', label: 'SLA Management' },
                       { value: 'sla_tracking_creation', label: 'SLA Tracking (create)' },
                       { value: 'sla_tracking_update', label: 'SLA Tracking (update)' },
                       { value: 'sla_escalation', label: 'SLA Escalation' },
-                      ...(extraChannel ? [{ value: extraChannel, label: extraChannel }] : []),
+                      ...extraChannels.map((c) => ({ value: c, label: c })),
                     ]}
                     placeholder="Channel"
                     triggerClassName="w-full"
+                    clearable
                   />
-                  <SearchableSelect
-                    value={tableFilter}
-                    onChange={setTableFilter}
+                  <SearchableMultiSelect
+                    value={splitMulti(tableFilter)}
+                    onChange={(v) => setTableFilter(joinMulti(v))}
                     options={[
-                      { value: 'all', label: 'All Tables' },
                       { value: 'attachments', label: 'Attachments' },
                       { value: 'conversation_sla_tracking', label: 'Conversation SLA Tracking' },
                       { value: 'conversation_sla_event_log', label: 'Conversation SLA Event Log' },
                     ]}
                     placeholder="Table"
                     triggerClassName="w-full"
+                    clearable
                   />
                   {(createdFrom || createdTo) && (
                     // A drill-down seeds a date window from the URL. The date

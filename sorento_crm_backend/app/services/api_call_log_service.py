@@ -291,8 +291,8 @@ def list_call_logs(
     *,
     date_from=None,
     date_to=None,
-    source: Optional[str] = None,
-    outcome: Optional[str] = None,
+    source: Optional[list[str] | str] = None,
+    outcome: Optional[list[str] | str] = None,
     endpoint: Optional[str] = None,
     correlation_id: Optional[str] = None,
     search: Optional[str] = None,
@@ -315,9 +315,9 @@ def list_call_logs(
     if date_to is not None:
         q = q.filter(ApiCallLog.created_at <= date_to)
     if source:
-        q = q.filter(ApiCallLog.source == source)
+        q = q.filter(ApiCallLog.source.in_([source] if isinstance(source, str) else source))
     if outcome:
-        q = q.filter(ApiCallLog.outcome == outcome)
+        q = q.filter(ApiCallLog.outcome.in_([outcome] if isinstance(outcome, str) else outcome))
     if endpoint:
         q = q.filter(ApiCallLog.endpoint.ilike(f"%{endpoint}%"))
     if correlation_id:
