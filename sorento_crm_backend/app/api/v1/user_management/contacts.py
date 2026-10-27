@@ -138,6 +138,7 @@ async def get_contacts(
             own_memory_level_only=chatbot_memory_level == "own",
             include_linked_users=can_view_users,
             no_customers_only=customers == "none",
+            viewer_id=current_user["id"],
             access_filters={
                 "access_type": access_type,
                 "tier": tier,

@@ -41,6 +41,10 @@ fi
 if [ "${SKIP_MIGRATIONS:-0}" != "1" ]; then
   echo "Running database migrations..."
   alembic upgrade head
+  # GOODSCHAIN-INDEX-QUERY: retry any index a migration let the deploy skip when its build
+  # timed out (app/utils/online_index.py). In the background so it never delays the health
+  # check; a no-op once the indexes are VALID; it never exits non-zero.
+  python -m scripts.ensure_goods_chain_indexes &
 else
   echo "SKIP_MIGRATIONS=1; skipping alembic upgrade head"
 fi

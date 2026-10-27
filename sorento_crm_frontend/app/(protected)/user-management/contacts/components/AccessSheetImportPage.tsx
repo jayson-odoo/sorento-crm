@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useRef, useState } from 'react';
+import { Fragment, useCallback, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronUp, Download, LoaderCircle } from 'lucide-react';
 import { Alert, AlertContent, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -495,11 +495,19 @@ function ExtraCustomers({
   const known = new Set(block.accounts.map((a) => a.customer_id));
   const ticked = selection.ticked[block.key] ?? [];
   const extra = ticked.filter((id) => !known.has(id));
-  const fetchOptions = async (query: string) => {
-    const options = await picker.fetchOptions(query);
-    onLabels?.(Object.fromEntries(options.map((o) => [o.value, o.label])));
-    return options;
-  };
+  // Stable across renders: the multi-select re-runs its search whenever `fetchOptions` changes,
+  // and `onLabels` re-renders this card, so a fresh function each render searched forever.
+  const onLabelsRef = useRef(onLabels);
+  onLabelsRef.current = onLabels;
+  const pickerFetch = picker.fetchOptions;
+  const fetchOptions = useCallback(
+    async (query: string) => {
+      const options = await pickerFetch(query);
+      onLabelsRef.current?.(Object.fromEntries(options.map((o) => [o.value, o.label])));
+      return options;
+    },
+    [pickerFetch],
+  );
   return (
     <SearchableMultiSelect
       value={extra}
