@@ -1512,6 +1512,11 @@ class ProjectOrderInquiryService:
         # `_invalidate_link_cache` on every write, so the cascade cannot read a total it
         # has already changed.
         self._linked_by_target_cache: Optional[Tuple[Dict[str, Decimal], Dict[str, Decimal]]] = None
+        # LINKAGE-UNIFY U5: the products whose followed placements that memo's SPO tally
+        # already carries, and the same claims split by row (a re-deal credits its own).
+        # A chain read, so it is read per product walked, and dropped with the memo.
+        self._followed_products: set = set()
+        self._followed_by_row: Dict[str, Dict[str, Decimal]] = {}
         # G7 dedication evidence per candidate LINE (`PLAN-scm-reorder-oi-feedback-1sep.md`
         # S6), filled by `_prime_claims` for the targets actually under consideration and
         # dropped by the same invalidation `_linked_by_target` uses - a claim written
@@ -4198,43 +4203,37 @@ class ProjectOrderInquiryService:
             return bool(row and row[0] == ref)
         if spo_allocation_id:
             row = (
-                self.db.query(
-                    SPOAllocation.from_so_line_ref,
-                    SPOAllocation.from_po_line_ref,
-                    SPOAllocation.from_po_number,
-                )
+                self.db.query(SPOAllocation.from_so_line_ref)
                 .filter(SPOAllocation.id == spo_allocation_id)
                 .first()
             )
             if row is None:
                 return False
-            direct_ref, po_line_ref, po_number = row
-            if direct_ref:
-                return direct_ref == ref
-            if po_line_ref and po_number:
-                matches = (
-                    self.db.query(PurchaseOrderLine.from_so_line_ref)
-                    .join(
-                        PurchaseOrder,
-                        PurchaseOrder.id == PurchaseOrderLine.purchase_order_id,
-                    )
-                    .filter(
-                        PurchaseOrder.po_number == po_number,
-                        PurchaseOrderLine.source_ref == po_line_ref,
-                    )
-                    .limit(2)
-                    .all()
+            if row[0]:
+                return row[0] == ref
+            # LINKAGE-UNIFY U5: the PO line the allocation was transferred from, by the
+            # goods chain's own key (PO number, both line refs trimmed, same product,
+            # same company, or the allocation's own `po_line_id`).
+            matches = (
+                self.db.query(PurchaseOrderLine.from_so_line_ref)
+                .join(
+                    PurchaseOrder,
+                    PurchaseOrder.id == PurchaseOrderLine.purchase_order_id,
                 )
-                if len(matches) != 1:
-                    if len(matches) > 1:
-                        logger.warning(
-                            "_book_names_target_for_line: ambiguous "
-                            "(po_number=%r, source_ref=%r) resolves to more "
-                            "than one purchase_order_line; refused",
-                            po_number, po_line_ref,
-                        )
-                    return False
-                return matches[0][0] == ref
+                .join(SPOAllocation, goods_chain.po_spo_key_clause())
+                .filter(SPOAllocation.id == spo_allocation_id)
+                .limit(2)
+                .all()
+            )
+            if len(matches) != 1:
+                if len(matches) > 1:
+                    logger.warning(
+                        "_book_names_target_for_line: ambiguous allocation %r "
+                        "resolves to more than one purchase_order_line; refused",
+                        spo_allocation_id,
+                    )
+                return False
+            return matches[0][0] == ref
         return False
 
     def _displace_other_line_holders(
@@ -10374,15 +10373,30 @@ class ProjectOrderInquiryService:
         )
         return {row_id: _dec(qty) for row_id, qty in rows}
 
-    def _linked_by_target(self) -> Tuple[Dict[str, Decimal], Dict[str, Decimal]]:
+    def _linked_by_target(
+        self, product_ids: Optional[Iterable[Optional[str]]] = None
+    ) -> Tuple[Dict[str, Decimal], Dict[str, Decimal]]:
         """What every link already claims, per PO line and per SPO allocation.
 
         The netting that stops two rows claiming the same purchase-order quantity. Read off
         the LINKS rather than off the rows' own `po_line_id`, which is derived display now:
         a row linked to two lines claims quantity on both, and the scalar names one.
+
+        `product_ids` scopes the followed half (U5, `_add_followed_spo_claims`), the one
+        read here that is a chain walk rather than an aggregate: only the products a caller
+        walks are read (None: every product), once each until the next write. It only
+        adds allocations of a product not read before, so a total this memo has already
+        handed out never moves under its caller.
         """
-        if self._linked_by_target_cache is not None:
-            return self._linked_by_target_cache
+        if self._linked_by_target_cache is None:
+            self._linked_by_target_cache = self._link_totals()
+        by_po, by_spo = self._linked_by_target_cache
+        self._add_followed_spo_claims(by_spo, product_ids)
+        return by_po, by_spo
+
+    def _link_totals(self) -> Tuple[Dict[str, Decimal], Dict[str, Decimal]]:
+        """`_linked_by_target`'s aggregate half: the links' and the released links' own
+        quantity, per PO line and per SPO allocation, over the whole link table."""
         by_po = {
             str(po_line_id): _dec(qty)
             for po_line_id, qty in self.db.query(
@@ -10423,8 +10437,55 @@ class ProjectOrderInquiryService:
             .all()
         ):
             by_spo[str(target_id)] = by_spo.get(str(target_id), _ZERO) + _dec(qty)
-        self._linked_by_target_cache = (by_po, by_spo)
         return by_po, by_spo
+
+    def _add_followed_spo_claims(
+        self, by_spo: Dict[str, Decimal], product_ids: Optional[Iterable[Optional[str]]]
+    ) -> None:
+        """LINKAGE-UNIFY U5 (A-R11): a placement on a PO line whose goods AutoCount moved
+        onto an SPO holds that SPO's quantity as well - 486 placed on PO 202607-S0100
+        leaves no free 486 on SPO-2026/09-0107 L9 for another row. The split is the goods
+        chain's own, the one Stock Debt and the OI screens read.
+
+        Added into `by_spo` (the memo's own tally) and, split by row, into
+        `_followed_by_row`, which a re-deal credits back exactly as it credits its direct
+        links (`_candidates_for_row`). Only for the products of `product_ids` (None: every
+        product) not read since the last write; a product read once is marked whether or
+        not it had anything to add. Only a line AutoCount has transferred from
+        (`qty_received > 0`) can have its placements on an SPO, so only those are read:
+        one link query and one batched chain read for the whole product set, never a query
+        per row or per target."""
+        query = (
+            self.db.query(OrderInquiryLink.id, PurchaseOrderLine.product_id)
+            .join(PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id)
+            .filter(PurchaseOrderLine.qty_received > 0)
+        )
+        if product_ids is None:
+            if self._followed_products:
+                query = query.filter(
+                    PurchaseOrderLine.product_id.notin_(sorted(self._followed_products))
+                )
+        else:
+            unread = {str(pid) for pid in product_ids if pid} - self._followed_products
+            if not unread:
+                return
+            query = query.filter(PurchaseOrderLine.product_id.in_(sorted(unread)))
+            self._followed_products |= unread
+        link_ids: List[str] = []
+        for link_id, product_id in query.all():
+            link_ids.append(str(link_id))
+            self._followed_products.add(str(product_id))
+        for chain in goods_chain.chains_for_links(self.db, link_ids, with_bins=False).values():
+            for hop in chain.hops:
+                if (
+                    hop.kind == goods_chain.KIND_SPO
+                    and hop.spo_allocation_id
+                    and hop.state in (goods_chain.IN_TRANSIT, goods_chain.RECEIVED)
+                ):
+                    key = hop.spo_allocation_id
+                    by_spo[key] = by_spo.get(key, _ZERO) + hop.qty
+                    own = self._followed_by_row.setdefault(chain.row_id, {})
+                    own[key] = own.get(key, _ZERO) + hop.qty
 
     def _invalidate_link_cache(self) -> None:
         """Every writer of a link calls this. A stale total is a double-claim.
@@ -10439,6 +10500,8 @@ class ProjectOrderInquiryService:
         across them.
         """
         self._linked_by_target_cache = None
+        self._followed_products = set()
+        self._followed_by_row = {}
         self._claims_cache = {}
         self._awaiting_link_cache = {}
         # A write that resolves or creates a claim (`_write_link`, every placement) must
@@ -10727,7 +10790,7 @@ class ProjectOrderInquiryService:
         if not product_id:
             return []
         own_so_number = self._row_so_number(row)
-        by_po, by_spo = self._linked_by_target()
+        by_po, by_spo = self._linked_by_target([product_id])
         # `credit_own_links` reaching `_dedication_for_target` too (bug found chasing
         # PR #490's CI failures, `test_order_inquiry_draft_links.py` R2/S4 redeal): the
         # row's OWN draft claims are ignored the SAME way its own linked quantity
@@ -10747,6 +10810,13 @@ class ProjectOrderInquiryService:
                     by_spo[key] = by_spo[key] - _dec(link.qty)
                 if link.claim_id:
                     own_claim_ids.add(str(link.claim_id))
+            # LINKAGE-UNIFY U5: and what its own PO placements hold on the SPOs they
+            # follow onto (`_linked_by_target` added it to those SPOs' tally), or a row
+            # with 486 on a transferred PO line finds the SPO its own goods sit on fully
+            # claimed - by itself.
+            for key, qty in self._followed_by_row.get(str(row.id), {}).items():
+                if key in by_spo:
+                    by_spo[key] = by_spo[key] - qty
             ignore_claim_ids = frozenset(own_claim_ids)
         pools = self._pool_codes()
         cited = self._cited_documents(row)
@@ -14097,7 +14167,7 @@ class ProjectOrderInquiryService:
         wanted = {pid for pid in product_ids if pid}
         if not wanted:
             return {"po": set(), "spo": set()}
-        by_po, by_spo = self._linked_by_target()
+        by_po, by_spo = self._linked_by_target(wanted)
 
         # LADDER V4 (section 1d): the flag applies the SAME group-deficit rule the walk
         # does, so a row is never offered a Link that the dialog would then show as empty.
