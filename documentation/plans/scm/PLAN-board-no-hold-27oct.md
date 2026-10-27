@@ -47,3 +47,32 @@ Behaviour card: `CARD-board-no-hold-27oct.md` (posted as one crew-ask). Dry run:
 One place: `_hold_query` stops matching decision allocations, so every reader above follows. Stock Debt's
 allocation half then hands the walk a ROUTE instead of a hold: "this line may draw this bin, at its own date"
 (card Q1 a), joined to `may_draw` for that line only. No per-screen copy.
+
+## Red-first test list (draft, assumes card answers Q1-Q5 = (a); revised once the owner answers)
+
+Backend, Postgres scratch schema (`tests/_pg_fixture.py`), seeded with the `_decided_line` shape of
+`tests/test_project_supply_holds.py`:
+
+1. **Stock Debt walk, CB4702 shape**: 36 on hand; later order (due +60d) has a confirmed Reserve of 36 at the bin;
+   earlier undecided order (due +10d) needs 36. Expect earlier `covered` 36, later `short` 36 (today: later `pinned`,
+   earlier `short`). Smoke-proven by the dry run.
+2. **Free-stock figure**: `free_stock_by_location` = on hand - AutoCount reserved, with a confirmed decision present;
+   `held_stock_by_location` = 0. Rewrites `test_project_supply_holds.py` AC-S1-1/5 (those assert the hold).
+3. **Board strip / group drill**: free and held on the board's stock detail read the same as (2).
+4. **Location stock**: `location_stock_service` free equals on hand - reserved with a decision present.
+5. **Reorder runs** (Q4 a): `_project_supply_reduction_map` returns nothing for an active Reserve / Borrow.
+6. **Route, cross-group** (Q1 a): a decided line in group BB planned from an IB bin draws that bin at its own date;
+   an earlier IB line due first takes it first; an undecided BB line still cannot draw IB.
+7. **Route, site pool** (Q1 a): a project line planned "Reserve from BRW" draws BRW at its date; an earlier dealer line
+   on BRW is served first.
+8. **Unchanged binders**: an OI placement on an SPO, landed goods for the line's own purchase, a PO S/O pin still bind
+   first at any date (guards against the change leaking past `so_line_allocations`).
+9. **Confirm**: two orders may both confirm Reserve 36 of a 36 pile; no short recorded for the second because of the first.
+10. **Board queue** (Q2 a): a decided line Stock Debt reads short returns to the queue flagged "Plan not covered",
+    naming the earlier order; a decided line still covered stays out.
+11. **Borrow** (Q3 a): donor shows "planned for SO..." note; buy-back OI ORDER_BACK row still counted as demand.
+
+Frontend vitest: wording of the decided-line pill and the "Plan not covered" state (Q5).
+
+Kill tests (reviewer): put the old `or_(decision_id IS NULL, state = ACTIVE)` back in `_hold_query` and tests 1-5 must go
+red; drop the route join and 6-7 must go red; widen the change to `_holds`' placement half and 8 must go red.
