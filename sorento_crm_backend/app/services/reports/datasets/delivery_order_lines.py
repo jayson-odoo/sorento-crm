@@ -338,6 +338,10 @@ DEFINITION = reg.ReportDefinition(
 PENDING_DATASET = dataclasses.replace(DATASET, key=PENDING_KEY)
 PENDING_DEFINITION = dataclasses.replace(
     DEFINITION, key=PENDING_KEY, title="Pending delivery", dataset=PENDING_DATASET,
+    # An open basis: with no period named it counts every date, as the chatbot does.
+    params=tuple(
+        dataclasses.replace(p, default=reg.all_dates_period) if p.key == "period" else p for p in DEFINITION.params
+    ),
     pivot=reg.PivotLayout(title="Pending delivery"),
 )
 

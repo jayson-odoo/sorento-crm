@@ -194,7 +194,11 @@ def _definition(basis: str) -> reg.ReportDefinition:
         dataset=dataset,
         params=(
             reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
-            reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
+            reg.PeriodParam(
+                key="period", label="Period",
+                # An open basis counts every date when no period is named, as the chatbot does.
+                default=reg.all_dates_period if basis == "outstanding" else reg.current_year_period,
+            ),
             reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
             reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),
             reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),

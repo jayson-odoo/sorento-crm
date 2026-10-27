@@ -88,7 +88,7 @@ DEFINITION = reg.ReportDefinition(
     dataset=DATASET,
     params=(
         reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
-        reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
+        reg.PeriodParam(key="period", label="Period", default=reg.all_dates_period),
         reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
         reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, sales_agent_condition),
         reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),

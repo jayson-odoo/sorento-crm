@@ -370,6 +370,33 @@ def test_slice4_tally_unpaid_screen_total_equals_the_report_ask_total(client, db
     assert got == (0, D("290.00") if case == "none" else D("230.00")), got
 
 
+@pytest.mark.parametrize("basis", ["outstanding", "pending_delivery", "unpaid"])
+def test_s8_an_open_screen_with_no_period_counts_every_date_as_the_bot_does(client, db, basis) -> None:
+    """S8: the bot answers an open basis with no period over all dates; the screen's default period is the same,
+    so a row dated years back is in both totals."""
+    w = _world(db)
+    old = date(2024, 3, 5)
+    seed_so_line(db, cust=w.c1, prod=w.pa, qty=10, delivered=4, total="700.00", agent=w.agent, wh=w.wh, order_date=old)
+    so = seed_so(db, customer_id=w.c1.id, agent_id=w.agent.id, demand_class="retail")
+    seed_do(db, customer_id=w.c1.id, order_date=old, source_book="db1", sales_order_id=so.id,
+            lines=[line(w.pa.id, w.wh.id, 2, total="70.00")])
+    header = doc(db, "invoice", "90.00", old, customer=w.c1, agent_row=w.agent, lines=[bline(qty="1", net="90.00", prod=w.pa)])
+    header.outstanding = D("90.00")
+    db.commit()
+    contact = _staff(db)
+    resp = client.get(ASK, params={"basis": basis, **_as_contact(contact)}, headers={"X-API-Key": "k"})
+    assert resp.status_code == 200, resp.text
+    total = resp.json()["total"]
+    expected = (int(total["qty"]), money(total["amount"]))
+    body = {"params": {"date_basis": "order_date"},
+            "view": {"params": {"date_basis": "order_date"}, "detail": {"columns": [], "order": []},
+                     "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]}}}
+    got = _grand(client.post(f"/api/v1/reports/{KEYS[basis]}/run", json=body))
+    assert got == expected, (basis, got, expected)
+    september_only = _grand(_run(client, KEYS[basis]))
+    assert got[1] > september_only[1], "the 2024 row must be counted"
+
+
 # ================================================================ unpaid on screen: customer / sales agent / month only
 
 
