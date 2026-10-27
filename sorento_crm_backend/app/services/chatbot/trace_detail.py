@@ -689,6 +689,7 @@ def _span_extract(records: list[dict[str, Any]]) -> dict[str, Any] | None:
         "provider": event.get("provider"),
         "model": event.get("model"),
         "model_source": event.get("model_source"),
+        "embedding_model": event.get("embedding_model"),
         "ms": event.get("ms") or 0,
         "tokens": event.get("tokens") if isinstance(event.get("tokens"), dict) else {},
         "matched_rows": shown,

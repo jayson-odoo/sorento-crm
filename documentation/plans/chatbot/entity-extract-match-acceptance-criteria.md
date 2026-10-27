@@ -108,3 +108,65 @@ version that carries the span marker. Every other version behaves exactly as tod
   named cause. The span call also runs on the staff Gemini model for the 186 non-code messages (org-key ledger rules).
 - **AC-S2-11 [UX]** Hand test: the owner picks the S2 version in the Chatbot Console and runs the script in
   `laneboard/scripts/<PR>.md`; each step names the exact rows the reply must use.
+
+## S3: semantic bridge (Gemini lookup embedder + span "meaning"), owner 27 Oct ~09:4x
+
+Owner: "can we use gemini key for embedding? ... the AI should know what 10 inch means, and what emas or biru mean".
+Rulings: Gemini embedder option configured like the chat models, recalibrated floors per provider, prod stays on its
+OpenAI embedder unless switched; keep cross-kind partials (no F2); no unit rules and no alias data (the AI bridges
+languages and units). Crew 27 Oct: prompt-registry label `chatbot_lookup_embedder`; new PR; span "meaning" field.
+
+- **AC-S3-1 [BE]** The lookup/resolver embedder follows the production label of prompt key `chatbot_lookup_embedder`
+  (provider/model, same control as the chat models): label gemini / gemini-embedding-001 -> list and span vectors come
+  from Gemini with the AI config's Gemini key; no label or no model -> today's OpenAI text-embedding-3-small (prod
+  unchanged); a missing key for the chosen provider -> spelling only, never an exception.
+- **AC-S3-2 [BE]** Vectors are cached per (model, text sha): a model switch re-embeds and never mixes vector spaces;
+  Gemini list texts are embedded in batches.
+- **AC-S3-3 [BE]** Meaning floors are per embedding model in `list_resolver`: text-embedding-3-small keeps today's
+  values; gemini-embedding-001 uses the calibrated table (category 0.70, spec 0.75, file_type 0.65, brand 0.60,
+  promotion_kind 0.75, location 0.65, salesperson 0.70, customer 0.75, sales_channel 0.65, spec_key 0.75; calibrated on
+  the calib half of the phase-1 gold, test half 108/132 right vs 107 on OpenAI vectors); a model with no table -> no
+  meaning matches. The n-gram lookup path keeps its OpenAI floors and runs spelling only on any other model.
+- **AC-S3-4 [BE]** The span answer carries an optional per-span `meaning` (the plain English form, sizes in mm, or
+  null). A migration publishes `chatbot_span_extractor` v2 with that wording UNLABELLED (the production label stays on
+  v1); v1 answers without `meaning` keep working.
+- **AC-S3-5 [BE]** When a span has a meaning, the resolver tries the meaning first and keeps it if it resolves
+  (resolved or ambiguous); otherwise it resolves the span text. The trace records text, meaning and which one matched.
+  Measured offline: meaning-first resolves emas -> gold, 金色 -> gold, hitam -> black, warna -> colour, sinki -> sink.
+- **AC-S3-6 [FE]** The drawer's Span pass section shows each phrase's meaning (when present) and which form matched;
+  the pass-1 line also names the embedding model.
+- **AC-S3-7 [T]** Migration: single head, idempotent, downgrade removes only its own rows, no label moves.
+- **AC-S3-8 [T]** On the copy (label `chatbot_lookup_embedder` -> gemini, span label -> v2): the owner's two messages
+  plus "emas", "biru", "金色" rerun, per phrase before / after, posted on the PR.
+
+### S3 round 2: startup warm of the lookup vectors (crew 27 Oct ~11:3x, ask a70702435)
+
+Why: today the list vectors are embedded lazily by the first turn (`lookup_lists.warm`, called from
+`engine._lookup_lines` and `engine._span_prep`); turns never block on it but run spelling only
+(`lookup_lists.usable_embedder`) until ~4.6k texts are cached, which took more than 70 s on Gemini (100-text batches,
+`GEMINI_EMBED_CHUNK`). So every process start has a no-meaning window, and it only starts when a message arrives.
+
+- **AC-S3-9 [BE]** API start-up (`startup_event`) starts ONE background daemon thread that embeds every list row text a
+  turn can load (the `engine._span_prep` rows at the widest visibility: salespeople and all customers of all companies,
+  plus the spec-name rows) with the embedder the turn would use (`lookup_lists.embedder`, label-driven). Start-up
+  returns without waiting for it: an embedder that blocks for minutes delays start-up by well under 1 s.
+- **AC-S3-10 [BE]** Once that warm finishes, the FIRST turn after start uses meaning matching (its rows are cached, so
+  `usable_embedder` gives the embedder and a meaning-only span resolves); no earlier turn is needed to start the warm.
+- **AC-S3-11 [BE]** The warm is advisory: no key (embedder None), a database error or a provider error is logged and
+  swallowed; start-up completes and turns behave as today (lazy warm, spelling only until cached).
+- **AC-S3-12 [BE]** Switch `CHATBOT_LOOKUP_WARM_ENABLED` (default on; "0"/"false"/"off"/"no" turn it off);
+  `tests/conftest.py` turns it off like `CHATBOT_INBOX_SWEEPER_ENABLED`. The warm reads row texts only, in its own
+  read session with company scope None (all companies; the texts go only to the per-process vector cache and to the
+  same embedding provider a turn already sends them to), and closes the session before embedding.
+- **AC-S3-13 [BE]** (measured 27 Oct 11:2x-11:3x on ONE process: a 4,652-text warm on gemini-embedding-001 got HTTP
+  429 part-way three times, even at ~1.5k texts a minute; a single request right after succeeded; the exact limit is
+  UNVERIFIED) The background warm (`fill`) retries a chunk that hits a rate limit (`llm_call.is_rate_limited`, not an
+  out-of-credit 429) after 15, 30 and 60 s, each stretched by a random 0-50% so the 4 workers of a container do not
+  retry in lockstep; after the last wait the fill stops (texts already stored stay cached, the next turn's lazy warm
+  goes on). Other errors are not retried. The turn path never retries and never sleeps. Before the production label
+  moves to Gemini, a 4-worker start must be checked (4 warms start at once).
+- **AC-S3-14 [BE]** A finished warm logs one INFO line naming the embedder model, the texts cached and the seconds
+  taken ("lookup lists warm: N texts cached on <model> in S s"), so the copy's log shows which embedder is live; a
+  failed warm logs a WARNING.
+- **AC-S3-15 [BE]** `warm` does nothing when every text is already cached: no thread, no log line (every turn
+  calls it; the reviewer saw three "texts cached ... in 0.0 s" lines after one request).
