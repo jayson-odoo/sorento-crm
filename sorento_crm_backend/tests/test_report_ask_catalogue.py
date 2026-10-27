@@ -126,11 +126,11 @@ def test_dealer_keys():
     assert set(DEALER_KEYS) == {"product", "brand", "category", "month"}, DEALER_KEYS
 
 
-def test_no_ask_definition_is_on_the_reports_screen():
-    """The Reports screen catalogue is unchanged: no ask basis registers anywhere."""
-    from app.services.reports.registry import all_definitions
+def test_every_ask_basis_is_on_the_reports_screen_as_the_same_definition():
+    """REPORT-UNIFY slice 4 (owner Q5 (a), plan 3b): the six ask bases are registered on the Reports API as the very
+    definitions the bot runs. (Slice 1 pinned the opposite; the owner reversed it so staff can check the bot's number.)"""
+    from app.services.reports.registry import all_definitions, get
 
-    registered = {d.key for d in all_definitions()}
     for basis, definition in _definitions().items():
-        assert definition.key not in registered, (basis, registered)
-        assert all(d is not definition for d in all_definitions()), basis
+        assert get(definition.key) is definition, basis
+        assert any(d is definition for d in all_definitions()), basis

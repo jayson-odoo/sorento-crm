@@ -17,6 +17,7 @@ import sqlalchemy as sa
 from app.models.finance import CREDIT_NOTE, POSTED, BillingDocument
 from app.models.order import Customer
 from app.models.sales_agent import SalesAgent
+from app.services.reports import ask_params as ap
 from app.services.reports import registry as reg
 from app.services.reports.datasets.delivery_order_lines import NO_AGENT
 from app.services.reports.datasets.sales_order_lines_ask import _agent_in
@@ -85,9 +86,9 @@ DEFINITION = reg.ReportDefinition(
     params=(
         reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
         reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
-        reg.SelectParam("customer", "Customer", True, (), _no_options, customer_condition),
-        reg.SelectParam("sales_agent", "Sales agent", True, (), _no_options, sales_agent_condition),
-        reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition),
+        reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
+        reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, sales_agent_condition),
+        reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),
     ),
     detail=reg.DetailLayout(
         title="Unpaid invoices",

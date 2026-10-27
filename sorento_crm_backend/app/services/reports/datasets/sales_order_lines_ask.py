@@ -21,6 +21,7 @@ from app.models.inventory import Warehouse
 from app.models.order import Customer, SalesOrder, SalesOrderLine
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
+from app.services.reports import ask_params as ap
 from app.services.reports import registry as reg
 from app.services.reports.datasets.delivery_order_lines import NO_AGENT
 from app.services.reports.datasets.sales_order_lines import channel_label
@@ -194,14 +195,15 @@ def _definition(basis: str) -> reg.ReportDefinition:
         params=(
             reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
             reg.PeriodParam(key="period", label="Period", default=reg.current_year_period),
-            reg.SelectParam("customer", "Customer", True, (), _no_options, customer_condition),
-            reg.SelectParam("product", "Product", True, (), _no_options, product_condition),
-            reg.SelectParam("brand", "Brand", True, (), _no_options, brand_condition),
-            reg.SelectParam("category", "Category", True, (), _no_options, category_condition),
-            reg.SelectParam("sales_agent", "Sales agent", True, (), _no_options, sales_agent_condition),
-            reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition),
-            reg.SelectParam("location", "Location", True, (), _no_options, location_condition),
-            reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition),
+            reg.SelectParam("customer", "Customer", True, (), ap.customer_options, customer_condition),
+            reg.SelectParam("product", "Product", True, (), _no_options, product_condition, hidden=True),
+            reg.SelectParam("brand", "Brand", True, (), ap.brand_options, brand_condition),
+            reg.SelectParam("category", "Category", True, (), ap.category_options, category_condition),
+            reg.SelectParam("sales_agent", "Sales agent", True, (), ap.agent_options, sales_agent_condition),
+            reg.SelectParam("customer_agent", "Customers assigned to", True, (), _no_options, customer_agent_condition, hidden=True),
+            reg.SelectParam("location", "Location", True, (), _no_options, location_condition, hidden=True),
+            reg.SelectParam("channel", "Channel", True, (), _no_options, channel_condition, hidden=True),
+            reg.SelectParam("spec", "Specification", True, (), ap.spec_options, ap.spec_condition),
         ),
         detail=reg.DetailLayout(
             title="Sales order lines",

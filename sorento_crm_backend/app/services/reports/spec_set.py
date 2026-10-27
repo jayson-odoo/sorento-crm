@@ -89,7 +89,7 @@ def resolve(
     clause = membership_clause(membership)
     if clause is None:
         return None, [], not_applied
-    with company_scope(db, frozenset(grants)):
+    with company_scope(db, None if grants is None else frozenset(grants)):
         ids = (
             db.query(Product.id)
             .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
