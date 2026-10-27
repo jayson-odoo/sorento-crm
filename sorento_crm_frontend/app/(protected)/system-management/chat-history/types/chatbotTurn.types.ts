@@ -372,8 +372,6 @@ export interface TurnDetailApply {
    * fetch, denied, ask, lane); an older turn carries the one-line string.
    */
   plan: string | Record<string, unknown> | null;
-  /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
-  prompt_text: string | null;
 }
 
 /**
@@ -534,6 +532,46 @@ export interface IndexMatch {
   looked_up: { what: string; details: string[] } | null;
 }
 
+export interface SpanExtractCandidate {
+  list: string;
+  label: string;
+  score: number;
+  /** exact / spell / partial / meaning (an embedding hit). */
+  signal: string;
+}
+
+export type SpanExtractSource = 'span' | 'near_exact' | 'held' | 'number';
+
+export interface SpanExtractSpan {
+  text: string;
+  type: string | null;
+  status: string | null;
+  /** Close rows before the top-K cut. */
+  close?: number;
+  residual?: boolean;
+  candidates?: SpanExtractCandidate[];
+}
+
+/** The span pass of a turn; null/absent when the turn ran no span pass. */
+export interface SpanExtract {
+  spans: SpanExtractSpan[];
+  rows_rendered: number;
+  near_exact_rows: number;
+  fallback: boolean;
+  fallback_reason: string | null;
+  provider: string | null;
+  model: string | null;
+  model_source: string | null;
+  ms: number;
+  tokens?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cached_tokens?: number };
+  /** Labels of the lookup rows the parser was shown. */
+  matched_rows: string[];
+  /** Rows added from today's near-exact lookup. */
+  near_exact?: { list: string; label: string; spelling: number; source: SpanExtractSource }[];
+  /** The block handed to the parser: per list, each row with where it came from, in render order. */
+  final_block?: Record<string, { label: string; source: SpanExtractSource }[]>;
+}
+
 export interface TurnDetail {
   stages: TurnDetailStage[];
   parse: TurnDetailParse | null;
@@ -552,6 +590,9 @@ export interface TurnDetail {
   session: TurnDetailSession;
   /** `null` when the turn sent the full lists; absent on a trace composed before the lane shipped. */
   index_match?: IndexMatch | null;
+  span_extract?: SpanExtract | null;
+  /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
+  prompt_text?: string | null;
 }
 
 export interface ChatbotTurnDetail extends ChatbotTurn {

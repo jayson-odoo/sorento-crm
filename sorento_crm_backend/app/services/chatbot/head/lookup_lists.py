@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Callable
 
 from app.services.chatbot.head import candidates
-from app.services.chatbot_lookup_edits import MARKER
+from app.services.chatbot_lookup_edits import MARKER, SPAN_MARKER
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -31,6 +31,9 @@ HEADER_NOUN = {
     "sales_channel": "Sales channel", "customer": "Customer",
 }
 FLOOR_SPELLING = 0.5
+#: ENTITY-EXTRACT-MATCH S2 V2: on the span path a row the message spells at least this well is offered even when no
+#: span named it (a misspelling the span model passed over); looser spellings and meaning-only hits are not.
+NEAR_EXACT_SPELLING = 0.95
 #: The base meaning floor (the measured 3-large config); `shortlist` reads `FLOOR_MEANING_BY_LIST`.
 FLOOR_MEANING = 0.5
 #: Per list for text-embedding-3-small (free re-score of 26 Oct); any other list uses `_FLOOR_MEANING_OTHER`.
@@ -102,6 +105,7 @@ HELD_SUBJECT_LISTS = {
 }
 
 _LINE_RE = re.compile(r"^[ \t]*" + re.escape(MARKER) + r"[ \t]*$", re.MULTILINE)
+_SPAN_LINE_RE = re.compile(r"^[ \t]*" + re.escape(SPAN_MARKER) + r"[ \t]*$", re.MULTILINE)
 _CUSTOMER_BLOCKERS = frozenset({"category", "brand", "sales_channel", "location"})
 _WORD_RE = re.compile(r"[^\W_]+")
 _CODE_WORD_RE = re.compile(r"\d{3,}|(?=[a-z0-9]*\d)(?=[a-z0-9]*[a-z])[a-z0-9]{5,}")
@@ -128,6 +132,11 @@ class Hit:
 def gate_on(template: str | None) -> bool:
     """True when the RAW template carries the marker as its own line."""
     return bool(template) and _LINE_RE.search(template) is not None
+
+
+def spans_gate_on(template: str | None) -> bool:
+    """True when the RAW template carries the span marker as its own line (ENTITY-EXTRACT-MATCH S2)."""
+    return bool(template) and _SPAN_LINE_RE.search(template) is not None
 
 
 def header(list_name: str) -> str:
@@ -801,6 +810,17 @@ def provider_embedder(api_key: str) -> Embedder:
 _warm_lock = threading.Lock()
 
 
+def _import_sdk() -> None:
+    """Import the provider SDK modules a lookup thread will use, in the CALLING thread: two threads importing the
+    SDK lazily at once (the warm-up or prefetch thread and the span call) raced to `KeyError: 'openai.resources'`
+    on a fresh process. Not done at app import: the SDK stays lazy."""
+    try:
+        import openai  # noqa: F401
+        import openai.resources.embeddings  # noqa: F401
+    except Exception:  # noqa: BLE001 - no SDK, no provider embedder: nothing to race
+        pass
+
+
 def prefetch(message: str, embed: Embedder | None) -> Callable[[], bool]:
     """CHAT-V66-REGRESSIONS: start the message pieces' embedding (the lookup's one network call per turn) on a thread,
     so the round trip overlaps the turn's database work. The returned call waits for it, at most `EMBED_TIMEOUT`, and
@@ -819,6 +839,7 @@ def prefetch(message: str, embed: Embedder | None) -> Callable[[], bool]:
             pass
 
     thread = threading.Thread(target=run, name="lookup-lists-prefetch", daemon=True)
+    _import_sdk()
     thread.start()
 
     def ready() -> bool:
@@ -847,6 +868,7 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
         finally:
             _warm_lock.release()
 
+    _import_sdk()
     threading.Thread(target=run, name="lookup-lists-warm", daemon=True).start()
 
 

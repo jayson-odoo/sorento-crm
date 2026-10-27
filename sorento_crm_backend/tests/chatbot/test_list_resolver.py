@@ -270,16 +270,19 @@ def test_spec_key_rows_from_registry_entries():
     assert res.status == "resolved" and res.candidates[0].row.key == "finish"
 
 
-# AC-S1-14
-def test_nothing_on_the_turn_path_imports_list_resolver():
-    root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
-    offenders = [
+# AC-S1-14 narrowed on purpose by AC-S2-9: only the span pass and the engine seam import the resolver
+def _importers(root: Path) -> list[str]:
+    return sorted(
         str(p.relative_to(root)) for p in root.rglob("*.py")
         if p.name != "list_resolver.py" and "list_resolver" in p.read_text(encoding="utf-8", errors="ignore")
-    ]
-    assert offenders == []
-    # and the module itself must exist for the guard to mean anything
+    )
+
+
+def test_only_span_extract_and_the_engine_import_list_resolver():
+    root = Path(__file__).resolve().parents[2] / "app" / "services" / "chatbot"
     assert (root / "head" / "list_resolver.py").is_file()
+    assert (root / "head" / "span_extract.py").is_file(), "AC-S2-9: the span pass module must exist"
+    assert _importers(root) == ["engine.py", "head/span_extract.py"]
 
 
 # AC-S1-6 guard: the margin itself (a zero margin must fail this)
@@ -356,14 +359,10 @@ def test_exact_other_list_beats_one_edit_typed_row():
     assert res.candidates[0].row.list_name == "brand" and res.candidates[0].row.key == "b1"
 
 
-# AC-S1-14 widened: nothing under app/ imports it
-def test_nothing_in_app_references_list_resolver():
+# AC-S1-14 widened, then narrowed by AC-S2-9: nothing else under app/ references it
+def test_nothing_else_in_app_references_list_resolver():
     root = Path(__file__).resolve().parents[2] / "app"
-    offenders = [
-        str(p.relative_to(root)) for p in root.rglob("*.py")
-        if p.name != "list_resolver.py" and "list_resolver" in p.read_text(encoding="utf-8", errors="ignore")
-    ]
-    assert offenders == []
+    assert _importers(root) == ["services/chatbot/engine.py", "services/chatbot/head/span_extract.py"]
 
 
 # nit: a one-row list is not all-common
@@ -390,3 +389,56 @@ def test_exact_row_beats_longer_row_containing_it():
     ]
     res = _one("length", None, rows)
     assert res.status == "resolved" and res.candidates[0].row.key == "k1"
+
+
+# F1: a span word matches a row word with the same consonant skeleton (typos that drop vowels)
+SKEL = [
+    R("brand", "s1", "ZZSORENTO"),
+    R("category", "s2", "Flush type ZZWashdown"),
+    R("brand", "s3", "ZZOMEGA"),
+]
+
+
+def test_consonant_skeleton_matches_a_dropped_vowel_brand():
+    res = _one("zzsrnto", "brand", SKEL)
+    assert res.status == "resolved" and res.candidates[0].row.key == "s1", res
+
+
+def test_consonant_skeleton_matches_a_dropped_vowel_in_a_multiword_label():
+    res = _one("zzwshdwn", "category", SKEL)
+    assert res.status == "resolved" and res.candidates[0].row.key == "s2", res
+
+
+def test_a_two_consonant_span_word_does_not_match_on_the_length_rule_alone():
+    res = _one("lm", "brand", [R("brand", "t1", "laomeiu")])
+    assert res.status != "resolved", res
+
+
+def test_changed_vowels_do_not_tie_surnames():
+    rows = [R("customer", "n1", "ZZLIANG"), R("customer", "n2", "ZZLING"), R("customer", "n3", "ZZLUNG")]
+    res = _one("zzleong", "customer", rows)
+    assert not (res.status == "ambiguous" and len(res.candidates) == 3), res
+    res = _one("zzchuan", "customer", [R("customer", "c1", "ZZCHAN"), R("customer", "c2", "ZZCHEN"), R("customer", "c3", "ZZCHIN")])
+    assert [c.row.key for c in res.candidates][:1] in (["c1"], []) and not {"c2", "c3"} & {c.row.key for c in res.candidates}, res
+
+
+def test_a_skeleton_match_never_beats_a_closer_one_edit_row():
+    rows = [R("category", "k1", "ZZ Carton Box"), R("category", "k2", "ZZ Shower Curtain")]
+    res = _one("cartn", "category", rows)
+    assert res.candidates and res.candidates[0].row.key == "k1" and "k2" not in {c.row.key for c in res.candidates}, res
+
+
+def test_dropped_vowels_still_match_siphonic_and_chrome():
+    assert _one("sphnc", "category", [R("category", "p1", "ZZ Siphonic")]).candidates[0].row.key == "p1"
+    assert _one("chrm", "category", [R("category", "p2", "ZZ Chrome")]).candidates[0].row.key == "p2"
+
+
+def test_a_different_first_letter_does_not_match():
+    res = _one("rstn", "brand", [R("brand", "u1", "arosten")])
+    assert res.status != "resolved", res
+
+
+def test_an_exact_row_still_beats_a_skeleton_match():
+    rows = [R("brand", "e1", "ZZSORENTO"), R("brand", "e2", "ZZSRNTO")]
+    res = _one("zzsrnto", "brand", rows)
+    assert res.candidates[0].row.key == "e2" and res.candidates[0].signal == "exact", res

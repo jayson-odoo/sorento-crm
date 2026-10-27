@@ -70,7 +70,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import case, func, null, nullslast, or_
+from sqlalchemy import and_, case, func, null, nullslast, or_
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -3149,6 +3149,11 @@ class ProjectSupplyService:
         takes ITS received quantity as the landed figure, unless the PO line itself landed
         more (`_landed_for_refs`).
         """
+        # LINKAGE-UNIFY U5: the goods chain's own PO -> SPO key (PO number, trimmed line
+        # ref, product, company, or the allocation's own `po_line_id`), never the bare line
+        # ref. Local import: `goods_chain` reads this module at import time.
+        from app.services.scm import goods_chain
+
         refs = [ref for ref in {str(r).strip() for r in source_refs if r} if ref]
         if not refs or not product_id:
             return {}
@@ -3158,10 +3163,8 @@ class ProjectSupplyService:
                 SPOAllocation.quantity_received,
                 SPOAllocation.spo_number,
             )
-            .join(
-                SPOAllocation,
-                SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref,
-            )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+            .join(SPOAllocation, goods_chain.po_spo_key_clause())
             .filter(
                 PurchaseOrderLine.from_so_line_ref.in_(refs),
                 PurchaseOrderLine.product_id == product_id,
@@ -3202,6 +3205,9 @@ class ProjectSupplyService:
         wanted = {product_id: refs for product_id, refs in wanted.items() if refs}
         if not wanted:
             return {}
+        # LINKAGE-UNIFY U5: the goods chain's own PO -> SPO key, as the single-key read.
+        from app.services.scm import goods_chain
+
         all_refs = sorted(set().union(*wanted.values()))
         product_ids = sorted(wanted)
         received: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
@@ -3212,10 +3218,13 @@ class ProjectSupplyService:
                 SPOAllocation.spo_number,
                 PurchaseOrderLine.product_id,
             )
+            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .join(
                 SPOAllocation,
-                (SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref)
-                & (SPOAllocation.product_id == PurchaseOrderLine.product_id),
+                and_(
+                    goods_chain.po_spo_key_clause(),
+                    SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                ),
             )
             .filter(
                 PurchaseOrderLine.from_so_line_ref.in_(all_refs),
@@ -3419,6 +3428,9 @@ class ProjectSupplyService:
             # company that both happen to appear somewhere in that set would otherwise pair
             # across the join without ever being compared to each other (AC-6, fix-round
             # S2).
+            # LINKAGE-UNIFY U5: the goods chain's own PO -> SPO key (company inside it).
+            from app.services.scm import goods_chain
+
             rows = (
                 self.db.query(
                     PurchaseOrderLine.from_so_line_ref,
@@ -3427,11 +3439,13 @@ class ProjectSupplyService:
                     PurchaseOrderLine.company_id,
                     SPOAllocation.spo_number,
                 )
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
                 .join(
                     SPOAllocation,
-                    (SPOAllocation.from_po_line_ref == PurchaseOrderLine.source_ref)
-                    & (SPOAllocation.product_id == PurchaseOrderLine.product_id)
-                    & (SPOAllocation.company_id == PurchaseOrderLine.company_id),
+                    and_(
+                        goods_chain.po_spo_key_clause(),
+                        SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                    ),
                 )
                 .filter(
                     PurchaseOrderLine.from_so_line_ref.in_(refs),

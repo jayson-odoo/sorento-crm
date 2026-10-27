@@ -201,6 +201,33 @@ def follow_capacity(spo: Any) -> float:
     )
 
 
+def po_spo_key_clause() -> Any:
+    """LINKAGE-UNIFY U5: the one PO line -> SPO allocation key as a SQL join condition, for
+    a query that has joined `PurchaseOrder` onto `PurchaseOrderLine` - the key
+    `transferred_allocations` reads, stated once for every other reader (own arrival, the
+    ingest hook, the book-names exemption) so none spells a looser one.
+
+    In the line's company, either route: OI-SPO-EXACT (`from_po_number` = the PO number,
+    trimmed `from_po_line_ref` = the trimmed `source_ref`, same product; a line with no
+    `source_ref` reaches nothing this way), or the allocation's own `po_line_id` (an SPO
+    this system raised off the line). `purchase_order_lines.source_ref` is not unique (bare
+    ordinals on hundreds of lines), so the PO number is never optional.
+    """
+    return and_(
+        SPOAllocation.company_id == PurchaseOrderLine.company_id,
+        or_(
+            and_(
+                SPOAllocation.from_po_number == PurchaseOrder.po_number,
+                func.btrim(SPOAllocation.from_po_line_ref)
+                == func.btrim(PurchaseOrderLine.source_ref),
+                func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
+                SPOAllocation.product_id == PurchaseOrderLine.product_id,
+            ),
+            SPOAllocation.po_line_id == PurchaseOrderLine.id,
+        ),
+    )
+
+
 def _transfer_key(row: Any) -> Tuple[str, str, str, str]:
     """OI-SPO-EXACT plus company, off a PO line row carrying `po_number`, `po_line_ref`
     (trimmed), `po_product_id` and `po_company_id`."""

@@ -62,6 +62,7 @@ from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
 from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, lookup_lists, scheme_index
+from app.services.chatbot.head import list_resolver, span_extract
 from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
@@ -1211,6 +1212,37 @@ def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[st
     return False, None
 
 
+def _guarded(db: Session, fn: Any, default: Any) -> Any:
+    """`fn()` in its own savepoint; `default` (fail closed) when it raises, with the session still usable."""
+    try:
+        with db.begin_nested():
+            return fn()
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning("chatbot: lookup list check failed", exc_info=True)
+        return default
+
+
+def _lookup_visibility(
+    db: Session, contact_respond_id: str, space_id: Any
+) -> tuple[bool, bool, frozenset[str] | None]:
+    """(include_salespeople, include_customers, customer_ids) for the contact: the contact is resolved once and each
+    check runs in its own savepoint, so a database error in one drops only that block."""
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    resolved = _guarded(
+        db,
+        lambda: resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
+        ),
+        None,
+    )
+    include_salespeople = bool(resolved) and _guarded(db, lambda: _may_see_salespeople(db, str(resolved)), False)
+    include_customers, customer_ids = (
+        _guarded(db, lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
+    )
+    return include_salespeople, include_customers, customer_ids
+
+
 def _lookup_lines(
     db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None = None, held: dict[str, tuple[str, ...]] | None = None,
@@ -1221,29 +1253,11 @@ def _lookup_lines(
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
     resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
     database error in one drops only that block (fail closed)."""
-
-    def guarded(fn, default):
-        try:
-            with db.begin_nested():
-                return fn()
-        except Exception:  # noqa: BLE001 - fail closed
-            logger.warning("chatbot: lookup list check failed", exc_info=True)
-            return default
-
     try:
-        from app.services.field_access import resolve_contact_with_null_workspace_fallback
-
         # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
-        embed = guarded(lambda: lookup_lists.embedder(db), None)
+        embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
         pieces_ready = lookup_lists.prefetch(message, embed)
-        resolved = guarded(
-            lambda: resolve_contact_with_null_workspace_fallback(
-                db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
-            ),
-            None,
-        )
-        include_salespeople = bool(resolved) and guarded(lambda: _may_see_salespeople(db, str(resolved)), False)
-        include_customers, customer_ids = guarded(lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
+        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
         with db.begin_nested():
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
@@ -1271,6 +1285,187 @@ def _lookup_lines(
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
         return [], {"pieces": [], "hits": [], "failed": True}
+
+
+@dataclass
+class _SpanPrep:
+    """What the span pass needs from the turn's session, so the span call itself runs with none open."""
+
+    message: str
+    rows: list[lookup_lists.LookupRow]
+    spec_key_rows: list[lookup_lists.LookupRow]
+    brand_words: frozenset[str]
+    numbers: list[lookup_lists.Hit]
+    held: dict[str, tuple[str, ...]]
+    embed: Any
+    config: span_extract.SpanConfig | None
+
+
+def _span_prep(
+    db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
+) -> _SpanPrep | None:
+    """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
+    rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
+    try:
+        embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
+        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        with db.begin_nested():
+            from app.services.product_spec_registry import active_registry
+
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+            )
+            spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
+            brand_words = lookup_lists.brand_words(db, brands)
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
+        config = None
+        try:
+            with db.begin_nested():
+                config = span_extract.resolve_config(db, llm_choice=llm_choice)
+        except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
+            logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
+        lookup_lists.warm([*rows, *spec_keys], embed)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config)
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
+        return None
+
+
+def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
+    """Trace only: the rows the resolver offered for one span, best first, the first 8 (`close`
+    carries the full count) so the event stays inside the trace entry cap."""
+    return [
+        {"list": c.row.list_name, "label": c.row.label, "score": round(c.score, 3), "signal": c.signal}
+        for c in res.candidates[:8]
+    ]
+
+
+def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[lookup_lists.Hit]]:
+    """The resolver's matched rows as lookup hits: per list, best first, one hit per row. Spec-name rows have no
+    block (`lookup_lists.render` knows no such list); they are in the resolver so "colour" is not read as a value."""
+    best: dict[str, dict[str, lookup_lists.Hit]] = {}
+    for res in resolutions:
+        for c in res.candidates:
+            seen = best.setdefault(c.row.list_name, {})
+            if c.row.key not in seen or seen[c.row.key].spelling + seen[c.row.key].meaning < c.score:
+                spelled = c.signal != "meaning"
+                seen[c.row.key] = lookup_lists.Hit(c.row, res.span.text, c.score if spelled else 0.0, 0.0 if spelled else c.score)
+    return {name: sorted(h.values(), key=lambda x: (-(x.spelling + x.meaning), x.row.label)) for name, h in best.items()}
+
+
+def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_respond_id: str, dry_run: bool,
+                 turn_id: str | None) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    """The span call, then the lookup blocks. Runs with no DB session open. Returns (lines, `lookup_lists` event,
+    `span_extract` event). A call that fails or answers unreadably leaves today's n-gram lines (`fallback`)."""
+    config = prep.config
+    answer = span_extract.extract(config, prep.message) if config is not None else None
+    event: dict[str, Any] = {
+        "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
+        "provider": config.provider if config else None, "model": config.model if config else None,
+        "model_source": config.model_source if config else None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
+        "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
+    }
+    if answer is not None and answer.usage and not dry_run:
+        try:
+            with _session(session_factory) as db:
+                record_turn_llm_usage(
+                    db, feature=span_extract.FEATURE, usage=answer.usage, response_time_ms=answer.ms,
+                    contact_respond_id=contact_respond_id, answered=answer.spans is not None, chatbot_turn_id=turn_id,
+                )
+        except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
+            logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
+    reason = "no_config" if answer is None else answer.failure
+    try:
+        hits: dict[str, list[lookup_lists.Hit]] | None = None
+        if answer is not None and answer.spans is not None:
+            try:
+                all_rows = [*prep.rows, *prep.spec_key_rows]
+                embed = lookup_lists.usable_embedder(all_rows, prep.embed)
+                resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
+                # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
+                # resolved as their own untyped span, one level only.
+                rest = [
+                    list_resolver.Span(left)
+                    for r in resolutions
+                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code"
+                    for left in [list_resolver.unmatched_words(r.span.text, r.candidates[0].row, all_rows)]
+                    if left
+                ]
+                extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
+                hits = _hits_of([*resolutions, *extra])
+                span_keys = {h.row.key for hs in hits.values() for h in hs}
+                near_rows: list[dict[str, Any]] = []
+                # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
+                # only: no embedder is passed, so this makes no network call after the session closed.
+                near_exact = 0
+                for name, spelled in lookup_lists.shortlist(
+                    prep.message, prep.rows, None, brand_words=prep.brand_words
+                ).items():
+                    have = {h.row.key for h in hits.get(name, [])}
+                    added = [h for h in spelled if h.spelling >= lookup_lists.NEAR_EXACT_SPELLING and h.row.key not in have]
+                    near_exact += len(added)
+                    near_rows += [
+                        {"list": name, "label": h.row.label, "spelling": round(h.spelling, 3), "source": "near_exact"}
+                        for h in added
+                    ]
+                    hits[name] = [*hits.get(name, []), *added]
+                event["near_exact_rows"] = near_exact
+                event["near_exact"] = near_rows
+                held_keys: set[str] = set()
+                for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
+                    known = {h.row.key for h in held_hits}
+                    held_keys |= known
+                    hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
+                hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
+                event["spans"] = [
+                    {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
+                     "candidates": _candidates_of(r)}
+                    for r in resolutions
+                ] + [
+                    {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True,
+                     "candidates": _candidates_of(r)}
+                    for r in extra
+                ]
+                lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}
+            except Exception:  # noqa: BLE001 - the resolver or the adapter failed: today's n-gram lines take over
+                logger.warning("chatbot: span matching failed; using the n-gram lookup", exc_info=True)
+                hits, reason = None, "resolver_error"
+        if hits is None:
+            event["fallback"], event["fallback_reason"] = True, reason
+            hits = lookup_lists.shortlist(
+                prep.message, prep.rows, lookup_lists.usable_embedder(prep.rows, prep.embed),
+                brand_words=prep.brand_words, held=prep.held,
+            )
+            lookup_event = {"pieces": lookup_lists.pieces(prep.message), "fallback": True}
+        # Spec NUMBERS join the spec block on every path, as in `_lookup_lines`.
+        number_keys = {h.row.key for h in prep.numbers}
+        if prep.numbers:
+            hits["spec"] = [*prep.numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+        if not event["fallback"]:
+            # Trace only: where each row of the final block came from, in render order.
+            event["final_block"] = {
+                name: [
+                    {"label": h.row.label, "source": (
+                        "number" if h.row.key in number_keys else "held" if h.row.key in held_keys
+                        else "span" if h.row.key in span_keys else "near_exact")}
+                    for h in hs
+                ]
+                for name, hs in hits.items()
+            }
+        lines = lookup_lists.render(hits)
+        event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
+        lookup_event["hits"] = [
+            {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
+            for name in hits
+            for h in hits[name]
+        ]
+        return lines, lookup_event, event
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: span lookup failed; parsing without lookup lists", exc_info=True)
+        event["fallback"], event["fallback_reason"] = True, "resolver_error"
+        return [], {"pieces": [], "hits": [], "failed": True}, event
 
 
 def _scoped_factory(
@@ -4906,13 +5101,19 @@ def _run_stages_body(  # noqa: PLR0915
             if parser_config.closed_lists or parser_config.lookup_lists
             else frozenset()
         )
-        lookup_lines, lookup_event = (
-            _lookup_lines(
+        lookup_lines, lookup_event, span_prep, span_event = None, None, None, None
+        if parser_config.lookup_spans:
+            # ENTITY-EXTRACT-MATCH S2: the rows are read here; the span call runs once this session is closed.
+            span_prep = _span_prep(
+                db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+                lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
+            )
+            lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
+        elif parser_config.lookup_lists:
+            lookup_lines, lookup_event = _lookup_lines(
                 db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)),
             )
-            if parser_config.lookup_lists else (None, None)
-        )
         index_matches: list[dict] = []
         index_failed: list[bool] = []
         candidate_lines, listed_codes, pick_info = (
@@ -4928,6 +5129,12 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if parser_config.closed_lists
             else (None, frozenset(), {})
+        )
+
+    if span_prep is not None:
+        lookup_lines, lookup_event, span_event = _span_lookup(
+            span_prep, session_factory=session_factory, contact_respond_id=str(contact_respond_id), dry_run=dry_run,
+            turn_id=turn_id,
         )
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
@@ -5157,6 +5364,8 @@ def _run_stages_body(  # noqa: PLR0915
     turn_trace.add("prompt_text", {"text": user_block})
     if lookup_event is not None:
         turn_trace.add("lookup_lists", lookup_event)
+    if span_event is not None:
+        turn_trace.add("span_extract", span_event)
     if parser_config.closed_lists_index:
         turn_trace.add(
             "closed_lists_index",

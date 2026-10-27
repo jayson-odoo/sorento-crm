@@ -26,6 +26,7 @@ import logging
 import os
 import re
 import sys
+import threading
 import time
 from typing import Any
 
@@ -335,6 +336,10 @@ def _mode_used(config: Any) -> str:
     return "index" if getattr(config, "closed_lists_index", False) else "block"
 
 
+#: The `span_extract` event of this thread's latest `_parse_one` (None for a version without the span marker).
+_SPAN = threading.local()
+
+
 def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] | None = None) -> Any:
     """The parser's emission for one message, with the user turn the engine builds: for a turn with no
     history (no held product, so no held ids), or (F1-B) for a gold `context` rendered through the same
@@ -349,12 +354,15 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
     from app.services.reports.ask import SALES_CHANNELS
 
     user_turn, latest_user_message = _fresh_turn(message)
+    _SPAN.event = None
     held = context or {}
     # CHAT-V66-REGRESSIONS: a lookup version gets the engine's lookup blocks (the message's own text plus the values the
     # row's subject holds) and loses the per-turn lists, as `engine.run_turn` builds it. The gold contact resolves to
     # no one, so no Salesperson or Customer block (staff-only blocks the harness never sees).
-    lookup = bool(getattr(config, "lookup_lists", False))
+    spans = bool(getattr(config, "lookup_spans", False))
+    lookup = bool(getattr(config, "lookup_lists", False)) or spans
     lookup_lines = None
+    span_prep = None
     db = factory()
     try:
         set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
@@ -368,13 +376,23 @@ def _parse_one(message: str, config: Any, factory: Any, context: dict[str, Any] 
             if config.closed_lists
             else (None, frozenset(), {})
         )
-        if lookup:
+        if spans:
+            # ENTITY-EXTRACT-MATCH S2: the span seam, as the engine runs it (the call itself after the session closes).
+            span_prep = engine._span_prep(
+                db, user_turn.own_text, frozenset(), "parser-gold", None, brands,
+                lookup_lists.held_values(_subject_values(held.get("subject"))), None,
+            )
+        elif lookup:
             lookup_lines, _event = engine._lookup_lines(
                 db, user_turn.own_text, config, frozenset(), "parser-gold", None, brands,
                 lookup_lists.held_values(_subject_values(held.get("subject"))),
             )
     finally:
         db.close()
+    if span_prep is not None:
+        lookup_lines, _event, _SPAN.event = engine._span_lookup(
+            span_prep, session_factory=factory, contact_respond_id="parser-gold", dry_run=True, turn_id=None
+        )
     # As the engine: an empty state adds no block.
     held_any = bool(
         held.get("subject") or held.get("open_question") or held.get("last_list") or held.get("pending_task")
@@ -514,6 +532,9 @@ def run_live(rows: list[dict[str, Any]], *, session_factory: Any, version_id: st
                         }
                         try:
                             parsed = _parse_one(case["message"], config, factory, context=case.get("context"))
+                            if getattr(_SPAN, "event", None):  # S2: did the span call fall back to the n-gram lines
+                                row.update(span_fallback=bool(_SPAN.event.get("fallback")),
+                                           span_fallback_reason=_SPAN.event.get("fallback_reason"))
                             usage = getattr(parsed, "usage", None) or {}
                             row.update({k: usage.get(k) for k in (*USAGE_KEYS, "parser_ms")})
                             verdict = dict(parsed)

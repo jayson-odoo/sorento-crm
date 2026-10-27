@@ -89,7 +89,10 @@ def _landed_for(db, core_line, product, warehouse, *, qty, marker):
     """What R7's tier 1 reads as LANDED for `core_line`: its own purchase
     (`purchase_order_lines.from_so_line_ref` = the line's `source_ref`), received on an
     SPO row (`spo_allocations.from_po_line_ref` = the PO line's `source_ref`,
-    `quantity_received`). The SPO row is fully received, so it is no longer incoming."""
+    `quantity_received`). The SPO row is fully received, so it is no longer incoming.
+
+    AutoCount always sends from_po_number with from_po_line_ref (0 of 72,340 dev rows without
+    it); LINKAGE-UNIFY U5 matches on both."""
     from app.models.procurement import PurchaseOrder, PurchaseOrderLine, SPOAllocation
 
     so_ref = f"ZZTBOOK:{marker}:{core_line.id[:8]}"
@@ -116,7 +119,8 @@ def _landed_for(db, core_line, product, warehouse, *, qty, marker):
             product_id=product.id, warehouse_id=warehouse.id,
             allocated_quantity=qty, quantity_received=qty, receipt_status="received",
             line_status="closed", expected_date=TODAY - timedelta(days=20),
-            from_po_line_ref=po_ref, company_id=SORENTO_COMPANY_ID,
+            from_po_line_ref=po_ref, from_po_number=po.po_number,
+            company_id=SORENTO_COMPANY_ID,
         )
     )
     db.flush()

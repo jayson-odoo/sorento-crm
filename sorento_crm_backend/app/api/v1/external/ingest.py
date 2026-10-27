@@ -737,51 +737,39 @@ def _refs_from_written_spo_allocations(
 ) -> set[str]:
     """The SO line refs the book states for these allocations - each one's own
     `from_so_line_ref`, or, when it names only a purchase-order line, that
-    line's own `from_so_line_ref` (matched on `from_po_number` AND the line's
-    own `source_ref` - `_chain_allocations`'s exact-key reasoning:
-    `purchase_order_lines.source_ref` is not unique, the August extract wrote
-    bare ordinals onto hundreds of lines each).
+    line's own `from_so_line_ref`.
 
-    `from_po_line_ref` is stripped before it becomes part of the key (review
-    round item 6), the same way `_chain_allocations` itself strips it: a
-    trailing/leading space on either side of the match would otherwise miss
-    silently rather than resolve."""
+    LINKAGE-UNIFY U5: the allocation reaches its PO line through the goods
+    chain's own key (`goods_chain.po_spo_key_clause`: PO number, BOTH line refs
+    trimmed, same product, same company, or the allocation's own `po_line_id`),
+    never a looser spelling. `purchase_order_lines.source_ref` is not unique
+    (the August extract wrote bare ordinals onto hundreds of lines each), so the
+    PO number and the product stay part of the match."""
+    from app.services.scm import goods_chain
+
     wanted = sorted({str(i) for i in allocation_ids if i})
     if not wanted:
         return set()
     rows = (
-        db.query(
-            SPOAllocation.from_so_line_ref,
-            SPOAllocation.from_po_line_ref,
-            SPOAllocation.from_po_number,
-        )
+        db.query(SPOAllocation.id, SPOAllocation.from_so_line_ref)
         .filter(SPOAllocation.id.in_(wanted), SPOAllocation.company_id == company_id)
         .all()
     )
-    refs = {r[0] for r in rows if r[0]}
-    chain_keys = {
-        (r[2], (r[1] or "").strip()) for r in rows if not r[0] and (r[1] or "").strip() and r[2]
-    }
-    if not chain_keys:
+    refs = {from_so_ref for _id, from_so_ref in rows if from_so_ref}
+    chained = sorted({str(allocation_id) for allocation_id, from_so_ref in rows if not from_so_ref})
+    if not chained:
         return refs
-    po_numbers = sorted({key[0] for key in chain_keys})
-    line_refs = sorted({key[1] for key in chain_keys})
-    po_lines = (
-        db.query(
-            PurchaseOrderLine.source_ref,
-            PurchaseOrderLine.from_so_line_ref,
-            PurchaseOrder.po_number,
-        )
+    for (from_so_ref,) in (
+        db.query(PurchaseOrderLine.from_so_line_ref)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+        .join(SPOAllocation, goods_chain.po_spo_key_clause())
         .filter(
-            PurchaseOrder.po_number.in_(po_numbers),
-            PurchaseOrderLine.source_ref.in_(line_refs),
+            SPOAllocation.id.in_(chained),
             PurchaseOrderLine.company_id == company_id,
         )
         .all()
-    )
-    for source_ref, from_so_ref, po_number in po_lines:
-        if from_so_ref and (po_number, source_ref) in chain_keys:
+    ):
+        if from_so_ref:
             refs.add(from_so_ref)
     return refs
 
