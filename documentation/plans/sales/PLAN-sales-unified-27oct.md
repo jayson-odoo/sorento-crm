@@ -1,7 +1,9 @@
 # PLAN: Sales unified (one sales definition + AutoCount-matching reports)
 
-Status: Build, round 3 (27 Oct 2026): card approved (Lavish 16:12, Q2 to Q5 (a)); Q1 re-ruled (b)
-at 16:2x; round 3 (section 2.9) Q6 to Q10 ruled (a); chatbot basis question ruled (b). Track: full (size L: migration, new permission slug, finance
+Status: Built, in review (27 Oct 2026): S1 to S6 built on PR #1916; reviewer, security reviewer and
+browser pass done with fixes; owner hand test and the crew tally against the AutoCount reports
+pending. Rulings: card (Lavish 16:12, Q2 to Q5 (a)); Q1 (b) at 16:2x; round 3 Q6 to Q10 (a);
+chatbot basis question (b). Track: full (size L: migration, new permission slug, finance
 figures). crew-lane: SALES-UNIFIED.
 UAC: `sales-unified-27oct-acceptance-criteria.md` alongside. Mock: `mockups/sales-unified-27oct.html`.
 
