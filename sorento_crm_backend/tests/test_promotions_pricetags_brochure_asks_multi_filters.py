@@ -164,7 +164,7 @@ def brochure(db):
 
 
 def _bi(client, s, pairs):
-    resp = get(client, BROCHURE, [("limit", 200), ("query", s["stem"]), *pairs])
+    resp = get(client, BROCHURE, [("limit", 100), ("query", s["stem"]), *pairs])
     assert resp.status_code == 200, resp.text
     return {r["productId"] for r in resp.json()["items"]}
 

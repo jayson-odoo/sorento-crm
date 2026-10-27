@@ -97,7 +97,7 @@ function renderIt() {
 }
 async function openFilters(user: ReturnType<typeof userEvent.setup>) {
   renderIt();
-  await user.click(await screen.findByRole('button', { name: /^filters/i }));
+  await user.click(await screen.findByRole('button', { name: /^quick filters/i }));
 }
 
 describe('Promotions - multi Access level and Attachment state filters', () => {

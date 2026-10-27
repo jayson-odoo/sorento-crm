@@ -75,10 +75,11 @@ beforeEach(() => {
     items: [], total: 0, page: 1, limit: 25, pages: 1, summary: {},
   } as never);
   vi.mocked(listBrochureImagePromotionOptions).mockReset();
-  vi.mocked(listBrochureImagePromotionOptions).mockResolvedValue({
-    items: [{ value: 'promo-1', label: 'ZZT Flyer One' }, { value: 'promo-2', label: 'ZZT Flyer Two' }],
-    total: 2,
-  } as never);
+  // The service returns the options array itself (brochureImageService.ts listBrochureImagePromotionOptions).
+  vi.mocked(listBrochureImagePromotionOptions).mockResolvedValue([
+    { value: 'promo-1', label: 'ZZT Flyer One' },
+    { value: 'promo-2', label: 'ZZT Flyer Two' },
+  ]);
 });
 afterEach(() => cleanup());
 
