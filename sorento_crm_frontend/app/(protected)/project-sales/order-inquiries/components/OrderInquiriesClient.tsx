@@ -322,7 +322,7 @@ type OrderInquiryViewFilters = {
   view?: OrderInquiryView;
   granularity?: OrderInquiryMatrixGranularity;
   delivery_month?: string;
-  location?: string;
+  location?: string | string[];
   agent?: string;
   so_month?: string;
   po_number?: string;
@@ -456,8 +456,9 @@ export function OrderInquiriesClient({
   // `delivery_month` beside them are (AC-F1): a filter that reaches the request and the
   // Filters badge but not the address bar is one a reload silently drops, and one the
   // buyer cannot send to anybody.
-  const [locationFilter, setLocationFilter] = React.useState(
-    () => joinMulti(splitMulti(searchParams.get('location'))),
+  // Location is free text (a code can hold a comma): one entry per value, a repeated param, never joined.
+  const [locationFilter, setLocationFilter] = React.useState<string[]>(() =>
+    splitText(searchParams.getAll('location')),
   );
   const [agentFilter, setAgentFilter] = React.useState(
     () => joinMulti(splitMulti(searchParams.get('agent'))),
@@ -608,6 +609,8 @@ export function OrderInquiriesClient({
     else next.set('rows', matrixAxis);
     if (matrixGranularity === 'week') next.delete('granularity');
     else next.set('granularity', matrixGranularity);
+    next.delete('location');
+    for (const place of locationFilter) next.append('location', place);
     if (debounced) next.set('query', debounced);
     else next.delete('query');
     // S2, AC-M2: "All" (the default) carries no param; any other tab does, so a reload
@@ -618,7 +621,6 @@ export function OrderInquiriesClient({
     // a shared link opens on the same narrowed list. Cleared means the parameter goes,
     // which is what "Clear filters" then says in the address bar.
     for (const [key, value] of [
-      ['location', locationFilter],
       ['agent', agentFilter],
       ['so_month', soMonthFilter],
       ['po_number', poNumberFilter],
@@ -728,7 +730,8 @@ export function OrderInquiriesClient({
     if (!urlHad.view) setView(stored.view ?? 'list');
     if (!urlHad.granularity) setMatrixGranularity(stored.granularity ?? 'week');
     if (!urlHad.delivery_month) setMonth(stored.delivery_month ?? '');
-    if (!urlHad.location) setLocationFilter(stored.location ?? '');
+    if (!urlHad.location)
+      setLocationFilter(splitText(Array.isArray(stored.location) ? stored.location : stored.location ? [stored.location] : []));
     if (!urlHad.agent) setAgentFilter(stored.agent ?? '');
     if (!urlHad.so_month) setSoMonthFilter(stored.so_month ?? '');
     if (!urlHad.po_number) resetPoNumberInput(stored.po_number ?? '');
@@ -772,7 +775,7 @@ export function OrderInquiriesClient({
     if (view !== 'list') blob.view = view;
     if (matrixGranularity !== 'week') blob.granularity = matrixGranularity;
     if (month) blob.delivery_month = month;
-    if (locationFilter) blob.location = locationFilter;
+    if (locationFilter.length) blob.location = locationFilter;
     if (agentFilter) blob.agent = agentFilter;
     if (soMonthFilter) blob.so_month = soMonthFilter;
     if (poNumberFilter) blob.po_number = poNumberFilter;
@@ -824,7 +827,7 @@ export function OrderInquiriesClient({
       // S1, R-K. The backend does not read these yet (Phase 1 mock contract) - forwarded
       // all the same so the page keeps working once it does, and unknown params are
       // ignored server-side in the meantime.
-      location: locationFilter || undefined,
+      location: locationFilter.length ? locationFilter : undefined,
       agent: agentFilter || undefined,
       so_month: soMonthFilter || undefined,
       po_number: poNumberFilter || undefined,
@@ -965,7 +968,7 @@ export function OrderInquiriesClient({
     linkedFilter ||
     (ackFilter && ackFilter !== ACK_ANY) ||
     kindFilter ||
-    locationFilter ||
+    locationFilter.length > 0 ||
     agentFilter ||
     soMonthFilter ||
     poNumberFilter ||
@@ -1459,7 +1462,7 @@ export function OrderInquiriesClient({
     (linkedFilter ? 1 : 0) +
     (ackFilter && ackFilter !== ACK_ANY ? 1 : 0) +
     (kindFilter ? 1 : 0) +
-    (locationFilter ? 1 : 0) +
+    (locationFilter.length ? 1 : 0) +
     (agentFilter ? 1 : 0) +
     (soMonthFilter ? 1 : 0) +
     (poNumberFilter ? 1 : 0) +
@@ -1523,8 +1526,8 @@ export function OrderInquiriesClient({
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Location</Label>
         <SearchableMultiSelect
-          value={splitMulti(locationFilter)}
-          onChange={(value) => setLocationFilter(joinMulti(value))}
+          value={locationFilter}
+          onChange={setLocationFilter}
           clearable
           options={(summary.data?.locations ?? []).map((entry) => ({
             value: entry.id,
@@ -1724,7 +1727,7 @@ export function OrderInquiriesClient({
             // `to_confirm` - the default is what an UNTOUCHED filter reads as,
             // and this press is the buyer actively asking to see it all.
             setAckFilter(ACK_ANY);
-            setLocationFilter('');
+            setLocationFilter([]);
             setAgentFilter('');
             setSoMonthFilter('');
             setPoNumberInput('');

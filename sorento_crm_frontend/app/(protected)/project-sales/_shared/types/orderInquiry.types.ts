@@ -746,7 +746,8 @@ export interface OrderInquiryWorklistParams {
    */
   ack?: OrderInquiryAckState | 'to_confirm';
   /** The row's Location column, equality (S1, R-K). Warehouse code, never a UUID. */
-  location?: string;
+  /** One location, or several (free text, each sent whole). */
+  location?: string | string[];
   /** The row's Agent column, equality (S1, R-K). The sales agent's id. */
   agent?: string;
   /** `YYYY-MM` on the SO date (S1, R-K) - the "SO month" filter. */
@@ -1466,7 +1467,8 @@ export interface OrderInquiryHeaderListParams {
   state?: OrderInquiryHeaderStatus | 'all';
   query?: string;
   raised_by?: string;
-  agent?: string;
+  /** One agent name, or several (free text, each sent whole). */
+  agent?: string | string[];
   /** Exact match on the Project column's own text (reviewer B2, fix round 22 Sep
    * 2026) - never a `projects.id`: 0 of 738 headers on the prod copy carry a
    * registered project. One title or several (OR-ed), each sent whole. */

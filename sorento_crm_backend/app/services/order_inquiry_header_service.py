@@ -150,19 +150,6 @@ class HeaderListResult:
     limit: int = 25
 
 
-def _title_candidates(raw) -> Optional[List[str]]:
-    """The Project filter's titles: each value whole (a title may hold a comma), plus the pieces of a
-    comma-joined value, so a link written before the filter took several still reads."""
-    whole = multi_text(raw)
-    if not whole:
-        return None
-    out = list(whole)
-    for value in multi_values(whole) or []:
-        if value not in out:
-            out.append(value)
-    return out
-
-
 class OrderInquiryHeaderService:
     """Reads header rows - one per order inquiry, never one per instruction."""
 
@@ -376,10 +363,11 @@ class OrderInquiryHeaderService:
         raisers = multi_values(raised_by)
         if raisers:
             base = base.filter(OrderInquiry.raised_by.in_(raisers))
-        agents = multi_values(agent)
+        # Agent NAMES and project titles are free text: read whole, one entry per value, never split.
+        agents = multi_text(agent)
         if agents:
             base = base.filter(_AGENT_NAME.in_(agents))
-        titles = _title_candidates(project)
+        titles = multi_text(project)
         if titles:
             # B2 (reviewer): filter on the SAME text the Project column prints
             # (`_PROJECT_TITLE`), not `ProjectSalesOrder.project_id` - 0 of 738 headers

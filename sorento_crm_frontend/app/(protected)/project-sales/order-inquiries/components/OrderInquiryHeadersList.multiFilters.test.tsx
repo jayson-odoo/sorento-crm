@@ -152,8 +152,8 @@ describe('Order inquiry documents - multi filters', () => {
     await waitFor(() => expect(setOf(lastParams()[param])).toEqual([]));
   });
 
-  it('an old link with one value reads as a one-value filter, a joined one as a set', async () => {
-    searchParamsValue = 'raised_by=zzt-u1&agent=ZZT Agent One,ZZT Agent Two';
+  it('an old link with one value reads as a one-value filter, a repeated agent as a set', async () => {
+    searchParamsValue = 'raised_by=zzt-u1&agent=ZZT Agent One&agent=ZZT Agent Two';
     renderList();
     await waitFor(() => expect(setOf(lastParams()?.raised_by)).toEqual(['zzt-u1']));
     expect(setOf(lastParams().agent)).toEqual(['ZZT Agent One', 'ZZT Agent Two']);
