@@ -81,7 +81,7 @@ class TestToolPickAndArgs:
         assert args["rows"] == "month" and args["cols"] == "year"
         assert args["channel"] == "dealer"
         assert args["date_from"] == "2025-01-01" and args["date_to"] == "2026-12-31"
-        assert args["basis"] == "delivered"  # G1: the default
+        assert args["basis"] == "invoiced"  # SALES-UNIFIED: the default is invoiced (was G1 delivered)
         assert "contact_id" in args and "space_id" in args
         assert "reply_format" not in args and "deliver" not in args
 

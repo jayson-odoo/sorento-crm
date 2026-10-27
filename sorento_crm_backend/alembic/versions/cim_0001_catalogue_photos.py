@@ -1,7 +1,7 @@
 """CATALOG-IMAGES: catalogue photo readings and the photos cut out of them.
 
 Revision ID: cim_0001_catalogue_photos
-Revises: pp2_0001_view_own_perms
+Revises: sales_unified_0002
 Create Date: 2026-10-27
 """
 from __future__ import annotations
@@ -12,7 +12,7 @@ from sqlalchemy.dialects import postgresql
 
 # Kept <= 32 chars: alembic_version.version_num is varchar(32).
 revision = "cim_0001_catalogue_photos"
-down_revision = "pp2_0001_view_own_perms"
+down_revision = "sales_unified_0002"
 branch_labels = None
 depends_on = None
 

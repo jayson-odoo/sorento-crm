@@ -169,7 +169,9 @@ WITH prods AS (
     WHERE r.run_id = CAST(:run_id AS uuid)
 )
 SELECT sol.product_id::text AS product_id,
-       COALESCE(so.demand_class, 'unclassified') AS channel,
+       -- `other` trends with retail, as fulfilment weighs it (`demand_class.planning_class`).
+       COALESCE(CASE WHEN so.demand_class = 'other' THEN 'retail' ELSE so.demand_class END,
+                'unclassified') AS channel,
        to_char(date_trunc('month', so.order_date), 'YYYY-MM') AS month,
        SUM(sol.qty_ordered) AS qty
 FROM sales_order_lines sol
@@ -179,7 +181,7 @@ WHERE so.order_date >= :since AND so.order_date < :until
   -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
   AND NOT sol.removed_unreferenced
   {co}
-GROUP BY sol.product_id, COALESCE(so.demand_class, 'unclassified'),
+GROUP BY sol.product_id, 2,
          date_trunc('month', so.order_date)
 """
 

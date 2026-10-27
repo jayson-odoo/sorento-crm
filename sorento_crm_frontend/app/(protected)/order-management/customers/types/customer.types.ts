@@ -29,6 +29,8 @@ export interface Customer {
   customer_group_name?: string | null;
   // Routing and Sales type default; null = not set.
   debtor_type?: DebtorType | null;
+  // AutoCount's own debtor type, read-only (written by the master ingest).
+  autocount_debtor_type?: string | null;
   // Extended profile (added by commercial_core)
   registered_name?: string | null;
   trading_name?: string | null;

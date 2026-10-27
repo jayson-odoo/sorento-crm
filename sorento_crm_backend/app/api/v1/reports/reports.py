@@ -139,7 +139,7 @@ def _params_meta(
                     years=_years(db, definition),
                 )
             )
-        elif isinstance(param, reg.SelectParam):
+        elif isinstance(param, reg.SelectParam) and not param.hidden:
             metas.append(
                 ReportSelectParamMeta(
                     key=param.key,

@@ -1003,6 +1003,18 @@ PERMISSION_REGISTRY.extend([
 ])
 
 
+# SALES-UNIFIED (#1916): the set-apart customers the sales reports pull out of Dealer and
+# Project team. Reading the list is `sales.reports.view`; granted to admin and superadmin by
+# `sales_unified_0001`.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "sales.set_apart.edit",
+        "name": "Edit set-apart customers",
+        "description": "Add, change and remove the customers the sales reports set apart, by month.",
+    },
+])
+
+
 # claude.ai connector (CLAUDE-CONNECTOR, contract section 3). Granted to NO role by the migration:
 # admins and superadmins do not get it by bypass either (owner ruling Q1 (a)); the connector checks
 # the role grants directly. Grant listing and revoke live in the shared service.

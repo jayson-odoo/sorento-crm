@@ -48,6 +48,7 @@ from sqlalchemy.orm import Session
 from app.models.scm import PriorityPolicy, ReorderRun
 from app.services.error_handler import AppException
 from app.services.scm.cash_ranking import Factor, rank_score
+from app.services.scm.demand_class import planning_class
 
 #: The factor keys a policy may weight. Adding a fifth is a row in `scm.priority_policy.factors`
 #: plus a value here; it is never a schema change (AC-H6 applies the same rule to demand classes).
@@ -523,13 +524,17 @@ def demand_class_by_po(db: Session, po_numbers: set[str]) -> dict[str, str]:
     rows = db.execute(
         text(
             f"""
-            SELECT c.po_number, so.demand_class, count(*) AS n
+            SELECT c.po_number,
+                   -- `other` votes as retail: fulfilment weighs it so (`planning_class`).
+                   CASE WHEN so.demand_class = 'other' THEN 'retail' ELSE so.demand_class END
+                       AS demand_class,
+                   count(*) AS n
               FROM scm.order_link_claim c
               JOIN sales_orders so ON so.so_number = c.so_number
              WHERE c.po_number = ANY(:nums)
                AND so.demand_class IS NOT NULL
                AND {predicate or 'true'}
-             GROUP BY c.po_number, so.demand_class
+             GROUP BY c.po_number, 2
              ORDER BY c.po_number, n DESC
             """
         ),
@@ -554,7 +559,7 @@ def demand_value(
     klass = classes.get(po_number)
     if klass is None:
         return 0.0
-    w = class_weights.get(klass)
+    w = class_weights.get(planning_class(klass))
     return float(w) if w is not None else None
 
 
@@ -783,7 +788,7 @@ def factors_for_demand_rows(
 
     out: dict[str, list[Factor]] = {}
     for index, row in enumerate(rows):
-        klass = row.get("demand_class")
+        klass = planning_class(row.get("demand_class"))
         class_weight = class_weights.get(klass) if klass else None
         values = {
             "po_document_sequence": None,

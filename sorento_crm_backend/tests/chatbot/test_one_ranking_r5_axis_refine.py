@@ -137,9 +137,9 @@ def test_a3r2_1_a_new_axis_over_a_total_or_a_month_trend_asks_the_count_it_never
 ) -> None:
     _state_on(console)
     text, log = _say_all(console, monkeypatch, _first_total(old_axis), "total qty of x in 2026")
-    assert _ran(log) == [] and "Delivered" in text, ("setup", text, log)
+    assert _ran(log) == [] and "Invoiced, delivered" in text, ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _verdict(group_by="customer", open_question_answer=answer), "by customer")
-    assert _ran(log) == [] and "How many?" in text and "Delivered" in text and text.count("?") >= 2, (text, log)
+    assert _ran(log) == [] and "How many?" in text and "Invoiced, delivered" in text and text.count("?") >= 2, (text, log)
     assert "as a number" not in text, text
     # basis alone must not run the ranking without a count
     text, log = _say_all(console, monkeypatch, _verdict(basis="delivered", ranking_refine=False, state_changes=ANSWER_OP), "delivered")
@@ -198,6 +198,6 @@ def test_a3r2_5_a_dealers_swap_to_an_agent_gets_the_refusal_at_once(console, mon
     _link_dealer(console)
     _state_on(console)
     text, log = _say_all(console, monkeypatch, _first_total(None), "total qty of x in 2026")
-    assert _ran(log) == [] and "Delivered" in text, ("setup", text, log)
+    assert _ran(log) == [] and "Invoiced, delivered" in text, ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _verdict(group_by="sales_agent"), "by agent")
     assert _ran(log) == [] and "not available for your account" in text, (text, log)
