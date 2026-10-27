@@ -73,7 +73,8 @@ function sortHeader(title: string): ColumnDef<CatalogPhoto>['header'] {
   return render;
 }
 
-function Thumb({ src, alt }: { src: string; alt: string }) {
+function Thumb({ src, alt }: { src: string | null; alt: string }) {
+  if (!src) return <div className="h-10 w-14 rounded border border-border bg-muted" aria-hidden />;
   return (
     <img src={src} alt={alt} className="h-10 w-14 rounded border border-border object-cover" />
   );

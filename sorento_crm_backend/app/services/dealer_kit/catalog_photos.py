@@ -188,12 +188,12 @@ def _caption_for(rect: tuple[float, float, float, float], captions: list[_Captio
     return best[1] if best else None
 
 
-def _smask_pixels(document: "fitz.Document", smask: int) -> int:
+def _smask_pixels(document: "fitz.Document", smask: int) -> Optional[int]:
     try:
         width = int(document.xref_get_key(smask, "Width")[1])
         height = int(document.xref_get_key(smask, "Height")[1])
-    except Exception:  # noqa: BLE001 - no readable size: let the decode decide
-        return 0
+    except Exception:  # noqa: BLE001
+        return None
     return width * height
 
 
@@ -212,8 +212,11 @@ def _encode(
     if not content:
         return None
     smask = int(raw.get("smask") or 0)
-    if smask and _smask_pixels(document, smask) > CATALOGUE_MAX_PIXELS:
-        return None
+    if smask:
+        pixels = _smask_pixels(document, smask)
+        # An unreadable mask size is not trusted: skip rather than decode it.
+        if pixels is None or pixels > CATALOGUE_MAX_PIXELS:
+            return None
     extension = (raw.get("ext") or "").lower()
     content, _name, _mime = ensure_rgb_image(content, f"photo.{extension}", None)
 
@@ -242,7 +245,9 @@ def _encode(
         return None
 
 
-def extract_catalog_photos(data: bytes) -> list[CatalogPhoto]:
+def extract_catalog_photos(data: bytes, limit: Optional[int] = None) -> list[CatalogPhoto]:
+    """Every kept photo. With ``limit``, decoding stops at ``limit + 1`` so a caller can tell the
+    PDF holds too many without paying to decode them all."""
     try:
         document = fitz.open(stream=data, filetype="pdf")
     except Exception as exc:  # pragma: no cover
@@ -258,15 +263,25 @@ def extract_catalog_photos(data: bytes) -> list[CatalogPhoto]:
         raise ValueError(f"The PDF has more than {CATALOGUE_MAX_PAGES} pages.")
 
     photos: list[CatalogPhoto] = []
+    encoded_cache: dict = {}
     try:
         for index in range(document.page_count):
-            photos.extend(_read_page(document, document[index], index + 1))
+            room = None if limit is None else limit + 1 - len(photos)
+            if room is not None and room <= 0:
+                break
+            photos.extend(_read_page(document, document[index], index + 1, encoded_cache, room))
     finally:
         document.close()
     return photos
 
 
-def _read_page(document: "fitz.Document", page: "fitz.Page", number: int) -> list[CatalogPhoto]:
+def _read_page(
+    document: "fitz.Document",
+    page: "fitz.Page",
+    number: int,
+    encoded_cache: dict,
+    room: Optional[int],
+) -> list[CatalogPhoto]:
     width = page.rect.width or 1
     height = page.rect.height or 1
     captions = _captions(page)
@@ -289,7 +304,14 @@ def _read_page(document: "fitz.Document", page: "fitz.Page", number: int) -> lis
         if int(placed.get("width", 0)) * int(placed.get("height", 0)) > CATALOGUE_MAX_PIXELS:
             continue
 
-        encoded = _encode(document, xref, _crop_of(bbox, visible))
+        if room is not None and len(found) >= room:
+            break
+        crop = _crop_of(bbox, visible)
+        # One (image, crop) is re-encoded once per run, however many times it is placed.
+        cache_key = (xref, tuple(round(v, 4) for v in crop))
+        if cache_key not in encoded_cache:
+            encoded_cache[cache_key] = _encode(document, xref, crop)
+        encoded = encoded_cache[cache_key]
         if encoded is None:
             continue
         image_bytes, mime, px_w, px_h = encoded

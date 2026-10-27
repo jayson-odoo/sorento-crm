@@ -22,13 +22,17 @@ from app.models.product import Product, ProductAttachment
 from app.models.resources import Attachment, AttachmentDirectory, AttachmentType
 from app.services.dealer_kit import flyer_reading_service as flyer_svc
 from app.services.dealer_kit.catalog_photo_matching import already_on_file, match_codes
-from app.services.dealer_kit.catalog_photos import dhash, extract_catalog_photos, hamming
+from app.services.dealer_kit.catalog_photos import (
+    CATALOGUE_MAX_PAGES,
+    dhash,
+    extract_catalog_photos,
+    hamming,
+)
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
 
 LOOKALIKE_MAX_DISTANCE = 10
-CATALOGUE_MAX_PAGES = 300
 CATALOGUE_MAX_PHOTOS = 2000
 MAX_ALSO_ATTACH = 50
 MAX_CODE_LENGTH = 120
@@ -36,9 +40,6 @@ JOB_TYPE = "catalogue_photo_read"
 FAILED_MESSAGE = "The catalogue could not be read. Check the PDF and upload it again."
 QUEUE_FAILED_MESSAGE = "The catalogue could not be queued. Try uploading it again."
 
-
-class CatalogueReadError(Exception):
-    """A failure whose message is safe to show the user (it never carries system detail)."""
 ROOT_FOLDER = "Catalogue photos"
 PHOTO_TYPE_NAME = "Product Photos"
 QUEUE = "flyer_read"
@@ -46,6 +47,10 @@ JOB_TIMEOUT = flyer_svc.FLYER_READ_JOB_TIMEOUT
 
 TABS = ("ready", "duplicate", "needs_product", "skipped")
 DECISIONS = ("attach", "skip", "keep_both", "replace")
+
+
+class CatalogueReadError(Exception):
+    """A failure whose message is safe to show the user (it never carries system detail)."""
 _RANK = {"high": 3, "medium": 2, "low": 1, "none": 0}
 
 
@@ -387,7 +392,7 @@ def process_reading(db: Session, reading: CataloguePhotoReading) -> None:
     if pages > CATALOGUE_MAX_PAGES:
         raise CatalogueReadError(f"That catalogue has more than {CATALOGUE_MAX_PAGES} pages.")
     try:
-        photos = extract_catalog_photos(data)
+        photos = extract_catalog_photos(data, limit=CATALOGUE_MAX_PHOTOS)
     except ValueError as exc:  # the extractor's refusals carry fixed, plain messages
         raise CatalogueReadError(str(exc)) from exc
     if len(photos) > CATALOGUE_MAX_PHOTOS:
@@ -463,15 +468,15 @@ def process_reading(db: Session, reading: CataloguePhotoReading) -> None:
                     decision="skip" if duplicate else "attach",
                 )
             )
+        reading.page_count = pages
+        reading.photo_count = len(photos)
+        reading.status = "ready"
+        reading.error = None
+        db.commit()
     except BaseException:
         for provider, key in uploaded:
             storage_router.delete_object_best_effort(provider, key)
         raise
-    reading.page_count = pages
-    reading.photo_count = len(photos)
-    reading.status = "ready"
-    reading.error = None
-    db.commit()
 
 
 # --------------------------------------------------------------------------- #

@@ -47,8 +47,8 @@ export interface CatalogPhoto {
   id: string;
   page: number;
   position: number;
-  thumbnail_url: string;
-  image_url: string;
+  thumbnail_url: string | null;
+  image_url: string | null;
   printed_code: string | null;
   block_codes: string[];
   placeholders: string[];
@@ -58,7 +58,7 @@ export interface CatalogPhoto {
   suggestion: string | null;
   other_block_products: ProductRef[];
   also_attach_product_ids: string[];
-  duplicate: { attachment_id: string; thumbnail_url: string; distance: number } | null;
+  duplicate: { attachment_id: string; thumbnail_url: string | null; distance: number } | null;
   decision: CatalogPhotoDecision;
   attached_at: string | null;
 }

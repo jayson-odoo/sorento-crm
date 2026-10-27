@@ -147,7 +147,7 @@ export function CataloguePhotosReview({ id }: { id: string }) {
       <AttachmentBulkDownloadDialog
         open={zipOpen}
         onOpenChange={setZipOpen}
-        directoryId={null}
+        directoryId={data.directory_id}
         folderIds={data.directory_id ? [data.directory_id] : []}
         attachmentIds={[]}
       />
