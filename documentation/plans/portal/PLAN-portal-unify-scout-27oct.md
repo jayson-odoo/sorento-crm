@@ -1,7 +1,8 @@
 # PLAN: portal / system unification scout (27 Oct 2026)
 
-Status: scout v2 delivered (27 Oct), awaiting owner alignment on sections 10 to 12 and decisions D1 to D8
-before any lane starts (Q5). Design lane, no product code.
+Status: scout v3 delivered (27 Oct): recommendation is now option (i), one CRM shell for everyone.
+Awaiting owner alignment on v3 (QA to QE, D1 to D8) before any lane starts (Q5). Design lane, no
+product code.
 Track: scout. Lane PORTAL-UNIFY-SCOUT.
 
 Design doc (the deliverable, self-contained HTML):
@@ -63,3 +64,20 @@ only). Q5 P1 and P2 as two parallel lanes now (rec: yes).
   compares (i) one shell with a role menu against (ii) two frames around the same pages, and
   recommends (ii).
 - Q5: no lane starts until alignment.
+
+## v3 (owner feedback on v2, 27 Oct 2026)
+
+Owner: "I am fine with them seeing the sidebar just like CRM" (Q4), "how can we ensure same
+behaviour for simple forms and project sales" (Q2), Q3 "all". v3 recommends option (i): set-up
+salespeople sign in (`/signin` or their WhatsApp link, same code) to the CRM layout, the sidebar
+trimmed by the `salesperson` role's permissions, every page the staff page. No blocker found.
+
+- "Only theirs" is one backend rule (`*.view_own`) per module, landing before any grant (P2).
+- Each simple form converges onto its existing staff screen (project registration, sample
+  request, NPA, sales opportunity, stock inquiry, purchase request + sponsorship, complaint, price
+  tag), then the portal form is retired once no contact without a user uses it.
+- Phases: P1 WhatsApp link to CRM session (S), P2 view_own rule (M), P3 role + menu + "My work"
+  home (S to M), P4 converge forms one lane each (M each), P5 quotation D1 to D8 (M), P6 retire
+  portal forms per kind.
+- Questions QA (retire portal gradually), QB (salesperson menu headings), QC (hide floor values and
+  internal numbers), QD (salesperson registrations go to approval), QE (portal Conversation kind).
