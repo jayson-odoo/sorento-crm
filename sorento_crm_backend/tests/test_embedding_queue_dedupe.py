@@ -23,7 +23,7 @@ from app.services.embedding_change_listener import (
     EMBEDDED_FIELDS,
     SUPERSEDED_ERROR,
     bulk_enqueue_embedding_events,
-    lock_embedding_sources,
+    enqueue_pending,
     register_embedding_change_listeners,
 )
 from tests._pg_fixture import blank_session
@@ -194,19 +194,132 @@ def test_queue_event_reuses_the_pending_row_and_takes_the_new_payload(db, monkey
     assert len(jobs) == 1  # the pending row already has its RQ job
 
 
-def test_enqueue_and_worker_claim_share_one_lock():
-    """The worker cannot claim a row while a transaction that skipped its insert because of
-    that row is still open (it would read the source without that transaction's change)."""
-    key = ("order", str(uuid.uuid4()))
-    with engine.connect() as holder, engine.connect() as other:
-        with holder.begin():
-            lock_embedding_sources(holder, [key])
-            taken = other.execute(
-                text("SELECT pg_try_advisory_xact_lock(hashtext('embedding_queue'), hashtext(:k))"),
-                {"k": f"{key[0]}:{key[1]}"},
-            ).scalar()
-            other.rollback()
-            assert taken is False
+def test_a_failed_row_does_not_absorb_a_new_change(db):
+    """A row in retry backoff is one failure nearer dead_letter; the new change gets its own."""
+    order = _order(db)
+    db.query(EmbeddingQueue).update({"retry_count": 2}, synchronize_session=False)
+    order.remarks = "fresh change"
+    db.flush()
+    rows = _rows(db, "order", order.id, "pending")
+    assert sorted(r.retry_count for r in rows) == [0, 2]
+
+
+def test_queue_event_enqueues_a_job_for_a_pending_row_that_has_none(db, monkeypatch):
+    """A listener row carries no RQ job; queue_event on the same source must give it one."""
+    from app.services import embedding_service
+
+    jobs = []
+
+    class _Job:
+        id = "job-2"
+
+    monkeypatch.setattr(embedding_service, "enqueue_job", lambda *a, **k: jobs.append(a) or _Job())
+    listener_row = _queue_row(db, "mcp_tool", "zzt_tool_2")
+    item = embedding_service.EmbeddingEventService(db).queue_event(
+        source_type="mcp_tool", source_id="zzt_tool_2", event_type="mcp_tool.updated",
+        payload={"capability": {"body_text": "x"}},
+    )
+    assert item.id == listener_row.id
+    assert item.rq_job_id == "job-2" and len(jobs) == 1
+
+
+# --------------------------------------------------------------------------- #
+# Race safety: two real transactions on a scratch copy of embedding_queue
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def two_sessions():
+    """Two sessions on separate connections, both seeing a scratch embedding_queue, so one can
+    hold row locks while the other tries to claim. Rows here commit (into the scratch schema)."""
+    import os
+
+    from sqlalchemy.orm import Session
+
+    name = f"zzs_eqdrace_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    admin = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
+    admin.exec_driver_sql(f'CREATE TABLE "{name}".embedding_queue (LIKE public.embedding_queue INCLUDING ALL)')
+    conns, sessions = [], []
+    for _ in range(2):
+        conn = engine.connect()
+        conn.exec_driver_sql(f'SET search_path TO "{name}"')
+        # A broken lock fails the test instead of hanging it.
+        conn.exec_driver_sql("SET statement_timeout = '5s'")
+        conn.commit()
+        conns.append(conn)
+        sessions.append(Session(bind=conn))
+    try:
+        yield sessions
+    finally:
+        for sess in sessions:
+            sess.rollback()
+            sess.close()
+        for conn in conns:
+            conn.exec_driver_sql("RESET search_path")
+            conn.exec_driver_sql("RESET statement_timeout")
+            conn.close()
+        admin.exec_driver_sql(f'DROP SCHEMA "{name}" CASCADE')
+        admin.close()
+
+
+def _row_dict(source_id, source_type="order"):
+    now = datetime.utcnow()
+    return {
+        "id": str(uuid.uuid4()), "source_type": source_type, "source_id": source_id,
+        "event_type": f"{source_type}.updated", "event_version": 1, "payload": {},
+        "status": "pending", "retry_count": 0, "available_at": now, "created_at": now,
+    }
+
+
+def test_worker_cannot_claim_a_row_an_open_enqueue_relied_on(two_sessions, monkeypatch):
+    """The lost update this guards: an enqueue skips its insert because a row is pending, the
+    worker claims that row and reads the source before the enqueue's change commits."""
+    from app.services import embedding_worker
+
+    enqueuer, worker_db = two_sessions
+    sid = str(uuid.uuid4())
+    pending = _row_dict(sid)
+    enqueue_pending(enqueuer, [pending])
+    enqueuer.commit()
+
+    assert enqueue_pending(enqueuer, [_row_dict(sid)]) == []  # skipped, transaction still open
+    monkeypatch.setattr(embedding_worker, "SessionLocal", lambda: worker_db)
+    monkeypatch.setattr(worker_db, "close", lambda: None)
+    assert embedding_worker.process_embedding_queue_item(pending["id"]) == {
+        "status": "busy", "queue_id": pending["id"],
+    }
+    assert worker_db.get(EmbeddingQueue, pending["id"]).status == "pending"
+
+    enqueuer.commit()
+    claimed = embedding_worker._claim(worker_db, pending["id"])
+    assert claimed is not None and claimed.status == "pending"
+
+
+def test_an_enqueue_after_an_uncommitted_claim_queues_its_own_row(two_sessions):
+    """The claim may already have read the source, so the enqueue must not count on it."""
+    import threading
+
+    from app.services import embedding_worker
+
+    enqueuer, worker_db = two_sessions
+    sid = str(uuid.uuid4())
+    pending = _row_dict(sid)
+    enqueue_pending(worker_db, [pending])
+    worker_db.commit()
+
+    claimed = embedding_worker._claim(worker_db, pending["id"])
+    claimed.status = "processing"
+    worker_db.flush()  # claimed, not committed
+
+    result = {}
+    thread = threading.Thread(target=lambda: result.setdefault("rows", enqueue_pending(enqueuer, [_row_dict(sid)])))
+    thread.start()
+    thread.join(0.5)
+    assert thread.is_alive(), "the enqueue should wait for the claim to commit"
+    worker_db.commit()
+    thread.join(5)
+    assert len(result["rows"]) == 1
 
 
 # --------------------------------------------------------------------------- #
@@ -239,6 +352,17 @@ def test_claim_supersedes_the_other_pending_rows_of_its_source(db, worker):
     assert statuses[old[1].id] == ("skipped", SUPERSEDED_ERROR)
     assert statuses[old[2].id] == ("skipped", SUPERSEDED_ERROR)
     assert db.get(EmbeddingQueue, other_source.id).status == "pending"
+
+
+def test_claiming_an_older_mcp_tool_row_leaves_the_newer_payload_pending(db, worker):
+    """mcp_tool rows carry their text in the payload, so an older one never covers a newer."""
+    older = _queue_row(db, "mcp_tool", "zzt_tool_3", age=timedelta(minutes=5),
+                       payload={"payload": {"capability": {"body_text": "old"}}})
+    newer = _queue_row(db, "mcp_tool", "zzt_tool_3", age=timedelta(minutes=1),
+                       payload={"payload": {"capability": {"body_text": "new"}}})
+    worker.process_embedding_queue_item(older.id)
+    db.expire_all()
+    assert db.get(EmbeddingQueue, newer.id).status == "pending"
 
 
 def test_failed_run_does_not_go_back_to_pending_beside_a_newer_row(db, worker, monkeypatch):
@@ -587,3 +711,29 @@ def test_an_invalid_index_of_the_same_name_is_rebuilt(queue_schema):
     outcome = ensure_embedding_queue_indexes(queue_schema)
     assert outcome["ix_embedding_queue_pending_source"] == "built"
     assert index_valid(queue_schema, "ix_embedding_queue_pending_source") is True
+
+
+def test_prune_task_retries_a_missing_index_only_in_the_retry_hour(db, monkeypatch):
+    from app.scheduler import task_scheduler
+    from app.services import embedding_queue_indexes as eqi
+
+    built = []
+    monkeypatch.setattr(eqi, "missing_indexes", lambda conn: ["ix_embedding_queue_pending_source"])
+    monkeypatch.setattr(eqi, "ensure_embedding_queue_indexes", lambda conn: built.append(1) or {"x": "built"})
+
+    class _Clock:
+        hour = 0
+
+        @classmethod
+        def utcnow(cls):
+            return datetime(2026, 10, 27, cls.hour, 0)
+
+    monkeypatch.setattr(task_scheduler, "datetime", _Clock)
+    monkeypatch.setattr(task_scheduler.settings, "embedding_queue_index_retry_hour_utc", 19)
+
+    _Clock.hour = 10
+    result = task_scheduler._handler_embedding_queue_prune(db, None)
+    assert built == [] and result["indexes"] == {"ix_embedding_queue_pending_source": "missing"}
+    _Clock.hour = 19
+    assert task_scheduler._handler_embedding_queue_prune(db, None)["indexes"] == {"x": "built"}
+    assert built == [1]

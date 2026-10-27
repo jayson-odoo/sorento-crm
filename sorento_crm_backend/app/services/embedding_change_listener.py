@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from datetime import datetime
 from typing import Any, Iterable
 
-from sqlalchemy import event, select, text
+from sqlalchemy import event, select
 
 from app.models.certificate import Certificate
 from app.models.embeddings import EmbeddingQueue
@@ -105,63 +105,56 @@ def embedded_fields_changed(target, source_type: str) -> bool:
 SUPERSEDED_ERROR = "dedup: superseded"
 
 
-def _source_key(source_type: str, source_id: str) -> str:
-    return f"{source_type}:{source_id}"
+def pending_queue_ids(
+    bind, source_type: str, source_ids: Iterable[str], *, lock: str | None = "share"
+) -> dict[str, str]:
+    """source_id -> id of a pending, never-failed embedding_queue row that covers it.
 
+    The rows found are row-locked until the caller's transaction ends (`lock="share"`, or
+    `"update"` for a caller that rewrites the row). That is what makes skipping an insert safe:
+    the worker claims a row with FOR UPDATE NOWAIT, so it cannot claim (and read the source)
+    while a transaction that relied on the row is still open, and an enqueuer that finds the
+    row already claimed waits for that claim, re-reads it as `processing` and inserts its own.
+    Row locks live in the tuple, not the shared lock table, so a 10k-row import can hold them.
 
-def lock_embedding_sources(bind, keys: Iterable[tuple[str, str]]) -> None:
-    """Take the transaction-level advisory lock for each (source_type, source_id).
-
-    Every enqueue holds it from its "is a row already pending?" check until its transaction
-    ends, and the worker takes it before it claims a pending row. So an enqueue that finds a
-    pending row and adds none cannot lose its change: the worker cannot claim that row (and
-    read the source) until the enqueuing transaction has committed. Keys are locked in sorted
-    order so two batches cannot deadlock on each other. A no-op off Postgres.
+    A row that already failed (`retry_count > 0`) does not cover a new change: it waits out a
+    backoff and is one failure nearer dead_letter, which the new change must not inherit.
     """
-    engine = bind.get_bind() if hasattr(bind, "get_bind") else bind
-    if engine.dialect.name != "postgresql":
-        return
-    flat = sorted({_source_key(t, i) for t, i in keys})
-    if not flat:
-        return
-    bind.execute(
-        text(
-            "SELECT pg_advisory_xact_lock(hashtext('embedding_queue'), hashtext(s.k)) "
-            "FROM (SELECT unnest(CAST(:keys AS text[])) AS k ORDER BY 1) s"
-        ),
-        {"keys": flat},
-    )
-
-
-def pending_queue_ids(bind, source_type: str, source_ids: Iterable[str]) -> dict[str, str]:
-    """source_id -> id of its pending embedding_queue row, for those that have one."""
     ids = sorted({str(i) for i in source_ids})
     if not ids:
         return {}
     table = EmbeddingQueue.__table__
-    rows = bind.execute(
-        select(table.c.source_id, table.c.id).where(
+    query = (
+        select(table.c.source_id, table.c.id)
+        .where(
             table.c.status == "pending",
+            table.c.retry_count == 0,
             table.c.source_type == source_type,
             table.c.source_id.in_(ids),
         )
-    ).all()
-    return {str(r.source_id): str(r.id) for r in rows}
+        .order_by(table.c.id)
+    )
+    if lock == "share":
+        query = query.with_for_update(read=True)
+    elif lock == "update":
+        query = query.with_for_update()
+    return {str(r.source_id): str(r.id) for r in bind.execute(query).all()}
 
 
 def enqueue_pending(bind, rows: list[dict]) -> list[dict]:
     """Insert embedding_queue rows, skipping every source that already has a pending row.
 
     A pending row has not been claimed by the worker yet (it sets `processing` before it reads
-    the source), so the one row already waiting will embed the latest state; a second is pure
-    duplicate work. Race-safe through `lock_embedding_sources`. Returns the rows inserted.
+    the source), so the row already waiting will embed the latest state; a second is pure
+    duplicate work. Race-safe through the row locks `pending_queue_ids` takes. Two enqueuers
+    that both find nothing pending can each insert one row; that duplicate is harmless (the
+    first claim supersedes it). Returns the rows inserted.
     """
     by_key: dict[tuple[str, str], dict] = {}
     for row in rows:
         by_key[(row["source_type"], str(row["source_id"]))] = row
     if not by_key:
         return []
-    lock_embedding_sources(bind, by_key.keys())
     by_type: dict[str, list[str]] = {}
     for source_type, source_id in by_key:
         by_type.setdefault(source_type, []).append(source_id)

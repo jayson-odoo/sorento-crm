@@ -8,8 +8,9 @@ a failed build drops its INVALID leftover, logs a WARNING, and returns. Without 
 queue runs at today's speed.
 
 Two callers: migration eqd_0001_pending_idx_prune at deploy, and the hourly
-embedding_queue_prune task, which is the retry path: it rebuilds whichever index is missing or
-invalid, and is a single catalog read when both are present.
+embedding_queue_prune task, which is the retry path: in its daily retry hour
+(EMBEDDING_QUEUE_INDEX_RETRY_HOUR_UTC) it rebuilds whichever index is missing or invalid; every
+other run is a catalog read.
 """
 from __future__ import annotations
 
@@ -44,13 +45,18 @@ def index_valid(connection, name: str):
     """pg_index.indisvalid for the index on embedding_queue (True / False), or None when absent."""
     return connection.execute(
         sa.text(
-            # Through the table, not to_regclass(name): an unqualified index name resolves along
-            # the search_path, so a same-named index in a later schema would answer for it.
+            # Keyed on the table the search_path resolves (public in the app), so a same-named
+            # index on another schema's embedding_queue never answers for it.
             "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
             "WHERE i.indrelid = 'embedding_queue'::regclass AND c.relname = :name"
         ),
         {"name": name},
     ).scalar()
+
+
+def missing_indexes(connection) -> list[str]:
+    """The indexes that are absent or INVALID: one catalog read each."""
+    return [name for name in EMBEDDING_QUEUE_INDEXES if index_valid(connection, name) is not True]
 
 
 def ensure_embedding_queue_indexes(
@@ -88,8 +94,8 @@ def ensure_embedding_queue_indexes(
             except (DBAPIError, RuntimeError) as exc:
                 outcome[name] = "failed"
                 logger.warning(
-                    "embedding_queue index %s not built (%s); the queue works without it and the "
-                    "hourly embedding_queue_prune task retries.",
+                    "embedding_queue index %s not built (%s); the queue works without it and "
+                    "embedding_queue_prune retries daily.",
                     name,
                     str(exc).splitlines()[0],
                 )

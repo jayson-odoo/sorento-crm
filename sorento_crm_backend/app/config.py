@@ -296,6 +296,10 @@ class Settings(BaseSettings):
     embedding_queue_retention_days: int = 14  # EMBEDDING_QUEUE_RETENTION_DAYS
     embedding_queue_prune_batch_size: int = 1000
     embedding_queue_prune_max_batches: int = 100
+    # UTC hour in which embedding_queue_prune retries a pending-only index the deploy could not
+    # build (19 UTC = 03:00 MYT). Once a day, so a build that keeps timing out costs one 90s
+    # attempt a day, not one an hour, in the shared scheduler loop.
+    embedding_queue_index_retry_hour_utc: int = 19
     # embedding_queue_dedupe retires duplicate pending rows (the pre-dedupe backlog): rows per
     # batch, batches per run, and the pause between batches that spreads the write load.
     embedding_queue_dedupe_batch_size: int = 10000

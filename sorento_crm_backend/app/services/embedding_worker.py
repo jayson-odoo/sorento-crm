@@ -8,6 +8,8 @@ import logging
 from typing import Any
 
 import httpx
+from sqlalchemy import select
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.orm import Session
 
 from app.config import settings
@@ -15,7 +17,7 @@ from app.database import SessionLocal
 from app.models.base import set_company_scope
 from app.models.certificate import Certificate, CertificateProduct
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
-from app.services.embedding_change_listener import SUPERSEDED_ERROR, lock_embedding_sources
+from app.services.embedding_change_listener import SUPERSEDED_ERROR
 from app.models.product import Product, ProductCategory, Brand
 from app.models.marketing import Promotion
 from app.models.marketing import PromotionProduct, PromotionAttachment
@@ -760,19 +762,49 @@ def _supersede_pending_duplicates(db: Session, queue_item: EmbeddingQueue) -> in
     if queue_item.source_type in _PAYLOAD_SOURCE_TYPES:
         return 0
     now = datetime.utcnow()
-    return (
-        db.query(EmbeddingQueue)
+    # SKIP LOCKED: a row an enqueuer is holding stays pending and is claimed on its own later,
+    # rather than this claim waiting on (or deadlocking with) that transaction.
+    others = (
+        db.query(EmbeddingQueue.id)
         .filter(
             EmbeddingQueue.source_type == queue_item.source_type,
             EmbeddingQueue.source_id == queue_item.source_id,
             EmbeddingQueue.status == "pending",
             EmbeddingQueue.id != queue_item.id,
         )
+        .with_for_update(skip_locked=True)
+        .subquery()
+    )
+    return (
+        db.query(EmbeddingQueue)
+        .filter(EmbeddingQueue.id.in_(select(others.c.id)))
         .update(
             {"status": "skipped", "processed_at": now, "last_error": SUPERSEDED_ERROR},
             synchronize_session=False,
         )
     )
+
+
+def _claim(db: Session, queue_id: str) -> EmbeddingQueue | None:
+    """Lock the row FOR UPDATE NOWAIT; None when another transaction holds it.
+
+    An enqueuer that skipped its insert because this row was pending holds it FOR SHARE until
+    it commits. Waiting here would stall the scheduler loop behind that transaction (an
+    import can run for minutes), so a busy row is left pending for the next poll instead.
+    """
+    try:
+        return (
+            db.query(EmbeddingQueue)
+            .filter(EmbeddingQueue.id == queue_id)
+            .with_for_update(nowait=True)
+            .populate_existing()
+            .first()
+        )
+    except DBAPIError as exc:
+        if getattr(getattr(exc, "orig", None), "pgcode", None) != "55P03":  # lock_not_available
+            raise
+        db.rollback()
+        return None
 
 
 def _has_other_pending(db: Session, queue_item: EmbeddingQueue) -> bool:
@@ -804,11 +836,13 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         if queue_item.status in {"completed", "skipped"}:
             return {"status": queue_item.status, "queue_id": queue_id}
 
-        # Claim under the source's enqueue lock (EMBED-QUEUE-DEDUPE): a transaction that found
-        # this row pending and queued nothing must commit before the source is read below.
-        lock_embedding_sources(db, [(queue_item.source_type, queue_item.source_id)])
-        db.refresh(queue_item)
+        # Claim under the row lock (EMBED-QUEUE-DEDUPE): a transaction that found this row
+        # pending and queued nothing must commit before the source is read below.
+        queue_item = _claim(db, queue_id)
+        if queue_item is None:
+            return {"status": "busy", "queue_id": queue_id}
         if queue_item.status in {"completed", "skipped"}:
+            db.rollback()
             return {"status": queue_item.status, "queue_id": queue_id}
         queue_item.status = "processing"
         _supersede_pending_duplicates(db, queue_item)

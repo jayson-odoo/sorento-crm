@@ -63,8 +63,8 @@ def upgrade():
         )
     # Never a stall (owner, 27 Oct; runbook memory-and-deploy-guards.md, 13 Oct): each build is
     # CONCURRENTLY with a 5s lock wait and a 90s cap, and a build that fails or times out drops
-    # its leftover, logs a WARNING and lets the release go on. The hourly embedding_queue_prune
-    # task retries a missing index (app/services/embedding_queue_indexes.py).
+    # its leftover, logs a WARNING and lets the release go on. embedding_queue_prune retries a
+    # missing index once a day (app/services/embedding_queue_indexes.py).
     from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes
 
     with op.get_context().autocommit_block():

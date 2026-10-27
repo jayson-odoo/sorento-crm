@@ -19,10 +19,17 @@ Causes:
 
 - **Dedupe without a unique index** (crew agreed, 27 Oct). Deploy is blue/green, and the old
   colour keeps inserting duplicates while `CREATE UNIQUE INDEX CONCURRENTLY` runs, so that
-  build would fail. Instead, every enqueue takes
-  `pg_advisory_xact_lock(hashtext('embedding_queue'), hashtext('<type>:<id>'))` and inserts
-  nothing if the source already has a pending row. The worker takes the same lock before it
-  claims a row, so an enqueue that skipped its insert cannot lose its change.
+  build would fail.
+  - An enqueue that finds a pending row locks it `FOR SHARE` until its transaction ends, and
+    inserts nothing.
+  - The worker claims with `FOR UPDATE NOWAIT`. A busy row stays pending for the next poll, so
+    the scheduler never waits on an import.
+  - Supersede and backlog dedupe use `SKIP LOCKED`.
+  - Row locks, not advisory locks (review B1): an advisory lock takes a slot in the shared lock
+    table, and 20k of them in one transaction ran out of shared memory on Postgres defaults.
+    Row locks live in the tuple.
+  - The guarantee holds once both colours run this code. During the blue/green overlap, an
+    old-colour worker still claims rows without the lock.
 - **No data change in the migration** (owner, 27 Oct). Collapsing the backlog in a migration
   would write about 8 GB of WAL and take about 8 minutes. The scheduled task
   `embedding_queue_dedupe` does it instead.
@@ -32,7 +39,7 @@ Causes:
 
 ## Changes
 
-1. Enqueue dedupe in `embedding_change_listener.enqueue_pending`, used by the listeners,
+1. Enqueue dedupe in `embedding_change_listener.enqueue_pending` / `pending_queue_ids`, used by the listeners,
    `bulk_enqueue_embedding_events`, `EmbeddingEventService.queue_event` (which reuses the pending
    row and replaces its payload) and the product bulk import.
 2. An update queues only when a column in `EMBEDDED_FIELDS` changed. Each model's list is taken
@@ -48,20 +55,35 @@ Causes:
 6. Settings: `EMBEDDING_QUEUE_BATCH_SIZE` (default 10), `EMBEDDING_QUEUE_RETENTION_DAYS`
    (default 14), and the prune and dedupe batch knobs.
 7. Scheduled tasks, both seeded by the migration:
-   - `embedding_queue_prune` (hourly): retries any missing index, then deletes completed and
-     skipped rows older than 14 days, 1000 per batch, at most 100 batches per run.
+   - `embedding_queue_prune` (hourly): rebuilds a missing index in its daily retry hour
+     (19 UTC), then deletes completed and skipped rows older than 14 days, 1000 per batch, at
+     most 100 batches per run.
    - `embedding_queue_dedupe` (every 5 min): skips superseded pending rows, keeping the newest
      per source, 10k per batch, at most 10 batches per run with a 1s pause between them. A
      no-op once the backlog is clean.
 
-## Proposed, not done (needs crew OK)
+## Follow-up (crew OK, separate PR after this one)
 
 Drop the line-level types `inbound_shipment_line`, `order_line` and `picking_line`. No in-app
-reader uses them: `entity_resolver` excludes them, and `fuzzy_resolver`, project search and
-tool search all read other types. The only path that returns them is
-`/external/rag/search` with no `source_type`. Their text is UUIDs and quantities.
+reader uses them, and no n8n workflow calls `/external/rag/search` (crew checked; the 11 `zz-*`
+harness workflows were unreadable).
+
+The follow-up:
+- removes their listeners and backfill entries
+- deactivates their documents through the scheduled-task path
+- writes its tests red-first
+
+## Known, not fixed here
+
+- The product bulk import still queues every product in the file, changed or not. Dedupe
+  keeps that to one pending row per product.
+- A VALID hand-built index with the right name is reused without comparing its definition.
+  That is crew's instruction.
 
 ## Tests
+
+UAC: `embed-queue-dedupe-27oct-acceptance-criteria.md`.
+
 
 `tests/test_embedding_queue_dedupe.py` covers:
 - field lists match the model columns

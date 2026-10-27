@@ -120,13 +120,12 @@ class EmbeddingEventService:
             "triggered_by": triggered_by,
             "payload": payload or {},
         }
-        from app.services.embedding_change_listener import lock_embedding_sources, pending_queue_ids
+        from app.services.embedding_change_listener import pending_queue_ids
 
         # One pending row per source (EMBED-QUEUE-DEDUPE): a row already waiting will read the
         # source when it runs. Its payload is replaced, since mcp_tool rows carry the text to
         # embed in the payload itself.
-        lock_embedding_sources(self.db, [(source_type, source_id)])
-        pending_id = pending_queue_ids(self.db, source_type, [source_id]).get(str(source_id))
+        pending_id = pending_queue_ids(self.db, source_type, [source_id], lock="update").get(str(source_id))
         if pending_id is not None:
             queue_item = self.db.query(EmbeddingQueue).filter(EmbeddingQueue.id == pending_id).one()
             queue_item.event_type = event_type
@@ -906,21 +905,28 @@ def dedupe_pending_embedding_queue(
 
     batch_sql = text(
         """
+        WITH dupes AS (
+            SELECT id FROM (
+                SELECT id, row_number() OVER (
+                           PARTITION BY source_type, source_id
+                           ORDER BY created_at DESC, id DESC
+                       ) AS rn
+                  FROM embedding_queue
+                 WHERE status = 'pending'
+            ) ranked
+             WHERE rn > 1
+             LIMIT :batch
+        ), free AS (
+            -- SKIP LOCKED: a row the worker is claiming or an enqueuer holds is left for a
+            -- later run, so this never waits on, or deadlocks with, live work.
+            SELECT q.id FROM embedding_queue q JOIN dupes d ON d.id = q.id
+             WHERE q.status = 'pending'
+               FOR UPDATE OF q SKIP LOCKED
+        )
         UPDATE embedding_queue q
            SET status = 'skipped', processed_at = now() AT TIME ZONE 'UTC', last_error = :reason
-          FROM (
-                SELECT id FROM (
-                    SELECT id, row_number() OVER (
-                               PARTITION BY source_type, source_id
-                               ORDER BY created_at DESC, id DESC
-                           ) AS rn
-                      FROM embedding_queue
-                     WHERE status = 'pending'
-                ) ranked
-                 WHERE rn > 1
-                 LIMIT :batch
-               ) dupes
-         WHERE q.id = dupes.id AND q.status = 'pending'
+          FROM free
+         WHERE q.id = free.id
         """
     )
     skipped_total = 0
