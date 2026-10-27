@@ -370,6 +370,11 @@ BRANCH_KINDS = (
     "ai_not_allowed",
     # SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity (`lanes/opportunity.py`).
     "log_opportunity",
+    # WA-USERNAME-CONTACTS: the phone flow for a username-only WhatsApp contact (`engine._phone_turn`).
+    "phone_ask",
+    "phone_linked",
+    "phone_ignored",
+    "phone_handoff",
 )
 BranchKind = Literal[BRANCH_KINDS]  # type: ignore[valid-type]
 

@@ -495,6 +495,8 @@ def _unambiguous_refs(db: Session, refs: set) -> set:
         str(ref)
         for (ref,) in db.query(SalesOrderLine.source_ref)
         .filter(SalesOrderLine.source_ref.in_(wanted))
+        # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+        .filter(SalesOrderLine.removed_unreferenced.is_(False))
         .group_by(SalesOrderLine.source_ref)
         .having(func.count(SalesOrderLine.id) == 1)
     }

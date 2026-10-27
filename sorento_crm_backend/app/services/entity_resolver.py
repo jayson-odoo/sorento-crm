@@ -4831,7 +4831,7 @@ def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
 
     # A portal registration waiting for approval is not a project to answer about yet
     # (PROJECT-REG-PORTAL R4): it has no code to hand back.
-    rows = approved_projects(
+    query = approved_projects(
         db.query(
             Project.id,
             Project.project_code,
@@ -4844,7 +4844,19 @@ def _probe_project(db: Session, tokens: list[str]) -> dict[str, list[ResolvedEnt
                 _ws_insensitive_lower(Project.title).in_(keys),
             )
         )
-    ).all()
+    )
+    # A user who may see only their own projects is not told another project exists
+    # (PORTAL-P2-ONLY-THEIRS): the acting user is the one stamped on this session.
+    from app.audit_context import get_actor
+    from app.services import own_scope
+
+    actor = get_actor(db)
+    acting_user = str(actor.user_id) if actor is not None and actor.user_id else None
+    if acting_user and own_scope.user_is_limited(
+        db, acting_user, own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
+    ):
+        query = query.filter(own_scope.project_clause(own_scope.me(db, acting_user)))
+    rows = query.all()
     for pid, code, title, outcome, owner_user_id in rows:
         by_code = _strip_all_ws(str(code or "").lower())
         by_title = _strip_all_ws(str(title or "").lower())

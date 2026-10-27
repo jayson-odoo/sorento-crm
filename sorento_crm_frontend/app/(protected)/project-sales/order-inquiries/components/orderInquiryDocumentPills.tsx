@@ -42,7 +42,9 @@ export function WorklistPill({
   truncate?: boolean;
   children: React.ReactNode;
 }) {
-  const className = truncate ? 'min-w-0 max-w-full shrink-0' : 'shrink-0';
+  const className = truncate
+    ? 'min-w-0 max-w-full shrink-0 whitespace-nowrap'
+    : 'shrink-0 whitespace-nowrap';
   const body = truncate ? <span className="truncate">{children}</span> : children;
   const variant = destructive ? 'destructive' : warning ? 'warning' : 'secondary';
   return (
@@ -146,5 +148,64 @@ export function DocumentStatePills({
         </span>
       ) : null}
     </>
+  );
+}
+
+/** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto, as both PO screens
+ * receive it (`goods_chain.spo_lines_of`). */
+export interface DocumentSpoLine {
+  spo_number: string | null;
+  line_label: string | null;
+  receipts?: OrderInquiryLinkReceipt[];
+  dead_reason?: OrderInquiryDeadReason | null;
+}
+
+/**
+ * LINKAGE-UNIFY U4: a PO line's SPO cell - every SPO line it was transferred onto, each its
+ * number (`renderDocument`: the screen's own document link, never truncated), its line and
+ * the U3 document pills ("Received <qty> at <bin>", red "SPO withdrawn"). The same piece on
+ * the order inquiry's PO popup and the SCM purchase order's Lines tab. No "In transit" tag
+ * (owner ruling): a line still at sea simply carries no pill.
+ */
+export function PoLineSpoCell({
+  spos,
+  lineDeadReason,
+  renderDocument,
+}: {
+  spos: DocumentSpoLine[] | undefined;
+  /** Owner Q5 (a): the PO line itself brings nothing (`po_cancelled`), so with no SPO line
+   * to carry the mark the cell draws the same red pill, beside any SPO entries. */
+  lineDeadReason?: OrderInquiryDeadReason | null;
+  renderDocument: (spoNumber: string) => React.ReactNode;
+}) {
+  if (!spos?.length && !lineDeadReason) return <span className="text-muted-foreground">-</span>;
+  return (
+    <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-1">
+      {lineDeadReason ? (
+        <DocumentStatePills
+          receipts={[]}
+          deadReason={lineDeadReason}
+          testIdPrefix="po-line"
+          testIdSuffix="cancelled"
+        />
+      ) : null}
+      {(spos ?? []).map((spo, index) => (
+        <span
+          key={`${spo.spo_number ?? ''}-${spo.line_label ?? ''}-${index}`}
+          className="flex min-w-0 items-center gap-1"
+        >
+          {spo.spo_number ? renderDocument(spo.spo_number) : null}
+          {spo.line_label ? (
+            <span className="shrink-0 text-2xs text-muted-foreground">{spo.line_label}</span>
+          ) : null}
+          <DocumentStatePills
+            receipts={spo.receipts ?? []}
+            deadReason={spo.dead_reason ?? null}
+            testIdPrefix="po-line-spo"
+            testIdSuffix={String(index)}
+          />
+        </span>
+      ))}
+    </span>
   );
 }

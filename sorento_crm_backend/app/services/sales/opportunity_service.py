@@ -11,7 +11,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Union
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
@@ -684,10 +684,19 @@ def meta(db: Session) -> dict:
     return {"stages": stages, "lost_reasons": lost_reasons}
 
 
-def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Optional[str] = None) -> List[dict]:
+def sales_order_options(
+    db: Session,
+    opportunity: SalesOpportunity,
+    *,
+    q: Optional[str] = None,
+    agent_ids: Optional[AgentIds] = None,
+) -> List[dict]:
     """That customer's non-cancelled sales orders, newest first, `q` narrowing by order
     number the same as the prospect branch below narrows by number or customer name
-    (Phase 3 fix2 nit: the customer-backed branch used to ignore `q` outright)."""
+    (Phase 3 fix2 nit: the customer-backed branch used to ignore `q` outright).
+
+    `agent_ids` keeps both branches to those agents' own customers, for a user who may
+    see only their own opportunities (PORTAL-P2-ONLY-THEIRS)."""
     if opportunity.customer_id:
         order_query = db.query(SalesOrder).filter(
             SalesOrder.customer_id == opportunity.customer_id,
@@ -695,6 +704,8 @@ def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Option
         )
         if q:
             order_query = order_query.filter(SalesOrder.so_number.ilike(f"%{q}%"))
+        if agent_ids is not None:
+            order_query = order_query.filter(_own_customers(agent_ids))
         orders = order_query.order_by(SalesOrder.order_date.desc().nullslast()).limit(50).all()
     else:
         order_query = (
@@ -707,6 +718,8 @@ def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Option
             order_query = order_query.filter(
                 or_(SalesOrder.so_number.ilike(like), Customer.customer_name.ilike(like))
             )
+        if agent_ids is not None:
+            order_query = order_query.filter(_own_customers(agent_ids))
         orders = order_query.order_by(SalesOrder.order_date.desc().nullslast()).limit(50).all()
 
     customer_names: Dict[str, str] = {}
@@ -726,6 +739,12 @@ def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Option
         }
         for o in orders
     ]
+
+
+def _own_customers(agent_ids: AgentIds):
+    return SalesOrder.customer_id.in_(
+        select(Customer.id).where(Customer.sales_agent_id.in_(_agent_id_list(agent_ids)))
+    )
 
 
 def agent_options(db: Session, *, company_id: str) -> List[dict]:

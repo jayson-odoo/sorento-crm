@@ -26,6 +26,9 @@ Image builds and the deploy always stay on GitHub-hosted (prod is amd64).
   every job.
 - One runner: a 6 GB VM holds one type-check (4 GB heap) or one xdist shard,
   not two.
+- No image builds here: an amd64 build on this arm64 VM is QEMU emulation
+  (measured 27 Oct 2026: backend image 5.5 min, frontend `next build`
+  OOM-killed in the 6 GB VM). See `documentation/plans/_archive/ci/PLAN-ci-runner-mac-26oct.md`.
 
 ## Commands (on the Mac)
 

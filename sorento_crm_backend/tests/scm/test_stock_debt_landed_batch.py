@@ -69,11 +69,16 @@ def _ref() -> str:
 
 
 def _statements(db, call):
-    """`(call(), [every SQL statement it sent])`."""
+    """`(call(), [every SQL statement it sent])`, leaving out the constant statements that
+    only read or set `max_parallel_workers_per_gather` (the shm guard around the PO read)."""
     bind = db.get_bind()
     seen: list[str] = []
 
     def _before(_conn, _cursor, statement, _params, _context, _many):
+        if "max_parallel_workers_per_gather" in statement and (
+            "current_setting(" in statement or "set_config(" in statement
+        ):
+            return
         seen.append(statement)
 
     event.listen(bind, "before_cursor_execute", _before)

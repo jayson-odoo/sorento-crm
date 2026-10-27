@@ -1464,8 +1464,9 @@ class DocumentIngestService(MasterRefResolver):
         `updated` (matched by its own existing `source_ref`), `adopted` (an
         xlsx-era ref-less row claimed by `_adopt_lines`'s three-step match),
         `created` (neither matched, so a fresh row), `deleted` (an unmatched
-        leftover row nothing points at) and `cancelled` (an unmatched leftover
-        row something still points at).
+        ref-less leftover row nothing points at) and `cancelled` (any other
+        unmatched leftover: one with an AutoCount `source_ref`, or one something
+        still points at).
 
         A line whose `source_ref` is NULL was written by the extract importer
         before AutoCount owned this document, and leaving it counted would
@@ -1477,9 +1478,17 @@ class DocumentIngestService(MasterRefResolver):
         physical line, matched by what it actually is rather than replaced,
         keeps every allocation, claim and GRN link that already hangs off it.
         """
+        # AC-REMOVED-KEEP-CANCELLED review fix: a duplicate-ref row is now kept (cancelled)
+        # rather than deleted, so which row wins `by_ref` must not depend on scan order -
+        # a live row first, then the oldest - or the two could swap on a later push.
         existing = (
             self.db.query(spec.line_model)
             .filter(getattr(spec.line_model, spec.line_fk) == str(header.id))
+            .order_by(
+                spec.line_model.line_status == CANCELLED,
+                spec.line_model.created_at,
+                spec.line_model.id,
+            )
             .all()
         )
         by_ref: dict[str, Any] = {}
@@ -1602,6 +1611,10 @@ class DocumentIngestService(MasterRefResolver):
                         values["line_status"] = CANCELLED
                 for column, value in values.items():
                     setattr(row, column, value)
+                # AC-REMOVED-KEEP-CANCELLED: AutoCount sends a line it had removed again. The
+                # old sweep would have deleted it and this push recreated it, counted again.
+                if row.removed_unreferenced:
+                    row.removed_unreferenced = False
                 counts["updated"] += 1
                 if spec.entity_type == "sales_orders":
                     self._sync_mirror_line(row, values)
@@ -1636,13 +1649,31 @@ class DocumentIngestService(MasterRefResolver):
         # same thing for every row of THIS line table in THIS sweep - fetched
         # once here rather than once per row inside `is_referenced`.
         line_referrers = referrers_of(self.db, line_table)
+        # AC-REMOVED-LINES (owner, 26 Oct 2026): an AutoCount line (`by_ref`: it has a DtlKey
+        # this push no longer carries) that ends cancelled on a header this push does NOT
+        # cancel was REMOVED, not cancelled. Pool, duplicate-ref and already-cancelled rows
+        # are not removed AutoCount lines, and the TRANSITION guard keeps a later push of the
+        # same reduced document from releasing again.
+        removed_ids = {id(row) for row in by_ref.values()}
+        removed_lines: list[Any] = []
         for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
             prior_line_status = row.line_status
-            if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
+            # AC-REMOVED-KEEP-CANCELLED (owner, 27 Oct 2026): a line carrying an AutoCount
+            # DtlKey is NEVER deleted, referenced or not - it stays as a Cancelled record and
+            # only its linkage goes. Without this, the release above left it unreferenced
+            # and the NEXT push deleted it. Only a ref-less (xlsx-era) leftover nothing
+            # points at is still deleted: it is the duplicate count this sweep exists for.
+            referenced = is_referenced(self.db, line_table, row.id, referrers=line_referrers)
+            if row.source_ref or referenced:
                 # Quantities and prices are left exactly as they were: this row
                 # is now evidence of what a transfer moved or a plan was built
                 # from, and rewriting it would falsify that record.
                 row.line_status = CANCELLED
+                # Owner via crew, 27 Oct: a line kept ONLY because of the rule above (the old
+                # sweep would have deleted it here) counts in no total. Sticky until AutoCount
+                # sends the line again; every other cancelled line counts exactly as before.
+                if not referenced:
+                    row.removed_unreferenced = True
                 counts["cancelled"] += 1
                 # PLAN-oi-cancelled-line-used-confirm.md (3.2a): this loop walks
                 # `already_cancelled` on EVERY push (its whole reason to be there is
@@ -1652,10 +1683,27 @@ class DocumentIngestService(MasterRefResolver):
                 # re-confirmed on every later push of the same reduced document.
                 if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
                     newly_cancelled_so_line_ids.append(row.id)
+                if (
+                    id(row) in removed_ids
+                    and prior_line_status != CANCELLED
+                    and header.status != CANCELLED
+                ):
+                    removed_lines.append(row)
             else:
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
+        # AC-RL-07: a push carrying no lines at all (header-only, failed detail) releases
+        # nothing; the sweep above still runs as before.
+        if removed_lines and (line_values or dropped_refs):
+            from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+            oi_service = ProjectOrderInquiryService(self.db)
+            if spec.entity_type == "purchase_orders":
+                oi_service.release_removed_lines(po_line_ids=[r.id for r in removed_lines])
+            elif spec.entity_type == "sales_orders":
+                # Retire BEFORE the flag below, which then only meets actioned rows.
+                oi_service.retire_rows_for_removed_so_lines(removed_lines)
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,

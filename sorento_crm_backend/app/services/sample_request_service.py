@@ -63,6 +63,10 @@ class Actor:
     contact_id: Optional[str] = None
     can_process: bool = False
     can_view_all: bool = False
+    #: `.view_own` without `.view` (PORTAL-P2-ONLY-THEIRS): their own rows, the ones raised
+    #: from the portal by their own contact included, and anything else is not found.
+    own_only: bool = False
+    own_contact_id: Optional[str] = None
 
 
 # ------------------------------------------------------------------ small helpers
@@ -102,8 +106,18 @@ def is_owner(req: SampleRequest, actor: Actor) -> bool:
     return actor.user_id is not None and req.salesperson_id == actor.user_id
 
 
+def can_view(req: SampleRequest, actor: Actor) -> bool:
+    if actor.can_view_all or is_owner(req, actor):
+        return True
+    return bool(
+        actor.own_contact_id and req.contact_id and str(req.contact_id) == actor.own_contact_id
+    )
+
+
 def assert_can_view(req: SampleRequest, actor: Actor) -> None:
-    if not (actor.can_view_all or is_owner(req, actor)):
+    if not can_view(req, actor):
+        if actor.own_only:
+            raise handle_not_found("Sample request", req.id)
         raise _forbidden()
 
 
@@ -584,7 +598,10 @@ def list_for(
     if contact_id is not None:
         query = query.filter(SampleRequest.contact_id == contact_id)
     elif not actor.can_view_all:
-        query = query.filter(SampleRequest.salesperson_id == actor.user_id)
+        mine = SampleRequest.salesperson_id == actor.user_id
+        if actor.own_contact_id:
+            mine = or_(mine, SampleRequest.contact_id == actor.own_contact_id)
+        query = query.filter(mine)
     if project_id:
         query = query.filter(SampleRequest.project_id == project_id)
     if salesperson_id:

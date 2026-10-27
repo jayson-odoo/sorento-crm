@@ -2736,6 +2736,8 @@ class OrderInquiryWorklistService:
                 PurchaseOrderLine.qty_received,
                 Warehouse.warehouse_code,
                 PurchaseOrderLine.from_so_line_ref,
+                PurchaseOrderLine.line_status,
+                PurchaseOrderLine.cancelled_by_cancel_doc,
             )
             .select_from(PurchaseOrderLine)
             .outerjoin(Product, Product.id == PurchaseOrderLine.product_id)
@@ -2746,11 +2748,26 @@ class OrderInquiryWorklistService:
         )
         line_ids = [str(line[0]) for line in lines]
         spo_numbers_by_line = self._spo_numbers_by_po_line(po)
+        # LINKAGE-UNIFY U4: each line's SPO lines with where their goods landed (GR bins)
+        # or why they bring nothing - one read for the document, the goods chain's own.
+        spos_by_line = goods_chain.spo_lines_of(self.db, line_ids)
+        dead_ids = goods_chain.dead_po_line_ids(self.db, line_ids)
         # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
         # per line - the same reader the SCM purchase-order detail's Lines tab already
         # calls, so the book's linkage reads identically wherever a line is shown.
+        # HIDE-REMOVED-LINE-SO: a line AutoCount removed shows no S/O, the same rule the SCM
+        # purchase-order detail applies (`order_link_service.book_so_ref_of`).
+        shown_ref = {
+            str(line.id): order_link_service.book_so_ref_of(
+                line.from_so_line_ref,
+                line_status=line.line_status,
+                cancelled_by_cancel_doc=line.cancelled_by_cancel_doc,
+                header_status=po.status,
+            )
+            for line in lines
+        }
         book_so_by_ref = order_link_service.book_so_numbers_by_ref(
-            self.db, [line[-1] for line in lines if line[-1]]
+            self.db, [ref for ref in shown_ref.values() if ref]
         )
         # Issue #1215 point 2: which LINE an order inquiry's placement sits on, not only
         # which document - a PO with two lines of the same item made the "Allocated to"
@@ -2803,8 +2820,14 @@ class OrderInquiryWorklistService:
                     # on both screens - through the SAME shared function
                     # (`order_link_service.book_so_fields`, review of PR #764, F5) rather
                     # than a second copy of the derivation.
-                    **order_link_service.book_so_fields(from_so_line_ref, book_so_by_ref),
+                    **order_link_service.book_so_fields(
+                        shown_ref[str(line_id)], book_so_by_ref
+                    ),
                     "spo_numbers": spo_numbers_by_line.get(str(line_id), []),
+                    "spos": spos_by_line.get(str(line_id), []),
+                    # Owner Q5 (a): a placement on a dead PO line reads "PO cancelled", by
+                    # the chain's own rule (`goods_chain.po_line_is_dead`).
+                    "dead_reason": "po_cancelled" if str(line_id) in dead_ids else None,
                 }
                 for (
                     line_id,
@@ -2813,7 +2836,9 @@ class OrderInquiryWorklistService:
                     qty_ordered,
                     qty_received,
                     warehouse_code,
-                    from_so_line_ref,
+                    _from_so_line_ref,
+                    _line_status,
+                    _cancelled_by_cancel_doc,
                 ) in lines
             ],
             # WHO is holding this document's quantity (AC-D18). Drafts included and marked

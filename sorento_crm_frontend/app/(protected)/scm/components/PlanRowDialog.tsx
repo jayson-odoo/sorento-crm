@@ -43,6 +43,7 @@ import { purchaseOrderStatusPill } from '../lib/purchaseOrderStatus';
 import { useContainerRequestDrill } from '../hooks/useContainerRequestDrill';
 import { useLocationStock } from '../reorder/hooks/useReorderRun';
 import { StockDocumentsPanel } from '../../project-sales/fulfilment-planning/components/StockDocumentsPanel';
+import { WorklistPill } from '../../project-sales/order-inquiries/components/orderInquiryDocumentPills';
 import type {
   ContainerRequestDrillIncomingPlRow,
   ContainerRequestDrillPoRow,
@@ -1620,6 +1621,9 @@ export interface SoCoverageRow {
    *  from `kind` (which family the row came from). A project row is always `'project'`; a
    *  book line carries whatever its own sales order was stamped, including `null` (R3). */
   demand_class: 'project' | 'retail' | null;
+  /** LINKAGE-UNIFY U4 (the SPO document's read-only "SO covered" list): the PO number a
+   *  placement reached this SPO through, printed "via PO <number>" beside its order. */
+  via_po?: string | null;
 }
 
 /**
@@ -1801,9 +1805,30 @@ export function SoCoveragePicker({
         id: 'document',
         accessorFn: (c) => c.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Sales order" column={column} />,
-        cell: ({ row }) => textCell(row.original.document),
+        // LINKAGE-UNIFY U4 round 4: neither the SO number nor "via PO <number>" (the order
+        // inquiry's own shared pill) ever truncates; in a narrow column the pill wraps
+        // under the SO number instead (full text kept in its title).
+        cell: ({ row }) =>
+          row.original.via_po ? (
+            <span className="flex min-w-0 flex-wrap items-center gap-x-1 gap-y-0.5">
+              <span className="shrink-0 whitespace-nowrap">
+                {textCell(row.original.document)}
+              </span>
+              <WorklistPill
+                testId={`so-covered-via-po-${row.original.key}`}
+                title={`via PO ${row.original.via_po}`}
+              >
+                {`via PO ${row.original.via_po}`}
+              </WorklistPill>
+            </span>
+          ) : (
+            textCell(row.original.document)
+          ),
         footer: () => TOTAL_LABEL,
-        size: 130,
+        // Wide enough for "SO396349" + "via PO 202607-S0083" in the grid's truncating td, with
+        // a margin for font rendering differences.
+        size: 180,
+        minSize: 180,
         meta: { skeleton: SKELETON_CELL },
       },
       {

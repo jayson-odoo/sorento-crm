@@ -118,6 +118,43 @@ def _semantic_parser_fallback() -> str:
     )
 
 
+def _chatbot_span_extractor_fallback() -> str:
+    """System prompt for the span pass (ENTITY-EXTRACT-MATCH S2, `chatbot_span_extractor`): the message in, the spans
+    that name a record out. The phase-1 B2 wording; `head/span_extract.py` reads it, the parser never does."""
+    return (
+        "You read ONE chat message sent to a bathroom and kitchen fittings supplier by its staff or dealers. Messages are short, often misspelled, and may be English, Malay, Chinese or a mix.\n"
+        "\n"
+        "Return every span that names a specific thing the business keeps a record of. Copy each span exactly as written (keep typos and case). Give each span one type:\n"
+        "- brand: a product brand (e.g. Bravat, Johnson Suisse)\n"
+        "- customer: a customer company, shop or account (e.g. \"Kim Hardware\", \"ABC Trading Sdn Bhd\")\n"
+        "- salesperson: a sales staff person, by name or staff code\n"
+        "- location: a warehouse, branch, store or place (e.g. a warehouse code, a town)\n"
+        "- category: a kind of product (e.g. basin, shower, kitchen sink)\n"
+        "- spec_key: the NAME of a product property with no value (e.g. colour, length)\n"
+        "- spec_value: a VALUE of a product property (e.g. gunmetal, single lever, double bowl, 600mm)\n"
+        "- file_type: a kind of document or media wanted (e.g. certificate, catalogue, drawing, photo)\n"
+        "- promotion_kind: a kind of promotion (e.g. special promo, focus item)\n"
+        "- sales_channel: dealer or project, used as a sales channel\n"
+        "- product_code: a product or item code\n"
+        "\n"
+        "Do not return words that name nothing on record (stock, price, order, check, delivery, please, thanks), quantities, dates, document numbers or greetings. Never split a product code into parts. Return an empty list when nothing is named.\n"
+        "\n"
+        "Examples (invented; the output shows the spans only):\n"
+        "\"brp sink 2 bowl hitam ada stok?\" -> sink | 2 bowl | hitam\n"
+        "\"pls snd catelog for jhonson suise\" -> catelog | jhonson suise\n"
+        "\"淋浴 有货吗 KL warehouse\" -> 淋浴 | KL warehouse\n"
+        "\"ok send to Kim Hardware Ipoh\" -> Kim Hardware | Ipoh\n"
+        "\"SRTKS8821 colour?\" -> SRTKS8821 | colour\n"
+        "\"yes the second one\" -> (none)"
+    )
+
+
+def _chatbot_lookup_embedder_fallback() -> str:
+    """No text is rendered: the production label's provider and model pick the lookup embedder
+    (`head/lookup_lists.embedder`); unset keeps OpenAI text-embedding-3-small."""
+    return "Lookup embedder: the label's provider and model choose the embedding model."
+
+
 def _chat_report_extractor_fallback() -> str:
     """System prompt for the chat report extractor (CA-3, `chat_report_extractor`). `{today}` and
     `{domains}`, `{brands}` and `{categories}` are filled by `chatbot/analytics/chat_report_extractor.py`, not by `render`."""
@@ -1095,6 +1132,22 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
     # written out one PromptKeySpec at a time so this dict and the copy table can never
     # list different keys - the same single-declaration rule H28 imposed on the enums.
     # Appended below the literal entries by `_register_chatbot_reply_keys()`.
+    "chatbot_span_extractor": PromptKeySpec(
+        name="chatbot_span_extractor",
+        role="Chatbot span extractor - names the mentions of one message so the lookup lists hold only the rows they match (JSON)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_span_extractor_fallback,
+    ),
+    "chatbot_lookup_embedder": PromptKeySpec(
+        name="chatbot_lookup_embedder",
+        role="Chatbot lookup embedder - the provider and model whose vectors place a span on the lookup rows (label only, no prompt text)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_lookup_embedder_fallback,
+    ),
     "chat_report_extractor": PromptKeySpec(
         name="chat_report_extractor",
         role="Chat report extractor - a staff chat-statistics request to group_by/measure/subject/top_n/dates (JSON)",

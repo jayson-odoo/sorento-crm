@@ -151,6 +151,11 @@ TEMPLATE_DEFAULT_USE_CASES = (
     # ``quantity`` / ``outcome`` / ``asked_at``. Unmapped out-of-window -> the send is
     # skipped and logged failed; in-window it sends the default one-line wording.
     "stock_ask_salesman",
+    # WhatsApp phone share (PLAN-wa-username-contacts-26oct). Sent to a WhatsApp contact
+    # that chats by username only (no phone on its Respond.io record) to ask for its number.
+    # A Utility template carrying the static Share Contact Info button; no params. Unmapped
+    # -> no ask is sent and the chat is handed to staff once per 24h.
+    "wa_phone_share",
 )
 
 # Chat reply use cases - a *_chat / conversation_chat default MUST map a slot to the

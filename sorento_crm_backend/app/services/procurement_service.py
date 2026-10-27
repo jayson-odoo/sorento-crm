@@ -3101,6 +3101,48 @@ class SPOAllocationService:
                         "qty": float(link_qty or 0),
                     }
                 )
+            # LINKAGE-UNIFY U4: the placements that reached these lines through their PO
+            # line (placed on the PO, its goods transferred here), by the goods chain's own
+            # split - the quantity is what of each sits on this SPO line - marked with the
+            # PO number they came through.
+            from app.services.scm import goods_chain
+
+            via = [
+                placement
+                for placement in goods_chain.placements_on(
+                    self.db, spo_allocation_ids=alloc_ids, with_bins=False
+                )
+                if placement.via_po
+            ]
+            if via:
+                sales_side = {
+                    str(row_id): (doc_no or provisional, project_title)
+                    for row_id, doc_no, provisional, project_title in self.db.query(
+                        OrderInquiryRow.id,
+                        ProjectSalesOrder.autocount_doc_no,
+                        ProjectSalesOrder.provisional_ref,
+                        _Project.title,
+                    )
+                    .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+                    .join(
+                        ProjectSalesOrder,
+                        ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+                    )
+                    .outerjoin(_Project, _Project.id == ProjectSalesOrder.project_id)
+                    .filter(OrderInquiryRow.id.in_({p.chain.row_id for p in via}))
+                    .all()
+                }
+                for placement in via:
+                    document, customer = sales_side.get(placement.chain.row_id, (None, None))
+                    so_covered_by_alloc.setdefault(placement.document_id, []).append(
+                        {
+                            "document": document,
+                            "customer": customer,
+                            "demand_class": "project",
+                            "qty": float(placement.qty),
+                            "via_po": placement.via_po,
+                        }
+                    )
             from app.services.scm import spo_conversion_service as _spo_conv
 
             # The FIRST allocation of each SPO line, in the order this document's own query

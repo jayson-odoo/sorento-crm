@@ -745,8 +745,13 @@ def test_autocount_leftover_referenced_line_flags_an_acknowledged_row_changed(en
         l for l in env.so_lines(header["id"]) if l["id"] == line_b["id"]
     )
     assert updated_line_b["line_status"] == "cancelled"
-    assert row.ack_state == ACK_CHANGED
-    assert row.changed_at is not None
+    if row_state == INQUIRY_RAISED:
+        # AC-RL-20 / owner ruling 26 Oct 2026: a raised row on a line the push removes is
+        # retired like Transfer to Cancel SO, not flagged (supersedes the C1 flag here).
+        assert row.state == INQUIRY_CANCELLED
+    else:
+        assert row.ack_state == ACK_CHANGED
+        assert row.changed_at is not None
 
 
 def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(env):
@@ -758,8 +763,11 @@ def test_autocount_repeated_leftover_cancel_does_not_reflag_a_reconfirmed_row(en
     ref_b = record["lines"][1]["source_ref"]
     line_b = next(l for l in lines if l["source_ref"] == ref_b)
 
+    # AC-RL-20 / owner ruling 26 Oct 2026: a raised row would now be retired, so the
+    # re-flag intent is kept with an actioned row (actioned rows keep the C1 flag).
     _mirror, row = _mirror_for_ingest_line(
-        env, header["id"], line_b["id"], line_b["product_id"], row_ack=ACK_ACKNOWLEDGED,
+        env, header["id"], line_b["id"], line_b["product_id"],
+        row_state=INQUIRY_ACTIONED, row_ack=ACK_ACKNOWLEDGED,
     )
 
     reduced = dict(record, lines=[record["lines"][0]])

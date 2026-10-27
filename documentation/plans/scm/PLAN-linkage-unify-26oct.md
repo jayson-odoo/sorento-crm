@@ -1,7 +1,7 @@
 # PLAN: one answer to "where are this SO line's goods now" (LINKAGE-UNIFY)
 
-Status: U1-U3 owner hand-test PASS (26 Oct ~15:20, "ok to merge"), merging as PR #1870 (supersedes #1866 / #1868).
-U4 #1874 and U5 #1873 open, retargeted to main after #1870 merges. Size L, lead pattern. UAC:
+Status: U1-U3 merged as #1870 (1aaeed54ae); U4 merged as #1874 (36f571df3b, owner PASS 26 Oct ~22:05).
+U5 #1873 on main, reviewer READY; owner hand test, then CI + merge. Double placements: ruling (a), section 13. Size L, lead pattern. UAC:
 `linkage-unify-26oct-acceptance-criteria.md`. The fix is cut into the slices of section 6.
 Lane LINKAGE-UNIFY, branch `crew/linkage-unify`, base origin/main 263643ae36.
 
@@ -419,6 +419,29 @@ L16 shapes; vitest for the shared pill piece (PO no received pill, SPO receipt p
 dead pills, class d PO receipt pill) and the filter select. Browser pass 1280 / 375 on the crew
 test copy, then hand test.
 
+## 10. U5 contract (one key everywhere + the candidate walk sees followed placements)
+
+Track: slice U5, S, backend only, stacked on U3. No migration, no UI.
+
+1. Candidate walk (Link dialog, cascade, `po_candidates_for_row`, `has_link_candidate`):
+   `_linked_by_target` (PS ~10000-10050) nets an SPO allocation's remaining by the placements
+   that FOLLOW onto it from their PO line (the chain's split: the same claims `_follow_totals`
+   computes for Stock Debt), so 486 placed on PO 202607-S0100 leaves SPO-2026/09-0107 L9 with
+   no free 486 for another row (A-R11 / D4). The followed split comes from `goods_chain`, never
+   a second copy.
+2. One PO -> SPO key: own-arrival readers (`_po_received_by_so_line_ref` PSS ~3107,
+   `_po_received_by_product` ~3184, `_prefetch_own_arrival` ~3312, and `_landed_holds` through
+   them), the ingest SPO hook (`_refs_from_written_spo_allocations`, `api/v1/external/ingest.py`
+   ~735) and `_book_names_target_for_line` (PS ~4014) match SPO to PO line through
+   `goods_chain`'s key (PO number + trimmed line ref + product + company, plus the FK route).
+   Measured: the loose own-arrival key gives 0 cross-PO pairs on dev (`sql/v-key.sql`), so this
+   is behaviour-neutral on today's data; it closes the collision risk on bare-ordinal refs.
+
+Tests (red first): the candidate walk offers no free SPO quantity a followed placement already
+holds; a space-padded `from_po_line_ref` is followed by the own-arrival readers; an SPO with the
+same line ref under ANOTHER PO number is not; the ingest hook and `_book_names_target_for_line`
+follow the same key (trim, product).
+
 ## 11. Owner rulings after the U3 hand test and the U4 mock (26 Oct, ~13:40-13:50)
 
 - #1870 hand test: the document number (SPO and PO) never truncates at any column width; the
@@ -430,3 +453,68 @@ test copy, then hand test.
   screens renamed "Transferred"; (b) "SPO withdrawn" explained on #1870 (`retired_at`, L784
   example); the red pill stays until the owner picks a name ("SPO line removed" /
   "Dropped from SPO" offered). Build U4 after the #1870 round-5 pill fix.
+
+U5 notes (26 Oct): the one key drops SPO rows that name a PO line by `from_po_line_ref` without
+`from_po_number`; 0 of 72,340 dev rows have that shape (`sql/v-key-nopo.sql`), so the Stock Debt
+lendable seed was corrected to the real AutoCount shape. Follow-up, not built: the Link dialog's
+PO-side remaining still subtracts every placement on the PO line, so a PARTLY transferred line
+can be over-netted (0 partial transfers on dev; trigger: the first one).
+
+## 12. U4 contract (PO / SPO popups, SPO document, SCM PO detail; mock U4 + rulings s11)
+
+Track: slice U4, M, stacked on U3 (sibling of U5). No migration, no RBAC. UI per
+`documentation/mockups/LINKAGE-UNIFY-U4/index.html` with the owner's rulings: NO "In transit"
+tag anywhere (the mock drew one: drop it); "Transferred" replaces "Qty received" / "Received"
+for the PO line figure on both PO screens; pills exactly as U3 (shared pill piece, quiet
+receipt pill, red "SPO withdrawn" / "PO cancelled", number never truncates).
+
+goods_chain gains `placements_on(db, po_line_ids=(), spo_allocation_ids=())`: every live
+placement whose chain passes through those documents, each with its `LinkChain` (the same split,
+GR bins and dead rules; placements on a PO line that follow onto an SPO are returned for that
+SPO with `via_po` = the PO number).
+
+1. PO popup (`OrderInquiryWorklistService.get_po_detail` WS ~2595, `_spo_numbers_by_po_line`
+   ~2716, "Allocated to" `_allocations_on` ~2893; FE `OrderInquiryDocumentDialog.tsx`
+   `PO_LINE_COLUMNS` ~344): each PO line carries `spos` = one entry per SPO line it was
+   transferred onto (`spo_number`, `line_label`, `receipts`, `dead_reason`), drawn with the
+   shared pills; the column headed "Received" reads "Transferred"; "Allocated to" rows carry
+   where the placement's goods are now (`receipts` / SPO in transit / `dead_reason`).
+2. SPO popup (`get_spo_detail` WS ~2759): "Allocated to" also lists placements that reached the
+   SPO through their PO line, marked "via PO <number>".
+3. SPO document page (`procurement_service.get_document` ~2942, "SO covered" ~3044-3135; FE
+   `procurement-management/spo-allocations/components/SPODocumentDetail.tsx`): "SO covered"
+   includes the via-PO placements, marked the same way.
+4. SCM PO detail Lines tab (`scm/purchase_order_service.py` ~145; FE
+   `scm/purchase-orders/[id]/components/PurchaseOrderDetail.tsx` ~592-642): header "Qty received"
+   -> "Transferred"; new SPO column per PO line (same `spos` entries, shared pills).
+
+Real cases: PO 202607-S0100 (L880 on SPO-2026/09-0107 L9 "Received 486 at BRW-BB"; L784's 294 via
+PO on L12), SPO-2026/09-0107 (L7 withdrawn), PO 202607-S0083 (cancelled line, OI-2609-0194 L16).
+Tests (red first): backend wire for 1-4 incl. `placements_on`; vitest for the dialog headers,
+SPO cells and via-PO rows, and the SCM PO detail header + SPO column; browser 1280 / 375.
+
+Lead note on U4 (26 Oct): owner rule R13 (24 Sep, `OrderInquiryDocumentDialog.tsx` ~658: "the
+lines grid is the WHOLE answer now - no panel underneath states it a second way") stands. The U4
+mock drew "Allocated to" panels in the PO / SPO popups; that was a mock error, so U4 changes the
+popups' lines grids only (SPO column with pills, "Transferred"), and the via-PO placements show on
+the SPO document page's "SO covered" (a different screen, not under R13). Flagged to the owner.
+
+## 13. Owner ruling on double placements (ask a12763574, 27 Oct)
+
+The same goods placed twice: on a PO line AND directly on the SPO line that PO line was
+transferred onto (crew audit of #1874: SPO-2026/09-0107 L3 "2 SOs 180" on 116, L5 22 on 11,
+L6 600 on 300, header "SO covered 12 . 2,192" on 2,016). Not a double: L12 294 via PO + 60
+direct = 354, a real split.
+
+Ruling (a): stored placements stay as they are. Every stored placement shows (U4's SPO page
+"SO covered" and its header sum them); the U4 / U5 hand-test scripts warn the owner. Stock
+Debt coverage already counts the pair once (`supply_assignment.py:730`, `:759` cap each hold);
+only `_book_so_holds` adds followed + direct (`stock_debt_service.py:2552-2558`), which can only
+make an SPO's S/O pin less. The OI worklist "taken" counts both (`order_inquiry_worklist_service.py`
+`:2507-2509`, `:2186-2198`). U5 stops NEW doubles (the candidate walk nets followed placements).
+
+Follow-up lane (not built here): release the redundant links on the over-placed SPO allocations,
+like AC-REMOVED-LINES #1878. Measured: 24 SPO allocations carry more live placed qty (direct +
+followed) than allocated, 923 excess units (`sql/d-14.sql` on sorento_cagent_stack, 15 Oct data,
+`data-D-divergence-dev.md:51`; the count on newer data may differ);
+row list `sql/d-14-list.sql` (read-only, for crew / the owner to run; not run from this lane).

@@ -27,7 +27,7 @@ from app.models.product import Brand
 from app.models.sales_agent import SalesAgent
 from app.services import audit_service
 from app.services import contact_setup_engine as engine
-from app.services.contact_access_copy_service import Names, names_for, snapshots
+from app.services.contact_access_copy_service import REMOVED_LOCATION, Names, names_for, snapshots
 from app.services.contact_customer_service import link_customer
 from app.services.error_handler import AppException
 
@@ -56,6 +56,9 @@ TEMPLATE: dict[str, Any] = {
     "switches_off": ["escalation_allowed", "packing_list_allowed"],
 }
 COMPANY_ORDER = ("SRT", "MCH")
+#: A contact holding one of these companies keeps every brand: the import never narrows its
+#: brands, and a narrowed list goes back to every brand (owner 27 Oct, ACCESS-SHEET-FIXES).
+EVERY_BRAND_COMPANIES = ("MCH",)
 OWNER_WORDS = {"business owner": "owner", "employee": "employee"}
 CONTACT_COLUMNS = engine.CONTACT_COLUMNS + (
     RespondContact.brand_ids, RespondContact.chatbot_allowed, RespondContact.regions,
@@ -216,6 +219,11 @@ def _world(db: Session, used: set) -> dict:
         names[str(brand.id)] = brand.brand_name
     world["brands"] = {c: sorted(ids) for c, ids in by_company.items()}
     world["brand_names"] = names
+    # By code from the companies table, not the sheet's world: a contact may hold MCH already
+    # while the sheet tags SRT alone.
+    world["every_brand_company_ids"] = {
+        str(r[0]) for r in db.query(Company.id).filter(Company.code.in_(EVERY_BRAND_COMPANIES))
+    }
     return world
 
 
@@ -373,8 +381,13 @@ def _build_blocks(db: Session, rows: list[dict], rank: bool) -> list[dict]:
                 survives, held = flags.get(c["id"], ("Y", "N"))
                 if survives == "Y" and held == "N":
                     exact[c["id"]] = c
+        # Every exact account is listed, but only one of a company the rows tag is ticked: the
+        # rest would link to nobody (ACCESS-SHEET-FIXES, owner 27 Oct).
         accounts = [
-            _account(c, "exact", 1.0, c["is_active"], block["agents"].get(c["company_code"]))
+            _account(
+                c, "exact", 1.0, c["is_active"] and c["company_code"] in union,
+                block["agents"].get(c["company_code"]),
+            )
             for c in sorted(exact.values(), key=lambda c: (c["company_code"] or "", c["code"]))
         ]
         covered = {c["company_code"] for c in exact.values()}
@@ -435,8 +448,48 @@ def _contact_entry(row: dict) -> dict:
         "line": row["line"], "name": row["name"], "phone": row["phone_text"], "in_crm": False,
         "contact_id": None, "role": row["tags"]["role"], "companies": companies,
         "template": "+".join(companies) + f" {row['tags']['role']}", "status": "skipped",
-        "skip_reason": None, "changes": [], "warnings": [], "not_applied": [],
+        "skip_reason": None, "changes": [], "warnings": [], "holds_more_items": [], "outside_links": [],
+        "not_applied": [],
     }
+
+
+def _shown_changes(changed: list[dict], snap, todo: dict, names: Names, world: dict) -> list[dict]:
+    """The changes as the preview lists them: stock locations one location per item, not one line."""
+    code = {**names.warehouses, **{str(w.id): w.warehouse_code for per in world["warehouses"].values() for w in per.values()}}
+
+    def items(include, hide: bool):
+        return sorted(code.get(w, REMOVED_LOCATION) for w in include) + (["hide zero-quantity"] if hide else [])
+
+    out = []
+    for c in changed:
+        before, after = c["before"], c["after"]
+        if c["facet"] == "stock_locations":
+            cur = snap.stock
+            if cur is not None and cur.include and cur.exclude is None:
+                before = items(cur.include, cur.hide_zero)
+            _, include_ids, hide = todo["stock"]
+            if include_ids:
+                after = items(include_ids, hide)
+        out.append({"facet": c["facet"], "before": before, "after": after})
+    return out
+
+
+def _holds_more_items(snap, tpl: dict, names: Names, world: dict, keeps_every_brand: bool = False) -> list[dict]:
+    """Per facet, what the contact holds outside its template, by the labels the changes use."""
+    company_code = {str(c.id): code for code, c in world["companies"].items()}
+    warehouse_code = {str(w.id): w.warehouse_code for per in world["warehouses"].values() for w in per.values()}
+    held_locations = set(snap.stock.include or ()) if snap.stock else set()
+    facets = (
+        ("access_types", set(snap.access_types) - tpl["types"], lambda i: i),
+        ("companies", set(snap.companies) - tpl["companies"],
+         lambda i: company_code.get(i) or names.companies.get(i, (None, None))[0] or "other company"),
+        ("stock_locations", held_locations - tpl["locations"],
+         lambda i: warehouse_code.get(i) or names.warehouses.get(i) or "other location"),
+        # A contact the engine leaves on (or returns to) every brand holds nothing extra there.
+        ("brands", set() if keeps_every_brand else set(snap.brands) - tpl["brands"],
+         lambda i: world["brand_names"].get(i) or names.brands.get(i) or "other brand"),
+    )
+    return [{"facet": f, "items": sorted(label(i) for i in extra)} for f, extra, label in facets if extra]
 
 
 def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozenset, rank: bool) -> dict:
@@ -455,6 +508,7 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
     media = {}
     links: dict[str, set] = {}
     customer_label: dict[str, str] = {}
+    customer_company: dict[str, Optional[str]] = {}  # customer id -> company code
     if found:
         ids = [str(c.id) for c in found.values()]
         from app.models.media import ContactMediaLimit
@@ -471,18 +525,35 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
         for b in blocks:
             for a in b["accounts"]:
                 customer_label[a["customer_id"]] = f"{a['customer_code']} {a['customer_name']}".strip()
-        for c in db.query(Customer.id, Customer.customer_code, Customer.customer_name).filter(
-            Customer.id.in_(wanted_ids - set(customer_label))
-        ) if wanted_ids - set(customer_label) else ():
-            customer_label[str(c.id)] = f"{c.customer_code} {c.customer_name}".strip()
+                customer_company[a["customer_id"]] = a["company_code"]
+        rest = wanted_ids - set(customer_label)
+        if rest:
+            code_of = {str(c.id): c.code for c in db.query(Company.id, Company.code)}
+            for c in db.query(Customer.id, Customer.customer_code, Customer.customer_name, Customer.company_id).filter(
+                Customer.id.in_(rest)
+            ):
+                customer_label[str(c.id)] = f"{c.customer_code} {c.customer_name}".strip()
+                customer_company[str(c.id)] = code_of.get(str(c.company_id))
 
     out_blocks, plans = [], []
     desired_of: dict[str, engine.Desired] = {}
     for block in blocks:
         entries = []
+        links_to: dict[str, list[str]] = {}  # account id -> found contacts whose row tags its company
         for row in block["rows"]:
             entry = _contact_entry(row)
             contact = found.get(row["phone"])
+            row_companies = set(row["tags"]["companies"])
+            if contact is not None:
+                held = links.get(str(contact.id), set())
+                # Owner 27 Oct: shown, never removed (apply is add-only).
+                entry["outside_links"] = sorted(
+                    f"{customer_label.get(i, 'other account')} ({customer_company.get(i) or 'other company'})"
+                    for i in held if customer_company.get(i) not in row_companies
+                )
+                for a in block["accounts"]:
+                    if a["company_code"] in row_companies:
+                        links_to.setdefault(a["customer_id"], []).append(row["name"])
             if contact is None:
                 entry["skip_reason"] = "ambiguous_phone" if row["phone"] in ambiguous else "not_in_crm"
             elif block["key"] not in confirmed:
@@ -496,9 +567,10 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
                 )
                 snap = snaps[cid]
                 changes, todo = engine._plan_contact(db, contact, snap, d, names, world, TEMPLATE, media.get(cid), skip)
-                held = links.get(cid, set())
-                add_links = [i for i in confirmed[block["key"]] if i not in held]
-                after = sorted({*held, *confirmed[block["key"]]})
+                # Owner 27 Oct: an account links only to contacts whose own row tags its company.
+                row_links = [i for i in confirmed[block["key"]] if customer_company.get(i) in comps]
+                add_links = [i for i in row_links if i not in held]
+                after = sorted({*held, *row_links})
                 if add_links:
                     changes.append({
                         "facet": "customers", "changed": True, "status": "add", "contact_id": cid,
@@ -506,18 +578,13 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
                         "after": sorted(customer_label.get(i, "other account") for i in after),
                     })
                 tpl = _template_sets(world, comps, row["tags"]["role"])
-                warnings = []
-                snap_locations = set(snap.stock.include or ()) if snap.stock else set()
-                if (
-                    set(snap.access_types) - tpl["types"] or set(snap.companies) - tpl["companies"]
-                    or snap_locations - tpl["locations"] or set(snap.brands) - tpl["brands"]
-                ):
-                    warnings.append("holds_more")
+                holds_more = _holds_more_items(snap, tpl, names, world, bool(todo.get("keeps_every_brand")))
+                warnings = ["holds_more"] if holds_more else []
                 changed = [c for c in changes if c["changed"]]
                 entry.update(
-                    in_crm=True, contact_id=cid, skip_reason=None, warnings=warnings,
+                    in_crm=True, contact_id=cid, skip_reason=None, warnings=warnings, holds_more_items=holds_more,
                     status="applied" if changed else "no_change",
-                    changes=[{"facet": c["facet"], "before": c["before"], "after": c["after"]} for c in changed],
+                    changes=_shown_changes(changed, snap, todo, names, world),
                     not_applied=sorted({c["facet"] for c in changes if c["status"] == "not_applied"}),
                 )
                 plans.append({
@@ -528,7 +595,8 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
         out_blocks.append({
             "key": block["key"], "dealer": block["dealer"], "alt_dealers": block["alt_dealers"],
             "companies": block["companies"], "status": block["status"], "warnings": block["warnings"],
-            "accounts": block["accounts"], "contacts": entries,
+            "accounts": [{**a, "links_to": links_to.get(a["customer_id"], [])} for a in block["accounts"]],
+            "contacts": entries,
         })
 
     contacts = [c for b in out_blocks for c in b["contacts"]]

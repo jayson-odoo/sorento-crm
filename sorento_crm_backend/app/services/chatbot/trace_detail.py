@@ -667,6 +667,37 @@ def _index_match(records: list[dict[str, Any]], db: Session | None = None) -> di
     }
 
 
+def _span_extract(records: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """ENTITY-EXTRACT-MATCH S2: the span pass of a turn (the phrases the model copied, the fallback), plus the row
+    labels the parser was shown (the turn's `lookup_lists` hits, once each); None for a turn with no span event."""
+    events = _kind_records(records, "span_extract")
+    if not events:
+        return None
+    event = events[-1]
+    lookups = _kind_records(records, "lookup_lists")
+    shown: list[str] = []
+    for hit in (lookups[-1].get("hits") if lookups else None) or []:
+        label = hit.get("label") if isinstance(hit, dict) else None
+        if isinstance(label, str) and label not in shown:
+            shown.append(label)
+    return {
+        "spans": [s for s in event.get("spans") or [] if isinstance(s, dict)],
+        "rows_rendered": event.get("rows_rendered") or 0,
+        "near_exact_rows": event.get("near_exact_rows") or 0,
+        "fallback": bool(event.get("fallback")),
+        "fallback_reason": event.get("fallback_reason"),
+        "provider": event.get("provider"),
+        "model": event.get("model"),
+        "model_source": event.get("model_source"),
+        "embedding_model": event.get("embedding_model"),
+        "ms": event.get("ms") or 0,
+        "tokens": event.get("tokens") if isinstance(event.get("tokens"), dict) else {},
+        "matched_rows": shown,
+        "near_exact": [n for n in event.get("near_exact") or [] if isinstance(n, dict)],
+        "final_block": event.get("final_block") if isinstance(event.get("final_block"), dict) else {},
+    }
+
+
 def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[str, Any]:
     records = _records(row)
     return {
@@ -686,4 +717,5 @@ def compose_trace_detail(row: ChatbotTurn, db: Session | None = None) -> dict[st
         "order": _order(row, db),
         "prompt_text": _prompt_text(records),
         "index_match": _index_match(records, db),
+        "span_extract": _span_extract(records),
     }

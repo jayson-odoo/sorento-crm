@@ -89,9 +89,15 @@ def can_view(db: Session, project_id: str, current_user: dict) -> bool:
         # id is simply not visible.
         return False
     try:
-        return (
-            db.query(Project.id).filter(Project.id == str(project_id)).first() is not None
-        )
+        from app.services import own_scope
+
+        query = db.query(Project.id).filter(Project.id == str(project_id))
+        # A user who may see only their own projects sees only their own projects' panel
+        # (PORTAL-P2-ONLY-THEIRS); everyone else keeps the company-wide read above.
+        uid = str((current_user or {}).get("id") or "")
+        if own_scope.user_is_limited(db, uid, own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN):
+            query = query.filter(own_scope.project_clause(own_scope.me(db, uid)))
+        return query.first() is not None
     except Exception:  # noqa: BLE001 -- a failed lookup is a "no", not a 500
         if not db.is_active:
             db.rollback()

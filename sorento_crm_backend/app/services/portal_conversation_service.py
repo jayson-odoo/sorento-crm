@@ -36,13 +36,12 @@ def _iso(value: Any) -> Optional[str]:
     return value.isoformat() if isinstance(value, datetime) else None
 
 
-def _rows_query(db: Session, agent_ids: list[str], *, q: Optional[str] = None, contact_id: Optional[str] = None):
-    """The list, unpaged: one row per contact, with its named customer and latest message."""
+def _agent_link(agent_ids: list[str]):
+    """One row per contact linked to one of the agents' customers, with the customer it is
+    named by: the primary link, else the first by name."""
     from app.services.stock_ask_service import _owning_agent_column
 
-    # The customer a contact is named by when they belong to several of the agent's accounts:
-    # the primary link, else the first by name.
-    link = (
+    return (
         select(
             RespondContactCustomer.contact_id.label("contact_id"),
             Customer.customer_name.label("customer_name"),
@@ -63,8 +62,20 @@ def _rows_query(db: Session, agent_ids: list[str], *, q: Optional[str] = None, c
             RespondContactCustomer.is_primary.desc(),
             Customer.customer_name,
         )
-        .cte("agent_link")
     )
+
+
+def agent_contact_ids(agent_ids: list[str]):
+    """``respond_contacts.id`` of the agents' contacts, as a subquery. The CRM inbox narrows
+    to this for a user who may only see their own conversations (PORTAL-P2-ONLY-THEIRS), so
+    the inbox and the portal view can never disagree on whose contact is whose."""
+    link = _agent_link(agent_ids).subquery("agent_link_ids")
+    return select(link.c.contact_id)
+
+
+def _rows_query(db: Session, agent_ids: list[str], *, q: Optional[str] = None, contact_id: Optional[str] = None):
+    """The list, unpaged: one row per contact, with its named customer and latest message."""
+    link = _agent_link(agent_ids).cte("agent_link")
     # The inbox's "latest message per contact" DISTINCT ON, narrowed to THIS agent's contacts
     # before it runs (review 30 Sep, finding 2): the portal polls this every 30s per open tab, so
     # it must not walk every contact's messages the way the staff inbox can afford to.
