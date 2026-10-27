@@ -1,7 +1,7 @@
 """AC-REMOVED-KEEP-CANCELLED follow-up: mark the lines the sweep keeps instead of deleting.
 
 Revision ID: akc_0001_removed_unreferenced
-Revises: eem_0002_span_version_on_diet
+Revises: eqd_0001_pending_idx_prune
 Create Date: 2026-10-27
 
 Before #1905 the ingest's leftover sweep hard-deleted an AutoCount PO / SO line a push no
@@ -16,7 +16,7 @@ from __future__ import annotations
 from alembic import op
 
 revision = "akc_0001_removed_unreferenced"
-down_revision = "eem_0002_span_version_on_diet"
+down_revision = "eqd_0001_pending_idx_prune"
 branch_labels = None
 depends_on = None
 
