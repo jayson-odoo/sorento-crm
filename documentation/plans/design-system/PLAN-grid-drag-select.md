@@ -1,6 +1,6 @@
 # PLAN: DataGrid drag / range select (GRID-DRAG-SELECT)
 
-Status: Build (local lane a3, 28 Oct). Owner answered all five (UAC `grid-drag-select-acceptance-criteria.md`). Done + reviewed: A Shift+click, B drag, D keyboard on both checkbox paths, toolbar hold. Left: C select-all-matching on Contacts (red tests in f67e5b69), B-touch press-and-hold, rollout cost crew-note, reviewer delta, browser 1280/375, hand test. Track: M (FE only, no migration, no RBAC change).
+Status: Review (local lane a3, 28 Oct). Built red-first: A Shift+click, B mouse drag, B-touch press-and-hold (500 ms, 8px slop), D keyboard on both checkbox paths; C Odoo-style select all on Contacts, capped 1,000, with export, pending state and Link customers run 6 at a time. Reviewer rounds closed; browser pass 1280 + 375 touch; hand test with the owner next. Rollout to the other 36 bulk-action lists is the SELECT-ALL-ROLLOUT lane (owner, 28 Oct). Track: M (FE only, no migration, no RBAC change).
 
 ## Journey
 
