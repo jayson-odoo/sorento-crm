@@ -23,7 +23,7 @@ pick up `invoiced` on rebase.
 
 **`pending_delivery`.**
 - **Rows:** the existing `services/reports/datasets/delivery_order_lines.py` (DO lines, DO date), plus the
-  outstanding-DO predicate `outstanding_report_service._outstanding_clause(_delivered_status_ids(db))`, the one
+  outstanding-DO predicate `order_service._outstanding_clause(_delivered_status_ids(db))` (`services/order_service.py:75,102`), the one
   population the old report's DO block used (`outstanding_report_service.py:448-480`, owner R11).
 - **Measures:** qty = line quantity; RM = the dataset's own line amount.
 - **Filters and groupings:** every filter and grouping the dataset already declares (customer, product, brand,
