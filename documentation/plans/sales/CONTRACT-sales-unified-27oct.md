@@ -107,3 +107,19 @@ A credit or debit note none of whose lines trace inherits the sales orders of it
   `date_to` mapped onto its params; `group=category` on invoiced -> 422 `group_needs_order_basis`.
 - `PATCH /api/v1/companies/{id}` accepts `sales_agent_source`.
 - Customers push: `market_segment_code` also writes `autocount_debtor_type` (upper, trimmed).
+
+## 7. The chatbot's report ask (`crm_report_ask`, `GET /api/v1/order-management/report-ask`)
+
+- New basis `invoiced` in `app.services.reports.ask.CATALOGUE["sales"]`, label `"invoiced sales"`,
+  definition `sales_invoiced_ask` built in `app/services/reports/datasets/billing_document_lines.py`
+  on the SAME dataset expressions as `top_selling_items` (one copy): dimension keys `customer`,
+  `product` (product code, else the line's item code), `brand`, `category`, `sales_agent`
+  (`agent_label()`, `(no agent)`), `channel` (sales type label), `month` (`YYYY-MM` of doc_date),
+  `all`; measures `amount` (`signed_line_amount`), `qty` (`signed_line_quantity`), `customers`,
+  `orders` (distinct billing documents), `products` (count_distinct). Filters `customer`,
+  `product`, `brand`, `category`, `sales_agent` (the attributed agent; `none` = no agent),
+  `customer_agent`, `channel` (accepts `retail`/`dealer`, `project`, and the six sales type
+  values). `location` on invoiced: 422 `location_needs_order_basis`.
+- The route's `DEFAULT_BASIS` becomes `invoiced` (a direct API caller naming none).
+- Tally: the report-ask invoiced amount for group_by `product` equals the `top_selling_items`
+  report's `sales_value` per item for the same company, period and channel (AC-30).
