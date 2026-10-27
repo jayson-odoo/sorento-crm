@@ -55,6 +55,14 @@ by_index = pytest.mark.parametrize("table,name,columns,printed", CASES, ids=[c[1
 SPO = CASES[0]
 
 
+@pytest.fixture(autouse=True)
+def _wait_out_other_tests(monkeypatch):
+    """A CONCURRENTLY build waits for every open transaction in the DATABASE, and under xdist
+    other workers' tests hold theirs for seconds. The success paths here wait as long as that
+    takes (lock_timeout 0); the timeout tests set their own short limit."""
+    monkeypatch.setenv("MIGRATION_LOCK_TIMEOUT", "0")
+
+
 def _load():
     spec = importlib.util.spec_from_file_location(f"m_{REVISION}", VERSIONS / f"{REVISION}.py")
     module = importlib.util.module_from_spec(spec)
@@ -186,7 +194,9 @@ def test_the_build_runs_under_the_repo_migration_limits_and_restores_the_session
     with _scratch() as (_schema, conn):
         conn.exec_driver_sql("SET lock_timeout = '0'")
         conn.exec_driver_sql("SET statement_timeout = '0'")
-        assert ensure_index_online(conn, table, name, columns) is True
+        # The outcome depends on what other xdist workers hold open (a 5s wait may time out);
+        # this test pins only the limits and their restore.
+        ensure_index_online(conn, table, name, columns)
         assert seen[0] == ("5s", "180s")
         assert conn.execute(sa.text("SHOW lock_timeout")).scalar() == "0"
         assert conn.execute(sa.text("SHOW statement_timeout")).scalar() == "0"
@@ -208,6 +218,7 @@ def test_a_build_stuck_behind_live_work_gives_up_logs_and_the_retry_builds_it(mo
             "not built" in r.getMessage() and "lock timeout" in r.getMessage()
             for r in caplog.records
         )
+        monkeypatch.setenv("MIGRATION_LOCK_TIMEOUT", "0")
         assert ensure_index_online(conn, table, name, columns) is True
         assert _index(conn, schema, name)[1] is True
 
@@ -343,3 +354,31 @@ def test_duration_ms_reads_every_migration_timeout_form():
     assert [duration_ms(v) for v in ("0", "5s", "2500ms", "3min", "1h", "250")] == [
         0, 5000, 2500, 180000, 3600000, 250,
     ]
+
+
+def test_the_migration_leaves_it_to_another_builder_and_still_succeeds(caplog):
+    """The advisory lock lives in `ensure_indexes_online`, so the migration takes it too:
+    with another builder (the retry on the other colour) holding it, upgrade() builds nothing,
+    warns, and still completes."""
+    module = _load()
+    caplog.set_level(logging.WARNING, logger=online_index.__name__)
+    with _scratch() as (schema, conn):
+        with engine.connect() as other:
+            other.execute(sa.text("SELECT pg_advisory_lock(:k)"), {"k": online_index.ADVISORY_LOCK_KEY})
+            try:
+                _run_upgrade(module, schema)
+            finally:
+                other.execute(sa.text("SELECT pg_advisory_unlock(:k)"), {"k": online_index.ADVISORY_LOCK_KEY})
+        assert all(_index(conn, schema, n) is None for _t, n, _c in GOODS_CHAIN_KEY_INDEXES)
+        assert any("another backend is building" in r.getMessage() for r in caplog.records)
+
+
+def test_the_retry_script_never_exits_non_zero(monkeypatch):
+    """gunicorn reaps it like a worker after start.sh execs, so even a failure exits 0."""
+    from scripts import ensure_goods_chain_indexes as retry
+
+    def boom(_engine):
+        raise RuntimeError("database unreachable")
+
+    monkeypatch.setattr(retry, "run", boom)
+    retry.main()

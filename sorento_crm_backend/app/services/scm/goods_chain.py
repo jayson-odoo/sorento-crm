@@ -245,7 +245,8 @@ def key_rows(keys: Iterable[Tuple[Any, ...]], **columns: Any) -> Any:
     grows; and an expression that deep overflows the default 2MB `max_stack_depth` (about
     7,500 keys in the sandbox). One `unnest` of one array per column is the same SQL for 5
     keys or 50,000, and a join against it can use the key's index. Each array is cast to its column's type so a uuid
-    column is compared as uuid. `keys` must not be empty."""
+    column is compared as uuid. `keys` must not be empty and no part may be None (it would
+    reach the cast as the text 'None'): callers keep only complete keys."""
     names = list(columns)
     distinct = sorted({tuple(str(value) for value in key) for key in keys})
     arrays = [

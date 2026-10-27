@@ -170,8 +170,77 @@ def test_stock_debt_follow_totals_same_answer_with_9000_padding_allocations(scm_
     w.place_on_po(seeded["line1"], 70)
     real = [seeded[k].id for k in ("a1", "a1b", "a2", "a3")]
     service = StockDebtService(db)
-    alone = service._follow_totals([seeded["line1"].id], real)
-    assert alone[0][seeded["line1"].id] > 0
+    # No PO line ids: line1 is reached ONLY through the key its allocations name (a1, a1b
+    # carry from_po_number + ref and no po_line_id), so this pins the key route itself.
+    alone = service._follow_totals([], real)
+    capacity, claims = alone
+    assert capacity[seeded["line1"].id] > 0
+    assert claims[seeded["a1"].id] + claims[seeded["a1b"].id] == 70
     padding = _pad_allocations(db, seeded["a1"].id)
     assert len(padding) == PADDING
-    assert service._follow_totals([seeded["line1"].id], padding + real) == alone
+    assert service._follow_totals([], padding + real) == alone
+
+
+# --------------------------------------------------------------- decoys: company, product
+#
+# Each key part must be matched, not only the PO number and ref: a decoy that differs from the
+# real key in ONE part (another company, another product) is never followed. The session is
+# scoped to BOTH companies, so the scope filter cannot hide a wrong match.
+
+
+def _other_company(db):
+    from app.models.base import set_company_scope
+    from app.models.company import Company
+
+    other = _u()
+    db.add(Company(id=other, name="ZZT GC decoy", code=f"ZZTGD{_u()[:6]}".upper(), is_active=True))
+    db.flush()
+    set_company_scope(db, frozenset({SORENTO_COMPANY_ID, other}))
+    return other
+
+
+def _decoy_world(db):
+    """line1 with no SPO of its own, plus two allocations naming line1's PO number and ref:
+    one in another company, one of another product."""
+    from tests.scm.test_stock_debt_routes import _product
+
+    w = _World(db)
+    po, line = w.po(ordered=100, transferred=100)
+    other_company = _other_company(db)
+    by_company = w.onto(po, line, qty=40)
+    by_company.company_id = other_company
+    by_product = w.onto(po, line, qty=30)
+    by_product.product_id = _product(db, f"{w.marker}-DECOY").id
+    db.flush()
+    return w, po, line, {"company": by_company, "product": by_product}
+
+
+def test_transferred_allocations_follows_no_decoy(scm_app):
+    db = scm_app[1]
+    _w, po, line, decoys = _decoy_world(db)
+    assert _gc().transferred_allocations(db, [_po_line_row(po, line)]) == {}
+
+
+def test_po_lines_feeding_follows_no_decoy(scm_app):
+    db = scm_app[1]
+    _w, _po, line, decoys = _decoy_world(db)
+    for kind, decoy in decoys.items():
+        row = SimpleNamespace(
+            spo_po_line_id=None,
+            spo_from_po_number=decoy.from_po_number,
+            spo_from_ref=decoy.from_po_line_ref.strip(),
+            spo_product_id=decoy.product_id,
+            spo_company_id=decoy.company_id,
+        )
+        assert _gc()._po_lines_feeding(db, [row]) == set(), kind
+
+
+def test_stock_debt_follow_totals_follows_no_product_decoy(scm_app):
+    """`_follow_totals` keys on PO number, ref and product (its triples carry no company)."""
+    from app.services.scm.stock_debt_service import StockDebtService
+
+    db = scm_app[1]
+    w, _po, line, decoys = _decoy_world(db)
+    w.place_on_po(line, 50)
+    capacity, _claims = StockDebtService(db)._follow_totals([], [decoys["product"].id])
+    assert line.id not in capacity

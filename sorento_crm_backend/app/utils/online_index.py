@@ -45,9 +45,8 @@ GOODS_CHAIN_KEY_INDEXES: Tuple[Tuple[str, str, str], ...] = (
     ),
 )
 
-#: pg_try_advisory_lock key, so two backends starting together (blue and green) never build
-#: the same index at once; the second would otherwise see the first's in-progress build as
-#: INVALID and drop it.
+#: pg_try_advisory_lock key `ensure_indexes_online` takes, so two builders (the migration, the
+#: retry, blue and green starting together) never build the same index at once.
 ADVISORY_LOCK_KEY = 0x6763_6964_7830  # "gcidx0"
 
 
@@ -131,10 +130,30 @@ def ensure_index_online(
 
 
 def ensure_indexes_online(bind, indexes: Sequence[Tuple[str, str, str]]) -> bool:
-    """`ensure_index_online` for each, all of them inside ONE migration statement_timeout
-    (180s by default): blue/green waits 4 minutes for health, so two builds may not each take
-    a full 180s. Each lock wait is still bounded by lock_timeout on top. An index the budget
-    no longer reaches is skipped with a WARNING, for the retry. True when all are VALID."""
+    """`ensure_index_online` for each, under `ADVISORY_LOCK_KEY`: the migration and the retry
+    script, from any number of backends starting at once, never build at the same time (one
+    would see the other's in-progress build as INVALID and drop it). A caller that does not
+    get the lock skips with a WARNING; whoever holds it builds.
+
+    All builds share ONE migration statement_timeout (180s by default): blue/green waits 4
+    minutes for health, so two builds may not each take a full 180s. Each lock wait is still
+    bounded by lock_timeout on top. An index the budget no longer reaches is skipped with a
+    WARNING, for the retry. True when all are VALID afterwards."""
+    if all(index_valid(bind, t, n) is True for t, n, _c in indexes):
+        return True
+    if not bind.execute(sa.text("SELECT pg_try_advisory_lock(:k)"), {"k": ADVISORY_LOCK_KEY}).scalar():
+        log.warning(
+            "another backend is building the goods chain key indexes; leaving them to it "
+            "(the next backend start retries whatever it does not finish)."
+        )
+        return False
+    try:
+        return _ensure_within_budget(bind, indexes)
+    finally:
+        bind.execute(sa.text("SELECT pg_advisory_unlock(:k)"), {"k": ADVISORY_LOCK_KEY})
+
+
+def _ensure_within_budget(bind, indexes: Sequence[Tuple[str, str, str]]) -> bool:
     total_ms = duration_ms(migration_timeouts()[1])
     deadline = time.monotonic() + total_ms / 1000 if total_ms else None
     results = []
