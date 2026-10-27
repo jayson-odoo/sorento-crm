@@ -1,9 +1,10 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: S2 #1885 built dark (head 3e5740d367, reviewer READY on b261d856bf, security CLEAN, crew-audit fixes in);
-S2 gate NOT PASSED on either model (see "S2 gate results"); owner decision pending. S1 #1876 merged (078b1ab482).
-Track: L overall (chatbot architecture), lead pattern; S1 itself is M (library + eval, no migration, no behaviour change).
-UAC: `documentation/plans/chatbot/entity-extract-match-acceptance-criteria.md`.
+Status: 27 Oct 14:2x. S1 #1876, S2 #1885 (dark), S2 fix #1895 merged. S3 #1898 head 5c483b59fe (semantic bridge +
+startup warm round AC-S3-9..15): CI green (run 40448538146), reviewer READY, security CLEAN, owner hand test done; owner
+ruling 14:2x: merge AS IS (crew merges). The three hand-test FAILs (parser v132 never sets a category canonical_code;
+'wc' code hit shadows the class; Latin message inherits zh) go to a NEW lane after the merge (brief: crew-note
+6435294917 on #1898). 200-msg S3 gate: 74.2 vs R 75.3 / B 73.8 (flat). Track: L lane.
 
 Owner rulings (26 Oct ~16:15, via crew): Q1 (a) two-pass + union, slices S1 -> S2 -> S3 -> S4, S1 its own PR
 (red-first, reviewer), then S2; Q2 +~1.0 s per turn OK; Q3 (a) no new alias table: PROMPT_SYNONYMS into lookup_sets,
@@ -387,6 +388,23 @@ gives the parser cleaner candidate blocks but not more right answers; remaining 
 copies out (category words inside codes, spec names) and partial customer names. Offline (no LLM) on the recorded span
 answers: V1 offered the gold row for 79.0% of mentions, V2 85.0%, today's lookup 79.8% (spelling only). Owner option:
 gemini-3.5-flash-lite as span model finds more spans than gpt-5.4-mini (94.0 vs 90.3 span recall on 186 messages).
+
+## S3 design: semantic bridge (UAC AC-S3-1..8)
+
+- Embedder switch: new `PROMPT_KEYS` entry `chatbot_lookup_embedder` (fallback text names its purpose; no prompt text is
+  rendered); `lookup_lists.embedder(db)` reads `ai_prompt_registry.agent_model(db, "chatbot_lookup_embedder")`: gemini ->
+  a Gemini embedder (batchEmbedContents on GEMINI_EMBEDDING_MODEL, `llm_provider.py:991`) with
+  `resolve_api_key(cfg, "gemini")`; otherwise today's `provider_embedder` (`lookup_lists.py:724`). The embedder exposes
+  its model so callers pick floors. The RAG worker's `settings.embedding_provider` (`config.py:297`) is NOT touched.
+- Cost of a switch: ~4,600 list texts, ~50k tokens, ~USD 0.008 and ~15 s per worker process start (spelling only until
+  warm, as today).
+- Floors: `list_resolver.MEANING_FLOORS_BY_MODEL`, OpenAI = today's FLOORS meaning values, gemini-embedding-001 = AC-S3-3
+  table (`crew/state/eval/eem/s2/gem_floors_lowtie.json`); unknown model -> meaning off.
+- Span `meaning`: schema field (string or null); prompt v2 = v1 + one paragraph (`crew/state/eval/eem/s2/gem_span2.py:21`);
+  migration `eem_0003_span_meaning` publishes v2 unlabelled; engine resolves meaning first (AC-S3-5); trace/drawer show it.
+- Copy: crew sets `chatbot_lookup_embedder` production label -> gemini / gemini-embedding-001 and moves the span label to
+  v2 on sorento_explore1020 only.
+- Size: M (~400 lines + migration). Stacked on #1895 (`crew/eem-span-version-fix`), retargeted to main after it merges.
 
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 

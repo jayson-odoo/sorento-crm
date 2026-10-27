@@ -107,7 +107,8 @@ export type CustomerSelectOption = SearchableSelectOption & {
 export async function searchCustomersSelect(
   query: string,
   pageIndex = 0,
-  options?: { companyScope?: 'grants' },
+  // `customerId` reads back that one customer's label (active or not), e.g. a filter restored from the URL.
+  options?: { companyScope?: 'grants'; customerId?: string },
 ): Promise<CustomerSelectOption[]> {
   type Row = {
     id: string;
@@ -126,6 +127,7 @@ export async function searchCustomersSelect(
   });
   if (query.trim()) search.set('query', query.trim());
   if (options?.companyScope) search.set('company_scope', options.companyScope);
+  if (options?.customerId) search.set('customer_id', options.customerId);
   const response = await apiFetch(`/api/v1/order-management/customers/select?${search.toString()}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Failed to load customers'));
