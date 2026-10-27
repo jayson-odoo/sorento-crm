@@ -1,6 +1,6 @@
 # PLAN: BOARD-NO-HOLD - a Fulfilment Planning decision is a plan, not a stock hold
 
-Status: Plan (behaviour card + dry-run script; no code until the owner answers the card). Track: full
+Status: Plan, card answered 27 Oct ~18:05 (Q1 a, Q2 as today; Q3-Q5 built on trimmed recommendations); red-first starts once the crew dry-run numbers are in. Track: full
 (size L, touches every free-stock reader). Lane is LEAD pattern (tester + coder + reviewer subagents).
 
 ## Journey
@@ -48,7 +48,7 @@ One place: `_hold_query` stops matching decision allocations, so every reader ab
 allocation half then hands the walk a ROUTE instead of a hold: "this line may draw this bin, at its own date"
 (card Q1 a), joined to `may_draw` for that line only. No per-screen copy.
 
-## Red-first test list (draft, assumes card answers Q1-Q5 = (a); revised once the owner answers)
+## Red-first test list (owner answers 27 Oct: Q1 a, Q2 as today; Q3-Q5 trimmed to as today, Q4 a)
 
 Backend, Postgres scratch schema (`tests/_pg_fixture.py`), seeded with the `_decided_line` shape of
 `tests/test_project_supply_holds.py`:
@@ -68,11 +68,12 @@ Backend, Postgres scratch schema (`tests/_pg_fixture.py`), seeded with the `_dec
 8. **Unchanged binders**: an OI placement on an SPO, landed goods for the line's own purchase, a PO S/O pin still bind
    first at any date (guards against the change leaking past `so_line_allocations`).
 9. **Confirm**: two orders may both confirm Reserve 36 of a 36 pile; no short recorded for the second because of the first.
-10. **Board queue** (Q2 a): a decided line Stock Debt reads short returns to the queue flagged "Plan not covered",
-    naming the earlier order; a decided line still covered stays out.
-11. **Borrow** (Q3 a): donor shows "planned for SO..." note; buy-back OI ORDER_BACK row still counted as demand.
+10. **Board queue as today** (Q2): a decided line Stock Debt reads short stays decided and out of the queue; no new
+    buy demand row appears for it.
+11. **Borrow as today** (Q3): the donor's "lent to" entry and the buy-back OI ORDER_BACK demand are unchanged; the
+    borrowed qty no longer nets the donor bin's free stock.
 
-Frontend vitest: wording of the decided-line pill and the "Plan not covered" state (Q5).
+No frontend change (Q5 trimmed to as today); browser pass checks Stock Debt + the board strip numbers only.
 
 Kill tests (reviewer): put the old `or_(decision_id IS NULL, state = ACTIVE)` back in `_hold_query` and tests 1-5 must go
 red; drop the route join and 6-7 must go red; widen the change to `_holds`' placement half and 8 must go red.
