@@ -22,7 +22,7 @@ and the narrower constraint and index can return.
 Plan: documentation/plans/forms/PLAN-resubmitted-status-27oct.md.
 
 Revision ID: resub_0001_resubmitted_status
-Revises: sales_unified_0002
+Revises: cim_0001_catalogue_photos
 """
 import uuid
 
@@ -31,7 +31,7 @@ from alembic import op
 
 # Kept <=32 chars: alembic_version.version_num is varchar(32).
 revision = "resub_0001_resubmitted_status"
-down_revision = "sales_unified_0002"
+down_revision = "cim_0001_catalogue_photos"
 branch_labels = None
 depends_on = None
 
