@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
+import RequireAccess from '@/app/components/common/RequireAccess';
 import AccessSheetImportPage from '../components/AccessSheetImportPage';
 
 export const metadata: Metadata = {
@@ -23,7 +24,9 @@ export default function AccessSheetPage() {
         />
       </Container>
       <Container>
-        <AccessSheetImportPage />
+        <RequireAccess permission="user_management.contacts.edit">
+          <AccessSheetImportPage />
+        </RequireAccess>
       </Container>
     </>
   );

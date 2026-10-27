@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, useState } from 'react';
+import { Fragment, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronUp, Download, LoaderCircle } from 'lucide-react';
 import { Alert, AlertContent, AlertDescription, AlertTitle } from '@/components/ui/alert';
@@ -25,6 +25,7 @@ import {
   allExactConfirmed,
   changeLines,
   confirmAllExact,
+  hasConfirmableExact,
   initialSelection,
   orderedChanges,
   resultCsv,
@@ -189,7 +190,7 @@ export default function AccessSheetImportPage() {
             <Button
               variant="outline"
               className="me-auto"
-              disabled={preview.counts.blocks_exact === 0 || allConfirmed}
+              disabled={!hasConfirmableExact(preview) || allConfirmed}
               onClick={() => setSelection(confirmAllExact(preview, selection))}
             >
               {allConfirmed ? 'All exact confirmed' : 'Confirm all exact'}
@@ -315,13 +316,19 @@ function BlockList({
   // Every card starts open: the page scrolls, so nothing is hidden behind a click.
   const [closedKeys, setClosedKeys] = useState<Record<string, boolean>>({});
   const [page, setPage] = useState(1);
+  const top = useRef<HTMLDivElement>(null);
+  const goTo = (next: number) => {
+    setPage(next);
+    // From the pager below the cards, the new page would otherwise open at its bottom.
+    top.current?.scrollIntoView({ block: 'start' });
+  };
   const pageCount = Math.max(1, Math.ceil(blocks.length / PAGE_SIZE));
   const shown = blocks.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
   const pager = (
-    <ScmPager page={page} pageCount={pageCount} total={blocks.length} unit="dealer" onPageChange={setPage} />
+    <ScmPager page={page} pageCount={pageCount} total={blocks.length} unit="dealer" onPageChange={goTo} />
   );
   return (
-    <div className="space-y-2">
+    <div ref={top} className="space-y-2 scroll-mt-4">
       {pager}
       {shown.map((block) => {
         const isOpen = !closedKeys[block.key];
@@ -451,7 +458,7 @@ function AccountsTable({
               <Cell>{a.sales_agent ?? '-'}</Cell>
               <Cell>{a.sheet_agent ?? '-'}</Cell>
               <Cell>
-                {/* Apply links an account only when it is ticked (and its block confirmed). */}
+                {/* Apply links only ticked accounts; names show while the account is ticked. */}
                 {a.links_to.length && ticked.includes(a.customer_id) ? (
                   <ul>
                     {a.links_to.map((name, i) => (

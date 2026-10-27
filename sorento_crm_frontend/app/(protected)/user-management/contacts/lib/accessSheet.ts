@@ -29,6 +29,11 @@ function confirmableExact(block: AccessSheetBlock): boolean {
   return block.status === 'exact' && !block.warnings.includes('rows_disagree');
 }
 
+/** Whether Confirm all exact has any card to confirm. */
+export function hasConfirmableExact(preview: AccessSheetResult): boolean {
+  return preview.blocks.some(confirmableExact);
+}
+
 export function confirmAllExact(preview: AccessSheetResult, sel: AccessSheetSelection): AccessSheetSelection {
   const confirmed = { ...sel.confirmed };
   for (const block of preview.blocks) if (confirmableExact(block)) confirmed[block.key] = true;

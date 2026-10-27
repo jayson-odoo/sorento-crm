@@ -962,7 +962,6 @@ export default function ContactsList() {
         }}
       />
 
-
       <BulkCopyAccessDialog
         open={bulkCopyDialogOpen}
         onOpenChange={setBulkCopyDialogOpen}
