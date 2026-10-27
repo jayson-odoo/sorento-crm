@@ -36,7 +36,7 @@ MONTH_OF_YEAR = reg.MONTHS_OF_YEAR
 
 #: The Channel filter's values and the words each reads as (G4: `demand_class`).
 CHANNELS: Tuple[Tuple[str, str], ...] = (("dealer", "Dealer"), ("project", "Project team"))
-_DEMAND_CLASS = {"dealer": "retail", "project": "project"}
+_DEMAND_CLASS = {"dealer": "retail", "project": "project", "other": "other"}
 
 #: The Basis filter (G1): Delivered is the default, and the basis prints on every header.
 #: Invoiced (finance S1) reads billing documents, `datasets/billing_documents.py`.
@@ -59,6 +59,7 @@ def channel_label(demand_class: Any) -> Any:
     return sa.case(
         (demand_class == "retail", sa.literal("Dealer")),
         (demand_class == "project", sa.literal("Project team")),
+        (demand_class == "other", sa.literal("Other")),
         else_=sa.null(),
     )
 
@@ -161,7 +162,8 @@ def note(ctx) -> str:
     """The basis line on every header (G1; finance S1 UAC S1-5 for Invoiced)."""
     basis = _basis(ctx)
     if basis == "invoiced":
-        return f"Basis: {BASIS_WORDS[basis]}, by document date, grouped by the sales order type."
+        return (f"Basis: {BASIS_WORDS[basis]}, by document date, grouped by the sales type of the "
+                "sales orders each document traces to.")
     return f"Basis: {BASIS_WORDS[basis]}, by sales order date. Sales orders, not invoices."
 
 

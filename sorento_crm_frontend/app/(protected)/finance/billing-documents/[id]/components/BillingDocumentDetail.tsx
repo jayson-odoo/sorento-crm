@@ -3,7 +3,6 @@
 import { useMemo, useState } from 'react';
 import Link from 'next/link';
 import { type ColumnDef } from '@tanstack/react-table';
-import { useRouter } from 'next/navigation';
 import { Info, Link2, ListOrdered } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -18,17 +17,15 @@ import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { isNotFound } from '@/lib/api-client';
 import { formatDateTimeInMalaysia, formatMoney2dp } from '@/lib/helpers';
 import { BillingStatusBadge, BillingTypeBadge } from '../../components/BillingBadges';
-import { OutstandingCell } from '../../components/OutstandingCell';
 import { useBillingDocumentQuery } from '../../hooks/useBillingDocuments';
 import { formatBillingAmount, formatDay } from '../../lib/format';
 import { billingPagerQuery } from '../../lib/listQuery';
 import { useCanViewOutstanding } from '../../lib/permissions';
 import {
-  BILLING_TYPE_LABEL,
   type BillingDocumentDetail as Detail,
   type BillingDocumentLine,
-  type BillingRelatedNote,
 } from '../../types/billingDocument.types';
+import { RelatedDocumentsPanel } from '@/app/(protected)/order-management/shared/related/RelatedDocumentsPanel';
 
 /**
  * `/finance/billing-documents/{id}` (UAC S2-5..S2-7). Read only: no edit, no delete. The meta
@@ -37,18 +34,7 @@ import {
  */
 type Tab = 'details' | 'lines' | 'related';
 
-function EmptyPanel({ title, hint }: { title: string; hint?: string }) {
-  return (
-    <Card>
-      <div className="flex flex-col items-center gap-1 px-4 py-10 text-center">
-        <span className="text-sm font-medium">{title}</span>
-        {hint ? <span className="text-sm text-muted-foreground">{hint}</span> : null}
-      </div>
-    </Card>
-  );
-}
-
-function LineFrom({ line }: { line: BillingDocumentLine }) {
+function LineFrom({ line, doIds }: { line: BillingDocumentLine; doIds: Map<string, string> }) {
   if (!line.from_doc_type || !line.from_doc_no) return null;
   const so = line.sales_order;
   if (line.from_doc_type === 'SO' && so) {
@@ -59,9 +45,18 @@ function LineFrom({ line }: { line: BillingDocumentLine }) {
     );
   }
   const label = `${line.from_doc_type} ${line.from_doc_no}`;
+  // DOC-RELATIONS: a DO the CRM holds opens, like every other related number. `doIds` is empty
+  // for a viewer without the DO view slug (the server masks it), so the number stays text.
+  const doId = line.from_doc_type === 'DO' ? doIds.get(line.from_doc_no) : undefined;
   return (
     <span className="block truncate" title={so ? `${label} (${so.doc_no})` : label}>
-      {label}
+      {doId ? (
+        <Link href={`/order-management/orders/${doId}`} className="text-primary hover:underline">
+          {label}
+        </Link>
+      ) : (
+        label
+      )}
       {so ? (
         <>
           {' '}
@@ -75,13 +70,22 @@ function LineFrom({ line }: { line: BillingDocumentLine }) {
 }
 
 export default function BillingDocumentDetail({ id }: { id: string }) {
-  const router = useRouter();
   const canSeeOutstanding = useCanViewOutstanding();
   const { data: doc, isLoading, error, refetch, isFetching } = useBillingDocumentQuery(id);
   const [tab, setTab] = useState<Tab>('details');
 
   const notFound = isNotFound(error);
   const failed = !!error && (!doc || notFound);
+
+  const doIds = useMemo(
+    () =>
+      new Map(
+        (doc?.related.delivery_orders ?? [])
+          .filter((d) => d.id)
+          .map((d) => [d.doc_no, d.id as string] as const),
+      ),
+    [doc],
+  );
 
   const lineColumns = useMemo<ColumnDef<BillingDocumentLine>[]>(
     () => [
@@ -159,64 +163,11 @@ export default function BillingDocumentDetail({ id }: { id: string }) {
         id: 'from',
         header: 'From',
         size: 170,
-        cell: ({ row }) => <LineFrom line={row.original} />,
+        cell: ({ row }) => <LineFrom line={row.original} doIds={doIds} />,
         meta: { headerTitle: 'From' },
       },
     ],
-    [],
-  );
-
-  const noteColumns = useMemo<ColumnDef<BillingRelatedNote>[]>(
-    () => [
-      {
-        id: 'document_type',
-        header: 'Type',
-        size: 130,
-        cell: ({ row }) => <BillingTypeBadge type={row.original.document_type} />,
-        meta: { headerTitle: 'Type' },
-      },
-      {
-        id: 'doc_no',
-        header: 'Number',
-        size: 140,
-        cell: ({ row }) => (
-          <Link
-            href={`/finance/billing-documents/${row.original.id}`}
-            onClick={(e) => e.stopPropagation()}
-            className="block truncate font-medium text-primary hover:underline"
-            title={row.original.doc_no}
-          >
-            {row.original.doc_no}
-          </Link>
-        ),
-        meta: { headerTitle: 'Number' },
-      },
-      { id: 'doc_date', header: 'Date', size: 110, cell: ({ row }) => formatDay(row.original.doc_date), meta: { headerTitle: 'Date' } },
-      {
-        id: 'total',
-        header: 'Total',
-        size: 120,
-        cell: ({ row }) => formatBillingAmount(row.original.total, row.original.currency_code),
-        meta: { headerTitle: 'Total', headerClassName: 'text-right', cellClassName: 'text-right tabular-nums' },
-      },
-      ...(canSeeOutstanding
-        ? [
-            {
-              id: 'outstanding',
-              header: 'Outstanding',
-              size: 130,
-              cell: ({ row }: { row: { original: BillingRelatedNote } }) => (
-                <OutstandingCell
-                  outstanding={row.original.outstanding}
-                  currencyCode={row.original.currency_code}
-                />
-              ),
-              meta: { headerTitle: 'Outstanding', headerClassName: 'text-right', cellClassName: 'text-right' },
-            } as ColumnDef<BillingRelatedNote>,
-          ]
-        : []),
-    ],
-    [canSeeOutstanding],
+    [doIds],
   );
 
   if (failed && notFound) {
@@ -291,12 +242,6 @@ export default function BillingDocumentDetail({ id }: { id: string }) {
       : doc.outstanding === 0
         ? 'Paid'
         : `Outstanding ${formatBillingAmount(doc.outstanding, doc.currency_code)}`;
-  const hasRelated =
-    !!doc.against ||
-    doc.related.notes.length > 0 ||
-    doc.related.sales_orders.length > 0 ||
-    doc.related.delivery_order_nos.length > 0;
-
   return (
     <>
       <Container>{header(doc)}</Container>
@@ -403,79 +348,11 @@ export default function BillingDocumentDetail({ id }: { id: string }) {
               />
             </TabsContent>
 
+            {/* DOC-RELATIONS (owner, mock v2): one table of the sales orders, delivery orders and
+                billing documents this one belongs with, every number a link, the same table the
+                sales order and delivery order pages show. */}
             <TabsContent value="related">
-              {hasRelated ? (
-                <div className="space-y-6">
-                  {doc.against ? (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>
-                          {doc.document_type === 'credit_note' ? 'Credit note against' : 'Debit note against'}
-                        </CardTitle>
-                      </CardHeader>
-                      <CardContent>
-                        {doc.against.id ? (
-                          <Link
-                            href={`/finance/billing-documents/${doc.against.id}`}
-                            className="text-sm font-medium text-primary hover:underline"
-                          >
-                            {doc.against.doc_no}
-                          </Link>
-                        ) : (
-                          <span className="text-sm font-medium">{doc.against.doc_no}</span>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ) : null}
-                  {doc.related.notes.length > 0 ? (
-                    <PanelDataGrid
-                      title="Credit and debit notes"
-                      columns={noteColumns}
-                      rows={doc.related.notes}
-                      getRowId={(n) => n.id}
-                      listingKey="finance.billing_documents.view::notes"
-                      paginate={false}
-                      emptyTitle="No credit or debit notes"
-                      onRowClick={(n) => router.push(`/finance/billing-documents/${n.id}`)}
-                    />
-                  ) : null}
-                  {doc.related.sales_orders.length > 0 ? (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Sales orders</CardTitle>
-                      </CardHeader>
-                      <CardContent className="flex flex-wrap gap-x-4 gap-y-1">
-                        {doc.related.sales_orders.map((so) => (
-                          <Link
-                            key={so.id}
-                            href={`/scm/sales-orders/${so.id}`}
-                            className="text-sm font-medium text-primary hover:underline"
-                          >
-                            {so.doc_no}
-                          </Link>
-                        ))}
-                      </CardContent>
-                    </Card>
-                  ) : null}
-                  {doc.related.delivery_order_nos.length > 0 ? (
-                    <Card>
-                      <CardHeader>
-                        <CardTitle>Delivery orders</CardTitle>
-                      </CardHeader>
-                      <CardContent className="flex flex-wrap gap-x-4 gap-y-1 text-sm">
-                        {doc.related.delivery_order_nos.map((no) => (
-                          <span key={no}>{no}</span>
-                        ))}
-                      </CardContent>
-                    </Card>
-                  ) : null}
-                </div>
-              ) : (
-                <EmptyPanel
-                  title="No related documents"
-                  hint={`No notes, sales orders or delivery orders are linked to this ${BILLING_TYPE_LABEL[doc.document_type].toLowerCase()}.`}
-                />
-              )}
+              <RelatedDocumentsPanel kind="billing_document" id={doc.id} />
             </TabsContent>
           </Tabs>
         </div>

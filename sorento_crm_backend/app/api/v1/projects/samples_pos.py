@@ -24,7 +24,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.projects import (
     ProjectPurchaseOrderCreate,
@@ -51,6 +51,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 
@@ -82,7 +86,7 @@ def _project_for_edit(db: Session, project_id: str, current_user: dict):
 async def list_samples(
     project_id: str,
     version_id: str | None = Query(None, description="Narrow to one quotation version"),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -173,7 +177,7 @@ async def delete_sample(
 )
 async def list_purchase_orders(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -296,7 +300,7 @@ async def delete_purchase_order(
 )
 async def list_po_lines(
     po_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -491,7 +495,7 @@ def _line_or_404(db: Session, po_id: str, line_id: str):
 )
 async def list_project_sponsorships(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Sponsorship forms linked to this project (AC-F3).
@@ -515,7 +519,7 @@ async def list_project_sponsorships(
 )
 async def project_sponsorship_rollup(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """AC-F7, per project and per year."""

@@ -13,7 +13,7 @@ FE contract: ``sorento_crm_frontend/.../companies/services/companyService.ts``.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel
@@ -77,6 +77,7 @@ def _serialize_company(db: Session, company: Company, *, with_counts: bool = Tru
         "code": company.code,
         "is_active": bool(company.is_active),
         "so_feed_live": bool(company.so_feed_live),
+        "sales_agent_source": company.sales_agent_source or "document",
         "autocount_ref": company.autocount_ref,
         "logo_url": company.logo_url,
         "created_at": company.created_at.isoformat() if company.created_at else None,
@@ -114,6 +115,9 @@ class CompanyForm(BaseModel):
     code: str
     is_active: bool = True
     so_feed_live: bool = True
+    # SALES-UNIFIED 2.2: whose sale an invoice is, the document's agent or the customer's.
+    # Absent leaves it as stored, so an older client's PUT cannot reset it.
+    sales_agent_source: Optional[Literal["document", "customer"]] = None
     autocount_ref: Optional[str] = None
     logo_url: Optional[str] = None
 
@@ -185,6 +189,7 @@ def create_company(
         code=code,
         is_active=body.is_active,
         so_feed_live=body.so_feed_live,
+        sales_agent_source=body.sales_agent_source or "document",
         autocount_ref=(body.autocount_ref or None),
         logo_url=(body.logo_url or None),
     )
@@ -330,6 +335,8 @@ def update_company(
     company.code = code
     company.is_active = body.is_active
     company.so_feed_live = body.so_feed_live
+    if body.sales_agent_source is not None:
+        company.sales_agent_source = body.sales_agent_source
     company.autocount_ref = body.autocount_ref or None
     company.logo_url = body.logo_url or None
     db.commit()

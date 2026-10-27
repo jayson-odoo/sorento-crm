@@ -97,6 +97,7 @@ export function mockCreateCompany(body: CompanyFormData): Company {
     code: body.code,
     is_active: body.is_active,
     so_feed_live: body.so_feed_live,
+    sales_agent_source: body.sales_agent_source,
     autocount_ref: body.autocount_ref || null,
     logo_url: body.logo_url || null,
     created_at: '2026-07-24T00:00:00Z',
@@ -116,6 +117,7 @@ export function mockUpdateCompany(id: string, body: CompanyFormData): Company {
     code: body.code,
     is_active: body.is_active,
     so_feed_live: body.so_feed_live,
+    sales_agent_source: body.sales_agent_source,
     autocount_ref: body.autocount_ref || null,
     logo_url: body.logo_url || null,
   };

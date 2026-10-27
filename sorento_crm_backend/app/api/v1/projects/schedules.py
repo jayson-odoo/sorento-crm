@@ -19,7 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import ListResponse
 from app.schemas.project_schedule import (
     AreaDateChange,
@@ -47,6 +47,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 
 # A schedule is a PDF or a photograph of one. Anything else is a person uploading the
@@ -100,7 +104,7 @@ def _version_for_edit(db: Session, version_id: str, current_user: dict):
 )
 async def list_project_delivery_schedules(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Where a person starts: the schedules on this project, each with its latest
@@ -119,7 +123,7 @@ async def list_project_delivery_schedules(
 )
 async def list_delivery_schedule_versions(
     schedule_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The revision history, newest first. R1 and R2 are two documents of one
@@ -238,7 +242,7 @@ def _page_count(content: bytes, mime: str) -> Optional[int]:
 )
 async def get_delivery_schedule_version(
     version_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The whole grid plus its verdict, per column. Reconciliation is never per
@@ -510,7 +514,7 @@ async def delete_delivery_schedule_version(
 )
 async def get_purchase_order_progress(
     po_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Per PO line: ordered, scheduled, delivered (AutoCount), outstanding; per area of

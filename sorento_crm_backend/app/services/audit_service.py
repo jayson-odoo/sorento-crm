@@ -551,20 +551,33 @@ def list_audit_logs(
     changed_to: Optional[datetime] = None,
     page: int = 1,
     limit: int = 50,
+    include_children: bool = False,
 ) -> tuple[list[AuditLog], int]:
     """List audit logs with optional filters. Returns (items, total).
+
+    ``include_children`` (with ``entity_type`` and ``entity_id``) also returns the rows whose
+    root is that record, e.g. a complaint's product lines (``__audit_parent__``), so one
+    record's trail shows its lines being added, removed and changed.
 
     ``entity_id`` and ``user_id`` are UUID columns - a non-UUID value (e.g. a
     typed name in the User filter) would raise a Postgres DataError (500). Guard
     both: an unparseable value can never match a row, so short-circuit to empty.
     """
     q = db.query(AuditLog)
-    if entity_type:
-        q = q.filter(AuditLog.entity_type == entity_type)
-    if entity_id:
-        if not _is_uuid(entity_id):
-            return [], 0
-        q = q.filter(AuditLog.entity_id == entity_id)
+    if entity_id and not _is_uuid(entity_id):
+        return [], 0
+    if include_children and entity_type and entity_id:
+        from sqlalchemy import and_, or_
+
+        q = q.filter(or_(
+            and_(AuditLog.entity_type == entity_type, AuditLog.entity_id == entity_id),
+            and_(AuditLog.root_entity_type == entity_type, AuditLog.root_entity_id == entity_id),
+        ))
+    else:
+        if entity_type:
+            q = q.filter(AuditLog.entity_type == entity_type)
+        if entity_id:
+            q = q.filter(AuditLog.entity_id == entity_id)
     if user_id:
         if not _is_uuid(user_id):
             return [], 0

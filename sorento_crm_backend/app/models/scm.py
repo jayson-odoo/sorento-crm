@@ -35,7 +35,6 @@ from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 from app.database import Base
 from app.models.base import CompanyScopedMixin
-from app.services.scm.demand_class import check_constraint_sql
 import uuid
 
 
@@ -267,7 +266,12 @@ class ReorderRun(Base, CompanyScopedMixin):
     __tablename__ = "reorder_run"
     __audit_skip__ = "SCM reorder run progress"
     __table_args__ = (
-        CheckConstraint(check_constraint_sql("demand_class"), name="ck_scm_reorder_run_demand_class"),
+        # A run's scope is a planning leg, project or retail; `other` is no leg of its own
+        # (`demand_class.planning_class`), so this stays pinned to the two (SALES-UNIFIED).
+        CheckConstraint(
+            "demand_class IS NULL OR demand_class IN ('project', 'retail')",
+            name="ck_scm_reorder_run_demand_class",
+        ),
         {"schema": "scm"},
     )
 

@@ -1305,7 +1305,30 @@ class StockDebtService:
         }
         floors = self._stand_in_floors(product_ids, outside_bins, span=span)
 
-        def walk(product_id: str, all_holds: Sequence[Hold]) -> Assignment:
+        # STOCKDEBT-PERF: each demand line key -> its products, once; a holds list is then
+        # bucketed per product in ONE pass (hold order kept: pins share a stand-in in hold
+        # order), not scanned once per product.
+        line_products: Dict[str, List[str]] = {}
+        for demand_product, demand_lines in demand_rows.items():
+            for line in demand_lines:
+                line_products.setdefault(line.key, []).append(demand_product)
+
+        def bucket(all_holds: Sequence[Hold]) -> Dict[str, List[Hold]]:
+            by_product: Dict[str, List[Hold]] = {}
+            for hold in all_holds:
+                for owner in line_products.get(hold.line_key, ()):
+                    by_product.setdefault(owner, []).append(hold)
+            return by_product
+
+        # One walk per (product, pin set): everything else `walk` reads is fixed for this
+        # call, and `Hold`/`Assignment` are frozen. Local to the call, never across requests.
+        walked: Dict[Tuple[str, Tuple[Hold, ...]], Assignment] = {}
+
+        def walk(product_id: str, by_product: Dict[str, List[Hold]]) -> Assignment:
+            pinned = by_product.get(product_id, [])
+            memo_key = (product_id, tuple(pinned))
+            if memo_key in walked:
+                return walked[memo_key]
             # The product's own lead, or the ladder's default - the SAME source the reserve
             # window uses (plan risk 5), so the red horizon here and the window there agree.
             # `is None`, never `or` - the same test `_po_rows` and `reserve_window_end`
@@ -1317,9 +1340,7 @@ class StockDebtService:
                 DEFAULT_LEAD_TIME_DAYS if lead is None else lead
             )
             lines = demand_rows.get(product_id, [])
-            line_keys = {line.key for line in lines}
-            pinned = [hold for hold in all_holds if hold.line_key in line_keys]
-            return assign(
+            result = assign(
                 product_id,
                 as_of=as_of,
                 tba_from=tba_from,
@@ -1343,6 +1364,8 @@ class StockDebtService:
                     and hold.supply_key.partition(":")[2] in outside_bins
                 },
             )
+            walked[memo_key] = result
+            return result
 
         def held_by_line(all_holds: Sequence[Hold]) -> Dict[str, float]:
             """STOCK-DEBT-STALE-PIN: what each line's holds REALLY cover - their takes in a
@@ -1350,12 +1373,12 @@ class StockDebtService:
             is still the line's own, so the book's S/O must not refill it) - rather than
             the holds' own quantities, which a pin on a bin holding less than it states
             overstates. Walked only for the products that have a hold at all."""
-            keyed = {hold.line_key for hold in all_holds}
+            by_product = bucket(all_holds)
             held: Dict[str, float] = {}
-            for product_id, lines in demand_rows.items():
-                if not any(line.key in keyed for line in lines):
+            for product_id in demand_rows:
+                if product_id not in by_product:
                     continue
-                for row in walk(product_id, all_holds).lines:
+                for row in walk(product_id, by_product).lines:
                     taken = sum(
                         float(item.qty) for item in row.assigned if item.pinned
                     ) + float(row.lent_qty)
@@ -1383,8 +1406,9 @@ class StockDebtService:
             )
 
         out: Dict[str, Assignment] = {}
+        by_product = bucket(holds)
         for product_id in product_ids:
-            out[product_id] = walk(product_id, holds)
+            out[product_id] = walk(product_id, by_product)
             if keep_events:
                 self._event_cache[product_id] = supply_rows.get(product_id, [])
         return out

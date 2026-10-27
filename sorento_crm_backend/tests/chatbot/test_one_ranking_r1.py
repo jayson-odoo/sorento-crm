@@ -273,7 +273,7 @@ def test_r1_review_1_a_customer_pick_continues_the_ranking_never_the_catalogue_l
         assert ran[0].get("customer_ids") == [ZZ_UUID_1] and ran[0]["top_n"] == 4 and ran[0]["measure"] == "amount", ran
     else:
         # Or it asks only what is still missing, in one reply (the period and / or the basis).
-        assert "Which period" in reply or "Delivered" in reply, reply
+        assert "Which period" in reply or "Invoiced, delivered" in reply, reply
         assert "Which one" not in reply, reply
         # The answer to what was missing runs the ranking for the PICKED customer.
         result, captured = _run_turn(
@@ -306,7 +306,7 @@ def test_r1_review_2_an_old_top_selling_session_still_reaches_the_own_book_run(c
 def test_r1_review_3_guard_a_noisy_axis_word_in_a_basis_answer_does_not_change_the_axis(console, monkeypatch, group_by, label) -> None:
     text, log = _say_all(
         console, monkeypatch, _top_selling(top_n=10, measure="qty", rank_by="quantity", basis=None), "top 10 selling items this year by qty")
-    assert _names(log) == [] and "Delivered" in text, ("setup: the basis must be asked", text, log)
+    assert _names(log) == [] and "Invoiced, delivered" in text, ("setup: the basis must be asked", text, log)
     text, log = _say_all(
         console, monkeypatch,
         _answer(order_status=label, group_by=group_by, measure=None, basis="delivered"), "delivered")

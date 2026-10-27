@@ -36,10 +36,24 @@ PROJECT = "project"
 #: safe write for a caller that must put something in the column.
 DEFAULT_DEMAND_CLASS = "retail"
 
-#: The whole vocabulary. Adding a third class is a weights change AND a migration on the
-#: check constraint, deliberately: it must not be possible to smuggle one in through a
-#: spreadsheet.
-DEMAND_CLASSES = (PROJECT, DEFAULT_DEMAND_CLASS)
+#: An agent in neither the dealer nor the project list (SALES-UNIFIED round 3, owner ruling Q7
+#: (a)): its orders are sales of their own, "Other", never counted as Dealer. Fulfilment does not
+#: tell it apart: `planning_class` weighs it as retail, so no planning figure moves.
+OTHER = "other"
+
+#: The whole vocabulary. Adding a class is a weights change AND a migration on the check
+#: constraint, deliberately: it must not be possible to smuggle one in through a spreadsheet.
+#: `other` (SALES-UNIFIED) came with `planning_class`, which keeps the weights unchanged.
+DEMAND_CLASSES = (PROJECT, DEFAULT_DEMAND_CLASS, OTHER)
+
+#: What each class weighs as in fulfilment and planning. `other` is retail there.
+_PLANNING = {OTHER: DEFAULT_DEMAND_CLASS}
+
+
+def planning_class(value: Optional[str]) -> Optional[str]:
+    """The class fulfilment and planning weigh `value` as: `other` is retail, every other
+    value (and None) is itself. One mapping, read by every SCM reader of a class."""
+    return _PLANNING.get(value, value) if value else value
 
 #: Words in a stated order type or a market-segment code that mean project work. Matched as
 #: substrings because the real values are typed by people: `PROJECT`, `Projects`, `contract`.
@@ -79,6 +93,7 @@ def classify_document(
     debtor_code: Optional[str],
     company_id,
     segment_cache: Optional[dict] = None,
+    use_segment: bool = True,
 ) -> Optional[str]:
     """The demand class a sales document should carry (D4, plan section 1/2.3).
 
@@ -120,7 +135,9 @@ def classify_document(
     per-call read is unchanged.
     """
     cls = class_of(stored_order_type) or class_of(stated_order_type) or agent_demand_class
-    if cls is not None:
+    if cls is not None or not use_segment:
+        # `use_segment=False`: the sales order ingest (SALES-UNIFIED Q8 (a)) never guesses a
+        # class from the customer's segment; no order type and no agent class is "not set".
         return cls
     from app.services.scm.demand_classifier import segment_of
 

@@ -1,5 +1,6 @@
 """Orders API routes."""
 import calendar
+import logging
 import re
 from datetime import datetime, time
 
@@ -23,6 +24,7 @@ from app.services.order_service import (
     stamp_so_outstanding_rows,
 )
 from app.services.uuid_list_param import parse_uuid_list
+from app.services.document_relations import RELATED_SORT_PATTERN
 from app.config import settings as app_settings
 
 
@@ -1141,6 +1143,36 @@ async def get_order(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{order_id}/related")
+def get_order_related(
+    order_id: str,
+    sort: str = Query("doc_date", pattern=RELATED_SORT_PATTERN),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    current_user: dict = Depends(require_permission_with_api_key("order_management.orders.view")),
+    db: Session = Depends(get_db),
+):
+    """DOC-RELATIONS: the sales orders and billing documents of this delivery order, each kind
+    null without its view slug, plus the visible ones as one table sorted server side."""
+    from app.services import document_relations as relations
+
+    try:
+        order = OrderService(db).get_order(order_id)  # 404 if missing
+        return relations.related_response(
+            db,
+            current_user["id"],
+            relations.relations_for_delivery_order(db, order),
+            sort=sort,
+            dir=dir,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        # Logged with its real text, answered generically (security review nit): a SQL error
+        # never reaches the caller.
+        logging.getLogger(__name__).error("Related documents failed for %s: %s", order_id, e, exc_info=True)
+        raise handle_internal_error()
+
+
 @router.post("/", response_model=OrderResponse, status_code=status.HTTP_201_CREATED)
 async def create_order(
     order_data: OrderCreate,
@@ -2091,9 +2123,11 @@ async def get_top_selling(
     basis: Optional[str] = Query(
         None,
         description=(
-            "delivered (default) | ordered. delivered = LEAST(qty_delivered, qty_ordered), "
-            "transferred to DO, and its share of line_total; ordered = the whole line, "
-            "qty_ordered and line_total, whatever the line's status."
+            "invoiced (default) | delivered | ordered. invoiced = SALES: billing document lines, "
+            "invoices + cash sales + debit notes - credit notes, excluding tax, by document date "
+            "(the Top selling items report's own figures; group=item only). delivered = "
+            "LEAST(qty_delivered, qty_ordered) of SALES ORDER lines, transferred to DO, and its "
+            "share of line_total; ordered = the whole SO line, whatever the line's status."
         ),
     ),
     group: Optional[str] = Query(
@@ -2194,12 +2228,34 @@ async def get_top_selling(
         return norm
 
     rank_by_norm = _choice(rank_by, "rank_by", ("quantity", "amount"))
-    basis_norm = _choice(basis, "basis", ("delivered", "ordered"), default="delivered")
+    basis_norm = _choice(basis, "basis", ("invoiced", "delivered", "ordered"), default="invoiced")
     group_norm = _choice(group, "group", ("item", "category"), default="item")
     direction_norm = _choice(direction, "direction", ("top", "bottom"), default="top")
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None:
-        channel_norm = _choice(channel_norm, "channel", ("dealer", "project"))
+        from app.services.sales.invoiced_sales import SALES_TYPE_LABELS
+
+        allowed_channels = ("dealer", "project") + (
+            tuple(v for v in SALES_TYPE_LABELS if v not in ("dealer", "project"))
+            if basis_norm == "invoiced" else ()
+        )
+        channel_norm = _choice(channel_norm, "channel", allowed_channels)
+    if basis_norm == "invoiced":
+        # SALES-UNIFIED: the invoiced basis is the Top selling items report, items only, and
+        # finance data: it needs the reports' own slug, not only orders.view (security M1).
+        from app.services.sales.invoiced_sales import require_invoiced_access
+
+        require_invoiced_access(db, current_user)
+        for value, name, code in (
+            (group_norm == "category", "group=category", "group_needs_order_basis"),
+            ((customer_query or "").strip(), "customer_query", "customer_query_needs_order_basis"),
+            ((detail_code or "").strip(), "detail_code", "detail_code_needs_order_basis"),
+        ):
+            if value:
+                raise AppException(
+                    422, f"{name} is for delivered or ordered sales; invoiced ranks items by id filters",
+                    detail=name, code=code,
+                )
 
     # The shared safety ceiling (owner, 30 Sep 2026: no 100 cap), not a product limit.
     if n is not None and not 1 <= n <= TOP_SELLING_N_CEILING:
@@ -2290,6 +2346,29 @@ async def get_top_selling(
         raise AppException(
             422, "date_from is after date_to", detail=f"{window_from} > {window_to}", code="invalid_date_range",
         )
+
+    if basis_norm == "invoiced":
+        from app.services.sales.top_selling_invoiced import top_selling_invoiced
+
+        data = top_selling_invoiced(
+            db,
+            rank_by=rank_by_norm,
+            n=1 if count_only else n,
+            direction=direction_norm,
+            customer_ids=resolved_customer_ids,
+            category_ids=resolved_category_ids,
+            sales_agent_ids=resolved_agent_ids,
+            brand_ids=resolved_brand_ids,
+            channel=channel_norm,
+            date_from=window_from,
+            date_to=window_to,
+            dealer_scoped=dealer_scoped,
+        )
+        if count_only:
+            data["n"] = None
+            if data["total_count"] > 1:
+                data["rows"] = []
+        return TopSellingResponse(**data)
 
     data = top_selling(
         db,
