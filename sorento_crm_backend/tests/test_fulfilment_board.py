@@ -6217,6 +6217,14 @@ def _order_already_holding_at_the_pool(db):
             }
         ],
     )
+    # BOARD-NO-HOLD (27 Oct 2026): a Reserve holds nothing, so the carried hold is made a
+    # BORROW (`other_location`) in place, the kind that still nets 3 off the pool.
+    from app.models.project_so import SOLineAllocation
+
+    db.query(SOLineAllocation).filter(
+        SOLineAllocation.so_line_id == mirror.id
+    ).update({"source_type": "other_location"}, synchronize_session=False)
+    db.flush()
     return {"actor": actor, "product": product, "own": own, "pool": pool, "pso_id": pso_id}
 
 
