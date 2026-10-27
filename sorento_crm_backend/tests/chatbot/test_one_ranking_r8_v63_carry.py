@@ -12,7 +12,8 @@ from tests.chatbot.test_engine import _parser_output, stub_access  # noqa: F401
 from tests.chatbot.test_one_ranking_r5_axis_refine import YEAR_2026, _ran
 from tests.chatbot.test_report_ask_lane import PRODUCT_CODE, SEP, TOOL, _e, _names, _say_all, console  # noqa: F401
 
-SALES_REPORT_TOOL = "crm_sales_report"
+#: REPORT-UNIFY (Q1): the total is the report ask too (no axis); its basis is typed in the message, never defaulted.
+SALES_REPORT_TOOL = TOOL
 HOW_MANY = "How many? For example top 5."
 PERIOD_Q = "Which period?"
 BASIS_Q = "Invoiced, delivered, ordered or outstanding?"
@@ -35,7 +36,7 @@ def _row1(**over: Any) -> dict[str, Any]:
     """'Top sales for <product> in 2026': v63 reads the sales report total (`crm_sales_report`)."""
     base: dict[str, Any] = dict(
         order_status="sales_report", entities=[_e(PRODUCT_CODE, "product")], entity_op="replace_combine",
-        domain_in_message=True, **YEAR_2026,
+        domain_in_message=True, basis="delivered", **YEAR_2026,
     )
     base.update(over)
     return _v63(**base)
@@ -66,7 +67,7 @@ def _top5(**over: Any) -> dict[str, Any]:
 
 def _total(console, monkeypatch, **over: Any) -> None:
     text, log = _say_all(console, monkeypatch, _row1(**over), f"Top sales for {PRODUCT_CODE} in 2026")
-    assert SALES_REPORT_TOOL in _names(log) and TOOL not in _names(log), ("setup", text, log)
+    assert _names(log) == [TOOL] and not log[0][1].get("group_by"), ("setup", text, log)
 
 
 def _runs_with_all_four(log, group_by: str) -> dict[str, Any]:
@@ -79,7 +80,7 @@ def _runs_with_all_four(log, group_by: str) -> dict[str, Any]:
     return args
 
 
-def test_r8_0_the_total_is_still_the_sales_report_tool(console, monkeypatch) -> None:
+def test_r8_0_the_total_is_the_report_ask_without_an_axis(console, monkeypatch) -> None:
     _total(console, monkeypatch)
 
 
