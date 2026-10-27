@@ -1,9 +1,10 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: S2 #1885 built dark (head 3e5740d367, reviewer READY on b261d856bf, security CLEAN, crew-audit fixes in);
-S2 gate NOT PASSED on either model (see "S2 gate results"); owner decision pending. S1 #1876 merged (078b1ab482).
-Track: L overall (chatbot architecture), lead pattern; S1 itself is M (library + eval, no migration, no behaviour change).
-UAC: `documentation/plans/chatbot/entity-extract-match-acceptance-criteria.md`.
+Status: 27 Oct checkpoint. S1 #1876 merged (078b1ab482); S2 #1885 merged dark (b464ff7a9b); S2 switch-on fix #1895
+merged (dark; drawer Span pass section, eem_0002, F1 vowel-dropped typo match). S3 semantic bridge #1898 (Gemini lookup
+embedder via `chatbot_lookup_embedder` label, per-model floors, span `meaning`, eem_0003) rebased onto main, reviewer
+READY at d95d25aa4d (now 497212cef1 after rebase), waiting for crew CI + a separate owner OK to merge. Copy :3112
+(sorento_explore1020) runs ab304e6508 with span pass ON (labels on Gemini); per-phrase rerun done (see PR #1898).
 
 Owner rulings (26 Oct ~16:15, via crew): Q1 (a) two-pass + union, slices S1 -> S2 -> S3 -> S4, S1 its own PR
 (red-first, reviewer), then S2; Q2 +~1.0 s per turn OK; Q3 (a) no new alias table: PROMPT_SYNONYMS into lookup_sets,
