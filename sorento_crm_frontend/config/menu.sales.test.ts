@@ -31,6 +31,17 @@ describe('Sales menu', () => {
     expect(item?.moduleKey).toBe('sales');
   });
 
+  it('REPORT-UNIFY slice 4: Sales & outstanding sits beside Top selling items, open to either report permission', () => {
+    const sales = MENU_SIDEBAR.find((i) => !i.heading && i.title === 'Sales');
+    const titles = (sales?.children ?? []).map((c) => c.title);
+    expect(titles.indexOf('Sales & outstanding')).toBe(titles.indexOf('Top selling items') + 1);
+    const item = sales?.children?.find((c) => c.title === 'Sales & outstanding');
+    expect(item?.path).toBe('/sales/sales-and-outstanding');
+    expect(item?.permissionsAny).toEqual(['sales.reports.view', 'order_management.orders.view']);
+    expect(item?.moduleKey).toBe('sales');
+    expect(moduleKeyForPath('/sales/sales-and-outstanding')).toBe('sales');
+  });
+
   it('maps /sales to the sales module', () => {
     expect(moduleKeyForPath('/sales/yearly-comparison')).toBe('sales');
   });

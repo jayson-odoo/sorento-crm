@@ -149,6 +149,13 @@ export const MENU_SIDEBAR: MenuConfig = [
         moduleKey: 'sales',
       },
       {
+        title: 'Sales & outstanding',
+        path: '/sales/sales-and-outstanding',
+        // Invoiced needs the reports slug, the other five bases the orders slug: either opens the screen.
+        permissionsAny: ['sales.reports.view', 'order_management.orders.view'],
+        moduleKey: 'sales',
+      },
+      {
         title: 'Set-apart customers',
         path: '/sales/set-apart-customers',
         permission: 'sales.reports.view',
