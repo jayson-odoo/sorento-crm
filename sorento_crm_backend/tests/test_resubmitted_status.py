@@ -165,3 +165,22 @@ def test_integration_edit_cannot_override_the_resubmitted_status(db):
 
     db.refresh(complaint)
     assert complaint.status == "resubmitted"
+
+
+def test_helper_stage_based_forms_resubmit_to_resubmitted():
+    assert (
+        submission_status.status_on_submit(was_rejected=False, stage="pending_project_sales")
+        == "pending_project_sales"
+    )
+    assert (
+        submission_status.status_on_submit(was_rejected=True, stage="pending_project_sales")
+        == "resubmitted"
+    )
+
+
+def test_helper_resubmitted_stands_in_for_the_stage():
+    assert submission_status.is_awaiting_review("resubmitted", "pending_project_sales")
+    assert submission_status.is_awaiting_review("pending_project_sales", "pending_project_sales")
+    assert not submission_status.is_awaiting_review("pending_purchasing", "pending_project_sales")
+    assert submission_status.is_awaiting_review("Submitted")
+    assert not submission_status.is_awaiting_review(None)
