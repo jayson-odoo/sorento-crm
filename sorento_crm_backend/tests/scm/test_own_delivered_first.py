@@ -133,6 +133,28 @@ def _held_by_bin(db, world, line) -> dict:
     return out
 
 
+def _planned(db, world, line) -> Decimal:
+    """What every decision row of this line still asks of its bin, Reserves included:
+    `_decision_allocation_query` with `held_qty_expr()`. Since BOARD-NO-HOLD (owner, 27 Oct
+    2026) a Reserve holds nothing (`_held` leaves it out), but Stock Debt still routes its
+    line to the bin by this figure, so the delivered-first credit sizes a Reserve's route
+    exactly as it sizes a Borrow's hold."""
+    db.expire_all()
+    rows = (
+        ProjectSupplyService(db)
+        ._decision_allocation_query(
+            [str(world.product.id)],
+            exclude_line_ids=None,
+            entities=(SOLineAllocation.so_line_id, held_qty_expr()),
+        )
+        .all()
+    )
+    return sum(
+        (Decimal(str(qty)) for line_id, qty in rows if str(line_id) == str(line.id)),
+        Decimal("0"),
+    )
+
+
 def _free_at_pool(db, world) -> Decimal:
     db.expire_all()
     free = ProjectSupplyService(db).free_stock_by_location([str(world.product.id)])
@@ -245,23 +267,26 @@ def test_cb6633_nl_existing_hold_reads_zero_after_delivery_with_no_data_change(a
     assert _stock_debt_pins(world.db, world, core_line) == []
 
 
-def test_partial_delivery_holds_the_reserve_less_what_was_delivered(api):
-    """Reserve 336 + Buy 126, 100 delivered before the confirm: the Reserve still holds
-    236 (not 336, and not 136 - the delivery is credited once). A later delivery of 50 more
-    takes it to 186."""
+def test_partial_delivery_routes_the_reserve_less_what_was_delivered(api):
+    """Reserve 336 + Buy 126, 100 delivered before the confirm: the Reserve still plans
+    236 at its bin (not 336, and not 136 - the delivery is credited once). A later delivery
+    of 50 more takes it to 186. BOARD-NO-HOLD: it holds none of it; Stock Debt routes the
+    line to the bin for that 186."""
     client, world, order, line, core_line, _stock_row = _world(
         api, ordered="462", delivered="100", on_hand=500
     )
 
     _confirm(client, order, _own_336_buy_126(world, line))
 
-    assert _held(world.db, world, line) == Decimal("236")
+    assert _held(world.db, world, line) == Decimal("0"), "a Reserve holds nothing"
+    assert _planned(world.db, world, line) == Decimal("236")
 
     core_line.qty_delivered = Decimal("150")
     world.db.commit()
 
-    assert _held(world.db, world, line) == Decimal("186")
+    assert _planned(world.db, world, line) == Decimal("186")
     pins = _stock_debt_pins(world.db, world, core_line)
+    assert pins and all(h.route for h in pins), pins
     assert sum((Decimal(str(h.qty)) for h in pins), Decimal("0")) == Decimal("186")
 
 
@@ -292,9 +317,42 @@ def test_reserve_and_borrow_rows_together_hold_only_what_delivery_left(api):
     assert _held(world.db, world, line) == Decimal("30")
 
 
-def test_a_hold_under_no_decision_keeps_todays_cap_at_what_is_owed(api):
-    """Guard: a reallocated hold that belongs to no revision has no decision to read a
-    Reserve from, so it keeps today's read, least(qty, still owed)."""
+def test_a_borrow_with_a_buy_gives_up_what_was_delivered_before_the_buy(api):
+    """BOARD-NO-HOLD leaves Borrow the one board component that holds stock, so this is where
+    the rule still moves a hold. Borrow 50 at another location + Buy 100 (plan 150),
+    confirmed before delivery: 30 delivered come out of the Borrow first, so it holds 20
+    (the Buy-first read held least(50, owed 120) = 50); 60 delivered, it holds 0."""
+    client, world, order, line, core_line, _stock_row = _world(
+        api, ordered="150", delivered="0", on_hand=500
+    )
+    donor_wh = _warehouse(world.db, "ZZT-DON-ODF3", segment="dealer")
+    _stock(world.db, world.product, donor_wh, on_hand=100)
+    world.db.commit()
+
+    _confirm(client, order, _line_payload(
+        line.id,
+        borrow=[{
+            "source": "other_location", "warehouse_id": donor_wh.id, "qty": "50",
+            "reason": "ZZT borrow from the other location.",
+        }],
+        buy_qty="100", buy_reason="ZZT buy the rest",
+        amend_reason="ZZT borrow 50, buy 100",
+    ))
+    assert _written_stock_qty(world.db, line) == Decimal("50")
+
+    core_line.qty_delivered = Decimal("30")
+    world.db.commit()
+    assert _held_by_bin(world.db, world, line) == {str(donor_wh.id): Decimal("20")}
+
+    core_line.qty_delivered = Decimal("60")
+    world.db.commit()
+    assert _held(world.db, world, line) == Decimal("0")
+
+
+def test_a_row_under_no_decision_keeps_todays_cap_at_what_is_owed(api):
+    """Guard: a reallocated row that belongs to no revision has no decision to read a
+    Reserve from, so it keeps today's read, least(qty, still owed). BOARD-NO-HOLD: as a
+    Reserve source it holds nothing; the figure is what Stock Debt routes it by."""
     from datetime import datetime
 
     _client, world, _order, line, _core_line, _stock_row = _world(
@@ -308,14 +366,15 @@ def test_a_hold_under_no_decision_keeps_todays_cap_at_what_is_owed(api):
     ))
     world.db.commit()
 
-    assert _held(world.db, world, line) == Decimal("6")
+    assert _held(world.db, world, line) == Decimal("0"), "a Reserve source holds nothing"
+    assert _planned(world.db, world, line) == Decimal("6")
 
 
-def test_a_revision_that_planned_only_the_owed_qty_keeps_its_hold(api):
+def test_a_revision_that_planned_only_the_owed_qty_keeps_its_plan(api):
     """Guard (dev SO389799 SRT2403-RG shape): a revision decided before the 14 Sep 2026
     ruling planned only what was then still owed - Reserve 3 for the 3 of 20 left after 17
     shipped (`open_qty` "3" in its snapshot). Those 17 were never its to consume, so the
-    Reserve still holds 3, as before this rule."""
+    Reserve still plans 3, as before this rule (and holds none, BOARD-NO-HOLD)."""
     from app.models.project_so import SOSupplyDecision
     from sqlalchemy.orm.attributes import flag_modified
 
@@ -346,7 +405,8 @@ def test_a_revision_that_planned_only_the_owed_qty_keeps_its_hold(api):
     core_line.qty_delivered = Decimal("17")
     db.commit()
 
-    assert _held(db, world, line) == Decimal("3")
+    assert _held(db, world, line) == Decimal("0")
+    assert _planned(db, world, line) == Decimal("3")
 
 
 @pytest.mark.parametrize("reserve_written_first", [True, False])
@@ -397,13 +457,14 @@ def test_delivery_uses_the_reserve_first_so_the_borrow_bin_keeps_what_is_left(
     assert held.get(str(donor_wh.id), Decimal("0")) == Decimal("30"), held
 
 
-def test_a_revision_on_the_ordered_qty_with_a_lower_required_qty_keeps_its_hold(api):
+def test_a_revision_on_the_ordered_qty_with_a_lower_required_qty_keeps_its_plan(api):
     """Guard (reviewer round 1), a known limit of the read: ordered 20, CS required 15,
     Reserve 15, 5 delivered. The snapshot (`open_qty` 15) cannot tell this revision from one
     decided before 14 Sep 2026, which planned `qty_ordered` less the 5 already delivered
     (20 - 5). Read the conservative way, as such an old revision: the 5 are not consumed,
-    the Reserve 15 still holds 15, the read before this rule. Never seen on the dev copy
-    (0 decided lines have `qty_required` below `qty_ordered`)."""
+    the Reserve 15 still plans 15, the read before this rule (and holds none,
+    BOARD-NO-HOLD). Never seen on the dev copy (0 decided lines have `qty_required` below
+    `qty_ordered`)."""
     from app.models.order import SalesOrderLine
 
     client, world, order, line, core_line, _stock_row = _world(
@@ -419,7 +480,8 @@ def test_a_revision_on_the_ordered_qty_with_a_lower_required_qty_keeps_its_hold(
     core_line.qty_delivered = Decimal("5")
     world.db.commit()
 
-    assert _held(world.db, world, line) == Decimal("15")
+    assert _held(world.db, world, line) == Decimal("0")
+    assert _planned(world.db, world, line) == Decimal("15")
 
 
 def test_an_autocount_cancel_before_the_confirm_is_not_taken_off_twice(api):
