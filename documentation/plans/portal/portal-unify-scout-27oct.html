@@ -166,13 +166,14 @@ footer{color:var(--muted-foreground);font-size:12.5px;margin-top:24px}
 <body>
 <div class="wrap">
 
-<p class="eyebrow">Design scout · portal and system · v3 · 27 Oct 2026</p>
+<p class="eyebrow">Design scout · portal and system · v3 · aligned 27 Oct 2026</p>
 <h1>One sign-in, one CRM, every screen built once</h1>
 <p class="lede">v3 follows your feedback on v2: salespeople may see the CRM sidebar, and you want one behaviour for the simple forms and for project sales. This version shows how that works step by step, what a salesperson would see, how each portal form converges onto the staff screen that already exists, and what happens to today's portal.</p>
 <div class="chips">
   <span class="chip">Lane PORTAL-UNIFY-SCOUT</span>
   <span class="chip">No product code</span>
   <span class="chip">v3: one CRM shell for everyone</span>
+  <span class="chip">Status: aligned, lanes P1 and P2 ready</span>
   <span class="chip">Code read at main 54f1eb37</span>
   <span class="chip">FE = sorento_crm_frontend/, BE = sorento_crm_backend/</span>
 </div>
@@ -186,6 +187,16 @@ A salesperson you have set up as a user signs in like staff, through <code>/sign
 <li><b>"Only theirs" is a backend rule</b> on every list and record a salesperson can open, not a hidden menu. Today staff lists filter by company only, so this rule is the first thing built, before any salesperson gets a single new permission.</li>
 <li><b>The portal stays for contacts who have no user</b> (dealers and anyone you have not set up). Q2 says only set-up users go beyond registration. A portal form is deleted only once nobody without a user still uses it.</li>
 </ol>
+</div>
+
+<div class="callout" style="border-left-color:var(--success)">
+<b class="h">Aligned with the owner, 27 Oct 2026</b>
+"ok, just make sure we don't reinvent the wheel and reuse as much as possible." Option (i), one CRM shell, is accepted. QA (a), QB (a), QD (a) and D1 to D8 are as recommended.
+<ul>
+<li><b>QC:</b> "this depends on their permission". Floor values and internal numbers are not hidden from salespeople by role. Each one shows to whoever holds an existing view permission, granted per role or user. The "below floor" warning always shows (P5).</li>
+<li><b>QE:</b> "CRM already has conversation, just need to reuse the component and show only the conversation they can see". The existing CRM inbox (<code>app/(protected)/sla-management/conversations</code>, backend <code>app/api/v1/sla/conversations.py</code>) is scoped on the server to their agents' customers. This reuses the portal's existing scoping, <code>portal_conversation_service.py:39-155</code> (P2). No new page.</li>
+<li><b>Standing rule for every phase:</b> reuse existing staff screens, components and services. No parallel implementation. Each lane brief lists what it reuses, with paths, and the little that is new.</li>
+</ul>
 </div>
 
 <div class="callout">
@@ -390,14 +401,14 @@ The audit log names the user and how they signed in (identity S0, shipped). No c
 <tr><th>Portal form today</th><th>Staff screen it moves to</th><th>Duplicated today</th><th>What the staff screen needs before a salesperson uses it</th><th>"Only theirs" columns</th><th>Effort</th></tr>
 <tr><td>Project registration (<code>SubmissionForm.tsx:234-277</code>)</td><td><code>/project-sales/new</code>, <code>ProjectForm.tsx</code> (785)</td><td>50 to 100 lines</td><td>When the creator cannot approve, save as <b>pending</b> for Project Sales Admin instead of registering directly. The service already supports pending (<code>project_registration_service.py:593-675</code>); the staff create route calls <code>register_project</code> today.</td><td><code>owner_user_id</code>, collaborators</td><td><span class="pill ok">S</span></td></tr>
 <tr><td>Sample request (<code>SampleRequestForm.tsx</code>, 456)</td><td><code>/project-sales/sample-requests</code></td><td>100 to 200 (lines already shared)</td><td>Salesperson field locked to self; project picker limited to own projects</td><td><code>salesperson_id</code>, <code>contact_id</code></td><td><span class="pill ok">S</span></td></tr>
-<tr><td>New product application (657)</td><td><code>/procurement-management/new-product-applications</code></td><td>100 to 200 (header and lines shared)</td><td>Requester locked to self</td><td><code>contact_id</code> + creator</td><td><span class="pill ok">S</span></td></tr>
+<tr><td>New product application (657)</td><td><code>/procurement-management/new-product-applications</code></td><td>100 to 200 (header and lines shared)</td><td>Requester locked to self</td><td><code>contact_id</code></td><td><span class="pill ok">S</span></td></tr>
 <tr><td>Stock inquiry (in <code>SubmissionForm.tsx</code>)</td><td><code>/procurement-management/stock-inquiries</code> (form 577)</td><td>150 to 250</td><td>Salesperson field locked to self; <b>AI extract</b> (portal only today, <code>AIExtractDialog.tsx</code>, 862) added to the staff form; resubmit after rejection on the staff detail</td><td><code>contact_id</code>, <code>salesperson_contact_id</code></td><td><span class="pill mid">M</span></td></tr>
 <tr><td>Purchase request + sponsorship form</td><td><code>/procurement-management/purchase-requests</code> (form 1,185), <code>/sponsorship-forms</code></td><td>250 to 400</td><td>Requested-by locked to self; AI extract; resubmit</td><td><code>contact_id</code>, <code>requested_by_contact_id</code></td><td><span class="pill mid">M</span></td></tr>
 <tr><td>Complaint</td><td><code>/complaint-management/complaints</code> (form 1,101)</td><td>about 200 (lines table + section)</td><td>AI extract; customer-facing fields only for this role</td><td><code>contact_id</code></td><td><span class="pill mid">M</span></td></tr>
 <tr><td>Sales opportunity (mirror, 1,136)</td><td><code>/sales/opportunities</code> (1,934)</td><td>500 to 700</td><td>Customer list limited to their agents (the portal route already does this, <code>portal_sales_opportunity.py:207-215</code>)</td><td><code>sales_agent_id</code> in their agents</td><td><span class="pill ok">S</span></td></tr>
 <tr><td>Price tag request (<code>PriceTagRequestForm.tsx</code>, 3,872)</td><td><code>/dealer-kit/price-tag-requests</code> (staff has review and design, <b>no create form</b>)</td><td>low today (create exists only on the portal)</td><td>Move the create form from the portal folder into the staff page (a move, not a copy)</td><td><code>contact_id</code>, <code>created_by</code></td><td><span class="pill mid">M</span></td></tr>
 <tr><td>Customer asks</td><td><code>/sales/customer-asks</code></td><td>about 0</td><td>Nothing; built for salespeople already</td><td>built</td><td><span class="pill ok">none</span></td></tr>
-<tr><td>Conversations (portal kind)</td><td>no staff page for "my customers' chats"</td><td>n/a</td><td>Keep as a small page in the CRM, or drop; question QE</td><td>their agents' customers</td><td><span class="pill ok">S</span></td></tr>
+<tr><td>Conversations (portal kind)</td><td><code>/sla-management/conversations</code> (the CRM inbox, <code>ConversationsInbox.tsx</code>)</td><td>n/a</td><td>Server scope to their agents' customers, reusing <code>portal_conversation_service</code> (QE ruling). Reply stays behind its own permission.</td><td>their agents' customers</td><td><span class="pill ok">S</span></td></tr>
 </table></div>
 
 <div class="callout">
@@ -410,6 +421,7 @@ The audit log names the user and how they signed in (identity S0, shipped). No c
 </div>
 
 <h3>The one backend rule ("only theirs")</h3>
+<p>Stock inquiries, purchase requests, complaints and new product applications have no "created by user" column, so a staff-form create by a salesperson stamps their linked contact into <code>contact_id</code>, as the portal does today. "Me" is therefore the user id plus the linked contact id.</p>
 <p>One shared function decides whether the caller is limited to their own rows: they hold the module's new <code>*.view_own</code> permission and not its <code>view</code>. When limited, the module's list and get-by-id queries add "submitted by me or naming me", using that module's columns from the table above, with "me" meaning the user id and their linked contact id. Today two modules already do this in their own way (tickets, <code>tickets_service.py:68-76</code>; customer asks), so the second and later modules justify one shared helper.</p>
 <p>Tests for every module: a salesperson's list holds only their rows, and another salesperson's record id returns 404 on the detail route and on every child route (lines, attachments, comments, exports).</p>
 </section>
@@ -484,19 +496,19 @@ Delete each portal form and its <code>public/portal*.py</code> routes once no co
 <h2><span class="n">F</span>Quotation decisions D1 to D8 (unchanged) and five questions</h2>
 <p>One shell changes none of D1 to D8 (v2 section 12, kept below under History). Same recommendations: (a) for all except D6 (b). One addition comes from the shared screen: the quotation API returns each line's floor value (<code>floor_value_applied</code>, <code>project.types.ts:787-790</code>), so whether a salesperson may see the floor itself is question QC.</p>
 
-<div class="q"><div class="ask">QA. To delete the portal fully, every contact who submits forms needs a user, which you create. (a) Do it gradually: the portal stays for contacts without a user, and each form is deleted once nobody without a user uses it; (b) set a cut-off date and create users for everyone before it.</div>
+<div class="q"><div class="ask"><span class="pill ok">Ruled (a)</span> QA. To delete the portal fully, every contact who submits forms needs a user, which you create. (a) Do it gradually: the portal stays for contacts without a user, and each form is deleted once nobody without a user uses it; (b) set a cut-off date and create users for everyone before it.</div>
 <div class="rec"><b>Recommend: (a).</b> It keeps your rule that you create each user yourself, and dealers keep working. P1's count tells you how many contacts per form are involved.</div></div>
 
-<div class="q"><div class="ask">QB. Sidebar wording for salespeople. (a) Items appear in their staff groups (Procurement, Project Sales Admin, Operations, Dealer Kit); (b) add "MY WORK" and "REQUESTS" headings shown only to the salesperson role, pointing at the same pages.</div>
+<div class="q"><div class="ask"><span class="pill ok">Ruled (a)</span> QB. Sidebar wording for salespeople. (a) Items appear in their staff groups (Procurement, Project Sales Admin, Operations, Dealer Kit); (b) add "MY WORK" and "REQUESTS" headings shown only to the salesperson role, pointing at the same pages.</div>
 <div class="rec"><b>Recommend: (b).</b> It is menu configuration only, not page copies. Staff department names mean nothing to a salesperson.</div></div>
 
-<div class="q"><div class="ask">QC. Internal numbers on shared screens: the floor value on quotation lines, and the internal consignment and PO numbers on sample requests (<code>SampleRequestDetail.tsx:557-560</code>). (a) Hide them from salespeople by permission and keep the "below floor" warning; (b) show them.</div>
+<div class="q"><div class="ask"><span class="pill inf">Ruled: visibility follows a permission</span> QC. Internal numbers on shared screens: the floor value on quotation lines, and the internal consignment and PO numbers on sample requests (<code>SampleRequestDetail.tsx:557-560</code>). (a) Hide them from salespeople by permission and keep the "below floor" warning; (b) show them.</div>
 <div class="rec"><b>Recommend: (a).</b> The warning tells them to ask for approval without publishing the floor.</div></div>
 
-<div class="q"><div class="ask">QD. A project a salesperson registers on the staff form goes to Project Sales Admin for approval, as the portal does today. (a) Yes; (b) salespeople register directly.</div>
+<div class="q"><div class="ask"><span class="pill ok">Ruled (a)</span> QD. A project a salesperson registers on the staff form goes to Project Sales Admin for approval, as the portal does today. (a) Yes; (b) salespeople register directly.</div>
 <div class="rec"><b>Recommend: (a).</b> It keeps the check you set up in #1849.</div></div>
 
-<div class="q"><div class="ask">QE. The portal's "Conversation" kind (their customers' WhatsApp chats) has no staff page. (a) Bring it in as a small CRM page; (b) drop it.</div>
+<div class="q"><div class="ask"><span class="pill inf">Ruled: reuse the CRM inbox, scoped</span> QE. The portal's "Conversation" kind (their customers' WhatsApp chats) has no staff page. (a) Bring it in as a small CRM page; (b) drop it.</div>
 <div class="rec"><b>Recommend: (a)</b> if salespeople use it, otherwise (b). The pre-flight count in P1 shows who has it granted.</div></div>
 </section>
 
