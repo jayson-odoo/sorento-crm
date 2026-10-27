@@ -18,7 +18,8 @@ and, for the chosen company (--company, default SRT) only:
 * VARIANT: a product `<sheet code>-<anything>` that is not itself printed in the sheet, for
   the longest sheet code it extends, when the sheet code is a product and finish / seat
   material match. Same rule as the flyer spec reader (product_spec_flyer_ingest._siblings).
-* Same code on several rows: format-equal rows are one (first row's text); otherwise the
+* Same code on several rows: format-equal rows are one (first row's text; spacing, case, `D: `,
+  `150 x 150` vs `150x150`, and the order of the lines do not count); otherwise the
   longest text wins when it contains every shorter one; otherwise the code is skipped.
 * A text printing both an S-Trap and a P-Trap block is cut per product by its stored trap
   type; one that cannot be cut is skipped.
@@ -139,15 +140,27 @@ def read_sheet(path: str) -> Optional[list[tuple[int, str, str]]]:
 
 
 def format_key(text: str) -> str:
-    """Text compared for duplicates: spacing collapsed, `:` spaced as `: `, `D: ` dropped, no case."""
+    """Text compared for duplicates: spacing collapsed, `:` spaced as `: `, `D: ` dropped, no case,
+    and a dimension product `150 x 150` / `150X150` / `150 × 150` written `150x150`."""
     t = re.sub(r"\s+", " ", text)
+    t = re.sub(r"(\d)\s*[xX×]\s*(?=\d)", r"\1x", t)
     t = re.sub(r"\s*:\s*", ": ", t).lower()
     return re.sub(r"(?:(?<=\s)|^)d: ", "", t).strip(" :")
 
 
+def _lines_key(text: str) -> tuple[str, ...]:
+    """The text's lines as a set (format_key per line): the same lines in another order are equal."""
+    return tuple(sorted(filter(None, (format_key(line) for line in text.split("\n")))))
+
+
 def dedupe(entries: list[tuple[int, str, str]]):
     """entries: (row, text, rule) in sheet order -> the chosen (text, rule), or None on a conflict."""
-    keyed = [(format_key(text), text, rule) for _, text, rule in entries]
+    # Rows printing the same lines in another order share the first such row's key.
+    first_key = {}
+    keyed = []
+    for _, text, rule in entries:
+        key = first_key.setdefault(_lines_key(text), format_key(text))
+        keyed.append((key, text, rule))
     distinct = list(dict.fromkeys(k for k, _, _ in keyed))
     if len(distinct) == 1:
         return keyed[0][1], keyed[0][2]

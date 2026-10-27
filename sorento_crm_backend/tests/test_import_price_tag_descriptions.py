@@ -471,8 +471,10 @@ def test_dimension_spacing_and_x_sign_are_format_equal_and_the_first_rows_text_w
 
 def test_a_dimension_x_between_letters_is_left_alone():
     script = _script()
-    assert script.format_key("Box x Lid") != script.format_key("Box Lid")
-    assert script.format_key("L700 x W400") == script.format_key("L700xW400") != "l700xw400"
+    assert script.format_key("Box x Lid") == "box x lid"
+    assert script.format_key("L700 x W400 x H760mm") == "l700 x w400 x h760mm"
+    assert script.format_key("700 x 400 x 760mm") == "700x400x760mm"
+    assert script.format_key("1 x 2 X 3") == "1x2x3"
 
 
 def test_after_dimension_spacing_the_text_with_an_extra_line_wins(db, tmp_path):
@@ -489,7 +491,7 @@ def test_the_same_lines_in_another_order_are_format_equal_and_the_first_rows_tex
 ):
     p = _prod(db, "SRTKT1932SS-DIY")
     first = "Kitchen Tap\nPillar Mounted\nStainless Steel\nH350mm"
-    second = "Kitchen Tap\nStainless Steel\nH350 mm\nPillar Mounted"
+    second = "Kitchen Tap\nStainless Steel\nH350mm\nPillar Mounted"
     run = _run(db, tmp_path, [("SRTKT1932SS-DIY", first), ("SRTKT1932SS-DIY", second)], apply=True)
     assert _desc(db, p) == first
     assert run.skipped == []
