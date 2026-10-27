@@ -512,3 +512,74 @@ def test_ac_ru_7_total_equals_sum_by_product_equals_sum_by_spec(client, db, basi
         assert sum(money(r["amount"]) for r in grouped["rows"]) == money(total["total"]["amount"]), grouped["rows"]
         assert _tot(grouped) == _tot(total), grouped["total"]
     assert any(r["name"] == NOT_STATED for r in by_spec["rows"]), by_spec["rows"]
+
+
+# ================================================================ AC-RU-7: the invoiced half of the tally (SALES-UNIFIED #1916)
+
+
+def _invoiced_world(db):
+    """Billing document lines for the products of the tally, September 2026 (qty / net):
+
+        pA p_trap 3 / 300 less a credit note line 1 / 50  -> 2 / 250     pD no spec row  5 / 500
+        pB p_trap 2 / 200                                                  pE spec row, no trap_type  1 / 100
+        pC s_trap 4 / 400
+    p_trap 4 / 450 | s_trap 4 / 400 | Not stated 6 / 600 | everything 14 / 1450.
+
+    `sales.reports.view` is held the way the other invoiced route tests hold it: the `client` fixture's
+    principal is a superadmin, which the route's permission check passes (tests/test_sales_unified_tally.py).
+    """
+    from tests._sales_unified_seed import doc, line as bline
+
+    seed_registry(db)
+    p = {
+        "A": make_product(db, unique_code("IA"), specs={"trap_type": "p_trap"}),
+        "B": make_product(db, unique_code("IB"), specs={"trap_type": "p_trap"}),
+        "C": make_product(db, unique_code("IC"), specs={"trap_type": "s_trap"}),
+        "D": make_product(db, unique_code("ID")),
+        "E": make_product(db, unique_code("IE"), specs={"length": (1, "mm")}),
+    }
+    for key, qty, net in (("A", "3", "300.00"), ("B", "2", "200.00"), ("C", "4", "400.00"),
+                          ("D", "5", "500.00"), ("E", "1", "100.00")):
+        doc(db, "invoice", net, SEP, lines=[bline(qty=qty, net=net, prod=p[key])])
+    doc(db, "credit_note", "50.00", SEP, lines=[bline(qty="1", net="50.00", prod=p["A"])])
+    db.commit()
+    return p
+
+
+def test_ac_ru_7_invoiced_total_equals_sum_by_product_equals_sum_by_spec(client, db):
+    """AC-RU-7: basis=invoiced, no grouping == sum of group_by=product == sum of group_by=spec:trap_type."""
+    _invoiced_world(db)
+    contact = _staff(db)
+    total = _ok(client, contact, basis="invoiced")
+    by_product = _ok(client, contact, basis="invoiced", group_by="product", top_n=1000)
+    by_spec = _ok(client, contact, basis="invoiced", group_by="spec:trap_type", top_n=1000)
+    assert total["basis"] == "invoiced", total
+    assert _tot(total) == (14, D("1450.00")), total["total"]
+    for grouped in (by_product, by_spec):
+        assert sum(r["qty"] for r in grouped["rows"]) == 14, grouped["rows"]
+        assert sum(money(r["amount"]) for r in grouped["rows"]) == D("1450.00"), grouped["rows"]
+        assert _tot(grouped) == _tot(total), grouped["total"]
+    assert _by_name(by_spec) == {
+        _norm("P-trap"): (4, D("450.00")), _norm("S-trap"): (4, D("400.00")), _norm(NOT_STATED): (6, D("600.00")),
+    }, by_spec["rows"]
+
+
+def test_ac_ru_1_a_spec_filter_narrows_the_invoiced_basis(client, db):
+    """AC-RU-1 on invoiced: p_trap is A + B (credit note netted) = 4 / 450; s_trap is C = 4 / 400; a
+    product with no spec row never matches a spec."""
+    _invoiced_world(db)
+    contact = _staff(db)
+    p_trap = _ok(client, contact, basis="invoiced", spec="trap_type:p_trap")
+    assert _tot(p_trap) == (4, D("450.00")), p_trap["total"]
+    assert _tot(_ok(client, contact, basis="invoiced", spec="trap_type:s_trap")) == (4, D("400.00"))
+    both = _ok(client, contact, basis="invoiced", spec=["trap_type:p_trap", "trap_type:s_trap"])
+    assert _tot(both) == (8, D("850.00")), both["total"]
+    assert _spec_echo(p_trap) and "Trap type: P-trap" in _spec_echo(p_trap)[0]["values"], p_trap["filters"]
+
+
+def test_ac_ru_4_a_spec_matching_no_product_is_no_products_on_invoiced(client, db):
+    """AC-RU-4 on invoiced: never the unfiltered invoiced total."""
+    _invoiced_world(db)
+    body = _ok(client, _staff(db), basis="invoiced", spec="trap_type:wall")
+    assert body["status"] == "no_products", body
+    assert body["rows"] == [] and body["total"]["qty"] == 0, body
