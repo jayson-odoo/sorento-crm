@@ -152,6 +152,12 @@ export type ListToolbarSelectAllMatching = {
   loadedCount: number;
   /** True when the user has opted into selecting the full filtered set. */
   active: boolean;
+  /**
+   * Most rows the page will select. A page that ticks the matching ids itself (rather than
+   * acting on the filter server-side) fetches them in one request, so it is bounded by that
+   * endpoint's page size. Above it the link reads "Select first 1,000 of 1,248".
+   */
+  limit?: number;
   onSelectAll: () => void;
   onClear: () => void;
 };
@@ -381,7 +387,12 @@ export function DataGridListToolbar<TData extends object>({
     }
   };
 
-  const exportCountLabel = allRecordsActive && selectAllMatching ? selectAllMatching.total : selectedCount;
+  const matchingLimit = selectAllMatching?.limit;
+  const matchingCapped = Boolean(selectAllMatching && matchingLimit && selectAllMatching.total > matchingLimit);
+  const matchingCount = selectAllMatching
+    ? Math.min(selectAllMatching.total, matchingLimit ?? selectAllMatching.total)
+    : 0;
+  const exportCountLabel = allRecordsActive && selectAllMatching ? matchingCount : selectedCount;
 
   // Banner shows once every loaded row is selected AND more rows exist beyond the page.
   const allPageRowsSelected = table.getIsAllPageRowsSelected();
@@ -476,7 +487,9 @@ export function DataGridListToolbar<TData extends object>({
               {keepSearchWhileSelected ? searchSlot : null}
               <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
                 {allRecordsActive && selectAllMatching
-                  ? `All ${selectAllMatching.total} selected`
+                  ? matchingCapped
+                    ? `${matchingCount.toLocaleString('en-US')} selected`
+                    : `All ${selectAllMatching.total} selected`
                   : `${stripSelectionCount} selected`}
               </Badge>
               {bulkActionsSlot == null && exportButtonEl}
@@ -672,9 +685,15 @@ export function DataGridListToolbar<TData extends object>({
           <div className="flex flex-wrap items-center justify-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 text-sm">
             {allRecordsActive ? (
               <>
-                <span>
-                  All <span className="font-medium">{selectAllMatching.total}</span> records matching the current filters are selected.
-                </span>
+                {matchingCapped ? (
+                  <span>
+                    {`First ${matchingCount.toLocaleString('en-US')} of ${selectAllMatching.total.toLocaleString('en-US')} matching records are selected.`}
+                  </span>
+                ) : (
+                  <span>
+                    All <span className="font-medium">{selectAllMatching.total}</span> records matching the current filters are selected.
+                  </span>
+                )}
                 <Button variant="link" size="sm" className="h-auto p-0" onClick={clearSelection}>
                   Clear selection
                 </Button>
@@ -685,7 +704,9 @@ export function DataGridListToolbar<TData extends object>({
                   All <span className="font-medium">{selectAllMatching.loadedCount}</span> on this page selected.
                 </span>
                 <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAllMatching.onSelectAll}>
-                  Select all {selectAllMatching.total} records
+                  {matchingCapped
+                    ? `Select first ${matchingCount.toLocaleString('en-US')} of ${selectAllMatching.total.toLocaleString('en-US')}`
+                    : `Select all ${selectAllMatching.total} records`}
                 </Button>
               </>
             )}
