@@ -334,7 +334,13 @@ def test_ac3_impersonation_token_never_mints():
 # --------------------------------------------------------------------------- #
 # AC-4: one 401 body for every refusal at the exchange                         #
 # --------------------------------------------------------------------------- #
-@pytest.mark.parametrize("secret", ["", "x", "NOPE" + uuid.uuid4().hex, "a" * 200])
+# Fixed values and ids: a random value here gives each xdist worker a different test id and
+# the run aborts with "Different tests were collected".
+@pytest.mark.parametrize(
+    "secret",
+    ["", "x", "NOPE0123456789abcdef0123456789abcdef", "a" * 200],
+    ids=["empty", "short", "unknown", "long"],
+)
 def test_ac4_unknown_secret_is_the_same_401(secret):
     with blank_session() as db:
         with _client_ctx(db) as client:
