@@ -81,7 +81,9 @@ DATASET = reg.Dataset(
 DEFINITION = reg.ReportDefinition(
     key="unpaid_documents",
     title="Unpaid invoices",
-    permission="order_management.orders.view",
+    # Receivables are finance data: the billing documents' own slug, as `api/v1/finance/billing_documents` reads them
+    # (security review B1).
+    permission="finance.billing_documents.view",
     dataset=DATASET,
     params=(
         reg.DateBasisParam(key="date_basis", label="Date basis", default="order_date"),
@@ -101,7 +103,7 @@ DEFINITION = reg.ReportDefinition(
         "pivot": {"rows": "month", "cols": "all", "measures": ["qty", "amount"]},
     },
     workbook=reg.WorkbookSpec(company_name=""),
-    module_key="order_management",
+    module_key="finance",
 )
 
 reg.validate(DEFINITION)

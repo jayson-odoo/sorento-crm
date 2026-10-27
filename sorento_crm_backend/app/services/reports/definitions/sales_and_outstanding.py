@@ -2,7 +2,8 @@
 chatbot's report ask runs (`ask.CATALOGUE["sales"]`), registered on the generic reports API so staff can check the
 bot's number. They are registered as the SAME objects, never copies, so the screen and the bot cannot drift.
 
-Permission follows each definition: invoiced `sales.reports.view`, the other five `order_management.orders.view`.
+Permission follows each definition: invoiced `sales.reports.view`, unpaid `finance.billing_documents.view` (receivables are
+finance data), the other four `order_management.orders.view`.
 """
 from __future__ import annotations
 

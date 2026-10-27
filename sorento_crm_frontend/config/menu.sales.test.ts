@@ -37,7 +37,11 @@ describe('Sales menu', () => {
     expect(titles.indexOf('Sales & outstanding')).toBe(titles.indexOf('Top selling items') + 1);
     const item = sales?.children?.find((c) => c.title === 'Sales & outstanding');
     expect(item?.path).toBe('/sales/sales-and-outstanding');
-    expect(item?.permissionsAny).toEqual(['sales.reports.view', 'order_management.orders.view']);
+    expect(item?.permissionsAny).toEqual([
+      'sales.reports.view',
+      'order_management.orders.view',
+      'finance.billing_documents.view',
+    ]);
     expect(item?.moduleKey).toBe('sales');
     expect(moduleKeyForPath('/sales/sales-and-outstanding')).toBe('sales');
   });

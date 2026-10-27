@@ -46,7 +46,7 @@ vi.mock('@/components/reports/ReportPage', () => ({
 
 import { SalesAndOutstandingView } from './SalesAndOutstandingView';
 
-const ALL = ['sales.reports.view', 'order_management.orders.view'];
+const ALL = ['sales.reports.view', 'order_management.orders.view', 'finance.billing_documents.view'];
 const LABELS = ['Invoiced', 'Delivered', 'Ordered', 'Undelivered orders', 'Pending delivery', 'Unpaid invoices'];
 
 beforeEach(() => {
@@ -87,12 +87,20 @@ describe('SalesAndOutstandingView', () => {
     expect(state.replace).toHaveBeenCalledWith('/sales/sales-and-outstanding', { scroll: false });
   });
 
-  it('hides Invoiced from a user without the reports permission and opens on Delivered', () => {
+  it('hides Invoiced and Unpaid invoices from a user with the orders permission only and opens on Delivered', () => {
     state.perms = new Set(['order_management.orders.view']);
     render(<SalesAndOutstandingView />);
     expect(screen.queryByRole('tab', { name: 'Invoiced' })).toBeNull();
-    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(LABELS.slice(1));
+    expect(screen.queryByRole('tab', { name: 'Unpaid invoices' })).toBeNull();
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(LABELS.slice(1, 5));
     expect(screen.getByTestId('report-key').textContent).toBe('sales_order_lines_ask_delivered');
+  });
+
+  it('shows Unpaid invoices alone to a finance user and opens on it', () => {
+    state.perms = new Set(['finance.billing_documents.view']);
+    render(<SalesAndOutstandingView />);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['Unpaid invoices']);
+    expect(screen.getByTestId('report-key').textContent).toBe('unpaid_documents');
   });
 
   it('hides the five order tabs from a user with the reports permission only', () => {

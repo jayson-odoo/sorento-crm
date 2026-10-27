@@ -7,6 +7,8 @@ import { useUrlTab } from '@/hooks/useUrlTab';
 
 const REPORTS_VIEW = 'sales.reports.view';
 const ORDERS_VIEW = 'order_management.orders.view';
+// Unpaid invoices are receivables: finance data, behind the billing documents slug (security review B1).
+const FINANCE_VIEW = 'finance.billing_documents.view';
 
 /** One tab per basis, each its own report definition (the ones the chatbot's report ask runs). */
 export const SALES_AND_OUTSTANDING_TABS = [
@@ -20,7 +22,7 @@ export const SALES_AND_OUTSTANDING_TABS = [
     permission: ORDERS_VIEW,
   },
   { value: 'pending-delivery', label: 'Pending delivery', reportKey: 'delivery_order_lines_pending', permission: ORDERS_VIEW },
-  { value: 'unpaid', label: 'Unpaid invoices', reportKey: 'unpaid_documents', permission: ORDERS_VIEW },
+  { value: 'unpaid', label: 'Unpaid invoices', reportKey: 'unpaid_documents', permission: FINANCE_VIEW },
 ] as const;
 
 type TabValue = (typeof SALES_AND_OUTSTANDING_TABS)[number]['value'];
@@ -28,9 +30,13 @@ type TabValue = (typeof SALES_AND_OUTSTANDING_TABS)[number]['value'];
 export function SalesAndOutstandingView() {
   const canReports = useHasPermission(REPORTS_VIEW);
   const canOrders = useHasPermission(ORDERS_VIEW);
-  const visible = SALES_AND_OUTSTANDING_TABS.filter((t) =>
-    t.permission === REPORTS_VIEW ? canReports : canOrders,
-  );
+  const canFinance = useHasPermission(FINANCE_VIEW);
+  const allowed: Record<string, boolean> = {
+    [REPORTS_VIEW]: canReports,
+    [ORDERS_VIEW]: canOrders,
+    [FINANCE_VIEW]: canFinance,
+  };
+  const visible = SALES_AND_OUTSTANDING_TABS.filter((t) => allowed[t.permission]);
   const [active, setTab] = useUrlTab<TabValue>({
     tabs: visible.map((t) => t.value),
     defaultTab: visible[0]?.value ?? 'invoiced',

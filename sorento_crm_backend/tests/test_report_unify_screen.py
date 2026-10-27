@@ -66,9 +66,10 @@ KEYS = {
     "pending_delivery": "delivery_order_lines_pending",
     "unpaid": "unpaid_documents",
 }
-ORDER_BASES = [b for b in KEYS if b != "invoiced"]
+ORDER_BASES = [b for b in KEYS if b not in ("invoiced", "unpaid")]
 NO_SPEC = ["unpaid"]
 ORDERS_VIEW, REPORTS_VIEW = "order_management.orders.view", "sales.reports.view"
+FINANCE_VIEW = "finance.billing_documents.view"  # unpaid invoices are receivables: finance data (security review B1)
 
 
 # ------------------------------------------------------------------------- helpers
@@ -237,6 +238,23 @@ def test_slice4_orders_view_alone_sees_and_runs_the_five_order_bases_and_not_inv
         assert KEYS["invoiced"] not in listed
         assert _meta(c, KEYS["invoiced"]).status_code == 403
         assert _run(c, KEYS["invoiced"]).status_code == 403
+        # B1: unpaid is AR, behind the finance slug everywhere else; orders.view does not open it.
+        assert KEYS["unpaid"] not in listed
+        assert _meta(c, KEYS["unpaid"]).status_code == 403
+        assert _run(c, KEYS["unpaid"]).status_code == 403
+
+
+def test_slice4_finance_billing_documents_view_opens_unpaid_and_nothing_else(db) -> None:
+    """Slice 4 / security B1: unpaid needs finance.billing_documents.view, and that slug alone opens just it."""
+    principal = _user(db, DEFAULT_COMPANY_ID)
+    with _client(db, principal, allow=(FINANCE_VIEW,)) as c:
+        listed = {r["key"] for r in c.get("/api/v1/reports").json()["reports"]}
+        assert KEYS["unpaid"] in listed
+        assert _meta(c, KEYS["unpaid"]).status_code == 200
+        assert _run(c, KEYS["unpaid"]).status_code == 200
+        for basis in (*ORDER_BASES, "invoiced"):
+            assert KEYS[basis] not in listed, basis
+            assert _meta(c, KEYS[basis]).status_code == 403, basis
 
 
 def test_slice4_sales_reports_view_opens_invoiced(db) -> None:
