@@ -1,8 +1,8 @@
 # UAC - BULK-ACCESS-PREVIEW (access-sheet preview shows every change; links follow each contact's row)
 
 Status: APPROVED 27 Oct (owner on mock v2: approved, "make this into a new page [...] so I can scroll down, have
-pagination"; card `CARD-bulk-access-preview-27oct.md` approved, edge cases as recommended). P8 is built on the crew
-recommendation while the owner's answer is open; the hand-test script names it so he can veto.
+pagination"; card `CARD-bulk-access-preview-27oct.md` approved, edge cases as recommended). P8 settled by crew ruling 27 Oct
+(b): Rows disagree cards are confirmed too.
 Amends `bulk-contact-access-26oct-acceptance-criteria.md` U10, U11 (link fan-out) and U20 (dialog, truncation).
 
 ## Linking
@@ -28,5 +28,6 @@ Amends `bulk-contact-access-26oct-acceptance-criteria.md` U10, U11 (link fan-out
   Confirmations and picks survive paging. Usable at 375 px (facet rows stack: label, before, after) and 1280 px.
 
 ## Confirm all exact
-- P8 (built on the crew recommendation, owner may veto) "Confirm all exact" skips blocks with warning
-  `rows_disagree`; the admin confirms those by hand.
+- P8 [crew ruling 27 Oct, (b)] "Confirm all exact" confirms every `exact` block, `rows_disagree` included (per-row
+  company linking makes rows tagging different companies the normal case); the "Rows disagree on companies" pill
+  stays visible on the card.

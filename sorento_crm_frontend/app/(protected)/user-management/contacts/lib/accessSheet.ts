@@ -23,10 +23,10 @@ export function initialSelection(preview: AccessSheetResult): AccessSheetSelecti
   return { confirmed, ticked };
 }
 
-/** Owner question 27 Oct, built on the crew recommendation: a card whose rows disagree on
- * companies is left for the admin to confirm by hand. */
+/** Every exact card, Rows disagree included (crew ruling 27 Oct: with per-row company linking,
+ * rows tagging different companies is the normal case; the card keeps its pill). */
 function confirmableExact(block: AccessSheetBlock): boolean {
-  return block.status === 'exact' && !block.warnings.includes('rows_disagree');
+  return block.status === 'exact';
 }
 
 /** Whether Confirm all exact has any card to confirm. */

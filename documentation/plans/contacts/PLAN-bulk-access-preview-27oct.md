@@ -1,6 +1,6 @@
 # PLAN: access-sheet preview shows full per-contact changes; account links follow each contact's own row (BULK-ACCESS-PREVIEW)
 
-Status: Review READY (round 2) and round-2 fixes in; sandbox browser pass PASS; hand test filed; open owner question on Confirm all exact vs Rows disagree. Mock v2 + card approved 27 Oct (preview as
+Status: Review READY (round 2) and round-2 fixes in; sandbox browser pass PASS; P8 flipped to crew ruling (b); browser pass rerun on the new head; hand test re-filed. Mock v2 + card approved 27 Oct (preview as
 its own paginated page). Track: M (LEAD pattern; diff over 300 lines, no migration, no auth change).
 Parent: `PLAN-bulk-contact-access-26oct.md` (#1875). UAC: `bulk-access-preview-27oct-acceptance-criteria.md`.
 
