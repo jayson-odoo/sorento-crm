@@ -32,7 +32,6 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { NewOnboardingRequestDialog } from './NewOnboardingRequestDialog';
@@ -46,14 +45,13 @@ import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { useOnboardingRequests } from '../hooks/useOnboardingRequests';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 
-const STATUS_OPTIONS = [
-  { value: 'all', label: 'All statuses' },
-  ...(Object.keys(ONBOARDING_STATUS_LABELS) as OnboardingRequestStatus[]).map((status) => ({
-    value: status,
-    label: ONBOARDING_STATUS_LABELS[status],
-  })),
-];
+const STATUS_OPTIONS = (Object.keys(ONBOARDING_STATUS_LABELS) as OnboardingRequestStatus[]).map((status) => ({
+  value: status,
+  label: ONBOARDING_STATUS_LABELS[status],
+}));
 
 /** Stored naive UTC, read as Malaysia wall-clock, never as the browser's zone. */
 function day(value: string | null): string {
@@ -78,7 +76,9 @@ export function OnboardingRequestList() {
     isSettling: searchSettling,
     reset: resetSearch,
   } = useDebouncedSearch();
+  // FILTER-MULTISELECT: one or more statuses, comma-joined ('all' = none chosen).
   const [statusFilter, setStatusFilter] = useState('all');
+  const statusKeys = splitMulti(statusFilter).filter((v) => v !== 'all');
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
 
@@ -103,14 +103,14 @@ export function OnboardingRequestList() {
    */
   useResetPageOnFilterChange(setPagination, [searchQuery]);
 
-  const isFiltered = searchQuery.trim().length > 0 || statusFilter !== 'all';
+  const isFiltered = searchQuery.trim().length > 0 || statusKeys.length > 0;
 
   const listParams = {
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    statusKey: statusFilter === 'all' ? undefined : statusFilter,
+    statusKey: joinMulti(statusKeys) || undefined,
   };
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useOnboardingRequests(listParams);
@@ -296,7 +296,7 @@ export function OnboardingRequestList() {
             sorting,
             searchQuery,
           },
-          { status_key: statusFilter === 'all' ? undefined : statusFilter },
+          { status_key: joinMulti(statusKeys) || undefined },
         );
         const id = (row as OnboardingRequestSummary).id;
         return `/user-management/onboarding-requests/${id}${qs ? `?${qs}` : ''}`;
@@ -318,27 +318,49 @@ export function OnboardingRequestList() {
             }
             filters={{
               kind: 'custom',
-              active: statusFilter !== 'all',
-              activeCount: statusFilter !== 'all' ? 1 : 0,
+              active: statusKeys.length > 0,
+              activeCount: statusKeys.length > 0 ? 1 : 0,
+              activeSummary: statusKeys.length
+                ? {
+                    label: multiChipLabel(
+                      'Status',
+                      statusKeys.map((k) => ONBOARDING_STATUS_LABELS[k as OnboardingRequestStatus] ?? k),
+                    ),
+                    onClear: () => {
+                      setStatusFilter('all');
+                      firstPage();
+                    },
+                  }
+                : undefined,
               content: (
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={(value) => {
-                        setStatusFilter(value || 'all');
+                    <SearchableMultiSelect
+                      value={statusKeys}
+                      onChange={(values) => {
+                        setStatusFilter(joinMulti(values) || 'all');
                         firstPage();
                       }}
                       options={STATUS_OPTIONS}
-                      placeholder="All statuses"
+                      placeholder="Status: any"
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">
+                            {multiChipLabel('Status', chosen.map((o) => o.label))}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Status: any</span>
+                        )
+                      }
+                      clearable
                       triggerClassName="mt-1"
                       // "Completed with failures" is wider than the filter
                       // popover, and cut short it reads as plain "Completed".
                       wrapOptions
                     />
                   </div>
-                  {statusFilter !== 'all' ? (
+                  {statusKeys.length > 0 ? (
                     <div className="flex justify-end">
                       <Button
                         variant="ghost"
