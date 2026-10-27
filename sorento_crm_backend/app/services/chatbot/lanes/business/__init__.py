@@ -1877,7 +1877,14 @@ def run_fetch(
         # category ranking is the sales ranking on the report engine, never `crm_top_selling_report`.
         parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
         order_status_raw = report_ask.ASK_NAME
-    if domain in contracts.ORDER_OR_SALES_DOMAINS and order_status_raw not in (report_ask.ASK_NAME, "top_selling"):
+    _company_answer = isinstance(parse_output.get("required_ask"), dict) and (
+        parse_output["required_ask"].get("ask") == sales_company_ask.ASK_NAME
+    )  # the reply to the Yearly comparison's company question re-runs THAT ask: never retyped here
+    if (
+        domain in contracts.ORDER_OR_SALES_DOMAINS
+        and order_status_raw not in (report_ask.ASK_NAME, "top_selling")
+        and not _company_answer
+    ):
         # REPORT-UNIFY (Q1): every sales total or breakdown and every outstanding ask that holds a filter or an
         # axis is the report ask. The engine seam (`report_ask.by_capability`) converts it before grounding; this is
         # the same conversion for a verdict that skipped it (a live session, a direct call).
