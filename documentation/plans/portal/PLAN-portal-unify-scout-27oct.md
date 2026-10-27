@@ -1,6 +1,7 @@
 # PLAN: portal / system unification scout (27 Oct 2026)
 
-Status: scout delivered, awaiting owner rulings on Q1 to Q5 (design lane, no product code).
+Status: scout v2 delivered (27 Oct), awaiting owner alignment on sections 10 to 12 and decisions D1 to D8
+before any lane starts (Q5). Design lane, no product code.
 Track: scout. Lane PORTAL-UNIFY-SCOUT.
 
 Design doc (the deliverable, self-contained HTML):
@@ -48,3 +49,17 @@ Q1 salesperson reads only own + collaborator projects (rec: yes). Q2 project sal
 registration only for set-up users (rec: yes). Q3 portal quotation scope (rec: draft + lines +
 send for approval; admin issues). Q4 salesperson never sees the CRM sidebar (rec: portal shell
 only). Q5 P1 and P2 as two parallel lanes now (rec: yes).
+
+## Owner answers (27 Oct 2026) and v2
+
+- Q1 yes, Q2 yes.
+- Q3: salespeople may use every quotation function built, issue and revision included, to cut
+  admin work. v2 section 12 lists today's rules and decisions D1 to D8 (floors as the discount
+  limit, floor coverage, who signs, self-approval, revision, terms, sign link, admin visibility).
+- Q4: concern about building the CRM view and the portal view twice. v2 section 10: one route tree
+  (`app/(protected)/project-sales/**`), the frame chosen in `app/(protected)/layout.tsx`
+  (Demo1Layout or a new PortalFrame), permissions decide buttons, and guards (route allowlist
+  vitest, ESLint bans on `@/lib/shell` and on portal imports of project-sales). v2 section 11
+  compares (i) one shell with a role menu against (ii) two frames around the same pages, and
+  recommends (ii).
+- Q5: no lane starts until alignment.
