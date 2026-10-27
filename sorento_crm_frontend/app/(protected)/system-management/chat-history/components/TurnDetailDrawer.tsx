@@ -8,6 +8,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible';
 import { SearchableCode } from '@/components/common/find-in-text/SearchableCode';
 import { IndexMatchSection } from './IndexMatchSection';
+import { SpanPassSection } from './SpanPassSection';
 import { useChatbotTurn } from '../hooks/useChatbotTurns';
 import { factText, shortTurnId } from '../turnPresentation';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -91,8 +92,13 @@ function Sections({ detail }: { detail: TurnDetail }) {
       <Section title="Index match" testId="section-index-match">
         <IndexMatchSection indexMatch={detail.index_match ?? null} />
       </Section>
+      {detail.span_extract && (
+        <Section title="Span pass" testId="section-span-pass">
+          <SpanPassSection spanExtract={detail.span_extract} />
+        </Section>
+      )}
       <Section title="Apply" testId="section-apply">
-        <ApplySection apply={detail.apply ?? null} />
+        <ApplySection apply={detail.apply ?? null} promptText={detail.prompt_text ?? null} />
       </Section>
       <Section title="Memory" testId="section-memory">
         <MemorySection memory={detail.memory ?? null} />
@@ -311,7 +317,7 @@ function decisionWords(kind: string): string {
   return DECISION_WORDS[kind] ?? kind;
 }
 
-function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
+function ApplySection({ apply, promptText }: { apply: TurnDetail['apply']; promptText: string | null }) {
   if (!apply) return <Empty>Not recorded on this turn (APPLY shipped in S3).</Empty>;
   const stateDiff = diffEntries(apply.state_diff);
   const narrowing = apply.narrowing ?? [];
@@ -376,14 +382,14 @@ function ApplySection({ apply }: { apply: TurnDetail['apply'] }) {
           <Code value={apply.plan} />
         )}
       </div>
-      {apply.prompt_text && (
+      {promptText && (
         <Collapsible>
           <CollapsibleTrigger className="text-primary underline-offset-2 hover:underline">
             Prompt text sent to the parser
           </CollapsibleTrigger>
           <CollapsibleContent>
             <div className="mt-1 overflow-x-auto">
-              <SearchableCode text={apply.prompt_text} />
+              <SearchableCode text={promptText} />
             </div>
           </CollapsibleContent>
         </Collapsible>

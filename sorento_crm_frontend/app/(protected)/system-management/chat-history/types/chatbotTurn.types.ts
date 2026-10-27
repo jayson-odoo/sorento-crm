@@ -367,8 +367,6 @@ export interface TurnDetailApply {
    * fetch, denied, ask, lane); an older turn carries the one-line string.
    */
   plan: string | Record<string, unknown> | null;
-  /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
-  prompt_text: string | null;
 }
 
 /**
@@ -529,6 +527,30 @@ export interface IndexMatch {
   looked_up: { what: string; details: string[] } | null;
 }
 
+export interface SpanExtractSpan {
+  text: string;
+  type: string | null;
+  status: string | null;
+  /** Close rows before the top-K cut. */
+  close?: number;
+  residual?: boolean;
+}
+
+/** The span pass of a turn; null/absent when the turn ran no span pass. */
+export interface SpanExtract {
+  spans: SpanExtractSpan[];
+  rows_rendered: number;
+  near_exact_rows: number;
+  fallback: boolean;
+  fallback_reason: string | null;
+  provider: string | null;
+  model: string | null;
+  model_source: string | null;
+  ms: number;
+  /** Labels of the lookup rows the parser was shown. */
+  matched_rows: string[];
+}
+
 export interface TurnDetail {
   stages: TurnDetailStage[];
   parse: TurnDetailParse | null;
@@ -547,6 +569,9 @@ export interface TurnDetail {
   session: TurnDetailSession;
   /** `null` when the turn sent the full lists; absent on a trace composed before the lane shipped. */
   index_match?: IndexMatch | null;
+  span_extract?: SpanExtract | null;
+  /** The rendered user block plus hint blocks sent to the parser, capped at 64 KB. */
+  prompt_text?: string | null;
 }
 
 export interface ChatbotTurnDetail extends ChatbotTurn {

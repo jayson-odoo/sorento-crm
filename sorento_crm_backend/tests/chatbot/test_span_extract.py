@@ -488,7 +488,9 @@ def test_ac_s2_8_revision_ids_and_single_head():
     assert m.revision == "eem_0001_span_pass" and len(m.revision) <= 32
     script = ScriptDirectory.from_config(Config(str(VERSIONS.parents[1] / "alembic.ini")))
     assert script.get_revision(m.down_revision) is not None, m.down_revision
-    assert script.get_heads() == [m.revision], script.get_heads()
+    heads = script.get_heads()
+    assert len(heads) == 1, heads
+    assert m.revision in {r.revision for r in script.walk_revisions(base="base", head=heads[0])}  # a later migration may follow
 
 
 def test_ac_s2_8_upgrade_seeds_the_span_prompt_labelled_production(_small_diet):
