@@ -28,6 +28,8 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useTenantModules } from '@/hooks/useTenantModules';
@@ -87,8 +89,8 @@ export default function PromotionsList() {
   // same permission as editing one by hand.
   const canResubmit = useHasPermission('marketing.promotions.edit');
   const [filterStatus, setFilterStatus] = useState<string>('all');
-  const [filterAccessLevel, setFilterAccessLevel] = useState<string>('all');
-  const [filterAttachmentState, setFilterAttachmentState] = useState<'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed'>('all');
+  const [filterAccessLevel, setFilterAccessLevel] = useState<string>('');
+  const [filterAttachmentState, setFilterAttachmentState] = useState<string>('');
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -97,15 +99,13 @@ export default function PromotionsList() {
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
     setFilterStatus(state.filters.status ?? 'all');
-    setFilterAccessLevel(state.filters.user_type ?? 'all');
-    setFilterAttachmentState(
-      (state.filters.attachment_state as typeof filterAttachmentState) ?? 'all',
-    );
+    setFilterAccessLevel(state.filters.user_type ?? '');
+    setFilterAttachmentState(state.filters.attachment_state ?? '');
   });
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [viewerAttachmentId, setViewerAttachmentId] = useState<string | null>(null);
 
-  const hasActiveQuickFilters = filterStatus !== 'all' || filterAccessLevel !== 'all' || filterAttachmentState !== 'all';
+  const hasActiveQuickFilters = filterStatus !== 'all' || filterAccessLevel !== '' || filterAttachmentState !== '';
 
   /**
    * One query, one key, shared with the record page's pager (S3-03).
@@ -120,8 +120,8 @@ export default function PromotionsList() {
     sorting,
     searchQuery,
     status: filterStatus,
-    user_type: filterAccessLevel === 'all' ? undefined : filterAccessLevel,
-    attachment_state: filterAttachmentState === 'all' ? undefined : filterAttachmentState,
+    user_type: filterAccessLevel || undefined,
+    attachment_state: filterAttachmentState || undefined,
     expiry_notify_batch_id: expiryNotifyBatchId,
     advancedFilter: advancedFilter ?? undefined,
   });
@@ -319,9 +319,8 @@ export default function PromotionsList() {
       },
       {
         status: filterStatus !== 'all' ? filterStatus : undefined,
-        user_type: filterAccessLevel !== 'all' ? filterAccessLevel : undefined,
-        attachment_state:
-          filterAttachmentState !== 'all' ? filterAttachmentState : undefined,
+        user_type: filterAccessLevel || undefined,
+        attachment_state: filterAttachmentState || undefined,
         // Both narrow the set, so both have to ride along or the pager walks a
         // wider one than the reader is looking at.
         expiry_notify_batch_id: expiryNotifyBatchId,
@@ -439,35 +438,31 @@ export default function PromotionsList() {
                       </div>
                       <div className="space-y-2">
                         <Label>Access level</Label>
-                        <SearchableSelect
-                          value={filterAccessLevel}
-                          onChange={setFilterAccessLevel}
+                        <SearchableMultiSelect
+                          value={splitMulti(filterAccessLevel)}
+                          onChange={(v) => setFilterAccessLevel(joinMulti(v))}
                           loadError={accessTypesError}
                           onRetry={() => void refetchAccessTypes()}
-                          options={[
-                            { value: 'all', label: 'All' },
-                            ...accessTypeOptions.map((opt) => ({
-                              value: opt.code,
-                              label: opt.name || opt.code,
-                            })),
-                          ]}
+                          options={accessTypeOptions.map((opt) => ({
+                            value: opt.code,
+                            label: opt.name || opt.code,
+                          }))}
                           placeholder="All"
+                          clearable
                         />
                       </div>
                       <div className="space-y-2">
                         <Label>Attachment state</Label>
-                        <SearchableSelect
-                          value={filterAttachmentState}
-                          onChange={(v) =>
-                            setFilterAttachmentState(v as 'all' | 'unlinked' | 'linked_to_trashed' | 'unlinked_or_trashed')
-                          }
+                        <SearchableMultiSelect
+                          value={splitMulti(filterAttachmentState)}
+                          onChange={(v) => setFilterAttachmentState(joinMulti(v))}
                           options={[
-                            { value: 'all', label: 'All' },
                             { value: 'unlinked', label: 'No attachments' },
                             { value: 'linked_to_trashed', label: 'Linked to trashed' },
                             { value: 'unlinked_or_trashed', label: 'No attachments or trashed' },
                           ]}
                           placeholder="All"
+                          clearable
                         />
                       </div>
                       {hasActiveQuickFilters && (
@@ -477,8 +472,8 @@ export default function PromotionsList() {
                           className="w-full"
                           onClick={() => {
                             setFilterStatus('all');
-                            setFilterAccessLevel('all');
-                            setFilterAttachmentState('all');
+                            setFilterAccessLevel('');
+                            setFilterAttachmentState('');
                           }}
                         >
                           Clear quick filters

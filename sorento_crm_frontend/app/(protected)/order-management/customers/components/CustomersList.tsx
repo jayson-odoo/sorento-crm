@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
   ColumnDef,
@@ -63,7 +63,16 @@ export default function CustomersList() {
   const [statusFilter, setStatusFilter] = useState<string>('all');
   // Group ids, comma-joined when several; the names are what the picker has fetched so far.
   const [groupFilter, setGroupFilter] = useState('');
-  const [groupNames, setGroupNames] = useState<Record<string, string>>({});
+  const groupNames = useRef<Record<string, string>>({});
+  const fetchGroups = useCallback(async (query: string) => {
+    const found = (await searchCustomerGroupsSelect(query)).map((g) => ({
+      value: g.id,
+      label: g.name,
+      description: `${g.ledger_count} ${g.ledger_count === 1 ? 'ledger' : 'ledgers'}`,
+    }));
+    for (const o of found) groupNames.current[o.value] = o.label;
+    return found;
+  }, []);
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -314,21 +323,10 @@ export default function CustomersList() {
                         setGroupFilter(joinMulti(v));
                         setPagination((p) => ({ ...p, pageIndex: 0 }));
                       }}
-                      fetchOptions={async (query) => {
-                        const found = (await searchCustomerGroupsSelect(query)).map((g) => ({
-                          value: g.id,
-                          label: g.name,
-                          description: `${g.ledger_count} ${g.ledger_count === 1 ? 'ledger' : 'ledgers'}`,
-                        }));
-                        setGroupNames((prev) => ({
-                          ...prev,
-                          ...Object.fromEntries(found.map((o) => [o.value, o.label])),
-                        }));
-                        return found;
-                      }}
+                      fetchOptions={fetchGroups}
                       selectedOptions={splitMulti(groupFilter).map((id) => ({
                         value: id,
-                        label: groupNames[id] ?? 'Selected group',
+                        label: groupNames.current[id] ?? 'Selected group',
                       }))}
                       placeholder="All groups"
                       emptyMessage="No groups match."

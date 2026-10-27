@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -65,7 +65,7 @@ export default function SalesOpportunitiesView() {
   const [salesAgentId, setSalesAgentId] = useState('');
   const [customerId, setCustomerId] = useState('');
   // The names of the customers fetched so far, so a pick is named in the trigger (never an id).
-  const [customerNames, setCustomerNames] = useState<Record<string, string>>({});
+  const customerNames = useRef<Record<string, string>>({});
   const [closeFrom, setCloseFrom] = useState<string | null>(null);
   const [closeTo, setCloseTo] = useState<string | null>(null);
 
@@ -88,15 +88,15 @@ export default function SalesOpportunitiesView() {
     value: a.id,
     label: a.label,
   }));
-  const fetchCustomerOptions = async (q: string): Promise<SearchableSelectOption[]> => {
+  const fetchCustomerOptions = useCallback(async (q: string): Promise<SearchableSelectOption[]> => {
     const result = await getSalesOpportunityCustomerOptions(q);
     const found = result.items.map((item) => ({
       value: item.customer_id,
       label: `${item.customer_code} - ${item.customer_name}`,
     }));
-    setCustomerNames((prev) => ({ ...prev, ...Object.fromEntries(found.map((o) => [o.value, o.label])) }));
+    for (const o of found) customerNames.current[o.value] = o.label;
     return found;
-  };
+  }, []);
 
   const { data, isLoading, isFetching, isPlaceholderData, isError, refetch } = useSalesOpportunities({
     pageIndex: pagination.pageIndex,
@@ -313,7 +313,7 @@ export default function SalesOpportunitiesView() {
                   fetchOptions={fetchCustomerOptions}
                   selectedOptions={splitMulti(customerId).map((id) => ({
                     value: id,
-                    label: customerNames[id] ?? 'Selected customer',
+                    label: customerNames.current[id] ?? 'Selected customer',
                   }))}
                   placeholder="Customer"
                   clearable

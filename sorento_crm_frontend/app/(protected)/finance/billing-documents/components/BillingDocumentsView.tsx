@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -75,7 +75,12 @@ export default function BillingDocumentsView({ customerId }: { customerId?: stri
   const [status, setStatus] = useState('');
   const [pickedCustomerId, setPickedCustomerId] = useState('');
   // The names of the customers fetched so far, so a pick is named in the trigger (never an id).
-  const [customerNames, setCustomerNames] = useState<Record<string, string>>({});
+  const customerNames = useRef<Record<string, string>>({});
+  const fetchCustomers = useCallback(async (q: string) => {
+    const found = await searchBillingCustomerOptions(q);
+    for (const o of found) customerNames.current[o.value] = o.label;
+    return found;
+  }, []);
   const [agentCode, setAgentCode] = useState('');
   const [dateFrom, setDateFrom] = useState<string | null>(null);
   const [dateTo, setDateTo] = useState<string | null>(null);
@@ -360,17 +365,10 @@ export default function BillingDocumentsView({ customerId }: { customerId?: stri
                     aria-label="Customer"
                     value={splitMulti(pickedCustomerId)}
                     onChange={(v) => setPickedCustomerId(joinMulti(v))}
-                    fetchOptions={async (q) => {
-                      const found = await searchBillingCustomerOptions(q);
-                      setCustomerNames((prev) => ({
-                        ...prev,
-                        ...Object.fromEntries(found.map((o) => [o.value, o.label])),
-                      }));
-                      return found;
-                    }}
+                    fetchOptions={fetchCustomers}
                     selectedOptions={splitMulti(pickedCustomerId).map((id) => ({
                       value: id,
-                      label: customerNames[id] ?? 'Selected customer',
+                      label: customerNames.current[id] ?? 'Selected customer',
                     }))}
                     placeholder="Customer"
                     clearable

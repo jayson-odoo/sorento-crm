@@ -31,7 +31,7 @@
  * dialog walks the same rows in the same order.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   getCoreRowModel,
@@ -40,7 +40,8 @@ import {
   type PaginationState,
 } from '@tanstack/react-table';
 
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardTable } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -57,7 +58,6 @@ import { TriangleAlert, Check, ImageOff, Images } from 'lucide-react';
 
 import {
   BROCHURE_IMAGE_PAGE_SIZE,
-  PROMOTION_PAGE_SIZE,
   type BrochureImageRow,
 } from '../../services/brochureImageService';
 import {
@@ -84,6 +84,12 @@ export function BrochureImagePicker() {
   });
 
   const promotionOptions = useBrochureImagePromotionOptions();
+  const { fetchOptions: fetchPromotionPage } = promotionOptions;
+  // First page of matches; stable, because the multi-select refetches when this changes.
+  const fetchPromotions = useCallback(
+    (query: string) => fetchPromotionPage(query, 0),
+    [fetchPromotionPage],
+  );
 
   // Any change of filter is a different worklist, so page 1 is where it starts.
   useEffect(() => {
@@ -314,17 +320,16 @@ export function BrochureImagePicker() {
               <Label htmlFor="dk-bi-promotion" className="text-xs text-muted-foreground">
                 Promotion
               </Label>
-              <SearchableSelect
+              <SearchableMultiSelect
                 id="dk-bi-promotion"
-                value={promotionId}
-                onChange={setPromotionId}
-                // Server-searched and paged: there are hundreds of promotions,
-                // so a static option list would cap the filter at one page and
-                // hide the rest without saying so.
-                fetchOptions={promotionOptions.fetchOptions}
-                paginated
-                pageSize={PROMOTION_PAGE_SIZE}
-                selectedOption={promotionOptions.optionFor(promotionId)}
+                value={splitMulti(promotionId)}
+                onChange={(v) => setPromotionId(joinMulti(v))}
+                // Server-searched: there are hundreds of promotions, so a static option list
+                // would cap the filter at one page and hide the rest without saying so.
+                fetchOptions={fetchPromotions}
+                selectedOptions={splitMulti(promotionId).map(
+                  (id) => promotionOptions.optionFor(id) ?? { value: id, label: 'Selected promotion' },
+                )}
                 placeholder="Every product"
                 clearable
                 className="w-full sm:w-72"
