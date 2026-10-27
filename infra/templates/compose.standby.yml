@@ -5,12 +5,21 @@
 # it nothing (/api/v1/health/role answers 503), and nothing that writes or schedules runs.
 # scripts/promote-standby.sh starts the `promoted` profile once the db is writable.
 services:
+  # The replica is read-only: start.sh would run `alembic upgrade head` and abort the start.
+  # Migrations reach the standby through replication. After promotion, the next release's
+  # migrations run on this node like on any primary (drop the override then).
+  backend_blue:
+    environment:
+      SKIP_MIGRATIONS: "1"
+  backend_green:
+    environment:
+      SKIP_MIGRATIONS: "1"
   worker:
     profiles: ["promoted"]
     environment:
       ENABLE_SCHEDULER: "true"
       # Direct to Postgres, not pgbouncer (app/scheduler/leader.py docstring).
-      SCHEDULER_LEADER_DATABASE_URL: ${SCHEDULER_LEADER_DATABASE_URL}
+      SCHEDULER_LEADER_DATABASE_URL: ${SCHEDULER_LEADER_DATABASE_URL:?set a direct Postgres URL (not pgbouncer)}
   worker_fast:
     profiles: ["promoted"]
   db:

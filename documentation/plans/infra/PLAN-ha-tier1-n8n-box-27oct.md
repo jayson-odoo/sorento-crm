@@ -41,7 +41,7 @@ the repo: crew confirms each "applied?" cell.
 | Item | Lane / PR | Repo artefacts | Applied on prod? |
 |---|---|---|---|
 | Edge lockdown (DB/Redis/MCP not on public interfaces, `TRUSTED_PROXIES`) | HA-SEC-EDGE #1688 (closed 14 Oct) | `documentation/runbooks/prod-edge-lockdown.md`, `documentation/plans/security/PLAN-prod-edge-lockdown-14oct.md` | unverified |
-| Outside monitor, heartbeats, Cloudflare switch | HA-MONITOR #1692 (16 Oct) | `documentation/runbooks/monitoring.md`, `documentation/runbooks/n8n-heartbeat-workflow.json` (exported `active: false`, line 114), `scripts/ops/cf-proxy.py`, `HC_SCHEDULER_URL` job `healthchecks_scheduler_ping` (`sorento_crm_backend/app/scheduler/task_scheduler.py:950-954`), `GET /api/v1/health` (`sorento_crm_backend/app/main.py:685`) | unverified (heartbeat workflow import and Uptime Kuma monitors are owner steps) |
+| Outside monitor, heartbeats, Cloudflare switch | HA-MONITOR #1692 (16 Oct) | `documentation/runbooks/monitoring.md`, `documentation/runbooks/n8n-heartbeat-workflow.json` (exported `active: false`, line 114), `scripts/ops/cf-proxy.py`, `HC_SCHEDULER_URL` job `healthchecks_scheduler_ping` (`sorento_crm_backend/app/scheduler/task_scheduler.py:953-960`), `GET /api/v1/health` (`sorento_crm_backend/app/main.py:685`) | unverified (heartbeat workflow import and Uptime Kuma monitors are owner steps) |
 | Verified backups: alarm, restore test, n8n + shared DBs | HA-BACKUP-CHECK #1695 (16 Oct) | `scripts/ops/backup-db.sh`, `scripts/ops/restore-test.sh`, `documentation/runbooks/backups.md` | unverified (cron swap to the repo script, `HC_BACKUP_URL`) |
 | n8n to CRM private path (tailnet) | HA-N8N-PRIVATE-PATH #1694 (16 Oct) | `documentation/runbooks/n8n-private-path.md` (failover = one `.env` line, lines 641-663) | unverified (closing public 6432/8765 rules is 48 h after the switch) |
 | Deploy memory guard, migration timeouts, pre-migrate snapshot, rollback | HA-MEM-DEPLOY-GUARD #1693 (16 Oct) | `scripts/blue_green_deploy.sh` (snapshot 320-345), `.github/workflows/rollback.yml`, `documentation/runbooks/memory-and-deploy-guards.md` | in use: the 8 pre-migrate dumps on the box are its output |
@@ -240,7 +240,7 @@ Why not full active-active today:
   So the standby should talk to its LOCAL replica, never chat with the remote primary.
 - **Redis is single-node** (RQ queues, the chatbot per-contact drain mutex
   `chatbot:drain:{contact}` at `sorento_crm_backend/app/services/chatbot/inbox_queue.py:444`, the
-  reconcile lock at `sorento_crm_backend/app/tasks/chat_reconcile_tasks.py:21`, rate limits). The
+  reconcile lock at `sorento_crm_backend/app/tasks/chat_reconcile_tasks.py:20`, rate limits). The
   inbox sweeper starts on EVERY API process (`sorento_crm_backend/app/main.py:406-411`): two nodes
   with two Redis instances would each think they hold the per-contact lock and double-send. Active
   -active would have to put both nodes on the primary's Redis over the tunnel, paying RTT per
@@ -372,7 +372,7 @@ With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 12
 1. **`GET /api/v1/health/role`** (unauthenticated, like `/api/v1/health`): 200
    `{"status":"healthy","role":"primary"}` when the DB answers and `pg_is_in_recovery()` is false;
    503 `{"status":"standby","role":"standby","replay_lag_seconds":N}` on a hot standby; 503
-   `{"status":"unhealthy"}` when the DB is unreachable. The LB monitor of section 5, and the lag
+   `{"status":"unhealthy","role":"unknown"}` when the DB is unreachable. The LB monitor of section 5, and the lag
    number Phase B would use. No host, no error text.
 2. **Scheduler leader guard** (`sorento_crm_backend/app/scheduler/leader.py`, called first in
    `start_scheduler`, `sorento_crm_backend/app/scheduler/task_scheduler.py`):
@@ -384,8 +384,15 @@ With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 12
      its own connection for the life of the process, so a second scheduler against the same
      primary refuses. That URL must reach Postgres DIRECTLY: through a transaction-mode pgbouncer
      the lock would sit on a pooled server connection that outlives the worker, and the next
-     worker (every deploy recreates it) could never start. Unset = no lock, today's behaviour, so
-     merging this changes nothing on prod until crew sets the env on the `worker` container.
+     worker (every deploy recreates it) could never start, or would re-enter the lock beside the
+     first. Unset = no lock. Set it on the `worker` container of BOTH nodes, or the lock protects
+     nothing.
+   - The lock lives as long as its session: the 10 s scheduler heartbeat checks the held
+     connection and exits the process if it is gone (a Postgres restart, such as the one that
+     turns on archiving), so the restarted worker takes the lock again or refuses.
+   - What changes on prod at merge: only the standby check. It opens one DB connection when the
+     scheduler starts, so a DB that does not answer at that moment now exits the worker (restart
+     loop until it answers) where before the scheduler started and failed per tick.
    - Tests: `sorento_crm_backend/tests/test_scheduler_leader.py`,
      `sorento_crm_backend/tests/test_api_v1_health_role.py`.
 3. **Infra templates** under `infra/` (README there): Postgres primary/standby configs, pg_hba,
@@ -459,7 +466,9 @@ Risks:
   check, so fencing is mandatory and the old primary's pool is disabled in the LB at failover.
 - Deploys now touch two nodes: the release must deploy the standby too (same image), or the
   standby drifts and a failover runs old code. A migration runs once, on the primary; the replica
-  receives it through replication, and the standby's backend must be the same release.
+  receives it through replication, and the standby's backend must be the same release and start
+  with `SKIP_MIGRATIONS=1` (`sorento_crm_backend/start.sh` otherwise runs `alembic upgrade head`
+  against the read-only replica and the container fails to start).
 - Replication slot filling the primary's disk: capped by `max_slot_wal_keep_size`.
 - n8n remains a single point of failure for bot sends (section 6).
 - OpenAI / provider allowlists forgotten: failover works but the bot fails. Drill catches it.

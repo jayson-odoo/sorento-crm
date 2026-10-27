@@ -778,6 +778,10 @@ def process_pending_integration_logs():
 
 def _scheduled_tasks_heartbeat():
     """Heartbeat: run due DB-configured scheduled tasks and persist run logs."""
+    # A Postgres restart drops the leader lock with its session; exit rather than run unlocked.
+    from app.scheduler.leader import exit_if_leadership_lost
+
+    exit_if_leadership_lost()
     try:
         with scheduler_session("scheduled_tasks_heartbeat") as db:
             run_due_tasks(db)

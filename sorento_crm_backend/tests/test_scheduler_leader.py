@@ -119,3 +119,34 @@ def test_start_scheduler_takes_leadership_before_any_job(monkeypatch):
     with pytest.raises(leader.SchedulerNotLeader):
         task_scheduler.start_scheduler()
     assert created == [], "no scheduler may be built when leadership is refused"
+
+
+def test_lost_lock_session_exits_the_process(monkeypatch):
+    """A Postgres restart ends the lock's session: the heartbeat must not run on unlocked."""
+    monkeypatch.setenv(leader.LEADER_URL_ENV, settings.database_url)
+    leader.acquire_leadership()
+    pid = leader._held.execute(text("SELECT pg_backend_pid()")).scalar()
+    leader._held.commit()
+    killer = _other_session()
+    try:
+        killer.execute(text("SELECT pg_terminate_backend(:p)"), {"p": pid})
+        killer.commit()
+    finally:
+        killer.close()
+
+    exits = []
+    monkeypatch.setattr(leader.os, "_exit", lambda code: exits.append(code))
+    ran = []
+    monkeypatch.setattr(task_scheduler, "run_due_tasks", lambda db: ran.append(1))
+    task_scheduler._scheduled_tasks_heartbeat()
+    assert exits == [1]
+    leader._held = None  # the session is already gone
+
+
+def test_live_lock_lets_the_heartbeat_run(monkeypatch):
+    monkeypatch.setenv(leader.LEADER_URL_ENV, settings.database_url)
+    leader.acquire_leadership()
+    exits = []
+    monkeypatch.setattr(leader.os, "_exit", lambda code: exits.append(code))
+    leader.exit_if_leadership_lost()
+    assert exits == []

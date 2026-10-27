@@ -13,8 +13,16 @@ leadership first:
    advisory lock, held on a connection of its own for the life of the process, so a second
    scheduler against the same primary refuses to run. That URL must reach Postgres DIRECTLY
    (not a transaction-mode pgbouncer): through such a pooler the lock sits on a server
-   connection that outlives the process holding it, and the next worker could never start.
+   connection that outlives the process holding it, so the next worker could never start, or
+   lands on that same server connection, re-enters the lock and runs beside the first.
    Unset = no lock (today's behaviour), logged once.
+
+The lock lives as long as its session. A Postgres restart or a terminated backend ends it, so
+the scheduler heartbeat calls `exit_if_leadership_lost` every tick: if the held connection no
+longer answers, the process exits and `restart: unless-stopped` brings it back to take the lock
+again (or to refuse, if another scheduler took it meanwhile). RQ work-horses forked from the
+worker inherit the socket but never touch it, and leave through `os._exit`, so they do not close
+it.
 """
 from __future__ import annotations
 
@@ -84,6 +92,20 @@ def acquire_leadership() -> None:
             raise
         _held = connection
         logger.info("Scheduler leader lock taken")
+
+
+def exit_if_leadership_lost() -> None:
+    """Exit the process when the lock's session is gone. No-op without a lock."""
+    connection = _held
+    if connection is None:
+        return
+    try:
+        with _held_guard:
+            connection.execute(text("SELECT 1"))
+            connection.commit()
+    except Exception as e:  # noqa: BLE001
+        logger.error("Scheduler leader lock lost (%s); exiting so a restart re-takes it", type(e).__name__)
+        os._exit(1)
 
 
 def release_leadership() -> None:
