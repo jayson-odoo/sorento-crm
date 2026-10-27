@@ -1333,6 +1333,15 @@ def _span_prep(
         return None
 
 
+def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
+    """Trace only: the rows the resolver offered for one span, best first, the first 8 (`close`
+    carries the full count) so the event stays inside the trace entry cap."""
+    return [
+        {"list": c.row.list_name, "label": c.row.label, "score": round(c.score, 3), "signal": c.signal}
+        for c in res.candidates[:8]
+    ]
+
+
 def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[lookup_lists.Hit]]:
     """The resolver's matched rows as lookup hits: per list, best first, one hit per row. Spec-name rows have no
     block (`lookup_lists.render` knows no such list); they are in the resolver so "colour" is not read as a value."""
@@ -1386,6 +1395,8 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 ]
                 extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
                 hits = _hits_of([*resolutions, *extra])
+                span_keys = {h.row.key for hs in hits.values() for h in hs}
+                near_rows: list[dict[str, Any]] = []
                 # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
                 # only: no embedder is passed, so this makes no network call after the session closed.
                 near_exact = 0
@@ -1395,17 +1406,26 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                     have = {h.row.key for h in hits.get(name, [])}
                     added = [h for h in spelled if h.spelling >= lookup_lists.NEAR_EXACT_SPELLING and h.row.key not in have]
                     near_exact += len(added)
+                    near_rows += [
+                        {"list": name, "label": h.row.label, "spelling": round(h.spelling, 3), "source": "near_exact"}
+                        for h in added
+                    ]
                     hits[name] = [*hits.get(name, []), *added]
                 event["near_exact_rows"] = near_exact
+                event["near_exact"] = near_rows
+                held_keys: set[str] = set()
                 for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
                     known = {h.row.key for h in held_hits}
+                    held_keys |= known
                     hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
                 hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
                 event["spans"] = [
-                    {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates)}
+                    {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
+                     "candidates": _candidates_of(r)}
                     for r in resolutions
                 ] + [
-                    {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True}
+                    {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True,
+                     "candidates": _candidates_of(r)}
                     for r in extra
                 ]
                 lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}
@@ -1420,8 +1440,20 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
             )
             lookup_event = {"pieces": lookup_lists.pieces(prep.message), "fallback": True}
         # Spec NUMBERS join the spec block on every path, as in `_lookup_lines`.
+        number_keys = {h.row.key for h in prep.numbers}
         if prep.numbers:
             hits["spec"] = [*prep.numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+        if not event["fallback"]:
+            # Trace only: where each row of the final block came from, in render order.
+            event["final_block"] = {
+                name: [
+                    {"label": h.row.label, "source": (
+                        "number" if h.row.key in number_keys else "held" if h.row.key in held_keys
+                        else "span" if h.row.key in span_keys else "near_exact")}
+                    for h in hs
+                ]
+                for name, hs in hits.items()
+            }
         lines = lookup_lists.render(hits)
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
         lookup_event["hits"] = [
