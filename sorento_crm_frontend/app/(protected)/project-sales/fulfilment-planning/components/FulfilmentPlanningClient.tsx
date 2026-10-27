@@ -33,7 +33,6 @@ import {
 import { ReviewStatePill } from '../../_shared/components/ReviewStatePill';
 import type {
   FulfilmentPlanningRow,
-  ReviewState,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import {
   FULFILMENT_PLANNING_SORT_FIELDS,

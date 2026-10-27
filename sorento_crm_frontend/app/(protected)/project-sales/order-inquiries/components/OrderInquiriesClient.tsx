@@ -67,15 +67,6 @@ import {
   splitText,
 } from '@/lib/list-filters/multiValue';
 
-/** A multi-select trigger for an id-valued filter: names, never the ids. */
-const idTrigger =
-  (title: string, empty: string) =>
-  (chosen: { value: string; label: string }[]) =>
-    chosen.length ? (
-      <span className="block truncate">{multiChipLabel(title, idFilterLabels(chosen))}</span>
-    ) : (
-      <span className="text-muted-foreground">{empty}</span>
-    );
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
@@ -160,6 +151,20 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { SupplyKindCard } from '../../_shared/components/SupplyKindCard';
+
+/** A multi-select trigger label for an id-valued filter: names, never the ids. */
+function renderIdTrigger(
+  title: string,
+  empty: string,
+  chosen: { value: string; label: string }[],
+) {
+  return chosen.length ? (
+    <span className="block truncate">{multiChipLabel(title, idFilterLabels(chosen))}</span>
+  ) : (
+    <span className="text-muted-foreground">{empty}</span>
+  );
+}
+
 
 function reserveFilterFrom(value: string | null): OrderInquiryReserveStatus | '' {
   return (ORDER_INQUIRY_RESERVE_STATUSES as string[]).includes(value ?? '')
@@ -1539,7 +1544,7 @@ export function OrderInquiriesClient({
             label: `${entry.label} (${entry.rows})`,
           }))}
           placeholder="Every agent"
-          renderTriggerLabel={idTrigger('Agent', 'Every agent')}
+          renderTriggerLabel={(chosen) => renderIdTrigger('Agent', 'Every agent', chosen)}
         />
       </div>
       <div className="space-y-1.5">
@@ -1662,7 +1667,7 @@ export function OrderInquiriesClient({
             label: entry.label,
           }))}
           placeholder="Every supplier"
-          renderTriggerLabel={idTrigger('Supplier', 'Every supplier')}
+          renderTriggerLabel={(chosen) => renderIdTrigger('Supplier', 'Every supplier', chosen)}
         />
       </div>
       <div className="space-y-1.5">
@@ -1689,7 +1694,7 @@ export function OrderInquiriesClient({
             label: entry.label,
           }))}
           placeholder="Everyone"
-          renderTriggerLabel={idTrigger('Raised by', 'Everyone')}
+          renderTriggerLabel={(chosen) => renderIdTrigger('Raised by', 'Everyone', chosen)}
         />
       </div>
       <div className="space-y-1.5">

@@ -123,7 +123,7 @@ export default function AttachmentBrowser() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    directory_id: folderIds.length ? joinMulti(folderIds) : undefined,
+    directory_id: isTrashView ? undefined : directoryFilter || undefined,
     is_deleted: isTrashView ? true : undefined,
     attachment_type_id: attachmentTypeId || undefined,
     link_status: linkStatus !== '__all__' ? linkStatus : undefined,
@@ -146,7 +146,7 @@ export default function AttachmentBrowser() {
           searchQuery,
         },
         {
-          directory_id: folderIds.length ? joinMulti(folderIds) : undefined,
+          directory_id: isTrashView ? undefined : directoryFilter || undefined,
           is_deleted: isTrashView ? 'true' : undefined,
           attachment_type_id: attachmentTypeId || undefined,
           link_status: linkStatus !== '__all__' ? linkStatus : undefined,
