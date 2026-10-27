@@ -27,7 +27,7 @@ from app.models.product import Brand
 from app.models.sales_agent import SalesAgent
 from app.services import audit_service
 from app.services import contact_setup_engine as engine
-from app.services.contact_access_copy_service import Names, names_for, snapshots
+from app.services.contact_access_copy_service import REMOVED_LOCATION, Names, names_for, snapshots
 from app.services.contact_customer_service import link_customer
 from app.services.error_handler import AppException
 
@@ -440,6 +440,27 @@ def _contact_entry(row: dict) -> dict:
     }
 
 
+def _shown_changes(changed: list[dict], snap, todo: dict, names: Names, world: dict) -> list[dict]:
+    """The changes as the preview lists them: stock locations one location per item, not one line."""
+    code = {**names.warehouses, **{str(w.id): w.warehouse_code for per in world["warehouses"].values() for w in per.values()}}
+
+    def items(include, hide: bool):
+        return sorted(code.get(w, REMOVED_LOCATION) for w in include) + (["hide zero-quantity"] if hide else [])
+
+    out = []
+    for c in changed:
+        before, after = c["before"], c["after"]
+        if c["facet"] == "stock_locations":
+            cur = snap.stock
+            if cur is not None and cur.include and cur.exclude is None:
+                before = items(cur.include, cur.hide_zero)
+            _, include_ids, hide = todo["stock"]
+            if include_ids:
+                after = items(include_ids, hide)
+        out.append({"facet": c["facet"], "before": before, "after": after})
+    return out
+
+
 def _holds_more_items(snap, tpl: dict, names: Names, world: dict) -> list[dict]:
     """Per facet, what the contact holds outside its template, by the labels the changes use."""
     company_code = {str(c.id): code for code, c in world["companies"].items()}
@@ -549,7 +570,7 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
                 entry.update(
                     in_crm=True, contact_id=cid, skip_reason=None, warnings=warnings, holds_more_items=holds_more,
                     status="applied" if changed else "no_change",
-                    changes=[{"facet": c["facet"], "before": c["before"], "after": c["after"]} for c in changed],
+                    changes=_shown_changes(changed, snap, todo, names, world),
                     not_applied=sorted({c["facet"] for c in changes if c["status"] == "not_applied"}),
                 )
                 plans.append({

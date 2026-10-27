@@ -1483,3 +1483,22 @@ def test_p6_a_contact_within_its_template_has_no_holds_more_items(client, db, w)
     body = _post(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])).json()
     entry = _by_name(body)["ZZT Ann"]
     assert entry["holds_more_items"] == [] and "holds_more" not in entry["warnings"]
+
+
+def test_p5_stock_locations_change_is_one_location_per_item(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    _contact(db, w, 1, warehouses=[w.wh["SRT-OTHER"], w.wh["BRW"]])
+    _contact(db, w, 2)
+    content = _sheet(
+        [
+            ("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER)),
+            ("ZZT Bob", "+60100000002", _tags(DEALER, ["SRT"], OWNER)),
+        ]
+    )
+    by = _by_name(_post(client, content).json())
+    (ann,) = [c for c in by["ZZT Ann"]["changes"] if c["facet"] == "stock_locations"]
+    assert ann["before"] == ["BRW", "ZZT-OTHER"]
+    assert ann["after"] == ["BRW", "MWH", "ZZT-OTHER"]
+    (bob,) = [c for c in by["ZZT Bob"]["changes"] if c["facet"] == "stock_locations"]
+    assert bob["before"] is None
+    assert bob["after"] == ["BRW", "MWH"]
