@@ -47,7 +47,7 @@ vi.mock('../../_shared/services/orderInquiryReserveService', async (importOrigin
     }),
   };
 });
-const listSpy = vi.fn(async (_params: Record<string, unknown>) => ({ data: [] as unknown[], total: 0, page: 1, limit: 25 }));
+const listSpy = vi.fn(async (..._args: unknown[]) => ({ data: [] as unknown[], total: 0, page: 1, limit: 25 }));
 vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../_shared/services/orderInquiryService')>();
   return {
