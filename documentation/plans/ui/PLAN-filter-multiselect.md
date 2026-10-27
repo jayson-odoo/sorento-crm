@@ -1,11 +1,22 @@
 # PLAN: every dropdown filter is multi-select (FILTER-MULTISELECT)
 
-Status: Plan. Scan done (27 Oct); behaviour card posted to the owner as one crew-ask; PR1 (Contacts
+Status: Build. Scan done (27 Oct); owner answered the card (28 Oct, section 0); PR1 (Contacts
 Company filter + Companies column) built as #1930. Track: full lane, split into stacked PRs (diff well
 over 300 lines across ~120 screens; no migration expected, no auth change).
 
 Owner standing rule (27 Oct 2026): "do a scan through the filter in our system, all dropdown
 filter should be able to multi select". Same family as "every grid column sortable server-side".
+
+## 0. Owner answers (28 Oct ~00:20 MYT)
+
+- Q1 (a): the five broken filters (Stock batches Status, Customers Status, Permissions Role, Order
+  statuses Final, Divergences "Any") are fixed in the PR that touches them.
+- Q2 (b): the report Company filter stays single (one company per run).
+- Q3 (a): two-value filters (Region on Contacts and Packing lists, Chat history Direction) become
+  multi too.
+- Q4 (a): the Advanced filter dialog gets real multi-select pick lists, as the lane's last PR (with
+  the import-jobs / import-logs text boxes turned into dropdowns).
+- Q5 (a): stacked PRs by area, shared parts first (#1930 first).
 
 ## 1. The rule (behaviour card)
 
