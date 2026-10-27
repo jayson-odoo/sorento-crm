@@ -124,7 +124,7 @@ class SpanBot:
             parser_mod, "resolve_config",
             lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
                 system_prompt="stub", prompt_version=39, provider="openai", model="gpt-test", api_key="sk-test",
-                lookup_lists=True, lookup_spans=True,
+                lookup_lists=True, lookup_spans=True, row_ids=True,
             ),
         )
         mp.setattr(span_extract, "resolve_config", lambda db, *, llm_choice=None: span_extract.SpanConfig(

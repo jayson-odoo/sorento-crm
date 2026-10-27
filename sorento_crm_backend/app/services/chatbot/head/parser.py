@@ -142,9 +142,9 @@ class ParserConfig:
     category_pick: bool = False
     message_language: bool = False
     # REPORT-UNIFY slice 3: the prompt in use carries `ROW_ID_ASK`, so a brand, salesperson or category candidate line
-    # ends with its row id and the parser may answer with it. True for a bare config (the `by_words` pattern);
-    # `resolve_config` turns it on only for a version that carries the sentence: every other version is unchanged.
-    row_ids: bool = True
+    # ends with its row id and the parser may answer with it. False for a bare config; `resolve_config` turns it
+    # on only for a version that carries the sentence: every other version is unchanged.
+    row_ids: bool = False
 
 
 def _build_base_json_schema() -> dict[str, Any]:
