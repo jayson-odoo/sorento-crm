@@ -247,7 +247,7 @@ describe('Sales orders - multi Status, Priority, Source, Type, Customer and Agen
     storedConfig(null);
     const user = userEvent.setup();
     await openFilters(user);
-    const box = (await screen.findAllByRole('listbox')).find((b) => within(b).queryByText('Closed')) as HTMLSelectElement;
+    const box = (await screen.findAllByRole('listbox')).find((b) => within(b).queryByText('Completed')) as HTMLSelectElement;
     await user.selectOptions(box, ['open', 'closed']);
     await waitFor(() => expect(lastParams().status).toBe('open,closed'));
     await waitFor(
