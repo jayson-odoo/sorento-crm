@@ -817,6 +817,35 @@ def resolve_category_class_exact(db: Session, token: str) -> list[str]:
     ]
 
 
+def class_member_ids(db: Session, labels: list[str]) -> list[str]:
+    """EEM-CATEGORY-PICK: every category of the classes `labels`: those carrying the class label, plus the class-less
+    ones `product_class_signal.category_class` maps to it (the generic "WC" is a Water Closet category)."""
+    from app.models.product import ProductCategory
+    from app.services.product_class_signal import ClassVocabulary, category_class
+
+    wanted = set(labels)
+    rows = (
+        db.query(ProductCategory.id, ProductCategory.category_code, ProductCategory.category_name, ProductCategory.class_label)
+        .filter(ProductCategory.is_searchable.is_(True))
+        .order_by(ProductCategory.category_code)
+        .all()
+    )
+    vocab = ClassVocabulary(db) if any(not r[3] for r in rows) else None
+    return [
+        str(r[0]) for r in rows
+        if category_class(db, code=r[1], name=r[2], class_label=r[3], vocab=vocab) in wanted
+    ]
+
+
+def unclassed_ids(db: Session, ids: list[str]) -> bool:
+    """True when every category in `ids` carries no class label (an empty list is not)."""
+    from app.models.product import ProductCategory
+
+    if not ids:
+        return False
+    return not db.query(ProductCategory.id).filter(ProductCategory.id.in_(ids), ProductCategory.class_label.isnot(None)).first()
+
+
 def resolve_category_class(db: Session, token: str) -> tuple[list[str], list[str]]:
     """A category word through the catalogue's class vocabulary, the one the stock ask
     reads (`product_class_signal.resolve_classes_for_term`: a class label, its synonyms,

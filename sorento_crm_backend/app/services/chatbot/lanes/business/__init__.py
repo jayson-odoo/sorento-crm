@@ -508,10 +508,14 @@ def _top_selling_category_ids(
         if len(matched) > 1:
             return [], True, [row[1] for row in matched], []
         found = [row[0] for row in matched]
-        if not found and not code:
-            found, labels = business_services.resolve_category_class(db, token)
-            if not found and len(labels) > 1:
+        if not code and (not found or business_services.unclassed_ids(db, found)):
+            # EEM-CATEGORY-PICK: a class word, or a generic code with no class ("wc"), means the whole class.
+            class_ids, labels = business_services.resolve_category_class(db, token)
+            if not found and not class_ids and len(labels) > 1:
                 return [], True, labels, []
+            if len(labels) == 1:
+                class_ids = business_services.class_member_ids(db, labels)
+            found = [*found, *class_ids]
         if not found:
             unknown.append(token)
         for category_id in found:
