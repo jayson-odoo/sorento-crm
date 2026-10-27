@@ -400,11 +400,10 @@ def _decided_allocation(db, product, warehouse, qty, source_type):
     _alloc(db, project_line, warehouse, qty, source_type)
 
 
-def test_8_retail_supply_is_lowered_by_neither_and_the_project_half_by_both(scm_app):
-    """BORROW-NO-HOLD AC-BNH-10: the retail map (default) is empty for a Reserve and for a
-    Borrow; the project half (`with_reserve=True`) still counts both."""
-    from app.services.scm import reorder_run_service as svc
-
+def test_8_the_project_buy_is_lowered_by_both_a_reserve_and_a_borrow(scm_app):
+    """BORROW-NO-HOLD AC-BNH-10, map half: the claim map counts every non-Buy allocation
+    (Reserve 30, Borrow 20) and feeds the PROJECT Buy only. That retail's net is lowered by
+    neither is proven in `test_reorder_plan_oi_need_in_full.py`."""
     _app, db, *_ = scm_app
     marker = f"ZZTNH{_u()[:6]}".upper()
     bin_ib = _warehouse(db, f"ZZTBRW{_u()[:4]}-IB")
@@ -413,16 +412,8 @@ def test_8_retail_supply_is_lowered_by_neither_and_the_project_half_by_both(scm_
     _decided_allocation(db, reserve_product, bin_ib, 30, ALLOC_SOURCE_OWN)
     _decided_allocation(db, borrow_product, bin_ib, 20, BORROW)
 
-    assert _reduction(db, reserve_product) == {}
-    assert _reduction(db, borrow_product) == {}
-
-    def project(product):
-        return svc._project_supply_reduction_map(
-            db, [{"product_id": str(product.id)}], with_reserve=True
-        )
-
-    assert project(reserve_product) == {(str(reserve_product.id), str(bin_ib.id)): 30.0}
-    assert project(borrow_product) == {(str(borrow_product.id), str(bin_ib.id)): 20.0}
+    assert _reduction(db, reserve_product) == {(str(reserve_product.id), str(bin_ib.id)): 30.0}
+    assert _reduction(db, borrow_product) == {(str(borrow_product.id), str(bin_ib.id)): 20.0}
 
 
 # --------------------------------------------------------------------------- 9

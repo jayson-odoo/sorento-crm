@@ -198,12 +198,13 @@ def test_re_confirming_the_same_reserve_and_own_borrow_never_holds_more_than_on_
         assert "2 short" in notices[0]["reason"], notices
 
 
-def test_confirm_an_own_location_borrow_with_free_stock_holds_it():
+def test_confirm_an_own_location_borrow_with_free_stock_passes_and_holds_nothing():
     with blank_session() as db:
         world = _own_world(db, on_hand=10)
         body = _confirm(db, world, borrow=[_own_borrow(world, "5")], buy_qty="5")
         assert not body.get("stock_short_notices"), body.get("stock_short_notices")
-        assert _held_at(db, world, world["own"]) == Decimal("5")
+        # BORROW-NO-HOLD (28 Oct 2026): a plan, so it holds nothing.
+        assert _held_at(db, world, world["own"]) == Decimal("0")
 
 
 def test_confirm_an_own_location_borrow_with_no_stock_at_all_still_passes():
@@ -241,10 +242,11 @@ def test_a_plain_borrow_at_the_lines_site_pool_is_still_refused():
         )
 
 
-def test_a_later_order_borrow_and_an_own_borrow_at_one_bin_never_hold_more_than_on_hand():
+def test_a_later_order_borrow_and_an_own_borrow_at_one_bin_record_the_overask_short():
     """Review N1: the dialog sends a later order's row plus the plain own row for an
     over-ask at the own bin. The later order's units come off the bin's free stock too, so
-    the pair holds what is on hand and records the rest short."""
+    the pair is judged against what is on hand and the rest is recorded short; the pair
+    holds nothing (BORROW-NO-HOLD, 28 Oct 2026)."""
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -264,6 +266,6 @@ def test_a_later_order_borrow_and_an_own_borrow_at_one_bin_never_hold_more_than_
                 _own_borrow(world, "5"),
             ],
         )
-        assert _held_at(db, world, own) == Decimal("30"), "never more than on hand"
+        assert _held_at(db, world, own) == Decimal("0"), "a plan holds nothing"
         notices = body["stock_short_notices"]
         assert len(notices) == 1 and "5 short" in notices[0]["reason"], notices
