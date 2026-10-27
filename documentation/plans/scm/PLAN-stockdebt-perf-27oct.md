@@ -1,6 +1,6 @@
 # PLAN: STOCKDEBT-PERF - make the Stock Debt board fast without changing a number
 
-Status: Plan, waiting on owner (crew --ask filed 27 Oct). Track: small fix track per PR (each PR
+Status: Build, PR1 (A + timing line). Owner approved A -> B -> C on 27 Oct; statement_timeout dropped. Track: small fix track per PR (each PR
 under ~300 lines, no migration, no auth change); lane is LEAD pattern (tester + coder + reviewer
 subagents). Page for the owner: `stockdebt-perf-27oct.html` beside this file.
 
@@ -55,10 +55,12 @@ C. One transferred_allocations read per request instead of two, and the remainin
    Effort S-M. Risk low.
 D. Row -> object cost: select id columns as text and plain tuples on the hot reads, not ORM
    rows + UUID objects. Gain ~0.2-0.4 s, mostly absorbed by A. Effort M. Risk low.
-E. Guard rails: `SET LOCAL statement_timeout` on the board request so a runaway query dies
-   instead of eating the box, plus one INFO timing line per request (total, sql, statements,
-   products) so prod p95 is read from logs without anyone touching prod. Effort S. Risk low.
-   Frontend "took too long, retry" only if the owner asks (UI change).
+E. Timing line: one INFO line per board build with per-stage ms and product counts, so prod
+   slowness is visible by stage. The request total is already logged by
+   `LoggingMiddleware` (app/middleware/logging_middleware.py:72-76). NO statement_timeout
+   (owner, 27 Oct: a hard limit is a dead end on a slow day). A graceful safety net (frontend
+   progress state, or last-good snapshot fallback) is a separate owner question later, not in
+   these PRs.
 F. Cache (parked). Per (company, scope, filters) board cache would make page flips free, but
    invalidation spans every write path (imports, GRN, Respond, links, holds) and a TTL shows
    stale numbers. Trigger to build it: A-E land and warm p95 is still above target.
@@ -91,12 +93,30 @@ rebases on them.
 
 ## PR order
 
-1. A + E timing line (biggest gain, smallest diff). 2. B. 3. C. 4. D only if still short of
+1. A + E timing line (biggest gain, smallest diff). UAC: `stockdebt-perf-acceptance-criteria.md`. 2. B. 3. C. 4. D only if still short of
 target. F only on its trigger.
 
-## Open questions (crew --ask)
+## Decisions (crew relay, 27 Oct)
 
-1. Approve order A, B, C, E (D, F conditional)?
-2. DB for profiling + equality harness: a lane throwaway copy of sorento_prod_1020, or read-only
-   on sorento_prod_1020 itself?
-3. statement_timeout value (recommend 20 s) and no frontend change?
+1. Order A -> B -> C, timing line in PR1; D and the cache only on their triggers.
+2. Profiling + equality harness run READ-ONLY on sorento_prod_1020 (no full copies; session
+   forced read-only by a connect listener, because the app's own `connect_args` options
+   override PGOPTIONS, app/database.py:17-18).
+3. No statement_timeout (owner reversed it).
+
+## Step 0 (27 Oct, sorento_prod_1020 read-only, scope = one company)
+
+| Company | Candidates | With open demand | Demand lines | Rows in debt |
+|---|---|---|---|---|
+| main (00000000) | 5,044 | 1,769 (35%) | 20,105 | 1,025 |
+| second (38db4f20) | 667 | 20 | 45 | 11 |
+
+The profile's 5,966 walks = 5,044 products + the held_by_line re-walks. A walks 1,769.
+
+A is identical by construction: `_demand` filters (stock_debt_service.py:1548-1556) are the
+candidate demand read's (:1019-1029) plus product and date clauses, so every product with
+demand rows is in the demand set; with no demand, credit is never negative
+(supply_assignment.py:853 `free = max(left, 0)`), debit and the TBA/undated/unlocated buckets
+come only from demand lines (:1265, :866-869), so `_in_debt` is false. The snapshot reads
+`assignments` only for listed rows (stock_debt_snapshot_service.py:98). Projected view is left
+walking every candidate (projection moves reserve stock; not proven).
