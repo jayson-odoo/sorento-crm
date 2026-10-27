@@ -95,7 +95,12 @@ def project_clause(m: Me):
 def project_in_scope(db: Session, m: Me, project_id: Optional[str]) -> bool:
     from app.models.projects import Project
 
-    if not project_id:
+    import uuid
+
+    try:
+        uuid.UUID(str(project_id))
+    except (TypeError, ValueError):
+        # Never compared to the uuid column: the cast error would abort the transaction.
         return False
     return (
         db.query(Project.id).filter(Project.id == str(project_id), project_clause(m)).first()

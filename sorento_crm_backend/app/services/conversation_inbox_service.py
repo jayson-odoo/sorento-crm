@@ -185,8 +185,13 @@ def list_conversations(
     q: Optional[str] = None,
     cursor: Optional[str] = None,
     limit: int = DEFAULT_LIMIT,
+    contact_ids=None,
 ) -> dict:
     """One keyset page of the inbox. Exactly one SQL statement.
+
+    ``contact_ids`` (a subquery of ``respond_contacts.id``) narrows every tab to those
+    contacts, for a viewer who may see only their own customers' conversations
+    (PORTAL-P2-ONLY-THEIRS); ``None`` is the whole inbox.
 
     ``my_open_ticket_id`` is only populated when the caller holds EXACTLY ONE
     open ticket for that contact: that is the only case where a reply can be
@@ -252,6 +257,9 @@ def list_conversations(
             )
             .exists()
         )
+
+    if contact_ids is not None:
+        conditions.append(RespondContact.id.in_(contact_ids))
 
     needle = (q or "").strip()
     if needle:
