@@ -367,8 +367,11 @@ def _existing_spos(db: Session, shipment_id: str) -> list[dict]:
             "po_number": po.po_number,
             "supplier_id": str(po.supplier_id) if po.supplier_id else None,
             "supplier_name": po.supplier.supplier_name if po.supplier else None,
-            "line_count": len(po.lines),
-            "total_qty": sum(float(ln.qty_ordered or 0) for ln in po.lines),
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            "line_count": len([ln for ln in po.lines if not ln.removed_unreferenced]),
+            "total_qty": sum(
+                float(ln.qty_ordered or 0) for ln in po.lines if not ln.removed_unreferenced
+            ),
             "created_at": po.created_at.isoformat() if po.created_at else None,
             "status": po.status,
         }

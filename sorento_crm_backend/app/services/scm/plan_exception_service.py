@@ -265,7 +265,9 @@ def _readings(db: Session, product_ids: Sequence[str]) -> dict[str, ItemReading]
                    (SELECT MAX(po.issue_date)
                       FROM purchase_order_lines pol
                       JOIN purchase_orders po ON po.id = pol.purchase_order_id
-                     WHERE pol.product_id = p.id) AS last_po_date
+                     WHERE pol.product_id = p.id
+                       -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                       AND NOT pol.removed_unreferenced) AS last_po_date
             FROM products p
             LEFT JOIN LATERAL (
                 SELECT abc_class, xyz_class

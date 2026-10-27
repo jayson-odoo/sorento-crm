@@ -3416,6 +3416,8 @@ class ProjectSupplyService:
             .filter(
                 SalesOrderLine.sales_order_id.in_(order_ids),
                 SalesOrderLine.product_id.in_(product_ids),
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                SalesOrderLine.removed_unreferenced.is_(False),
             )
             .all()
         )
@@ -3533,6 +3535,8 @@ class ProjectSupplyService:
             .filter(
                 SalesOrderLine.sales_order_id == core_line.sales_order_id,
                 SalesOrderLine.product_id == core_line.product_id,
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                SalesOrderLine.removed_unreferenced.is_(False),
             )
             .all()
         )

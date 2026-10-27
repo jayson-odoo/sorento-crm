@@ -42,6 +42,8 @@ def list_rates(db: Session) -> dict:
         "JOIN purchase_orders po ON po.id = pol.purchase_order_id "
         "WHERE pol.unit_cost IS NOT NULL "
         "  AND COALESCE(pol.currency, po.currency) IS NOT NULL"
+        # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+        "  AND NOT pol.removed_unreferenced"
     )).scalars().all()
 
     missing = sorted(c for c in used
