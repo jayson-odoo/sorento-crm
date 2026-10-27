@@ -220,6 +220,14 @@ def start_inbox_queue() -> None:
     inbox_queue.start_sweeper()
 
 
+def start_lookup_warm():
+    """App start-up: the lookup-vector warm (ENTITY-EXTRACT-MATCH AC-S3-9), a daemon thread the engine starts
+    unless `CHATBOT_LOOKUP_WARM_ENABLED` is off. Returns the thread, or None."""
+    from app.services.chatbot import engine
+
+    return engine.start_lookup_warm()
+
+
 def stop_inbox_queue(grace_seconds: float = INBOX_SHUTDOWN_GRACE_SECONDS) -> bool:
     """App shutdown: drains stop taking rows and finish the one they are in (its sender
     POST and done mark included). True when they did within the grace. A process that
