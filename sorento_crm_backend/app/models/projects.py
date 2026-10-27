@@ -87,9 +87,12 @@ BLOCKING_OUTCOMES = (OUTCOME_OPEN,)
 # rejected row has no code yet and is kept out of every internal path (R4) until Approve.
 APPROVAL_DRAFT = "draft"
 APPROVAL_PENDING = "pending"
+# Submitted again after a rejection; waits for a decision exactly like `pending`
+# (RESUBMITTED-STATUS, app/services/submission_status.py).
+APPROVAL_RESUBMITTED = "resubmitted"
 APPROVAL_REJECTED = "rejected"
 APPROVAL_APPROVED = "approved"
-UNAPPROVED_STATES = (APPROVAL_DRAFT, APPROVAL_PENDING, APPROVAL_REJECTED)
+UNAPPROVED_STATES = (APPROVAL_DRAFT, APPROVAL_PENDING, APPROVAL_RESUBMITTED, APPROVAL_REJECTED)
 
 PARTY_DEVELOPER = "developer"
 PARTY_ARCHITECT = "architect"

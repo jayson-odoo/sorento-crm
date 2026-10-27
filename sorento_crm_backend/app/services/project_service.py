@@ -16,6 +16,7 @@ from app.models.projects import (
     APPROVAL_DRAFT,
     APPROVAL_PENDING,
     APPROVAL_REJECTED,
+    APPROVAL_RESUBMITTED,
     OUTCOME_OPEN,
     Project,
     ProjectBrand,
@@ -32,6 +33,7 @@ from app.models.projects import (
 from app.models.status import Status
 from app.status_engine.registry import get_status_entity
 from app.schemas.common import MAX_PAGE_LIMIT
+from app.services import submission_status
 from app.services.error_handler import AppException
 from app.services.numbering_service import NumberingService
 from app.services.project_clash_service import (
@@ -80,6 +82,9 @@ def approved_projects(query):
 # Each opens with the label the project carries in place of a code (R2).
 _NOT_APPROVED_MESSAGES = {
     APPROVAL_PENDING: (
+        f"{AWAITING_APPROVAL_LABEL}: nothing can be added to this project until it is approved."
+    ),
+    APPROVAL_RESUBMITTED: (
         f"{AWAITING_APPROVAL_LABEL}: nothing can be added to this project until it is approved."
     ),
     APPROVAL_REJECTED: (
@@ -422,7 +427,7 @@ def can_edit_project(
     if MANAGE_PERMISSION in (permissions or set()):
         return True
     if (
-        project.approval_state == APPROVAL_PENDING
+        submission_status.is_awaiting_review(project.approval_state, APPROVAL_PENDING)
         and APPROVE_REGISTRATIONS_PERMISSION in (permissions or set())
     ):
         return True
@@ -901,7 +906,12 @@ def serialize_projects(
                         and project.owner_user_id == actor_user_id
                     )
                     or project.id in collaborating
-                    or (may_approve and project.approval_state == APPROVAL_PENDING)
+                    or (
+                        may_approve
+                        and submission_status.is_awaiting_review(
+                            project.approval_state, APPROVAL_PENDING
+                        )
+                    )
                 ),
                 "approval_state": project.approval_state,
                 "reject_reason": project.reject_reason,
