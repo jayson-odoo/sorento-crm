@@ -101,6 +101,11 @@ def embedded_fields_changed(target, source_type: str) -> bool:
     return any(name in attrs and attrs[name].history.has_changes() for name in fields)
 
 
+# No longer embedded (EMBED-DROP-LINE-TYPES): no reader uses them and their text is UUIDs and
+# quantities. A queued row of one is skipped and its document deactivated.
+DROPPED_SOURCE_TYPES = frozenset({"inbound_shipment_line", "order_line", "picking_line"})
+
+
 # last_error on a pending row retired because a newer row of the same source covers it.
 SUPERSEDED_ERROR = "dedup: superseded"
 
