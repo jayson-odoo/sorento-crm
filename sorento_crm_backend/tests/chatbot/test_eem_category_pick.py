@@ -195,7 +195,7 @@ def test_ac_cp_4_no_class_or_several_classes_is_none():
 def test_ac_cp_4_load_rows_sets_group_on_category_and_class_rows():
     with blank_session() as db:
         made = _seed_categories(db)
-        rows = ll.load_rows(db)
+        rows = ll.load_rows(db, group_categories=True)
         by_key = {r.key: r for r in rows if r.list_name == "category"}
         assert by_key[made["SRT-WC"].id].group == CLASS
         assert by_key[made["WC"].id].group == CLASS  # class-less generic joins the vocabulary class

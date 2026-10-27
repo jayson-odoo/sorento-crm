@@ -215,8 +215,8 @@ def test_review_5_an_opportunity_turn_after_zh_replies_in_the_parsed_language(se
     real = opp._stub_config
     monkeypatch.setattr(opp, "_stub_config", lambda *a, **k: dataclasses.replace(real(*a, **k), message_language=True))
     zh = {"focus": None, "open_question": None, "reply_language": "zh"}
-    q = {**opp._all_four(), "message_language": "en"}
+    q = {**opp._all_four(), "message_language": "ms"}
     turn = opp._say(session_factory, monkeypatch, q, "log an opportunity: Bath Idea, condo job Taman X, RM 40k, closing mid Dec",
                     dry_run=True, state=zh)
     assert turn.result.error is None, turn.result.error
-    assert turn.result.session_patch["reply_language"] == "en", turn.result.session_patch
+    assert turn.result.session_patch["reply_language"] == "ms", turn.result.session_patch

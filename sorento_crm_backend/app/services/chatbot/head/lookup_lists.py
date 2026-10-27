@@ -602,7 +602,7 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
 def load_rows(
     db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
     include_customers: bool = False, customer_ids: frozenset[str] | None = None, brands: list[dict] | None = None,
-    group_categories: bool = True,
+    group_categories: bool = False,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
     spec word values, file types and the sales channels. `group_categories` (EEM-CATEGORY-PICK) reads the class
