@@ -237,14 +237,14 @@ def test_ledger_type_single(client, ledger):
 
 def test_ledger_type_union(client, ledger):
     s = ledger
-    assert _ledger(client, s, [("transaction_type", "SALE,ADJUSTMENT")]) == {s["b"].id, s["c"].id}
+    assert _ledger(client, s, [("transaction_type", "BULK_IMPORT,SYSTEM_ADJUSTMENT")]) == {s["b"].id, s["c"].id}
     got = _ledger(client, s, [("transaction_type", "BULK_IMPORT"), ("transaction_type", "SYSTEM_ADJUSTMENT")])
     assert got == {s["b"].id, s["c"].id}
 
 
 def test_ledger_type_and_warehouse(client, ledger):
     s = ledger
-    got = _ledger(client, s, [("transaction_type", "RECEIPT,ADJUSTMENT"), ("warehouse_id", s["w"][1].id)])
+    got = _ledger(client, s, [("transaction_type", "AUTOCOUNT_PUSH,SYSTEM_ADJUSTMENT"), ("warehouse_id", s["w"][1].id)])
     assert got == {s["c"].id, s["d"].id}
 
 
