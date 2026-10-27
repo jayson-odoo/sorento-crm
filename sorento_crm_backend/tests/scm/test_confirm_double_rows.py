@@ -175,6 +175,7 @@ def test_a_partly_short_reserve_pressed_again_holds_only_what_the_first_press_he
             assert len(notices) == 1 and "22 short" in notices[0]["reason"], (
                 press, notices,
             )
+            assert _frozen_short(db, world)[0]["warehouse_id"] == str(world["own"].id)
 
 
 def test_a_partly_delivered_line_pressed_again_never_grows_its_hold():

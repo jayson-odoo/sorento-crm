@@ -65,7 +65,8 @@ What the fix does on each kind of confirm:
 Setup: fresh bootstrapped DB, all modules installed, a seeded superadmin, and orders seeded at bins `ZZTBRW-IR` and
 `ZZTMWH-BB`. Every page was reached by sidebar clicks from `/`.
 
-1. ZZT-SOB line 2 (50 on hand, SO-A due earlier for 36): Change decision, Own 36 with a reason, Save, Confirm,
+1. ZZT-SOB line 2 (50 on hand, SO-A due earlier for 36): Change decision, Own 36 with a reason (so the own-bin lift
+   applies and only the on-hand floor bounds it), Save, Confirm,
    Confirm 1 order. Result: revision 1 holds `own 36`.
 2. The board would not save the same decision again. Presses 2 and 3 replayed the board's own `confirm-all` payload.
    - Active revision after each press: one `own 36`.
@@ -78,7 +79,7 @@ Setup: fresh bootstrapped DB, all modules installed, a seeded superadmin, and or
 
 ## Tests
 
-`tests/scm/test_confirm_double_rows.py`, 12 tests (6 fail on main):
+`tests/scm/test_confirm_double_rows.py`, 12 tests (9 fail on main: 6 on what is held, 3 only on the new shortfall keys):
 
 1. Three identical Reserve presses behind an earlier order: no allocation, short 36 on every press.
 2. Free stock: a repeat press keeps exactly one `own 36` under the active revision.
