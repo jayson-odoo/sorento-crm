@@ -8,6 +8,7 @@ code never showed on the complaint. Rows are written by hand: the shapes, not re
 from __future__ import annotations
 
 import uuid
+from datetime import datetime
 
 import pytest
 from fastapi.testclient import TestClient
@@ -34,15 +35,11 @@ def _row(db, *, entity_type, entity_id, action, old=None, new=None, root=None, m
         root_entity_type=root[0] if root else entity_type,
         root_entity_id=root[1] if root else entity_id,
         actor_type="contact",
+        # Pinned rather than clock_timestamp(), so the order is the test's.
+        changed_at=datetime(2026, 9, 1, 9, minute),
     )
     db.add(row)
     db.flush()
-    # clock_timestamp() would order them by insert; pin it so the order is the test's.
-    db.execute(
-        AuditLog.__table__.update()
-        .where(AuditLog.__table__.c.id == row.id)
-        .values(changed_at=f"2026-09-01 09:{minute:02d}:00")
-    )
     return row
 
 
