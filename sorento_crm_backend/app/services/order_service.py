@@ -828,6 +828,20 @@ def stamp_order_summary(db, payload: dict, filtered_q, *, product_ids=None) -> N
         logger.warning("stamp_order_summary skipped: %s", exc)
 
 
+
+def resolve_order_status_ids(db, order_status_id):
+    """Order status ids for the `order_status_id` filter: one value or several (comma-joined or a
+    list), each an id or a status code/name, OR-ed. `None` is "no filter", `[]` is "matches no
+    status". Shared by the delivery-orders list and its export so they cannot disagree."""
+    status_ids = None
+    for value in multi_values(order_status_id) or []:
+        resolved = resolve_identifier(
+            db, value, OrderStatus, code_fields=("status_code", "status_name")
+        )
+        if resolved is not None:
+            status_ids = [*(status_ids or []), *resolved]
+    return status_ids
+
 class OrderService:
     """Service for order operations."""
     
@@ -983,16 +997,7 @@ class OrderService:
             _customer_scoped = True
 
         # Several statuses are OR-ed; each may be an id or a code/name (FILTER-MULTISELECT).
-        status_ids = None
-        for _status_value in multi_values(order_status_id) or []:
-            _resolved = resolve_identifier(
-                self.db,
-                _status_value,
-                OrderStatus,
-                code_fields=("status_code", "status_name"),
-            )
-            if _resolved is not None:
-                status_ids = [*(status_ids or []), *_resolved]
+        status_ids = resolve_order_status_ids(self.db, order_status_id)
         if status_ids is not None:
             if not status_ids:
                 if ids_only:

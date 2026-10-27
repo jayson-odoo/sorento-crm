@@ -215,6 +215,9 @@ def advanced_search(
         result = ListQuerySearchService(db).search(body)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except AppException:
+        # A deliberate refusal (e.g. an unknown filter value) keeps its own status.
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
     _t2 = time.perf_counter() if _profile else 0.0
@@ -264,6 +267,8 @@ def export_rows(
         rows = ListQueryExportService(db).export_rows(body)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except AppException:
+        raise
     except Exception:
         # Logged, never echoed: a database error's text carries the SQL and the schema.
         logger.exception("list_query.export_failed resource=%s", body.resource)

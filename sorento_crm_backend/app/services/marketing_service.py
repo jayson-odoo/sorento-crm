@@ -316,18 +316,30 @@ def clamp_discount_percent_for_db(value: Optional[float]) -> Optional[float]:
     return round(v, 2)
 
 
+ATTACHMENT_STATES = ("unlinked", "linked_to_trashed", "unlinked_or_trashed")
+
+
+def validated_attachment_states(raw):
+    """The Promotions cleanup filter's states from a param (comma-joined, repeated or one),
+    each checked: an unknown one is a 422 on every path (list, search, export)."""
+    from app.services.error_handler import handle_unprocessable
+    from app.utils.multi_value import multi_values
+
+    states = multi_values(raw)
+    if states and any(s not in ATTACHMENT_STATES for s in states):
+        raise handle_unprocessable(f"Attachment state: expected one of {', '.join(ATTACHMENT_STATES)}")
+    return states
+
 
 def attachment_state_clause(attachment_state):
     """The Promotions cleanup filter as one clause: one state, or several OR-ed (the set of
     promotions in any of them). None when no known state is given."""
-    from sqlalchemy import exists as _sa_exists, and_ as _sa_and, or_ as _sa_or2
-
     if not attachment_state:
         return None
     states = [attachment_state] if isinstance(attachment_state, str) else attachment_state
-    has_any_link = _sa_exists().where(PromotionAttachment.promotion_id == Promotion.id)
-    linked_to_trashed = _sa_exists().where(
-        _sa_and(
+    has_any_link = exists().where(PromotionAttachment.promotion_id == Promotion.id)
+    linked_to_trashed = exists().where(
+        and_(
             PromotionAttachment.promotion_id == Promotion.id,
             PromotionAttachment.attachment_id == Attachment.id,
             Attachment.is_deleted.is_(True),
@@ -336,10 +348,10 @@ def attachment_state_clause(attachment_state):
     by_state = {
         "unlinked": ~has_any_link,
         "linked_to_trashed": linked_to_trashed,
-        "unlinked_or_trashed": _sa_or2(~has_any_link, linked_to_trashed),
+        "unlinked_or_trashed": or_(~has_any_link, linked_to_trashed),
     }
     clauses = [by_state[s] for s in states if s in by_state]
-    return _sa_or2(*clauses) if clauses else None
+    return or_(*clauses) if clauses else None
 
 class PromotionService:
     """Service for promotion operations."""

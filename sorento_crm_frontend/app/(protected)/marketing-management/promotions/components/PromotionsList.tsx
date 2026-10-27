@@ -495,8 +495,8 @@ export default function PromotionsList() {
                       filter: advancedFilter ?? undefined,
                       quick_search: searchQuery || undefined,
                       promotion_status: filterStatus,
-                      promotion_access_level:
-                        filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+                      promotion_access_level: filterAccessLevel || undefined,
+                      promotion_attachment_state: filterAttachmentState || undefined,
                     }),
                   }
                 : undefined
@@ -511,8 +511,8 @@ export default function PromotionsList() {
                       filter: advancedFilter ?? undefined,
                       quick_search: searchQuery || undefined,
                       promotion_status: filterStatus,
-                      promotion_access_level:
-                        filterAccessLevel === 'all' ? undefined : filterAccessLevel,
+                      promotion_access_level: filterAccessLevel || undefined,
+                      promotion_attachment_state: filterAttachmentState || undefined,
                     }),
                   }
                 : false

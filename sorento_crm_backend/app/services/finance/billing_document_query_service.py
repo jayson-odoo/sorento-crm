@@ -405,9 +405,11 @@ def export_rows(
     if unknown:
         raise ValueError(f"Unknown or non-exportable field: {unknown[0]}")
     if customer_id is not None:
-        customer_id = _canonical_uuid(customer_id)
-        if customer_id is None:
+        # Several customers (comma-joined, like the list): each id is canonicalised on its own.
+        customer_id = [_canonical_uuid(v) for v in _split(customer_id)]
+        if None in customer_id:
             raise ValueError("Invalid customer_id")
+        customer_id = customer_id or None
     if record_ids:
         record_ids = [_canonical_uuid(v) for v in record_ids]
         if None in record_ids:
