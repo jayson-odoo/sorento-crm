@@ -76,7 +76,7 @@ def _option_specs() -> Dict[tuple, Dict[str, Any]]:
     options and keeps the text box. Every statement runs through the caller's session, so the company
     scope applies to the owned tables exactly as it does on the list.
     """
-    from sqlalchemy import String, cast
+    from sqlalchemy import String, cast, func
     from app.models.country import Country
     from app.models.inventory import Warehouse
     from app.models.order import Customer, Order, OrderLine, OrderStatus
@@ -100,7 +100,8 @@ def _option_specs() -> Dict[tuple, Dict[str, Any]]:
         ("orders", "order_type"): own(Order, Order.order_type, order_base),
         ("orders", "agent"): own(Order, Order.agent, order_base),
         ("orders", "line_product_id"): {
-            "root": OrderLine, "value": OrderLine.product_id, "label": Product.product_name,
+            "root": OrderLine, "value": OrderLine.product_id,
+            "label": func.concat(Product.product_code, " ", func.coalesce(Product.product_name, "")),
             "joins": [(Order, Order.id == OrderLine.order_id), (Product, Product.id == OrderLine.product_id)],
             "base": order_base,
         },
@@ -321,7 +322,8 @@ def field_options(
         q = q.filter(spec["value"].isnot(None), spec["label"].isnot(None))
         needle = (query or "").strip()
         if needle:
-            q = q.filter(spec["label"].ilike(f"%{needle}%"))
+            literal = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            q = q.filter(spec["label"].ilike(f"%{literal}%", escape="\\"))
         grouped = q.group_by(spec["value"], spec["label"])
         total = grouped.order_by(None).count()
         rows = grouped.order_by(spec["label"]).offset((page - 1) * limit).limit(limit).all()

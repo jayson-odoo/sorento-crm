@@ -117,7 +117,8 @@ def test_a_product_and_warehouse_only_on_another_companys_order_are_not_offered(
     db.commit()
     prods = {o["label"] for o in _opts(client, "orders", "line_product_id").json()["data"]}
     whs = {o["label"] for o in _opts(client, "orders", "line_warehouse_id").json()["data"]}
-    assert "ZZT prod sorento" in prods and "ZZT prod mocha" not in prods
+    # Labels read "CODE Name" (PR7 review round).
+    assert any(p.endswith(" ZZT prod sorento") for p in prods) and not any("ZZT prod mocha" in p for p in prods)
     assert "ZZT wh sorento" in whs and "ZZT wh mocha" not in whs
 
 

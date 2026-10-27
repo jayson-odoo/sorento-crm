@@ -191,6 +191,30 @@ function PickListValue({
     if (firstPage.data) remember(firstPage.data.data);
   }, [firstPage.data, remember]);
 
+  // A saved value that is not on the first page reopens by name: walk the pages (bounded) until every
+  // picked value has a label, so an id is never shown.
+  const pickedKey = picked.join('\u0000');
+  useEffect(() => {
+    const missing = picked.filter((v) => labels[v] === undefined);
+    if (!missing.length) return;
+    let cancelled = false;
+    (async () => {
+      const found = new Set<string>();
+      for (let page = 1; page <= 20 && !cancelled; page += 1) {
+        const res = await fetchListQueryFieldOptions(resourceKey, field.field_key, { page }).catch(() => null);
+        if (!res || cancelled) return;
+        remember(res.data);
+        res.data.forEach((o) => found.add(o.value));
+        if (missing.every((v) => found.has(v)) || res.data.length === 0) return;
+        if (page * (res.pagination?.limit || 50) >= (res.pagination?.total ?? 0)) return;
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pickedKey, resourceKey, field.field_key, remember]);
+
   if (multi) {
     return (
       <SearchableMultiSelect
@@ -209,6 +233,9 @@ function PickListValue({
       value={picked[0] ?? ''}
       onChange={(v) => onChange(v ? [v] : [])}
       options={(firstPage.data?.data ?? []).map((o) => ({ value: o.value, label: o.label }))}
+      fetchOptions={fetchOptions}
+      paginated
+      selectedOption={picked[0] ? { value: picked[0], label: labels[picked[0]] ?? 'Selected' } : undefined}
       placeholder="Choose a value"
       clearable
     />

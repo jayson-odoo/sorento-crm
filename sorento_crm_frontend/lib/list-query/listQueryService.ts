@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 export type ListQueryResourceKey =
   | 'orders'
@@ -78,10 +79,7 @@ export async function fetchListQueryFieldOptions(
   const r = await apiFetch(
     `/api/v1/list-query/${resourceKey}/fields/${encodeURIComponent(fieldKey)}/options${q ? `?${q}` : ''}`,
   );
-  if (!r.ok) {
-    const err = await r.json().catch(() => ({}));
-    throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to load the options');
-  }
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load the options'));
   return r.json();
 }
 
