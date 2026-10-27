@@ -46,6 +46,7 @@ from tests._sales_report_do_seed import (  # noqa: F401  (client / db are fixtur
     seed_so,
     warehouse,
 )
+from tests._brand_scope_seed import api, world  # noqa: F401  (phase 3 S6 fixtures)
 from tests.test_report_ask_route import _brand, _category
 from tests.test_top_selling_report import _access
 
@@ -512,3 +513,17 @@ def test_s1_unpaid_needs_the_finance_view_slug_on_the_act_as_user_besides_the_co
             assert _ask(c, contact, basis=kind).status_code == 200, kind
     with _client(db, principal, allow=("order_management.orders.view", "finance.billing_documents.view")) as c:
         assert _ask(c, contact, basis="unpaid").status_code == 200
+
+
+# ================================================================ phase 3 S6: unpaid for a brand-scoped contact
+
+
+def test_s6_a_brand_scoped_contact_is_refused_unpaid_because_an_invoice_has_no_brand(world, api) -> None:
+    """Phase 3 S6 (mutation K6): an invoice carries no brand, so `unpaid` cannot be held to a brand-scoped contact's brands:
+    403 `report_dimension_not_allowed`. The unscoped contact reads it, and the scoped one still reads the other kinds."""
+    window = {"date_from": "2026-01-01", "date_to": "2026-12-31"}
+    refused = api.get("/api/v1/order-management/report-ask", world.scoped, basis="unpaid", **window)
+    assert refused.status_code == 403, refused.text
+    assert refused.json()["code"] == "report_dimension_not_allowed", refused.text
+    assert api.get("/api/v1/order-management/report-ask", world.unscoped, basis="unpaid", **window).status_code == 200
+    assert api.get("/api/v1/order-management/report-ask", world.scoped, basis="outstanding", **window).status_code == 200
