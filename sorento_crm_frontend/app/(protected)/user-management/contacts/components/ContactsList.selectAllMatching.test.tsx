@@ -247,6 +247,6 @@ describe('Internal Users: select every matching contact (Odoo pattern, capped at
     await waitFor(() => expect(generateExcelFileMock).toHaveBeenCalled());
     const rows = generateExcelFileMock.mock.calls[0][0] as Record<string, unknown>[];
     expect(rows).toHaveLength(1000);
-    expect(rows.some((r) => Object.values(r).includes('Demo Contact 1000'))).toBe(true);
+    expect(rows.some((r) => Object.values(r).includes('Contact 1000'))).toBe(true);
   });
 });
