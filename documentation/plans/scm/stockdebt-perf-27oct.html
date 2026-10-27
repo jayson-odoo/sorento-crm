@@ -1,0 +1,109 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock Debt speed plan</title>
+<style>
+:root{--bg:#fbfaf8;--fg:#1d1d1f;--muted:#6e6e73;--line:#e3e1dc;--card:#ffffff;--sql:#3b6fd8;--py:#d8833b;--ok:#2e8b57;--warn:#b8860b;--bad:#c0392b;--chip:#f0eee9}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#151517;--fg:#ececf0;--muted:#a1a1a8;--line:#2e2e33;--card:#1c1c20;--sql:#6f9bf0;--py:#f0a868;--ok:#5cc08a;--warn:#e0b44c;--bad:#ec7063;--chip:#26262b}}
+:root[data-theme="dark"]{--bg:#151517;--fg:#ececf0;--muted:#a1a1a8;--line:#2e2e33;--card:#1c1c20;--sql:#6f9bf0;--py:#f0a868;--ok:#5cc08a;--warn:#e0b44c;--bad:#ec7063;--chip:#26262b}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,sans-serif}
+main{max-width:980px;margin:0 auto;padding:28px 16px 60px}
+h1{font-size:26px;margin:0 0 4px}
+h2{font-size:18px;margin:34px 0 10px;padding-top:14px;border-top:1px solid var(--line)}
+p.sub{color:var(--muted);margin:0 0 18px}
+.kpis{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.kpi{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.kpi b{display:block;font-size:22px;font-variant-numeric:tabular-nums}
+.kpi span{color:var(--muted);font-size:13px}
+.bars{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px}
+.bar{display:grid;grid-template-columns:minmax(120px,260px) 1fr 64px;gap:10px;align-items:center;margin:6px 0;font-size:13px}
+.bar .t{height:14px;border-radius:4px;background:var(--chip);overflow:hidden}
+.bar .t i{display:block;height:100%}
+.bar .v{text-align:right;font-variant-numeric:tabular-nums;color:var(--muted)}
+.lg{font-size:12px;color:var(--muted);margin-top:8px}
+.lg i{display:inline-block;width:10px;height:10px;border-radius:2px;margin:0 4px 0 10px;vertical-align:-1px}
+table{width:100%;border-collapse:collapse;background:var(--card);border:1px solid var(--line);border-radius:10px;overflow:hidden;font-size:14px}
+th,td{padding:9px 10px;border-bottom:1px solid var(--line);text-align:left;vertical-align:top}
+th{font-size:12px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.03em}
+tr:last-child td{border-bottom:0}
+.pill{display:inline-block;padding:1px 8px;border-radius:999px;font-size:12px;font-weight:600;background:var(--chip)}
+.hi{color:var(--ok)}.mid{color:var(--warn)}.lo{color:var(--muted)}
+code{font:12.5px ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--chip);padding:1px 5px;border-radius:4px;word-break:break-word}
+.rec{background:var(--card);border:1px solid var(--ok);border-left-width:5px;border-radius:10px;padding:12px 16px}
+ol li,ul li{margin:4px 0}
+.wrap{overflow-x:auto}
+@media (max-width:640px){.bar{grid-template-columns:1fr 54px}.bar .t{grid-column:1/3;order:3}}
+</style>
+</head>
+<body>
+<main>
+<h1>Stock Debt: speed plan</h1>
+<p class="sub">Lane STOCKDEBT-PERF, 27 Oct. Numbers from crew's profile on the local copy <code>sorento_prod_1020</code> (code 782a45162c + the from-PO index). No code yet; every number on the board must stay identical.</p>
+
+<div class="kpis">
+  <div class="kpi"><b>3.4 to 4.2 s</b><span>warm request today</span></div>
+  <div class="kpi"><b>6.8 s</b><span>without the #1899 index</span></div>
+  <div class="kpi"><b>5,966</b><span>products computed for 25 rows shown</span></div>
+  <div class="kpi"><b>&lt; 1.5 s</b><span>target, warm p95</span></div>
+</div>
+
+<h2>Why it is slow</h2>
+<p>The page asks for 25 rows, but the server builds the whole board for every one of 5,966 products first, then cuts the 25 (<code>stock_debt_service.py:373</code>). Turning to page 2 builds it all again. Roughly half the time is database, half is Python working through the rows.</p>
+
+<div class="bars">
+  <div class="bar"><span>Transfers read, twice</span><div class="t"><i style="width:56%;background:var(--sql)"></i></div><span class="v">0.56 s</span></div>
+  <div class="bar"><span>Other 44 small queries</span><div class="t"><i style="width:57%;background:var(--sql)"></i></div><span class="v">0.57 s</span></div>
+  <div class="bar"><span>PO lines feeding SPOs</span><div class="t"><i style="width:24%;background:var(--sql)"></i></div><span class="v">0.24 s</span></div>
+  <div class="bar"><span>Dealer outstanding column</span><div class="t"><i style="width:22%;background:var(--sql)"></i></div><span class="v">0.22 s</span></div>
+  <div class="bar"><span>Last supplier per product</span><div class="t"><i style="width:19%;background:var(--sql)"></i></div><span class="v">0.19 s</span></div>
+  <div class="bar"><span>Order inquiry placements</span><div class="t"><i style="width:12%;background:var(--sql)"></i></div><span class="v">0.12 s</span></div>
+  <div class="bar"><span>Open PO lines + demand</span><div class="t"><i style="width:19%;background:var(--sql)"></i></div><span class="v">0.19 s</span></div>
+  <div class="bar"><span>Matching supply to orders, per product</span><div class="t"><i style="width:74%;background:var(--py)"></i></div><span class="v">~0.74 s</span></div>
+  <div class="bar"><span>Turning 215k rows into objects</span><div class="t"><i style="width:65%;background:var(--py)"></i></div><span class="v">~0.65 s</span></div>
+  <div class="bar"><span>Other Python</span><div class="t"><i style="width:77%;background:var(--py)"></i></div><span class="v">~0.77 s</span></div>
+  <div class="lg"><i style="background:var(--sql)"></i>database 2.09 s<i style="background:var(--py)"></i>Python 2.16 s (run 2, 4.24 s total; Python split from the profiler, scaled from its 2.99 s down to the real 2.16 s)</div>
+</div>
+
+<h2>Options, best first</h2>
+<div class="wrap">
+<table>
+<tr><th>#</th><th>Change</th><th>Gain</th><th>Effort</th><th>Risk</th></tr>
+<tr><td>A</td><td><b>Skip products that cannot owe anything.</b> On the default view (only debt), a product with no open sales-order line can never show debt: supply alone never makes a month negative (<code>supply_assignment.py:631, 1274</code>). The server already knows which products have open orders (<code>stock_debt_service.py:1017-1029</code>), so it computes only those.</td><td class="hi">Largest: every query and the matching shrink together. Exact size measured in step 0.</td><td class="hi">Small</td><td class="mid">Low-mid; proved by the equality check</td></tr>
+<tr><td>B</td><td><b>Stop re-scanning.</b> For each product the code scans every hold in the company (<code>stock_debt_service.py:1251</code>), and matches products up to three times (<code>:1302, :1312, :1317</code>). Look holds up by order line once; match once.</td><td class="mid">0.2 to 0.4 s</td><td class="hi">Small</td><td class="hi">Low</td></tr>
+<tr><td>C</td><td><b>Tune the remaining queries.</b> Read transfers once, not twice (<code>:1913</code> and <code>goods_chain.py:788</code>); last supplier without ranking every PO line (<code>:2603</code>); dealer outstanding and open PO reads checked with EXPLAIN. A new index would be a migration and go through the full review.</td><td class="mid">0.3 to 0.5 s</td><td class="mid">Small-mid</td><td class="hi">Low</td></tr>
+<tr><td>E</td><td><b>Guard rails.</b> A time limit on the board's queries so one bad query cannot take the database down again, and one timing line per request so prod speed can be read from logs without anyone touching prod.</td><td class="lo">Safety, and the way to measure prod</td><td class="hi">Small</td><td class="hi">Low</td></tr>
+<tr><td>D</td><td><b>Lighter rows.</b> Read ids as plain text instead of building 245k id objects.</td><td class="lo">0.2 to 0.4 s, mostly covered by A</td><td class="mid">Medium</td><td class="hi">Low</td></tr>
+<tr><td>F</td><td><b>Cache the board</b> per company and filter. Page flips would be instant, but every write path (imports, GRN, Respond, links, holds) must clear it, or the board shows old numbers.</td><td class="hi">Large for page 2+</td><td class="mid">Medium</td><td class="bad">Stale numbers</td></tr>
+</table>
+</div>
+<p>Already moving in other lanes, not repeated here: <b>#1899</b> (index for PO lines feeding SPOs, 1.2 s to 28 ms) and <b>#1897</b> (bounded PO-received read). This lane builds on top of them.</p>
+
+<h2>Recommendation</h2>
+<div class="rec">
+<p><b>Build A, then B, then C, with E's timing line in the first PR.</b> A is the biggest win for the smallest change and does not alter what the board computes, only which products it bothers with. Park the cache (F) and only build it if A to C leave the warm p95 above 1.5 s; skip a worker-refreshed snapshot (stale by design).</p>
+</div>
+
+<h2>How we prove nothing changes</h2>
+<ul>
+<li><b>Side-by-side check.</b> A script builds the full board (every row, every month, totals, suppliers, counts, a sample of cell drills, the export rows) under 12 filter combinations, once on today's code and once on the new code, against the same database copy. The two must match exactly, number for number. The PR states the counts only.</li>
+<li><b>Tests first.</b> Each PR opens with a failing test that pins the speed property (for A: a product with stock but no orders is never computed), then the fix. The existing Stock Debt test suites stay unchanged and green.</li>
+</ul>
+
+<h2>How we measure</h2>
+<ul>
+<li>Locally: 10 requests per version on the prod copy, median and p95, same day. Target warm p95 under 1.5 s, cold under 3 s, no more queries than today (53).</li>
+<li>Prod: after a release, the owner reads the new timing line in the backend logs. Crew never touches prod.</li>
+</ul>
+
+<h2>Questions</h2>
+<ol>
+<li>Order A, B, C, with E's timing line in the first PR; D and the cache only if still short of target? <b>Recommend yes.</b></li>
+<li>Profiling and the side-by-side check need real volumes: (a) crew makes a throwaway copy of <code>sorento_prod_1020</code> for this lane, or (b) read-only on <code>sorento_prod_1020</code> itself. <b>Recommend (a)</b>: lanes do not query the shared prod copy directly.</li>
+<li>Query time limit for the board: <b>recommend 20 s</b>, server side only, no screen change unless you ask for one.</li>
+</ol>
+</main>
+</body>
+</html>
