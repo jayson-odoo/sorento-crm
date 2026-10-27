@@ -35,6 +35,8 @@ export default function BulkLinkCustomersDialog({ open, onOpenChange, contacts, 
   const [busy, setBusy] = useState(false);
 
   const handleOpenChange = (next: boolean) => {
+    // Mid-run the dialog stays open: it closes itself once every request has settled.
+    if (!next && busy) return;
     if (!next) picker.clear();
     onOpenChange(next);
   };
@@ -87,7 +89,8 @@ export default function BulkLinkCustomersDialog({ open, onOpenChange, contacts, 
       );
     }
     onLinked(okIds);
-    handleOpenChange(false);
+    picker.clear();
+    onOpenChange(false);
   };
 
   return (
@@ -109,7 +112,7 @@ export default function BulkLinkCustomersDialog({ open, onOpenChange, contacts, 
           />
         </DialogBody>
         <DialogFooter>
-          <Button variant="outline" onClick={() => handleOpenChange(false)}>
+          <Button variant="outline" disabled={busy} onClick={() => handleOpenChange(false)}>
             Cancel
           </Button>
           <Button disabled={picker.selected.length === 0 || busy} onClick={() => void apply()}>

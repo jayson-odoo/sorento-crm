@@ -158,6 +158,8 @@ export type ListToolbarSelectAllMatching = {
    * endpoint's page size. Above it the link reads "Select first 1,000 of 1,248".
    */
   limit?: number;
+  /** True while the page is fetching the matching ids: the link reads "Selecting..." and is disabled. */
+  pending?: boolean;
   onSelectAll: () => void;
   onClear: () => void;
 };
@@ -703,8 +705,16 @@ export function DataGridListToolbar<TData extends object>({
                 <span>
                   All <span className="font-medium">{selectAllMatching.loadedCount.toLocaleString('en-US')}</span> on this page selected.
                 </span>
-                <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAllMatching.onSelectAll}>
-                  {matchingCapped
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  disabled={selectAllMatching.pending}
+                  onClick={selectAllMatching.onSelectAll}
+                >
+                  {selectAllMatching.pending
+                    ? 'Selecting...'
+                    : matchingCapped
                     ? `Select first ${matchingCount.toLocaleString('en-US')} of ${selectAllMatching.total.toLocaleString('en-US')}`
                     : `Select all ${selectAllMatching.total.toLocaleString('en-US')} records`}
                 </Button>

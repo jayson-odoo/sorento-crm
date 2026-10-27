@@ -268,6 +268,8 @@ export default function ContactsList() {
   // Bumped whenever the selection moves on, so a 1,000-row fetch that lands late is dropped.
   const matchingSeq = useRef(0);
   const matchingPendingSeq = useRef<number | null>(null);
+  // Mirror of the ref above, for the toolbar link to read "Selecting..." while it runs.
+  const [matchingPending, setMatchingPending] = useState(false);
   const selectedContacts = useMemo(
     () => matching ?? pageContacts.filter((c) => rowSelection[c.id]),
     [matching, pageContacts, rowSelection],
@@ -819,6 +821,7 @@ export default function ContactsList() {
     // A second click while this fetch is in flight does nothing.
     if (matchingPendingSeq.current === mine) return;
     matchingPendingSeq.current = mine;
+    setMatchingPending(true);
     try {
       const res = await fetchContactsPage({ ...listParams, pageIndex: 0, pageSize: 1000 });
       // Filters, sort, a tick or Clear moved on while it ran: this result is stale.
@@ -829,7 +832,10 @@ export default function ContactsList() {
       if (matchingSeq.current !== mine) return;
       toast.error(err instanceof Error ? err.message : 'Could not select all matching contacts');
     } finally {
-      if (matchingPendingSeq.current === mine) matchingPendingSeq.current = null;
+      if (matchingPendingSeq.current === mine) {
+        matchingPendingSeq.current = null;
+        setMatchingPending(false);
+      }
     }
   };
 
@@ -916,6 +922,7 @@ export default function ContactsList() {
               total: data?.pagination?.total ?? 0,
               loadedCount: pageContacts.length,
               active: matching !== null,
+              pending: matchingPending,
               limit: 1000,
               onSelectAll: () => void selectAllMatchingRows(),
               onClear: () => setMatching(null),
@@ -993,13 +1000,11 @@ export default function ContactsList() {
         onOpenChange={setBulkLinkOpen}
         contacts={selectedContacts}
         onLinked={(okIds) => {
-          if (okIds.length === selectedContacts.length) {
+          // In the all-matching mode any outcome leaves it (the dialog's toast has the count).
+          if (matching || okIds.length === selectedContacts.length) {
             clearSelection();
             return;
           }
-          // Partial: the linked ones leave the selection and the all-matching set; the failed
-          // ones stay selected, still in the mode.
-          setMatching((prev) => prev && prev.filter((c) => !okIds.includes(c.id)));
           setRowSelection((prev) => {
             const next = { ...prev };
             okIds.forEach((id) => delete next[id]);
