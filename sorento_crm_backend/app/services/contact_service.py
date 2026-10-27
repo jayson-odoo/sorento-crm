@@ -111,6 +111,7 @@ class ContactService:
         no_customers_only: bool = False,
         access_filters: Optional[dict] = None,
         redact_sections: frozenset = frozenset(),
+        viewer_id: Optional[str] = None,
     ):
         """List contacts with pagination and filtering.
 
@@ -121,6 +122,9 @@ class ContactService:
         ``include_linked_users`` (S3 1.7): the caller holds `users.view`, so
         each row's `linked_user_id`/`linked_user_name` are filled from ONE
         batched query for the whole page - never one query per row.
+
+        ``viewer_id`` (ACCESS-SHEET-FIXES): the list belongs to no one company, so the
+        Customers column and the ``customer_id`` filter read every company that user is granted.
         """
         q = self.db.query(RespondContact)
         if own_memory_level_only:
@@ -150,7 +154,7 @@ class ContactService:
                 )
             )
         if access_filters:
-            q = self._apply_access_filters(q, access_filters)
+            q = self._apply_access_filters(q, access_filters, viewer_id)
         
         total = q.count()
         
@@ -179,7 +183,7 @@ class ContactService:
 
         from app.services.contact_customer_service import customer_codes_by_contact
 
-        codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts])
+        codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts], viewer_id)
         cost_ids = self._cost_visible_ids([str(c.id) for c in contacts])
 
         from app.services.contact_brand_scope import brand_refs_by_contact
@@ -239,7 +243,7 @@ class ContactService:
             )
         }
 
-    def _apply_access_filters(self, q, f: dict):
+    def _apply_access_filters(self, q, f: dict, viewer_id: Optional[str] = None):
         """UAC A2.3-A2.6: each filter narrows; together they AND. `yes|no` for the switches."""
         from app.models.access import (
             ContactFieldReveal,
@@ -305,8 +309,12 @@ class ContactService:
                 RespondContactCustomer.contact_id == RespondContact.id,
                 RespondContactCustomer.customer_id == f["customer_id"],
             )
-            # Same rule as `customers=none`: only links the caller can see count.
-            predicate = build_company_predicate(RespondContactCustomer, get_company_scope(self.db))
+            # Only links the caller can see count: every company they are granted when the
+            # viewer is known (Internal Users is company-less), else the active scope.
+            from app.services.company_scope_resolver import grants_scope_value
+
+            scope = grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
+            predicate = build_company_predicate(RespondContactCustomer, scope)
             if predicate is not None:
                 link = link.where(predicate)
             q = q.filter(link)
