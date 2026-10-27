@@ -29,7 +29,10 @@ NAMING_PATHS = [
     ("orders", f"{BASE}/order-management/orders", {"query": "ZZT"}),
     ("orders_by_product", f"{BASE}/order-management/orders/by-product", {"product_query": "ZZT"}),
     ("outstanding_report", f"{BASE}/order-management/outstanding-report", {"customer_query": "ZZT BRAND"}),
-    ("top_selling", f"{BASE}/order-management/top-selling", {"rank_by": "quantity", **Y}),
+    # The world's sales are delivery orders, so the route is pinned to Delivered; SALES-UNIFIED
+    # (#1916) made Invoiced its default, guarded below by `test_top_selling_invoiced_...`.
+    ("top_selling", f"{BASE}/order-management/top-selling",
+     {"rank_by": "quantity", "basis": "delivered", **Y}),
     ("current_stock_list", f"{BASE}/resource-management/attachments/current-stock-list", {}),
 ]
 IDS = [p[0] for p in NAMING_PATHS]
@@ -187,13 +190,55 @@ def test_outstanding_report_for_an_out_of_scope_product_reads_as_unknown(api, wo
 
 
 def test_top_selling_rows_and_totals_are_in_scope_only(api, world) -> None:
-    body = api.get(f"{BASE}/order-management/top-selling", world.scoped, rank_by="quantity", **Y).json()
+    q = {"rank_by": "quantity", "basis": "delivered", **Y}
+    body = api.get(f"{BASE}/order-management/top-selling", world.scoped, **q).json()
     assert [r["code"] for r in body["rows"]] == [world.codes["mocha"]], body
     assert body["total_count"] == 1
     assert body["totals"]["quantity"] == 2
     assert Decimal(str(body["totals"]["amount"])) == Decimal("100.00")
-    plain = api.get(f"{BASE}/order-management/top-selling", world.unscoped, rank_by="quantity", **Y).json()
+    plain = api.get(f"{BASE}/order-management/top-selling", world.unscoped, **q).json()
     assert plain["total_count"] == 3 and plain["totals"]["quantity"] == 9
+
+
+def _invoice(db, lines) -> None:
+    """A posted invoice in the world's 2026 window, one billing line per (product, qty, net)."""
+    from datetime import date
+
+    from app.models.finance import BillingDocument, BillingDocumentLine
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+    from tests._pg_fixture import unique_code
+
+    net = sum((n for _p, _q, n in lines), Decimal("0"))
+    header = BillingDocument(
+        id=str(uuid.uuid4()), company_id=DEFAULT_COMPANY_ID, document_type="invoice",
+        doc_no=unique_code("IV"), doc_date=date(2026, 6, 1), status="posted",
+        net_total=net, tax_total=Decimal("0"), total=net, local_net_total=net,
+        source_ref=f"SRT_DB:{uuid.uuid4().hex}",
+    )
+    db.add(header)
+    db.flush()
+    for n, (prod, qty, amount) in enumerate(lines, start=1):
+        db.add(BillingDocumentLine(
+            id=str(uuid.uuid4()), document_id=header.id, company_id=DEFAULT_COMPANY_ID, line_no=n,
+            product_id=prod.id, item_code=prod.product_code, quantity=Decimal(qty),
+            net_amount=amount, source_ref=f"D{n}",
+        ))
+    db.commit()
+
+
+def test_top_selling_invoiced_rows_and_totals_are_in_scope_only(api, world, db) -> None:
+    """AC-13 on the route's default basis since SALES-UNIFIED (Invoiced, billing lines): the
+    MOCHA-only contact sees the MOCHA line and its total; the unscoped contact sees all three."""
+    _invoice(db, [(world.p_mocha, 2, Decimal("100.00")), (world.p_sorento, 3, Decimal("3000.00"))])
+    _invoice(db, [(world.p_null, 4, Decimal("40.00"))])
+    q = {"rank_by": "quantity", **Y}
+    body = api.get(f"{BASE}/order-management/top-selling", world.scoped, **q).json()
+    assert body["basis"] == "invoiced", body
+    assert [r["code"] for r in body["rows"]] == [world.codes["mocha"]], body
+    assert body["totals"]["quantity"] == 2
+    assert Decimal(str(body["totals"]["amount"])) == Decimal("100.00")
+    plain = api.get(f"{BASE}/order-management/top-selling", world.unscoped, **q).json()
+    assert plain["total_count"] == 3 and plain["totals"]["quantity"] == 9, plain
 
 
 def test_sales_report_total_is_computed_from_in_scope_lines(api, world) -> None:
