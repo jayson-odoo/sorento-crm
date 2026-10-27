@@ -37,3 +37,44 @@ def test_npa_check_matches_the_model():
     migrated = {s.strip().strip("'") for s in module._NPA_STATUSES_NEW.split(",")}
     assert migrated == set(STATUSES)
     assert "resubmitted" in migrated
+
+
+def test_edition_open_keys_match_the_model_index_and_the_service():
+    from app.models.dealer_kit import Edition
+    from app.services.dealer_kit.edition_service import OPEN_STATUS_KEYS
+
+    module = _load()
+    migrated = {k.strip().strip("'") for k in module._EDITION_OPEN_NEW.split(",")}
+    assert migrated == set(OPEN_STATUS_KEYS)
+    index = next(i for i in Edition.__table__.indexes if i.name == module._EDITION_INDEX)
+    where = str(index.dialect_options["postgresql"]["where"])
+    assert all(f"'{key}'" in where for key in OPEN_STATUS_KEYS)
+
+
+def test_seeding_the_rungs_is_idempotent_and_skips_a_graph_that_does_not_exist():
+    from sqlalchemy import text
+
+    from tests._pg_fixture import blank_session
+
+    module = _load()
+    with blank_session() as db:
+        conn = db.connection()
+        module.seed_resubmitted_rungs(conn)  # no graphs at all: nothing to do
+        assert conn.execute(text("select count(*) from statuses where key = 'resubmitted'")).scalar() == 0
+
+        spec = importlib.util.spec_from_file_location(
+            "mig318_for_resub", ROOT / "alembic" / "versions" / "318_dealer_kit_edition.py"
+        )
+        mig318 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mig318)
+        mig318._seed_graph(conn)
+        module.seed_resubmitted_rungs(conn)
+        module.seed_resubmitted_rungs(conn)
+        assert conn.execute(text("select count(*) from statuses where key = 'resubmitted'")).scalar() == 1
+        edges = conn.execute(
+            text(
+                "select count(*) from status_transitions t join statuses s "
+                "on s.id in (t.from_status_id, t.to_status_id) where s.key = 'resubmitted'"
+            )
+        ).scalar()
+        assert edges == 3
