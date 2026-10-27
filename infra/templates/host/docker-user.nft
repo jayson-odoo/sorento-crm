@@ -1,4 +1,6 @@
-# Container firewall for the India box (and the witness, with its own app subnets).
+# Container firewall for the India box and the witness. The witness is the shared-service box for
+# now (owner, 27 Oct): there <N8N_SUBNETS> means EVERY app network on that box (Claude connector,
+# ideation, its backend), since none of them may reach etcd 2379/2380.
 # Security review B1: binding to 127.0.0.1 + the tunnel address does not keep containers out.
 # An n8n Code node can open <IN_WG_IP>:5432/8008/2379/2380 through its bridge gateway, and
 # traffic to <KL_WG_IP> or the witness is masqueraded to <IN_WG_IP>, so KL would see n8n as the
@@ -17,9 +19,11 @@
 table inet sorento_ha_guard
 delete table inet sorento_ha_guard
 
+include "/etc/sorento-ha/ha-members.nft"
+
 table inet sorento_ha_guard {
   set n8n_nets { type ipv4_addr; flags interval; elements = { <N8N_SUBNETS> } }
-  set ha_peers { type ipv4_addr; elements = { <KL_WG_IP>, <IN_WG_IP>, <WITNESS_WG_IP> } }
+  set ha_peers { type ipv4_addr; elements = { $KL_WG_IP, $IN_WG_IP, $WITNESS_WG_IP } }
 
   # Container traffic to the host itself (published ports, host-network etcd/HAProxy).
   chain input {

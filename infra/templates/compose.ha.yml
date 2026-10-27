@@ -14,7 +14,7 @@
 services:
   db:
     image: <REGISTRY>/sorento-patroni-pg17:<PIN>    # built from templates/patroni/Dockerfile
-    env_file: [patroni.env, walg.env]
+    env_file: [/etc/sorento-ha/ha-members.env, patroni.env, walg.env]
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./patroni.yml:/etc/patroni/patroni.yml:ro
@@ -65,7 +65,7 @@ services:
 
   etcd:
     image: <ETCD_IMAGE>:<PIN>
-    env_file: [etcd.env]                             # from templates/etcd/etcd.env.template
+    env_file: [/etc/sorento-ha/ha-members.env, etcd.env]   # etcd.env from templates/etcd/etcd.env.template
     network_mode: host                               # binds the tunnel address + 127.0.0.1 only
     volumes:
       - etcd_data:/etcd-data

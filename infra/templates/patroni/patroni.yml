@@ -24,7 +24,8 @@ restapi:
     - <IN_WG_IP>
 
 etcd3:
-  hosts: <KL_WG_IP>:2379,<IN_WG_IP>:2379,<WITNESS_WG_IP>:2379
+  # hosts: from PATRONI_ETCD3_HOSTS in /etc/sorento-ha/ha-members.env (the one place the voters
+  # are named, so moving the witness is a config change). Kept out of this file on purpose.
   # etcd auth + TLS are on (templates/etcd/etcd.env.template): PATRONI_ETCD3_USERNAME=patroni,
   # PATRONI_ETCD3_PASSWORD from patroni.env. A user that can write /sorento/ can move the leader.
   protocol: https

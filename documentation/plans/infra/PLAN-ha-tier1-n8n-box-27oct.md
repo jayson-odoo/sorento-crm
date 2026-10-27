@@ -1,7 +1,7 @@
 # PLAN: HA plan v2, Tier 1 on the n8n box with automatic failover (HA-TIER1-N8N-BOX)
 
-Status: plan + code guards + templates in review, PR #1915. Owner rulings D1-D5, O2 and O3
-recorded 27 Oct (section 10); O1 (witness host) still open, Hetzner as the working assumption. Track: docs + infra
+Status: plan + code guards + templates in review, PR #1915. Owner rulings D1-D5, O1, O2 and O3
+recorded 27 Oct (section 10): witness on the shared-service box for now, movable by config. Track: docs + infra
 templates + two small backend guards (health role endpoint, scheduler leader guard). No migration,
 no auth/RBAC change, no new ingest surface: small fix track for the code slice.
 
@@ -258,7 +258,8 @@ Tests: `infra/tests/test_ha_scripts.py`.
   in Singapore or Jakarta would fail exactly the case the owner named, so not there. Recommended:
   Europe (Hostinger KVM 1 in a European location, same account and billing; or Hetzner, an
   independent provider, so one provider's account or billing problem cannot take two of three
-  voters). Open item O1, including the shared-service box as option (c) (section 10).
+  voters). Owner ruling O1: the shared-service box for now, location unverified, with the
+  known limit in section 10; moving it to Europe later is config only.
 
 ### Latency and what users feel
 
@@ -530,7 +531,9 @@ offload on its trigger (section 4).
 
 1. Private infra repo `sorento-infra` (layout in `infra/README.md`; the templates move there).
    Prod compose, nginx, Caddy, `.deploy.env.example` captured from the box. No secrets.
-2. Move the KVM 8 to India (section 3). Buy the witness VPS (O1).
+2. Move the KVM 8 to India (section 3). Set up the witness on the shared-service box (O1:
+   `infra/templates/witness/compose.witness.yml`, its firewall and WireGuard peer, runbook
+   `documentation/runbooks/ha-failover.md`).
 3. WireGuard mesh between the three (or confirm the tailnet reaches all three).
 4. R2 bucket + scoped token for WAL-G.
 5. etcd on all three members; check `etcdctl endpoint health --cluster` shows 3 healthy.
@@ -583,17 +586,21 @@ Owner rulings, 27 Oct about 19:35 (recorded verbatim where quoted):
   about 19:45). Window 04:00 MYT, not the 03:00 asked, to stay clear of the 03:00 nightly
   `pg_dump` (section 2 "Failback"). `infra/scripts/switchback.sh`, section 2 "Failback".
 
-Still open:
+- **O1 Witness host: (c) the shared-service box, FOR NOW** (owner, 27 Oct about 23:30), built so
+  it can move to a Hetzner EU VPS later by config only: the three voters are named in one file
+  (`infra/templates/ha-members.env.example`, mirrored for the firewall in
+  `infra/templates/host/ha-members.nft`); the witness runs `infra/templates/witness/compose.witness.yml`;
+  the move is `documentation/runbooks/ha-failover.md` "Move the witness" (etcd learner add,
+  promote, remove; no downtime, quorum kept).
+  - **Known limit, accepted for now**: if the shared-service box shares a region or data centre
+    with the KL CRM box, a KL region outage loses 2 of the 3 voters and India will NOT take over
+    automatically; a human forces the promotion (runbook, "The witness today"). Its own deploys
+    and reboots also pause automatic failover while they last. Locations of the three boxes are
+    unverified (crew-ask on the PR).
+  - Trigger to move it: crew finds it in the same region as KL, or any incident where its
+    downtime overlapped a KL problem, or the first quarterly drill 5 showing its restarts.
 
-- **O1 Witness host** (the third etcd voter; it votes on which DB is primary, the LB cannot, see
-  section 2). Working assumption: (a).
-  - (a) Hetzner smallest cloud VPS in Germany or Finland, about EUR 4-5/month, independent
-    provider (prices unverified).
-  - (b) Hostinger KVM 1 in a European location, about $5-7/month promo, renewal higher, same
-    account.
-  - (c) the existing shared-service box (owner, 27 Oct about 19:47). See "O1 (c)" below.
-
-### O1 (c): the shared-service box as the witness
+### O1 (c): the shared-service box as the witness (analysis behind the ruling)
 
 What the repo says about the box (no provider, plan size, region or load is recorded anywhere):
 
@@ -649,10 +656,10 @@ month buys a voter that nothing else restarts.
 |---|---|---|
 | Cloudflare Load Balancing, 2 endpoints, 60 s checks | about $5 | unverified |
 | 15 s checks (O2 b) | about $15 more, possibly $0 on a Business zone | Cloudflare pricing page via search, unverified; owner confirms on the dashboard |
-| Witness VPS (O1 a; $0 with O1 c) | about EUR 4-5 (about $5) | unverified |
+| Witness: shared-service box for now (O1 c) | $0 (about EUR 4-5 once moved to Hetzner EU) | moving price unverified |
 | R2 for WAL-G: 7 compressed fulls + WAL, about 50-150 GB at $0.015/GB (10 GB free); about 50-100k writes, inside the free million | about $1-3 | depends on DB size D, unverified |
 | India region for the KVM 8 | $0 expected | unverified (Hostinger may charge for a location change) |
-| **Total** | **about $26-28** (about $11 if 15 s checks are included in the zone plan) | |
+| **Total** | **about $21-23** now, about $26-28 after the witness move (about $5 less if 15 s checks are included in the zone plan) | |
 
 ### Effort
 
