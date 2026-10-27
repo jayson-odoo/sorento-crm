@@ -110,6 +110,27 @@ to gallery" quietly removes about 2,000 products' pictures from customer documen
    photo came from an earlier catalogue import (manual photos are never replaced). The old link is
    removed through the deferred-action unlink. (b) Always keep both. Rec (a).
 
+## Owner answers (27 Oct ~19:15) and Lavish feedback on mock v1 (27 Oct 19:06)
+
+- **Q1** Not on the flyer reading. It goes on the PRODUCT page, as one action in the existing Action
+  dropdown. The flyer extraction and matching code is reused underneath.
+- **Q2 (a)** The photo goes to the first code. The other block codes are "also attach" ticks, default off.
+- **Q3** No main-photo choice or label anywhere: the photo is simply added as one of the product's photos.
+  Today's display must not change: a product whose single photo shows automatically
+  (`product_image_service.py:216`) keeps showing it. Done behind the scenes (the existing single photo
+  is pinned when a second one arrives), with no new words in the UI.
+- **Q4 (a)** Upload and review need `dealer_kit.page.edit`; Attach also needs `master_data.products.edit`.
+- **Q5 (a)** A Replace tick per row, AND an image comparison: a likely duplicate of an existing photo
+  (compared by the image, not only sha256) is flagged and the user picks "Keep both" or "Replace" per row.
+- **Feedback F1** "Will this link to the attachments linking? Does it bypass the n8n sending route?":
+  answered plainly in the mock v2 ask, with file:line.
+- **Feedback F2** "Download all as ZIP" of the extracted photos, named by code, so the user can rearrange
+  them outside.
+- **Feedback F3** Reuse the existing folder and file function so the user can drop photos into folders.
+- **Feedback F4** About a quarter of the photos were already uploaded by hand, so sha256 will not catch
+  them (different bytes). Flag likely duplicates by comparing the images, show both thumbnails side by
+  side as "Looks like an existing photo", user decides. Measure how many it flags on the real catalogue.
+
 ## Build (after answers)
 
 Phase 1 FE mock against fixtures. Phase 2 test-first: fixture PDFs generated in the tests with PyMuPDF
@@ -155,6 +176,12 @@ stand whether the screen ends up on the flyer reading (Q1 a) or on its own page 
   A product under another company never matches.
 - `already_on_file(db, product_id: str, sha256: str) -> bool`: True when a `product_attachments` row of
   that product links an attachment whose `file_hash == sha256` (R5).
+
+Lead rulings on the tester's questions (27 Oct): the caption is the whole text block that holds the
+anchor line (codes mid-line and on later lines count, unlike the owner's first-code-only `anchors()`);
+"nearest wins" applies among captions in the same x window; an alias row of another company never
+matches (company scope, like products); normalising drops every space and dot (`"bf.126 13"` ->
+`BF12613`); a row with `company_id = NULL` belongs to the active company, as in the flyer tests.
 
 Tests: `tests/test_catalog_photo_extraction.py` (fixture PDFs built with PyMuPDF in the test, as
 `tests/_flyer_pdf.py` does), `tests/test_catalog_photo_matching.py` (Postgres, `tests/_pg_fixture.py`).
