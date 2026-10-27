@@ -52,7 +52,12 @@ export type BranchKind =
   /** AI-ALLOWED-GATE: the CRM declined to answer this contact, nothing was sent. */
   | 'ai_not_allowed'
   /** SALES-TARGET-CHAT: a salesperson logging a sales opportunity. */
-  | 'log_opportunity';
+  | 'log_opportunity'
+  /** WA-USERNAME-CONTACTS: the phone-share flow for a username-only WhatsApp contact. */
+  | 'phone_ask'
+  | 'phone_linked'
+  | 'phone_ignored'
+  | 'phone_handoff';
 
 /**
  * One stage of one turn.

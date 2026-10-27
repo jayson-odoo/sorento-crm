@@ -86,7 +86,8 @@ export type UseCase =
   | 'ideation_draft_reminder'
   | 'ideation_status_update'
   | 'supplier_request_chat'
-  | 'stock_ask_salesman';
+  | 'stock_ask_salesman'
+  | 'wa_phone_share';
 
 export type ParamVariable =
   | 'contact_name'
@@ -378,6 +379,12 @@ export const USE_CASES: {
     label: 'Stock Ask - Salesman Notification',
     description:
       'Sent to the customer\'s sales agent when the chatbot answers a dealer\'s stock ask (too big, in stock, or no stock and no incoming) and the dealer contact has "Notify salesman" on. Map params to "Customer", "Contact name" (the dealer who asked), "Product", "Quantity", "Outcome" and "Asked at".',
+  },
+  {
+    key: 'wa_phone_share',
+    label: 'WhatsApp Phone Share',
+    description:
+      'Utility template with the Share Contact Info button, sent to a WhatsApp contact that chats by username only so they can share their phone number. No params.',
   },
 ];
 
