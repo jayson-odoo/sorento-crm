@@ -414,3 +414,25 @@ def test_a_limited_project_user_cannot_file_a_sample_request_on_a_foreign_projec
         response = client.post(SR, json={"project_id": foreign.id})
         assert response.status_code == 422, response.text
         assert "SAMPLE_REQUEST_PROJECT_INVALID" in response.text
+
+
+# ------------------------------------------------------------------ list layout (browser pass finding)
+
+
+def test_a_view_own_holder_reads_their_own_column_layout_but_not_shared_saved_views(scene):
+    """The opportunity grid loads its column layout from `/list-query/column-config/<view slug>`;
+    without this a view_own holder's grid never rendered (sandbox browser pass, 27 Oct). Saved
+    views are shared across users, so they stay on the plain `view` slug."""
+    from app.api.v1.list_query import _can_view_listing_key
+    from app.models.user import UserPermission
+
+    db, w = scene
+    for slug in (OPP_VIEW, OPP_OWN):
+        if not db.query(UserPermission).filter(UserPermission.slug == slug).first():
+            db.add(UserPermission(id=uid(), slug=slug, name=slug))
+    db.flush()
+    with acting(db, w.a, {OPP_OWN}) as client:
+        assert client.get(f"/api/v1/list-query/column-config/{OPP_VIEW}").status_code == 200
+        assert _can_view_listing_key(db, w.a, OPP_VIEW, fail_closed=True) is False
+    with acting(db, w.a, set()) as client:
+        assert client.get(f"/api/v1/list-query/column-config/{OPP_VIEW}").status_code == 403
