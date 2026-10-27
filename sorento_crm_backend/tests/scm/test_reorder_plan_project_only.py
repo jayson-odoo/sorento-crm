@@ -663,7 +663,46 @@ def test_ac_po_12_project_run_buys_the_row_in_full_even_when_on_hand_covers_it(s
 def test_ac_po_12b_project_run_reduces_the_confirmed_buy_by_a_confirmed_reserve_against_the_line(scm_app):
     """R1a = A's other half, FLIPPED (captain ruling, 23 Sep 2026, Lane F fix round 3,
     `PLAN-order-sheet-oi-reports-22sep.md`): a confirmed Reserve/Borrow supply reduction
-    against the SAME line (`so_line_allocations`, `source_type='reserve'`) now reduces a
+    against the SAME line (`so_line_allocations`, here a RESERVE, `source_type='own'`;
+    BOARD-NO-HOLD review S3, 27 Oct 2026: a Reserve no longer lowers RETAIL's figure but
+    still lowers the PROJECT half's own Buy, as before) now reduces a
+    Project run's own row Buy too - R1a's "not netted against stock" carves out on-hand/
+    SPO/PO, never a Reserve, which is CS's own explicit decision to use the stock (the
+    exact case R1a's own docstring names as the pushback path, "purchasing pushes back
+    through Request CS to reserve"). Originally pinned the OPPOSITE ("ignores... must not
+    touch"), reading `project_need` straight off `project_confirmed_committed` with no
+    reduction applied anywhere in `_project_only_cell` - `_project_only_cell` now applies
+    `max(project_need - project_supply_reduction, 0)`, the same formula every other sizing
+    path uses.
+    """
+    _, db, _, _ = scm_app
+    u = _seed_single_covered_by_stock(db)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+    _add_reserve_claim(db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=15, source_type="own")
+
+    created = svc.create_run(
+        db, [], enqueue=False,
+        plan_horizon_start=date(2026, 1, 1), plan_horizon_date=date(2026, 12, 31),
+        demand_class="project", so_numbers=[so["so_number"]],
+    )
+    svc.run_reorder(created["run_id"], db=db)
+
+    buys = _buy_rows(db, created["run_id"], u["pid"])
+    assert buys, "expected a Buy of the row's own qty less the confirmed reserve claim"
+    total = sum(float(b["rounded_qty"]) for b in buys)
+    assert total == 5.0, (
+        f"expected the confirmed 20 less the reserved 15 = 5, got {total}"
+    )
+
+
+def test_ac_po_12b_project_run_reduces_the_confirmed_buy_by_a_confirmed_borrow_against_the_line(scm_app):
+    """R1a = A's other half, FLIPPED (captain ruling, 23 Sep 2026, Lane F fix round 3,
+    `PLAN-order-sheet-oi-reports-22sep.md`): a confirmed Reserve/Borrow supply reduction
+    against the SAME line (`so_line_allocations`; BOARD-NO-HOLD, 27 Oct 2026: the seed is a
+    Borrow, `source_type='other_location'`, because a Reserve no longer reduces) now reduces a
     Project run's own row Buy too - R1a's "not netted against stock" carves out on-hand/
     SPO/PO, never a Reserve, which is CS's own explicit decision to use the stock (the
     exact case R1a's own docstring names as the pushback path, "purchasing pushes back

@@ -83,4 +83,6 @@ export interface UploadActivitySession {
   failed_rows?: number | null;
   skipped_rows?: number | null;
   job_error?: string | null;
+  /** Where the entry opens, when the job has a page of its own (a catalogue photo read). */
+  link_path?: string | null;
 }

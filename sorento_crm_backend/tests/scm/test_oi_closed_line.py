@@ -436,8 +436,13 @@ def test_ac_7_r14_guard_partial_delivery_with_six_left_by_the_holder_succeeds(ap
 
 
 def test_ac_7_r14_guard_partial_delivery_with_five_left_by_the_holder_warns(api):
-    """AC-7 via R14, owner rule 12 Oct 2026: holder B leaves only 5 free, 6 undelivered
-    units asked: confirms, holds 5, records 1 short, never refuses the order."""
+    """AC-7 via R14, owner rule 12 Oct 2026, as BOARD-NO-HOLD (27 Oct 2026) rewrites it:
+    holder B's confirmed Reserve of 5 is a plan, not a hold, so it leaves the 10 on hand
+    free. The 6 undelivered units asked confirm in full: holds 6, nothing short.
+
+    (Was: B leaves only 5 free, so A holds 5 and records 1 short. The shortfall warning
+    itself is still pinned by the on-hand floor cases in this file.)
+    """
     client, world, order_a, line_a = _holder_world(
         api, holder_qty="5", ordered_a="10", delivered_a="4"
     )
@@ -445,8 +450,8 @@ def test_ac_7_r14_guard_partial_delivery_with_five_left_by_the_holder_warns(api)
     response = _reserve(client, world, order_a, line_a, "10")
 
     assert response.status_code == 200, response.text
-    assert _held_qty(world.db, line_a) == Decimal("5")
-    _assert_short(response, world, order_a, line_a, short="1", free="5")
+    assert _held_qty(world.db, line_a) == Decimal("6")
+    assert not response.json().get("stock_short_notices"), response.json()
 
 
 def _holds_by_warehouse(db, line):

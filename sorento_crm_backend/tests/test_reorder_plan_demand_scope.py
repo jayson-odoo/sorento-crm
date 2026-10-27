@@ -224,9 +224,10 @@ def _add_form_row(db, project_so: dict, *, product_code: str, warehouse_code: st
 
 
 def _add_reserve_claim(db, project_so: dict, *, product_id, warehouse_id, qty,
-                        required_date=None) -> None:
-    """A confirmed Project Reserve claim on `project_so`'s own PSO (`so_line_allocations`,
-    `source_type='reserve'`) - the seed shape `tests/scm/test_plan_horizon_review_fixes.py`'s
+                        required_date=None, source_type="other_location") -> None:
+    """A confirmed Project BORROW claim on `project_so`'s own PSO (`so_line_allocations`,
+    `source_type='other_location'`; BOARD-NO-HOLD, 27 Oct 2026: a Reserve no longer takes
+    stock off a retail run's supply, a Borrow still does) - the seed shape `tests/scm/test_plan_horizon_review_fixes.py`'s
     `_project_reserve` uses, adapted to hang off an EXISTING project SO (there via its own
     throwaway one) so the claim's SO number is `project_so`'s, which is what
     `_project_supply_reduction_map`'s own SO join (`reorder_run_service.py` ~1263) scopes on.
@@ -248,7 +249,7 @@ def _add_reserve_claim(db, project_so: dict, *, product_id, warehouse_id, qty,
     db.add(pso_line)
     db.flush()
     alloc = SOLineAllocation(
-        id=_u(), so_line_id=pso_line.id, source_type="reserve",
+        id=_u(), so_line_id=pso_line.id, source_type=source_type,
         warehouse_id=warehouse_id, qty=qty, company_id=project_so["company_id"],
     )
     db.add(alloc)
@@ -312,7 +313,7 @@ def _seed_scope_universe(db) -> dict:
     opposed to the confirmed leg, which T4/T5 already exercised) is caught: SO B's form
     row must never appear in a run scoped to SO A alone.
 
-    B2 (review kill): a Reserve claim (`so_line_allocations`, `source_type='reserve'`)
+    B2 (review kill): a Borrow claim (`so_line_allocations`, `source_type='other_location'`)
     against SO A (qty 6) and one against SO B (qty 2) - distinct quantities so a broken
     `_project_supply_reduction_map` SO join is caught the same way; and one retail line
     naming no warehouse (qty 9) - `_apply_unlocated_demand` must add it for a

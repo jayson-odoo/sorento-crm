@@ -293,6 +293,22 @@ def get_upload_activity(
     ]
     if excluded_type_ids:
         attachments_filter.append(~Attachment.attachment_type_id.in_(excluded_type_ids))
+    # A catalogue read is ONE entry (its import job); its stored PDF and photos are not rows of
+    # their own, they would sit on "Processing" for good.
+    from app.models.catalogue_photos import CataloguePhoto, CataloguePhotoReading
+
+    attachments_filter.append(
+        ~Attachment.id.in_(
+            db.query(CataloguePhoto.attachment_id).filter(CataloguePhoto.attachment_id.isnot(None))
+        )
+    )
+    attachments_filter.append(
+        ~Attachment.id.in_(
+            db.query(CataloguePhotoReading.pdf_attachment_id).filter(
+                CataloguePhotoReading.pdf_attachment_id.isnot(None)
+            )
+        )
+    )
     attachments: List[Attachment] = (
         db.query(Attachment)
         .filter(and_(*attachments_filter))
@@ -453,7 +469,17 @@ _IMPORT_JOB_TYPE_LABELS: Dict[str, str] = {
     "po_history_import": "Purchase History Import",
     "sales_history_import": "Sales History Import",
     "order_inquiry_import": "Order Inquiry Import",
+    "catalogue_photo_read": "Catalogue photo read",
 }
+
+
+def _job_link(j: ImportJob) -> Optional[str]:
+    """Where a drawer entry opens, for the job types that have a page of their own."""
+    if j.job_type == "catalogue_photo_read":
+        reading_id = (j.job_metadata or {}).get("reading_id")
+        if reading_id:
+            return f"/master-data-management/products/catalogue-photos/{reading_id}"
+    return None
 
 
 def _import_job_session(j: ImportJob) -> UploadActivitySession:
@@ -487,4 +513,5 @@ def _import_job_session(j: ImportJob) -> UploadActivitySession:
         failed_rows=j.failed_rows,
         skipped_rows=j.skipped_rows,
         job_error=getattr(j, "error", None),
+        link_path=_job_link(j),
     )

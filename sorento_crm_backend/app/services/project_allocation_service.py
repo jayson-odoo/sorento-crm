@@ -40,15 +40,12 @@ from app.config import settings
 from app.models.inventory import Stock, Warehouse
 from app.models.product import Product
 from app.models.project_so import (
-    ALLOC_SOURCE_ORDER,
     CLAIM_REFUSED,
     CLAIM_REQUESTED,
-    DECISION_ACTIVE,
     AllocationClaim,
     ProjectSalesOrder,
     ProjectSalesOrderLine,
     SOLineAllocation,
-    SOSupplyDecision,
 )
 from app.models.projects import Project, ProjectCollaborator
 from app.models.user import User
@@ -229,40 +226,25 @@ class ProjectAllocationService:
         """
         if not product_id:
             return []
-        query = (
-            self.db.query(
+        # Local import: project_supply_service imports the engine this module also feeds.
+        from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
+
+        # The shared rule for "holding stock right now" (`_hold_query`), so a Reserve, which
+        # is a plan and holds nothing (BOARD-NO-HOLD), is not restated or re-decided here.
+        query = ProjectSupplyService(self.db)._hold_query(
+            [product_id],
+            exclude_line_ids=[exclude_line_id] if exclude_line_id else None,
+            entities=(
                 SOLineAllocation.warehouse_id,
                 Project.id,
                 Project.project_code,
                 Project.title,
                 Project.owner_user_id,
-                SOLineAllocation.qty,
-            )
-            .join(
-                ProjectSalesOrderLine,
-                ProjectSalesOrderLine.id == SOLineAllocation.so_line_id,
-            )
-            .join(
-                ProjectSalesOrder,
-                ProjectSalesOrder.id == ProjectSalesOrderLine.project_sales_order_id,
-            )
-            .join(Project, Project.id == ProjectSalesOrder.project_id)
-            .outerjoin(
-                SOSupplyDecision, SOSupplyDecision.id == SOLineAllocation.decision_id
-            )
-            .filter(
-                ProjectSalesOrderLine.product_id == product_id,
-                SOLineAllocation.confirmed_at.isnot(None),
-                SOLineAllocation.warehouse_id.isnot(None),
-                SOLineAllocation.source_type != ALLOC_SOURCE_ORDER,
-                or_(
-                    SOLineAllocation.decision_id.is_(None),
-                    SOSupplyDecision.state == DECISION_ACTIVE,
-                ),
-            )
-        )
-        if exclude_line_id:
-            query = query.filter(SOLineAllocation.so_line_id != exclude_line_id)
+                # The same capped figure free stock nets (`held_qty_expr`, what the line
+                # still owes), so the panel and the board quote one number.
+                held_qty_expr(),
+            ),
+        ).join(Project, Project.id == ProjectSalesOrder.project_id)
 
         totals: Dict[Tuple[str, str], Dict[str, Any]] = {}
         for warehouse_id, project_id, code, title, owner_user_id, qty in query.all():
