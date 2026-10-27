@@ -93,3 +93,27 @@ export function auditFieldChanges(
   }
   return out;
 }
+
+const RESUBMIT_KEYS = ['status', 'approval_status', 'order_status'];
+const RESUBMIT_SUMMARY = /\brejected\s*→\s*submitted\b/i;
+
+/**
+ * A rejected record sent back in: an UPDATE moving rejected -> submitted. Derived from the
+ * transition itself (raw status values, or the status-engine summary that carries the labels),
+ * so history written before any "Resubmitted" status existed reads the same way.
+ */
+export function isAuditResubmit(entry: {
+  action: string;
+  old_values: Record<string, unknown> | null;
+  new_values: Record<string, unknown> | null;
+  description: string | null;
+}): boolean {
+  if (entry.action !== 'UPDATE') return false;
+  const norm = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
+  for (const key of RESUBMIT_KEYS) {
+    if (norm(entry.old_values?.[key]) === 'rejected' && norm(entry.new_values?.[key]) === 'submitted') {
+      return true;
+    }
+  }
+  return RESUBMIT_SUMMARY.test(entry.description ?? '');
+}

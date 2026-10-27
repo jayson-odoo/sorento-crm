@@ -5,7 +5,13 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditLogs } from '@/hooks/useAuditLogs';
 import { actorDisplay } from '@/lib/audit-actor';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { auditFieldChanges, auditFieldLabel, formatAuditValue, type AuditFieldChange } from '@/lib/audit-fields';
+import {
+  auditFieldChanges,
+  auditFieldLabel,
+  formatAuditValue,
+  isAuditResubmit,
+  type AuditFieldChange,
+} from '@/lib/audit-fields';
 import type { AuditLogEntry } from '@/types/audit.types';
 
 // The backend summarises a status move ("status: rejected → submitted"); that line leads,
@@ -91,7 +97,9 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
                 className="border-b border-border/50 pb-3 last:border-0 last:pb-0"
               >
                 <div className="flex flex-wrap items-baseline gap-2 text-sm">
-                  <span className="font-medium capitalize">{entry.action.toLowerCase()}</span>
+                  <span data-testid="audit-action" className="font-medium capitalize">
+                    {isAuditResubmit(entry) ? 'Resubmitted' : entry.action.toLowerCase()}
+                  </span>
                   <span className="text-muted-foreground">
                     {formatDateTimeInMalaysia(entry.changed_at)}
                   </span>

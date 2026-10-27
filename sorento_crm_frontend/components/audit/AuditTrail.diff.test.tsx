@@ -137,4 +137,59 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     expect(screen.getByText('Root cause changed')).toBeInTheDocument();
     expect(document.body.textContent).not.toContain(a);
   });
+
+  // Owner + Kay, 27 Oct: rejected -> submitted reads "Resubmitted", derived from the transition
+  // so existing history shows it without a data change. Same two resubmit shapes as above.
+  it('resubmit shape 1 (status + long text append) heads the row "Resubmitted by <actor>"', () => {
+    mockEntries([
+      entry({
+        description: 'status: rejected → submitted',
+        old_values: { status: 'rejected', defect_description: BEFORE },
+        new_values: { status: 'submitted', defect_description: AFTER },
+      }),
+    ]);
+    renderTrail();
+    const row = screen.getAllByRole('listitem').find((li) => li.dataset.auditEntry) as HTMLElement;
+    expect(within(row).getByTestId('audit-action').textContent).toBe('Resubmitted');
+    expect(row.textContent).toContain('by Portal contact');
+    expect(within(row).getByText('Defect description changed')).toBeInTheDocument();
+  });
+
+  it('resubmit shape 2 (status + product code) heads the row "Resubmitted" with the field change under it', () => {
+    mockEntries([
+      entry({
+        description: 'status: rejected → submitted',
+        old_values: { status: 'rejected', product_code: 'CWCX604-P-RL-NEW' },
+        new_values: { status: 'submitted', product_code: 'CWCY604' },
+      }),
+    ]);
+    renderTrail();
+    expect(screen.getByTestId('audit-action').textContent).toBe('Resubmitted');
+    expect(screen.getByText('Product code: CWCX604-P-RL-NEW → CWCY604')).toBeInTheDocument();
+  });
+
+  it('a status-engine record (status_id, labels only in the summary) also reads "Resubmitted"', () => {
+    mockEntries([
+      entry({
+        entity_type: 'purchase_request',
+        description: 'Status: Rejected → Submitted',
+        old_values: { status_id: 'f0000000-0000-4000-8000-000000000005' },
+        new_values: { status_id: 'f0000000-0000-4000-8000-000000000006' },
+      }),
+    ]);
+    render(<AuditTrail entityType="purchase_request" entityId={COMPLAINT_ID} />);
+    expect(screen.getByTestId('audit-action').textContent).toBe('Resubmitted');
+  });
+
+  it('any other status move keeps the plain action heading', () => {
+    mockEntries([
+      entry({
+        description: 'status: submitted → approved',
+        old_values: { status: 'submitted' },
+        new_values: { status: 'approved' },
+      }),
+    ]);
+    renderTrail();
+    expect(screen.getByTestId('audit-action').textContent).toBe('update');
+  });
 });
