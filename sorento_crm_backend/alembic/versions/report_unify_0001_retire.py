@@ -11,7 +11,7 @@ MCP tools and the analytics connector keep them.
 unmoved and no republish follows from this migration.
 
 Revision ID: report_unify_0001_retire
-Revises: sales_unified_0002
+Revises: resub_0001_resubmitted_status
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "report_unify_0001_retire"
-down_revision = "sales_unified_0002"
+down_revision = "resub_0001_resubmitted_status"
 branch_labels = None
 depends_on = None
 

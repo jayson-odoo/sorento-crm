@@ -140,10 +140,11 @@ def _holds(db, lines, warehouse):
     return out
 
 
-def test_a_reserve_beyond_on_hand_less_other_lines_holds_confirms_holding_what_is_left_and_records_the_short(api):
-    """AC-E1: 10 on hand, 1 already reserved by SO383850, 15 asked for. The line confirms,
-    holds the 9 that are left and records 6 short; the two orders together never hold more
-    than the 10 on hand.
+def test_a_reserve_beyond_on_hand_confirms_holding_on_hand_and_records_the_short(api):
+    """AC-E1, as BOARD-NO-HOLD (owner, 27 Oct 2026) rewrites it: 10 on hand, 1 already
+    PLANNED by SO383850, 15 asked for. Another order's confirmed Reserve is a plan, not a
+    hold, so it takes nothing off the floor: the line confirms the 10 that are on hand and
+    records 5 short (was: 9 held and 6 short, the earlier order's 1 netted off).
 
     Owner rule 12 Oct 2026 (OI-CLOSED-LINE): a stock shortfall is a warning, never a refusal.
     """
@@ -165,14 +166,14 @@ def test_a_reserve_beyond_on_hand_less_other_lines_holds_confirms_holding_what_i
 
     assert response.status_code == 200, response.text
     body = response.json()
-    # The shortfall is recorded against the right line with the right figures: 9 of the 10
-    # on hand are left (1 is the earlier order's), so 6 of the 15 asked are short.
+    # Short against the floor alone: the whole 10 on hand are free to this line, so 5 of
+    # the 15 asked are short.
     notices = body["stock_short_notices"]
     assert [notice["line_no"] for notice in notices] == [22], notices
-    assert f"only 9 free at {world.own_wh.warehouse_code}" in notices[0]["reason"], notices
-    assert ", 6 short" in notices[0]["reason"], notices
-    assert _holds(db, [line], world.own_wh) == {line.id: Decimal("9")}
-    # Together with SO383850's 1, nothing held at the location exceeds what is on hand.
+    assert f"only 10 free at {world.own_wh.warehouse_code}" in notices[0]["reason"], notices
+    assert ", 5 short" in notices[0]["reason"], notices
+    assert _holds(db, [line], world.own_wh) == {line.id: Decimal("10")}
+    # Two plans may name the same stock: SO383850's 1 is still on its own line.
     db.expire_all()
     total = sum(
         (row.qty for row in db.query(SOLineAllocation).filter(
@@ -180,7 +181,7 @@ def test_a_reserve_beyond_on_hand_less_other_lines_holds_confirms_holding_what_i
         )),
         Decimal("0"),
     )
-    assert total == Decimal("10"), total
+    assert total == Decimal("11"), total
     assert (
         db.query(SOSupplyDecision)
         .filter(

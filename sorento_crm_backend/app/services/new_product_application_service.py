@@ -34,6 +34,7 @@ from app.models.procurement import ProductSupplier, StockInquiry, Supplier
 from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.user import User
+from app.services import submission_status
 from app.services.error_handler import AppException, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -47,7 +48,8 @@ APPROVE = "procurement.new_product_applications.approve"
 OPEN_CODE = "procurement.new_product_applications.open_code"
 
 DRAFT = "draft"
-SUBMITTED = "submitted"
+SUBMITTED = submission_status.SUBMITTED
+RESUBMITTED = submission_status.RESUBMITTED
 APPROVED = "approved"
 REJECTED = "rejected"
 COMPLETED = "completed"
@@ -56,16 +58,18 @@ CANCELLED = "cancelled"
 STATUS_LABELS = {
     DRAFT: "Draft",
     SUBMITTED: "Submitted",
+    RESUBMITTED: "Resubmitted",
     APPROVED: "Approved",
     REJECTED: "Rejected",
     COMPLETED: "Completed",
     CANCELLED: "Cancelled",
 }
 
-#: Statuses the applicant may edit in. Submitted and Approved are LOCKED (422), the
-#: terminal ones are closed (409).
+#: Statuses the applicant may edit in. Submitted (or Resubmitted) and Approved are LOCKED
+#: (422), the terminal ones are closed (409).
 EDITABLE = (DRAFT, REJECTED)
-LOCKED = (SUBMITTED, APPROVED)
+AWAITING_REVIEW = submission_status.AWAITING_REVIEW
+LOCKED = (*AWAITING_REVIEW, APPROVED)
 
 HEADER_TEXT = ("customer_name", "project_name", "remark")
 #: The v4 paper form's product block (AC-NPA-70): nothing else is written by the applicant.
@@ -373,12 +377,12 @@ def submit(db: Session, app: NewProductApplication, *, actor: Actor) -> str:
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
         )
     validate_submit(app)
-    app.status = SUBMITTED
+    app.status = submission_status.status_on_submit(was_rejected=app.status == REJECTED)
     app.submitted_at = datetime.utcnow()
     app.decided_at = None
     app.decided_by = None
     db.flush()
-    return "submitted"
+    return app.status
 
 
 def _require(app: NewProductApplication, status: str, verb: str) -> None:
@@ -389,10 +393,19 @@ def _require(app: NewProductApplication, status: str, verb: str) -> None:
         )
 
 
+def _require_awaiting_review(app: NewProductApplication, verb: str) -> None:
+    """Approve / reject: Submitted, or Resubmitted after a rejection (RESUBMITTED-STATUS)."""
+    if not submission_status.is_awaiting_review(app.status):
+        raise _conflict(
+            f"Only a submitted application can be {verb}.",
+            "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
+        )
+
+
 def approve(db: Session, app: NewProductApplication, *, actor: Actor) -> str:
     if not actor.can_approve:
         raise _forbidden("You cannot approve new product applications.")
-    _require(app, SUBMITTED, "approved")
+    _require_awaiting_review(app, "approved")
     app.status = APPROVED
     app.decided_at = datetime.utcnow()
     app.decided_by = actor.user_id
@@ -404,7 +417,7 @@ def approve(db: Session, app: NewProductApplication, *, actor: Actor) -> str:
 def reject(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> str:
     if not actor.can_approve:
         raise _forbidden("You cannot reject new product applications.")
-    _require(app, SUBMITTED, "rejected")
+    _require_awaiting_review(app, "rejected")
     reason = _clean(reason)
     if not reason:
         raise _invalid("reason", "Enter the reason for rejecting.")
@@ -451,13 +464,13 @@ def revise(db: Session, app: NewProductApplication, *, actor: Actor, reason: Opt
     for line in app.lines:
         line.cost_price = None
     db.flush()
-    return "withdrawn" if was == SUBMITTED else None
+    return "withdrawn" if was in AWAITING_REVIEW else None
 
 
 def cancel(db: Session, app: NewProductApplication, *, actor: Actor, reason: Optional[str]) -> None:
     if not is_owner(app, actor):
         raise _forbidden("Only the applicant can cancel this application.")
-    if app.status not in (DRAFT, SUBMITTED, APPROVED, REJECTED):
+    if app.status not in (DRAFT, *AWAITING_REVIEW, APPROVED, REJECTED):
         raise _conflict(
             f"A {STATUS_LABELS[app.status].lower()} application cannot be cancelled.",
             "NEW_PRODUCT_APPLICATION_ILLEGAL_MOVE",
@@ -1026,6 +1039,7 @@ def _holders(db: Session, slug: str, company_id: str, exclude: Iterable[Any] = (
 
 _EVENTS = {
     "submitted": ("waits for your approval", "approvers"),
+    "resubmitted": ("was resubmitted and waits for your approval", "approvers"),
     "withdrawn": ("was taken back for changes", "approvers"),
     "approved": ("is approved: codes to open", "purchasing"),
     "rejected": ("was rejected", "applicant"),

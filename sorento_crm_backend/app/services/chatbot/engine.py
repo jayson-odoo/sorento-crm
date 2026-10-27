@@ -3151,6 +3151,37 @@ def _recent_turn_count(db: Session, *, contact_respond_id: str, branch_kind: str
     )
 
 
+def _card_accepted_before(db: Session, *, contact_respond_id: str) -> bool:
+    """Has a live turn of this contact ever accepted a contact card (whatever the link did,
+    whatever branch the turn closed on)?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"card": "accepted"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
+def _recent_link_failure(db: Session, *, contact_respond_id: str) -> bool:
+    """Did a live turn of this contact hand a failed link to staff in the window?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.branch_kind == "phone_handoff",
+            ChatbotTurn.created_at >= _now() - PHONE_WINDOW,
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"link": "failed"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
 def _phone_turn(
     envelope: Envelope,
     *,
@@ -3299,9 +3330,14 @@ def _phone_unknown_decision(
     handoffs = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_handoff")
     # Only a card that arrived through the CRM's own HMAC-signed webhook counts as proof (WU22):
     # every other ingress can carry a body its caller wrote.
-    phone = (
-        wa_phone_link.accepted_card_phone(envelope.message) if envelope.ingress == DIRECT_INGRESS else None
-    )
+    is_card = wa_phone_link.is_contact_card(envelope.message)
+    if not is_card:
+        refusal: str | None = "not_a_card"
+    elif envelope.ingress != DIRECT_INGRESS:
+        refusal = "not_signed"
+    else:
+        refusal = wa_phone_link.card_refusal(envelope.message)
+    phone = wa_phone_link.accepted_card_phone(envelope.message) if refusal is None else None
     if phone:
         facts["card"] = "accepted"
         if dry_run:
@@ -3311,7 +3347,9 @@ def _phone_unknown_decision(
         facts["link"] = outcome.status
         if outcome.status == "failed":
             facts["reason"] = outcome.reason
-            if handoffs:
+            # WU21: one link-failure comment per 24 h. An earlier hand-off for another reason (the
+            # ask cap) told staff nothing about this phone, so it does not count.
+            if _recent_link_failure(db, contact_respond_id=contact_respond_id):
                 return "phone_ignored", "Phone link failed; staff already told in the last 24 hours"
             # After a merge the turn's own id may no longer exist: the survivor gets the comment (WU26).
             comment(
@@ -3325,12 +3363,23 @@ def _phone_unknown_decision(
         if outcome.chatbot_allowed:
             wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id)
         else:
+            # WA-PHONE-SHARE-LOOP: told once, on this turn; the contact now has a CRM row, so every
+            # later message closes silently at the AI-allowed gate.
+            wa_phone_link.send_verified(
+                db, client, identifier=survivor, turn_id=turn_id, line=wa_phone_link.NO_ACCESS_LINE
+            )
             comment(client, survivor, "phone verified, AI off for this contact")
         return "phone_linked", "Phone linked to the contact that holds its access"
 
-    facts["card"] = "none" if not wa_phone_link.is_contact_card(envelope.message) else "not_accepted"
+    facts["card"] = "none" if not is_card else "not_accepted"
+    if is_card:
+        facts["card_refusal"] = refusal
     if handoffs:
         return "phone_ignored", "Already handed to staff in the last 24 hours; sent nothing"
+    if _card_accepted_before(db, contact_respond_id=contact_respond_id):
+        # WA-PHONE-SHARE-LOOP: the contact already answered with a tap whose link failed and staff
+        # were told; asking again would loop. Only another tap retries the link (WU21).
+        return "phone_ignored", "Contact card already accepted and handed to staff; sent nothing"
     asks = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_ask")
     facts["asks_in_window"] = asks
     if dry_run:

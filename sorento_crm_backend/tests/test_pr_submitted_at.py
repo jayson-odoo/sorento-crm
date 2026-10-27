@@ -107,6 +107,6 @@ def test_resubmit_after_rejection_restamps_submitted_at(db):
     svc.submit_draft(token, "sponsorship_form", str(header.id))
 
     db.refresh(header)
-    assert header.status == "submitted"
+    assert header.status == "resubmitted"  # RESUBMITTED-STATUS (owner, 27 Oct)
     assert header.submitted_at > older  # re-stamped to the latest submit
     assert header.approval_status is None  # rejection cleared on resubmit

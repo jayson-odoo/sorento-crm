@@ -37,12 +37,14 @@ from sqlalchemy.orm import Session
 from app.models.dealer_kit import Edition, PageVersion
 from app.models.status import Status
 from app.modules.dealer_kit.bootstrap import EDITION_ENTITY
-from app.services import status_service
+from app.services import status_service, submission_status
 from app.services.dealer_kit import page_service
 from app.services.error_handler import AppException
 
 DRAFT = "draft"
 PENDING_APPROVAL = "pending_approval"
+# Sent again after a rejection (RESUBMITTED-STATUS); decided exactly like pending_approval.
+RESUBMITTED = submission_status.RESUBMITTED
 APPROVED = "approved"
 REJECTED = "rejected"
 DONE = "done"
@@ -51,7 +53,7 @@ DONE = "done"
 # index `uq_dealer_kit_edition_one_open_per_page` and migration 318's
 # `_OPEN_KEYS`, and named rather than derived as "not done" so a state added
 # later has to be classified on purpose.
-OPEN_STATUS_KEYS = (DRAFT, PENDING_APPROVAL, APPROVED, REJECTED)
+OPEN_STATUS_KEYS = (DRAFT, PENDING_APPROVAL, RESUBMITTED, APPROVED, REJECTED)
 
 
 def _status_by_key(db: Session, key: str) -> Status:
@@ -232,6 +234,15 @@ def submit(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Ed
             ),
         )
 
+    # Reopen keeps the rejection reason until this submit, so a reason still on the row
+    # means this send answers a rejection: a resubmission (RESUBMITTED-STATUS). An admin
+    # who deleted the rung from the graph gets the old pending landing.
+    target = PENDING_APPROVAL
+    if edition.status_key == DRAFT and (edition.rejection_reason or "").strip():
+        graph = status_service.resolve_graph(db, EDITION_ENTITY, None)
+        if graph.by_key(RESUBMITTED) is not None:
+            target = RESUBMITTED
+
     def _stamp() -> None:
         edition.submitted_by = user_id
         edition.submitted_at = datetime.utcnow()
@@ -244,7 +255,7 @@ def submit(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Ed
         # "Approved: <date>" beside a "Pending approval" pill.
         _void_approval(edition)
 
-    return _move(db, edition, PENDING_APPROVAL, apply=_stamp)
+    return _move(db, edition, target, apply=_stamp)
 
 
 def approve(db: Session, edition_id: str, *, user_id: Optional[str] = None) -> Edition:

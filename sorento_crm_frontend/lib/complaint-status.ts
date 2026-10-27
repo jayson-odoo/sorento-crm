@@ -8,6 +8,7 @@ export const COMPLAINT_STATUS_PILL_CLASS: Record<string, string> = {
   draft: 'bg-muted text-muted-foreground',
   new: 'bg-muted text-muted-foreground',
   submitted: 'bg-sky-100 text-sky-800',
+  resubmitted: 'bg-cyan-100 text-cyan-800',
   updated: 'bg-amber-100 text-amber-800',
   responded: 'bg-indigo-100 text-indigo-800',
   approved: 'bg-blue-100 text-blue-800',

@@ -73,6 +73,7 @@ FILENAME_STEM = "product-inquiry"
 _STATUS_LABELS = {
     "new": "New",
     "pending_project_sales": "Pending project sales",
+    "resubmitted": "Resubmitted",
     "pending_purchasing": "Pending purchasing",
     "rejected": "Rejected",
     "responded": "Responded",

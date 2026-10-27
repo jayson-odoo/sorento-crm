@@ -54,7 +54,7 @@ EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 MANAGE = "projects.projects.manage"
 APPROVE = svc.APPROVE_REGISTRATIONS_PERMISSION
-_APPROVAL_FILTERS = ("pending", "rejected", "approved", "draft")
+_APPROVAL_FILTERS = ("pending", "resubmitted", "rejected", "approved", "draft")
 #: The AI read tools (MCP over X-API-Key, the analytics connector) see approved projects only
 #: (PROJECT-REG-PORTAL R4): a registration waiting for approval is not a project to answer
 #: about. The staff board and list, on a session, keep showing them (R6).

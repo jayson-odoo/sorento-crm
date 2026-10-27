@@ -55,3 +55,16 @@ describe('complaint-status (skip stage: settled_on_site pill + label)', () => {
     );
   });
 });
+
+describe('complaint-status (RESUBMITTED-STATUS: submitted again after a rejection)', () => {
+  it('reads Resubmitted', () => {
+    expect(complaintStatusLabel('resubmitted')).toBe('Resubmitted');
+  });
+
+  it('has its own pill, told apart from a first submit', () => {
+    const resubmitted = complaintStatusPillClass('resubmitted');
+    expect(resubmitted).toBe(COMPLAINT_STATUS_PILL_CLASS.resubmitted);
+    expect(resubmitted).not.toBe(complaintStatusPillClass('submitted'));
+    expect(resubmitted).not.toBe(complaintStatusPillClass('something-unknown'));
+  });
+});

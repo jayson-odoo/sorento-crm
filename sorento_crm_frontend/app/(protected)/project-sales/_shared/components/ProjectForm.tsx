@@ -47,6 +47,7 @@ import type {
   ProjectUpdateBody,
 } from '../types/project.types';
 import { ClashWarningPanel } from '../../pipeline/components/ClashWarningPanel';
+import { isAwaitingDecision } from './ApprovalStatePill';
 import { LeadWizardDialog } from '../../leads/components/LeadWizardDialog';
 
 type LeadOption = { value: string; label: string; description?: string };
@@ -200,8 +201,7 @@ export function ProjectForm(props: ProjectFormProps) {
   // A portal registration still waiting for (or refused) approval sits outside the
   // registration lock (PROJECT-REG-PORTAL R3, owner ruling: duplicates never block). Its
   // matches are shown as information only; Approve's exact-duplicate 409 is the guard.
-  const awaitingDecision =
-    project?.approval_state === 'pending' || project?.approval_state === 'rejected';
+  const awaitingDecision = isAwaitingDecision(project?.approval_state);
   // In edit mode the project's own record is a "clash" against itself; it must never
   // block a save or show up in the panel.
   const candidates = (
