@@ -243,8 +243,12 @@ register(
 
 
 def _delete_sales_opportunity(db: Session, payload: dict):
+    from app.services import own_scope
     from app.services.sales import opportunity_service
 
+    own_scope.assert_pending_action_allowed(
+        db, "sales_opportunity.delete", _entity_id(payload), payload.get("requested_by_id")
+    )
     return opportunity_service.delete_opportunity_by_id(db, _entity_id(payload))
 
 

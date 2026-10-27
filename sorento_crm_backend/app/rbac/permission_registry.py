@@ -1025,3 +1025,35 @@ PERMISSION_REGISTRY.extend([
         "description": "Connect claude.ai to read CRM data as yourself. Chat tools also need View Chat History.",
     },
 ])
+
+
+# PORTAL-P2-ONLY-THEIRS: "only theirs". Holding a module's `view_own` without its `view` narrows
+# every read (and every write on an existing row) to the user's own rows (`app/services/own_scope.py`).
+# Seeded by migration `pp2_0001_view_own_perms` and granted to NO role there; P3 grants them.
+PERMISSION_REGISTRY.extend([
+    {
+        "slug": "projects.projects.view_own",
+        "name": "View Own Projects",
+        "description": "See only the projects you own, collaborate on or registered from the portal, and everything under them. Ignored when View Projects is also held.",
+    },
+    {
+        "slug": "sales.opportunities.view_own",
+        "name": "View Own Sales Opportunities",
+        "description": "See only the sales opportunities of your own sales agents. Ignored when View Sales Opportunities is also held.",
+    },
+    {
+        "slug": "projects.sample_requests.view_own",
+        "name": "View Own Sample Requests",
+        "description": "See only the sample requests you raised, or your own contact raised from the portal. Ignored when View Sample Requests is also held.",
+    },
+    {
+        "slug": "procurement.new_product_applications.view_own",
+        "name": "View Own New Product Applications",
+        "description": "See only the new product applications you raised, or your own contact raised from the portal. Ignored when View New Product Applications is also held.",
+    },
+    {
+        "slug": "sla_management.conversations.view_own",
+        "name": "View Own Conversations",
+        "description": "See only the conversations of your own sales agents' customers in the Conversations inbox. Ignored when View Conversations is also held.",
+    },
+])

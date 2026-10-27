@@ -30,20 +30,55 @@ router = APIRouter()
 VIEW = "projects.sample_requests.view"
 CREATE = "projects.sample_requests.create"
 PROCESS = "projects.sample_requests.process"
+VIEW_OWN = "projects.sample_requests.view_own"
 
 
 def _actor(db: Session, user: dict, slugs=None) -> svc.Actor:
+    from app.services import own_scope
+
     slugs = permission_slugs(db, user["id"]) if slugs is None else slugs
-    return svc.Actor(
+    actor = svc.Actor(
         user_id=user["id"], can_process=PROCESS in slugs, can_view_all=VIEW in slugs
     )
+    if own_scope.is_limited(slugs, VIEW, VIEW_OWN):
+        actor.own_only = True
+        actor.own_contact_id = own_scope.me(db, user["id"]).contact_id
+    return actor
+
+
+def _load_own(db: Session, request_id: str, actor: svc.Actor):
+    """A write's row. For a `.view_own` holder a row that is not theirs is not found, before
+    the write's own owner rule (403) gets a say (PORTAL-P2-ONLY-THEIRS)."""
+    req = _load(db, request_id)
+    if actor.own_only:
+        svc.assert_can_view(req, actor)
+    return req
+
+
+def _assert_own_project(db: Session, user: dict, project_id) -> None:
+    """A user who may see only their own projects picks only their own (owner ruling Q4a);
+    any other project answers exactly as an unknown one does."""
+    from app.services import own_scope
+
+    if not project_id:
+        return
+    uid = str(user["id"])
+    if not own_scope.user_is_limited(db, uid, own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN):
+        return
+    if not own_scope.project_in_scope(db, own_scope.me(db, uid), str(project_id)):
+        raise AppException(
+            status_code=422,
+            message="That project was not found.",
+            code="SAMPLE_REQUEST_PROJECT_INVALID",
+            details={"field": "project_id"},
+        )
 
 
 def _list_actor(db: Session, user: dict) -> svc.Actor:
-    """The queue and the project tab: `.view` sees all, `.create` sees own rows."""
+    """The queue and the project tab: `.view` sees all, `.create` and `.view_own` see own rows."""
     slugs = permission_slugs(db, user["id"])
     actor = _actor(db, user, slugs)
-    if not (actor.can_view_all or CREATE in slugs):
+    if not (actor.can_view_all or actor.own_only or CREATE in slugs):
         raise AppException(
             status_code=403, message=f"Permission required: {VIEW}", code="FORBIDDEN"
         )
@@ -130,12 +165,9 @@ def create_request(
     db: Session = Depends(get_db),
 ):
     try:
-        req = svc.create_draft(
-            db,
-            salesperson_id=user["id"],
-            data=payload.model_dump(exclude_unset=True),
-            source="staff",
-        )
+        data = payload.model_dump(exclude_unset=True)
+        _assert_own_project(db, user, data.get("project_id"))
+        req = svc.create_draft(db, salesperson_id=user["id"], data=data, source="staff")
         db.commit()
         db.refresh(req)
         return svc.serialize_detail(db, req)
@@ -163,10 +195,11 @@ def update_request(
     db: Session = Depends(get_db),
 ):
     try:
-        req = _load(db, request_id)
-        svc.update_draft(
-            db, req, actor=_actor(db, user), data=payload.model_dump(exclude_unset=True)
-        )
+        actor = _actor(db, user)
+        req = _load_own(db, request_id, actor)
+        data = payload.model_dump(exclude_unset=True)
+        _assert_own_project(db, user, data.get("project_id"))
+        svc.update_draft(db, req, actor=actor, data=data)
         db.commit()
         db.refresh(req)
         return svc.serialize_detail(db, req)
@@ -182,8 +215,9 @@ def submit_request(
     db: Session = Depends(get_db),
 ):
     try:
-        req = _load(db, request_id)
-        svc.submit(db, req, actor=_actor(db, user))
+        actor = _actor(db, user)
+        req = _load_own(db, request_id, actor)
+        svc.submit(db, req, actor=actor)
         db.commit()
         db.refresh(req)
         return svc.serialize_detail(db, req)
