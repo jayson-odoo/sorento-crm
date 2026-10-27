@@ -428,9 +428,35 @@ def _grouped_category_lines(hits: list[Hit]) -> list[str]:
     return [f"- {head}: {', '.join(items)}" if items else f"- {head}" for head, items, _m in groups.values()]
 
 
-def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False) -> list[str]:
+#: REPORT-UNIFY slice 3: the lists whose rows the report ask binds by id; their lines carry it when `row_ids`.
+ID_LISTS = frozenset({"brand", "salesperson", "category"})
+
+
+def cap_hits(name: str, hits: list[Hit]) -> list[Hit]:
+    """`TOP_K` for the list, except that a row the message names EXACTLY (spelling 1.0: a span, an alias, a code) is
+    never cut: every exact row stays, and only the looser ones fill what is left of the cap."""
+    cap = TOP_K.get(name, 10)
+    exact = [h for h in hits if h.spelling >= 1.0]
+    if len(exact) >= cap:
+        return exact
+    kept: list[Hit] = []
+    room = cap - len(exact)
+    for h in hits:
+        if h.spelling >= 1.0:
+            kept.append(h)
+        elif room > 0:
+            kept.append(h)
+            room -= 1
+    return kept
+
+
+def render(
+    hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False,
+    row_ids: bool = False,
+) -> list[str]:
     """One block per list with hits: the header, then `- <label>` once per label (a category block one line per
-    class when `group_categories`)."""
+    class when `group_categories`). `row_ids` (a prompt that asks for it) ends the line of a brand, salesperson or
+    category row with `[id: <row id>]`, so the parser can answer with the id."""
     lines: list[str] = []
     for name in order:
         if group_categories and name == "category":
@@ -440,13 +466,16 @@ def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *
                 lines.extend(grouped)
             continue
         labels: list[str] = []
+        printed: list[str] = []
         for h in hits.get(name) or []:
             label = _one_line(h.row.label)
             if label and label not in labels:
                 labels.append(label)
+                with_id = row_ids and name in ID_LISTS and h.row.key and not str(h.row.key).startswith("type:")
+                printed.append(f"{label} [id: {h.row.key}]" if with_id else label)
         if labels:
             lines.append(header(name))
-            lines.extend(f"- {label}" for label in labels)
+            lines.extend(f"- {text}" for text in printed)
     return lines
 
 

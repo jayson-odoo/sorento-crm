@@ -1284,7 +1284,7 @@ def _lookup_lines(
                 for h in hits[name]
             ],
         }
-        return lookup_lists.render(hits, group_categories=group), event
+        return lookup_lists.render(hits, group_categories=group, row_ids=bool(getattr(config, "row_ids", False))), event
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
         return [], {"pieces": [], "hits": [], "failed": True}
@@ -1304,12 +1304,15 @@ class _SpanPrep:
     config: span_extract.SpanConfig | None
     # EEM-CATEGORY-PICK: the parser prompt asks for a category pick, so the Category block is grouped by class.
     group_categories: bool = False
+    # REPORT-UNIFY slice 3: the parser prompt asks for the row id (`parser.ROW_ID_ASK`), so a brand, salesperson or
+    # category line carries it. True for a bare prep; `resolve_config` turns it on only for a version that asks.
+    row_ids: bool = True
 
 
 def _span_prep(
     db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
-    group_categories: bool = False,
+    group_categories: bool = False, row_ids: bool = False,
 ) -> _SpanPrep | None:
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
@@ -1333,7 +1336,7 @@ def _span_prep(
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories, row_ids)
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
@@ -1468,7 +1471,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                     known = {h.row.key for h in held_hits}
                     held_keys |= known
                     hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
-                hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
+                hits = {name: lookup_lists.cap_hits(name, hs) for name, hs in hits.items()}
                 event["spans"] = [
                     {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
                      "candidates": _candidates_of(r), "meaning": r.span.meaning, "matched_by": r.matched_by}
@@ -1504,7 +1507,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 ]
                 for name, hs in hits.items()
             }
-        lines = lookup_lists.render(hits, group_categories=prep.group_categories)
+        lines = lookup_lists.render(hits, group_categories=prep.group_categories, row_ids=prep.row_ids)
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
@@ -5209,7 +5212,7 @@ def _run_stages_body(  # noqa: PLR0915
             span_prep = _span_prep(
                 db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
-                group_categories=parser_config.category_pick,
+                group_categories=parser_config.category_pick, row_ids=parser_config.row_ids,
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:

@@ -102,7 +102,12 @@ def _param(meta, key):
 
 
 def _staff(db):
+    """A staff contact holding both reveals the route checks (Q6): Sales report for the sales bases, Outstanding
+    for the three outstanding kinds."""
+    from app.services.contact_field_reveal_service import set_granted_keys
+
     contact = _contact(db)
+    set_granted_keys(db, contact.id, ["sales_orders.sales_report", "sales_orders.outstanding"], actor_id=None)
     _access(db, contact, "Sorento Office")
     db.commit()
     return contact

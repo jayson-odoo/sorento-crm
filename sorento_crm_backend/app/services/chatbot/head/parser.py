@@ -141,6 +141,10 @@ class ParserConfig:
     # carry neither: their behaviour and schema are unchanged.
     category_pick: bool = False
     message_language: bool = False
+    # REPORT-UNIFY slice 3: the prompt in use carries `ROW_ID_ASK`, so a brand, salesperson or category candidate line
+    # ends with its row id and the parser may answer with it. True for a bare config (the `by_words` pattern);
+    # `resolve_config` turns it on only for a version that carries the sentence: every other version is unchanged.
+    row_ids: bool = True
 
 
 def _build_base_json_schema() -> dict[str, Any]:
@@ -903,6 +907,12 @@ def with_opportunity(schema: dict[str, Any]) -> dict[str, Any]:
 
 #: EEM-CATEGORY-PICK: the raw template sentences that turn the two flags on (the `MEANING_ASK` pattern).
 CATEGORY_PICK_ASK = "For a category entity, canonical_code is the label before the colon of the Category candidates line the message means."
+#: REPORT-UNIFY slice 3: the raw template sentence that turns `row_ids` on (the `CATEGORY_PICK_ASK` pattern). A
+#: version that names it prints `[id: <row id>]` on those candidate lines; none is labelled with it yet.
+ROW_ID_ASK = (
+    "For a brand, sales agent or category entity, canonical_code is the label or the id of the candidates line "
+    "the message means."
+)
 LANGUAGE_ASK = 'Also return top-level "message_language": the language the user wrote the current message in.'
 
 
@@ -1059,6 +1069,7 @@ def resolve_config(
         sales_channels=sales_channels,
         opportunity=OPPORTUNITY_LINE in (raw_template or ""),
         category_pick=CATEGORY_PICK_ASK in (raw_template or ""),
+        row_ids=ROW_ID_ASK in (raw_template or ""),
         message_language=LANGUAGE_ASK in (raw_template or ""),
         template=TEMPLATE_MARKER in (raw_template or ""),
         closed_lists_index=index_mode,
