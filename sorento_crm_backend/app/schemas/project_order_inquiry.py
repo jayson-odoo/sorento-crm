@@ -49,13 +49,12 @@ MULTI_UUID_PATTERN = rf"^{_UUID_CORE}(,{_UUID_CORE})*$"
 
 
 def _cap_each(value, label: str):
-    """Each value of a free-text list filter is held to the single-value cap, not the whole string. A plain
-    string from an older body is checked piece by piece, so two 150-character values joined still pass."""
-    for item in ([value] if isinstance(value, str) else list(value or [])):
-        for piece in (str(item).split(",") if isinstance(value, str) else [str(item)]):
-            if len(piece) > WORKLIST_FILTER_MAX_LENGTH:
-                raise ValueError(f"{label}: a value is longer than {WORKLIST_FILTER_MAX_LENGTH} characters")
+    """A free-text filter is one string (capped whole) or a list (each item capped). A string is ONE value."""
+    for item in [value] if isinstance(value, str) else list(value or []):
+        if len(str(item)) > WORKLIST_FILTER_MAX_LENGTH:
+            raise ValueError(f"{label}: a value is longer than {WORKLIST_FILTER_MAX_LENGTH} characters")
     return value
+
 
 def _check_worklist_states(value: Optional[str]) -> Optional[str]:
     """`state` takes one or several comma-joined states; each is checked like the GET route's Literal."""
