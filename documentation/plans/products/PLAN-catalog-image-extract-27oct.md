@@ -1,7 +1,6 @@
 # PLAN: Catalogue image extraction (CATALOG-IMAGES)
 
 Status: Build (mock v2 approved 27 Oct 19:19). Track: full.
-answers. Red tests for the answer-independent part (contract below) are written now (crew, 27 Oct).
 Lane moved local 27 Oct (CATALOG-IMAGES-L, same PR #1923, branch claude/catalog-images-9kwphh).
 Track: full (new upload/ingest surface, migration for the extraction rows, master-data writes).
 
@@ -342,3 +341,16 @@ def run(pdf, outdir):
             print(f"p{pno+1} xref{xref} {pix.width}x{pix.height} -> {name}.png")
 if __name__=="__main__": run(sys.argv[1], sys.argv[2])
 ```
+
+### Lead rulings on the S2 tester's questions (27 Oct)
+- Task seam `process_catalogue_photo_reading(reading_id, _db=None)` as the flyer task; the route enqueues
+  through `app.services.queue_service.enqueue_job` (looked up at call time), `queue_name="flyer_read"`,
+  `args == (reading_id,)`.
+- Bodies snake_case. Photos list `{"data": [...], "pagination": {"total": ...}}`. PATCH 200. Attach
+  `products` = count of distinct products touched; `skipped` = rows not linked because the same bytes are
+  already linked to that product (AC-16). Decision-`skip` rows are not counted there.
+- Upload refusals happen in the request: non-PDF 400, encrypted 400, over 50 MB 413; no rows left.
+- Every route, GETs included, needs `dealer_kit.page.edit` (owner Q4 a); Attach also needs
+  `master_data.products.edit`.
+- `counts` also carries `attached` (rows with `attached_at`), so the Attach step reads as done after a
+  reload (S0 coder note). The coder adds a test for it; existing assertions are not edited.
