@@ -205,3 +205,19 @@ def test_the_planner_uses_it_for_the_relations_lookup(monkeypatch):
         conn.exec_driver_sql(f"ANALYZE {table}")
         after = "\n".join(r[0] for r in conn.exec_driver_sql(query))
         assert NAME in after and "Seq Scan" not in after
+
+
+def test_the_sales_order_lookup_is_a_union_the_index_can_serve():
+    """billing_ids_for_sales_order ORed `sales_order_line_id IN (...)` with `from_doc_no IN
+    (...)`: Postgres runs that as hashed-subplan filters over a full scan of the lines, index
+    or not (sandbox EXPLAIN, 300k lines: 121 ms seq scan, 7 ms as a UNION). Its branches stay
+    separate SELECTs; test_document_relations.py pins which documents they find."""
+    from types import SimpleNamespace
+
+    from app.services.document_relations import billing_ids_for_sales_order
+
+    so = SimpleNamespace(id=str(uuid.uuid4()), company_id=str(uuid.uuid4()), so_number="SO-1")
+    sql = str(billing_ids_for_sales_order(so).compile(engine))
+    # Two UNIONs per copy; `_with_notes` reads the set twice (the documents, their notes).
+    assert sql.count("UNION") == 4
+    assert " OR billing_document_lines" not in sql
