@@ -81,7 +81,7 @@ _PROFILE_KEYS = (
 @router.post("/clash-preview", response_model=ClashPreviewResponse)
 async def preview_clashes(
     payload: ClashPreviewRequest,
-    _user: dict = Depends(require_any_permission(READ)),
+    _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     """Check a title BEFORE the user fills the rest of the form.
@@ -336,7 +336,22 @@ async def get_project(
         # never pays that embedding call.
         from app.services import project_registration_service as registrations
 
-        body["possible_duplicates"] = registrations.duplicates_for_project(db, project)
+        duplicates = registrations.duplicates_for_project(db, project)
+        me = _visible_to(db, current_user)
+        if me is not None and duplicates:
+            # Only theirs: a project they may not open is not named to them either.
+            from app.models.projects import Project
+            from app.services import own_scope
+
+            ids = [d["project_id"] for d in duplicates]
+            mine = {
+                str(row[0])
+                for row in db.query(Project.id)
+                .filter(Project.id.in_(ids), own_scope.project_clause(me))
+                .all()
+            }
+            duplicates = [d for d in duplicates if str(d["project_id"]) in mine]
+        body["possible_duplicates"] = duplicates
         return body
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

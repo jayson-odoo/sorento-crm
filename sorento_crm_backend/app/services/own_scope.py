@@ -143,3 +143,48 @@ def conversation_contact_ids(m: Me):
     from app.services.portal_conversation_service import agent_contact_ids
 
     return agent_contact_ids(list(m.agent_ids))
+
+
+# ------------------------------------------------------------------ deferred actions
+
+#: Deferred actions on project-sales records that the router guard refuses a limited user on
+#: the route itself (fulfilment planning, sales-order line files: owner ruling Q2a).
+_PROJECT_ACTIONS_REFUSED = frozenset(
+    {"project_sales_order.undo_confirm", "sales_order_line_attachment.delete"}
+)
+
+
+def assert_pending_action_allowed(
+    db: Session, action_key: str, entity_id: str, actor_id: Optional[str]
+) -> None:
+    """A deferred action is a write that never passes the record's own routes, so the
+    "only theirs" rule is repeated here: at park time and again when the window lapses."""
+    from app.services.error_handler import AppException, handle_not_found
+
+    if not actor_id:
+        return
+    if action_key == "sales_opportunity.delete":
+        if not user_is_limited(db, actor_id, OPPORTUNITIES_VIEW, OPPORTUNITIES_VIEW_OWN):
+            return
+        import uuid
+
+        from app.models.sales import SalesOpportunity
+
+        try:
+            uuid.UUID(str(entity_id))
+        except (TypeError, ValueError):
+            raise handle_not_found("Sales Opportunity", entity_id)
+        found = (
+            db.query(SalesOpportunity.id)
+            .filter(SalesOpportunity.id == str(entity_id), opportunity_clause(me(db, actor_id)))
+            .first()
+        )
+        if found is None:
+            raise handle_not_found("Sales Opportunity", entity_id)
+    elif action_key in _PROJECT_ACTIONS_REFUSED:
+        if user_is_limited(db, actor_id, PROJECTS_VIEW, PROJECTS_VIEW_OWN):
+            raise AppException(
+                status_code=403,
+                message="Not available with access to your own records only.",
+                code="FORBIDDEN",
+            )

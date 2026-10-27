@@ -199,12 +199,24 @@ def assert_project_approved(project) -> None:
     )
 
 
-def _describe_blockers(db: Session, blockers: List[ClashCandidate]) -> str:
+def _describe_blockers(
+    db: Session, blockers: List[ClashCandidate], actor_user_id: Optional[str] = None
+) -> str:
     """The refusal message. Names the incumbent so the user knows who to talk to.
 
     "Already registered" on its own is a dead end; the point of the block is to
     route the second person to the first one, or to the request-to-join path.
+
+    Except to a user who may see only their own projects (PORTAL-P2-ONLY-THEIRS): naming a
+    project they cannot open would let them probe for other people's pursuits by
+    registering guesses, so they are sent to a manager instead.
     """
+    from app.services import own_scope
+
+    if actor_user_id and own_scope.user_is_limited(
+        db, str(actor_user_id), own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
+    ):
+        return "This development is already registered. Ask a sales manager about it."
     owner_ids = [b.owner_user_id for b in blockers if b.owner_user_id]
     names = {}
     if owner_ids:
@@ -283,7 +295,7 @@ def register_project(
     if blockers:
         raise AppException(
             status_code=409,
-            message=_describe_blockers(db, blockers),
+            message=_describe_blockers(db, blockers, actor_user_id),
             code="project_already_registered",
         )
 
@@ -1235,7 +1247,7 @@ def update_project(
         if blockers:
             raise AppException(
                 status_code=409,
-                message=_describe_blockers(db, blockers),
+                message=_describe_blockers(db, blockers, actor_user_id),
                 code="project_already_registered",
             )
         if new_title:

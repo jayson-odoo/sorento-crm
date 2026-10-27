@@ -537,7 +537,7 @@ async def project_sponsorship_rollup(
     "/sponsorships/conversion", response_model=SponsorshipConversionResponse
 )
 async def sponsorship_conversion(
-    _user: dict = Depends(require_any_permission(READ)),
+    _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     """Sponsorship-to-PO conversion for the acting company (AC-F7).

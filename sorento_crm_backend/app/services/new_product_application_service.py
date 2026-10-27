@@ -91,7 +91,7 @@ class Actor:
     own_contact_id: Optional[str] = None
 
 
-def actor_from_slugs(user_id: str, slugs: Iterable[str], *, own_contact_id: Optional[str] = None) -> Actor:
+def actor_from_slugs(user_id: str, slugs: Iterable[str]) -> Actor:
     s = set(slugs)
     can_view_all = bool(s & {VIEW, APPROVE, OPEN_CODE})
     own_only = VIEW_OWN in s and not can_view_all
@@ -102,7 +102,6 @@ def actor_from_slugs(user_id: str, slugs: Iterable[str], *, own_contact_id: Opti
         can_approve=APPROVE in s,
         can_open_code=OPEN_CODE in s,
         own_only=own_only,
-        own_contact_id=own_contact_id if own_only else None,
     )
 
 

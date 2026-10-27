@@ -180,12 +180,28 @@ def test_view_and_view_own_together_behave_as_view(scene):
         assert client.get(f"{BASE}/projects/{p['p4']}").status_code == 200
 
 
-def test_admin_still_reads_every_project(scene):
-    """Admin gets every slug from `get_user_permission_slugs`, `view` included."""
-    db, w, p = scene
-    with acting(db, w.a, {VIEW, VIEW_OWN, EDIT}, roles={"admin"}) as client:
-        assert p["p4"] in _listed(client)
-        assert client.get(f"{BASE}/projects/{p['p4']}").status_code == 200
+def test_admin_and_superadmin_are_never_limited(scene):
+    """The real permission service, no stub: admin and superadmin get every slug from
+    `get_user_permission_slugs`, `view` included, so `view_own` never narrows them."""
+    from sqlalchemy import text as sql
+
+    from app.models.user import UserPermission, UserRole, UserRoleAssignment
+    from app.services import own_scope
+
+    db, w, _p = scene
+    for slug in (VIEW, VIEW_OWN):  # the blank schema seeds no permissions
+        if not db.query(UserPermission).filter(UserPermission.slug == slug).first():
+            db.add(UserPermission(id=uid(), slug=slug, name=slug))
+    for slug in ("admin", "superadmin"):
+        role_id = db.execute(sql("select id from user_roles where slug = :s"), {"s": slug}).scalar()
+        if role_id is None:
+            role_id = uid()
+            db.add(UserRole(id=role_id, slug=slug, name=f"{MARKER} {slug}"))
+            db.flush()
+        holder = user(db, f"Role {slug}")
+        db.add(UserRoleAssignment(id=uid(), user_id=holder, role_id=role_id))
+        db.flush()
+        assert not own_scope.user_is_limited(db, holder, VIEW, VIEW_OWN), slug
 
 
 # ------------------------------------------------------------------ UAC 2, 3: detail and children
@@ -358,3 +374,120 @@ def test_the_assistant_does_not_name_a_foreign_project_to_a_limited_user(scene):
     codes = [db.get(Project, p[k]).project_code for k in ("p1", "p4")]
     assert _probe(db, w, w.a, LIMITED, codes) == {p["p1"]}
     assert _probe(db, w, w.a, {VIEW}, codes) == {p["p1"], p["p4"]}
+
+
+def test_every_route_a_limited_user_reaches_is_pinned():
+    """Security review L5: a route that becomes reachable to a limited user (a new child under
+    an anchor, a new reference path) changes this list, so it is reviewed rather than trusted.
+    Regenerate the file from the failure message after checking the new route scopes its ids."""
+    from pathlib import Path
+
+    from app.api.v1.projects import _own_scope
+    from app.main import app
+
+    reached = sorted(
+        f"{method} {route.path_format[len(BASE):]}"
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith(BASE)
+        for method in route.methods
+        if _own_scope.classify(method, route.path_format) is not None
+    )
+    pinned = (Path(__file__).parent / "portal_p2_allowed_routes.txt").read_text().split("\n")
+    assert reached == [line for line in pinned if line], "\n".join(
+        sorted(set(reached) ^ {line for line in pinned if line})
+    )
+
+
+# ------------------------------------------------------------------ security review M1, M2, L1
+
+
+def test_a_clash_does_not_name_a_foreign_project_to_a_limited_user(scene):
+    from app.services import project_seed_service
+
+    db, w, p = scene
+    project_seed_service.run(db, company_id=w.company_id)
+    foreign = db.get(Project, p["p4"])
+    with acting(db, w.a, LIMITED) as client:
+        response = client.post(f"{BASE}/projects/", json={"title": foreign.title})
+        assert response.status_code == 409, (response.status_code, response.text)
+        assert foreign.project_code not in response.text
+        assert foreign.title not in response.text
+    with acting(db, w.a, {VIEW, EDIT}) as client:
+        response = client.post(f"{BASE}/projects/", json={"title": foreign.title})
+        assert response.status_code == 409, response.text
+        assert foreign.project_code in response.text
+
+
+def test_possible_duplicates_name_only_their_own_projects(scene, monkeypatch):
+    from app.services import project_registration_service as registrations
+
+    db, w, p = scene
+    listed = [{"project_id": p[k], "project_code": "x", "title": "x"} for k in ("p1", "p4")]
+    monkeypatch.setattr(registrations, "duplicates_for_project", lambda db_, project: list(listed))
+    with acting(db, w.a, LIMITED) as client:
+        body = client.get(f"{BASE}/projects/{p['p5']}").json()
+        assert [d["project_id"] for d in body["possible_duplicates"]] == [p["p1"]]
+    with acting(db, w.a, {VIEW}) as client:
+        body = client.get(f"{BASE}/projects/{p['p5']}").json()
+        assert [d["project_id"] for d in body["possible_duplicates"]] == [p["p1"], p["p4"]]
+
+
+def test_a_schedule_cell_refuses_another_projects_phase(scene):
+    from app.services.error_handler import AppException
+    from app.services.project_schedule_service import ProjectScheduleService
+
+    db, w, p = scene
+    own = _children(db, w.company_id, db.get(Project, p["p1"]))
+    foreign = _children(db, w.company_id, db.get(Project, p["p4"]))
+    with pytest.raises(AppException) as exc:
+        ProjectScheduleService(db).update_cells(
+            own["schedule_version"],
+            [{"phase_id": foreign["phase"], "product_id": uid(), "qty": 1}],
+        )
+    assert exc.value.status_code == 404
+
+
+def test_a_second_id_not_trusted_under_its_anchor_is_refused():
+    """The `_NESTED` refusal no live route reaches today (reviewer kill test M23)."""
+    from app.api.v1.projects import _own_scope
+
+    assert _own_scope.classify("GET", BASE + "/projects/{project_id}/x/{other_id}") is None
+    assert _own_scope.classify("GET", BASE + "/samples/{sample_id}/lines/{line_id}") is None
+    assert _own_scope.classify("GET", BASE + "/projects/{project_id}/tasks/{task_id}") is not None
+
+
+def _gate_slugs(route) -> set:
+    slugs: set = set()
+
+    def walk(dependant):
+        for cell in getattr(dependant.call, "__closure__", None) or ():
+            try:
+                value = cell.cell_contents
+            except ValueError:
+                continue
+            if isinstance(value, str):
+                slugs.add(value)
+            elif isinstance(value, (list, tuple)):
+                slugs.update(v for v in value if isinstance(v, str))
+        for sub in dependant.dependencies:
+            walk(sub)
+
+    walk(route.dependant)
+    return slugs
+
+
+def test_no_route_takes_view_own_that_the_guard_then_refuses():
+    """Reviewer S2: a read opened to `view_own` but refused by the guard is a dead change
+    that reads as a grant. Every route gated on `view_own` must be one the guard lets through."""
+    from app.api.v1.projects import _own_scope
+    from app.main import app
+
+    dead = [
+        f"{method} {route.path}"
+        for route in app.routes
+        if isinstance(route, APIRoute) and route.path.startswith(BASE)
+        and VIEW_OWN in _gate_slugs(route)
+        for method in route.methods
+        if _own_scope.classify(method, route.path_format) is None
+    ]
+    assert dead == []

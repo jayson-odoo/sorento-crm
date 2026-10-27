@@ -860,7 +860,7 @@ async def create_amendment(
 @router.get("/amendments/{amendment_id}", response_model=AmendmentDetail)
 async def get_amendment(
     amendment_id: str,
-    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),
 ):
     try:
@@ -934,7 +934,7 @@ async def update_amendment_row_decisions(
 )
 async def get_autocount_change_list(
     amendment_id: str,
-    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),
 ):
     """The accepted rows, in the shape a person keys into AutoCount (section 9.4)."""
@@ -948,7 +948,7 @@ async def get_autocount_change_list(
 @router.get("/amendments/{amendment_id}/autocount-change-list.xlsx")
 async def export_autocount_change_list(
     amendment_id: str,
-    _user: dict = Depends(require_any_permission_with_api_key(READ)),
+    _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),
 ):
     """Same rows as the JSON twin, as the workbook that is keyed into AutoCount."""

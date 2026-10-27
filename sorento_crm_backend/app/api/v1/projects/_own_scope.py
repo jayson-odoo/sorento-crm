@@ -11,19 +11,20 @@ It fails closed. For a limited user:
 
 - a route whose first id is not in ``_ANCHORS`` is refused (403), so a child route added
   later is closed to them until someone maps it here;
-- an id after the first one must be a name in ``_NESTED``: each of those routes already
-  loads it under its parent (``get_task_or_404(db, project_id, task_id)``,
+- an id after the first one must be a name in ``_NESTED`` for that anchor: each of those
+  routes already loads it under its parent (``get_task_or_404(db, project_id, task_id)``,
   ``_line_or_404(db, po_id, line_id)``, ...), so a foreign child under their own parent is a
   404 from the route itself;
 - a route with no id is refused unless it is in ``_ID_LESS`` (the project list filters in
-  the query) or is reference data under ``_REFERENCE``.
+  the query) or is reference data (``_REFERENCE_PREFIXES`` / ``_REFERENCE_PATHS``).
 
-``tests/test_portal_p2_own_scope_projects.py`` enumerates ``app.routes`` and pins this map.
+``tests/test_portal_p2_own_scope_projects.py`` enumerates ``app.routes`` and pins every route
+this lets a limited user reach in ``tests/portal_p2_allowed_routes.txt``.
 """
 from __future__ import annotations
 
 import re
-from typing import Callable, Dict, Optional, Tuple
+from typing import Dict, Optional, Tuple
 
 from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.orm import Session
@@ -126,23 +127,20 @@ _ANCHORS: Dict[Tuple[str, str], object] = {
     ("sample-requests", "request_id"): _MODULE_RULE,
 }
 
-#: Second-and-later ids, each loaded by its route under the parent the anchor resolved,
-#: plus the plain integer positions some routes take.
-_NESTED = frozenset(
-    {
-        "task_id",
-        "stakeholder_id",
-        "document_id",
-        "issue_id",
-        "quotation_id",
-        "request_id",
-        "line_id",
-        "finding_id",
-        "column_index",
-        "product_index",
-        "index",
-    }
-)
+#: Second-and-later ids per anchor, each loaded by its route under the parent the anchor
+#: resolved (security review 27 Oct, file:line per name in the PR), plus the plain integer
+#: positions some routes take. Keyed per anchor so a name trusted under one parent is not
+#: trusted under another.
+_NESTED: Dict[str, frozenset] = {
+    "projects": frozenset(
+        {"task_id", "stakeholder_id", "document_id", "issue_id", "quotation_id", "request_id"}
+    ),
+    "quotation-versions": frozenset({"line_id"}),
+    "purchase-orders": frozenset({"line_id", "finding_id"}),
+    "purchase-order-versions": frozenset({"line_id"}),
+    "delivery-schedule-versions": frozenset({"column_index", "product_index", "index"}),
+    "sales-orders": frozenset({"line_id", "finding_id"}),
+}
 
 #: Routes with no id a limited user may call: the list filters to theirs in the query, a
 #: registration is theirs by construction, sample requests answer by their own row rule.
@@ -157,7 +155,8 @@ _ID_LESS = frozenset(
 )
 
 #: Setup and lookups, not anybody's records; their own permission still gates them.
-_REFERENCE = ("/config/", "/status-graph/", "/quotation-approval-graph", "/quotation-line-images")
+_REFERENCE_PREFIXES = ("/config/", "/status-graph/")
+_REFERENCE_PATHS = frozenset({"/quotation-approval-graph", "/quotation-line-images"})
 
 
 def _not_found() -> HTTPException:
@@ -171,27 +170,36 @@ def _refused() -> HTTPException:
     )
 
 
+def classify(method: str, path_format: str):
+    """How a limited user reaches this route: ``"open"`` (no id to check), an anchor resolver
+    (or ``_MODULE_RULE``) for its first id, or ``None`` when it is refused."""
+    path = path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
+    if path.startswith(_REFERENCE_PREFIXES) or path in _REFERENCE_PATHS:
+        return "open"
+    names = _PARAM.findall(path)
+    if not names:
+        return "open" if (method, path) in _ID_LESS else None
+    segment = path[: path.index("{")].rstrip("/").rsplit("/", 1)[-1]
+    resolver = _ANCHORS.get((segment, names[0]))
+    nested = _NESTED.get(segment, frozenset())
+    if resolver is None or any(name not in nested for name in names[1:]):
+        return None
+    return resolver
+
+
 def check(db: Session, user_id: str, method: str, path_format: str, path_params: dict) -> None:
     """Raise unless a limited user may reach this route with these ids; no-op otherwise."""
     if not own_scope.user_is_limited(
         db, user_id, own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
     ):
         return
+    resolver = classify(method, path_format)
+    if resolver is None:
+        raise _refused()
+    if resolver == "open" or resolver is _MODULE_RULE:
+        return
     path = path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
-    if path.startswith(_REFERENCE):
-        return
-    names = _PARAM.findall(path)
-    if not names:
-        if (method, path) in _ID_LESS:
-            return
-        raise _refused()
-    first = names[0]
-    segment = path[: path.index("{")].rstrip("/").rsplit("/", 1)[-1]
-    resolver = _ANCHORS.get((segment, first))
-    if resolver is None or any(name not in _NESTED for name in names[1:]):
-        raise _refused()
-    if resolver is _MODULE_RULE:
-        return
+    first = _PARAM.findall(path)[0]
     value = str(path_params.get(first) or "")
     if not _is_uuid(value):
         raise _not_found()
@@ -219,5 +227,3 @@ async def project_own_scope_guard(
     path_format = getattr(route, "path_format", None) or request.url.path
     check(db, str(current_user.get("id") or ""), request.method, path_format, request.path_params)
 
-
-Resolver = Callable[[Session, str], Optional[str]]

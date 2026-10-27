@@ -45,13 +45,14 @@ OPP_VIEW, OPP_OWN = "sales.opportunities.view", "sales.opportunities.view_own"
 OPP_LIMITED = {OPP_OWN, "sales.opportunities.add", "sales.opportunities.edit", "sales.opportunities.delete"}
 
 
-def _opportunity(db, w, agent_id, customer_id) -> str:
+def _opportunity(db, w, agent_id, customer_id, prospect_name=None) -> str:
     from app.services import status_service
     from app.services.sales.opportunity_service import SALES_OPPORTUNITY_ENTITY
 
     row = SalesOpportunity(
         id=uid(), company_id=w.company_id, opportunity_no=f"{MARKER}-{uid()[:8]}",
         title=f"{MARKER} opportunity", customer_id=customer_id, sales_agent_id=agent_id,
+        prospect_name=prospect_name if customer_id is None else None,
         status_id=status_service.initial_status(db, SALES_OPPORTUNITY_ENTITY).id,
         expected_amount=1000, expected_close_date=date.today() + timedelta(days=30), source="crm",
     )
@@ -311,3 +312,100 @@ def test_conversations_with_no_contact_are_empty(scene):
     loner = user(db, "No contact")
     with acting(db, loner, {CONV_OWN}) as client:
         assert _inbox(client) == set()
+
+
+# ------------------------------------------------------------------ security review H1, H2
+
+
+def _sales_order(db, w, customer_id) -> str:
+    from app.models.order import SalesOrder
+
+    row = SalesOrder(
+        id=uid(), company_id=w.company_id, so_number=f"ZZT-SO-{uid()[:6]}",
+        customer_id=customer_id, status="open", order_date=date.today(),
+    )
+    db.add(row)
+    db.flush()
+    return row.id
+
+
+def test_sales_order_options_offer_only_their_customers_orders(scene):
+    """H1: a prospect opportunity (no customer) searched every order in the company."""
+    db, w = scene
+    mine = _sales_order(db, w, w.cust_a.id)
+    theirs = _sales_order(db, w, w.cust_b.id)
+    prospect = _opportunity(db, w, w.ag_a.id, None, prospect_name=f"{MARKER} prospect")
+    with acting(db, w.a, OPP_LIMITED) as client:
+        response = client.get(f"{OPP}/{prospect}/sales-order-options")
+        assert response.status_code == 200, response.text
+        ids = {row["id"] for row in response.json()["data"]}
+        assert mine in ids and theirs not in ids
+    with acting(db, w.a, {OPP_VIEW}) as client:
+        ids = {row["id"] for row in client.get(f"{OPP}/{prospect}/sales-order-options").json()["data"]}
+        assert {mine, theirs} <= ids
+
+
+def test_a_limited_user_cannot_point_their_opportunity_at_a_foreign_customer(scene):
+    db, w = scene
+    o1 = _opportunity(db, w, w.ag_a.id, w.cust_a.id)
+    with acting(db, w.a, OPP_LIMITED) as client:
+        response = client.patch(f"{OPP}/{o1}", json={"customer_id": w.cust_b.id})
+        assert response.status_code == 403, response.text
+
+
+def _park(client, action_key, entity_type, entity_id, payload=None):
+    return client.post(
+        "/api/v1/pending-actions",
+        json={"action_key": action_key, "entity_type": entity_type, "entity_id": entity_id, "payload": payload or {}},
+    )
+
+
+def test_a_limited_user_cannot_park_a_delete_on_a_foreign_opportunity(scene):
+    """H2: the screen deletes through a deferred action, not DELETE /{id}."""
+    db, w = scene
+    o2 = _opportunity(db, w, w.ag_b.id, w.cust_b.id)
+    with acting(db, w.a, OPP_LIMITED) as client:
+        response = _park(client, "sales_opportunity.delete", "sales_opportunity", o2)
+        assert response.status_code == 404, response.text
+
+
+def test_a_parked_delete_rechecks_when_it_runs(scene):
+    from app.services.error_handler import AppException
+    from app.services.record_actions import _delete_sales_opportunity
+
+    db, w = scene
+    o2 = _opportunity(db, w, w.ag_b.id, w.cust_b.id)
+    with acting(db, w.a, OPP_LIMITED):
+        with pytest.raises(AppException) as exc:
+            _delete_sales_opportunity(db, {"entity_id": o2, "requested_by_id": w.a})
+        assert exc.value.status_code == 404
+    assert db.get(SalesOpportunity, o2) is not None
+
+
+def test_fulfilment_side_deferred_actions_are_refused_to_a_limited_project_user(scene):
+    db, w = scene
+    with acting(db, w.a, {"projects.projects.view_own", "projects.projects.edit"}) as client:
+        response = _park(
+            client, "project_sales_order.undo_confirm", "project_sales_order", uid(),
+            {"decision_id": uid()},
+        )
+        assert response.status_code == 403, response.text
+
+
+def test_a_limited_project_user_cannot_file_a_sample_request_on_a_foreign_project(scene):
+    """Owner ruling Q4a; reviewer kill test M15."""
+    from app.models.projects import Project
+
+    db, w = scene
+    foreign = Project(
+        id=uid(), company_id=w.company_id, project_code=f"{MARKER}-{uid()[:6]}",
+        title=f"{MARKER} foreign {uid()[:6]}", normalised_title=f"{MARKER} foreign {uid()[:6]}",
+        owner_user_id=w.b,
+    )
+    db.add(foreign)
+    db.flush()
+    perms = {"projects.projects.view_own", SR_OWN, SR_CREATE}
+    with acting(db, w.a, perms) as client:
+        response = client.post(SR, json={"project_id": foreign.id})
+        assert response.status_code == 422, response.text
+        assert response.json().get("code") == "SAMPLE_REQUEST_PROJECT_INVALID" or "not found" in response.text

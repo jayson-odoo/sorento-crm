@@ -54,10 +54,23 @@ def _own_agent_ids(db: Session, user: dict) -> Optional[list]:
 
 
 def _assert_still_theirs(db: Session, user: dict, opportunity) -> None:
-    """A user who sees only their own opportunities may not log or move one onto an agent
-    that is not theirs: they could not see it afterwards."""
+    """A user who sees only their own opportunities may not log or move one onto an agent,
+    or a customer, that is not theirs: they could not see it afterwards, and a foreign
+    customer would open that customer's sales orders to them (security review H1). Checked
+    after the write, so a Won link that fills in a prospect's customer is covered too."""
     own = _own_agent_ids(db, user)
-    if own is not None and str(opportunity.sales_agent_id or "") not in own:
+    if own is None:
+        return
+    customer_agent = None
+    if opportunity.customer_id:
+        from app.models.order import Customer
+
+        customer_agent = (
+            db.query(Customer.sales_agent_id).filter(Customer.id == opportunity.customer_id).scalar()
+        )
+    if str(opportunity.sales_agent_id or "") not in own or (
+        opportunity.customer_id and str(customer_agent or "") not in own
+    ):
         from app.services.error_handler import AppException
 
         raise AppException(
@@ -286,6 +299,8 @@ def get_sales_order_options(
 ):
     try:
         opportunity = _load(db, _user, opportunity_id)
-        return _list(svc.sales_order_options(db, opportunity, q=q))
+        return _list(
+            svc.sales_order_options(db, opportunity, q=q, agent_ids=_own_agent_ids(db, _user))
+        )
     except Exception as exc:
         _reraise(db, exc)

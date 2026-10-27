@@ -264,7 +264,7 @@ async def list_my_tasks(
     ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    current_user: dict = Depends(require_any_permission(READ)),
+    current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     """One person's open work across every project, overdue first (AC-N9).
