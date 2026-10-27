@@ -40,6 +40,7 @@ from app.models.portal import (
 )
 from app.models.price_tag import PriceTagRequest
 from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine, StockInquiry
+from app.services import submission_status
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_conflict, handle_not_found, handle_unprocessable
 
@@ -788,6 +789,10 @@ class PortalRevisionService:
 
         label = adapter.label
         status = (getattr(row, "status", None) or "").strip().lower()
+        if status == submission_status.RESUBMITTED:
+            # Resubmitted stands in for the type's review stage (RESUBMITTED-STATUS),
+            # which is where `status_for_stage` lands when no stage is named.
+            status = adapter.status_for_stage("")
         allowed_statuses = [
             str(s).strip().lower() for s in (config.allowed_statuses or []) if str(s).strip()
         ]

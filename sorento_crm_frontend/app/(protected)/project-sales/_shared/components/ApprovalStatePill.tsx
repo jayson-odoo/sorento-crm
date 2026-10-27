@@ -1,16 +1,18 @@
 'use client';
 
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
+import { isAwaitingReview } from '@/lib/submission-status';
 import type { ProjectApprovalState } from '../types/project.types';
 
 const LABEL: Partial<Record<ProjectApprovalState, string>> = {
   pending: 'Awaiting approval',
+  resubmitted: 'Resubmitted',
   rejected: 'Rejected',
 };
 
 /** True for a portal registration still waiting for, or refused, approval (R6). */
 export function isAwaitingDecision(state?: ProjectApprovalState | null): boolean {
-  return state === 'pending' || state === 'rejected';
+  return isAwaitingReview(state, 'pending') || state === 'rejected';
 }
 
 /**

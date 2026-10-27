@@ -269,6 +269,7 @@ export function PipelineClient() {
           clearable
           options={[
             { value: 'pending', label: 'Awaiting approval' },
+            { value: 'resubmitted', label: 'Resubmitted' },
             { value: 'rejected', label: 'Rejected' },
           ]}
           placeholder="Any approval state"

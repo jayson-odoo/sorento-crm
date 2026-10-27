@@ -514,13 +514,14 @@ def test_rw7_the_portal_shows_the_reason_and_lets_the_contact_edit_and_resubmit(
     assert registration(world, rid).title == "CADANGAN BLOK BETA FASA 2"
     again = submit(world, rid)
     assert again.status_code == 200, again.text
-    assert again.json()["status"] == "pending"
+    # RESUBMITTED-STATUS (owner, 27 Oct): a submit answering a rejection is a resubmit.
+    assert again.json()["status"] == "resubmitted"
     row = registration(world, rid)
-    assert row.approval_state == "pending"
+    assert row.approval_state == "resubmitted"
     assert row.reject_reason is None
     assert row.decided_at is None and row.decided_by is None
     assert c.get(f"{SUB}/{rid}").json()["reject_reason"] is None
-    assert _rows(world)[rid]["approval_state"] == "pending"
+    assert _rows(world)[rid]["approval_state"] == "resubmitted"
 
 
 def test_rw7_a_rejected_project_can_be_approved_only_after_it_is_resubmitted(world):

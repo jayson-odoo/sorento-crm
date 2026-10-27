@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
+import { isAwaitingReview } from '@/lib/submission-status';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -565,7 +566,8 @@ export default function PurchaseRequestDetail({
   const approvalStatusNorm = (request.approval_status ?? '').trim();
   const lifecycleStatusNorm = (request.status ?? '').trim().toLowerCase();
   const isDraftLifecycle = lifecycleStatusNorm === 'draft';
-  const isSubmittedLifecycle = lifecycleStatusNorm === 'submitted';
+  // Resubmitted (after a rejection) gets the same reviewer actions as submitted.
+  const isSubmittedLifecycle = isAwaitingReview(lifecycleStatusNorm);
   const isDraftLike =
     approvalStatusNorm === '' || approvalStatusNorm === 'draft';
   const isRejected = approvalStatusNorm === 'rejected';

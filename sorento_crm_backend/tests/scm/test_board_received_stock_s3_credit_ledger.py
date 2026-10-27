@@ -189,7 +189,7 @@ def test_ac_s3_11_compose_never_covers_the_same_units_twice():
         ]["sources"]
 
 
-def test_ac_s3_11_confirm_never_holds_the_same_units_twice():
+def test_ac_s3_11_confirm_records_both_plans_in_full_and_neither_holds_the_stock():
     """AC-S3-11 confirm half: same world (on hand 40, one bin, two orders each needing 40,
     one with its own PO line received 40). A live `ProjectSupplyService.confirm()` covering
     ORDER B first (ordinary Reserve 40) and then ORDER A (own-arrival Reserve 40, asked for
@@ -197,7 +197,11 @@ def test_ac_s3_11_confirm_never_holds_the_same_units_twice():
     (`order: ProjectSalesOrder`, `app/services/project_supply_service.py`), so
     "a confirm covering both" is two confirms in sequence, sharing the same on-hand.
 
-    MEASURED green today (not forced red - see this file's CONTRACT CHOICES): B's confirm
+    BOARD-NO-HOLD (owner, 27 Oct 2026) REWRITES the outcome below: a Reserve holds no
+    stock, so A is NOT recorded short and both plans stand in full (the "held once, by B"
+    reading and its 40-short notice are gone). The setup is unchanged.
+
+    Was MEASURED green (not forced red - see this file's CONTRACT CHOICES): B's confirm
     commits a real `SOLineAllocation` (`source_type=ALLOC_SOURCE_OWN`) for its
     40. A's confirm then asks for the SAME 40 as an own-arrival Reserve, and
     `_check_reserve_against_on_hand` (R14) - independent of `_check_line`'s own
@@ -271,10 +275,10 @@ def test_ac_s3_11_confirm_never_holds_the_same_units_twice():
             ),
             actor_user_id=actor,
         )
-        [notice] = result_a["stock_short_notices"]
-        assert notice["line_no"] == 1, notice
-        assert f"only 0 free at {own.warehouse_code}" in notice["reason"], notice
-        assert ", 40 short" in notice["reason"], notice
+        # BOARD-NO-HOLD (owner, 27 Oct 2026): B's confirmed Reserve is a plan, not a hold,
+        # so it takes nothing off the bin and A's Reserve of the same 40 is not short. Two
+        # plans may name one pile; who actually gets it is decided by date in Stock Debt.
+        assert not result_a.get("stock_short_notices"), result_a.get("stock_short_notices")
         from app.models.project_so import SOLineAllocation
 
         db.expire_all()
@@ -284,8 +288,8 @@ def test_ac_s3_11_confirm_never_holds_the_same_units_twice():
                 SOLineAllocation.so_line_id.in_([line_a.id, line_b.id])
             )
         }
-        assert held == {line_b.id: Decimal("40")}, (
-            "the 40 on hand are held once, by the order that confirmed first"
+        assert held == {line_b.id: Decimal("40"), line_a.id: Decimal("40")}, (
+            "both plans are recorded in full; neither holds the stock"
         )
 
 

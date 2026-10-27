@@ -88,6 +88,7 @@ import {
   discardRevisionDraft,
   saveRevisionDraft,
   statusLabel,
+  submitVerb,
   submitDraft,
   uploadAttachment,
 } from '../lib/portal-client';
@@ -532,6 +533,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [detail, setDetail] = useState<PortalSubmissionDetail | null>(null);
+  const verb = submitVerb(detail?.status);
   // The id a create call answered with, held in STATE rather than trusted to
   // live only in the `submissionId` prop (the route param) - a retry after
   // create-succeeded-but-flushPendingFiles-failed never gets a fresh prop, so
@@ -1198,7 +1200,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       }
       await flushPendingFiles(id);
       await submitDraft(kind, id, cleanedFields, cleanedProducts);
-      toast.success('Submitted.');
+      toast.success(verb === 'Resubmit' ? 'Resubmitted.' : 'Submitted.');
       router.replace(portalHomePath({ type: kind }));
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
@@ -2321,8 +2323,10 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               disabled={saving || submitting}
             >
               {submitting
-                ? 'Submitting...'
-                : `Submit ${SUBMISSION_LABELS[kind].toLowerCase()}`}
+                ? verb === 'Resubmit'
+                  ? 'Resubmitting...'
+                  : 'Submitting...'
+                : `${verb} ${SUBMISSION_LABELS[kind].toLowerCase()}`}
             </Button>
           )}
         </div>
@@ -2513,7 +2517,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-              Submit this {SUBMISSION_LABELS[kind].toLowerCase()}?
+              {verb} this {SUBMISSION_LABELS[kind].toLowerCase()}?
             </AlertDialogTitle>
             <AlertDialogDescription>
               Once submitted, your team will be notified. You can no longer edit
@@ -2523,7 +2527,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           <AlertDialogFooter>
             <AlertDialogCancel disabled={submitting}>Cancel</AlertDialogCancel>
             <AlertDialogAction onClick={handleSubmit} disabled={submitting}>
-              Submit {SUBMISSION_LABELS[kind].toLowerCase()}
+              {verb} {SUBMISSION_LABELS[kind].toLowerCase()}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

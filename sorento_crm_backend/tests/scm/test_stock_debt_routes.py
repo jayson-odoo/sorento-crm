@@ -1556,17 +1556,22 @@ def test_a_role_holding_projects_view_reaches_stock_debt_through_the_443_sweep(s
 
 
 def _confirmed_hold(db, project_line, warehouse, qty):
-    """A CONFIRMED `so_line_allocations` row - the shape `_hold_query` recognises: located,
-    not an ORDER source, belonging to no decision, and confirmed."""
+    """A CONFIRMED `so_line_allocations` row that HOLDS - the shape `_hold_query`
+    recognises: located, not an ORDER source, belonging to no decision, and confirmed.
+
+    A BORROW (`other_location`): BOARD-NO-HOLD (owner, 27 Oct 2026) made a Reserve
+    (own / brw / group_take) a plan that holds nothing, so the tests that pin what a HOLD
+    does (`pinned`, honoured outside the span, bound first at any date) seed the kind that
+    still holds. A Reserve's own reading is `tests/scm/test_board_no_hold.py`."""
     from datetime import datetime
 
-    from app.models.project_so import ALLOC_SOURCE_GROUP_TAKE, SOLineAllocation
+    from app.models.project_so import ALLOC_SOURCE_OTHER_LOCATION, SOLineAllocation
 
     row = SOLineAllocation(
         id=_u(),
         company_id=SORENTO_COMPANY_ID,
         so_line_id=project_line.id,
-        source_type=ALLOC_SOURCE_GROUP_TAKE,
+        source_type=ALLOC_SOURCE_OTHER_LOCATION,
         warehouse_id=warehouse.id,
         qty=Decimal(str(qty)),
         confirmed_at=datetime.utcnow(),

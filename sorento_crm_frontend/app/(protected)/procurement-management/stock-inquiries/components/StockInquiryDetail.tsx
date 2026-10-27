@@ -70,6 +70,7 @@ import {
 } from '../services/stockInquiryService';
 import { toast } from '@/lib/toast';
 import { formatDate } from '@/lib/helpers';
+import { isAwaitingReview, SI_REVIEW_STAGE } from '@/lib/submission-status';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -629,7 +630,7 @@ export default function StockInquiryDetail({
                 {submitForProjectSalesMutation.isPending ? 'Submitting…' : 'Submit for project sales'}
               </Button>
             )}
-            {businessCtasEnabled && inquiry.status === 'pending_project_sales' && (
+            {businessCtasEnabled && isAwaitingReview(inquiry.status, SI_REVIEW_STAGE) && (
               <>
                 {canProjectSalesApprove && (
                   <Button

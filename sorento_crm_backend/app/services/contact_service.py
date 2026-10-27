@@ -619,15 +619,41 @@ class ContactService:
         )
         return count == 1
 
-    def delete_contact(self, contact_id: str) -> None:
-        """Delete a respond contact and all contact - agent linkages. Related contact_agent_access rows are deleted; conversation_sla_tracking.respond_contact_id is SET NULL."""
+    # Business history a contact may not take with it. Assignment / link rows
+    # (agents, tags, companies, access settings) cascade or are removed below;
+    # these are records whose loss nobody asked for. `price_tag_requests` has no
+    # ON DELETE (contact_id is NOT NULL, ptag_0001), so it used to crash the delete
+    # with a raw ForeignKeyViolation; `conversation_ticket_comments` CASCADEs, and
+    # is the only copy of those notes (Respond.io has no read-back). Same refusal
+    # shape as the schedule delete (`project_schedule_service`): name what blocks.
+    _DELETE_BLOCKERS = (
+        ("price_tag_requests", "contact_id", "price tag request"),
+        ("conversation_ticket_comments", "respond_contact_id", "ticket comment"),
+    )
+
+    def _delete_blocker(self, contact_id: str) -> Optional[str]:
+        """The refusal message when linked history keeps this contact, else None."""
+        from sqlalchemy import text
+
+        linked = []
+        for table, column, noun in self._DELETE_BLOCKERS:
+            count = self.db.execute(
+                text(f"SELECT count(*) FROM {table} WHERE {column} = :c"), {"c": contact_id}
+            ).scalar()
+            if count:
+                linked.append(f"{count} {noun}{'' if count == 1 else 's'}")
+        if not linked:
+            return None
+        return f"This contact has {' and '.join(linked)}; it cannot be deleted."
+
+    def _remove_contact(self, contact: RespondContact) -> None:
+        """Delete the contact and its contact - agent linkages (not committed).
+        conversation_sla_tracking.respond_contact_id and the other history FKs are SET NULL."""
         from app.models.access import ContactAgentAccess
         from app.models.conversation_frame import ConversationFrame
 
-        contact = self.get_contact(contact_id)
-        # Delete contact - agent access linkages first so the contact can be removed
         self.db.query(ContactAgentAccess).filter(
-            ContactAgentAccess.respond_contact_id == contact_id
+            ContactAgentAccess.respond_contact_id == contact.id
         ).delete(synchronize_session=False)
         # Chatbot memory lane A (contract section 3): a deleted contact's episodes go
         # with it. Keyed by `respond_io_id` - the episode store's own contact key,
@@ -644,43 +670,53 @@ class ContactService:
                     "chatbot: respond_io_id %s is shared by more than one contact; "
                     "skipping conversation_frame delete for contact %s",
                     contact.respond_io_id,
-                    contact_id,
+                    contact.id,
                 )
         self.db.delete(contact)
+
+    def delete_contact(self, contact_id: str) -> None:
+        """Delete a respond contact and all contact - agent linkages. Refused (409) while
+        linked history (`_DELETE_BLOCKERS`) still references it."""
+        contact = self.get_contact(contact_id)
+        blocker = self._delete_blocker(contact_id)
+        if blocker:
+            raise handle_conflict(blocker)
+        self._remove_contact(contact)
         self.db.commit()
 
     def bulk_delete_contacts(self, contact_ids: list[str]) -> dict:
-        """Delete multiple contacts by id. Returns deleted_count and message."""
+        """Delete every contact that can be deleted; report the rest per contact in
+        `blocked` ({id, name, phone_number, reason}) instead of failing the batch."""
         if not contact_ids:
-            return {"deleted_count": 0, "message": "No contacts to delete."}
-        from app.models.access import ContactAgentAccess
-        from app.models.conversation_frame import ConversationFrame
+            return {"deleted_count": 0, "blocked": [], "message": "No contacts to delete."}
         deleted = 0
+        blocked = []
         for contact_id in contact_ids:
             contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
-            if contact:
-                self.db.query(ContactAgentAccess).filter(
-                    ContactAgentAccess.respond_contact_id == contact_id
-                ).delete(synchronize_session=False)
-                # Security review 26 Sep 2026 (B1): same refusal as `delete_contact`
-                # - never touch frames by a `respond_io_id` a namesake also holds.
-                if contact.respond_io_id:
-                    if self._respond_id_belongs_uniquely_to(contact):
-                        self.db.query(ConversationFrame).filter(
-                            ConversationFrame.contact_respond_id == contact.respond_io_id
-                        ).delete(synchronize_session=False)
-                    else:
-                        logger.warning(
-                            "chatbot: respond_io_id %s is shared by more than one "
-                            "contact; skipping conversation_frame delete for "
-                            "contact %s",
-                            contact.respond_io_id,
-                            contact_id,
-                        )
-                self.db.delete(contact)
-                deleted += 1
+            if not contact:
+                continue
+            blocker = self._delete_blocker(contact_id)
+            if blocker:
+                blocked.append(
+                    {
+                        "id": contact.id,
+                        "name": contact.name,
+                        "phone_number": contact.phone_number,
+                        "reason": blocker,
+                    }
+                )
+                continue
+            self._remove_contact(contact)
+            deleted += 1
         self.db.commit()
-        return {"deleted_count": deleted, "message": f"Deleted {deleted} contact(s)."}
+        message = f"Deleted {deleted} contact{'' if deleted == 1 else 's'}."
+        if blocked:
+            n = len(blocked)
+            message += (
+                f" {n} contact{' was' if n == 1 else 's were'} not deleted because "
+                f"{'it has' if n == 1 else 'they have'} linked records."
+            )
+        return {"deleted_count": deleted, "blocked": blocked, "message": message}
 
     # --------------------------------------------------------------------- #
     # Chatbot memory lane A (contract section 5) - the contact's memory/facts

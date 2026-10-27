@@ -22,7 +22,7 @@ from __future__ import annotations
 from decimal import Decimal
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import and_, exists, or_, select
+from sqlalchemy import and_, exists, or_, select, union
 from sqlalchemy.orm import Session
 
 from app.models.finance import BillingDocument, BillingDocumentLine
@@ -94,23 +94,26 @@ def _with_notes(direct, company_id: str):
 def billing_ids_for_sales_order(so: SalesOrder):
     """SELECT of the ids of the billing documents of `so` (the Invoices tab's set)."""
     do_numbers = select(Order.order_number).where(Order.id.in_(_do_ids_for_so(so)))
-    direct = (
-        select(BillingDocumentLine.document_id)
-        .join(BillingDocument, BillingDocument.id == BillingDocumentLine.document_id)
-        .where(
-            BillingDocument.company_id == so.company_id,
-            or_(
-                BillingDocumentLine.sales_order_line_id.in_(_so_line_ids(so)),
-                and_(
-                    BillingDocumentLine.from_doc_type == "SO",
-                    BillingDocumentLine.from_doc_no == so.so_number,
-                ),
-                and_(
-                    BillingDocumentLine.from_doc_type == "DO",
-                    BillingDocumentLine.from_doc_no.in_(do_numbers),
-                ),
-            ),
+
+    def lines(*where):
+        return (
+            select(BillingDocumentLine.document_id)
+            .join(BillingDocument, BillingDocument.id == BillingDocumentLine.document_id)
+            .where(BillingDocument.company_id == so.company_id, *where)
         )
+
+    # A UNION, not one OR: an OR over `IN (subquery)` branches is a filter on a full scan of
+    # the lines, while each branch alone uses its own index (BILLING-FROM-DOC-INDEX).
+    direct = union(
+        lines(BillingDocumentLine.sales_order_line_id.in_(_so_line_ids(so))),
+        lines(
+            BillingDocumentLine.from_doc_type == "SO",
+            BillingDocumentLine.from_doc_no == so.so_number,
+        ),
+        lines(
+            BillingDocumentLine.from_doc_type == "DO",
+            BillingDocumentLine.from_doc_no.in_(do_numbers),
+        ),
     )
     return _with_notes(direct, so.company_id)
 

@@ -1104,7 +1104,7 @@ async def create_complaint(
             update_payload = ComplaintUpdate.model_validate(
                 complaint_data.model_dump(exclude_none=True, exclude={"attachments"})
             )
-            service.update_complaint(str(existing.id), update_payload)
+            service.resubmit_rejected_complaint(str(existing.id), update_payload)
             db.commit()
             return service.get_complaint_with_attachments(str(existing.id))
 
