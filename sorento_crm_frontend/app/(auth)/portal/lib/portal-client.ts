@@ -1021,6 +1021,7 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   rejected: 'Rejected',
   responded: 'Responded',
   submitted: 'Submitted',
+  resubmitted: 'Resubmitted',
   processed_by_cs: 'Processed by CS',
   closed: 'Closed',
   completed: 'Completed',
@@ -1033,6 +1034,9 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   collected: 'Collected',
   void: 'Void',
 };
+
+// One rule for staff and portal send buttons; re-exported so portal code keeps one import.
+export { submitVerb } from '@/lib/submission-status';
 
 export function statusLabel(status: string | null | undefined): string {
   const s = (status ?? '').trim();

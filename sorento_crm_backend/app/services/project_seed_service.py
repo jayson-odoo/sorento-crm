@@ -191,6 +191,7 @@ DEFAULT_QUOTATION_STATUSES = (
     ("draft", "Draft", True, False),
     ("rejected", "Rejected", False, False),
     ("pending_approval", "Pending Approval", False, False),
+    ("resubmitted", "Resubmitted", False, False),
     ("approved", "Approved", False, False),
     ("issued", "Issued", False, False),
 )
@@ -212,6 +213,10 @@ DEFAULT_QUOTATION_EDGES = (
     ("rejected", "draft", "Back to draft", 0),
     ("approved", "issued", "Issued to the customer", 0),
     ("issued", "pending_approval", "Send for approval", 0),
+    # RESUBMITTED-STATUS: a rejected quotation asked again, decided exactly like pending.
+    ("draft", "resubmitted", "Resubmit for approval", 1),
+    ("resubmitted", "approved", "Approve", 0),
+    ("resubmitted", "rejected", "Reject", 1),
 )
 
 # Sample request flow (SR-CORE card rule 10). Cancelled is reachable from Draft, Submitted and

@@ -34,6 +34,7 @@ import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { numberFieldError } from '@/lib/number-field';
+import { isAwaitingReview, submitVerb } from '@/lib/submission-status';
 import { stateFromDetail } from '@/lib/new-product-application-form';
 import { codeWithName } from '@/lib/product-display';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -370,7 +371,7 @@ export default function NewProductApplicationDetail({
   const isOwner = Boolean(userId) && r.applicant_id === userId;
   const ownerActs = isOwner && canCreate;
   const editable = r.status === 'draft' || r.status === 'rejected';
-  const locked = r.status === 'submitted' || r.status === 'approved';
+  const locked = isAwaitingReview(r.status) || r.status === 'approved';
   const anyResolved = r.lines.some(isResolved);
   const canRevise = locked && !anyResolved && (ownerActs || canApprove);
   const canCancel =
@@ -581,10 +582,10 @@ export default function NewProductApplicationDetail({
             <div className="flex flex-wrap items-center gap-2">
               {editable && ownerActs && (
                 <Button disabled={busy} onClick={() => submit.mutate(r.id)}>
-                  Submit
+                  {submitVerb(r.status)}
                 </Button>
               )}
-              {r.status === 'submitted' && canApprove && (
+              {isAwaitingReview(r.status) && canApprove && (
                 <>
                   <Button disabled={busy} onClick={() => approve.mutate(r.id)}>
                     Approve

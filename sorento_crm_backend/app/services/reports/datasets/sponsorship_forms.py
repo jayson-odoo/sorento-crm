@@ -55,6 +55,7 @@ SUBJECT_SET_KEY = "procurement_sponsor_subject"
 STATUS_LABELS: Tuple[Tuple[str, str], ...] = (
     ("draft", "Draft"),
     ("submitted", "Submitted"),
+    ("resubmitted", "Resubmitted"),
     ("approved", "Approved"),
     ("processed_by_cs", "Processed by CS"),
     ("closed", "Closed"),

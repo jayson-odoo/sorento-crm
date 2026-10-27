@@ -65,16 +65,23 @@ def _stock(db, product, warehouse, *, on_hand, reserved=0):
 
 
 def _own_pin(db, project_line, warehouse, qty, confirmed_at=None):
-    """A CONFIRMED 'own' allocation - the prod row's own source - holding `qty` at the bin."""
+    """A CONFIRMED allocation that HOLDS `qty` at the bin.
+
+    The prod rows were 'own' (a Reserve). BOARD-NO-HOLD (owner, 27 Oct 2026) made a Reserve
+    a plan, not a hold, so the pin semantics this file pins (`pinned`, the cap at the bin's
+    free stock, the stand-in, first confirmed first) are exercised on a BORROW
+    (`other_location`), the kind that still binds first at any date. What a Reserve does
+    now is `tests/scm/test_board_no_hold.py`'s.
+    """
     from datetime import datetime
 
-    from app.models.project_so import ALLOC_SOURCE_OWN, SOLineAllocation
+    from app.models.project_so import ALLOC_SOURCE_OTHER_LOCATION, SOLineAllocation
 
     row = SOLineAllocation(
         id=_u(),
         company_id=SORENTO_COMPANY_ID,
         so_line_id=project_line.id,
-        source_type=ALLOC_SOURCE_OWN,
+        source_type=ALLOC_SOURCE_OTHER_LOCATION,
         warehouse_id=warehouse.id,
         qty=Decimal(str(qty)),
         confirmed_at=confirmed_at or datetime.utcnow(),

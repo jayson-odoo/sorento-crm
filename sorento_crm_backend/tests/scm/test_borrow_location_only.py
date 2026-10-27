@@ -332,6 +332,15 @@ def _own_bin_world(db):
         so_number=f"ZZT-SO-DONOR{_uid()[:4]}",
     )
     _decide(db, donor_order, donor_line, own, "30", eling)
+    # BOARD-NO-HOLD (27 Oct 2026): a Reserve holds nothing, so it no longer blocks the own
+    # bin. The blocking hold is made a BORROW in place (stored source flipped), the kind that
+    # still holds.
+    from app.models.project_so import SOLineAllocation
+
+    db.query(SOLineAllocation).filter(
+        SOLineAllocation.so_line_id == donor_line.id
+    ).update({"source_type": "other_location"}, synchronize_session=False)
+    db.commit()
     asker, asker_line, _cso, _cline = _seed_line(
         db, company_id, project, product, own, qty_ordered="30", line_no=1,
         so_number=f"ZZT-SO-ASK{_uid()[:5]}",

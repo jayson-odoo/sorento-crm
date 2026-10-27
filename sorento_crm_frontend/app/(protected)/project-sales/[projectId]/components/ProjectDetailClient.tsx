@@ -39,6 +39,7 @@ import {
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { formatDateInMalaysia } from '@/lib/helpers';
+import { isAwaitingReview } from '@/lib/submission-status';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -185,7 +186,7 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   // A registration waiting for (or refused) approval has no stage to move: only Approve
   // gives it its first one.
   const waiting = isAwaitingDecision(project.approval_state);
-  const canDecide = mayApprove && project.approval_state === 'pending';
+  const canDecide = mayApprove && isAwaitingReview(project.approval_state, 'pending');
   const moves =
     project.can_edit && !waiting ? availableStatusMoves(graph.data, project.status_id) : [];
   const { secondary: secondaryMoves } = splitStatusMoves(moves);
