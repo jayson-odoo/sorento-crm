@@ -110,6 +110,15 @@ def test_summary_state_counts_do_not_change_when_a_state_is_picked(client, world
 
 def test_acknowledge_filter_location_caps_each_value_not_the_whole_string():
     a, b = "A" * 150, "B" * 150
-    assert AcknowledgeFilter(location=f"{a},{b}").location == f"{a},{b}"
+    assert AcknowledgeFilter(location=[a, b]).location == [a, b]
     with pytest.raises(Exception):
         AcknowledgeFilter(location="C" * 201)
+
+
+def test_a_single_location_string_is_capped_whole_and_list_items_each():
+    a, b = "A" * 150, "B" * 150
+    with pytest.raises(Exception):
+        AcknowledgeFilter(location=f"{a},{b}")  # one 301-character string
+    assert AcknowledgeFilter(location=[a, b]).location == [a, b]  # two 150-character items
+    with pytest.raises(Exception):
+        AcknowledgeFilter(location=["C" * 201])
