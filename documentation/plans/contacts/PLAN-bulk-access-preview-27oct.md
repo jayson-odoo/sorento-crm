@@ -11,4 +11,9 @@ Parent: `PLAN-bulk-contact-access-26oct.md` (#1875). UAC: `bulk-access-preview-2
 3. Visibility: per contact, a before -> after view per facet, one item per line, nothing truncated;
    "Holds more than the template" lists what is extra.
 
-Detail filled in after reading the code (next commit).
+Mockup: `documentation/mockups/BULK-ACCESS-PREVIEW/index.html`. Card: `CARD-bulk-access-preview-27oct.md`.
+
+## Changes
+- BE `_plan` (svc:491-507): per contact, links = confirmed accounts whose company is on the row; add `links_to` per account, `outside_links` and `holds_more_items` per contact.
+- FE `ContactsTable` (dlg:528-571) becomes per-contact panels with a before -> after grid; `AccountsTable` gets "Links to".
+- FE `confirmAllExact` (lib:24-27): skip `rows_disagree` blocks if the owner agrees.
