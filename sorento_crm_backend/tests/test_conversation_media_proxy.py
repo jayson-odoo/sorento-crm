@@ -81,6 +81,13 @@ def _permissions(monkeypatch):
         "check_user_has_permission",
         lambda self, uid, slug: slug in _GRANTS,
     )
+    # The contact-keyed route takes `[view, view_own]` through `require_any_permission`,
+    # which reads the whole slug set rather than asking per slug; both answer from _GRANTS.
+    monkeypatch.setattr(
+        UserPermissionService,
+        "get_user_permission_slugs",
+        lambda self, uid: set(_GRANTS),
+    )
     monkeypatch.setattr(
         UserPermissionService,
         "get_user_role_slugs",
