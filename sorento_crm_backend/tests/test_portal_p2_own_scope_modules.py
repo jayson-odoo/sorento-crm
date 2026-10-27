@@ -382,14 +382,16 @@ def test_a_parked_delete_rechecks_when_it_runs(scene):
     assert db.get(SalesOpportunity, o2) is not None
 
 
-def test_fulfilment_side_deferred_actions_are_refused_to_a_limited_project_user(scene):
+def test_fulfilment_undo_follows_its_own_slug_but_line_files_stay_refused(scene):
+    """Q2: undo confirm belongs to fulfilment planning, so it follows its own slug (edit);
+    sales-order line files are not a cross-project screen and stay refused."""
     db, w = scene
     with acting(db, w.a, {"projects.projects.view_own", "projects.projects.edit"}) as client:
         response = _park(
             client, "project_sales_order.undo_confirm", "project_sales_order", uid(),
             {"decision_id": uid()},
         )
-        assert response.status_code == 403, response.text
+        assert "your own records only" not in response.text, response.text
         response = _park(
             client, "sales_order_line_attachment.delete", "sales_order_line_attachment", uid(),
             {"line_id": uid()},

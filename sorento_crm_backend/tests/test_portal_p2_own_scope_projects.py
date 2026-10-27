@@ -304,14 +304,9 @@ def test_a_removed_collaborator_loses_the_project_on_the_next_request(scene):
 @pytest.mark.parametrize(
     "method,path",
     [
-        ("GET", "/reports/forecast"),
         ("GET", "/my-tasks"),
-        ("POST", "/leads"),
-        ("GET", "/leads/{x}"),
-        ("GET", "/order-inquiries"),
         ("POST", "/sales-orders/bulk-delete"),
         ("GET", "/amendments/{x}"),
-        ("GET", "/divergences/{x}"),
         ("GET", "/parties/{x}"),
     ],
 )
@@ -491,3 +486,45 @@ def test_no_route_takes_view_own_that_the_guard_then_refuses():
         if _own_scope.classify(method, route.path_format) is None
     ]
     assert dead == []
+
+
+
+# ------------------------------------------------------------------ owner ruling Q2 (27 Oct 17:50)
+
+GUARD_REFUSAL = "Not available with access to your own records only."
+
+#: One route per cross-project screen the owner named: each follows its own permission slug.
+_CROSS_PROJECT = (
+    ("GET", "/reports/forecast", VIEW),
+    ("GET", "/stock-debt", "projects.stock_debt.view"),
+    ("GET", "/order-inquiries", VIEW),
+    ("GET", "/leads", VIEW),
+    ("GET", "/allocation-claims", VIEW),
+    ("GET", "/fulfilment-planning/queue", VIEW),
+    ("GET", "/divergences", VIEW),
+)
+
+
+@pytest.mark.parametrize("method,path,own_slug", _CROSS_PROJECT)
+def test_view_own_neither_opens_nor_closes_a_cross_project_screen(scene, method, path, own_slug):
+    """Q2: "depends on the permission we give to their role". Holding view_own on projects
+    must not by itself open the screen (its own slug still answers 403) nor close it (with
+    its own slug granted, the guard does not refuse)."""
+    db, w, _p = scene
+    with acting(db, w.a, LIMITED) as client:
+        response = client.request(method, BASE + path)
+        if own_slug != VIEW:
+            assert response.status_code == 403, response.text
+        assert GUARD_REFUSAL not in response.text
+    if own_slug != VIEW:
+        with acting(db, w.a, LIMITED | {own_slug}) as client:
+            response = client.request(method, BASE + path)
+            assert response.status_code != 403, response.text
+
+
+def test_a_cross_project_write_follows_its_own_slug_for_a_limited_user(scene):
+    """Q2: POST /leads takes projects.projects.edit; the guard does not refuse it."""
+    db, w, _p = scene
+    with acting(db, w.a, LIMITED) as client:
+        response = client.post(BASE + "/leads", json={"title": f"{MARKER} lead"})
+        assert GUARD_REFUSAL not in response.text

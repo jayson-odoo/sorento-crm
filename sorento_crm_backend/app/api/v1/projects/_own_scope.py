@@ -16,7 +16,9 @@ It fails closed. For a limited user:
   ``_line_or_404(db, po_id, line_id)``, ...), so a foreign child under their own parent is a
   404 from the route itself;
 - a route with no id is refused unless it is in ``_ID_LESS`` (the project list filters in
-  the query) or is reference data (``_REFERENCE_PREFIXES`` / ``_REFERENCE_PATHS``).
+  the query) or is reference data (``_REFERENCE_PREFIXES`` / ``_REFERENCE_PATHS``);
+- the cross-project screens (``_OWN_PERMISSION_PREFIXES``) are left to their own permission
+  slug (owner ruling Q2).
 
 ``tests/test_portal_p2_own_scope_projects.py`` enumerates ``app.routes`` and pins every route
 this lets a limited user reach in ``tests/portal_p2_allowed_routes.txt``.
@@ -156,6 +158,23 @@ _ID_LESS = frozenset(
 
 #: Setup and lookups, not anybody's records; their own permission still gates them.
 _REFERENCE_PREFIXES = ("/config/", "/status-graph/")
+
+#: The cross-project screens (owner ruling Q2, 27 Oct): "depends on the permission we give to
+#: their role". `view_own` on projects neither opens nor closes them; each route answers to its
+#: own permission slug exactly as for anyone else, so the guard steps aside.
+_OWN_PERMISSION_PREFIXES = (
+    "/reports/",
+    "/stock-debt",
+    "/order-inquiries",
+    "/order-inquiry-headers",
+    "/order-inquiry-rows",
+    "/leads",
+    "/allocation-claims",
+    "/fulfilment-planning",
+    "/plans",
+    "/planning-changes",
+    "/divergences",
+)
 _REFERENCE_PATHS = frozenset({"/quotation-approval-graph", "/quotation-line-images"})
 
 
@@ -175,6 +194,8 @@ def classify(method: str, path_format: str):
     (or ``_MODULE_RULE``) for its first id, or ``None`` when it is refused."""
     path = path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
     if path.startswith(_REFERENCE_PREFIXES) or path in _REFERENCE_PATHS:
+        return "open"
+    if path.startswith(_OWN_PERMISSION_PREFIXES):
         return "open"
     names = _PARAM.findall(path)
     if not names:

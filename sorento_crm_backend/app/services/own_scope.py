@@ -148,10 +148,9 @@ def conversation_contact_ids(m: Me):
 # ------------------------------------------------------------------ deferred actions
 
 #: Deferred actions on project-sales records that the router guard refuses a limited user on
-#: the route itself (fulfilment planning, sales-order line files: owner ruling Q2a).
-_PROJECT_ACTIONS_REFUSED = frozenset(
-    {"project_sales_order.undo_confirm", "sales_order_line_attachment.delete"}
-)
+#: the route itself (sales-order line files). Fulfilment planning's undo confirm is not here:
+#: it follows its own permission slug (owner ruling Q2, 27 Oct).
+_PROJECT_ACTIONS_REFUSED = frozenset({"sales_order_line_attachment.delete"})
 
 
 def assert_pending_action_allowed(

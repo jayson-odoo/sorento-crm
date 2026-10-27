@@ -1,6 +1,6 @@
 # PLAN: PORTAL-P2-ONLY-THEIRS, "only theirs" on the server (27 Oct 2026)
 
-Status: Review passed (reviewer READY, security-reviewer READY, 27 Oct). Awaiting CI and the owner hand-test. PR #1911.
+Status: Review passed (reviewer READY, security-reviewer READY, 27 Oct); owner merge OK without hand test (no portal impact). Awaiting CI. PR #1911.
 Track: full (RBAC change), security review required. Lane PORTAL-P2-ONLY-THEIRS.
 
 Source brief: `documentation/plans/portal/PLAN-portal-unify-scout-27oct.md` (PR #1894), section
@@ -31,11 +31,13 @@ the active sales agents linked to that contact (`sales.portal_agent.agents_for_c
 
 - Q1 (a): one guard on the project-sales router resolving the first URL id to its project, fail
   closed, plus explicit list filters.
-- Q2 (a, pending owner, built on the recommendation): only the brief's project screens open to
-  `view_own`; cross-project views (forecast, stock debt, order inquiries, leads, allocations,
-  fulfilment planning, divergences, `/my-tasks`) stay `view`-only, so a limited user gets 403.
-- Q3 (a, pending owner): conversation notes, replies and templates only on their own contacts.
-- Q4 (a, pending owner): pickers offer only their own customers, agents and projects.
+- Q2 (owner, 27 Oct 17:50, "depends on the permission we give to their role"): the
+  cross-project screens (forecast and reports, stock debt, order inquiries, leads, allocation
+  claims, fulfilment planning, plans, planning changes, divergences) get NO extra block: the
+  guard steps aside and each answers to its own permission slug; `view_own` neither opens nor
+  closes them.
+- Q3 (owner): salespeople get no reply; the (a) guard stays as defence in depth.
+- Q4 (owner): (a), pickers offer only their own customers, agents and projects.
 - Q5 (a): today's 403 for a sample request / NPA creator without `view` is untouched.
 
 ## Design
