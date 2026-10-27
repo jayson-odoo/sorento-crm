@@ -62,12 +62,12 @@ def _schema(with_meaning: bool) -> dict[str, Any]:
     }
 
 
-#: The schema with `meaning`; a v1 prompt (which never asks for it) is sent `SCHEMA_V1`, see `schema_for`.
+#: The schema with `meaning`; a v1 prompt (which never asks for it) is sent `SCHEMA_V1`, see `span_schema`.
 SCHEMA: dict[str, Any] = _schema(True)
 SCHEMA_V1: dict[str, Any] = _schema(False)
 
 
-def schema_for(system_prompt: str) -> dict[str, Any]:
+def span_schema(system_prompt: str) -> dict[str, Any]:
     """The meaning schema only when the prompt asks for meanings."""
     return SCHEMA if MEANING_ASK in (system_prompt or "") else SCHEMA_V1
 
@@ -144,7 +144,7 @@ def extract(config: SpanConfig, message: str) -> SpanAnswer | None:
             deadline_seconds=SPAN_TIMEOUT_SECONDS,
             temperature=0.0,
             max_tokens=MAX_TOKENS,
-            json_schema=schema_for(config.system_prompt),
+            json_schema=span_schema(config.system_prompt),
             json_schema_name=SCHEMA_NAME,
             timeout=SPAN_TIMEOUT_SECONDS,
         )
