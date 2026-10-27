@@ -53,7 +53,7 @@ def test_every_vocabulary_is_non_empty_and_unique() -> None:
         assert len(set(values)) == len(values), f"{name} has a duplicate member"
 
 
-def test_branch_kinds_are_the_sixteen_the_router_decides() -> None:
+def test_branch_kinds_are_the_twenty_the_router_and_gates_decide() -> None:
     assert set(contracts.BRANCH_KINDS) == {
         "access_denied",
         "escalate_offer",
@@ -75,6 +75,11 @@ def test_branch_kinds_are_the_sixteen_the_router_decides() -> None:
         "ai_not_allowed",
         # SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity (`lanes/opportunity.py`).
         "log_opportunity",
+        # WA-USERNAME-CONTACTS: the phone-share gate's four kinds (`wa_phone_link`, engine gate).
+        "phone_ask",
+        "phone_linked",
+        "phone_ignored",
+        "phone_handoff",
     }
 
 

@@ -315,3 +315,23 @@ describe('formatMs / turnDuration / shortTurnId', () => {
     expect(short.length).toBe(4);
   });
 });
+
+describe('WU23 phone branch kinds are named in words', () => {
+  const cases = [
+    ['phone_ask', 'Asked for a phone number', 'Asked'],
+    ['phone_linked', 'Phone linked', 'Linked'],
+    ['phone_ignored', 'Phone card ignored', 'No reply'],
+    ['phone_handoff', 'Phone handed to staff', 'Handed to staff'],
+  ] as const;
+
+  it.each(cases)('laneWords(%s) is %s', (kind, lane) => {
+    expect(laneWords(kind as never)).toBe(lane);
+  });
+
+  it.each(cases)('turnHeadline for %s says %s / %s, never Answered', (kind, _lane, word) => {
+    expect(turnHeadline(turn({ status: 'done', branch_kind: kind as never }))).toEqual({
+      word,
+      tone: 'ok',
+    });
+  });
+});
