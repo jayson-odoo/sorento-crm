@@ -28,6 +28,7 @@ from app.services.dealer_kit.catalog_photos import (
     extract_catalog_photos,
     hamming,
 )
+from app.services.attachment_bulk_download_service import suffix_copy_name
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
@@ -121,17 +122,16 @@ def _root_folder(db: Session, company_id: Optional[str]) -> AttachmentDirectory:
 def _make_folder(
     db: Session, root: AttachmentDirectory, file_name: str, company_id: Optional[str]
 ) -> AttachmentDirectory:
-    base = _folder_name(file_name)
-    name, n = base, 1
+    name = _folder_name(file_name)
     taken = {
         row[0]
         for row in db.query(AttachmentDirectory.name).filter(
             AttachmentDirectory.parent_id == root.id, AttachmentDirectory.is_deleted.is_(False)
         )
     }
+    # The drive's own collision naming ("x" -> "x - copy" -> "x - copy (2)").
     while name in taken:
-        n += 1
-        name = f"{base} ({n})"
+        name = suffix_copy_name(name)
     folder = AttachmentDirectory(
         id=str(uuid.uuid4()), parent_id=root.id, name=name, company_id=company_id
     )
@@ -201,6 +201,26 @@ def _store_file(
     return row
 
 
+def _free_pdf_name(db: Session, root: AttachmentDirectory, file_name: str) -> str:
+    """The PDF's name in the root folder, bumped the drive's way while another file holds it.
+
+    The drive keeps one active file name per folder (a unique index on the lower-cased stored
+    name), so a catalogue uploaded twice would otherwise be refused with a 500.
+    """
+    from app.services import storage_router
+
+    taken = {
+        (row[0] or "").lower()
+        for row in db.query(Attachment.original_filename).filter(
+            Attachment.directory_id == root.id, Attachment.is_deleted.is_(False)
+        )
+    }
+    name = file_name
+    while storage_router.sanitize_storage_filename(name).lower() in taken:
+        name = suffix_copy_name(name)
+    return name
+
+
 def create_from_upload(
     db: Session, *, file_name: str, data: bytes, user_id: Optional[str]
 ) -> CataloguePhotoReading:
@@ -210,6 +230,7 @@ def create_from_upload(
     company_id = resolve_write_company_id(get_company_scope(db))
     root = _root_folder(db, company_id)
     folder = _make_folder(db, root, file_name, company_id)
+    file_name = _free_pdf_name(db, root, file_name)
     # The source PDF sits in the root folder, so a ZIP of the catalogue folder holds photos only.
     pdf = _store_file(
         db,
