@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.base import get_company_scope
+from app.services.company_scope import build_company_predicate
 from app.dependencies import get_current_user
 from app.models.list_query_metadata import ListQueryField
 from app.models.user import UserListColumnConfig, UserPermission
@@ -277,7 +279,7 @@ def list_fields(
 def field_options(
     resource_key: str,
     field_key: str,
-    query: Optional[str] = Query(None),
+    query: Optional[str] = Query(None, max_length=200),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     current_user: dict = Depends(get_current_user),
@@ -288,10 +290,18 @@ def field_options(
     comes back; the view permission is the list's own."""
     from sqlalchemy import func
 
-    if not get_adapter(resource_key):
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown resource")
+    # 403 first, as `list_fields` does: an unknown resource and a forbidden one look alike to a caller
+    # with no view right (`_can_view` is False for a resource with no adapter).
     if not _can_view(db, current_user["id"], resource_key):
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+        known = get_adapter(resource_key) is not None
+        # An unknown resource is a 404 only for a caller who may view some list at all; for anyone else it
+        # is the same 403 a real resource gives, so the answer never maps which resources exist.
+        if known or not any(
+            _can_view(db, current_user["id"], str(getattr(r, "resource_key", "") or ""))
+            for r in ListQueryMetadataService(db).list_resources()
+        ):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown resource")
     spec = _option_specs().get((resource_key, field_key))
     meta = ListQueryMetadataService(db)
     if spec is None or field_key not in meta.fields_by_key(resource_key):
@@ -302,6 +312,12 @@ def field_options(
             q = q.join(target, on)
         for clause in spec["base"]:
             q = q.filter(clause)
+        # The session's scope listener only scopes classes named in the selected columns, so the ROOT
+        # resource's own company predicate is applied here, exactly as the list's rows are scoped.
+        if hasattr(spec["root"], "company_id"):
+            root_scope = build_company_predicate(spec["root"], get_company_scope(db))
+            if root_scope is not None:
+                q = q.filter(root_scope)
         q = q.filter(spec["value"].isnot(None), spec["label"].isnot(None))
         needle = (query or "").strip()
         if needle:
