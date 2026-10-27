@@ -316,7 +316,7 @@ async def bulk_delete_contacts(
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
-    """Bulk delete contacts by ID. Related access records are removed."""
+    """Bulk delete contacts by ID. Related access records are removed; contacts with linked history are skipped and listed in `blocked`."""
     try:
         service = ContactService(db)
         result = service.bulk_delete_contacts(body.ids)
@@ -661,7 +661,7 @@ async def delete_contact(
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
 ):
-    """Delete a respond contact. Related access records are cascade-deleted; SLA tracking references are set to null."""
+    """Delete a respond contact. Related access records are removed; SLA tracking references are set to null. 409 while linked history (price tag requests, ticket comments) references it."""
     try:
         service = ContactService(db)
         service.delete_contact(contact_id)
