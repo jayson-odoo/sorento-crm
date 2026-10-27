@@ -719,12 +719,17 @@ ROW_SORT = "__row__"
 TOTAL_SORT = "__total__"
 
 
-def _sorted_rows(sort, row_values, col_values, cells, row_sums, measures, row_column) -> List[str]:
+def _sorted_rows(sort, row_values, col_values, cells, row_sums, measures, row_column,
+                 strict: bool = True) -> List[str]:
     """The summary's rows in the chosen order (SALES-UNIFIED: every column sorts server-side):
     by the row label, by the row total of the first measure, or by one column's cell of it.
     A row with no figure sorts after every row with one, and the blank row stays last."""
     if sort.key not in (ROW_SORT, TOTAL_SORT) and sort.key not in col_values:
-        raise _invalid(f"Unknown sort column '{sort.key}'")
+        if strict:
+            raise _invalid(f"Unknown sort column '{sort.key}'")
+        # A block holds only the columns its own rows have: one without the sorted column
+        # keeps its order (the key was checked against the whole report's summary).
+        return list(row_values)
     if sort.key != ROW_SORT and (not measures or measures[0].ratio_of is not None):
         raise _invalid("This summary cannot sort by a figure")
     reverse = sort.dir == "desc"
@@ -755,7 +760,7 @@ def _sorted_rows(sort, row_values, col_values, cells, row_sums, measures, row_co
     return with_figure + without + blank
 
 
-def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotLayout:
+def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool, strict_sort: bool = True) -> ReportPivotLayout:
     definition = ctx.definition
     dataset = ctx.dataset
     config = view.pivot
@@ -845,7 +850,8 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
     row_values = _axis_values(ctx, row_column, row_values, rows=True)
     col_values = _axis_values(ctx, col_column, present_cols, rows=False)
     if config.sort is not None:
-        row_values = _sorted_rows(config.sort, row_values, col_values, cells, row_sums, measures, row_column)
+        row_values = _sorted_rows(config.sort, row_values, col_values, cells, row_sums, measures,
+                                  row_column, strict=strict_sort)
     value_labels = _value_labels(col_column, col_values)
 
     if cap and len(row_values) * len(col_values) > PIVOT_CELL_CAP:
@@ -1064,7 +1070,7 @@ def _blocks(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> Optional[Li
             company_grants=ctx.company_grants,
         )
         title = f"{company} - {label.upper()}" if company else label.upper()
-        blocks.append(ReportBlock(key=value, title=title, summary=_pivot(one, view, cap)))
+        blocks.append(ReportBlock(key=value, title=title, summary=_pivot(one, view, cap, strict_sort=False)))
     return blocks
 
 

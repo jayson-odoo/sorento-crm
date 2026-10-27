@@ -155,3 +155,22 @@ def test_s3_top_selling_items_ranks_by_rm_by_default(db):
     result = engine.run(db, definition, params, company_grants=frozenset({DEFAULT_COMPANY_ID}))
     rows = list(result.layouts.summary.row_values)
     assert rows.index(f"{dear_few.product_code} - {dear_few.description}" if dear_few.description else dear_few.product_code) == 0
+
+
+# ------------------------------------------------------------------ browser pass defect
+
+
+def test_sorting_by_a_debtor_type_some_blocks_lack_keeps_those_blocks_in_order(db):
+    from tests._sales_unified_seed import cust, run
+
+    with_type = cust(db, debtor_type="ZZTBRAV")
+    doc(db, "cash_sale", "10.00", date(2026, 1, 15), customer=with_type, agent_row=agent(db, unique_code("ZZTA")))
+    doc(db, "cash_sale", "30.00", date(2026, 1, 15), customer=with_type, agent_row=agent(db, unique_code("ZZTB")))
+    # Every block ticked: all but No sales order are empty, so none of them has the column.
+    result = run(db, "sales_by_debtor_type", pivot_sort={"key": "ZZTBRAV", "dir": "desc"})
+    no_so = next(b for b in result.layouts.blocks if b.key == "no_sales_order").summary
+    totals = [no_so.row_totals[v]["sales_value"] for v in no_so.row_values]
+    assert totals == ["30.00", "10.00"]
+    with pytest.raises(AppException) as unknown:
+        run(db, "sales_by_debtor_type", pivot_sort={"key": "ZZT-NOT-A-COLUMN", "dir": "asc"})
+    assert unknown.value.status_code == 422

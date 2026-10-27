@@ -29,7 +29,9 @@ Actor: the owner or a sales manager with "sales reports: view".
 - **AC-4 [BE][T]** `companies.sales_agent_source` defaults to `document` and rejects any value but
   `document` / `customer`; the Companies update route saves it.
 - **AC-5 [BE][T]** The migration is additive, upgrades and downgrades cleanly, single alembic head.
-- **AC-6 [FE][T]** Customer detail header shows the AutoCount debtor type read-only (`-` when none).
+- **AC-6 [FE][T]** Customer detail shows the AutoCount debtor type read-only (`-` when none), in the
+  Contact Information card beside the CRM debtor type (as built: the header carries only the code and
+  Outstanding, DESIGN-LANGUAGE header rule; browser pass 27 Oct).
 
 ## S2. Shared definition, sales type, set apart
 
