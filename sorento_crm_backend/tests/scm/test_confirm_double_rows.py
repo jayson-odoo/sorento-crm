@@ -204,6 +204,42 @@ def test_a_short_at_one_bin_and_a_hold_at_another_repeat_unchanged():
             ], press
             notices = _shorts(body)
             assert len(notices) == 1 and "18 short" in notices[0], (press, notices)
+            # The shortfall is frozen against its own component (the id the next press's
+            # carried credit is matched on), not only the location code.
+            assert _frozen_short(db, world)[0]["warehouse_id"] == str(world["own"].id)
+
+
+def _frozen_short(db, world):
+    active = ProjectSupplyService(db).active_decision(str(world["order"].id))
+    return active.line_snapshots[0].get("stock_short") or []
+
+
+def test_a_partly_delivered_borrow_pressed_again_never_grows_its_hold():
+    """Review B2: Borrow 36 at a sibling bin with 20 free, 10 of the line delivered. Every
+    press holds the 20 and records 6 short; the delivered units are credited once."""
+    with blank_session() as db:
+        world = _two_orders(db, on_hand=0, delivered=10, sibling_on_hand=20)
+        for press in (1, 2, 3, 4):
+            line = ConfirmLine(
+                project_line_id=world["line"].id,
+                borrow=[{
+                    "source": "other_location",
+                    "warehouse_id": str(world["sibling"].id),
+                    "qty": "36",
+                    "reason": "Units at the sibling bin.",
+                }],
+                buy_qty=Decimal("0"),
+            )
+            body = ProjectSupplyService(db).confirm(
+                world["order"], ConfirmSupplyBody(lines=[line]), actor_user_id=world["eling"]
+            )
+            db.commit()
+            assert _active_rows(db, world, by_bin=True) == [
+                (str(world["sibling"].id), Decimal("20"))
+            ], press
+            notices = _shorts(body)
+            assert len(notices) == 1 and "6 short" in notices[0], (press, notices)
+            assert _frozen_short(db, world)[0]["warehouse_id"] == str(world["sibling"].id)
 
 
 def _held(components, shorts):
@@ -240,3 +276,17 @@ def test_the_carried_credit_nets_only_its_own_components_short():
     # Never below zero.
     big = {**short_a, "short": "40"}
     assert credit(None, _held([reserve_a], [big]), "x", "reserve", "A") == Decimal("0")
+
+
+def test_a_shortfall_only_the_on_hand_floor_finds_is_frozen_against_its_component():
+    """A Reserve with a reason at its own bin skips the capacity recheck (the 8 Sep lift),
+    so only R14's on-hand floor records it short: 10 on hand, Reserve 36. That shortfall is
+    keyed to the bin too, and a repeat press holds the same 10."""
+    with blank_session() as db:
+        world = _two_orders(db, on_hand=10)
+        for press in (1, 2):
+            body = _confirm(db, world, reserve="36", amend_reason="From the floor.")
+            assert _active_rows(db, world) == [("own", Decimal("10"))], press
+            notices = _shorts(body)
+            assert len(notices) == 1 and "26 short" in notices[0], (press, notices)
+            assert _frozen_short(db, world)[0]["warehouse_id"] == str(world["own"].id)
