@@ -373,8 +373,13 @@ def _build_blocks(db: Session, rows: list[dict], rank: bool) -> list[dict]:
                 survives, held = flags.get(c["id"], ("Y", "N"))
                 if survives == "Y" and held == "N":
                     exact[c["id"]] = c
+        # Every exact account is listed, but only one of a company the rows tag is ticked: the
+        # rest would link to nobody (ACCESS-SHEET-FIXES, owner 27 Oct).
         accounts = [
-            _account(c, "exact", 1.0, c["is_active"], block["agents"].get(c["company_code"]))
+            _account(
+                c, "exact", 1.0, c["is_active"] and c["company_code"] in union,
+                block["agents"].get(c["company_code"]),
+            )
             for c in sorted(exact.values(), key=lambda c: (c["company_code"] or "", c["code"]))
         ]
         covered = {c["company_code"] for c in exact.values()}

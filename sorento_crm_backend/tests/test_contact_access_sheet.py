@@ -649,7 +649,7 @@ def test_u7_a_contact_within_its_template_gets_no_holds_more(client, db, w):
 # ================================================================ U8-U10 dealer blocks and accounts
 
 
-def test_u8_u10_exact_accounts_span_every_company_including_the_untagged_one(client, db, w):
+def test_u8_u10_exact_accounts_span_every_company_but_only_row_companies_are_proposed(client, db, w):
     ids = {
         "SRT": _cust(db, w, w.srt, DEALER, agent="ZZT-AG-S"),
         "MCH": _cust(db, w, w.mch, "Alpha Bath Sdn. Bhd.", agent="ZZT-AG-M"),
@@ -661,10 +661,35 @@ def test_u8_u10_exact_accounts_span_every_company_including_the_untagged_one(cli
     block = _block(body)
     assert block["status"] == "exact"
     exact = {a["customer_id"]: a for a in block["accounts"] if a["match"] == "exact"}
-    assert set(exact) == set(ids.values()), "every exact account of ANY company is proposed (Q4)"
+    assert set(exact) == set(ids.values()), "every exact account of ANY company is listed (Q4)"
     assert other not in exact
-    assert all(a["proposed"] for a in exact.values()), "every exact account is ticked by default"
     assert {a["company_code"] for a in exact.values()} == {"SRT", "MCH", "ZZX"}
+    # ACCESS-SHEET-FIXES (owner 27 Oct): an SRT-only dealer ticks only its SRT account; the
+    # Mocha and untagged-company exacts stay listed, unticked, so the preview never shows a
+    # ticked account that links to nobody.
+    assert {i for i, a in exact.items() if a["proposed"]} == {ids["SRT"]}
+
+
+def test_u8_u10_dealer_tagging_both_companies_proposes_both_exact_accounts(client, db, w):
+    ids = _dealer(db, w)
+    _contact(db, w, 1)
+    _contact(db, w, 2)
+    content = _sheet(
+        [
+            ("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER)),
+            ("ZZT Bob", "+60100000002", _tags(DEALER, ["MCH"], EMPLOYEE)),
+        ]
+    )
+    block = _block(_post(client, content).json())
+    assert {a["customer_id"] for a in block["accounts"] if a["proposed"]} == set(ids.values())
+
+
+def test_u8_u10_mch_only_dealer_with_only_an_srt_exact_proposes_nothing(client, db, w):
+    srt = _cust(db, w, w.srt, DEALER, agent="ZZT-AG-S")
+    _contact(db, w, 1)
+    block = _block(_post(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["MCH"], OWNER))])).json())
+    accounts = {a["customer_id"]: a for a in block["accounts"]}
+    assert accounts[srt]["match"] == "exact" and accounts[srt]["proposed"] is False
 
 
 def test_u8_rows_whose_dealer_texts_normalise_equal_share_one_block(client, db, w):
