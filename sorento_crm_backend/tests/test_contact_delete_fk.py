@@ -156,6 +156,7 @@ def test_bulk_delete_deletes_the_free_and_reports_the_linked(db: Session) -> Non
         {
             "id": linked_id,
             "name": "ZZT contact",
+            "phone_number": result["blocked"][0]["phone_number"],
             "reason": "This contact has 1 price tag request; it cannot be deleted.",
         }
     ]
@@ -197,6 +198,22 @@ def test_handle_internal_error_never_carries_db_error_text() -> None:
     for marker in _LEAK_MARKERS:
         assert marker not in str(body), f"{marker!r} leaked: {body}"
     assert body["message"] == "Oops! Something went wrong. Please try again in a moment."
+
+
+def test_a_real_psycopg_fk_error_is_hidden_in_both_shapes(db: Session) -> None:
+    """The real driver error, not a hand-built one: `str(e)` and a bare `str(e.orig)`
+    (which has no SQL and no link) must both be swapped for the generic message."""
+    contact_id = _contact(db)
+    _price_tag_request(db, contact_id)
+    savepoint = db.begin_nested()
+    with pytest.raises(IntegrityError) as exc_info:
+        db.execute(text("DELETE FROM respond_contacts WHERE id = :i"), {"i": contact_id})
+    savepoint.rollback()
+
+    for shape in (str(exc_info.value), str(exc_info.value.orig)):
+        body = str(handle_internal_error(shape).detail)
+        assert "price_tag_requests" not in body, body
+        assert contact_id not in body, body
 
 
 def test_kill_handle_internal_error_keeps_a_plain_message() -> None:

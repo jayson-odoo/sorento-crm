@@ -1,6 +1,6 @@
 # PLAN: contact delete fails on foreign keys (CONTACT-DELETE-FK)
 
-Status: in review. Small fix track: bug, diff well under 300 lines, no migration, no auth/RBAC change.
+Status: merge-ready (reviewer READY, browser pass done; owner chose to block on ticket comments, 28 Oct). Small fix track: bug, diff well under 300 lines, no migration, no auth/RBAC change.
 
 ## Report
 
@@ -37,6 +37,10 @@ SET NULL (record kept, link nulled): `attachments.uploaded_by_contact_id`, `pric
   with a message naming what is linked, the same shape as `project_schedule_service.py:2493`
   ("This schedule cannot be deleted: ..."). No migration.
 - Bulk delete: deletes the deletable, returns `blocked: [{id, name, reason}]`; the dialog names each one.
+- Bulk `blocked` entries carry `phone_number` so an unnamed contact is still identifiable.
 - B: `handle_internal_error` (`app/services/error_handler.py`) replaces any message carrying DB driver /
   SQLAlchemy text with the generic one and logs it. Covers the ~580 `handle_internal_error(str(e))` routes.
   The global `Exception` handler (`app/main.py:162`) already hid detail; the leak was the route-level wrap.
+  Not covered (follow-up, outside this lane): about 35 `HTTPException(detail=str(e))` sites that bypass
+  `handle_internal_error`, e.g. `app/api/v1/external/purchase_requests.py:119`,
+  `app/api/v1/external/conversation_assignee.py:81`, `app/api/v1/external/forms.py:136`.

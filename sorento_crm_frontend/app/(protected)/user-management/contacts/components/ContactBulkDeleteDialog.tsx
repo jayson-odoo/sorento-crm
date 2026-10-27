@@ -24,7 +24,7 @@ interface ContactBulkDeleteDialogProps {
 
 interface BulkDeleteResult {
   deleted_count: number;
-  blocked?: { id: string; name: string | null; reason: string }[];
+  blocked?: { id: string; name: string | null; phone_number: string; reason: string }[];
   message: string;
 }
 
@@ -55,9 +55,10 @@ export default function ContactBulkDeleteDialog({
         // Contacts with linked history are kept; name each one and why.
         toast.error(result.message, {
           description: blocked
-            .map((b) => `${b.name || 'Unnamed contact'}: ${b.reason}`)
+            .map((b) => `${b.name || b.phone_number}: ${b.reason}`)
             .join('\n'),
           classNames: { description: 'whitespace-pre-line' },
+          duration: 10000,
         });
       } else {
         toast.success(result?.message ?? `${contactIds.length} contact(s) deleted`);

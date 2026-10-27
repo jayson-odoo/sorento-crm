@@ -33,12 +33,13 @@ afterEach(() => {
 });
 
 describe('ContactBulkDeleteDialog blocked contacts', () => {
-  it('names each contact that was not deleted and why', async () => {
+  it('names each contact that was not deleted and why, by phone when unnamed', async () => {
     api.apiFetch.mockResolvedValue(
       ok({
         deleted_count: 1,
         blocked: [
-          { id: 'c2', name: 'Bob', reason: 'This contact has 2 price tag requests; it cannot be deleted.' },
+          { id: 'c2', name: 'Bob', phone_number: '6012', reason: 'This contact has 2 price tag requests; it cannot be deleted.' },
+          { id: 'c3', name: null, phone_number: '6013', reason: 'This contact has 1 ticket comment; it cannot be deleted.' },
         ],
         message: 'Deleted 1 contact. 1 contact was not deleted because it has linked records.',
       }),
@@ -49,7 +50,9 @@ describe('ContactBulkDeleteDialog blocked contacts', () => {
     expect(toastMock.toast.error).toHaveBeenCalledWith(
       'Deleted 1 contact. 1 contact was not deleted because it has linked records.',
       expect.objectContaining({
-        description: 'Bob: This contact has 2 price tag requests; it cannot be deleted.',
+        description:
+          'Bob: This contact has 2 price tag requests; it cannot be deleted.\n' +
+          '6013: This contact has 1 ticket comment; it cannot be deleted.',
       }),
     );
     expect(toastMock.toast.success).not.toHaveBeenCalled();

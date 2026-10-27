@@ -686,7 +686,7 @@ class ContactService:
 
     def bulk_delete_contacts(self, contact_ids: list[str]) -> dict:
         """Delete every contact that can be deleted; report the rest per contact in
-        `blocked` ({id, name, reason}) instead of failing the batch."""
+        `blocked` ({id, name, phone_number, reason}) instead of failing the batch."""
         if not contact_ids:
             return {"deleted_count": 0, "blocked": [], "message": "No contacts to delete."}
         deleted = 0
@@ -697,7 +697,14 @@ class ContactService:
                 continue
             blocker = self._delete_blocker(contact_id)
             if blocker:
-                blocked.append({"id": contact.id, "name": contact.name, "reason": blocker})
+                blocked.append(
+                    {
+                        "id": contact.id,
+                        "name": contact.name,
+                        "phone_number": contact.phone_number,
+                        "reason": blocker,
+                    }
+                )
                 continue
             self._remove_contact(contact)
             deleted += 1
