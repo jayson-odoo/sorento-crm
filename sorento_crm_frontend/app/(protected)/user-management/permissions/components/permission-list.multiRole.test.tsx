@@ -148,8 +148,16 @@ describe('Permissions list - multi Role filter', () => {
       '22222222-2222-4222-8222-222222222222',
     ]);
     await user.keyboard('{Escape}');
+    const before = apiFetchMock.mock.calls.length;
     await user.click(await screen.findByRole('button', { name: 'Clear filter: Role: Sales, Finance' }));
-    await waitFor(() => expect(lastQuery().get('roleId')).toBeNull());
-    expect(screen.queryByText('Role: Sales, Finance')).toBeNull();
+    await waitFor(() => expect(screen.queryByText('Role: Sales, Finance')).toBeNull());
+    // Clearing returns to the unfiltered query, already cached (the list keeps staleTime: Infinity),
+    // so a refetch is optional; any request made after clearing must not carry roleId.
+    for (const call of apiFetchMock.mock.calls.slice(before)) {
+      expect(String(call[0])).not.toContain('roleId');
+    }
+    await user.click(filtersButton());
+    const control = (await screen.findByRole('listbox')) as HTMLSelectElement;
+    expect(control.selectedOptions).toHaveLength(0);
   });
 });

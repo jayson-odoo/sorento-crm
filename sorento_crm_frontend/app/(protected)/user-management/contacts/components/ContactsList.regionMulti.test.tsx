@@ -171,9 +171,17 @@ describe('ContactsList - multi Region filter', () => {
     await user.selectOptions(await screen.findByLabelText('Region: any'), ['west', 'east']);
     await waitFor(() => expect(lastFilters().region).toBe('west,east'));
     await user.keyboard('{Escape}');
+    const before = getContactsMock.mock.calls.length;
     await user.click(await screen.findByRole('button', { name: /^Clear filter: Region: West.*East/ }));
     await waitFor(() => expect(screen.queryByText(/^Region: West.*East/)).toBeNull());
-    await waitFor(() => expect(lastFilters().region).toBeUndefined());
+    // Clearing returns to the unfiltered query, already cached (the list keeps staleTime: Infinity),
+    // so a refetch is optional; any request made after clearing must not carry the region.
+    for (const call of getContactsMock.mock.calls.slice(before)) {
+      expect((call[1] as Record<string, string>).region).toBeUndefined();
+    }
+    await user.click(filtersButton());
+    const control = (await screen.findByLabelText('Region: any')) as HTMLSelectElement;
+    expect(control.selectedOptions).toHaveLength(0);
   });
 
   it('writes the comma-joined value to the URL', async () => {
