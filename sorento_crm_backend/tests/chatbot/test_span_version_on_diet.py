@@ -51,7 +51,9 @@ def test_single_head_and_chain():
     assert m.revision == "eem_0002_span_version_on_diet" and len(m.revision) <= 32
     script = ScriptDirectory.from_config(Config(str(VERSIONS.parents[1] / "alembic.ini")))
     assert script.get_revision(m.down_revision) is not None
-    assert script.get_heads() == [m.revision], script.get_heads()
+    heads = script.get_heads()
+    assert len(heads) == 1, heads
+    assert m.revision in {r.revision for r in script.walk_revisions(base="base", head=heads[0])}  # a later migration may follow
 
 
 def test_dieted_production_text_publishes_one_unlabelled_span_version():
@@ -92,6 +94,44 @@ def test_text_already_carrying_spans_publishes_nothing():
         _production(db, template=f"Rules.\n{SPAN_MARKER}\n")
         assert m.publish_on_production(db) is None
         assert len(_versions(db)) == 1
+
+
+def test_pre_diet_production_text_is_left_to_eem_0001(monkeypatch):
+    from app.services import chatbot_lookup_edits as lle
+    from app.services import chatbot_prompt_diet_edits as diet
+
+    anchor = "A long wordy anchor sentence that the diet edit shortens."
+    monkeypatch.setattr(diet, "EDITS", (lle.Edit("replace", anchor, "Short."),))
+    m = _migration()
+    with blank_session() as db:
+        _production(db, template=f"Rules.\n{anchor}\n{MARKER}\n")
+        assert m.publish_on_production(db) is None
+        assert len(_versions(db)) == 1
+
+
+def test_downgrade_keeps_a_labelled_row_with_its_commit_message_and_its_label():
+    m = _migration()
+    with blank_session() as db:
+        _production(db)
+        with mock.patch.object(m.op, "get_bind", return_value=db.connection()):
+            assert m.publish_on_production(db) == 68
+            row = _versions(db)[-1]
+            db.add(AIPromptLabel(name=PARSER, label="staging", version_id=row.id))
+            db.flush()
+            m.downgrade()
+        db.expire_all()
+        assert [r.version for r in _versions(db)] == [67, 68]
+        assert db.query(AIPromptLabel).filter_by(name=PARSER, label="staging").count() == 1
+
+
+def test_candidates_per_span_are_capped_in_the_event():
+    from app.services.chatbot.engine import _candidates_of
+    from app.services.chatbot.head import list_resolver as lr
+    from app.services.chatbot.head import lookup_lists as ll
+
+    cands = tuple(lr.Candidate(ll.LookupRow("brand", f"k{i}", f"ZZ{i}", (f"zz{i}",)), 0.9, "spell") for i in range(12))
+    out = _candidates_of(lr.Resolution(lr.Span("zz"), "ambiguous", cands))
+    assert len(out) == 8 and out[0]["label"] == "ZZ0"
 
 
 def test_downgrade_removes_only_its_own_row():

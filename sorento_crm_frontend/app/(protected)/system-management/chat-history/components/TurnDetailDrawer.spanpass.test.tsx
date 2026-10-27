@@ -120,6 +120,8 @@ describe('TurnDetailDrawer Span pass section', () => {
     expect(body).toHaveTextContent('spell');
     expect(body).toHaveTextContent('Added from the message spelling');
     expect(body).toHaveTextContent('ZZALFA');
+    expect(screen.getByTestId('near-exact-label').className).not.toMatch(/\bh-5\b/);
+    expect(screen.getByTestId('near-exact-label').className).toMatch(/whitespace-normal/);
     expect(body).toHaveTextContent('Handed to the parser');
     expect(screen.getByTestId('final-source-span')).toHaveTextContent('Finish: French Gold');
     expect(screen.getByTestId('final-source-near_exact')).toHaveTextContent('ZZALFA');
