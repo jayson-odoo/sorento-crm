@@ -9796,7 +9796,7 @@ class ProjectSupplyService:
         """The one predicate for "this allocation row is holding stock right now".
 
         A Reserve is a plan, not a hold (BOARD-NO-HOLD, owner 27 Oct 2026): only a Borrow
-        holds stock. The Reserve rows are `_reserve_plan_query`, the same base predicate.
+        holds stock. The Reserve rows come from the same base, `_decision_allocation_query`.
 
         A hold counts when its allocation belongs to no decision (every row written before
         Stage 1C) or to an ACTIVE one; the LINES being replaced (`exclude_line_ids`, project
@@ -9821,21 +9821,6 @@ class ProjectSupplyService:
             exclude_line_ids=exclude_line_ids,
             entities=entities,
         ).filter(SOLineAllocation.source_type.notin_(ALLOC_RESERVE_SOURCES))
-
-    def _reserve_plan_query(
-        self,
-        product_ids: Sequence[str],
-        *,
-        exclude_line_ids: Optional[Sequence[str]] = None,
-        entities: Optional[Sequence[Any]] = None,
-    ):
-        """The live Reserve allocations: `_hold_query`'s base, Reserve sources only. They
-        hold nothing; Stock Debt reads them as a route (`Hold.route`)."""
-        return self._decision_allocation_query(
-            product_ids,
-            exclude_line_ids=exclude_line_ids,
-            entities=entities,
-        ).filter(SOLineAllocation.source_type.in_(ALLOC_RESERVE_SOURCES))
 
     def _decision_allocation_query(
         self,
