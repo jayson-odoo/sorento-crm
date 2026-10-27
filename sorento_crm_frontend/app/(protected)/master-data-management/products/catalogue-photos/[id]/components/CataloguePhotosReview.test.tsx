@@ -298,4 +298,19 @@ describe('CataloguePhotosReview', () => {
     expect(screen.queryByAltText('Page 2')).toBeNull();
     expect(document.querySelector('img')).toBeNull();
   });
+
+  it('FR-25: with nothing left to attach and one attached, all three steps read done', async () => {
+    svc.get.mockResolvedValue(
+      reading({
+        attached_count: 4,
+        counts: { ready: 4, duplicate: 0, needs_product: 0, skipped: 0, to_attach: 0 },
+      }),
+    );
+    renderReview();
+    await screen.findByRole('list', { name: 'Steps' });
+    const steps = within(screen.getByRole('list', { name: 'Steps' })).getAllByRole('listitem');
+    expect(steps).toHaveLength(3);
+    expect(steps.every((item) => (item.textContent ?? '').includes('(done)'))).toBe(true);
+    expect(screen.queryByRole('listitem', { current: 'step' })).toBeNull();
+  });
 });

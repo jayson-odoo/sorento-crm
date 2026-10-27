@@ -529,3 +529,24 @@ class TestFinalCommit:
             detail = _detail(client, rid)
         assert detail["status"] == "failed"
         assert set(api.storage.objects) == before
+
+
+class TestLookalikeAudit:
+    def test_fr24_the_import_job_result_says_how_many_photos_were_compared(self, api) -> None:
+        from app.models.job import ImportJob
+
+        _photo_type(api.db)
+        products = _seed_catalogue_products(api.db)
+        _existing_photo(api.db, api.storage, products[CODE_A], SEED_A)
+        missing, _ = _existing_photo(api.db, api.storage, products[CODE_B], SEED_OTHER)
+        for key in [k for k in api.storage.objects if f"existing-{SEED_OTHER}" in k]:
+            del api.storage.objects[key]  # the stored file is gone
+        with TestClient(app) as client:
+            rid = _read(api, client)
+        reading = api.db.query(CataloguePhotoReading).filter_by(id=rid).one()
+        api.db.expire_all()
+        job = api.db.query(ImportJob).filter(ImportJob.job_id == str(reading.job_id)).one()
+        result = job.result or {}
+        assert result.get("lookalike_compared") == 1, result
+        assert result.get("lookalike_unreadable") == 1, result
+        assert result.get("lookalike_flagged") == 1, result
