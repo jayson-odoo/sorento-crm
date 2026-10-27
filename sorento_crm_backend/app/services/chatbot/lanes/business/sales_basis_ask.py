@@ -74,13 +74,16 @@ def named_basis(parse_output: dict[str, Any]) -> str | None:
 def names_its_own_ask(verdict: dict[str, Any]) -> bool:
     """Engine seam, the basis question open: a message the parser declared no answer for that carries an ask of
     its own (its domain word, an axis, a count or a period: "total delivered sales Feb 2026", "top 5 dealers") is
-    that new ask, never read as the basis by the reply's shape. A bare "invoiced" or "1" carries none of them."""
+    that new ask, never read as the basis by the reply's shape. A bare "invoiced" or "1" carries none of them, and
+    a basis word with no domain word is the answer whatever axis the parser added to it (noise on an answering turn,
+    `report_ask.names_its_own_ask`)."""
     answer = verdict.get("open_question_answer")
     if isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES:
         return False
-    return (
-        verdict.get("domain_in_message") is True
-        or bool(verdict.get("group_by"))
+    if verdict.get("domain_in_message") is True:
+        return True
+    return not named_basis(verdict) and (
+        bool(verdict.get("group_by"))
         or verdict.get("top_n") is not None
         or bool(verdict.get("date_filter_start") or verdict.get("date_filter_end"))
     )

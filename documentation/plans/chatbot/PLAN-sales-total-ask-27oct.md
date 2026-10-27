@@ -1,6 +1,6 @@
 # PLAN: sales total asks the basis (SALES-TOTAL-ASK)
 
-Status: in review (small fix track: chatbot, no migration, no auth change). PR #1931.
+Status: in review, reviewer READY (small fix track: chatbot, no migration, no auth change). PR #1931.
 
 ## Ruling
 

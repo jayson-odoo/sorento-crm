@@ -240,3 +240,14 @@ def test_t10_a_ranking_while_the_question_is_open_is_never_read_as_the_basis(one
     assert "which basis" not in _reply(result), _reply(result)
     question = one.next_open_question() or {}
     assert question.get("about") != "sales_basis", question
+
+
+def test_t11_a_bare_basis_word_with_a_stray_axis_is_still_the_answer(one):
+    """Review round 2: "invoiced" parsed with no declared answer, an axis and the window echoed (parser noise on
+    an answering turn) answers the basis question; it is never a new ranking that asks its own questions."""
+    _ask(one)
+    _result, captured = one.say(
+        _answer(basis="invoiced", group_by="customer", **JAN_2026),
+        "invoiced",
+    )
+    _ran(captured, "invoiced")
