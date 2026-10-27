@@ -4,7 +4,7 @@
  */
 import type { ReactNode } from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import { render, screen, fireEvent, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -32,6 +32,7 @@ const svc = vi.hoisted(() => ({
   attach: vi.fn(),
 }));
 const toasts = vi.hoisted(() => ({ success: vi.fn(), error: vi.fn() }));
+const zip = vi.hoisted(() => ({ props: null as null | Record<string, unknown> }));
 
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn(), replace: vi.fn() }),
@@ -54,7 +55,10 @@ vi.mock('@/components/common/PageHeader', () => ({
   ),
 }));
 vi.mock('@/app/(protected)/resource-management/attachments/components/AttachmentBulkDownloadDialog', () => ({
-  default: () => null,
+  default: (props: Record<string, unknown>) => {
+    zip.props = props;
+    return null;
+  },
 }));
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
@@ -215,5 +219,66 @@ describe('CataloguePhotosReview', () => {
     renderReview();
     const current = await screen.findByRole('listitem', { current: 'step' });
     expect(current.textContent).toContain('Attach');
+  });
+
+  // ---- Fix round 1 (red) ----
+
+  it('FR-8: Download all as ZIP sends the reading folder as folderIds', async () => {
+    renderReview();
+    fireEvent.click(await screen.findByRole('button', { name: /Download all as ZIP/ }));
+    await waitFor(() => expect(zip.props?.open).toBe(true));
+    expect(zip.props?.folderIds).toEqual(['d1']);
+  });
+
+  it('FR-10: the Product column header sorts by product_code', async () => {
+    renderReview();
+    const sortBy = async (name: RegExp) => {
+      const header = await screen.findByRole('columnheader', { name });
+      fireEvent.click(within(header).getAllByRole('button')[0]);
+    };
+    await sortBy(/Printed code/);
+    await waitFor(() =>
+      expect(
+        svc.list.mock.calls.some((c) => (c[1] as { sort?: string }).sort === 'printed_code'),
+      ).toBe(true),
+    );
+    await sortBy(/Product/);
+    await waitFor(() =>
+      expect(
+        svc.list.mock.calls.some((c) => (c[1] as { sort?: string }).sort === 'product_code'),
+      ).toBe(true),
+    );
+  });
+
+  it('FR-14: an attached row on the look-alike tab reads Attached', async () => {
+    const attachedDuplicate = photo({
+      id: 'p8',
+      decision: 'replace',
+      attached_at: '2026-10-27T11:00:00',
+      duplicate: { attachment_id: 'a1', thumbnail_url: 'https://cdn.test/b.jpg', distance: 4 },
+    });
+    svc.list.mockImplementation(async (_id: string, params: { tab: string }) =>
+      page(params.tab === 'duplicate' ? [attachedDuplicate] : [photo()]),
+    );
+    renderReview();
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Looks like an existing photo (2)' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Looks like an existing photo (2)' }));
+    expect(await screen.findByText('Attached')).toBeInTheDocument();
+  });
+
+  it('FR-16: a placeholder is shown on the needs-a-product tab too', async () => {
+    const unmatched = photo({
+      id: 'p7',
+      product: null,
+      confidence: 'none',
+      placeholders: ['SRTWB_____'],
+    });
+    svc.list.mockImplementation(async (_id: string, params: { tab: string }) =>
+      page(params.tab === 'needs_product' ? [unmatched] : [photo()]),
+    );
+    renderReview();
+    fireEvent.mouseDown(await screen.findByRole('tab', { name: 'Needs a product (1)' }));
+    fireEvent.click(screen.getByRole('tab', { name: 'Needs a product (1)' }));
+    expect(await screen.findByText('SRTWB_____')).toBeInTheDocument();
   });
 });

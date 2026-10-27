@@ -76,4 +76,18 @@ describe('CatalogueUploadDialog', () => {
     expect(drawer.notify).toHaveBeenCalled();
     expect(nav.push).toHaveBeenCalledWith('/master-data-management/products/catalogue-photos/reading-1');
   });
+
+  it('FR-17: the size hint appears once', () => {
+    renderDialog();
+    const text = document.body.textContent ?? '';
+    expect(text.match(/up to 50 MB/g) ?? []).toHaveLength(1);
+  });
+
+  it('FR-17: the dialog has a description for assistive technology', () => {
+    renderDialog();
+    const dialog = screen.getByRole('dialog');
+    const id = dialog.getAttribute('aria-describedby');
+    expect(id).toBeTruthy();
+    expect(document.getElementById(id as string)).not.toBeNull();
+  });
 });
