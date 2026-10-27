@@ -66,6 +66,7 @@ export interface StockInquiry {
 export const STOCK_INQUIRY_STATUS_LABELS: Record<string, string> = {
   new: 'New',
   pending_project_sales: 'Pending project sales',
+  resubmitted: 'Resubmitted',
   pending_purchasing: 'Pending purchasing',
   rejected: 'Rejected',
   responded: 'Responded',

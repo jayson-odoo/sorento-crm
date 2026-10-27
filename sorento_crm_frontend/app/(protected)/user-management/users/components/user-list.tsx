@@ -60,7 +60,7 @@ import { toast } from '@/lib/toast';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import type { Table as ReactTable } from '@tanstack/react-table';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
@@ -241,7 +241,7 @@ const UsersToolbar = ({
                 renderTriggerLabel={(chosen) =>
                   chosen.length ? (
                     <span className="block truncate">
-                      {multiChipLabel('Role', chosen.map((o) => o.label))}
+                      {multiChipLabel('Role', idFilterLabels(chosen))}
                     </span>
                   ) : (
                     <span className="text-muted-foreground">Role: any</span>

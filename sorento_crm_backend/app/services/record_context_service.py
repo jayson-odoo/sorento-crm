@@ -99,6 +99,8 @@ def _pr_display_status(status: Any, approval_status: Any) -> str:
         return "Rejected"
     if s == "submitted":
         return "Submitted"
+    if s == "resubmitted":
+        return "Resubmitted"
     return "Draft"
 
 

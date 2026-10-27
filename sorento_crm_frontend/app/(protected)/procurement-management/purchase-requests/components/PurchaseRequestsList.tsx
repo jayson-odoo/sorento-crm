@@ -53,6 +53,7 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
 const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: 'all', label: 'All statuses' },
   { value: 'draft', label: 'Draft' },
+  { value: 'resubmitted', label: 'Resubmitted' },
   { value: 'pending', label: 'Pending approval' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
@@ -73,6 +74,7 @@ function getDisplayStatus(row: PurchaseRequest): string {
   // No approval decision yet - reflect the lifecycle status so a portal-submitted
   // request shows "Submitted" (tallies with the portal), not "Draft".
   if (s === 'submitted') return 'Submitted';
+  if (s === 'resubmitted') return 'Resubmitted';
   return 'Draft';
 }
 

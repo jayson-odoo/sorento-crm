@@ -509,9 +509,81 @@ def test_c1_a_rejected_quotation_resubmits_straight_to_pending_in_one_press():
             actor_user_id=owner,
         )
 
-        assert approval.current_key(db, document) == "pending_approval"
+        # RESUBMITTED-STATUS (owner, 27 Oct): the resubmit lands on its own rung.
+        assert approval.current_key(db, document) == "resubmitted"
         assert document.approval_rejected_reason is None
         assert _requested() == 2  # exactly one new row for the resubmit
+
+
+def _resubmitted(db):
+    from app.services import project_quotation_approval_service as approval
+
+    owner, manager, product, project, document, scope = _rejected(db)
+    approval.move(
+        db,
+        document=document,
+        to_status_id=_status(db, "pending_approval").id,
+        actor_user_id=owner,
+    )
+    assert approval.current_key(db, document) == "resubmitted"
+    return owner, manager, product, project, document, scope
+
+
+def test_a_resubmitted_quotation_is_approved_like_a_pending_one_and_then_issues():
+    from app.services import project_quotation_approval_service as approval
+    from app.services import project_quotation_document_service as qdocs
+
+    with blank_session() as db:
+        owner, manager, _, _, document, _ = _resubmitted(db)
+        _sign(db, document, owner)
+        approval.approve(db, document=document, actor_user_id=manager, permissions=EVERYTHING)
+        assert approval.current_key(db, document) == "approved"
+        assert qdocs.issue(db, document=document, actor_user_id=owner).issue_no == 1
+
+
+def test_a_resubmitted_quotation_can_be_rejected_again():
+    from app.services import project_quotation_approval_service as approval
+
+    with blank_session() as db:
+        _, manager, _, _, document, _ = _resubmitted(db)
+        approval.reject(
+            db, document=document, actor_user_id=manager, reason="Still too low.", permissions=EVERYTHING
+        )
+        assert approval.current_key(db, document) == "rejected"
+
+
+def test_a_resubmitted_quotation_is_locked_and_revisable_like_a_pending_one():
+    from app.services import project_quotation_approval_service as approval
+
+    with blank_session() as db:
+        owner, _, _, _, document, _ = _resubmitted(db)
+        with pytest.raises(AppException) as locked:
+            approval.assert_unlocked(db, document)
+        assert locked.value.detail["code"] == "quotation_locked_for_approval"
+        approval.revise_approval(db, document, owner, "Fix the WC price")
+        assert approval.current_key(db, document) == "draft"
+
+
+def test_a_graph_without_the_resubmitted_rung_still_resubmits_to_pending():
+    """An admin may delete the rung in Setup > Status Graphs; the press must still work."""
+    from app.models.status import StatusTransition
+    from app.services import project_quotation_approval_service as approval
+
+    with blank_session() as db:
+        owner, _, _, _, document, _ = _rejected(db)
+        rung = _status(db, "resubmitted")
+        db.query(StatusTransition).filter(
+            (StatusTransition.from_status_id == rung.id) | (StatusTransition.to_status_id == rung.id)
+        ).delete(synchronize_session=False)
+        db.delete(rung)
+        db.flush()
+        approval.move(
+            db,
+            document=document,
+            to_status_id=_status(db, "pending_approval").id,
+            actor_user_id=owner,
+        )
+        assert approval.current_key(db, document) == "pending_approval"
 
 
 def test_approve_and_reject_are_refused_without_the_grant():
@@ -573,6 +645,7 @@ def test_the_seeded_graph_is_the_exact_set_the_plan_names_and_the_seed_never_arg
             "draft",
             "rejected",
             "pending_approval",
+            "resubmitted",
             "approved",
             "issued",
         }
@@ -597,6 +670,10 @@ def test_the_seeded_graph_is_the_exact_set_the_plan_names_and_the_seed_never_arg
             ("rejected", "draft"),
             ("approved", "issued"),
             ("issued", "pending_approval"),
+            # RESUBMITTED-STATUS: a rejected quotation asked again, decided like pending.
+            ("draft", "resubmitted"),
+            ("resubmitted", "approved"),
+            ("resubmitted", "rejected"),
         }
 
         # Idempotent: a second boot adds nothing.

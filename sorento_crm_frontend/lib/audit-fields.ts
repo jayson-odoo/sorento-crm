@@ -1,3 +1,5 @@
+import { isAwaitingReview } from './submission-status';
+
 /**
  * How an audit row's before/after values read on a record's Audit Trail.
  *
@@ -95,12 +97,13 @@ export function auditFieldChanges(
 }
 
 const RESUBMIT_KEYS = ['status', 'approval_status', 'order_status'];
-const RESUBMIT_SUMMARY = /\brejected\s*→\s*submitted\b/i;
+const RESUBMIT_SUMMARY = /\brejected\s*→\s*(re)?submitted\b/i;
 
 /**
- * A rejected record sent back in: an UPDATE moving rejected -> submitted. Derived from the
- * transition itself (raw status values, or the status-engine summary that carries the labels),
- * so history written before any "Resubmitted" status existed reads the same way.
+ * A rejected record sent back in: an UPDATE moving rejected -> submitted, or rejected ->
+ * resubmitted now that the status exists (RESUBMITTED-STATUS). Derived from the transition itself
+ * (raw status values, or the status-engine summary that carries the labels), so history written
+ * before the "Resubmitted" status existed reads the same way.
  */
 export function isAuditResubmit(entry: {
   action: string;
@@ -111,7 +114,10 @@ export function isAuditResubmit(entry: {
   if (entry.action !== 'UPDATE') return false;
   const norm = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
   for (const key of RESUBMIT_KEYS) {
-    if (norm(entry.old_values?.[key]) === 'rejected' && norm(entry.new_values?.[key]) === 'submitted') {
+    if (
+      norm(entry.old_values?.[key]) === 'rejected' &&
+      isAwaitingReview(norm(entry.new_values?.[key]))
+    ) {
       return true;
     }
   }

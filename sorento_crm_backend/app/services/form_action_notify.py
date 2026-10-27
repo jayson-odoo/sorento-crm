@@ -155,6 +155,7 @@ def notify_undo(db: Session, record, *, actor_id: Optional[str], reason: str) ->
 _STATUS_LABELS = {
     "draft": "Draft",
     "submitted": "Submitted",
+    "resubmitted": "Resubmitted",
     "pending_approval": "Pending Approval",
     "approved": "Approved",
     "rejected": "Rejected",

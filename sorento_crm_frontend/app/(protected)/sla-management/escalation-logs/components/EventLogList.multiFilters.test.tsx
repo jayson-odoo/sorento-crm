@@ -1,6 +1,6 @@
 /**
  * FILTER-MULTISELECT PR2: the Escalation logs list's Event type and Assigned to filters take several
- * values (OR within a filter, AND across), comma-joined as `event_type` and `assigned_to`.
+ * values (OR within a filter, AND across), comma-joined as `event_type` and `assigned_to_id`.
  */
 import React from 'react';
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest';
@@ -106,8 +106,8 @@ describe('Escalation logs - multi Event type and Assigned to filters', () => {
     await openFilters(user);
     const boxes = await screen.findAllByRole('listbox');
     await waitFor(() => expect((boxes[1] as HTMLSelectElement).options.length).toBe(2));
-    await user.selectOptions(boxes[1], ['resp-ann', 'resp-ben']);
-    await waitFor(() => expect(lastParams().assigned_to).toBe('resp-ann,resp-ben'));
+    await user.selectOptions(boxes[1], ['u-ann', 'u-ben']);
+    await waitFor(() => expect(lastParams().assigned_to_id).toBe('u-ann,u-ben'));
   });
 
   it('the filters AND across each other and Clear advanced filters drops both', async () => {
@@ -116,12 +116,12 @@ describe('Escalation logs - multi Event type and Assigned to filters', () => {
     const boxes = await screen.findAllByRole('listbox');
     await waitFor(() => expect((boxes[1] as HTMLSelectElement).options.length).toBe(2));
     await user.selectOptions(boxes[0], ['escalation', 'response']);
-    await user.selectOptions(boxes[1], ['resp-ben']);
+    await user.selectOptions(boxes[1], ['u-ben']);
     await waitFor(() =>
-      expect(lastParams()).toMatchObject({ event_type: 'escalation,response', assigned_to: 'resp-ben' }),
+      expect(lastParams()).toMatchObject({ event_type: 'escalation,response', assigned_to_id: 'u-ben' }),
     );
     await user.click(screen.getByRole('button', { name: /clear advanced filters/i }));
     await waitFor(() => expect(lastParams().event_type).toBeUndefined());
-    expect(lastParams().assigned_to).toBeUndefined();
+    expect(lastParams().assigned_to_id).toBeUndefined();
   });
 });

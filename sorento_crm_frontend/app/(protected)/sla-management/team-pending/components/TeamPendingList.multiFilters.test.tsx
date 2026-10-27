@@ -83,7 +83,7 @@ beforeEach(() => {
     ],
   });
   useTeamPendingSLA.mockReturnValue({
-    data: { data: [mk('1', 'Ann', 'A'), mk('2', 'Ben', 'B'), mk('3', 'Cat', 'C')], total: 3, page: 1, limit: 50 },
+    data: { data: [mk('1', 'Ann', 'A'), mk('2', 'Ben', 'B'), mk('3', 'Cat', 'C')], teams: ['A', 'B', 'C'].map((t) => ({ id: `team-${t}`, name: `Team ${t}` })), total: 3, page: 1, limit: 50 },
     isLoading: false,
     isFetching: false,
     refetch: vi.fn(),

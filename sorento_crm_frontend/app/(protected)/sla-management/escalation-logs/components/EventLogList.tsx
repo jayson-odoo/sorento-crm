@@ -44,7 +44,7 @@ export default function EventLogList() {
     sorting,
     tracking_id: trackingId || undefined,
     event_type: eventType || undefined,
-    assigned_to: assignedTo || undefined,
+    assigned_to_id: assignedTo || undefined,
   });
 
   useEffect(() => {
@@ -191,7 +191,7 @@ export default function EventLogList() {
                     loadError={respondUsersError}
                     onRetry={() => void refetchRespondUsers()}
                     options={(respondUsers || []).map((user: UserLookupItem) => ({
-                      value: user.respond_user_id || user.id,
+                      value: user.id,
                       label: user.name || 'Unnamed user',
                     }))}
                     placeholder="Assigned to"

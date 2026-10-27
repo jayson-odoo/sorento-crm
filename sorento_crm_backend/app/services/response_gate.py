@@ -87,7 +87,8 @@ ALLOWED_RESPONSE_STATUSES: dict[str, tuple[str, ...]] = {
     # then approved -> processed_by_cs | closed. The technical team answers in
     # the first leg only; every later state is a decision that the answer must
     # not be rewritten under.
-    COMPLAINT: ("new", "submitted", "updated", "responded"),
+    # `resubmitted` is a submit after a rejection: the same leg, answered the same way.
+    COMPLAINT: ("new", "submitted", "resubmitted", "updated", "responded"),
 }
 
 # Wording for the statuses this gate can actually block, so the sentence reads

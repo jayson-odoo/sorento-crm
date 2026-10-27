@@ -231,12 +231,16 @@ def _act_as(client, user_id: str) -> None:
 # --------------------------------------------------------------------- candidates
 
 
-def _hold(db, line, warehouse, qty: str, *, actor: str) -> None:
+def _hold(db, line, warehouse, qty: str, *, actor: str,
+          source_type: str = "other_location") -> None:
     """A confirmed component on somebody's line: what makes a pile "held".
 
     Written directly because the only writer is now the atomic confirmation
     (`project_supply_service`), and dragging a whole Project SO confirmation into a
     candidate-ranking test would test the wrong thing.
+
+    A BORROW (`other_location`) by default: BOARD-NO-HOLD (27 Oct 2026) made a Reserve
+    (own / brw / group_take) hold nothing, so only a Borrow makes a pile "held".
     """
     from app.models.project_so import SOLineAllocation
 
@@ -245,7 +249,7 @@ def _hold(db, line, warehouse, qty: str, *, actor: str) -> None:
             id=_uid(),
             company_id=line.company_id,
             so_line_id=line.id,
-            source_type="own",
+            source_type=source_type,
             warehouse_id=warehouse.id,
             qty=Decimal(qty),
             confirmed_by=actor,
@@ -291,6 +295,56 @@ def test_candidates_rank_brw_first_and_name_the_holding_project(api):
     assert body["covered"] is False
     assert body["shortfall"] == "55"
     assert body["plan"] == [{"warehouse_id": brw.id, "warehouse_code": BRW_CODE, "qty": "80"}]
+
+
+def _candidate_at(body, code):
+    return next(c for c in body["candidates"] if c.get("warehouse_code") == code)
+
+
+def test_another_orders_confirmed_reserve_is_not_held_and_allocatable_is_on_hand_less_reserved(api):
+    """BOARD-NO-HOLD (B1): Seri Heights' confirmed RESERVE of 60 at a bin is a plan, not a
+    hold. It is not in `held_for_other_projects`, names no holder, needs no claim, and
+    `allocatable` is on hand 80 less AutoCount reserved 5 = 75 (capped at the 135 needed)."""
+    client, world = api
+    db = world.db
+    mwh = _warehouse(db, f"ZZT-MWH-{_uid()[:4]}")
+    _stock(db, world.product, mwh, 80, reserved=5)
+    _order, line = _sales_order(db, world.project, product=world.product, qty="135")
+    _other_order, other_line = _sales_order(
+        db, world.other_project, product=world.product, qty="60"
+    )
+    _hold(db, other_line, mwh, "60", actor=world.farah, source_type="own")
+    db.commit()
+
+    body = client.get(f"{BASE}/sales-order-lines/{line.id}/allocation-candidates").json()
+    candidate = _candidate_at(body, mwh.warehouse_code)
+
+    assert candidate["held_for_other_projects"] == "0"
+    assert candidate["holders"] == []
+    assert candidate["requires_claim"] is False
+    assert candidate["available"] == "75"
+    assert candidate["allocatable"] == "75"
+
+
+def test_another_orders_confirmed_borrow_is_still_held(api):
+    """Control: the same shape with a BORROW still holds, as today."""
+    client, world = api
+    db = world.db
+    mwh = _warehouse(db, f"ZZT-MWH-{_uid()[:4]}")
+    _stock(db, world.product, mwh, 80, reserved=5)
+    _order, line = _sales_order(db, world.project, product=world.product, qty="135")
+    _other_order, other_line = _sales_order(
+        db, world.other_project, product=world.product, qty="60"
+    )
+    _hold(db, other_line, mwh, "60", actor=world.farah, source_type="other_location")
+    db.commit()
+
+    body = client.get(f"{BASE}/sales-order-lines/{line.id}/allocation-candidates").json()
+    candidate = _candidate_at(body, mwh.warehouse_code)
+
+    assert candidate["held_for_other_projects"] == "60"
+    assert candidate["holders"][0]["project_code"] == world.other_project.project_code
+    assert candidate["available"] == "15"
 
 
 def test_inactive_locations_are_not_offered(api):

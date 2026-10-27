@@ -8,6 +8,7 @@ leaves nothing half-linked. Plan: documentation/plans/contacts/PLAN-wa-username-
 """
 from __future__ import annotations
 
+import json
 import logging
 import re
 from dataclasses import dataclass
@@ -34,6 +35,9 @@ _PHONE_RE = re.compile(r"\+?\d{8,15}")
 # module constant, not the chatbot reply-copy registry: that registry is seeded by a
 # migration and this flow ships without one.
 VERIFIED_LINE = "Phone number verified, you may start using the AI"
+# WA-PHONE-SHARE-LOOP (owner wording, 27 Oct): the one line a contact gets when its card was
+# accepted but the CRM does not let the AI answer it; later messages stay silent (ai_not_allowed).
+NO_ACCESS_LINE = "Phone number verified but the number does not have access yet to the AI system."
 
 
 @dataclass
@@ -56,29 +60,65 @@ def is_contact_card(body: dict) -> bool:
     return _card(body).get("type") == "contact"
 
 
-def accepted_card_phone(body: dict) -> Optional[str]:
-    """E.164 digits (no ``+``) of a card the sender tapped to share, else None.
+_UNREADABLE = object()
 
-    Accepted = origin `contact_request` (the Share Contact Info button, not a hand-shared
-    card), a non-empty phone, and a PRESENT `channel.meta.wa_id` naming the same number. The
-    caller still owes the signed-ingress check (`envelope.ingress == DIRECT_INGRESS`); this
-    reads the body only.
+
+def _wa_ids(body: dict) -> Any:
+    """Every `channel.meta.wa_id` present (flat and nested), [] when there is none, or
+    `_UNREADABLE` when meta is there but is not a dict the CRM can read.
+
+    Respond.io sends `channel.meta` as a JSON STRING wrapping a nested `meta`
+    (`'{"meta": {"wa_id": ..., "user_id": ...}}'`, prod sample under
+    tests/chatbot/replay_turns/prod_sample); a plain dict, nested or flat, is read the same way.
+    Unreadable is kept apart from absent so a shape change refuses the card instead of quietly
+    dropping the wa_id cross-check (security review S1).
+    """
+    channel = body.get("channel") if isinstance(body, dict) else None
+    meta = channel.get("meta") if isinstance(channel, dict) else None
+    if meta in (None, ""):
+        return []
+    if isinstance(meta, str):
+        try:
+            meta = json.loads(meta)
+        except (ValueError, RecursionError):
+            return _UNREADABLE
+    if not isinstance(meta, dict):
+        return _UNREADABLE
+    levels = [meta, meta["meta"]] if isinstance(meta.get("meta"), dict) else [meta]
+    return [str(level["wa_id"]) for level in levels if level.get("wa_id") not in (None, "")]
+
+
+def card_refusal(body: dict) -> Optional[str]:
+    """Why a card is not a share-button tap, or None when it is (rule 3, body half).
+
+    A tap = origin `contact_request` (the Share Contact Info button, not a hand-shared card)
+    and a non-empty phone. `channel.meta.wa_id` is a cross-check only WHEN PRESENT: a
+    username-only user can arrive with the BSUID and no wa_id (WA-PHONE-SHARE-LOOP). The
+    caller still owes the signed-ingress check (`envelope.ingress == DIRECT_INGRESS`).
+    Reasons carry no phone, so they can go in a turn trace.
     """
     inner = _card(body)
     if inner.get("type") != "contact":
-        return None
+        return "not_a_card"
     card = inner.get("contact")
     if not isinstance(card, dict) or card.get("origin") != "contact_request":
-        return None
+        return "origin"
     phone = normalize_msisdn(card.get("phone"))
     if not phone:
+        return "no_phone"
+    wa_ids = _wa_ids(body)
+    if wa_ids is _UNREADABLE:
+        return "meta_unreadable"
+    if any(normalize_msisdn(wa_id) != phone for wa_id in wa_ids):
+        return "wa_id_mismatch"
+    return None
+
+
+def accepted_card_phone(body: dict) -> Optional[str]:
+    """E.164 digits (no ``+``) of a card the sender tapped to share, else None (`card_refusal`)."""
+    if card_refusal(body) is not None:
         return None
-    channel = body.get("channel")
-    meta = channel.get("meta") if isinstance(channel, dict) else None
-    wa_id = meta.get("wa_id") if isinstance(meta, dict) else None
-    if wa_id in (None, "") or normalize_msisdn(wa_id) != phone:
-        return None
-    return phone
+    return normalize_msisdn(_card(body)["contact"].get("phone"))
 
 
 def respond_client(db: Session):
@@ -167,12 +207,15 @@ def send_ask(db: Session, *, contact_respond_id: str, turn_id: Optional[str] = N
     return True
 
 
-def send_verified(db: Session, client: Any, *, identifier: str, turn_id: Optional[str] = None) -> bool:
-    """The verified line to the surviving contact, with its outbox row. False when the send failed."""
-    payload = {"message": {"type": "text", "text": VERIFIED_LINE}}
+def send_verified(
+    db: Session, client: Any, *, identifier: str, turn_id: Optional[str] = None, line: str = VERIFIED_LINE
+) -> bool:
+    """The verified line (or `line`, e.g. `NO_ACCESS_LINE`) to the surviving contact, with its
+    outbox row. False when the send failed."""
+    payload = {"message": {"type": "text", "text": line}}
     business_id = turn_id or identifier
     try:
-        response = client.send_message(identifier, VERIFIED_LINE)
+        response = client.send_message(identifier, line)
     except Exception as e:  # noqa: BLE001 - the link stands; the next message resolves to the row
         logger.warning("wa_phone_link: verified line failed (%s)", _err(e))
         _outbox(db, identifier=identifier, business_id=business_id, status="failed", request_payload=payload, error=e)

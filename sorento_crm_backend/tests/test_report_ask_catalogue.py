@@ -8,6 +8,9 @@ definition it names, so a renamed column cannot leave a dead word behind.
 
 Owner direction 4 Oct 2026: every basis (delivered, ordered, outstanding) reads SALES ORDER lines,
 so the catalogue holds three bases and none of them points at the delivery order dataset.
+SALES-UNIFIED (#1916, owner ruling 27 Oct: Sales = IV + CS + DN - CN net, by document date) adds a
+fourth, `invoiced`, on the billing document lines; the bot asks it first ("Invoiced, delivered,
+ordered or outstanding?", owner ruling (b)).
 
 Ambiguity flagged to the captain: PLAN section 10 does not fix the shape of a CATALOGUE entry.
 Pinned here (tolerantly): an entry exposes `dimensions` and `filters`, each either a mapping
@@ -28,7 +31,7 @@ def _keys(collection):
     return list(collection.values()) if isinstance(collection, dict) else list(collection)
 
 
-BASES = ["delivered", "ordered", "outstanding"]
+BASES = ["invoiced", "delivered", "ordered", "outstanding"]
 
 
 def _definition(basis):
@@ -40,7 +43,7 @@ def _definition(basis):
 
 
 def _definitions():
-    """Every basis the catalogue HAS (the missing ones are asserted by the three-bases test)."""
+    """Every basis the catalogue HAS (the missing ones are asserted by the four-bases test)."""
     from app.services.reports.ask import CATALOGUE as _DATASETS
 
     CATALOGUE = _DATASETS["sales"]
@@ -48,7 +51,7 @@ def _definitions():
     return {basis: _field(CATALOGUE[basis], "definition") for basis in BASES if basis in CATALOGUE}
 
 
-def test_catalogue_has_the_three_bases():
+def test_catalogue_has_the_four_bases():
     from app.services.reports.ask import CATALOGUE as _DATASETS
 
     CATALOGUE = _DATASETS["sales"]
@@ -62,7 +65,8 @@ def test_the_basis_labels():
     CATALOGUE = _DATASETS["sales"]
 
     assert {b: _field(CATALOGUE[b], "label") for b in BASES} == {
-        "delivered": "delivered sales", "ordered": "ordered sales", "outstanding": "outstanding orders"}
+        "invoiced": "invoiced sales", "delivered": "delivered sales", "ordered": "ordered sales",
+        "outstanding": "outstanding orders"}
 
 
 def test_no_basis_reads_the_delivery_order_dataset():

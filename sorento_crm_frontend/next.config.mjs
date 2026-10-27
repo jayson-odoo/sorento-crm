@@ -30,6 +30,9 @@ const nextConfig = {
   experimental: {
     optimizePackageImports: ['@remixicon/react'],
     proxyTimeout: 120000,
+    // The rewrite proxy forwards a request body only up to 10 MB by default, so a 16 MB catalogue
+    // PDF never reached the backend; 60 MB covers the 50 MB upload ceiling plus multipart overhead.
+    middlewareClientMaxBodySize: '60mb',
   },
   compiler: {
     removeConsole: process.env.NODE_ENV === 'production' ? {

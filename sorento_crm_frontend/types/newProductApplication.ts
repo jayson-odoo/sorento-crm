@@ -7,6 +7,7 @@
 export type NewProductApplicationStatus =
   | 'draft'
   | 'submitted'
+  | 'resubmitted'
   | 'approved'
   | 'rejected'
   | 'completed'

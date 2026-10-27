@@ -42,6 +42,7 @@ from app.services.crockford import (
     CROCKFORD_TOKEN_LEN,
     crockford_token,
 )
+from app.services import submission_status
 from app.services.document_number import display_document_number
 from app.services.error_handler import (
     AppException,
@@ -1120,7 +1121,9 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit complaint with status {previous_status!r}."
                 )
-            row.status = "submitted"
+            row.status = submission_status.status_on_submit(
+                was_rejected=previous_status == "rejected"
+            )
         elif kind == "stock_inquiry":
             # A `responded` inquiry is read-only on this path - it changes only
             # through the revision endpoint (`PortalRevisionService.revise`).
@@ -1130,8 +1133,12 @@ class PortalService:
                 )
             # Portal submit mirrors the system "submit for project sales" flow:
             # advance directly to pending_project_sales so the Project Sales
-            # team is queued for review (notification fires below).
-            row.status = "pending_project_sales"
+            # team is queued for review (notification fires below). After a
+            # rejection it is `resubmitted`, which stands in for that stage.
+            row.status = submission_status.status_on_submit(
+                was_rejected=previous_status == "rejected",
+                stage=submission_status.SI_REVIEW_STAGE,
+            )
             row.rejection_reason = None
             row.rejected_at = None
             row.rejected_by = None
@@ -1181,7 +1188,9 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit {kind} with status {previous_status!r}."
                 )
-            row.status = "submitted"
+            row.status = submission_status.status_on_submit(
+                was_rejected=previous_status == "rejected" or approval_rejected
+            )
             # Top "Date" on the document = submitted date. Re-stamp on every submit,
             # including resubmit-after-rejection, so it reflects the latest submission
             # (mirrors approved_at, which also resets per approval cycle).
@@ -1951,20 +1960,25 @@ class PortalService:
             except Exception:  # noqa: BLE001
                 pass
             try:
+                sentence = (
+                    "A previously rejected stock inquiry has been resubmitted via the "
+                    "user portal and requires your review."
+                    if is_resubmission
+                    else "A new stock inquiry has been submitted via the user portal and "
+                    "requires your review."
+                )
                 service._notify_team_stock_inquiry(  # noqa: SLF001
                     inquiry_id=str(row.id),
                     agent_code="lead_time_enquiries",
                     team_assignment_code="project_sales",
-                    title="New Stock Inquiry created",
-                    intro_plain=(
-                        "Dear Project Sales Team,\n\nA new stock inquiry has been "
-                        "submitted via the user portal and requires your review."
+                    title=(
+                        "Stock inquiry resubmitted"
+                        if is_resubmission
+                        else "New Stock Inquiry created"
                     ),
-                    intro_html=(
-                        "Dear Project Sales Team,<br /><br />A new stock inquiry has been "
-                        "submitted via the user portal and requires your review."
-                    ),
-                    event_type="portal_submitted",
+                    intro_plain=f"Dear Project Sales Team,\n\n{sentence}",
+                    intro_html=f"Dear Project Sales Team,<br /><br />{sentence}",
+                    event_type="portal_resubmitted" if is_resubmission else "portal_submitted",
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Stock inquiry submit notify failed: %s", e)
@@ -1984,7 +1998,7 @@ class PortalService:
                     request_number=row.request_number or "N/A",
                     project_title=row.project_title or "N/A",
                     base_url_override=None,
-                    integration_action="created",
+                    integration_action="resubmitted" if is_resubmission else "created",
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Purchase request submit notify failed: %s", e)

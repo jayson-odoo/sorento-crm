@@ -626,7 +626,9 @@ def test_every_company_id_table_is_registered():
     #   are scoped through the parent = 170.
     # + 1 (SALES-UNIFIED): `sales.set_apart_customers`, one company's set-apart customers by
     #   month (`sales.agent_classes` has no company: its agent master is shared) = 171.
-    expected_owned = 171
+    # + 1 (CATALOG-IMAGES): `catalogue_photo_readings`, one company's catalogue upload; its
+    #   `catalogue_photos` rows carry no company_id and are reached only through the reading = 172.
+    expected_owned = 172
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

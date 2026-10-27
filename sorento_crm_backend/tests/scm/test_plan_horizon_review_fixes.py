@@ -178,7 +178,8 @@ def _project_reserve(db, *, product_id, donor_warehouse_id, qty,
                      required_date=None) -> None:
     """The minimal section-4/6.1 chain a Reserve/Borrow claim needs: a core SO line, its
     Project counterpart, an ACTIVE supply decision, and the `so_line_allocations` row
-    (`source_type='reserve'`, never `'order'` - that leg is the Buy residual, not a claim
+    (`source_type='other_location'`, a Borrow: BOARD-NO-HOLD, 27 Oct 2026, a Reserve no
+    longer claims stock; never `'order'` - that leg is the Buy residual, not a claim
     on existing stock)."""
     so = SalesOrder(id=_u(), so_number=_code("SO"), status="open", demand_class="project")
     db.add(so)
@@ -209,7 +210,7 @@ def _project_reserve(db, *, product_id, donor_warehouse_id, qty,
     db.add(decision)
     db.flush()
     alloc = SOLineAllocation(
-        id=_u(), so_line_id=psl.id, source_type="reserve",
+        id=_u(), so_line_id=psl.id, source_type="other_location",
         warehouse_id=donor_warehouse_id, qty=qty,
     )
     db.add(alloc)

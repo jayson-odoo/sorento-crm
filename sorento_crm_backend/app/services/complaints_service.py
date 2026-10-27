@@ -22,6 +22,7 @@ from app.models.sla import ConversationSLATracking
 from app.services.sla_scope import open_tracker_scope
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.contact_brand_scope import complaint_in_scope_clauses, in_scope_product_codes
+from app.services import submission_status
 from app.services.error_handler import handle_not_found
 from app.services.response_gate import (
     ALLOWED_RESPONSE_STATUSES,
@@ -1774,6 +1775,18 @@ class ComplaintService:
     # written without a status move. It lives in response_gate so the gate and
     # the status flip can never disagree about what the response stage is.
     _RESPONSE_STAGE_STATUSES: tuple[str, ...] = ALLOWED_RESPONSE_STATUSES["complaint"]
+
+    def resubmit_rejected_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
+        """Edit-via-submit of a rejected complaint (chatbot / integration path).
+
+        The caller has already checked the complaint is ``rejected``. The edit is a
+        submission answering that rejection, so it lands on ``resubmitted`` whatever
+        status the payload carried.
+        """
+        update = complaint_data.model_copy(
+            update={"status": submission_status.status_on_submit(was_rejected=True)}
+        )
+        return self.update_complaint(complaint_id, update)
 
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""

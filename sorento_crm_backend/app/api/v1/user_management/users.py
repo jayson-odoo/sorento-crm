@@ -30,7 +30,7 @@ from app.services.notification_service import NotificationService
 from app.services.product_discontinued_scope_service import serialize_scopes
 from app.services.user_service import UserService, UserPermissionService
 from app.services.user_avatar_url import resolve_avatar_url_for_client
-from app.utils.multi_value import multi_values
+from app.utils.multi_value import multi_uuids, multi_values
 
 logger = logging.getLogger(__name__)
 
@@ -71,6 +71,7 @@ async def get_users(
     db: Session = Depends(get_db)
 ):
     """Get users with pagination, filtering, and sorting."""
+    role_ids = multi_uuids(roleId, "Role")
     try:
         service = UserService(db)
         result = service.list_users(
@@ -78,7 +79,7 @@ async def get_users(
             limit=limit,
             query=query,
             status=multi_values(status),
-            role_id=multi_values(roleId),
+            role_id=role_ids,
             respond_synced=respond_synced,
             tier=tier,
             trashed=trashed,

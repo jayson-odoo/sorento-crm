@@ -112,7 +112,7 @@ export interface ProjectTemplateBody {
  * A portal registration's approval state (PROJECT-REG-PORTAL R1). Null is a staff-registered
  * project. A draft is never listed; pending and rejected ones have no code yet.
  */
-export type ProjectApprovalState = 'draft' | 'pending' | 'rejected' | 'approved';
+export type ProjectApprovalState = 'draft' | 'pending' | 'resubmitted' | 'rejected' | 'approved';
 
 /** An approved project a pending registration may repeat (D8): a link, never a block. */
 export interface ProjectPossibleDuplicate {
