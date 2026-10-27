@@ -258,6 +258,7 @@ describe('Contacts: select every matching contact (Odoo pattern, capped at 1,000
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Server unavailable'));
     expect(screen.getByText('3 selected')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' })).toBeEnabled();
   });
 
   it('Export hands the xlsx builder all 1,000 selected contacts, not the page\'s 3', async () => {
@@ -429,5 +430,44 @@ describe('Contacts: select every matching contact (Odoo pattern, capped at 1,000
       resolve({ data: Array.from({ length: 1000 }, (_, i) => contact(i + 1)), pagination: { total } });
     });
     expect(await screen.findByText('1,000 selected')).toBeInTheDocument();
+  });
+
+  it('P1: leaving the mode while the fetch is out frees the link at once', async () => {
+    renderList();
+    await waitForRows();
+    getContactsMock.mockImplementationOnce(() => new Promise(() => {}));
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    await screen.findByRole('button', { name: 'Selecting...' });
+
+    fireEvent.click(headerBox());
+    fireEvent.click(headerBox());
+    expect(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' })).toBeEnabled();
+  });
+
+  it('P1: a sort change while the fetch is out frees the link at once', async () => {
+    nav.search = 'sort=last_name&dir=asc';
+    const view = renderList();
+    await waitForRows();
+    getContactsMock.mockImplementationOnce(() => new Promise(() => {}));
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    await screen.findByRole('button', { name: 'Selecting...' });
+
+    nav.search = 'sort=first_name&dir=asc';
+    view.rerenderList();
+    await waitFor(() =>
+      expect(
+        getContactsMock.mock.calls.some(([p]) => JSON.stringify((p as { sorting: unknown }).sorting) === '[{"id":"first_name","desc":false}]'),
+      ).toBe(true),
+    );
+    await waitForRows();
+    if (!screen.queryByRole('button', { name: 'Select first 1,000 of 1,248' })) {
+      fireEvent.click(headerBox());
+      if (screen.queryByText(/\d+ selected/) && !screen.queryByRole('button', { name: /Select first|Selecting/ })) {
+        fireEvent.click(headerBox());
+      }
+    }
+    expect(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' })).toBeEnabled();
   });
 });
