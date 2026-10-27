@@ -769,6 +769,11 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     # of it. Only such a line reopens when the cancel lowers (a removed, CRM-cancelled or
     # header-cancelled line never does).
     cancelled_by_cancel_doc = Column(Boolean, default=False, server_default="false", nullable=False)
+    # AC-REMOVED-KEEP-CANCELLED: True while the ingest keeps this line (cancelled) only because a
+    # DtlKey line is never deleted any more - AutoCount removed it and nothing pointed at it, so
+    # the old sweep would have deleted it. Excluded from every total (owner via crew, 27 Oct);
+    # cleared when AutoCount sends the line again.
+    removed_unreferenced = Column(Boolean, default=False, server_default="false", nullable=False)
     # AC-CONSIGN-CRM (ruling 2): on a consignment line, what live AutoCount Consignment Returns
     # matched to it add up to, capped at ordered, derived on every sync. Reporting only: no
     # planned, delivered or status reader looks at it.

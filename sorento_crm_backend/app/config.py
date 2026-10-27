@@ -265,6 +265,8 @@ class Settings(BaseSettings):
     rate_limit_reset_window_seconds: int = 900
     rate_limit_portal_otp_max: int = 30        # portal OTP requests per window per IP
     rate_limit_portal_otp_window_seconds: int = 60
+    rate_limit_portal_link_max: int = 10       # portal-link session exchanges per window per IP
+    rate_limit_portal_link_window_seconds: int = 300
     # PHOTO-SEND-CAP: opens of a chatbot file short link (`/public/file-links/{code}`) per
     # window per IP. Generous for a dealer tapping through a photo list, tight for a guesser.
     rate_limit_file_link_max: int = 60
@@ -290,6 +292,21 @@ class Settings(BaseSettings):
     # When True, scheduled task also drains pending rows from embedding_queue if Redis is empty of jobs.
     # Set False to use Redis (RQ) only; then REDIS_URL must be the instance where jobs were enqueued.
     embedding_queue_db_fallback_enabled: bool = True  # EMBEDDING_QUEUE_DB_FALLBACK_ENABLED
+    # Rows the embedding_job_processor task takes per run, from Redis and from the DB each.
+    embedding_queue_batch_size: int = 10  # EMBEDDING_QUEUE_BATCH_SIZE
+    # embedding_queue_prune deletes completed/skipped rows older than this, in batches.
+    embedding_queue_retention_days: int = 14  # EMBEDDING_QUEUE_RETENTION_DAYS
+    embedding_queue_prune_batch_size: int = 1000
+    embedding_queue_prune_max_batches: int = 100
+    # UTC hour in which embedding_queue_prune retries a pending-only index the deploy could not
+    # build (19 UTC = 03:00 MYT). Once a day, so a build that keeps timing out costs one 90s
+    # attempt a day, not one an hour, in the shared scheduler loop.
+    embedding_queue_index_retry_hour_utc: int = 19
+    # embedding_queue_dedupe retires duplicate pending rows (the pre-dedupe backlog): rows per
+    # batch, batches per run, and the pause between batches that spreads the write load.
+    embedding_queue_dedupe_batch_size: int = 10000
+    embedding_queue_dedupe_max_batches: int = 10
+    embedding_queue_dedupe_pause_seconds: float = 1.0
     embedding_max_retries: int = 5
     embedding_retry_backoff_seconds: int = 60
     embedding_chunk_size: int = 900

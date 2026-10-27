@@ -360,14 +360,60 @@ def test_parse_provider_json_accepts_trailing_prose():
     assert parse_provider_json(content) == {"a": 1}
 
 
-def test_parse_provider_json_raises_on_non_object_json():
-    with pytest.raises(MediaExtractionParseError):
-        parse_provider_json("[1, 2, 3]")
+def test_parse_provider_json_takes_the_first_object_of_a_top_level_list():
+    """Prod 27 Oct: a photo captioned SRTKS6547 came back wrapped in a list and
+    the whole turn failed with "non-object JSON value"."""
+    content = '[{"entities": [{"raw": "SRTKS6547", "hint": "product"}]}, {"x": 1}]'
+    assert parse_provider_json(content) == {
+        "entities": [{"raw": "SRTKS6547", "hint": "product"}]
+    }
 
 
-def test_parse_provider_json_raises_on_a_bare_json_string():
+def test_parse_provider_json_skips_non_objects_before_the_first_object_in_a_list():
+    assert parse_provider_json('[1, "a", {"a": 1}]') == {"a": 1}
+
+
+def test_parse_provider_json_degrades_an_empty_list_to_nothing_read():
+    assert parse_provider_json("[]") == {}
+
+
+def test_parse_provider_json_degrades_a_list_with_no_object_to_nothing_read():
+    assert parse_provider_json("[1, 2, 3]") == {}
+
+
+def test_parse_provider_json_degrades_null_to_nothing_read():
+    assert parse_provider_json("null") == {}
+
+
+def test_parse_provider_json_degrades_a_bare_json_string_to_nothing_read():
+    # The module docstring's promise: a bare string degrades, it does not fail.
+    assert parse_provider_json('"just a string"') == {}
+
+
+def test_parse_provider_json_still_accepts_a_plain_object():
+    assert parse_provider_json('{"a": 1}') == {"a": 1}
+
+
+def test_parse_provider_json_still_raises_on_a_bare_number():
+    with pytest.raises(MediaExtractionParseError) as exc:
+        parse_provider_json("42")
+    assert "42" in str(exc.value)
+
+
+def test_parse_provider_json_still_raises_on_a_bare_boolean():
     with pytest.raises(MediaExtractionParseError):
-        parse_provider_json('"just a string"')
+        parse_provider_json("true")
+
+
+def test_parse_provider_json_error_carries_the_start_of_the_raw_output():
+    content = "I cannot help with that image. " + "x" * 1000
+    with pytest.raises(MediaExtractionParseError) as exc:
+        parse_provider_json(content)
+    message = str(exc.value)
+    assert "I cannot help with that image." in message
+    # Bounded: the first ~300 chars, never the whole output.
+    assert "x" * 300 not in message
+    assert len(message) < 600
 
 
 def test_parse_provider_json_raises_on_empty_content():

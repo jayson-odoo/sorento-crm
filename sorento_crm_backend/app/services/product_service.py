@@ -1573,7 +1573,6 @@ class ProductService:
         """
         if not touched:
             return
-        from app.models.embeddings import EmbeddingQueue
         from app.services.queue_service import enqueue_job
         from app.services.embedding_service import _get_embedding_worker
         from app.config import settings as _settings
@@ -1613,8 +1612,12 @@ class ProductService:
             })
             enqueue_payload.append(queue_id)
 
+        from app.services.embedding_change_listener import enqueue_pending
+
         try:
-            self.db.bulk_insert_mappings(EmbeddingQueue, rows)
+            # A product with a row already pending gets no second one (EMBED-QUEUE-DEDUPE).
+            inserted = {row["id"] for row in enqueue_pending(self.db, rows)}
+            enqueue_payload = [q_id for q_id in enqueue_payload if q_id in inserted]
             self.db.commit()
         except Exception:
             self.db.rollback()

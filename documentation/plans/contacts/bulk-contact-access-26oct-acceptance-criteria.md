@@ -61,7 +61,8 @@ Test data is fake (public repo): dealers like "ALPHA BATH SDN BHD", phones +6010
   [crew audit round 4]: ticking a `candidate` account or adding one through the search ticks its Confirm box;
   unticking never confirms; when no admin-chosen account is ticked any more the block is un-confirmed; exact
   accounts pre-ticked from another company never count; the block's own Confirm box still confirms explicitly. A confirmed block links EVERY
-  confirmed account to EVERY found contact of the block.
+  confirmed account to EVERY found contact of the block. [Superseded 27 Oct by BULK-ACCESS-PREVIEW P1: an account
+  links only to contacts whose own row tags its company.]
 - U12 Each account shows debtor code, name, company, active flag and its sales agent; the sheet's agent text for
   that company sits beside it. The sales agent is never written.
 

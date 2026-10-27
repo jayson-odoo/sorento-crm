@@ -60,6 +60,7 @@ from app.services.chatbot.engine import find_turn_for_message
 from app.services.error_handler import AppException
 from app.services.chatbot_reply_copy import CHATBOT_TURN_ERROR_REPLY
 from app.services.chatbot.contracts import (
+    DIRECT_INGRESS,
     CompleteRequest,
     CompleteResponse,
     TurnRequest,
@@ -190,6 +191,13 @@ def chat_turn(
     to_reraise: HTTPException | None = None
 
     try:
+        # WU22: `respond_webhook` is the CRM's own signed-webhook marker (`direct_ingress.envelope_for`);
+        # a caller of this route may not claim it, or a forged contact card would count as signed.
+        if payload.envelope.ingress == DIRECT_INGRESS:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                detail="The ingress value respond_webhook is reserved for the CRM's own webhook.",
+            )
         # The serialised payload, so a chunked request with no `content-length` is bounded
         # too. See MAX_TURN_BODY_BYTES: this is a bound on what gets STORED.
         body_bytes = len(payload.model_dump_json().encode("utf-8"))
