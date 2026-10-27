@@ -5,11 +5,13 @@ Walks the Stock Debt VIEW (`StockDebtService._assignments(view=True)`, the page'
 twice for every product a confirmed Fulfilment Planning decision holds today:
 
   A. as the code stands (decision holds bind first, at any date);
-  B. with `ProjectSupplyService._hold_query` answering no rows, which is the one predicate every
-     reader (Stock Debt, the board strip, location stock, the ladder) asks "is this holding stock".
+  B. the ruled rule (owner 27 Oct): `ProjectSupplyService._hold_query`, the one predicate every
+     reader asks "is this holding stock", answers no RESERVE row (Borrow keeps holding, Q3), and
+     Stock Debt hands each Reserve to the walk as a ROUTE (Q1 a): its line may draw the bin the
+     plan names, at the line's own date, in date order (`supply_assignment.Hold.route`).
 
-Order inquiry placements, landed goods and the book's own S/O pins are untouched in both runs:
-only the board-decision half (`so_line_allocations`) is switched off.
+Order inquiry placements, landed goods, the book's own S/O pins and Borrow are untouched in both
+runs. Read as company `--company` (default SRT), the scope an SRT user's page reads under.
 
 Prints, per product, every open sales-order line whose Assigned / Short / status changes, the
 totals, and the named sales orders' lines in full. No customer names: SO numbers, product codes,
@@ -29,23 +31,91 @@ from typing import Dict, Iterator, List, Optional, Tuple
 
 @contextmanager
 def _decisions_hold_nothing() -> Iterator[None]:
-    """Run B: the shared hold predicate matches no row. Restored on exit."""
-    from sqlalchemy import false
-
-    from app.services.project_supply_service import ProjectSupplyService
+    """Run B: the shared hold predicate matches no RESERVE row, and Stock Debt hands each
+    Reserve to the walk as a route instead. Restored on exit."""
+    from app.models.inventory import Warehouse
+    from app.models.project_so import (
+        ALLOC_RESERVE_SOURCES,
+        ProjectSalesOrderLine,
+        SOLineAllocation,
+    )
+    from app.services.project_supply_service import (
+        ProjectSupplyService,
+        _hold_product,
+        held_qty_expr,
+    )
+    from app.services.scm.supply_assignment import KIND_ON_HAND, Hold
 
     original = ProjectSupplyService._hold_query
 
     def no_holds(self, product_ids, *, exclude_line_ids, entities=None):
+        # Owner, 27 Oct ~18:15 (Q3): Borrow works like today and keeps holding; only a
+        # Reserve stops.
         return original(
             self, product_ids, exclude_line_ids=exclude_line_ids, entities=entities
-        ).filter(false())
+        ).filter(SOLineAllocation.source_type.notin_(ALLOC_RESERVE_SOURCES))
+
+    from app.services.scm.stock_debt_service import StockDebtService
+
+    original_holds = StockDebtService._holds
+
+    def with_routes(self, product_ids, line_keys, **kwargs):
+        # Owner Q1 (a): the Reserve still lets its line draw the bin it names, at the
+        # line's own date, in date order - a ROUTE (`Hold.route`), not a hold.
+        out = original_holds(self, product_ids, line_keys, **kwargs)
+        if not line_keys:
+            return out
+        span = kwargs.get("span")
+        supply_rows = kwargs.get("supply_rows") or {}
+        rows = (
+            original(
+                self.supply,
+                [str(pid) for pid in product_ids],
+                exclude_line_ids=None,
+                entities=(
+                    ProjectSalesOrderLine.core_sales_order_line_id,
+                    SOLineAllocation.warehouse_id,
+                    held_qty_expr(),
+                    Warehouse.warehouse_code,
+                    _hold_product,
+                ),
+            )
+            .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
+            .filter(
+                ProjectSalesOrderLine.core_sales_order_line_id.in_(list(line_keys)),
+                SOLineAllocation.source_type.in_(ALLOC_RESERVE_SOURCES),
+            )
+            .order_by(
+                SOLineAllocation.confirmed_at,
+                SOLineAllocation.created_at,
+                SOLineAllocation.id,
+            )
+            .all()
+        )
+        for core_line_id, warehouse_id, qty, code, product_id in rows:
+            key = f"on_hand:{warehouse_id}"
+            # The same rule `_holds` applies to a pin: a bin in the span the read found
+            # empty covers nobody (STOCK-DEBT-STALE-PIN).
+            in_span_empty = span is not None and str(warehouse_id) in span and key not in {
+                e.key for e in supply_rows.get(str(product_id), []) if e.kind == KIND_ON_HAND
+            }
+            if float(qty or 0) <= 0 or in_span_empty:
+                continue
+            out.append(
+                Hold(
+                    line_key=str(core_line_id), supply_key=key, qty=float(qty),
+                    kind=KIND_ON_HAND, warehouse=code, route=True,
+                )
+            )
+        return out
 
     ProjectSupplyService._hold_query = no_holds
+    StockDebtService._holds = with_routes
     try:
         yield
     finally:
         ProjectSupplyService._hold_query = original
+        StockDebtService._holds = original_holds
 
 
 def _held_products(db) -> List[Tuple[str, str, Optional[str]]]:
@@ -156,18 +226,33 @@ def main() -> None:
     parser.add_argument("--so", action="append", default=[],
                         help="SO number to print in full (repeatable)")
     parser.add_argument("--csv", help="write every changed line to this CSV")
+    parser.add_argument("--company", default="SRT", help="company code the page reads as")
     args = parser.parse_args()
     focus_products = set(args.product or ["CB4702"])
     focus_sos = set(args.so or ["SO400884", "SO426986"])
 
     from sqlalchemy import text
 
+    # The scope filter is a session listener the API installs at startup; without it, and
+    # without a scope on the session, `goods_chain`'s company predicate compiles to false
+    # and every transferred-SPO / PO placement chain reads nothing (crew, 27 Oct). Same
+    # pattern as `scripts/dealer_targets_dry_run.py`.
+    from app.services import company_scope as scope_module
+
+    scope_module.register_company_scope_listeners()
     from app.database import SessionLocal
+    from app.models.base import company_scope
 
     db = SessionLocal()
     try:
         db.execute(text("SET TRANSACTION READ ONLY"))
-        report(db, focus_products=focus_products, focus_sos=focus_sos, csv_path=args.csv)
+        company_id = db.execute(
+            text("select id from companies where code = :c"), {"c": args.company}
+        ).scalar()
+        if not company_id:
+            raise SystemExit(f"no company with code {args.company}")
+        with company_scope(db, frozenset({str(company_id)})):
+            report(db, focus_products=focus_products, focus_sos=focus_sos, csv_path=args.csv)
     finally:
         db.rollback()
         db.close()
