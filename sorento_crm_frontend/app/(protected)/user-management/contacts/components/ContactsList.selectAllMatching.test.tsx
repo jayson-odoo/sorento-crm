@@ -52,11 +52,12 @@ vi.mock('next-auth/react', () => ({
 }));
 vi.mock('@/lib/is-superadmin', () => ({ isSuperadminUser: () => false }));
 
-const permsRef = vi.hoisted(() => ({ view: true, add: true }));
+const permsRef = vi.hoisted(() => ({ view: true, add: true, edit: true }));
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => {
     if (slug === 'user_management.users.view') return permsRef.view;
     if (slug === 'user_management.users.add') return permsRef.add;
+    if (slug === 'user_management.contacts.edit') return permsRef.edit;
     return false;
   },
 }));
@@ -72,6 +73,12 @@ vi.mock('next/navigation', () => ({
 }));
 
 const toastError = vi.hoisted(() => vi.fn());
+const generateExcelFileMock = vi.hoisted(() => vi.fn());
+vi.mock('@/lib/excel-utils', async (orig) => ({
+  ...(await orig<typeof import('@/lib/excel-utils')>()),
+  generateExcelFile: (...a: unknown[]) => generateExcelFileMock(...a),
+}));
+
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: toastError, warning: vi.fn() } }));
 
 
@@ -224,5 +231,22 @@ describe('Internal Users: select every matching contact (Odoo pattern, capped at
 
     await waitFor(() => expect(toastError).toHaveBeenCalledWith('Server unavailable'));
     expect(screen.getByText('3 selected')).toBeInTheDocument();
+  });
+
+  it('Export hands the xlsx builder all 1,000 selected contacts, not the page\'s 3', async () => {
+    renderList();
+    await waitForRows();
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    await screen.findByText('1,000 selected');
+
+    const menu = await openActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: /^Export/ }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Download Excel' }));
+
+    await waitFor(() => expect(generateExcelFileMock).toHaveBeenCalled());
+    const rows = generateExcelFileMock.mock.calls[0][0] as Record<string, unknown>[];
+    expect(rows).toHaveLength(1000);
+    expect(rows.some((r) => Object.values(r).includes('Demo Contact 1000'))).toBe(true);
   });
 });
