@@ -64,6 +64,8 @@ TYPE_MARGIN = 0.15
 TOKEN_SIMILARITY = 0.6
 #: One edit is allowed only in words at least this long.
 EDIT_MIN_LETTERS = 4
+#: A span word that is a row word minus its vowels needs at least this many consonants to match.
+SKELETON_MIN_LETTERS = 3
 #: Row sets whose text structures are kept (the last few), so a turn prepares only its own spans.
 _PREPARED_SETS = 2
 
@@ -110,6 +112,23 @@ def spec_key_rows(registry: Iterable[Any]) -> list[LookupRow]:
     return out
 
 
+def _drops_only_vowels(word: str, target: str) -> int | None:
+    """How many letters of `target` a span word leaves out when it is `target` with only vowels removed (a
+    subsequence of it, no vowel changed or added, same first letter, at least `SKELETON_MIN_LETTERS` consonants);
+    None when it is not."""
+    if len(word) >= len(target) or word[0] != target[0]:
+        return None
+    if sum(1 for ch in word if ch not in "aeiou") < SKELETON_MIN_LETTERS:
+        return None
+    i = 0
+    for ch in target:
+        if i < len(word) and ch == word[i]:
+            i += 1
+        elif ch not in "aeiou":
+            return None
+    return len(target) - len(word) if i == len(word) else None
+
+
 class _ListIndex:
     """The texts of one list, folded and tokenised once: trigrams, word IDF, and an inverted word index."""
 
@@ -149,7 +168,7 @@ class _ListIndex:
 
     def matching_words(self, word: str) -> dict[str, float]:
         """The vocabulary words a span word stands for, with how well: 1.0 equal, the trigram similarity when it
-        is at least `TOKEN_SIMILARITY`, `1 - 1/letters` for one edit."""
+        is at least `TOKEN_SIMILARITY`, `1 - 1/letters` for one edit or a vowel-less spelling of the row word."""
         hit = self._matches.get(word)
         if hit is None:
             hit = {}
@@ -167,6 +186,12 @@ class _ListIndex:
                 for w in near:
                     if len(w) >= EDIT_MIN_LETTERS and abs(len(w) - len(word)) <= 1 and w != word:
                         hit[w] = max(hit.get(w, 0.0), 1.0 - 1.0 / max(len(w), len(word)))
+            if word:
+                for w in self.vocab:
+                    dropped = _drops_only_vowels(word, w)
+                    if dropped:
+                        # exactly what a one-edit match of the same two words scores: never above it, below equal
+                        hit[w] = max(hit.get(w, 0.0), 1.0 - 1.0 / len(w))
             self._matches[word] = hit
         return hit
 
