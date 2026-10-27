@@ -25,8 +25,6 @@ export and a snapshot show stays identical.
   lane sha, full board under the filter matrix: zero differences; warm median and p95 reported
   in the PR (counts only, no names: public repo).
 
-## Later PRs
-
 ## PR2: walk each product once (B), branch crew/stockdebt-perf-b stacked on #1901
 
 - AC-SDP-B1: In one board build, `assign()` runs for a product once per DISTINCT set of pinned
