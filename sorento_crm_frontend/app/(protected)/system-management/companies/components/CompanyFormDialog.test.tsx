@@ -105,3 +105,36 @@ describe('CompanyFormDialog - AutoCount sales orders connected switch', () => {
     expect(labels[1].textContent).toBe('Active');
   });
 });
+
+describe('CompanyFormDialog - Sales agent on a sale', () => {
+  it('sends the document setting by default on create', async () => {
+    renderCreate();
+    fillRequired();
+    fireEvent.click(screen.getByRole('button', { name: /^Create$/ }));
+
+    await waitFor(() => expect(hooks.createAsync).toHaveBeenCalledTimes(1));
+    expect(hooks.createAsync.mock.calls[0][0]).toMatchObject({ sales_agent_source: 'document' });
+  });
+
+  it('sends the saved customer setting on update', async () => {
+    hooks.useCompany.mockReturnValue({
+      data: {
+        id: 'c1',
+        name: 'Mocha',
+        code: 'MCH',
+        is_active: true,
+        so_feed_live: true,
+        sales_agent_source: 'customer',
+      },
+      isLoading: false,
+    });
+    render(<CompanyFormDialog open onOpenChange={vi.fn()} companyId="c1" />);
+    fireEvent.click(await screen.findByRole('button', { name: /^Update$/ }));
+
+    await waitFor(() => expect(hooks.updateAsync).toHaveBeenCalledTimes(1));
+    expect(hooks.updateAsync.mock.calls[0][0]).toMatchObject({
+      id: 'c1',
+      data: expect.objectContaining({ sales_agent_source: 'customer' }),
+    });
+  });
+});

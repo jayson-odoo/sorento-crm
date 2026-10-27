@@ -205,7 +205,9 @@ def _resolve_top_n(_db: Any, _word: str, extras: dict[str, Any]) -> rf.Resolved:
 #: The parser's keys for an answer to the metric question: `measure` (qty | amount) or the top
 #: selling key `rank_by` (a bare reply under the question parses as a top selling reading).
 METRIC_FROM_RANK_BY = {"quantity": "qty", "amount": "amount"}
-BASES = ("delivered", "ordered", "outstanding")
+#: The report ask's bases, in the order the basis question lists them (SALES-UNIFIED: invoiced
+#: is the one sales definition, `reports.ask.CATALOGUE["sales"]["invoiced"]`).
+BASES = ("invoiced", "delivered", "ordered", "outstanding")
 #: The measures the parser's `measure` may name: the two sums and (REPORT-SMART-1021) the
 #: counts (`reports.ask.COUNT_MEASURES`: customers, orders, products).
 METRICS = ("qty", "amount", "customers", "orders", "products")
@@ -309,7 +311,7 @@ BREAKDOWN_TOP_N = 100
 #: The keys `by_capability` writes; stripped from every verdict first, so no parse sets them.
 CAPABILITY_KEYS = ("capability_from", "report_breakdown", "bare_top_selling")
 #: The analysis's basis key (`sales_basis`) and the bases the report ask has of it.
-_ANALYSIS_BASES = frozenset({"delivered", "ordered"})
+_ANALYSIS_BASES = frozenset({"invoiced", "delivered", "ordered"})
 
 
 def from_top_selling(verdict: dict[str, Any]) -> dict[str, Any]:
@@ -1342,7 +1344,7 @@ def _refine(
             for key in ("product_code", "product_ids"):
                 args.pop(key, None)
             args.update(product_args)
-    if parse_output.get("basis") in ("ordered", "delivered", "outstanding"):
+    if parse_output.get("basis") in BASES:
         args["basis"] = parse_output["basis"]
     if metric_from(parse_output):
         args["measure"] = metric_from(parse_output)  # `measure`, else the top selling key `rank_by`
@@ -1542,6 +1544,22 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     if args.get("group_by") and isinstance(top_n, int):
         args["top_n"] = top_n
     return args
+
+
+#: SALES-UNIFIED (contract section 7): a billing line has no warehouse, so the route answers an
+#: invoiced ask by location (axis or filter) with 422 `location_needs_order_basis`. Said here
+#: before anything runs.
+INVOICED_LOCATION_LINE = "Sales by location are for delivered or ordered sales only."
+
+
+def invoiced_location_line(args: dict[str, Any]) -> str | None:
+    """The line for settled route args the route would refuse as an invoiced ask by location;
+    None for any other ask."""
+    if args.get("basis") != "invoiced":
+        return None
+    if args.get("group_by") == "location" or args.get("warehouse_codes"):
+        return INVOICED_LOCATION_LINE
+    return None
 
 
 def error_line(envelope: Any) -> str | None:

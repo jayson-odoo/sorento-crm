@@ -12,7 +12,12 @@ import {
 import { cn } from '@/lib/utils';
 import { formatMoney2dp } from '@/lib/helpers';
 import { wholeRinggit } from './reportFormat';
-import type { ReportColumn, ReportPivotLayout } from '@/services/reportService';
+import { ArrowDown, ArrowUp, ChevronsUpDown } from 'lucide-react';
+import type {
+  ReportColumn,
+  ReportPivotLayout,
+  ReportSortConfig,
+} from '@/services/reportService';
 
 /**
  * Blank, not zero: an absent cell is a form that does not exist, not a form worth nothing.
@@ -47,7 +52,48 @@ const PINNED_FOOT =
  * Every number here is a string the engine computed. Nothing on this screen adds two
  * figures together, so the pivot and the exported workbook cannot disagree to the sen.
  */
-export function ReportPivotTable({ layout }: { layout: ReportPivotLayout }) {
+function SortHeader({
+  label,
+  sortKey,
+  sort,
+  onSort,
+  center,
+}: {
+  label: string;
+  sortKey: string;
+  sort?: ReportSortConfig | null;
+  onSort?: (key: string) => void;
+  center?: boolean;
+}) {
+  if (!onSort) return <>{label}</>;
+  const active = sort?.key === sortKey;
+  const Icon = !active ? ChevronsUpDown : sort?.dir === 'desc' ? ArrowDown : ArrowUp;
+  return (
+    <button
+      type="button"
+      onClick={() => onSort(sortKey)}
+      aria-label={`Sort by ${label}`}
+      data-sort={active ? sort?.dir : 'none'}
+      className={cn(
+        'inline-flex items-center gap-1 font-[inherit] hover:text-foreground',
+        center && 'justify-center',
+      )}
+    >
+      {label}
+      <Icon className={cn('size-[0.7rem]', !active && 'opacity-60')} aria-hidden="true" />
+    </button>
+  );
+}
+
+export function ReportPivotTable({
+  layout,
+  sort,
+  onSort,
+}: {
+  layout: ReportPivotLayout;
+  sort?: ReportSortConfig | null;
+  onSort?: (key: string) => void;
+}) {
   const { measures, col_dim: colDim, row_values: rowValues } = layout;
   const columnLabel = (value: string) => colDim.value_labels?.[value] ?? value;
   const whole = layout.whole_units === true;
@@ -61,7 +107,7 @@ export function ReportPivotTable({ layout }: { layout: ReportPivotLayout }) {
         <TableHeader>
           <TableRow className="bg-muted/40">
             <TableHead rowSpan={2} className={cn(PINNED_HEAD, 'border-b border-border align-bottom')}>
-              {layout.row_dim.label}
+              <SortHeader label={layout.row_dim.label} sortKey="__row__" sort={sort} onSort={onSort} />
             </TableHead>
             {colDim.values.map((value) => (
               <TableHead
@@ -69,14 +115,20 @@ export function ReportPivotTable({ layout }: { layout: ReportPivotLayout }) {
                 colSpan={measures.length}
                 className="border-b border-s border-border text-center whitespace-nowrap"
               >
-                {columnLabel(value)}
+                <SortHeader
+                  label={columnLabel(value)}
+                  sortKey={value}
+                  sort={sort}
+                  onSort={onSort}
+                  center
+                />
               </TableHead>
             ))}
             <TableHead
               colSpan={measures.length}
               className="border-b border-s border-border text-center font-medium text-foreground whitespace-nowrap"
             >
-              Total
+              <SortHeader label="Total" sortKey="__total__" sort={sort} onSort={onSort} center />
             </TableHead>
           </TableRow>
           <TableRow className="bg-muted/40">

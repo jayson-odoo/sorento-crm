@@ -231,10 +231,19 @@ export type ReportParamMeta =
       options: ReportSelectOption[];
     };
 
+/**
+ * A server-side sort. Detail: `key` is a catalogue column. Summary: `__row__` is the row
+ * label, `__total__` the row total, any other value is a column value's cell.
+ */
+export interface ReportSortConfig {
+  key: string;
+  dir: 'asc' | 'desc';
+}
+
 export interface ReportViewConfig {
   params: ReportParamValues;
-  detail: { columns: string[]; order: string[] };
-  pivot: { rows: string; cols: string; measures: string[] };
+  detail: { columns: string[]; order: string[]; sort?: ReportSortConfig | null };
+  pivot: { rows: string; cols: string; measures: string[]; sort?: ReportSortConfig | null };
 }
 
 export interface ReportView {

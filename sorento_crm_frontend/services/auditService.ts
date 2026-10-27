@@ -12,6 +12,8 @@ export async function getAuditLogs(params: {
     entity_id: params.entity_id,
     page: String(params.page ?? 1),
     limit: String(params.limit ?? 50),
+    // A record's trail also lists its child rows (a complaint's product lines).
+    include_children: 'true',
   });
   const response = await apiFetch(`/api/v1/audit/logs?${search.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch audit logs');

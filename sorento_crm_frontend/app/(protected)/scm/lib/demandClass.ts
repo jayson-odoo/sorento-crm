@@ -20,7 +20,7 @@ import {
   demandClassLabel,
 } from '@/app/(protected)/master-data-management/sales-agents/lib/demandClass';
 
-export type DemandClassValue = 'project' | 'retail' | null | undefined;
+export type DemandClassValue = 'project' | 'retail' | 'other' | null | undefined;
 
 export type DemandClassBadgeVariant = 'info' | 'secondary';
 
@@ -29,11 +29,12 @@ export interface DemandClassBadge {
   label: string;
 }
 
-/** Project vs Retail chip, off `demand_class`. An unset class reads a MUTED
+/** Project / Retail / Other chip, off `demand_class`. An unset class reads a MUTED
  *  "Unclassified" rather than being hidden - it is a real, common answer (most of the
  *  book), not a loading state. */
 export function demandClassBadge(value: string | null | undefined): DemandClassBadge {
   const label = demandClassLabel(value);
+  if (value === 'other') return { variant: 'secondary', label: 'Other' };
   if (label && value && value in DEMAND_CLASS_LABEL) return { variant: 'info', label };
   return { variant: 'secondary', label: 'Unclassified' };
 }

@@ -297,19 +297,20 @@ def test_ac_r4_7_ac_s1_11_one_block_per_ticked_channel_titled_by_company(db, def
     assert [b.title for b in one] == ["SORENTO - PROJECT TEAM"]
 
 
-def test_ac_r3_3_basis_is_required_single_and_defaults_to_delivered(db, definition):
+def test_ac_r3_3_basis_is_required_single_and_defaults_to_invoiced(db, definition):
+    # SALES-UNIFIED AC-20: the default is Invoiced, the one sales definition.
     from app.services.error_handler import AppException
     from app.services.reports import engine
 
     basis = next(p for p in definition.params if p.key == "basis")
-    assert basis.default == ("delivered",)
+    assert basis.default == ("invoiced",)
     assert basis.multi is False and basis.clearable is False
     with pytest.raises(AppException) as bad:
         # "invoiced" is a basis since finance S1 (#1309); an unknown one is still refused.
         _run(db, definition, basis=["shipped"])
     assert bad.value.status_code == 422
     view = engine.view_config(definition)
-    assert view.params["basis"] == ["delivered"]
+    assert view.params["basis"] == ["invoiced"]
 
 
 def test_the_basis_line_is_on_the_result(db, definition):

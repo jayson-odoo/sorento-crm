@@ -534,7 +534,7 @@ export interface SalesOrder {
   stock_locations?: string[];
   /** The planning class this order was classified into, or `null` when nobody has ever
    *  said. Distinct from `order_type_label` - see `lib/demandClass.ts`. */
-  demand_class?: 'project' | 'retail' | null;
+  demand_class?: 'project' | 'retail' | 'other' | null;
   /** AutoCount's `Transferable` flag, read-only (AutoCount owns it). `false` = not confirmed
    *  for the queue yet, so Stock Debt and the fulfilment ladder skip the order; `null` = the
    *  source never said (counted). */

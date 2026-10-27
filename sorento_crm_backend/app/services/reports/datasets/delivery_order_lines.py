@@ -45,7 +45,7 @@ from app.services.reports import registry as reg
 NO_AGENT = "(no agent)"
 
 #: The two channel values the `channel` dimension and filter speak (sales order `demand_class`).
-CHANNELS = ("project", "retail")
+CHANNELS = ("project", "retail", "other")
 
 _LINE_SO = sa.orm.aliased(SalesOrder)
 _LINE_SOL = sa.orm.aliased(SalesOrderLine)

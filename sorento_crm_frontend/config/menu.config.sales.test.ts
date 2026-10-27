@@ -103,6 +103,9 @@ describe('filterMenuByModule - Sales group', () => {
       'Sales Teams',
       'Sales Agents',
       'Yearly comparison',
+      'Sales by debtor type',
+      'Top selling items',
+      'Set-apart customers',
     ]);
   });
 });

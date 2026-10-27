@@ -24,6 +24,7 @@ from app.schemas.scm_orders import (
     SalesOrderListResponse,
     SalesOrderUpdate,
 )
+from app.services.document_relations import RELATED_SORT_PATTERN
 from app.services.scm.sales_order_service import SalesOrderService
 
 router = APIRouter()
@@ -196,6 +197,31 @@ def get_sales_order_deliveries(so_id: str, db: Session = Depends(get_db), _user:
     except ValueError:
         raise AppException(404, "Sales order not found", code="SO_NOT_FOUND")
     return so_line_history(db, SalesOrderService(db)._get_or_404(so_id))
+
+
+@router.get("/sales-orders/{so_id}/related")
+def get_sales_order_related(
+    so_id: str,
+    sort: str = Query("doc_date", pattern=RELATED_SORT_PATTERN),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    db: Session = Depends(get_db),
+    user: dict = Depends(_READ),
+):
+    """DOC-RELATIONS: the delivery orders and billing documents of this order, each kind null
+    without its view slug, plus the visible ones as one table sorted server side."""
+    import uuid
+
+    from app.services import document_relations as relations
+    from app.services.error_handler import AppException
+
+    try:
+        uuid.UUID(str(so_id))
+    except ValueError:
+        raise AppException(404, "Sales order not found", code="SO_NOT_FOUND")
+    so = SalesOrderService(db)._get_or_404(so_id)
+    return relations.related_response(
+        db, user["id"], relations.relations_for_sales_order(db, so), sort=sort, dir=dir
+    )
 
 
 @router.post("/sales-orders", response_model=SalesOrder, status_code=status.HTTP_201_CREATED)

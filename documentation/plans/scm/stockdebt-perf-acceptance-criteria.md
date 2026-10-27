@@ -25,9 +25,19 @@ export and a snapshot show stays identical.
   lane sha, full board under the filter matrix: zero differences; warm median and p95 reported
   in the PR (counts only, no names: public repo).
 
+## PR2: walk each product once (B), branch crew/stockdebt-perf-b stacked on #1901
+
+- AC-SDP-B1: In one board build, `assign()` runs for a product once per DISTINCT set of pinned
+  holds it is walked with. A product whose pinned holds are the same in the base pass, the
+  landed-holds pass and the book-SO pass is walked exactly once (today: up to three times,
+  stock_debt_service.py held_by_line called twice, then the final walk).
+- AC-SDP-B2: The pinned holds handed to `assign()` for a product are exactly the holds whose
+  line is one of that product's demand lines, in the order they sit in the full holds list
+  (today's order; pins share a stand-in in hold order).
+- AC-SDP-B3: Holds are bucketed by product once per pass, not filtered from the full list once
+  per product (perf, measured by the harness, not a CI assertion).
+- AC-SDP-B4: Same equality bar as PR1: side-by-side harness, zero differences vs PR1's head.
+
 ## Later PRs
 
-- PR2 (B): each product walked once per pass; holds looked up by line key, not scanned per
-  product. Same equality bar.
-- PR3 (C): transferred allocations read once per request; last-supplier and remaining reads
-  tuned. Same equality bar; no statement count increase.
+- PR3: see branch crew/stockdebt-perf-c. Same equality bar; no statement count increase.
