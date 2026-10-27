@@ -3,6 +3,7 @@ values (OR within a filter, AND across). Red first; Postgres only; rows seeded h
 """
 from __future__ import annotations
 
+import uuid
 import pytest
 
 from app.models.company import Company  # noqa: F401  (mapper registry)
@@ -39,7 +40,8 @@ def _user(db, tag, label, status, roles=()):
 
 
 def _role(db):
-    role = UserRole(id=unique_code("role"), slug=unique_code("role").lower(), name=unique_code("Role"))
+    # Real role ids are uuids (21 of 21 on the dev DB), and the filter 422s on anything else.
+    role = UserRole(id=str(uuid.uuid4()), slug=unique_code("role").lower(), name=unique_code("Role"))
     db.add(role)
     db.flush()
     return role
