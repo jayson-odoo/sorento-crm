@@ -42,6 +42,8 @@ import type {
   MirrorAnnotationPayload,
   SalesAgent,
   SalesAgentBulkAnnotatePayload,
+  SalesAgentClassPayload,
+  SalesAgentClassRow,
 } from '../types/salesAgent.types';
 
 const BASE = '/api/v1/master-data/sales-agents';
@@ -183,4 +185,45 @@ export async function assignSalesAgentCustomers(
   }
   const body: { data?: AgentCustomer[] } = await response.json();
   return body.data ?? [];
+}
+
+/**
+ * The agent's dated classes.
+ *   GET   /api/v1/master-data/sales-agents/{id}/classes             -> { data: SalesAgentClassRow[] }
+ *   POST  /api/v1/master-data/sales-agents/{id}/classes             body SalesAgentClassPayload
+ *   PATCH /api/v1/master-data/sales-agents/classes/{rowId}          body SalesAgentClassPayload
+ * Delete is the parked action `sales_agent_class.delete` (D7).
+ */
+export async function getSalesAgentClasses(agentId: string): Promise<SalesAgentClassRow[]> {
+  const response = await apiFetch(`${BASE}/${agentId}/classes`);
+  if (!response.ok) {
+    throw new Error(await extractApiError(response, 'Failed to load the class history'));
+  }
+  return (await response.json()).data;
+}
+
+function classInit(method: string, payload: SalesAgentClassPayload): RequestInit {
+  return {
+    method,
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  };
+}
+
+export async function createSalesAgentClass(
+  agentId: string,
+  payload: SalesAgentClassPayload,
+): Promise<SalesAgentClassRow> {
+  const response = await apiFetch(`${BASE}/${agentId}/classes`, classInit('POST', payload));
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to add the class'));
+  return response.json();
+}
+
+export async function updateSalesAgentClass(
+  rowId: string,
+  payload: SalesAgentClassPayload,
+): Promise<SalesAgentClassRow> {
+  const response = await apiFetch(`${BASE}/classes/${rowId}`, classInit('PATCH', payload));
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to save the class'));
+  return response.json();
 }

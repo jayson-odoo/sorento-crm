@@ -17,7 +17,7 @@ from typing import Any, Optional
 
 from sqlalchemy.orm import Session
 
-from app.services.reports.datasets import chat_asks, chat_report_ask, sales_order_lines_ask
+from app.services.reports.datasets import billing_document_lines, chat_asks, chat_report_ask, sales_order_lines_ask
 from app.services.sales_report_delivered import _CHANNEL_CLASS, resolve_locations
 from app.services.sales_report_service import _money_edge, _qty
 
@@ -39,21 +39,30 @@ CHAT_MEASURES = ("asks", "failed", "failure_rate", "contacts")
 #: The dimensions that are a run of time: a trend lists every bucket, oldest first.
 CHAT_TRENDS = frozenset({"week", "month", "day"})
 
-#: Dataset -> basis -> entry. Sales: one entry per basis, every one over sales order lines.
-#: Chat: `asks` counts every ask, `turns` each message once.
+#: Dataset -> basis -> entry. Sales: `invoiced` (SALES-UNIFIED: the one sales definition, on the
+#: billing lines the Top selling items report reads, so the two cannot disagree) and one entry
+#: per order basis over sales order lines. Chat: `asks` counts every ask, `turns` each message once.
 CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
     "sales": {
-        basis: {
-            "definition": sales_order_lines_ask.DEFINITIONS[basis],
-            "label": label,
+        "invoiced": {
+            "definition": billing_document_lines.ASK_DEFINITION,
+            "label": "invoiced sales",
             "dimensions": DIMENSIONS,
             "filters": FILTERS,
-        }
-        for basis, label in (
-            ("delivered", "delivered sales"),
-            ("ordered", "ordered sales"),
-            ("outstanding", "outstanding orders"),
-        )
+        },
+        **{
+            basis: {
+                "definition": sales_order_lines_ask.DEFINITIONS[basis],
+                "label": label,
+                "dimensions": DIMENSIONS,
+                "filters": FILTERS,
+            }
+            for basis, label in (
+                ("delivered", "delivered sales"),
+                ("ordered", "ordered sales"),
+                ("outstanding", "outstanding orders"),
+            )
+        },
     },
     "chat": {
         basis: {
@@ -207,7 +216,7 @@ def _category_codes(db: Session, names: list[str], company_grants: Any) -> dict[
 
 
 #: The delivered dataset's raw channel values, as the ordered dataset already prints them.
-_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team"}
+_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team", "other": "Other"}
 
 MEASURES = ("amount", "qty")
 #: REPORT-SMART-1021: distinct counts, ranked by the count (ties by amount, then quantity).
