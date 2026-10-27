@@ -240,14 +240,14 @@ class TestWhoIsScoped:
         """AC-CS-03, flipped by V1-DOC-SCOPE slice 3 (owner rule: unlinked != customer): no
         link, no office type, not a salesperson or office tier -> another customer's word is
         never looked up and no picker names other customers. REPORT-UNIFY: an outstanding ask is the
-        report ask, which a contact with no sales report grant is refused outright, before the resolver."""
+        report ask, which a contact with no Outstanding reveal is refused outright, before the resolver."""
         _seed_contact(session_factory, variables={})
         reply, captured = _turn(
             session_factory, monkeypatch, _ask([_ent("hanlim")]), resolve_services=_hanlim_services(), attributes=(),
         )
         assert "Which one do you mean?" not in reply, reply
         assert "HANLIM" not in reply.upper(), reply
-        assert reply.strip() == "Sales report is not enabled for your account.", reply
+        assert reply.strip() == "Outstanding is not enabled for your account.", reply
         assert captured == []
 
     def test_inactive_office_type_does_not_make_staff(self, session_factory, monkeypatch) -> None:

@@ -645,7 +645,7 @@ def _so_list_reply(text: str) -> dict[str, Any]:
     return fragment
 
 
-def _sales_report_not_enabled() -> dict[str, Any]:
+def _sales_report_not_enabled(parse_output: dict[str, Any] | None = None) -> dict[str, Any]:
     """S4 wiring point 4 (AC-1651): refuse a sales-report ask BEFORE any fetch, with
     ONE line and nothing else.
 
@@ -655,7 +655,7 @@ def _sales_report_not_enabled() -> dict[str, Any]:
     keeps this OFF the miss lane entirely: no escalate offer, nothing armed.
     """
     structured: dict[str, Any] = {
-        "response": SALES_REPORT_NOT_ENABLED_MESSAGE,
+        "response": report_ask.not_enabled_line(parse_output or {}),
         "answers": [],
         "attachments": [],
         "action_links": [],
@@ -1949,7 +1949,7 @@ def run_fetch(
             if sales_need:
                 # R7 (PLAN-prompt-dynamic-30sep D9): the `sales` domain is refused in the
                 # words every sales figure ask was refused in under `order`.
-                return _sales_report_not_enabled()
+                return _sales_report_not_enabled(parse_output)
             return _error_fragment(
                 f"{domain} needs the {need} grant, which this contact does not hold",
                 outcome="access_denied",
@@ -2132,7 +2132,7 @@ def run_fetch(
                     "domain_grant",
                     {"domain": domain, "skipped": "not_granted", "needs": _SALES_REPORT_GRANT},
                 )
-            return _sales_report_not_enabled()
+            return _sales_report_not_enabled(parse_output)
         if decision == "salesperson_book" and trace is not None:
             trace.add("domain_grant", {"domain": domain, "decision": decision, "needs": _SALES_REPORT_GRANT})
         if order_status_raw != report_ask.ASK_NAME and report_ask.unreadable_period(parse_output):

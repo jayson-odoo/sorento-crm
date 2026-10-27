@@ -258,6 +258,16 @@ def grant_key(parse_output: dict[str, Any]) -> str:
     return SALES_REPORT_GRANT
 
 
+OUTSTANDING_NOT_ENABLED = "Outstanding is not enabled for your account."
+SALES_REPORT_NOT_ENABLED = "Sales report is not enabled for your account."
+
+
+def not_enabled_line(parse_output: dict[str, Any]) -> str:
+    """The refusal for a contact without the reveal the ask is read under: the route's own words
+    (`outstanding_not_enabled` / `sales_report_not_enabled`)."""
+    return OUTSTANDING_NOT_ENABLED if grant_key(parse_output) == OUTSTANDING_GRANT else SALES_REPORT_NOT_ENABLED
+
+
 def basis_from(parse_output: dict[str, Any]) -> str | None:
     basis = parse_output.get("basis")
     return basis if basis in BASES else None
