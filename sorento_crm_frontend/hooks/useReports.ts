@@ -47,7 +47,7 @@ export function useReportRun(
     ...LIST_QUERY_OPTIONS,
     // The pivot shape is part of the request, so reconfiguring the summary refetches
     // rather than re-deriving on the client (the engine owns every total).
-    queryKey: [REPORT_RUN_KEY, reportKey, params, view?.pivot],
+    queryKey: [REPORT_RUN_KEY, reportKey, params, view?.pivot, view?.detail?.sort],
     queryFn: () => runReport(reportKey, params, view!),
     enabled: Boolean(view),
     retry: 0,

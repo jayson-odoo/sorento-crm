@@ -10,11 +10,13 @@ Excel and the chatbot share one query.
   month after the as-at date is blank, never 0 (AC-S1-9).
 - VARIANCE is the last year minus the one before, over the months the last year has, so
   its total is this year to date against the same months last year (G5 (a), AC-S1-10).
-- Channel is the sales order's dealer or project class (G4); with both ticked the file
-  writes the DEALER block, then the PROJECT TEAM block, on one sheet (Q1 (b), AC-R4-7).
-- Basis is Delivered by default, Ordered on request, printed on every header (G1).
-  Invoiced (finance S1, #1309) reads AutoCount's billing documents instead of the order
-  lines: a second dataset, the same blocks by the sales order type (ruling Q14).
+- Channel is the sales type (SALES-UNIFIED 2.4): on Invoiced, the class of the sales orders
+  each document traces to, plus Set apart, Mixed, Type not set and No sales order, so with every
+  value ticked the blocks add up to all sales; on the order bases, the sales order's own dealer
+  or project class (G4), "Type not set" its blank class, the invoice-only types empty. One block
+  per ticked value, on one sheet (Q1 (b), AC-R4-7).
+- Basis is Invoiced by default (SALES-UNIFIED: one sales definition, `invoiced_sales`);
+  Delivered and Ordered stay on request, printed on every header (G1).
 """
 from __future__ import annotations
 
@@ -23,6 +25,7 @@ from datetime import date
 from app.services.reports import registry as reg
 from app.services.reports.datasets import billing_documents as bd
 from app.services.reports.datasets import sales_order_lines as ds
+from app.services.sales import invoiced_sales as inv
 
 KEY = "sales_yearly"
 PERMISSION = "sales.reports.view"
@@ -49,8 +52,25 @@ def _of(ctx):
     return bd if ctx.dataset is bd.DATASET else ds
 
 
+#: On the order bases, a sales type -> the sales order demand class it reads (None: blank).
+_ORDER_CLASSES = {
+    inv.DEALER: "retail", inv.PROJECT: "project", inv.OTHER: "other", inv.TYPE_NOT_SET: None,
+}
+
+
 def _channel_condition(ctx, values):
-    return _of(ctx).channel_condition(ctx, values)
+    if _of(ctx) is bd:
+        return bd.channel_condition(ctx, values)
+    import sqlalchemy as sa
+
+    from app.models.order import SalesOrder
+
+    chosen = inv.normalise_sales_types(values)
+    classes = [_ORDER_CLASSES[v] for v in chosen if v in _ORDER_CLASSES and _ORDER_CLASSES[v]]
+    parts = [SalesOrder.demand_class.in_(classes)] if classes else []
+    if inv.TYPE_NOT_SET in chosen:
+        parts.append(SalesOrder.demand_class.is_(None))
+    return sa.or_(*parts) if parts else sa.false()
 
 
 def _order_by(ctx):
@@ -84,15 +104,15 @@ REPORT = reg.register(
                 key="channel",
                 label="Channel",
                 multi=True,
-                default=tuple(value for value, _label in ds.CHANNELS),
-                options=lambda db: list(ds.CHANNELS),
+                default=tuple(value for value, _label in inv.SALES_TYPES),
+                options=lambda db: list(inv.SALES_TYPES),
                 condition=_channel_condition,
             ),
             reg.SelectParam(
                 key="basis",
                 label="Basis",
                 multi=False,
-                default=("delivered",),
+                default=("invoiced",),
                 options=lambda db: list(ds.BASES),
                 condition=ds.basis_condition,
                 clearable=False,
@@ -115,8 +135,8 @@ REPORT = reg.register(
         default_view={
             "params": {
                 "date_basis": "order_date",
-                "channel": [value for value, _label in ds.CHANNELS],
-                "basis": ["delivered"],
+                "channel": [value for value, _label in inv.SALES_TYPES],
+                "basis": ["invoiced"],
             },
             "detail": {
                 "columns": list(DEFAULT_DETAIL_COLUMNS),

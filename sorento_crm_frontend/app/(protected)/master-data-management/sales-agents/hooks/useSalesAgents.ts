@@ -6,13 +6,17 @@ import {
   annotateSalesAgent,
   bulkAnnotateSalesAgents,
   assignSalesAgentCustomers,
+  createSalesAgentClass,
   getSalesAgent,
+  getSalesAgentClasses,
+  updateSalesAgentClass,
   getSalesAgentCustomers,
   getSalesAgents,
 } from '../services/salesAgentService';
 import type {
   MirrorAnnotationPayload,
   SalesAgentBulkAnnotatePayload,
+  SalesAgentClassPayload,
 } from '../types/salesAgent.types';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 
@@ -138,5 +142,33 @@ export function useAssignSalesAgentCustomers(agentId: string) {
       );
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to assign customers'),
+  });
+}
+
+export const SALES_AGENT_CLASSES_PREFIX = ['sales-agent-classes'] as const;
+
+export function useSalesAgentClasses(agentId: string) {
+  return useQuery({
+    queryKey: [...SALES_AGENT_CLASSES_PREFIX, agentId],
+    queryFn: () => getSalesAgentClasses(agentId),
+    enabled: !!agentId,
+    retry: 1,
+  });
+}
+
+/** Add (no `rowId`) or edit one dated class. The agent's current class mirrors the open
+ *  row, so the agent detail and the list refetch too. */
+export function useSaveSalesAgentClass(agentId: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ rowId, payload }: { rowId: string | null; payload: SalesAgentClassPayload }) =>
+      rowId ? updateSalesAgentClass(rowId, payload) : createSalesAgentClass(agentId, payload),
+    onSuccess: (_row, { rowId }) => {
+      queryClient.invalidateQueries({ queryKey: SALES_AGENT_CLASSES_PREFIX });
+      queryClient.invalidateQueries({ queryKey: ['sales-agent', agentId] });
+      queryClient.invalidateQueries({ queryKey: ['sales-agents'] });
+      toast.success(rowId ? 'Class saved' : 'Class added');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to save the class'),
   });
 }

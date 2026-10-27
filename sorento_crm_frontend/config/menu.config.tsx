@@ -136,6 +136,24 @@ export const MENU_SIDEBAR: MenuConfig = [
         permission: 'sales.reports.view',
         moduleKey: 'sales',
       },
+      {
+        title: 'Sales by debtor type',
+        path: '/sales/sales-by-debtor-type',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Top selling items',
+        path: '/sales/top-selling-items',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
+      {
+        title: 'Set-apart customers',
+        path: '/sales/set-apart-customers',
+        permission: 'sales.reports.view',
+        moduleKey: 'sales',
+      },
     ],
   },
   {

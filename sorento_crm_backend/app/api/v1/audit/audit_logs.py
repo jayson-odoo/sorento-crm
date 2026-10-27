@@ -190,6 +190,69 @@ def _derive_description(it, status_labels: Optional[dict[str, str]] = None) -> O
     return None
 
 
+# A child row on its record's trail (a complaint's product line) is named by its own
+# identifying field, never its id: "Product line CWCY604".
+_CHILD_IDENT_FIELDS = ("product_code", "item_code", "code", "name", "title", "original_filename")
+
+
+def _child_kind(child_type: str, parent_type: str) -> str:
+    """`complaint_product_lines` under `complaint` -> "Product line"."""
+    stem = child_type[len(parent_type) + 1:] if child_type.startswith(f"{parent_type}_") else child_type
+    if stem.endswith("ies"):
+        stem = stem[:-3] + "y"
+    elif stem.endswith("s") and not stem.endswith("ss"):
+        stem = stem[:-1]
+    return stem.replace("_", " ").strip().capitalize()
+
+
+def _ident_from(values: Optional[dict]) -> Optional[str]:
+    for key in _CHILD_IDENT_FIELDS:
+        value = (values or {}).get(key)
+        if value not in (None, ""):
+            return str(value)
+    return None
+
+
+def _child_labels(db: Session, items, entity_type: str, entity_id: str) -> dict[str, str]:
+    """Audit row id -> label for every row on the page that belongs to a child of the record.
+
+    An UPDATE carries only the fields it changed, so the identifier comes from the newest
+    row of the same child that carries one, else from the live child row."""
+    children = [it for it in items if (it.entity_type, str(it.entity_id)) != (entity_type, entity_id)]
+    if not children:
+        return {}
+    idents: dict[tuple[str, str], str] = {}
+    for it in children:  # newest first, so the current code wins
+        key = (it.entity_type, str(it.entity_id))
+        if key not in idents:
+            ident = _ident_from(it.new_values) or _ident_from(it.old_values)
+            if ident:
+                idents[key] = ident
+    missing: dict[str, set[str]] = {}
+    for it in children:
+        if (it.entity_type, str(it.entity_id)) not in idents and _is_uuid(str(it.entity_id)):
+            missing.setdefault(it.entity_type, set()).add(str(it.entity_id))
+    if missing:
+        from app.database import Base
+        from app.services.audit_service import _audit_entity_type
+
+        for mapper in Base.registry.mappers:
+            cls = mapper.class_
+            ids = missing.get(_audit_entity_type(cls))
+            if not ids or "id" not in mapper.columns:
+                continue
+            for rec in db.query(cls).filter(mapper.columns["id"].in_(list(ids))).all():
+                ident = _ident_from({k: getattr(rec, k, None) for k in _CHILD_IDENT_FIELDS})
+                if ident:
+                    idents[(_audit_entity_type(cls), str(rec.id))] = ident
+    out: dict[str, str] = {}
+    for it in children:
+        kind = _child_kind(it.entity_type, entity_type)
+        ident = idents.get((it.entity_type, str(it.entity_id)))
+        out[str(it.id)] = f"{kind} {ident}" if ident else kind
+    return out
+
+
 @router.get("/", response_model=ListResponse[AuditLogResponse])
 async def get_audit_logs(
     entity_type: Optional[str] = Query(None, description="Filter by entity type (e.g. complaint, stock_inquiry, purchase_request)"),
@@ -199,6 +262,10 @@ async def get_audit_logs(
     trace_id: Optional[str] = Query(None, description="Filter by request correlation id (groups a multi-row change)"),
     changed_from: Optional[datetime] = Query(None, description="Filter changed_at >= (ISO); e.g. a day bar drill-down"),
     changed_to: Optional[datetime] = Query(None, description="Filter changed_at <= (ISO)"),
+    include_children: bool = Query(
+        False,
+        description="With entity_type + entity_id: also the record's child rows (e.g. a complaint's product lines)",
+    ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -217,6 +284,7 @@ async def get_audit_logs(
         changed_to=changed_to,
         page=page,
         limit=limit,
+        include_children=include_children,
     )
     user_ids = list(
         {str(it.user_id) for it in items if it.user_id is not None}
@@ -237,6 +305,8 @@ async def get_audit_logs(
 
     record_labels = entity_labels(db, items)
     status_labels = _status_labels(db, items)
+    if include_children and entity_type and entity_id:
+        record_labels.update(_child_labels(db, items, entity_type, entity_id))
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()
