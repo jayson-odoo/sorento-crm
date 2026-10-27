@@ -1054,8 +1054,9 @@ def _fresh_args(
         # same ones `crm_sales_report` read its prefix off); the engine marks it, never the parser.
         kinds = kinds | {"product"}
     customer_ids = _gate_ids(entities, "customer") if "customer" in kinds else []
-    if not customer_ids:
-        # The engine's scope rows: a linked contact's own accounts ("my ...", or a dealer's ask naming no customer).
+    if parse_output.get("self_reference") is True and not customer_ids:
+        # "my ...": the engine's scope rows, a linked contact's own accounts, whether a dealer or office staff. A
+        # dealer's ask naming no customer sends none: the route forces its links itself.
         customer_ids = [
             u for u in _gate_ids([e for e in jsc.array(entities) if isinstance(e, dict) and e.get("scope")], "customer")
         ]

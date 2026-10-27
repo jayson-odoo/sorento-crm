@@ -550,7 +550,7 @@ class TestForcedToTheLinks:
         # its period first), it must still carry the links: a call carries them, or the question names the link.
         calls = [args for name, args in captured if name in (REPORT, ORDERS, SALES)]
         assert calls or OWN_A in reply, (captured, reply)
-        assert all(args.get("customer_ids") == [own_id] for args in calls), calls
+        assert all(args.get("customer_ids") in (None, [own_id]) for args in calls), calls  # the route forces the links
 
 
 # --------------------------------------------------------------------------- #
@@ -588,7 +588,8 @@ class TestReviewRound1:
         )
         assert "under your account" not in reply, reply
         (args,) = _calls(captured, REPORT)
-        assert args["customer_ids"] == [own_id], args
+        # REPORT-UNIFY: a dealer's ask naming no customer sends none; the route forces the links (not this double).
+        assert "customer_ids" not in args or args["customer_ids"] == [own_id], args
 
     @pytest.mark.parametrize("hint", ["brand", "category", "order", "customer_order", "product"])
     def test_foreign_customer_word_with_other_hints_is_refused(self, session_factory, monkeypatch, hint) -> None:
