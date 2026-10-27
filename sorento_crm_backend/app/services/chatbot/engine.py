@@ -1305,8 +1305,8 @@ class _SpanPrep:
     # EEM-CATEGORY-PICK: the parser prompt asks for a category pick, so the Category block is grouped by class.
     group_categories: bool = False
     # REPORT-UNIFY slice 3: the parser prompt asks for the row id (`parser.ROW_ID_ASK`), so a brand, salesperson or
-    # category line carries it. True for a bare prep; `resolve_config` turns it on only for a version that asks.
-    row_ids: bool = True
+    # category line carries it. Off for a bare prep; `_span_prep` takes it from the prompt in use.
+    row_ids: bool = False
 
 
 def _span_prep(

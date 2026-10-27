@@ -433,16 +433,26 @@ ID_LISTS = frozenset({"brand", "salesperson", "category"})
 
 
 def cap_hits(name: str, hits: list[Hit]) -> list[Hit]:
-    """`TOP_K` for the list, except that a row the message names EXACTLY (spelling 1.0: a span, an alias, a code) is
-    never cut: every exact row stays, and only the looser ones fill what is left of the cap."""
+    """`TOP_K` for the list. The salesperson list is the one place an exact match is never cut (REPORT-UNIFY slice 3,
+    AC-RU-22): every PERSON the message names exactly (spelling 1.0: a span, an alias, a code) stays, however many
+    there are, and only the looser rows fill what is left of the cap. The accounts of one person (a code stem, "WT I"
+    to "WT III") count as one person, so a long ledger list still stops at the cap."""
     cap = TOP_K.get(name, 10)
-    exact = [h for h in hits if h.spelling >= 1.0]
-    if len(exact) >= cap:
-        return exact
-    kept: list[Hit] = []
-    room = cap - len(exact)
+    if name != "salesperson":
+        return hits[:cap]
+    from app.services.chatbot.lanes.business.services import _code_stem
+
+    people: set[str] = set()
+    exempt: list[Hit] = []
     for h in hits:
-        if h.spelling >= 1.0:
+        stem = _code_stem(h.row.label)
+        if h.spelling >= 1.0 and stem not in people:
+            people.add(stem)
+            exempt.append(h)
+    room = max(0, cap - len(exempt))
+    kept: list[Hit] = []
+    for h in hits:
+        if any(h is e for e in exempt):
             kept.append(h)
         elif room > 0:
             kept.append(h)

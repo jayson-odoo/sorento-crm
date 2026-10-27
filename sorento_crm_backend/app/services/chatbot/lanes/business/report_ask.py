@@ -1016,8 +1016,9 @@ def _word_filters(
             if not found:
                 return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
             distinct = {" ".join(n.split()).casefold(): " ".join(n.split()) for n in reversed(names)}
-            if len(distinct) > 1 and hint == "sales_agent":
-                # H3: several agents answer to the word: the person picks one, agents only, and nothing runs yet.
+            if hint == "sales_agent" and len({business_services._code_stem(n) for n in names}) > 1:
+                # H3: several DIFFERENT agents answer to the word (accounts of one person share a code stem and
+                # stay one person's union, below): the person picks one, agents only, and nothing runs yet.
                 out["sales_agent_pick"] = list(dict(zip(found, names)).items())
                 continue
             if len(distinct) > 1 and hint in SEVERAL_NOUNS:
