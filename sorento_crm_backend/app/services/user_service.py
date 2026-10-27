@@ -1416,9 +1416,13 @@ class UserPermissionService:
             )
         return q.order_by(UserPermission.name).all()
 
-    def list_permissions(self, page: int = 1, limit: int = 50):
-        """List user permissions."""
+    def list_permissions(self, page: int = 1, limit: int = 50, role_ids: Optional[list[str]] = None):
+        """List user permissions; role_ids keeps those granted to any of the roles."""
         q = self.db.query(UserPermission)
+        if role_ids:
+            q = q.filter(UserPermission.id.in_(
+                self.db.query(UserRolePermission.permission_id).filter(UserRolePermission.role_id.in_(role_ids))
+            ))
         
         total = q.count()
         offset = (page - 1) * limit

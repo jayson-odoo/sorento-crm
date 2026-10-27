@@ -47,6 +47,14 @@ def _tiers(raw: Optional[list[str]]) -> Optional[list[str]]:
     return values
 
 
+def _regions(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """The Region filter's values; an unknown one is a 422, as the old Literal param was."""
+    values = multi_values(raw)
+    if values and any(v not in ("west", "east") for v in values):
+        raise handle_unprocessable("Region: expected one of west, east")
+    return values
+
+
 class ContactCompaniesUpdateRequest(BaseModel):
     company_ids: list[str]
 
@@ -119,7 +127,7 @@ async def get_contacts(
     escalation: Optional[Literal["yes", "no"]] = Query(None),
     packing_list: Optional[Literal["yes", "no"]] = Query(None),
     stock: Optional[Literal["yes", "no"]] = Query(None),
-    region: Optional[Literal["west", "east"]] = Query(None),
+    region: Optional[list[str]] = Query(None),
     customer_id: Optional[list[str]] = Query(None),
     # FILTER-MULTISELECT: the companies of the contact's linked customers, any-of; the ids
     # repeat or comma-join (app/utils/multi_value.py).
@@ -162,7 +170,7 @@ async def get_contacts(
                 "escalation": escalation,
                 "packing_list": packing_list,
                 "stock": stock,
-                "region": region,
+                "region": _regions(region),
                 "customer_ids": multi_uuids(customer_id, "Customer"),
                 "company_ids": multi_uuids(company, "Company"),
                 "tag_ids": [str(t) for t in tag] if tag else None,

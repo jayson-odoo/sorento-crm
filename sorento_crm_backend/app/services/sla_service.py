@@ -755,7 +755,7 @@ class ConversationSLATrackingService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "desc",
-        assigned_to: Optional[str] = None,
+        assigned_to: Optional[list[str]] = None,
         tracking_ids: Optional[list[str]] = None,
         contact: Optional[str] = None,
         is_resolved: Optional[bool] = None,
@@ -830,15 +830,16 @@ class ConversationSLATrackingService:
                 )
             )
 
-        if assigned_to and assigned_to.strip():
-            assignee_val = assigned_to.strip()
+        if isinstance(assigned_to, str):
+            assigned_to = [assigned_to]
+        if assigned_to:
             # Only show trackings that have an assignee and that assignee matches (exclude unassigned)
             q = q.filter(ConversationSLATracking.assigned_to_id.isnot(None)).join(
                 User, ConversationSLATracking.assigned_to_id == User.id
             ).filter(
                 or_(
-                    User.respond_user_id == assignee_val,
-                    User.id == assignee_val,
+                    User.respond_user_id.in_(assigned_to),
+                    User.id.in_(assigned_to),
                 )
             )
 
@@ -857,7 +858,7 @@ class ConversationSLATrackingService:
         query: Optional[str] = None,
         sort_field: str = "created_at",
         sort_dir: str = "desc",
-        assigned_to: Optional[str] = None,
+        assigned_to: Optional[list[str]] = None,
         tracking_ids: Optional[list[str]] = None,
         scope: str = "conversation",
         contact: Optional[str] = None,
@@ -897,15 +898,16 @@ class ConversationSLATrackingService:
             if tracking_ids is not None:
                 q = q.filter(ConversationSLATracking.id.in_(tracking_ids))
 
-            if assigned_to and assigned_to.strip():
-                assignee_val = assigned_to.strip()
+            if isinstance(assigned_to, str):
+                assigned_to = [assigned_to]
+            if assigned_to:
                 # Only show trackings that have an assignee and that assignee matches (exclude unassigned)
                 q = q.filter(ConversationSLATracking.assigned_to_id.isnot(None)).join(
                     User, ConversationSLATracking.assigned_to_id == User.id
                 ).filter(
                     or_(
-                        User.respond_user_id == assignee_val,
-                        User.id == assignee_val,
+                        User.respond_user_id.in_(assigned_to),
+                        User.id.in_(assigned_to),
                     )
                 )
 
@@ -1531,8 +1533,8 @@ class ConversationSLATrackingService:
     def list_team_pending(
         self,
         user_id: str,
-        assignee: Optional[str] = None,
-        team: Optional[str] = None,
+        assignee: Optional[list[str]] = None,
+        team: Optional[list[str]] = None,
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
@@ -1560,11 +1562,13 @@ class ConversationSLATrackingService:
         # Optional team filter: restrict to members of that single team (must be in
         # the visible set, else it yields nothing).
         if team:
-            team_member_ids = self._members_of_teams([str(team)])
+            team = [team] if isinstance(team, str) else team
+            team_member_ids = self._members_of_teams([str(t) for t in team])
             member_ids = {m for m in member_ids if m in team_member_ids}
         # Optional assignee filter.
         if assignee:
-            member_ids = {m for m in member_ids if m == str(assignee)}
+            assignee = [assignee] if isinstance(assignee, str) else assignee
+            member_ids = {m for m in member_ids if m in {str(a) for a in assignee}}
         if not member_ids:
             return {"data": [], "total": 0, "page": page, "limit": limit}
 
@@ -5566,9 +5570,9 @@ class ConversationSLATrackingService:
         sort_field: Optional[str] = "event_at",
         sort_dir: Optional[str] = "desc",
         tracking_id: Optional[str] = None,
-        event_type: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-        assigned_to_id: Optional[str] = None,
+        event_type: Optional[list[str]] = None,
+        assigned_to: Optional[list[str]] = None,
+        assigned_to_id: Optional[list[str]] = None,
         date_from: Optional[str] = None,
         date_to: Optional[str] = None,
     ):
@@ -5585,11 +5589,11 @@ class ConversationSLATrackingService:
         if tracking_id:
             q = q.filter(ConversationSLAEventLog.sla_tracking_id == tracking_id)
         if event_type:
-            q = q.filter(ConversationSLAEventLog.event_type == event_type)
+            q = q.filter(ConversationSLAEventLog.event_type.in_(event_type))
         if assigned_to:
-            q = q.filter(ConversationSLAEventLog.assigned_to == assigned_to)
+            q = q.filter(ConversationSLAEventLog.assigned_to.in_(assigned_to))
         if assigned_to_id:
-            q = q.filter(ConversationSLAEventLog.assigned_to_id == assigned_to_id)
+            q = q.filter(ConversationSLAEventLog.assigned_to_id.in_(assigned_to_id))
         if date_from:
             try:
                 dt = datetime.fromisoformat(date_from.replace("Z", "+00:00"))

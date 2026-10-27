@@ -204,14 +204,13 @@ export default function ContactAccessFilters({ value, onChange, hideClear = fals
         renderTriggerLabel={(opt) => `Stock checks: ${opt.label}`}
         clearable
       />
-      <SearchableSelect
+      <SearchableMultiSelect
         triggerClassName={cls}
-        truncateTriggerLabel
-        value={value.region ?? ''}
-        onChange={set('region')}
+        value={splitMulti(value.region)}
+        onChange={setMulti('region')}
         options={PACKING_LIST_REGION_OPTIONS}
         placeholder="Region: any"
-        renderTriggerLabel={(opt) => `Region: ${opt.label}`}
+        renderTriggerLabel={(chosen) => multiTrigger('Region', chosen)}
         clearable
       />
       <SearchableMultiSelect

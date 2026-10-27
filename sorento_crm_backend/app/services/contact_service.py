@@ -409,8 +409,8 @@ class ContactService:
             value = yes(name)
             if value is not None:
                 q = q.filter(column.is_(value))
-        if f.get("region") in ("west", "east"):
-            q = q.filter(RespondContact.regions.contains([f["region"]]))
+        if f.get("region"):
+            q = q.filter(or_(*[RespondContact.regions.contains([r]) for r in f["region"] if r in ("west", "east")]))
         if f.get("tag_ids"):
             from app.models.access import respond_contact_tags as tag_pivot
 

@@ -42,7 +42,7 @@ const CHIPS: [
     k,
     (v) => `${YES_NO_TITLE[k]}: ${YES_NO[k][v === 'yes' ? 0 : 1]}`,
   ]),
-  ['region', (v) => `Region: ${REGION[v] ?? v}`],
+  ['region', (v) => `Region: ${multiValueSummary(splitMulti(v).map((r) => REGION[r] ?? r))}`],
   ['customer_id', (_v, l) => `Customer: ${l.customer_id ?? 'Selected customer'}`],
   [
     'access_differs_from',

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   ColumnDef,
   PaginationState,
@@ -21,7 +21,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { toast } from '@/lib/toast';
@@ -36,12 +37,10 @@ import { useSubscribeCoverage } from '@/app/(protected)/account/notifications/ho
 import ReassignDialog from '@/app/(protected)/sla-management/conversation-sla-tracking/components/ReassignDialog';
 import type { TeamPendingItem } from '@/app/(protected)/sla-management/conversation-sla-tracking/services/conversationSLATrackingService';
 
-const ALL = '__all__';
-
 export default function TeamPendingList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [assigneeFilter, setAssigneeFilter] = useState(ALL);
-  const [teamFilter, setTeamFilter] = useState(ALL);
+  const [assigneeFilter, setAssigneeFilter] = useState('');
+  const [teamFilter, setTeamFilter] = useState('');
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -58,8 +57,8 @@ export default function TeamPendingList() {
   const { data, isLoading, isPlaceholderData, isFetching, refetch, error } = useTeamPendingSLA({
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
-    assignee: assigneeFilter !== ALL ? assigneeFilter : undefined,
-    team: teamFilter !== ALL ? teamFilter : undefined,
+    assignee: assigneeFilter || undefined,
+    team: teamFilter || undefined,
     query: search || undefined,
   });
 
@@ -70,11 +69,12 @@ export default function TeamPendingList() {
 
   const rows = useMemo(() => data?.data ?? [], [data]);
 
-  // Team filter options: distinct {team_id, team_label} from the loaded rows.
+  // Team filter options: distinct {team_id, team_label} from the rows loaded so far. A filter
+  // narrows the rows, so teams once seen are kept: choosing one team must not hide the others.
+  const seenTeams = useRef(new Map<string, string>());
   const teamOptions = useMemo(() => {
-    const map = new Map<string, string>();
-    rows.forEach((r) => map.set(r.team_id, r.team_label));
-    return Array.from(map.entries()).map(([id, label]) => ({ id, label }));
+    rows.forEach((r) => seenTeams.current.set(r.team_id, r.team_label));
+    return Array.from(seenTeams.current.entries()).map(([id, label]) => ({ id, label }));
   }, [rows]);
 
   const mutatingId =
@@ -255,7 +255,7 @@ export default function TeamPendingList() {
     columnResizeMode: 'onChange',
   });
 
-  const hasActiveFilters = assigneeFilter !== ALL || teamFilter !== ALL;
+  const hasActiveFilters = Boolean(assigneeFilter || teamFilter);
 
   return (
     <>
@@ -286,37 +286,33 @@ export default function TeamPendingList() {
                 kind: 'custom',
                 active: hasActiveFilters,
                 activeCount:
-                  (assigneeFilter !== ALL ? 1 : 0) + (teamFilter !== ALL ? 1 : 0),
+                  (assigneeFilter ? 1 : 0) + (teamFilter ? 1 : 0),
                 content: (
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <label className="text-xs text-muted-foreground">Assignee</label>
-                      <SearchableSelect
-                        value={assigneeFilter}
-                        onChange={setAssigneeFilter}
-                        options={[
-                          { value: ALL, label: 'All assignees' },
-                          ...visibleUsers.map((u) => ({
-                            value: u.id,
-                            label: u.name || u.email,
-                          })),
-                        ]}
+                      <SearchableMultiSelect
+                        value={splitMulti(assigneeFilter)}
+                        onChange={(values) => setAssigneeFilter(joinMulti(values))}
+                        options={visibleUsers.map((u) => ({
+                          value: u.id,
+                          label: u.name || u.email,
+                        }))}
                         placeholder="All assignees"
+                        clearable
                       />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs text-muted-foreground">Team</label>
-                      <SearchableSelect
-                        value={teamFilter}
-                        onChange={setTeamFilter}
-                        options={[
-                          { value: ALL, label: 'All teams' },
-                          ...teamOptions.map((t) => ({
-                            value: t.id,
-                            label: t.label,
-                          })),
-                        ]}
+                      <SearchableMultiSelect
+                        value={splitMulti(teamFilter)}
+                        onChange={(values) => setTeamFilter(joinMulti(values))}
+                        options={teamOptions.map((t) => ({
+                          value: t.id,
+                          label: t.label,
+                        }))}
                         placeholder="All teams"
+                        clearable
                       />
                     </div>
                     {hasActiveFilters && (
@@ -325,8 +321,8 @@ export default function TeamPendingList() {
                         size="sm"
                         className="w-full"
                         onClick={() => {
-                          setAssigneeFilter(ALL);
-                          setTeamFilter(ALL);
+                          setAssigneeFilter('');
+                          setTeamFilter('');
                         }}
                       >
                         Clear filters

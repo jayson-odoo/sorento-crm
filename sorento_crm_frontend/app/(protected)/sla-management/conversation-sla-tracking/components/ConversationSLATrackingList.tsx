@@ -24,7 +24,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 
 import { Skeleton } from '@/components/ui/skeleton';
 import { Progress } from '@/components/ui/progress';
@@ -100,7 +101,7 @@ export default function ConversationSLATrackingList() {
     reset: resetSearchQuery,
   } = useDebouncedSearch();
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [assignedToFilter, setAssignedToFilter] = useState('__all__');
+  const [assignedToFilter, setAssignedToFilter] = useState('');
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -108,7 +109,7 @@ export default function ConversationSLATrackingList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearchQuery(state.searchQuery);
-    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
+    setAssignedToFilter(state.filters.assigned_to ?? '');
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
@@ -126,7 +127,7 @@ export default function ConversationSLATrackingList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    assigned_to: assignedToFilter && assignedToFilter !== '__all__' ? assignedToFilter : undefined,
+    assigned_to: assignedToFilter || undefined,
     contact: contactFilter,
     is_resolved: resolvedFilter,
     resolved_by: resolvedByFilter,
@@ -159,10 +160,7 @@ export default function ConversationSLATrackingList() {
         searchQuery,
       },
       {
-        assigned_to:
-          assignedToFilter && assignedToFilter !== '__all__'
-            ? assignedToFilter
-            : undefined,
+        assigned_to: assignedToFilter || undefined,
         contact: contactFilter,
         is_resolved: resolvedParam ?? undefined,
         resolved_by: resolvedByFilter,
@@ -522,7 +520,7 @@ export default function ConversationSLATrackingList() {
     manualFiltering: true,
   });
 
-  const hasAssigneeFilter = Boolean(assignedToFilter && assignedToFilter !== '__all__');
+  const hasAssigneeFilter = Boolean(assignedToFilter);
   const hasActiveFilters = hasAssigneeFilter || hasDeepLinkFilters;
   const activeFilterCount =
     (hasAssigneeFilter ? 1 : 0) +
@@ -547,7 +545,7 @@ export default function ConversationSLATrackingList() {
   }, [contactFilter, resolvedParam, resolvedByFilter, data]);
 
   const handleClearFilters = () => {
-    setAssignedToFilter('__all__');
+    setAssignedToFilter('');
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
     if (hasDeepLinkFilters) router.replace(CONVERSATION_SLA_TRACKING_PATH, { scroll: false });
   };
@@ -584,22 +582,29 @@ export default function ConversationSLATrackingList() {
               content: (
                 <div className="space-y-3">
                   <h4 className="font-medium text-sm">Filters</h4>
-                  <SearchableSelect
-                    value={assignedToFilter}
-                    onChange={(value) => {
-                      setAssignedToFilter(value);
+                  <SearchableMultiSelect
+                    value={splitMulti(assignedToFilter)}
+                    onChange={(values) => {
+                      setAssignedToFilter(joinMulti(values));
                       setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                     }}
                     loadError={respondUsersError}
                     onRetry={() => void refetchRespondUsers()}
-                    options={[
-                      { value: '__all__', label: 'All assignees' },
-                      ...(respondUsers || []).map((user: UserLookupItem) => ({
-                        value: user.respond_user_id || user.id,
-                        label: user.name || 'Unnamed user',
-                      })),
-                    ]}
+                    options={(respondUsers || []).map((user: UserLookupItem) => ({
+                      value: user.respond_user_id || user.id,
+                      label: user.name || 'Unnamed user',
+                    }))}
                     placeholder="Assignee"
+                    renderTriggerLabel={(chosen) =>
+                      chosen.length ? (
+                        <span className="block truncate">
+                          {multiChipLabel('Assignee', chosen.map((o) => o.label))}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">Assignee: any</span>
+                      )
+                    }
+                    clearable
                   />
                   {hasActiveFilters && (
                     <Button variant="outline" size="sm" onClick={handleClearFilters} className="w-full">
