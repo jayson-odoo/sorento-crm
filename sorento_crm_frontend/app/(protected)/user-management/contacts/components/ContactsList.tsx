@@ -261,9 +261,12 @@ export default function ContactsList() {
     () => Object.keys(rowSelection),
     [rowSelection],
   );
+  // "Select first 1,000 of N" (Odoo pattern): every contact matching the list, capped at the
+  // list endpoint's max page. While set, bulk actions act on these rather than the page.
+  const [matching, setMatching] = useState<RespondContact[] | null>(null);
   const selectedContacts = useMemo(
-    () => pageContacts.filter((c) => rowSelection[c.id]),
-    [pageContacts, rowSelection],
+    () => matching ?? pageContacts.filter((c) => rowSelection[c.id]),
+    [matching, pageContacts, rowSelection],
   );
 
   // One row here is one contact, so the outbound switch is 1:1 with the row and
@@ -762,7 +765,19 @@ export default function ContactsList() {
     state: { pagination, sorting, rowSelection },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
-    onRowSelectionChange: setRowSelection,
+    onRowSelectionChange: (updater) => {
+      if (matching) {
+        // A tick change leaves the all-matching mode and keeps only this page's ticks.
+        const pageIds = new Set(pageContacts.map((c) => c.id));
+        const base = typeof updater === 'function' ? updater(rowSelection) : updater;
+        setMatching(null);
+        setRowSelection(
+          Object.fromEntries(Object.entries(base).filter(([id]) => pageIds.has(id))),
+        );
+        return;
+      }
+      setRowSelection(updater);
+    },
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,
@@ -770,7 +785,20 @@ export default function ContactsList() {
     enableRowSelection: true,
   });
 
-  const clearSelection = () => setRowSelection({});
+  const clearSelection = () => {
+    setMatching(null);
+    setRowSelection({});
+  };
+
+  const selectAllMatchingRows = async () => {
+    try {
+      const res = await fetchContactsPage({ ...listParams, pageIndex: 0, pageSize: 1000 });
+      setRowSelection(Object.fromEntries(res.data.map((c) => [c.id, true])));
+      setMatching(res.data);
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Could not select all matching contacts');
+    }
+  };
 
   // Every filter except Tag and Tag settings lives in the toolbar Filters popover.
   const filtersToolbar = useContactFiltersToolbar({
@@ -785,6 +813,7 @@ export default function ContactsList() {
   // Reset selection whenever the result set changes.
   useEffect(() => {
     setRowSelection({});
+    setMatching(null);
   }, [
     searchQuery,
     chatbotMemoryLevel,
@@ -846,6 +875,14 @@ export default function ContactsList() {
               />
             }
             exportConfig={{ filename: 'contacts_export.xlsx' }}
+            selectAllMatching={{
+              total: data?.pagination?.total ?? 0,
+              loadedCount: pageContacts.length,
+              active: matching !== null,
+              limit: 1000,
+              onSelectAll: () => void selectAllMatchingRows(),
+              onClear: () => setMatching(null),
+            }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
