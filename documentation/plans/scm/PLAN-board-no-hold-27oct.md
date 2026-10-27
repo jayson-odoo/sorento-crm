@@ -1,6 +1,6 @@
 # PLAN: BOARD-NO-HOLD - a Fulfilment Planning decision is a plan, not a stock hold
 
-Status: Build, review round 1 fixes in progress. Owner answers 27 Oct: Q1 (a) the plan is a route; Q2 as today; Q3 Borrow unchanged in every way (only Reserve stops holding); Q4 (a) retail stops seeing a Reserve, the project-side Buy reduction pending crew-ask (built as kept); Q5 no wording change beyond losing `pinned` for a Reserve. Track: full
+Status: Build, review round 1 fixes in progress. Owner answers 27 Oct: Q1 (a) the plan is a route; Q2 as today; Q3 Borrow unchanged in every way (only Reserve stops holding); Q4 (a) retail stops seeing a Reserve; the project-side Buy reduction kept as today (owner 27 Oct ~22:25 "can keep as today"); Q5 no wording change beyond losing `pinned` for a Reserve. Track: full
 (size L, touches every free-stock reader). Lane is LEAD pattern (tester + coder + reviewer subagents).
 
 ## Journey
@@ -59,7 +59,7 @@ Backend, Postgres scratch schema (`tests/_pg_fixture.py`), seeded with the `_dec
 3. **Board strip / group drill**: free and held on the board's stock detail read the same as (2).
 4. **Location stock**: `location_stock_service` free equals on hand - reserved with a decision present.
 5. **Reorder runs** (Q4 a): a Reserve no longer lowers retail's figure (`retail_net`); a Borrow still does; the project
-   half's own Buy is still lowered by both (Lane F, pending crew-ask).
+   half's own Buy is still lowered by both (Lane F, owner 27 Oct ~22:25: keep as today).
 6. **Route, cross-group** (Q1 a): a decided line in group BB planned from an IB bin draws that bin at its own date;
    an earlier IB line due first takes it first; an undecided BB line still cannot draw IB.
 7. **Route, site pool** (Q1 a): a project line planned "Reserve from BRW" draws BRW at its date; an earlier dealer line

@@ -8,8 +8,8 @@ in Stock Debt like any other short line; no "Plan not covered" re-entry, no auto
 Owner answers (27 Oct ~18:15): Q3 "borrow should work like today": Borrow is out of scope and
 unchanged in every way (it keeps holding, Stock Debt pin and "lent to" as today); only Reserve
 stops holding. Q4 yes (a): reorder runs stop deducting Reserve from retail planning supply; the
-same Reserve also lowers a project line's own Buy (Lane F), kept as today pending the crew-ask
-of 27 Oct. Q5: no wording change except a Reserve no longer reads "pinned" / held.
+same Reserve also lowers a project line's own Buy (Lane F), kept as today (owner 27 Oct ~22:25:
+"can keep as today"). Q5: no wording change except a Reserve no longer reads "pinned" / held.
 
 Plan: `documentation/plans/scm/PLAN-board-no-hold-27oct.md` (code map with file:line).
 Dry run: `sorento_crm_backend/scripts/board_no_hold_dry_run.py` (read only, rolled back).
