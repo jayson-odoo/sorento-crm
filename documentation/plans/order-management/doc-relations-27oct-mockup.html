@@ -23,7 +23,7 @@
 </head>
 <body>
 <main>
-  <p class="muted">Static mock for DOC-RELATIONS (27 Oct). Data shaped like SO427775 / DO 202610-3905 / invoice 202610-3905.</p>
+  <p class="muted">Static mock, v2 after owner feedback 15:51 (Related as a sortable table; no sentence above the DO table). for DOC-RELATIONS (27 Oct). Data shaped like SO427775 / DO 202610-3905 / invoice 202610-3905.</p>
 
   <div class="sep">1. Delivery order detail: /order-management/orders/{id}</div>
   <h1>202610-3905 <span class="badge">In Transit</span></h1>
@@ -39,19 +39,16 @@
   </div>
 
   <div class="tabs"><span>General</span><span>Lines</span><span>Delivery</span><span>Invoices</span><span class="on">Related</span></div>
-  <div class="card">
-    <div class="group"><h2>Sales orders</h2><ul><li><a href="#">SO427775</a> <span class="muted">14 Oct 2026</span></li></ul></div>
-    <div class="group"><h2>Billing documents</h2><ul>
-      <li><span class="badge">Invoice</span> <a href="#">202610-3905</a> <span class="muted">22 Oct 2026</span></li>
-      <li><span class="badge">Credit note</span> <a href="#">CN-202610-0041</a> <span class="muted">25 Oct 2026</span></li></ul></div>
+  <div class="card scroll">
+    <h2>Related</h2>
+    <table><thead><tr><th style="width:140px">Type</th><th style="width:160px">Number</th><th style="width:120px">Date</th><th style="width:130px">Status</th><th class="r" style="width:140px">Amount</th></tr></thead><tbody><tr><td><span class="badge">Sales order</span></td><td><a href="#">SO427775</a></td><td>14 Oct 2026</td><td><span class="badge">Open</span></td><td class="r">MYR 1,360.00</td></tr><tr><td><span class="badge">Invoice</span></td><td><a href="#">202610-3905</a></td><td>22 Oct 2026</td><td><span class="badge">Posted</span></td><td class="r">MYR 1,280.00</td></tr><tr><td><span class="badge">Credit note</span></td><td><a href="#">CN-202610-0041</a></td><td>25 Oct 2026</td><td><span class="badge">Posted</span></td><td class="r">MYR 80.00</td></tr></tbody></table>
   </div>
 
-  <div class="sep">2. Sales order detail: Related tab (new) and Delivery tab sentence fix</div>
+  <div class="sep">2. Sales order detail: Related tab (new) and Delivery tab: no sentence when DO rows exist; "Nothing delivered yet." only when there are none</div>
   <h1>SO427775 <span class="badge">Open</span></h1>
   <div class="tabs"><span>General</span><span>Lines</span><span class="on">Delivery</span><span>Invoices</span><span>Transfers</span><span>Related</span></div>
   <div class="card scroll">
     <h2>Delivery</h2>
-    <p class="muted">16 on 1 delivery order.</p>
     <table><thead><tr><th style="width:150px">DO no.</th><th style="width:130px">DO date</th><th style="width:170px">Status</th><th style="width:150px">SKU</th><th style="width:110px">Location</th><th class="r" style="width:80px">Qty</th></tr></thead>
     <tbody>
       <tr><td><a href="#">202610-3905</a></td><td>21 Oct 2026</td><td><span class="badge">Picked Up</span></td><td>SKU-A</td><td>HQ</td><td class="r">5</td></tr>
@@ -59,18 +56,17 @@
     </tbody></table>
   </div>
   <div class="tabs"><span>General</span><span>Lines</span><span>Delivery</span><span>Invoices</span><span>Transfers</span><span class="on">Related</span></div>
-  <div class="card">
-    <div class="group"><h2>Delivery orders</h2><ul><li><a href="#">202610-3905</a> <span class="muted">21 Oct 2026</span></li></ul></div>
-    <div class="group"><h2>Billing documents</h2><ul><li><span class="badge">Invoice</span> <a href="#">202610-3905</a> <span class="muted">22 Oct 2026</span></li></ul></div>
+  <div class="card scroll">
+    <h2>Related</h2>
+    <table><thead><tr><th style="width:140px">Type</th><th style="width:160px">Number</th><th style="width:120px">Date</th><th style="width:130px">Status</th><th class="r" style="width:140px">Amount</th></tr></thead><tbody><tr><td><span class="badge">Delivery order</span></td><td><a href="#">202610-3905</a></td><td>21 Oct 2026</td><td><span class="badge">In Transit</span></td><td class="r">MYR 1,280.00</td></tr><tr><td><span class="badge">Invoice</span></td><td><a href="#">202610-3905</a></td><td>22 Oct 2026</td><td><span class="badge">Posted</span></td><td class="r">MYR 1,280.00</td></tr></tbody></table>
   </div>
 
   <div class="sep">3. Billing document detail: Related tab</div>
   <h1>202610-3905 <span class="badge">Invoice</span> <span class="badge">Posted</span></h1>
   <div class="tabs"><span>Details</span><span>Lines</span><span class="on">Related</span></div>
-  <div class="card">
-    <div class="group"><h2>Sales orders</h2><ul><li><a href="#">SO427775</a> <span class="muted">14 Oct 2026</span></li></ul></div>
-    <div class="group"><h2>Delivery orders</h2><ul><li><a href="#">202610-3905</a> <span class="muted">21 Oct 2026</span></li></ul></div>
-    <div class="group"><h2>Billing documents</h2><ul><li><span class="badge">Credit note</span> <a href="#">CN-202610-0041</a> <span class="muted">25 Oct 2026</span></li></ul></div>
+  <div class="card scroll">
+    <h2>Related</h2>
+    <table><thead><tr><th style="width:140px">Type</th><th style="width:160px">Number</th><th style="width:120px">Date</th><th style="width:130px">Status</th><th class="r" style="width:140px">Amount</th></tr></thead><tbody><tr><td><span class="badge">Sales order</span></td><td><a href="#">SO427775</a></td><td>14 Oct 2026</td><td><span class="badge">Open</span></td><td class="r">MYR 1,360.00</td></tr><tr><td><span class="badge">Delivery order</span></td><td><a href="#">202610-3905</a></td><td>21 Oct 2026</td><td><span class="badge">In Transit</span></td><td class="r">MYR 1,280.00</td></tr><tr><td><span class="badge">Credit note</span></td><td><a href="#">CN-202610-0041</a></td><td>25 Oct 2026</td><td><span class="badge">Posted</span></td><td class="r">MYR 80.00</td></tr></tbody></table>
   </div>
   <div class="card"><h2>No related documents</h2><p class="muted">Empty state (cash sale with no order).</p></div>
 </main>
