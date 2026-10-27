@@ -75,6 +75,13 @@ The follow-up:
 
 ## Known, not fixed here
 
+- During a long import, rows the import holds come back `busy` at the head of the oldest-first
+  poll, so the poll can make no progress until the import commits. That is a delay only, never
+  a loss. A `SKIP LOCKED` poll would lock the very rows its own worker call then claims, so it
+  is left as is.
+- `EMBEDDING_QUEUE_DB_FALLBACK_ENABLED` must stay `true`: a `busy` RQ job is used up, and only
+  the DB poll picks that row up again. The runbook says so.
+
 - The product bulk import still queues every product in the file, changed or not. Dedupe
   keeps that to one pending row per product.
 - A VALID hand-built index with the right name is reused without comparing its definition.

@@ -761,6 +761,9 @@ def _supersede_pending_duplicates(db: Session, queue_item: EmbeddingQueue) -> in
     """
     if queue_item.source_type in _PAYLOAD_SOURCE_TYPES:
         return 0
+    # A retrying row is one failure nearer dead_letter; the fresh rows must survive it.
+    if (queue_item.retry_count or 0) > 0:
+        return 0
     now = datetime.utcnow()
     # SKIP LOCKED: a row an enqueuer is holding stays pending and is claimed on its own later,
     # rather than this claim waiting on (or deadlocking with) that transaction.

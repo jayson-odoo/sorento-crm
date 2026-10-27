@@ -888,7 +888,7 @@ def prune_embedding_queue(
 def dedupe_pending_embedding_queue(
     db: Session, *, batch_size: int = 10000, max_batches: int = 10, pause_seconds: float = 1.0
 ) -> dict:
-    """Mark every pending row `skipped` that a NEWER pending row of the same source covers.
+    """Mark every pending row `skipped` that a newer pending row of the same source covers.
 
     The backlog queued before EMBED-QUEUE-DEDUPE holds many pending rows per source; the
     worker re-reads the source whatever row it runs, so only the newest is needed (newest,
@@ -909,7 +909,9 @@ def dedupe_pending_embedding_queue(
             SELECT id FROM (
                 SELECT id, row_number() OVER (
                            PARTITION BY source_type, source_id
-                           ORDER BY created_at DESC, id DESC
+                           -- Keep the newest never-failed row: a retrying one may still
+                           -- go to dead_letter, and must not take the fresh change with it.
+                           ORDER BY (retry_count = 0) DESC, created_at DESC, id DESC
                        ) AS rn
                   FROM embedding_queue
                  WHERE status = 'pending'

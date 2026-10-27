@@ -322,6 +322,58 @@ def test_an_enqueue_after_an_uncommitted_claim_queues_its_own_row(two_sessions):
     assert len(result["rows"]) == 1
 
 
+def test_claim_and_backlog_dedupe_never_wait_on_a_held_row(two_sessions, monkeypatch):
+    """A duplicate an open transaction holds is skipped by both, not waited on (the 5s
+    statement_timeout turns a wait into a failure) and stays pending."""
+    from app.services import embedding_worker
+    from app.services.embedding_service import dedupe_pending_embedding_queue
+
+    holder, worker_db = two_sessions
+    sid = str(uuid.uuid4())
+    older, held = _row_dict(sid), _row_dict(sid)
+    held["created_at"] = held["available_at"] = datetime.utcnow() - timedelta(minutes=5)
+    older["created_at"] = older["available_at"] = datetime.utcnow() - timedelta(minutes=9)
+    newest = _row_dict(sid)
+    holder.execute(EmbeddingQueue.__table__.insert(), [older, held, newest])
+    holder.commit()
+    holder.execute(text("SELECT id FROM embedding_queue WHERE id = :i FOR SHARE"), {"i": held["id"]})
+
+    claimed = embedding_worker._claim(worker_db, older["id"])
+    assert embedding_worker._supersede_pending_duplicates(worker_db, claimed) == 1  # newest only
+    worker_db.rollback()
+    assert dedupe_pending_embedding_queue(worker_db, batch_size=10, pause_seconds=0)["rows_skipped"] == 1
+    holder.commit()
+    statuses = dict(worker_db.execute(text("SELECT id::text, status FROM embedding_queue")).all())
+    assert statuses[held["id"]] == "pending"
+
+
+def test_claiming_a_retrying_row_keeps_the_fresh_rows(db, worker):
+    order = _order(db)
+    _complete_all(db)
+    retrying = _queue_row(db, "order", str(order.id), age=timedelta(minutes=9))
+    retrying.retry_count = 2
+    fresh = _queue_row(db, "order", str(order.id))
+    db.flush()
+    worker.process_embedding_queue_item(retrying.id)
+    db.expire_all()
+    assert db.get(EmbeddingQueue, fresh.id).status == "pending"
+
+
+def test_backlog_dedupe_keeps_a_fresh_row_over_a_newer_retrying_one(db):
+    from app.services.embedding_service import dedupe_pending_embedding_queue
+
+    sid = str(uuid.uuid4())
+    fresh = _queue_row(db, "order", sid, age=timedelta(minutes=5))
+    retrying = _queue_row(db, "order", sid, age=timedelta(minutes=1))
+    retrying.retry_count = 1
+    db.flush()
+    dedupe_pending_embedding_queue(db, batch_size=10, pause_seconds=0)
+    db.expire_all()
+    assert (db.get(EmbeddingQueue, fresh.id).status, db.get(EmbeddingQueue, retrying.id).status) == (
+        "pending", "skipped",
+    )
+
+
 # --------------------------------------------------------------------------- #
 # Worker claim: supersede, retry
 # --------------------------------------------------------------------------- #

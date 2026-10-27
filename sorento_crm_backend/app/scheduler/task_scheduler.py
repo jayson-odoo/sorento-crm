@@ -227,8 +227,9 @@ def _run_embedding_db_queue_fallback(db, max_jobs_per_run: int) -> dict:
     processed = 0
     for qid in ids:
         try:
-            process_embedding_queue_item(qid)
-            processed += 1
+            # "busy": an open transaction holds the row; it stays pending for the next poll.
+            if (process_embedding_queue_item(qid) or {}).get("status") != "busy":
+                processed += 1
         except Exception as e:
             logger.error("Embedding DB fallback failed for queue id %s: %s", qid, e, exc_info=True)
     return {"processed": processed}

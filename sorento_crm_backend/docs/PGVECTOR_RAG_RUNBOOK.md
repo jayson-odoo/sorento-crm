@@ -14,7 +14,9 @@
 - `EMBEDDING_MAX_RETRIES` (default: `5`)
 - `EMBEDDING_RETRY_BACKOFF_SECONDS` (default: `60`)
 - `REDIS_URL` - must be the **same** Redis instance for every process that enqueues or consumes RQ jobs (API, `seed_embeddings`, scheduled task). If you enqueue on your laptop (`localhost:6379`) but the server uses a different `REDIS_URL`, the server queue will look empty.
-- `EMBEDDING_QUEUE_DB_FALLBACK_ENABLED` (default: `true`) - when `false`, the scheduler only drains Redis (`embeddings` queue), no Postgres fallback; use this when you rely purely on RQ and correct `REDIS_URL`.
+- `EMBEDDING_QUEUE_DB_FALLBACK_ENABLED` (default: `true`) - when `false`, the scheduler only drains Redis (`embeddings` queue), no Postgres fallback; use this when you rely purely on RQ and correct `REDIS_URL`. **Keep it `true`** (EMBED-QUEUE-DEDUPE): a row another transaction holds comes back `busy` from its RQ job and stays pending, and only the DB fallback picks it up again; with the fallback off, that change is never embedded.
+- `EMBEDDING_QUEUE_BATCH_SIZE` (default: `10`) - rows `embedding_job_processor` takes per run, from Redis and from the DB each.
+- `EMBEDDING_QUEUE_RETENTION_DAYS` (default: `14`) - `embedding_queue_prune` (hourly) deletes completed/skipped rows older than this, in batches. `embedding_queue_dedupe` (every 5 min) retires duplicate pending rows left from before the dedupe.
 
 ## Deployment checklist
 1. Run Alembic migrations through:
