@@ -269,7 +269,9 @@ def test_cash_sale_with_no_order_has_nothing_related(world):
 def test_do_number_not_in_the_crm_is_kept_without_an_id(world):
     iv = world.doc(f"{MARKER}-IV-GHOST", lines=[{"from_doc_type": "DO", "from_doc_no": "GHOST-DO-1"}])
     b = _svc().relations_for_billing_document(world.db, iv)
-    assert b["delivery_orders"] == [{"id": None, "doc_no": "GHOST-DO-1", "doc_date": None}]
+    assert [(d["id"], d["doc_no"], d["doc_date"]) for d in b["delivery_orders"]] == [
+        (None, "GHOST-DO-1", None)
+    ]
 
 
 def test_do_linked_by_header_or_by_so_line(world):

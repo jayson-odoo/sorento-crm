@@ -555,7 +555,9 @@ class TestDetail:
     def test_a_document_with_nothing_related_has_empty_related(self, world, api):
         lone = world.doc("IV-LONE", lines=[{"item_code": "X"}])
         body = api(VIEW).get(f"{LIST}/{lone.id}").json()
-        assert body["related"] == {"notes": [], "sales_orders": [], "delivery_order_nos": []}
+        assert body["related"] == {
+            "notes": [], "sales_orders": [], "delivery_order_nos": [], "delivery_orders": [],
+        }
         assert body["against"] is None
 
     def test_a_credit_note_names_its_invoice(self, world, api):
