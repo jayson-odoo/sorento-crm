@@ -40,8 +40,8 @@ export default function OrderStatusesList() {
     debouncedValue: searchQuery,
     isSettling: searchSettling,
   } = useDebouncedSearch();
-  // Final-status filter is applied client-side: the list GET has no such param
-  // and order statuses are a small config set served on a single page.
+  // Final-status filter is answered by the server (`is_final_status`), so the total and the
+  // paging describe the filtered set.
   const [finalFilter, setFinalFilter] = useState<'all' | 'yes' | 'no'>('all');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
@@ -50,19 +50,20 @@ export default function OrderStatusesList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
+    is_final_status: finalFilter === 'all' ? undefined : finalFilter === 'yes',
   });
 
-  const rows = useMemo<OrderStatus[]>(() => {
-    const all = data?.data ?? [];
-    if (finalFilter === 'all') return all;
-    const want = finalFilter === 'yes';
-    return all.filter((r) => Boolean(r.is_final_status) === want);
-  }, [data, finalFilter]);
+  const rows = useMemo<OrderStatus[]>(() => data?.data ?? [], [data]);
 
   // Reset selection whenever the result set changes.
   useEffect(() => {
     setRowSelection({});
   }, [searchQuery, finalFilter, pagination.pageIndex, pagination.pageSize, sorting]);
+
+  // A different Final choice is a different set: back to page one.
+  useEffect(() => {
+    setPagination((p) => ({ ...p, pageIndex: 0 }));
+  }, [finalFilter]);
 
   // A search brings the reader back to page 0 to see the matches.
   const searchMounted = useRef(false);
