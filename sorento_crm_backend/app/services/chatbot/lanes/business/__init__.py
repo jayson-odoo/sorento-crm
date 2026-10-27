@@ -32,6 +32,7 @@ from app.services.chatbot.lanes.business import brand_guard
 from app.services.chatbot import do_ask
 from app.services.chatbot.lanes.business import alternatives as alternatives_mod
 from app.services.chatbot.lanes.business import fetch as fetch_mod
+from app.services.chatbot.lanes.business import yearly_basis_ask
 from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import chat_report
 from app.services.chatbot.lanes.business import report_ask
@@ -1875,7 +1876,7 @@ def run_fetch(
         parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
         order_status_raw = report_ask.ASK_NAME
     _company_answer = isinstance(parse_output.get("required_ask"), dict) and (
-        parse_output["required_ask"].get("ask") == sales_company_ask.ASK_NAME
+        parse_output["required_ask"].get("ask") in (sales_company_ask.ASK_NAME, yearly_basis_ask.ASK_NAME)
     )  # the reply to the Yearly comparison's company question re-runs THAT ask: never retyped here
     if (
         domain in contracts.ORDER_OR_SALES_DOMAINS
@@ -2149,17 +2150,27 @@ def run_fetch(
         # group_by "date"). A FRESH ask checks its axis first, then asks the company question.
         slot_asked = parse_output.get("required_ask")
         answering_company = isinstance(slot_asked, dict) and slot_asked.get("ask") == sales_company_ask.ASK_NAME
-        if not answering_company:
+        answering_basis = isinstance(slot_asked, dict) and slot_asked.get("ask") == yearly_basis_ask.ASK_NAME
+        if not answering_company and not answering_basis:
             group_by = jsc.js_string(parse_output.get("group_by") or "")
             if group_by and group_by != "year":
                 # (REPORT-UNIFY: the report ask draws every other axis; only the Yearly comparison is left here.)
                 # Review round 2 S1: "sales by customer" is not answered with a by-channel
                 # table and no word that the ask was changed; it is said, and nothing fetched.
                 return _sales_analysis_axis_unsupported(group_by)
-            if jsc.js_string(parse_output.get("sales_basis") or "") not in fetch_mod.SALES_ANALYSIS_BASES:
-                # Owner ruling 27 Oct: a sales total never defaults to invoiced; the basis is asked, Invoiced first,
-                # the way a ranking asks it.
-                return _fixed_reply(report_ask.ranking_ask.RANKING_BASIS_LINE)
+        if not answering_company:
+            # Owner ruling 27 Oct: a sales total never defaults its basis; the Yearly comparison asks it ("Invoiced,
+            # delivered or ordered?") through a slot, and the answer re-runs the first message's analysis.
+            basis_asked = yearly_basis_ask.settle(db, parse_output)
+            if basis_asked is not None:
+                if trace is not None:
+                    trace.add("required_ask", {"ask": yearly_basis_ask.ASK_NAME, "done": basis_asked.done,
+                                               "values": basis_asked.values})
+                if not basis_asked.done:
+                    return _fixed_reply(basis_asked.reply or "", required_ask=basis_asked.slot)
+                for key, value in yearly_basis_ask.run_input(basis_asked).items():
+                    semantic_input[key] = value
+                parse_output = {**parse_output, **{k: v for k, v in yearly_basis_ask.run_input(basis_asked).items()}}
         # SALES-COMPANY (CHAT-PICK-QTY-STATE item 1): a contact in two companies who names
         # neither is asked which HERE, before any fetch, as a `required_fields` slot, so the
         # reply is read against this question (the route's own "Sorento or Mocha?" came back
