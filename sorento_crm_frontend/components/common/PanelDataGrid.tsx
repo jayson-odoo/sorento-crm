@@ -62,6 +62,7 @@ export function PanelDataGrid<TRow extends object>({
   searchOf,
   renderGroupHeader,
   sortable = false,
+  serverSorting,
   onSortedRowsChange,
   rowSelection,
   onRowSelectionChange,
@@ -148,6 +149,12 @@ export function PanelDataGrid<TRow extends object>({
    * asked for one. The initial order is always the order the caller passed.
    */
   sortable?: boolean;
+  /**
+   * Sort on the SERVER instead (owner rule 27 Oct: every grid column sorts server side). The
+   * caller owns the state and refetches with it; the grid only renders the header controls and
+   * leaves the rows in the order they came back. Wins over `sortable`.
+   */
+  serverSorting?: { sorting: SortingState; onSortingChange: OnChangeFn<SortingState> };
   /**
    * The rows in the grid's own live order - sorted, then filtered, never paginated - each time
    * that order changes (Should fix 3, review round 1, PR #1218 S3). OPTIONAL: a caller whose
@@ -298,7 +305,7 @@ export function PanelDataGrid<TRow extends object>({
       : {}),
     state: {
       pagination: tablePagination,
-      ...(sortable ? { sorting } : {}),
+      ...(serverSorting ? { sorting: serverSorting.sorting } : sortable ? { sorting } : {}),
       ...(rowSelection ? { rowSelection } : {}),
       ...(expanded === undefined ? {} : { expanded }),
     },
@@ -309,9 +316,11 @@ export function PanelDataGrid<TRow extends object>({
         }
       : {}),
     onPaginationChange: setPagination,
-    ...(sortable
-      ? { onSortingChange: setSorting, getSortedRowModel: getSortedRowModel() }
-      : { enableSorting: false }),
+    ...(serverSorting
+      ? { onSortingChange: serverSorting.onSortingChange, manualSorting: true }
+      : sortable
+        ? { onSortingChange: setSorting, getSortedRowModel: getSortedRowModel() }
+        : { enableSorting: false }),
     ...(expanded === undefined
       ? {}
       : { onExpandedChange, getExpandedRowModel: getExpandedRowModel() }),
