@@ -75,11 +75,22 @@ describe('RelatedDocumentsPanel', () => {
     await screen.findByRole('link', { name: 'SO427775' });
     expect(getRelatedDocuments).toHaveBeenLastCalledWith('sales_order', 'iv-1', 'doc_date', 'asc');
 
-    const header = screen.getAllByRole('columnheader').find((h) => /Amount/.test(h.textContent ?? ''));
-    fireEvent.click(within(header as HTMLElement).getByRole('button', { name: /Amount/ }));
+    const amount = () =>
+      within(
+        screen.getAllByRole('columnheader').find((h) => /Amount/.test(h.textContent ?? '')) as HTMLElement,
+      ).getByRole('button', { name: /Amount/ });
+    fireEvent.click(amount());
     await waitFor(() =>
-      expect(getRelatedDocuments).toHaveBeenLastCalledWith('sales_order', 'iv-1', 'amount', expect.stringMatching(/asc|desc/)),
+      expect(getRelatedDocuments).toHaveBeenLastCalledWith('sales_order', 'iv-1', 'amount', 'asc'),
     );
+    fireEvent.click(amount());
+    await waitFor(() =>
+      expect(getRelatedDocuments).toHaveBeenLastCalledWith('sales_order', 'iv-1', 'amount', 'desc'),
+    );
+    // A third click would clear the sort; the table keeps the last one instead.
+    fireEvent.click(amount());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(getRelatedDocuments).toHaveBeenLastCalledWith('sales_order', 'iv-1', 'amount', 'desc');
   });
 
   it('opens the record a row is for', async () => {

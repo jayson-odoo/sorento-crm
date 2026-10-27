@@ -37,19 +37,6 @@ type Tab = 'details' | 'lines' | 'related';
 function LineFrom({ line, doIds }: { line: BillingDocumentLine; doIds: Map<string, string> }) {
   if (!line.from_doc_type || !line.from_doc_no) return null;
   const so = line.sales_order;
-  // DOC-RELATIONS: a DO the CRM holds opens, like every other related number.
-  const doId = line.from_doc_type === 'DO' ? doIds.get(line.from_doc_no) : undefined;
-  if (doId) {
-    return (
-      <Link
-        href={`/order-management/orders/${doId}`}
-        className="block truncate text-primary hover:underline"
-        title={`DO ${line.from_doc_no}`}
-      >
-        DO {line.from_doc_no}
-      </Link>
-    );
-  }
   if (line.from_doc_type === 'SO' && so) {
     return (
       <Link href={`/scm/sales-orders/${so.id}`} className="block truncate text-primary hover:underline" title={so.doc_no}>
@@ -58,9 +45,18 @@ function LineFrom({ line, doIds }: { line: BillingDocumentLine; doIds: Map<strin
     );
   }
   const label = `${line.from_doc_type} ${line.from_doc_no}`;
+  // DOC-RELATIONS: a DO the CRM holds opens, like every other related number. `doIds` is empty
+  // for a viewer without the DO view slug (the server masks it), so the number stays text.
+  const doId = line.from_doc_type === 'DO' ? doIds.get(line.from_doc_no) : undefined;
   return (
     <span className="block truncate" title={so ? `${label} (${so.doc_no})` : label}>
-      {label}
+      {doId ? (
+        <Link href={`/order-management/orders/${doId}`} className="text-primary hover:underline">
+          {label}
+        </Link>
+      ) : (
+        label
+      )}
       {so ? (
         <>
           {' '}

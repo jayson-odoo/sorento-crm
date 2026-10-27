@@ -10,7 +10,8 @@ anchor record's own company, so a same-numbered document in another company neve
   SO -> DO       a DO line naming the SO by `from_doc_no` (type SO or NULL), a DO line whose
                  `sales_order_line_id` is on the SO, or the DO header's `sales_order_id`;
                  deleted and cancelled DOs left out. The line half is the Delivery tab's own
-                 predicate (`so_line_history`), so the two cannot disagree.
+                 predicate (`so_line_history`); the header branch is extra (a DO linked only by
+                 its header has no line row for the Delivery tab to list).
   SO -> billing  a billing line resolved onto the SO's lines, transferred from the SO by number,
                  or transferred from one of the SO's DOs by number; plus the notes against those.
   DO -> billing  a billing line transferred from the DO by number; plus the notes against those.
@@ -65,6 +66,7 @@ def _do_ids_for_so(so: SalesOrder):
     """SELECT of the ids of the live DOs delivering `so`."""
     line_link = exists().where(
         OrderLine.order_id == Order.id,
+        OrderLine.company_id == so.company_id,
         or_(
             _so_from_doc(OrderLine.from_doc_type, OrderLine.from_doc_no, so.so_number),
             and_(
@@ -309,10 +311,17 @@ def relations_for_billing_document(
             BillingDocument.id == doc.against_document_id,
         ),
     )
+    billing = _billing_items(db, company_id, related_billing)
+    # A note's invoice the CRM does not hold is still named, without a link (the DO rule above).
+    if doc.against_doc_no and not doc.against_document_id:
+        billing.append(
+            {"id": None, "document_type": "invoice", "doc_no": doc.against_doc_no,
+             "doc_date": None, "status": None, "amount": None, "currency_code": None}
+        )
     return {
         "sales_orders": _by_date(_sales_order_items(db, company_id, so_ids)),
         "delivery_orders": _by_date(delivery_orders),
-        "billing_documents": _by_date(_billing_items(db, company_id, related_billing)),
+        "billing_documents": _by_date(billing),
     }
 
 
@@ -342,7 +351,11 @@ def related_table(
     rows.sort(key=lambda r: r["doc_no"])  # stable tiebreak under the chosen column
     present = [r for r in rows if r.get(sort) is not None]
     blank = [r for r in rows if r.get(sort) is None]
-    present.sort(key=lambda r: r[sort], reverse=dir == "desc")
+    # Text sorts case-blind: a SO status is a slug (`open`), a DO's a name (`Delivered`).
+    present.sort(
+        key=lambda r: r[sort].casefold() if isinstance(r[sort], str) else r[sort],
+        reverse=dir == "desc",
+    )
     return present + blank
 
 

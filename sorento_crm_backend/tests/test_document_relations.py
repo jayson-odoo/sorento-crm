@@ -301,13 +301,34 @@ def test_another_companys_same_numbers_never_link(world):
                      lines=[{"from_doc_type": "DO", "from_doc_no": do.order_number}])
     so_b = world.so(so.so_number, company_id=world.b)
     rel = _svc()
-    s = rel.relations_for_sales_order(world.db, so)
-    assert do_b.order_number not in _nos(s["delivery_orders"])
-    assert iv_b.doc_no not in _nos(s["billing_documents"])
-    assert _nos(rel.relations_for_delivery_order(world.db, do)["billing_documents"]) == [iv.doc_no]
-    # A DO in A naming the SO number resolves to A's order, never B's same-numbered one.
-    assert [x["id"] for x in rel.relations_for_delivery_order(world.db, do)["sales_orders"]] == [str(so.id)]
-    assert so_b.id not in {x["id"] for x in rel.relations_for_billing_document(world.db, iv)["sales_orders"]}
+    # A viewer whose scope holds BOTH companies (review B1): the session's own company filter
+    # then lets B's rows through, so only the service's explicit company match keeps them out.
+    world.db.expire_all()
+    with company_scope(world.db, frozenset({world.a, world.b})):
+        s = rel.relations_for_sales_order(world.db, so)
+        assert do_b.order_number not in _nos(s["delivery_orders"])
+        assert iv_b.doc_no not in _nos(s["billing_documents"])
+        assert _nos(rel.relations_for_delivery_order(world.db, do)["billing_documents"]) == [iv.doc_no]
+        # A DO in A naming the SO number resolves to A's order, never B's same-numbered one.
+        assert [x["id"] for x in rel.relations_for_delivery_order(world.db, do)["sales_orders"]] == [str(so.id)]
+        assert so_b.id not in {x["id"] for x in rel.relations_for_billing_document(world.db, iv)["sales_orders"]}
+
+
+def test_a_notes_invoice_not_in_the_crm_is_kept_without_an_id(world):
+    """Review S2: a credit note against an invoice the CRM does not hold still names it."""
+    cn = world.doc(f"{MARKER}-CN-GHOST", document_type="credit_note", against_doc_no="GHOST-IV-9")
+    rows = _svc().relations_for_billing_document(world.db, cn)["billing_documents"]
+    assert [(r["id"], r["doc_no"], r["document_type"]) for r in rows] == [(None, "GHOST-IV-9", "invoice")]
+
+
+def test_status_sorts_case_blind():
+    """Review S5: `Delivered` (a DO name) sorts with `open` / `posted` (slugs) by letter, not case."""
+    rows = {"sales_orders": [{"id": "s", "doc_no": "S", "doc_date": None, "status": "open"}],
+            "delivery_orders": [{"id": "d", "doc_no": "D", "doc_date": None, "status": "Delivered"}],
+            "billing_documents": [{"id": "b", "document_type": "invoice", "doc_no": "B",
+                                   "doc_date": None, "status": "cancelled"}]}
+    out = _svc().related_table(rows, sort="status", dir="asc")
+    assert [r["status"] for r in out] == ["cancelled", "Delivered", "open"]
 
 
 def test_a_so_typed_line_naming_a_do_number_is_not_a_do(world):
