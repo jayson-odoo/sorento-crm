@@ -338,3 +338,23 @@ def test_the_project_activity_panel_is_unchanged_for_a_view_holder(scene):
     db, w, p = scene
     with acting(db, w.a, {VIEW}) as client:
         assert client.get(f"/api/v1/activities/project/{p['p4']}/activities").status_code == 200
+
+
+# ------------------------------------------------------------------ UAC 6: the assistant's project lookup
+
+
+def _probe(db, w, user_id, perms, tokens):
+    from app.audit_context import AuditActor, stamp_actor
+    from app.services.entity_resolver import _probe_project
+
+    stamp_actor(AuditActor(actor_type="user", user_id=user_id, real_user_id=user_id), db=db)
+    with acting(db, user_id, perms):
+        found = _probe_project(db, tokens)
+    return {m.uuid for matches in found.values() for m in matches}
+
+
+def test_the_assistant_does_not_name_a_foreign_project_to_a_limited_user(scene):
+    db, w, p = scene
+    codes = [db.get(Project, p[k]).project_code for k in ("p1", "p4")]
+    assert _probe(db, w, w.a, LIMITED, codes) == {p["p1"]}
+    assert _probe(db, w, w.a, {VIEW}, codes) == {p["p1"], p["p4"]}
