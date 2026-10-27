@@ -160,8 +160,14 @@ describe('Spec verification - multi State and Class filters', () => {
     await openFilters(user);
     await user.selectOptions(await box('verified'), ['verified', 'unverified']);
     await waitFor(() => expect(setOf(lastParams().state)).toEqual(['unverified', 'verified']));
+    const before = getSpecVerificationWorklist.mock.calls.length;
     await user.click(screen.getByRole('button', { name: 'Clear filters' }));
-    await waitFor(() => expect(setOf(lastParams().state)).toEqual([]));
+    // Clearing returns to the cached unfiltered query (staleTime: Infinity), so a refetch is
+    // optional; any request made after clearing carries no state, and the URL drops it.
+    await waitFor(() => expect(lastUrlParam('state')).toEqual([]));
+    for (const call of getSpecVerificationWorklist.mock.calls.slice(before)) {
+      expect(setOf((call[0] as Record<string, unknown>).state)).toEqual([]);
+    }
   });
 
   it('a link with several states and classes restores both controls and the request', async () => {

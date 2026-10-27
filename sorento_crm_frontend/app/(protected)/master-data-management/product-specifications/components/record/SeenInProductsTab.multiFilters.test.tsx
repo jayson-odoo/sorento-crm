@@ -97,7 +97,11 @@ describe('Seen in products - multi Value, Class and Source filters', () => {
     renderTab();
     await user.selectOptions(await box('matte'), ['matte', 'gloss']);
     await waitFor(() => expect(setOf(lastParams().value)).toEqual(['gloss', 'matte']));
-    expect(within(screen.getByRole('button', { name: /Filters/i })).getByText('1')).toBeInTheDocument();
+    // The Filters menu is modal, so its button is hidden from the a11y tree while it is open.
+    await user.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(within(screen.getByRole('button', { name: /Filters/i })).getByText('1')).toBeInTheDocument(),
+    );
   });
 
   it('two classes and two sources reach the hook as sets of two', async () => {
