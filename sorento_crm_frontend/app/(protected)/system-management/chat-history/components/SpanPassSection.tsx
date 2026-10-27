@@ -32,6 +32,7 @@ export function SpanPassSection({
         {[
           model || 'No span model',
           spanExtract.model_source,
+          spanExtract.embedding_model ?? (spanExtract.embedding_model === null && !spanExtract.fallback ? 'spelling only' : null),
           `${spanExtract.ms} ms`,
           `${tokens.prompt_tokens ?? 0} in`,
           `${tokens.completion_tokens ?? 0} out`,
@@ -55,6 +56,16 @@ export function SpanPassSection({
               <span key={i} className="inline-flex items-center gap-1 rounded border px-1.5 py-0.5 text-xs">
                 <span className="font-medium">{s.text}</span>
                 {s.type && <span className="text-muted-foreground">{s.type}</span>}
+                {s.meaning && (
+                  <span className="min-w-0 whitespace-normal break-words text-muted-foreground">
+                    = <span data-testid="span-meaning">{s.meaning}</span>
+                    <span data-testid="span-matched-by" className="ms-1">
+                      <Badge variant="secondary" size="sm">
+                        {s.matched_by === 'meaning' ? 'meaning' : 'text'}
+                      </Badge>
+                    </span>
+                  </span>
+                )}
                 {s.status && (
                   <Badge variant="primary" size="sm">
                     {s.status}

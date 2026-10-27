@@ -409,6 +409,12 @@ async def startup_event():
         _chat_turns.start_inbox_queue()
     except Exception as e:
         logging.error(f"Failed to start the chatbot inbox sweeper: {str(e)}", exc_info=True)
+    try:
+        from app.tasks import chat_turns as _chat_turns
+
+        _chat_turns.start_lookup_warm()
+    except Exception as e:
+        logging.error(f"Failed to start the lookup vector warm: {str(e)}", exc_info=True)
 
     # Scheduler is gated so only the dedicated `worker` container runs it.
     # Blue/green API containers must NOT fire cron ticks (would double-process).

@@ -4,9 +4,9 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
-import { getCustomer } from '@/app/(protected)/order-management/customers/services/customerService';
 import { useContactAccessTypes } from '../../contact-access-types/hooks/useContactAccessTypes';
 import { getContact } from '../[id]/services/contactService';
+import { customerFilterLabel, customerFilterLabelKey } from '../lib/customerFilterLabel';
 import {
   popoverFilterChips,
   popoverFilterCount,
@@ -41,11 +41,8 @@ export function useContactFiltersToolbar(s: State) {
   const { data: accessTypes = [] } = useContactAccessTypes();
   // Same keys as ContactAccessFilters' own label read-back, so the cache is shared; chips never show an id.
   const customerLabel = useQuery({
-    queryKey: ['contact-filter-customer-label', s.accessFilters.customerId],
-    queryFn: async () => {
-      const c = await getCustomer(s.accessFilters.customerId as string);
-      return `${c.customer_code} - ${c.customer_name}`;
-    },
+    queryKey: customerFilterLabelKey(s.accessFilters.customerId),
+    queryFn: () => customerFilterLabel(s.accessFilters.customerId as string),
     enabled: !!s.accessFilters.customerId,
     staleTime: Infinity,
     retry: 0,
