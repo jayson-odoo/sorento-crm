@@ -1423,7 +1423,7 @@ export function PoTakesPicker({
     }
     for (const cond of appliedConditions) {
       if (!cond.value.length) continue;
-      // A condition's value may name several (comma-joined): a row matches any of them.
+      // A condition's value is a list (names stay whole, never comma-split): a row matches any of them.
       const wanted = cond.value;
       if (cond.field === 'po_number') out = out.filter((t) => wanted.includes(t.po_number ?? ''));
       if (cond.field === 'supplier_name') out = out.filter((t) => wanted.includes(t.supplier_name ?? ''));
