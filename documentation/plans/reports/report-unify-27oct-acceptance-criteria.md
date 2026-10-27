@@ -8,8 +8,9 @@ Status: Agreed (owner answers 27 Oct ~19:15). Plan: `PLAN-report-unify-27oct.md`
   `trap_type` is P-trap. The total equals the sum of those products' rows.
 - **AC-RU-2.** A spec set with more than 50 products is answered whole. There is no 50-id cap on a spec, because it
   resolves server-side.
-- **AC-RU-3.** A numeric spec (`length:250mm`) matches exactly after unit normalisation. 200 mm and unstated lengths
-  are excluded.
+- **AC-RU-3.** A numeric spec (`length:250` or `length:250mm` on an `mm` key) matches the stored number exactly. 200
+  and unstated lengths are excluded. A value in another unit (`length:25cm`) is echoed under `not_applied`
+  (reason `unit`), and so is an unknown key (reason `unknown_spec`).
 - **AC-RU-4.** A spec that matches no product returns zero rows with `status=no_products`, never the unfiltered set.
 - **AC-RU-5.** A spec key hidden from the contact is not applied and is echoed under
   `not_applied: [{filter: "spec", reason: "hidden"}]`.

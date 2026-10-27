@@ -52,18 +52,21 @@ Measured facts:
   outstanding RM exists today; only the old outstanding tool lacks it.
 
 Changes:
-1. **Route param `spec`**, repeatable, `key:value` (e.g. `trap_type:p_trap`, `length:250mm`). It is resolved
-   server-side to product ids by a new `services/reports/spec_set.py::product_ids_for_specs(db, specs,
-   hidden_keys)`:
-   - **String / bool values:** the membership clause `product_spec_search.filter_specs(specs=...)` builds. This is
-     the same membership "any P-trap WC?" uses (`product_predicate_service.resolve_product_set`).
-   - **Numeric values:** exact equality on `product_specifications.values[key].value`, after unit normalisation
-     from `product_spec_registry`. `filter_specs` drops a numeric value from membership (:989-993). A report must
-     not, so this is the one rule added.
-   - **Hidden keys:** a key the contact may not see is not applied and is echoed under `not_applied`.
-   - The resolved ids go to `run_ask` `filters["product"]`, ANDed with any named product / code.
-   - **No match:** an empty set returns zero rows, never "no filter" (`ask.py` module docstring rule), with
-     `status=no_products`.
+1. **Route param `spec`**, repeatable, `key:value` (e.g. `trap_type:p_trap`, `length:250`, `length:250mm`). It is
+   resolved server-side by a new `services/reports/spec_set.py`:
+   - **Membership** is `product_spec_search.membership_clause({key: [values]})` (`product_spec_search.py:895`), the
+     exact clause the described-set path uses. It already handles string / list / yes-no values and exact JSON
+     numbers. No new matching rule is added.
+   - **Units:** a value with a unit is accepted only in the registry's unit (`product_spec_registry.unit`). "250mm"
+     on an `mm` key is 250; another unit goes under `not_applied` with reason `unit`.
+   - **Unknown key:** a key not in `product_spec_registry` goes under `not_applied` with reason `unknown_spec`.
+   - **Hidden keys:** a key the contact may not see is resolved as in
+     `api/v1/system/references.py:1644` `_contact_hidden_spec_keys`, through
+     `spec_visibility.resolve_policy` / `hidden_keys` (moved into one shared helper in `spec_visibility`, which both
+     callers use). It goes under `not_applied` with reason `hidden`.
+   - The matching product ids go to `run_ask` `filters["product"]`, ANDed with any named product / code.
+   - **No match:** an empty set returns zero rows with `status=no_products`, never "no filter" (`ask.py` module
+     docstring rule).
 2. **The two new bases** (section 0) go in `ask.CATALOGUE["sales"]` (`pending_delivery`, `unpaid`) with their own
    dimensions / filters tuples. The route's `basis` doc and allow-list follow the catalogue.
 3. **`group_by=spec:<key>`.** `run_ask` runs `group_by=product` with no top-N cut, then folds the rows by each
