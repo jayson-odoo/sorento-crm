@@ -1007,6 +1007,15 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
         # test_the_index_exists` failing in CI while passing against the hand-migrated
         # shared dev DB.
         Index("ix_purchase_order_lines_source_ref_system", "source_ref", "source_system"),
+        # The PO line side of the PO -> SPO key `goods_chain._po_lines_feeding` and Stock
+        # Debt's `_follow_totals` join on (GOODSCHAIN-INDEX-QUERY, migration
+        # `gc_idx_0001_spo_from_po_key`).
+        Index(
+            "ix_purchase_order_lines_src_key",
+            func.btrim(source_ref),
+            "product_id",
+            "company_id",
+        ),
     )
 
 
