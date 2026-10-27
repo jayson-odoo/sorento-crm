@@ -31,7 +31,7 @@ from decimal import Decimal
 from io import BytesIO
 from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import func, or_, tuple_
+from sqlalchemy import and_, func, or_, select, union
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
@@ -1883,16 +1883,33 @@ class StockDebtService:
                     triples.append((po_number, ref, str(product_id)))
                 if po_line_id:
                     named.append(str(po_line_id))
+        # One SELECT of ids per route, joined by UNION, and the triples as a `key_rows` join
+        # rather than a row-IN (GOODSCHAIN-INDEX-QUERY): see `goods_chain.key_rows`.
         wanted = []
         if po_line_ids or named:
-            wanted.append(PurchaseOrderLine.id.in_(sorted({*po_line_ids, *named})))
-        if triples:
             wanted.append(
-                tuple_(
-                    PurchaseOrder.po_number,
-                    func.btrim(PurchaseOrderLine.source_ref),
-                    PurchaseOrderLine.product_id,
-                ).in_(sorted(set(triples)))
+                select(PurchaseOrderLine.id).where(
+                    PurchaseOrderLine.id.in_(sorted({*po_line_ids, *named}))
+                )
+            )
+        if triples:
+            keys = goods_chain.key_rows(
+                triples,
+                po_number=goods_chain.KEY_TEXT,
+                line_ref=goods_chain.KEY_TEXT,
+                product_id=goods_chain.KEY_UUID,
+            )
+            wanted.append(
+                select(PurchaseOrderLine.id)
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .join(
+                    keys,
+                    and_(
+                        PurchaseOrder.po_number == keys.c.po_number,
+                        func.btrim(PurchaseOrderLine.source_ref) == keys.c.line_ref,
+                        PurchaseOrderLine.product_id == keys.c.product_id,
+                    ),
+                )
             )
         if not wanted:
             return {}, {}
@@ -1905,7 +1922,7 @@ class StockDebtService:
                 PurchaseOrderLine.company_id.label("po_company_id"),
             )
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .filter(or_(*wanted))
+            .filter(PurchaseOrderLine.id.in_(union(*wanted) if len(wanted) > 1 else wanted[0]))
             .all()
         )
         if not lines:
