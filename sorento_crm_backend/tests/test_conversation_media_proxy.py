@@ -34,7 +34,7 @@ from sqlalchemy import text
 
 from app.models.access import AccessAgent, AgentTeam, RespondContact, Team
 from app.models.sla import SLAPolicy, SLAPolicyTier
-from app.models.user import User
+from app.models.user import User, UserPermission, UserRole, UserRoleAssignment, UserRolePermission
 from app.schemas.sla import ConversationSLATrackingCreate
 from app.services import media_proxy_service
 from app.services.sla_service import ConversationSLATrackingService
@@ -51,6 +51,12 @@ ALLOWED_HOST = "cdn.chatapi.net"
 ALLOWED_URL = f"https://{ALLOWED_HOST}/whatsapp_business/1/2/quotation.xlsx"
 
 _GRANTS: set[str] = set()
+# The real RBAC lookups, kept before `_permissions` fakes them, for the one test that runs
+# the route gate against seeded role rows instead.
+_REAL_RBAC = {
+    name: getattr(UserPermissionService, name)
+    for name in ("check_user_has_permission", "get_user_permission_slugs", "get_user_role_slugs")
+}
 _ADMINS: set[str] = set()
 _ACTOR: dict = {"id": None, "name": "Test Actor"}
 
@@ -80,6 +86,13 @@ def _permissions(monkeypatch):
         UserPermissionService,
         "check_user_has_permission",
         lambda self, uid, slug: slug in _GRANTS,
+    )
+    # The contact-keyed route takes `[view, view_own]` through `require_any_permission`,
+    # which reads the whole slug set rather than asking per slug; both answer from _GRANTS.
+    monkeypatch.setattr(
+        UserPermissionService,
+        "get_user_permission_slugs",
+        lambda self, uid: set(_GRANTS),
     )
     monkeypatch.setattr(
         UserPermissionService,
@@ -343,3 +356,29 @@ def test_an_unknown_contact_is_404(client, seed, monkeypatch):
     monkeypatch.setattr(media_proxy_service, "_client_factory", _upstream(_ok()))
     got = client.get(f"{INBOX_BASE}/zzt-nobody/media", params={"url": ALLOWED_URL})
     assert got.status_code == 404, got.text
+
+
+def test_a_real_view_only_role_still_loads_contact_media(client, seed, db, monkeypatch):
+    """No RBAC fakes: a role holding `view` and no `view_own` passes the route gate exactly as
+    before PORTAL-P2 (P2's promise), and a user with no role is still refused."""
+    for name, real in _REAL_RBAC.items():
+        monkeypatch.setattr(UserPermissionService, name, real)
+    monkeypatch.setattr(media_proxy_service, "_client_factory", _upstream(_ok()))
+    permission = db.query(UserPermission).filter_by(slug=VIEW).one_or_none()
+    if permission is None:
+        permission = UserPermission(id=str(uuid.uuid4()), slug=VIEW, name="View Conversations")
+        db.add(permission)
+    role_id = str(uuid.uuid4())
+    db.add(UserRole(id=role_id, slug=f"zzt-view-{role_id[:8]}", name=f"ZZT View {role_id[:8]}"))
+    db.flush()
+    db.add(UserRolePermission(id=str(uuid.uuid4()), role_id=role_id, permission_id=permission.id))
+    db.add(UserRoleAssignment(id=str(uuid.uuid4()), user_id=seed["assignee_id"], role_id=role_id))
+    db.flush()
+
+    got = client.get(f"{INBOX_BASE}/{RESPOND_IO_ID}/media", params={"url": ALLOWED_URL})
+    assert got.status_code == 200, got.text
+    assert got.content == b"PK\x03\x04 spreadsheet bytes"
+
+    _act_as(seed["outsider_id"])
+    refused = client.get(f"{INBOX_BASE}/{RESPOND_IO_ID}/media", params={"url": ALLOWED_URL})
+    assert refused.status_code == 403, refused.text

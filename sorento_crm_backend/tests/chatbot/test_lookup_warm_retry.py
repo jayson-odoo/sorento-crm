@@ -3,6 +3,7 @@ completion (AC-S3-14). The turn path never retries or sleeps."""
 from __future__ import annotations
 
 import logging
+import random
 import threading
 import uuid
 
@@ -153,7 +154,7 @@ def test_ac_s3_13_full_jitter_stretches_each_wait_by_half(env, monkeypatch):
 
 
 def test_ac_s3_13_default_jitter_keeps_every_wait_within_one_to_one_and_a_half(env, monkeypatch):
-    monkeypatch.undo()  # drop the zero-jitter patch, keep nothing else: re-patch the rest by hand
+    monkeypatch.setattr(ll, "_jitter", random.random, raising=False)
     sleeps: list[float] = []
     monkeypatch.setattr(ll, "_sleep", sleeps.append, raising=False)
     monkeypatch.setattr(ll, "_cache", {})

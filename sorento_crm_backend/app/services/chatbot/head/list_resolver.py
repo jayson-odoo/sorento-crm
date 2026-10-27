@@ -234,7 +234,10 @@ _prepared_lock = threading.RLock()
 
 
 def _prepare(rows: Sequence[LookupRow]) -> dict[str, _ListIndex]:
-    key = hashlib.sha1("\x01".join(f"{r.list_name}\x00{r.key}\x00" + "\x00".join(r.texts) for r in rows).encode()).hexdigest()
+    # The row's class (`group`) is part of the key: a grouped row set must never reuse a group-less index.
+    key = hashlib.sha1(
+        "\x01".join(f"{r.list_name}\x00{r.key}\x00{r.group or ''}\x00" + "\x00".join(r.texts) for r in rows).encode()
+    ).hexdigest()
     with _prepared_lock:
         built = _prepared.get(key)
         if built is None:
