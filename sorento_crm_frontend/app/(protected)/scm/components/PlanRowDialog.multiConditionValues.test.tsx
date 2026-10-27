@@ -88,6 +88,9 @@ function renderPicker() {
 beforeEach(() => cleanup());
 afterEach(() => cleanup());
 
+/** Whether a row shows this text: the still-open condition select also lists PO numbers as options. */
+const inRows = (text: string) => screen.queryAllByText(text).some((el) => !el.closest('select'));
+
 describe('PO / SO picker conditions - several values per condition', () => {
   it('the value of a condition is a multi control', async () => {
     renderPicker();
@@ -99,9 +102,9 @@ describe('PO / SO picker conditions - several values per condition', () => {
     renderPicker();
     await user.selectOptions(await box('PO-24118'), ['PO-24118', 'PO-9000']);
     fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
-    await waitFor(() => expect(screen.getByText('PO-9000')).toBeTruthy());
-    expect(screen.getByText('PO-24118')).toBeTruthy();
-    expect(screen.queryByText('PO-24090')).toBeNull();
+    await waitFor(() => expect(inRows('PO-9000')).toBe(true));
+    expect(inRows('PO-24118')).toBe(true);
+    expect(inRows('PO-24090')).toBe(false);
   });
 
   it('two suppliers in one condition show every PO of either', async () => {
@@ -120,8 +123,8 @@ describe('PO / SO picker conditions - several values per condition', () => {
     renderPicker();
     await user.selectOptions(await box('PO-24118'), ['PO-24118', 'PO-9000']);
     fireEvent.click(screen.getByRole('button', { name: /^apply$/i }));
-    await waitFor(() => expect(screen.queryByText('PO-24090')).toBeNull());
+    await waitFor(() => expect(inRows('PO-24090')).toBe(false));
     fireEvent.click(screen.getByRole('button', { name: /clear filters/i }));
-    await waitFor(() => expect(screen.getByText('PO-24090')).toBeTruthy());
+    await waitFor(() => expect(inRows('PO-24090')).toBe(true));
   });
 });
