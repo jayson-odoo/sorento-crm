@@ -108,3 +108,33 @@ version that carries the span marker. Every other version behaves exactly as tod
   named cause. The span call also runs on the staff Gemini model for the 186 non-code messages (org-key ledger rules).
 - **AC-S2-11 [UX]** Hand test: the owner picks the S2 version in the Chatbot Console and runs the script in
   `laneboard/scripts/<PR>.md`; each step names the exact rows the reply must use.
+
+## S3: semantic bridge (Gemini lookup embedder + span "meaning"), owner 27 Oct ~09:4x
+
+Owner: "can we use gemini key for embedding? ... the AI should know what 10 inch means, and what emas or biru mean".
+Rulings: Gemini embedder option configured like the chat models, recalibrated floors per provider, prod stays on its
+OpenAI embedder unless switched; keep cross-kind partials (no F2); no unit rules and no alias data (the AI bridges
+languages and units). Crew 27 Oct: prompt-registry label `chatbot_lookup_embedder`; new PR; span "meaning" field.
+
+- **AC-S3-1 [BE]** The lookup/resolver embedder follows the production label of prompt key `chatbot_lookup_embedder`
+  (provider/model, same control as the chat models): label gemini / gemini-embedding-001 -> list and span vectors come
+  from Gemini with the AI config's Gemini key; no label or no model -> today's OpenAI text-embedding-3-small (prod
+  unchanged); a missing key for the chosen provider -> spelling only, never an exception.
+- **AC-S3-2 [BE]** Vectors are cached per (model, text sha): a model switch re-embeds and never mixes vector spaces;
+  Gemini list texts are embedded in batches.
+- **AC-S3-3 [BE]** Meaning floors are per embedding model in `list_resolver`: text-embedding-3-small keeps today's
+  values; gemini-embedding-001 uses the calibrated table (category 0.70, spec 0.75, file_type 0.65, brand 0.60,
+  promotion_kind 0.75, location 0.65, salesperson 0.70, customer 0.75, sales_channel 0.65, spec_key 0.75; calibrated on
+  the calib half of the phase-1 gold, test half 108/132 right vs 107 on OpenAI vectors); a model with no table -> no
+  meaning matches. The n-gram lookup path keeps its OpenAI floors and runs spelling only on any other model.
+- **AC-S3-4 [BE]** The span answer carries an optional per-span `meaning` (the plain English form, sizes in mm, or
+  null). A migration publishes `chatbot_span_extractor` v2 with that wording UNLABELLED (the production label stays on
+  v1); v1 answers without `meaning` keep working.
+- **AC-S3-5 [BE]** When a span has a meaning, the resolver tries the meaning first and keeps it if it resolves
+  (resolved or ambiguous); otherwise it resolves the span text. The trace records text, meaning and which one matched.
+  Measured offline: meaning-first resolves emas -> gold, 金色 -> gold, hitam -> black, warna -> colour, sinki -> sink.
+- **AC-S3-6 [FE]** The drawer's Span pass section shows each phrase's meaning (when present) and which form matched;
+  the pass-1 line also names the embedding model.
+- **AC-S3-7 [T]** Migration: single head, idempotent, downgrade removes only its own rows, no label moves.
+- **AC-S3-8 [T]** On the copy (label `chatbot_lookup_embedder` -> gemini, span label -> v2): the owner's two messages
+  plus "emas", "biru", "金色" rerun, per phrase before / after, posted on the PR.
