@@ -299,7 +299,8 @@ def _read_page(
             continue
         if _covers_the_page(visible, width, height):
             continue
-        if (visible[2] - visible[0]) >= WIDE_BAND_FRACTION * width:
+        # PyMuPDF 2.0 writes placement sizes as float32 (475.998 for 476), so compare with a hair of slack.
+        if (visible[2] - visible[0]) >= WIDE_BAND_FRACTION * width - 0.01:
             continue
         if int(placed.get("width", 0)) * int(placed.get("height", 0)) > CATALOGUE_MAX_PIXELS:
             continue
