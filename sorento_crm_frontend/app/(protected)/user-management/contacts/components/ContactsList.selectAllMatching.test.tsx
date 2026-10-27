@@ -413,4 +413,19 @@ describe('Contacts: select every matching contact (Odoo pattern, capped at 1,000
       expect(within(m).queryByRole('menuitem', { name: 'Add tag (10)' })).toBeNull();
     }
   });
+
+  it('shows "Selecting..." (disabled) while the fetch is out, then the 1,000 selected badge', async () => {
+    renderList();
+    await waitForRows();
+    let resolve!: (v: unknown) => void;
+    getContactsMock.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+
+    expect(await screen.findByRole('button', { name: 'Selecting...' })).toBeDisabled();
+    await act(async () => {
+      resolve({ data: Array.from({ length: 1000 }, (_, i) => contact(i + 1)), pagination: { total } });
+    });
+    expect(await screen.findByText('1,000 selected')).toBeInTheDocument();
+  });
 });

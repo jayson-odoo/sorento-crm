@@ -18,7 +18,7 @@ const COLUMNS: ColumnDef<Rec>[] = [
   { id: 'name', accessorKey: 'name' },
 ];
 
-function Harness({ total, limit, active }: { total: number; limit?: number; active: boolean }) {
+function Harness({ total, limit, active, pending }: { total: number; limit?: number; active: boolean; pending?: boolean }) {
   const table = useReactTable({
     data: DATA,
     columns: COLUMNS,
@@ -32,7 +32,7 @@ function Harness({ total, limit, active }: { total: number; limit?: number; acti
       <DataGridListToolbar
         table={table}
         exportConfig={false}
-        selectAllMatching={{ total, limit, loadedCount: 3, active, onSelectAll: () => {}, onClear: () => {} }}
+        selectAllMatching={{ total, limit, loadedCount: 3, active, pending, onSelectAll: () => {}, onClear: () => {} }}
       />
     </TooltipProvider>
   );
@@ -86,5 +86,9 @@ describe('selectAllMatching.limit wording', () => {
     expect(screen.getByText('All 1,500 selected')).toBeInTheDocument();
     expect(screen.getByText('1,500')).toBeInTheDocument();
   });
-});
 
+  it('pending: the link reads "Selecting..." and is disabled', () => {
+    render(<Harness total={1248} limit={1000} active={false} pending />);
+    expect(screen.getByRole('button', { name: 'Selecting...' })).toBeDisabled();
+  });
+});
