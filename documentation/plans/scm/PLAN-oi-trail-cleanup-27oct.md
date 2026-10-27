@@ -1,6 +1,6 @@
 # PLAN: OI trail cleanup (fake "Reconfirmed" rows from the 20 Sep sheet import)
 
-Status: built, dry run done on a throwaway copy of sorento_prod_1020 (699 fakes, 0 genuine), in review (small fix track: one data migration, no UI change, no auth/RBAC change; owner OK'd deleting these rows 27 Oct 2026)
+Status: built, dry run done on a throwaway copy of sorento_prod_1020 (699 fakes, 0 genuine), crew answers applied; waiting on #1898 to merge, then re-parent (small fix track: one data migration, no UI change, no auth/RBAC change; owner OK'd deleting these rows 27 Oct 2026)
 
 Lane: OI-TRAIL-CLEANUP. UAC: `oi-trail-cleanup-27oct-acceptance-criteria.md` alongside.
 
@@ -43,11 +43,14 @@ One data migration, `sorento_crm_backend/alembic/versions/oitc_0001_fake_reconfi
   run touches nothing. Counts are logged.
 - Downgrade: no-op. The real rollback is restoring the pre-migrate dump.
 
-## Out of scope
+## An upload with no fake reconfirm (crew ruling 27 Oct)
 
-- 2 sheet rows at one other upload's stamp also sit 8 h after their birth, but no reconfirm row
-  sits at that stamp (crew dry run), so it put no fake event on the trail, and it is not one of
-  the two 20 Sep uploads the owner approved. Their acknowledged time stays 8 h late; a new crew ask if it should move.
+- 2 sheet rows at a third stamp also sit 8 h after their birth, but no reconfirm row sits at
+  that stamp, so the rule above cannot anchor it. Same root cause, so they move too: a stamp is
+  also an import stamp when a sheet row acknowledged by the uploader carries it ~8 h after its
+  birth, and both the stamp minus 8 h and the row's birth fall inside that uploader's
+  `order_inquiry_import` job (`import_jobs.created_at` to `completed_at`, real UTC). It only
+  shifts timestamps; there is nothing to delete at that stamp.
 
 ## Nothing re-creates it
 

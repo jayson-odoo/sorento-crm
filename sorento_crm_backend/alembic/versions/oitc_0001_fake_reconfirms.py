@@ -27,6 +27,14 @@ genuine reconfirm is stamped by `_record_raise`'s own `datetime.utcnow()` and ca
 it. Each such `(stamp, uploader)` pair names one affected upload; every `reconfirmed` row at
 that pair is then fake, including one whose inquiry's rows have since been re-acknowledged.
 
+An upload that created no header left no fake reconfirm to anchor on, yet its rows carry the
+same +8 h stamp (2 rows at a third stamp on the 20 Oct copy; crew ruling 27 Oct: same root
+cause, fix them too). Its stamp is read off its own `import_jobs` row instead: a sheet row
+acknowledged by the uploader, ~8 h after its birth, where the stamp minus 8 h and the row's
+birth both fall inside that uploader's `order_inquiry_import` job (`created_at` to
+`completed_at`, both real UTC, `job_service.py`). It shifts timestamps only; with no
+reconfirm at that stamp there is nothing to delete.
+
 Steps, one transaction: shift every `order_inquiry_rows.acknowledged_at` / `actioned_at` /
 `changed_at` equal to an affected stamp back eight hours (that includes rows born later that
 carried the acknowledgement forward with its stamp, e.g. a split or a revision:
@@ -35,8 +43,9 @@ where 523 blanked it only because of the fake reconfirm; delete the fake `reconf
 The header's own `raised_at` needs no step: 523 already moved it to its earliest row's
 `created_at`, the real instant (measured on the 20 Oct prod copy: all 699 headers).
 
-Idempotent by construction: the stamps are read off the fake rows this same revision
-deletes, so a second run finds none and touches nothing. Exposed as module-level functions (precedent: `523_oi_monthly_no_raises.py`) so a
+Idempotent by construction: the stamps are read off the fake rows this same revision deletes
+and off rows it moves out of the ~8 h window, so a second run finds none and touches
+nothing. Exposed as module-level functions (precedent: `523_oi_monthly_no_raises.py`) so a
 test drives the same code on a scratch schema.
 
 Nothing re-creates them: 523 is a past revision and alembic never reruns it, and its own
@@ -96,7 +105,7 @@ def clean_fake_reconfirms(bind) -> Dict[str, int]:
     bind.exec_driver_sql(
         f"""
         CREATE TEMP TABLE zzt_oitc_stamps AS
-        SELECT DISTINCT r.raised_at AS stamp, r.raised_by AS uploader
+        SELECT r.raised_at AS stamp, r.raised_by AS uploader
         FROM {raises} r
         JOIN {rows} w
           ON w.order_inquiry_id = r.order_inquiry_id
@@ -106,6 +115,22 @@ def clean_fake_reconfirms(bind) -> Dict[str, int]:
           AND w.note LIKE %(prefix)s
           AND r.raised_at - w.created_at BETWEEN interval '7 hours 50 minutes'
                                              AND interval '9 hours'
+        UNION
+        -- An upload that left no fake reconfirm (it created no header 523 could misread)
+        -- is tied to its rows by its own job instead: the uploader's OI-sheet job was
+        -- running at the stamp's real instant (stamp minus 8 h), and at the row's birth.
+        SELECT w.acknowledged_at, w.acknowledged_by
+        FROM {rows} w
+        JOIN import_jobs j
+          ON j.job_type = 'order_inquiry_import'
+         AND j.user_id = w.acknowledged_by
+         AND w.acknowledged_at - interval '8 hours'
+             BETWEEN j.created_at AND COALESCE(j.completed_at, j.created_at + interval '1 hour')
+         AND w.created_at
+             BETWEEN j.created_at AND COALESCE(j.completed_at, j.created_at + interval '1 hour')
+        WHERE w.note LIKE %(prefix)s
+          AND w.acknowledged_at - w.created_at BETWEEN interval '7 hours 50 minutes'
+                                                   AND interval '9 hours'
         """,
         {"prefix": _SHEET_NOTE_PREFIX + "%"},
     )

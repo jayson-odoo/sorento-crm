@@ -13,3 +13,6 @@
 - AC-TC-06: dry run on a throwaway copy of sorento_prod_1020 reports counts in line with the
   crew measurement (649 + 50 reconfirm rows, about 9,201 acknowledged rows) and SO400884's trail
   loses its "Reconfirmed" entry.
+- AC-TC-07: rows from an upload that left no fake reconfirm move back 8 h too when that
+  upload's own `order_inquiry_import` job ties them (job window holds the stamp minus 8 h and
+  the row's birth, same uploader); the same shape with no job behind it does not move.

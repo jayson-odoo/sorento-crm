@@ -256,3 +256,59 @@ def test_second_run_is_a_no_op_and_523_backfill_cannot_recreate_it():
         assert _kinds(db, header.id) == before
         assert db.get(OrderInquiryRow, rows[0].id).acknowledged_at == REAL
         assert "reconfirmed" not in _trail_kinds(db, core_line.id)
+
+
+def _oi_job(db, uploader, *, started, finished):
+    from app.models.job import ImportJob
+
+    job = ImportJob(
+        job_id=f"zzt-oitc-{_uid()}",
+        job_type="order_inquiry_import",
+        status="finished",
+        user_id=uploader,
+        created_at=started,
+        started_at=started,
+        completed_at=finished,
+    )
+    db.add(job)
+    db.flush()
+    return job
+
+
+def test_an_upload_with_no_fake_reconfirm_is_tied_by_its_own_job_and_shifted():
+    """Crew ruling 27 Oct: an upload that created no header (its rows joined an inquiry
+    the board already raised, so 523 wrote no reconfirm) still stamped its rows +8 h. Its
+    own `order_inquiry_import` job is the provenance; without one nothing moves."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+        uploader = _user(db, f"{MARKER} Uploader", f"up.{_uid()[:8]}@zzt.test").id
+        real_3 = datetime(2026, 9, 19, 6, 40, 11, 734002)
+        shifted_3 = real_3 + timedelta(hours=8)
+        _oi_job(db, uploader, started=real_3 - timedelta(seconds=40),
+                finished=real_3 + timedelta(seconds=90))
+        board, rows, core_line = _sheet_order(
+            db, company_id, uploader, real=real_3, shifted=shifted_3
+        )
+        board.raised_at = real_3 - timedelta(days=5)  # raised on the board, long before
+        # The same shape with no job behind it: no provenance, so it must not move.
+        real_4 = datetime(2026, 9, 18, 2, 0, 0, 1)
+        orphan, orphan_rows, _ = _sheet_order(
+            db, company_id, uploader, real=real_4, shifted=real_4 + timedelta(hours=8)
+        )
+        orphan.raised_at = real_4 - timedelta(days=5)
+        db.commit()
+        _backfill_523().backfill_raises(db.connection())
+        db.commit()
+
+        counts = _cleanup().clean_fake_reconfirms(db.connection())
+        db.commit()
+        db.expire_all()
+
+        assert counts["reconfirms_deleted"] == 0
+        assert "reconfirmed" not in _trail_kinds(db, core_line.id)
+        for row in rows:
+            assert db.get(OrderInquiryRow, row.id).acknowledged_at == real_3
+        for row in orphan_rows:
+            assert db.get(OrderInquiryRow, row.id).acknowledged_at == real_4 + timedelta(hours=8)
+        again = _cleanup().clean_fake_reconfirms(db.connection())
+        assert all(v == 0 for v in again.values()), again
