@@ -15,7 +15,7 @@ from fastapi.testclient import TestClient
 
 from app.models.finance import BillingDocument, BillingDocumentLine
 from app.models.inventory import Stock, Warehouse
-from app.models.procurement import ProductSupplier, Supplier
+from app.models.procurement import ProductSupplier, PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Brand
 from app.services.scm.trajectory import month_shift
 from tests.scm.conftest import as_user, grant_permission, requires_pg, seed_user
@@ -63,14 +63,6 @@ def _get(app, **params):
 
 def _row(body, product):
     return next((r for r in body["data"] if r["product_id"] == str(product.id)), None)
-
-
-def _ordered(db, product, wh, qty, order_date, *, demand_class="retail") -> None:
-    """A sales order line booked on `order_date` (the SO-ordered sales basis)."""
-    so = _so(db, product, wh, qty, delivered=qty, status="closed", line_status="closed")
-    so.order_date = order_date
-    so.demand_class = demand_class
-    db.flush()
 
 
 def _months_ago(n: int) -> date:
@@ -285,22 +277,11 @@ def test_outstanding_po_is_ordered_less_transferred_on_open_lines(scm_app):
 
 
 # ------------------------------------------------------------------ monthly sales (Q3)
-def test_monthly_sales_so_ordered_is_the_12_full_month_mean_and_peak(scm_app):
-    app, db, w = _setup(scm_app)
-    p = w.product("A")
-    brw = _wh(db, "BRW")
-    _ordered(db, p, brw, 850, _months_ago(1))
-    _ordered(db, p, brw, 300, _months_ago(5), demand_class="project")  # every channel counts
-    _ordered(db, p, brw, 50, _months_ago(12))
-    _ordered(db, p, brw, 999, _months_ago(13))     # older than the window
-    _ordered(db, p, brw, 777, date.today())        # this month is not a full month
-
-    r = _row(_get(app), p)
-    assert r["monthly_sales"] == (850 + 300 + 50) / 12
-    assert r["highest_month"] == 850
-
-
-def test_monthly_sales_invoiced_basis_reads_billing_lines_credit_notes_subtract(scm_app):
+# Owner ruling 27 Oct: one sales calculation everywhere. The two columns come from SALES-UNIFIED's
+# shared function (`invoiced_sales.quantity_by_product_month`, #1916): IV + CS + DN - CN line
+# quantity by document date, cancelled excluded. This report adds only the 12-month window,
+# the mean over all 12 months and the peak.
+def test_monthly_sales_is_the_shared_invoiced_quantity_12_full_month_mean_and_peak(scm_app):
     app, db, w = _setup(scm_app)
     p = w.product("A")
     _wh(db, "BRW")
@@ -309,17 +290,41 @@ def test_monthly_sales_invoiced_basis_reads_billing_lines_credit_notes_subtract(
     _billing(db, p, 6, _months_ago(3), doc_type="debit_note")
     _billing(db, p, 10, _months_ago(2), doc_type="credit_note")
     _billing(db, p, 500, _months_ago(4), status="cancelled")
+    _billing(db, p, 40, _months_ago(12))
+    _billing(db, p, 999, _months_ago(13))      # older than the window
+    _billing(db, p, 777, date.today())         # this month is not a full month
 
-    body = _get(app, sales_basis="invoiced")
-    assert body["sales_basis"] == "invoiced"
-    r = _row(body, p)
-    assert r["monthly_sales"] == (120 + 30 - 10 + 6) / 12
+    r = _row(_get(app), p)
+    assert r["monthly_sales"] == (120 + 30 - 10 + 6 + 40) / 12
     assert r["highest_month"] == 140
 
 
-def test_an_unknown_sales_basis_is_422(scm_app):
+def test_monthly_sales_reads_the_one_shared_sales_function(scm_app, monkeypatch):
+    """No second calculation: the report asks `invoiced_sales` and sums nothing itself."""
+    from app.services.sales import invoiced_sales
+
     app, db, w = _setup(scm_app)
-    assert TestClient(app).get(URL, params={"sales_basis": "nope"}).status_code == 422
+    p = w.product("A")
+    _wh(db, "BRW")
+    asked = []
+
+    def shared(session, since, until, product_ids=None):
+        asked.append((since, until, product_ids))
+        return [(str(p.id), _months_ago(1).strftime("%Y-%m"), 24)]
+
+    monkeypatch.setattr(invoiced_sales, "quantity_by_product_month", shared)
+    r = _row(_get(app), p)
+    assert (r["monthly_sales"], r["highest_month"]) == (2, 24)
+    (since, until, product_ids), = asked
+    assert until == date.today().replace(day=1)
+    assert (until.year - since.year) * 12 + until.month - since.month == 12
+    assert product_ids is None
+
+
+def test_sales_basis_is_no_longer_a_choice(scm_app):
+    app, db, w = _setup(scm_app)
+    body = _get(app)
+    assert "sales_basis" not in body
 
 
 # ------------------------------------------------------------------ supplier (Q4), filters, sort
@@ -331,34 +336,50 @@ def _supplier(db, code) -> Supplier:
     return s
 
 
-def _link(db, product, supplier, primary=False) -> None:
-    db.add(ProductSupplier(id=str(uuid.uuid4()), product_id=product.id, supplier_id=supplier.id,
-                           is_primary_supplier=primary))
+def _po_from(db, product, supplier, wh, issued, *, status="active") -> None:
+    po = PurchaseOrder(id=str(uuid.uuid4()), po_number=f"{MARKER}-PO-{uuid.uuid4().hex[:8]}",
+                       supplier_id=supplier.id, issue_date=issued, status=status)
+    db.add(po)
+    db.flush()
+    db.add(PurchaseOrderLine(id=str(uuid.uuid4()), purchase_order_id=po.id, product_id=product.id,
+                             warehouse_id=wh.id, qty_ordered=5, qty_received=5, line_status="closed"))
     db.flush()
 
 
-def test_supplier_is_the_primary_else_the_only_one_else_none_and_filters_on_it(scm_app):
+def test_supplier_is_the_last_po_supplier_and_filters_on_it(scm_app):
+    """Owner ruling 27 Oct (Q4): the LAST PO's supplier, the shared rule Stock Debt and the low
+    stock report read (`scm/last_po_supplier.py`). The product links play no part."""
     app, db, w = _setup(scm_app)
     brw = _wh(db, "BRW")
-    s1, s2 = _supplier(db, "S1"), _supplier(db, "S2")
-    a, b, c, d = (w.product(k) for k in "ABCD")
-    for p in (a, b, c, d):
+    s1, s2, s3 = _supplier(db, "S1"), _supplier(db, "S2"), _supplier(db, "S3")
+    a, b, c = (w.product(k) for k in "ABC")
+    for p in (a, b, c):
         _on_hand(db, p, brw, 1)
-    _link(db, a, s1)
-    _link(db, a, s2, primary=True)  # primary wins
-    _link(db, b, s1)                # the only one
-    _link(db, c, s1)
-    _link(db, c, s2)                # two, neither primary: none
-    # d: no supplier at all
+    _po_from(db, a, s1, brw, date(2025, 1, 1))
+    _po_from(db, a, s2, brw, date(2026, 3, 1))                       # newest: S2
+    _po_from(db, a, s3, brw, date(2026, 6, 1), status="cancelled")   # cancelled: skipped
+    _po_from(db, b, s1, brw, date(2026, 2, 1))
+    db.add(ProductSupplier(id=str(uuid.uuid4()), product_id=c.id, supplier_id=s3.id, is_primary_supplier=True))
+    db.flush()                                                        # c: a link, no PO: none
 
     body = _get(app)
     assert _row(body, a)["supplier_name"] == s2.supplier_name
     assert _row(body, b)["supplier_name"] == s1.supplier_name
     assert _row(body, c)["supplier_name"] is None
-    assert _row(body, d)["supplier_name"] is None
 
     only = _get(app, supplier_id=s1.id)
     assert {r["product_id"] for r in only["data"]} == {str(b.id)}
+
+
+def test_supplier_reads_the_shared_last_po_rule(scm_app, monkeypatch):
+    from app.services.scm import last_po_supplier
+
+    app, db, w = _setup(scm_app)
+    p = w.product("A")
+    s = _supplier(db, "spy")
+    _on_hand(db, p, _wh(db, "BRW"), 1)
+    monkeypatch.setattr(last_po_supplier, "last_po_supplier_ids", lambda session, ids: {str(p.id): str(s.id)})
+    assert _row(_get(app), p)["supplier_name"] == s.supplier_name
 
 
 def test_brand_item_code_and_warehouse_filters(scm_app):
@@ -444,3 +465,23 @@ def test_export_writes_every_row_with_the_screen_headers(scm_app):
     assert codes == sorted([a.product_code, b.product_code, c.product_code])
     c_row = next(row for row in rows[1:] if row[0] == c.product_code)
     assert c_row[header.index("Total stock")] == 777
+
+
+def test_export_writes_only_the_warehouse_columns_the_user_shows_totals_unchanged(scm_app):
+    """Owner ruling 27 Oct (Q5): the user picks which warehouse columns show (the grid's Columns
+    chooser); the export writes those, and Total stock still counts every warehouse."""
+    from openpyxl import load_workbook
+
+    app, db, w = _setup(scm_app)
+    _sheet_world(db, w)
+    c = w.product("C")
+    r = TestClient(app).get(f"{URL}/export", params={"sort": "item_code", "wh": ["DC1", "BRW"]})
+    assert r.status_code == 200, r.text
+    rows = list(load_workbook(io.BytesIO(r.content)).active.iter_rows(values_only=True))
+    header = rows[0]
+    assert header[3:5] == ("BRW", "DC1")  # in the report's own order, not the request's
+    assert "MWH" not in header and "WH3" not in header
+    c_row = next(row for row in rows[1:] if row[0] == c.product_code)
+    assert c_row[header.index("Total stock")] == 777  # MWH's 85 still counts
+    # A code the report does not have is ignored rather than refused.
+    assert TestClient(app).get(f"{URL}/export", params={"wh": ["NOPE"]}).status_code == 200
