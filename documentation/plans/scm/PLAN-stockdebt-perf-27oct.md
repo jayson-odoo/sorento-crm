@@ -91,6 +91,18 @@ rebases on them.
   its reads are not issued; B: walk count == products; C: statement count bound) plus the
   existing tests/scm stock debt suites unchanged and green.
 
+## PR1 measured (27 Oct, sorento_prod_1020 read-only, without #1899's index)
+
+- Side-by-side, 13 filter combos + 24 cell drills: every number equal. Only difference: the one
+  product with an exact last-supplier tie now reads the same supplier in every view (today it
+  read one supplier in 4 views and the other in 2).
+- Alternating A/B, 3 x 10 requests: base median 3.82-4.64 s, lane 3.41-3.57 s; min 3.60 -> 3.22 s.
+  Walks 5,966 -> 2,691 (1,769 + 922 held_by_line re-walks).
+- What is left (lane, per site): `_po_lines_feeding` 1.26 s (gone with #1899's index),
+  transferred_allocations x2 0.39 s, `_oi_placements` + `_po_received_by_product` 0.25 s,
+  `_demand_aggregates` 0.11 s SQL but ~0.6 s Python over 18k rows; Python 175k rows -> Row
+  objects, 208k UUIDs, walk 2,691 calls. PR2 (B) and PR3 (C) target these.
+
 ## PR order
 
 1. A + E timing line (biggest gain, smallest diff). UAC: `stockdebt-perf-acceptance-criteria.md`. 2. B. 3. C. 4. D only if still short of
