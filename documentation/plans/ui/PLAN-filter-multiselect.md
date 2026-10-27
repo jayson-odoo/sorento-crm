@@ -1,11 +1,12 @@
 # PLAN: every dropdown filter is multi-select (FILTER-MULTISELECT)
 
-Status: Build. Scan done (27 Oct); owner answered the card (28 Oct, section 0); PR1 (Contacts
-Company filter + Companies column) built as #1930, merge-ready. PR2 (this branch, #1928): slice A
-(Contacts Access type / Tier / Customer, Users Role / Status, Onboarding Status) re-landed red-first
-28 Oct (red 6a42a14c, code f999fc7b, kill-proof posted); Region, Permissions Role and slice B (SLA)
-red tests in progress; slice C (system) next. Track: full lane, split into stacked PRs (diff well
-over 300 lines across ~120 screens; no migration expected, no auth change).
+Status: Review. Scan done (27 Oct); owner answered the card (28 Oct, section 0). PR1 #1930
+(Contacts Company filter + Companies column) merge-ready. PR2 #1928 (contacts, users, permissions,
+onboarding, SLA, system logs / outboxes / chatbot / ideas: ~40 filters on 27 screens) built
+red-first in 5 batches, reviewer READY with kill tests per batch, review round green at 3b3da207,
+browser pass 7 of 8 screens (Ideas blocked by the copy's ideation 502; vitest covers it). PR3 #1937
+(sales / orders / customers / complaints / tickets / marketing) building; PR4 and PR5 red tests
+written. Track: full lane, stacked PRs (diff well over 300 lines; no migration, no auth change).
 
 Owner standing rule (27 Oct 2026): "do a scan through the filter in our system, all dropdown
 filter should be able to multi select". Same family as "every grid column sortable server-side".
@@ -68,6 +69,9 @@ Found while scanning, broken today regardless of multi-select (fix in the PR tha
 - Order statuses Final: filters the loaded page only (`OrderStatusesList.tsx:55-60`).
 - Divergences "Any": backend defaults `status="open"` (`api/v1/projects/divergences.py:153`).
 - Promotions: an advanced filter drops `attachment_state` (`usePromotions.ts:68-80`).
+- Escalation logs Assigned to (found in PR2 review, 28 Oct): the screen sent Respond ids as
+  `assigned_to`, a column that stores a display name (`sla_service.py:642-668`), so it matched
+  nothing; PR2 sends `users.id` as `assigned_to_id`.
 - Advanced filter dialog: enum / uuid values are free text, ids typed by hand
   (`ListQueryFilterDialog.tsx:329`); `option_source` always None (`api/v1/list_query.py:161-164`).
 
