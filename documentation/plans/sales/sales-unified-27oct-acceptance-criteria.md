@@ -96,3 +96,24 @@ Actor: the owner or a sales manager with "sales reports: view".
 - **AC-29** Crew runs `scripts/sales_unified_tally.py` on the owner's copy for January 2026: per
   bucket, beside the AutoCount figures (Dealer 6,513,047.67, Project team 6,084,471.57, set apart
   122,232.99, all 14,742,279.29) with the gap, posted on the PR.
+
+## S6. Round 3: the sales order type at the source (owner rulings Q6 to Q10 (a))
+
+- **AC-31 [BE][T]** An agent Dealer from the beginning, moved to Project team from July (one add):
+  the open row closes at June, the new row is open from July; the agent's June orders stay
+  Dealer, July orders become Project team; `sales_agents.demand_class` reads the open row.
+- **AC-32 [BE][T]** Overlapping class rows and an unknown class are 422 (`class_overlap`,
+  `invalid_class`).
+- **AC-33 [BE][T]** A stated order type outranks the agent's class; an order with no stated type
+  and no agent class is "Sales order type not set", never the customer's segment.
+- **AC-34 [BE][T]** The dry run reports, per agent per month, the orders and RM that would move and
+  from which class to which, and writes nothing; `--apply` writes exactly those moves.
+- **AC-35 [BE][T]** The Sales Agents screen's "the class is now X" moves only this month on; past
+  months move by a dated class row or the owner's backfill.
+- **AC-36 [BE][T]** `other` shows as "Other" in every sales report and plans as retail in SCM
+  (priority weight, PO class vote, channel trends).
+- **AC-37 [FE][E2E]** Sales agent detail: Class history grid (add / edit / deferred delete);
+  "Other" appears wherever a class is shown or picked.
+- **AC-38 [BE][T]** `invoiced_sales.quantity_by_product_month` (STOCK-POSITION-REPORT #1913):
+  signed quantity per product per month, credit notes negative, cancelled and product-less lines
+  out, since inclusive, until exclusive.

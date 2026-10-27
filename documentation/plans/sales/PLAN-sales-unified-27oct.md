@@ -156,6 +156,17 @@ None open. Round 1 Q1 to Q5 are ruled (section 0).
 
 ### 2.8 Engine extensions (only where the kernel cannot express it)
 
+As built (each one a thing the kernel could not express):
+- **Server-side sort** (`ReportViewDetailConfig.sort`, `ReportViewPivotConfig.sort`,
+  `engine._sorted_rows`): the kernel had no sort at all, and every column must sort on the server.
+- **`SelectParam.hidden`**: the top selling route filters by customer and category ids; a screen
+  dropdown of every customer would not serve, so those params are off the filter bar and meta.
+- **`Column.blank_label`**: a sale with no agent stays the engine's blank bucket (one row, last in
+  every order) but reads "(no agent)".
+- Blocks, YTD and the AutoCount-only total need nothing new (`sheet_per`, the period, the
+  Channel filter). The Excel month sheets are the kernel's detail-per-month sheets; a pivot per
+  month is the screen with that month as the period.
+
 - **None for the blocks, the YTD or the Report total.** Blocks are `sheet_per` on the Channel
   param; YTD is the period; the AutoCount-only total is the Channel filter with the non-AutoCount
   buckets unticked.
