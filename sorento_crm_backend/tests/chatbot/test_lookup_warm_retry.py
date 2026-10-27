@@ -42,6 +42,7 @@ def env(monkeypatch):
     monkeypatch.setattr(ll, "_warm_lock", threading.Lock())
     sleeps: list[float] = []
     monkeypatch.setattr(ll, "_sleep", sleeps.append, raising=False)
+    monkeypatch.setattr(ll, "_jitter", lambda: 0.0, raising=False)
     return sleeps
 
 
@@ -141,3 +142,80 @@ def test_ac_s3_14_a_failed_warm_logs_a_warning(env, caplog):
             if t.name == "lookup-lists-warm":
                 t.join(10)
     assert any(r.name == LOGGER and r.levelno == logging.WARNING for r in caplog.records), caplog.records
+
+
+# ---- round 2c
+def test_ac_s3_13_full_jitter_stretches_each_wait_by_half(env, monkeypatch):
+    monkeypatch.setattr(ll, "_jitter", lambda: 1.0, raising=False)
+    emb = ll._vector_embedder(_model(), Flaky([GeminiHTTPError("zz", 429)] * 3), 2)
+    emb.fill(_texts(2))
+    assert env == [22.5, 45.0, 90.0], env
+
+
+def test_ac_s3_13_default_jitter_keeps_every_wait_within_one_to_one_and_a_half(env, monkeypatch):
+    monkeypatch.undo()  # drop the zero-jitter patch, keep nothing else: re-patch the rest by hand
+    sleeps: list[float] = []
+    monkeypatch.setattr(ll, "_sleep", sleeps.append, raising=False)
+    monkeypatch.setattr(ll, "_cache", {})
+    emb = ll._vector_embedder(_model(), Flaky([GeminiHTTPError("zz", 429)] * 3), 2)
+    emb.fill(_texts(2))
+    assert len(sleeps) == 3 and callable(getattr(ll, "_jitter", None)), sleeps
+    for got, w in zip(sleeps, (15, 30, 60)):
+        assert w <= got <= 1.5 * w, sleeps
+
+
+class ResponseOnly(Exception):
+    def __init__(self, status):
+        super().__init__("zz")
+        self.response = type("R", (), {"status_code": status})()
+
+
+def test_ac_s3_13_a_429_on_the_response_object_is_retried(env):
+    emb = ll._vector_embedder(_model(), Flaky([ResponseOnly(429)]), 2)
+    texts = _texts(2)
+    emb.fill(texts)
+    assert env == [15], env
+    assert emb.is_cached(texts)
+
+
+def test_ac_s3_13_an_exhausted_quota_429_is_not_waited_out(env):
+    flaky = Flaky([GeminiHTTPError("zz insufficient_quota", 429)])
+    emb = ll._vector_embedder(_model(), flaky, 2)
+    with pytest.raises(GeminiHTTPError):
+        emb.fill(_texts(2))
+    assert env == [] and flaky.calls == 1, (env, flaky.calls)
+
+
+# AC-S3-15: a warm with nothing to fetch is a no-op
+def test_ac_s3_15_a_fully_cached_warm_starts_nothing_and_logs_nothing(env, caplog, monkeypatch):
+    emb = ll._vector_embedder(_model(), Flaky([]), 2)
+    rows = [R("customer", f"c{i}", f"zz cust {i}") for i in range(3)]
+    emb.fill(ll.row_texts(rows))
+    started = []
+    real = threading.Thread
+
+    class Spy(real):
+        def __init__(self, *a, **kw):
+            started.append(kw.get("name"))
+            super().__init__(*a, **kw)
+
+    monkeypatch.setattr(ll.threading, "Thread", Spy)
+    with caplog.at_level(logging.DEBUG, logger=LOGGER):
+        ll.warm(rows, emb)
+    assert "lookup-lists-warm" not in started, started
+    assert not [r for r in caplog.records if r.name == LOGGER], caplog.records
+    assert ll._warm_lock.acquire(blocking=False), "the no-op warm took the lock"
+    ll._warm_lock.release()
+
+
+def test_ac_s3_15_a_partly_cached_warm_still_runs_and_logs_once(env, caplog):
+    emb = ll._vector_embedder(_model(), Flaky([]), 2)
+    rows = [R("customer", f"c{i}", f"zz cust {i}") for i in range(5)]
+    emb.fill(ll.row_texts(rows)[:2])
+    with caplog.at_level(logging.INFO, logger=LOGGER):
+        ll.warm(rows, emb)
+        for t in threading.enumerate():
+            if t.name == "lookup-lists-warm":
+                t.join(10)
+    assert emb.is_cached(ll.row_texts(rows))
+    assert len([r for r in caplog.records if r.name == LOGGER and r.levelno == logging.INFO]) == 1, caplog.records
