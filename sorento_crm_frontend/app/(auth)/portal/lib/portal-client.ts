@@ -899,6 +899,8 @@ export interface PortalTokenInfo {
   name?: string | null;
   masked_phone?: string | null;
   whatsapp_number?: string | null;
+  /** The contact has an eligible CRM user: verifying also opens a CRM session. */
+  has_user?: boolean;
 }
 
 // ---------------------------------------------------------------------------
@@ -911,6 +913,8 @@ export interface PortalSlugInfo {
   name: string | null;
   masked_phone: string | null;
   whatsapp_number: string | null;
+  /** The contact has an eligible CRM user: verifying also opens a CRM session. */
+  has_user?: boolean;
 }
 
 /** GET /api/v1/public/portal/slug-info/{slug} - null mirrors the 404. */
@@ -925,11 +929,55 @@ export async function fetchSlugInfo(
   return unwrap<PortalSlugInfo>(res, 'Could not look up portal link.');
 }
 
+// ---------------------------------------------------------------------------
+// CRM session opened from the portal link (PORTAL-P1-SESSION-LINK)
+// ---------------------------------------------------------------------------
+
+/** Set when the verify card opened a CRM session, so portal Log out ends it too. */
+export const CRM_SESSION_FLAG_KEY = 'sorento.portal.crmSession';
+
+/**
+ * Exchange the just-verified portal token for a CRM session through the existing
+ * `phone-otp` NextAuth provider. Best-effort: the portal never depends on it, so a
+ * refusal or a network error is swallowed. Only called when the contact has a user.
+ */
+export async function openCrmSession(portalToken: string): Promise<boolean> {
+  try {
+    const { signIn } = await import('next-auth/react');
+    const res = await signIn('phone-otp', { portal_token: portalToken, redirect: false });
+    if (!res?.ok || res.error) return false;
+    window.localStorage.setItem(CRM_SESSION_FLAG_KEY, '1');
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * End the CRM session the verify card opened: revoke the FastAPI row, then sign
+ * NextAuth out. A no-op (no request at all) when the card never opened one.
+ */
+export async function endCrmSession(): Promise<void> {
+  if (typeof window === 'undefined') return;
+  if (window.localStorage.getItem(CRM_SESSION_FLAG_KEY) !== '1') return;
+  window.localStorage.removeItem(CRM_SESSION_FLAG_KEY);
+  try {
+    const { revokeCurrentSession, clearCachedAuthToken } = await import('@/lib/api');
+    await revokeCurrentSession();
+    clearCachedAuthToken();
+    const { signOut } = await import('next-auth/react');
+    await signOut({ redirect: false });
+  } catch {
+    /* the portal logout below is what matters */
+  }
+}
+
 /**
  * POST /api/v1/public/portal/logout - revokes the active token server-side
  * (clearing client storage alone would leave a copied token valid).
  */
 export async function portalLogout(): Promise<void> {
+  await endCrmSession();
   const token = readPortalToken();
   if (!token) return;
   await fetch('/api/v1/public/portal/logout', {

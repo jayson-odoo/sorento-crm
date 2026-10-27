@@ -196,23 +196,27 @@ const authOptions: NextAuthOptions = {
       credentials: {
         phone: { label: 'Phone', type: 'text' },
         code: { label: 'Code', type: 'text' },
+        // PORTAL-P1-SESSION-LINK: a portal token the verify card just verified with the
+        // same WhatsApp code; exchanged once at /auth/portal-link instead of phone + code.
+        portal_token: { label: 'Portal token', type: 'text' },
       },
       async authorize(credentials, req) {
-        if (!credentials?.phone || !credentials?.code) {
+        const portalToken = credentials?.portal_token;
+        if (!portalToken && (!credentials?.phone || !credentials?.code)) {
           throw new Error(
             JSON.stringify({ code: 400, message: 'Enter the verification code.' }),
           );
         }
+        const [path, body] = portalToken
+          ? ['/api/v1/auth/portal-link', { portal_token: portalToken }]
+          : ['/api/v1/auth/phone/verify', { phone: credentials!.phone, code: credentials!.code }];
 
         let res: Response;
         try {
-          res = await fetch(`${backendBaseUrl()}/api/v1/auth/phone/verify`, {
+          res = await fetch(`${backendBaseUrl()}${path}`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json', ...forwardedForHeader(req?.headers) },
-            body: JSON.stringify({
-              phone: credentials.phone,
-              code: credentials.code,
-            }),
+            body: JSON.stringify(body),
           });
         } catch {
           throw new Error(
