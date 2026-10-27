@@ -142,6 +142,16 @@ class PurchaseOrderService:
             self.db, [ln.from_so_line_ref for ln in lines if ln.from_so_line_ref]
         )
 
+    @staticmethod
+    def _shown_book_ref(ln: PurchaseOrderLine, po: PurchaseOrder) -> Optional[str]:
+        # HIDE-REMOVED-LINE-SO: a line AutoCount removed shows no S/O; the stored ref stays.
+        return order_link_service.book_so_ref_of(
+            ln.from_so_line_ref,
+            line_status=ln.line_status,
+            cancelled_by_cancel_doc=ln.cancelled_by_cancel_doc,
+            header_status=po.status,
+        )
+
     def serialize(self, po: PurchaseOrder, gr_reference: Optional[str] = None, *,
                   allocated_qty: float = 0.0,
                   allocations: Optional[list[dict]] = None,
@@ -265,7 +275,9 @@ class PurchaseOrderService:
                 # shared function both surfaces use, `order_link_service.book_so_fields`
                 # (review of PR #764, F5) - it also carries the FOURTH, list-only state
                 # `book_so_by_ref is BOOK_SO_NOT_RESOLVED`.
-                **order_link_service.book_so_fields(ln.from_so_line_ref, book_so_by_ref),
+                **order_link_service.book_so_fields(
+                    self._shown_book_ref(ln, po), book_so_by_ref
+                ),
                 # LINKAGE-UNIFY U4: every SPO line this line was transferred onto, with
                 # where its goods landed or why it brings nothing (`goods_chain`). Only the
                 # detail and update routes pass it; the list leaves the column empty.
