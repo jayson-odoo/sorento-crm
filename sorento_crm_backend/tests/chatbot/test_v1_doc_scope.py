@@ -379,11 +379,11 @@ def _outstanding_turn(session_factory, monkeypatch, attributes=None):
 
 class TestOutstandingReport:
     def test_unlinked_non_staff_gets_no_report(self, session_factory, monkeypatch) -> None:
-        """REPORT-UNIFY: the report ask is for the contact the sales report reveal is granted to; one without it
-        (here an unlinked non-staff contact) is refused before anything runs."""
+        """REPORT-UNIFY (owner Q6): an outstanding kind is read by the contact the Outstanding reveal is granted
+        to; an unlinked non-staff contact holding neither reveal is refused before anything runs."""
         _seed_contact(session_factory, variables={})
 
-        reply, captured = _outstanding_turn(session_factory, monkeypatch, attributes=[OUTSTANDING_KEY])
+        reply, captured = _outstanding_turn(session_factory, monkeypatch, attributes=["sales_orders.sales_report"])
 
         assert _calls(captured, REPORT) == [], captured
         assert reply.strip() == "Sales report is not enabled for your account.", reply

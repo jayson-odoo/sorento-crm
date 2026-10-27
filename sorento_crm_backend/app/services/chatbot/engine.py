@@ -5684,7 +5684,19 @@ def _run_stages_body(  # noqa: PLR0915
     # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
     verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
-    verdict = _report_ask.by_capability(verdict)
+    _open_required = state_in.focus.required_ask
+    _answers_open_ask = (
+        isinstance(_open_required, dict)
+        and _open_required.get("asking")
+        and _open_required.get("ask") != _report_ask.ASK_NAME
+        and required_fields.reply_verdict(
+            verdict, _open_required, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
+        )[1] == "required_ask_answer"
+    )
+    if not _answers_open_ask:
+        # A short reply under another open question (an idea, a low stock ask) is that answer, whatever report
+        # status the parser also read: `required_fields.reply_verdict` reroutes it below.
+        verdict = _report_ask.by_capability(verdict)
     verdict, _ranking_words = _report_ask.hold_words(verdict)
     with _session(session_factory) as grounding_db:
         verdict, grounding_notes = grounding.ground(
