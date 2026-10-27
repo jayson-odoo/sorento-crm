@@ -497,6 +497,27 @@ def test_the_same_lines_in_another_order_are_format_equal_and_the_first_rows_tex
     assert run.skipped == []
 
 
+def test_lines_in_another_order_are_compared_after_spacing_and_dimensions_are_evened_out(
+    db, tmp_path
+):
+    p = _prod(db, "SRTKT1934SS-GM-DIY")
+    first = "Floor Trap\n150 x 150\nD : Gunmetal"
+    run = _run(db, tmp_path, [("SRTKT1934SS-GM-DIY", first),
+                              ("SRTKT1934SS-GM-DIY", "150x150\ngunmetal\nFloor  Trap")], apply=True)
+    assert _desc(db, p) == first
+    assert run.skipped == []
+
+
+def test_trap_texts_with_lines_moved_between_blocks_are_still_a_conflict(db, tmp_path):
+    # Order says which trap a line belongs to (cut_trap): swapping the outlets is a contradiction.
+    p = _prod(db, "SRTWC9", text="old", trap="p_trap")
+    one = "Head\nS-Trap: Bottom\n150mm\nP-Trap: Horizontal\n180mm\n*Seat"
+    two = "Head\nS-Trap: Bottom\n180mm\nP-Trap: Horizontal\n150mm\n*Seat"
+    run = _run(db, tmp_path, [("SRTWC9", one), ("SRTWC9", two)], apply=True)
+    assert _desc(db, p) == "old"
+    assert run.skip_reasons(sheet_code="SRTWC9") == {"same code on several rows with different text"}
+
+
 def test_a_contradicting_line_is_still_a_conflict_and_lists_both_sheet_rows(db, tmp_path):
     p = _prod(db, "SRTKT1933SS-DIY", text="old")
     pillar = "Kitchen Tap\nPillar Mounted\nStainless Steel"

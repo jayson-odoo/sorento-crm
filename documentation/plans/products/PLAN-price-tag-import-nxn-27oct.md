@@ -15,9 +15,11 @@ the same lines in a different order; SRTKT1933SS-DIY is a real contradiction (Pi
 
 ## Fix
 
-1. `format_key` also writes a dimension product as `NxM`: `(\d)\s*[xX×]\s*(\d)` -> `\1x\2`.
-2. `dedupe`: two texts whose lines are the same set of lines (each compared by `format_key`),
-   in any order, are format-equal; the first row's text is written.
+1. `format_key` also writes a dimension product as `NxM`: `(\d)\s*[xX×]\s*(?=\d)` -> `\1x`
+   (lookahead so `1 x 2 x 3` chains).
+2. `dedupe`: two texts with the same lines (each compared by `format_key`, same counts) in any
+   order are format-equal; the first row's text is written. Not for a text with an S-/P-Trap line:
+   there order says which trap block a line belongs to (`cut_trap`), so a reorder is a conflict.
 3. The skipped CSV already names the sheet rows (`sheet_rows`, and `row N:` per text); a test pins it.
 
 ## Tests (red first)

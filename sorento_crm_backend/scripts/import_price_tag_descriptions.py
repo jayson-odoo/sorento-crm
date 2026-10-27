@@ -148,9 +148,13 @@ def format_key(text: str) -> str:
     return re.sub(r"(?:(?<=\s)|^)d: ", "", t).strip(" :")
 
 
-def _lines_key(text: str) -> tuple[str, ...]:
-    """The text's lines as a set (format_key per line): the same lines in another order are equal."""
-    return tuple(sorted(filter(None, (format_key(line) for line in text.split("\n")))))
+def _lines_key(text: str):
+    """The text's lines, sorted (format_key per line, same counts): the same lines in another order
+    are equal. None for a text with a trap line, where order says which block a line belongs to."""
+    lines = text.split("\n")
+    if any(_trap_of(line) for line in lines):
+        return None
+    return tuple(sorted(filter(None, (format_key(line) for line in lines))))
 
 
 def dedupe(entries: list[tuple[int, str, str]]):
@@ -159,7 +163,8 @@ def dedupe(entries: list[tuple[int, str, str]]):
     first_key = {}
     keyed = []
     for _, text, rule in entries:
-        key = first_key.setdefault(_lines_key(text), format_key(text))
+        lines = _lines_key(text)
+        key = format_key(text) if lines is None else first_key.setdefault(lines, format_key(text))
         keyed.append((key, text, rule))
     distinct = list(dict.fromkeys(k for k, _, _ in keyed))
     if len(distinct) == 1:
