@@ -1,0 +1,15 @@
+# /etc/systemd/system/role-watcher.service on BOTH CRM nodes. Plan section 2 "role watcher".
+[Unit]
+Description=Sorento CRM role watcher (workers + scheduler only on the Patroni leader)
+After=docker.service
+Requires=docker.service
+
+[Service]
+WorkingDirectory=/opt/sorento-crm2
+Environment=COMPOSE_FILES=-f docker-compose.yml -f compose.ha.yml
+ExecStart=/opt/sorento-crm2/infra/scripts/role-watcher.sh
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

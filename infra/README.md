@@ -7,7 +7,7 @@ section 1, "Still open"); they belong in a PRIVATE repo, proposed name `sorento-
 repo exists, this directory moves there and is deleted here. Nothing in this directory is read by
 the app, the CI or `scripts/blue_green_deploy.sh`.
 
-Rules: placeholders only (`<PRIMARY_WG_IP>`, `<STANDBY_WG_IP>`, `<CRM_PUBLIC_HOST>`,
+Rules: placeholders only (`<KL_WG_IP>`, `<IN_WG_IP>`, `<WITNESS_WG_IP>`, `<CRM_PUBLIC_HOST>`,
 `<R2_BUCKET>`). No addresses, private hostnames, passwords or keys, here or in the private repo:
 secrets stay in env files on the boxes.
 
@@ -17,35 +17,43 @@ secrets stay in env files on the boxes.
 sorento-infra/
   README.md                       what runs where, how to apply
   nodes/
-    primary/                      CRM box (KVM 4)
-      docker-compose.yml          captured from the box (backend_blue/green, frontend, worker,
+    crm/                          the SAME files on both CRM nodes (KL and IN); per-node env only
+      docker-compose.yml          captured from the KL box (backend_blue/green, frontend, worker,
                                   worker_fast, db, redis, mcp, pgbouncer)
+      compose.ha.yml              from templates/compose.ha.yml
+      patroni.yml                 from templates/patroni/patroni.yml
+      patroni/Dockerfile          pgvector pg17 + Patroni + WAL-G
+      etcd.env.example            from templates/etcd/etcd.env.template
+      walg.env.example            from templates/walg.env.example
       .deploy.env.example         names only, no values
       nginx/  caddy/              captured from the box
-      postgres/primary.conf       from templates/postgres/primary.conf
-      postgres/pg_hba.conf        from templates/postgres/pg_hba.conf.template
-    standby/                      n8n box (KVM 8)
-      docker-compose.yml          same services as primary
-      compose.standby.yml         from templates/compose.standby.yml
-      postgres/standby.conf       from templates/postgres/standby.conf
+      systemd/role-watcher.service
+    in-extra/                     India box only
+      haproxy.cfg                 n8n + MCP follow the primary
       n8n/                        the existing n8n compose, unchanged
+    witness/
+      etcd.env.example            etcd only
   wireguard/wg0.conf.template
-  scripts/promote-standby.sh
-  runbooks/failover.md            plan section 2 "Failover", "Failback", "Drills"
+  scripts/role-watcher.sh  scripts/ha-checks.sh
+  runbooks/ha-failover.md         plan sections 8b, 11 ("What still needs a human"), 12 (drills)
 ```
 
 ## Files here
 
 | File | What |
 |---|---|
-| `templates/postgres/primary.conf` | WAL level, archiving with WAL-G, slot cap, `archive_timeout` |
-| `templates/postgres/standby.conf` | hot standby settings, `primary_conninfo` over the tunnel |
-| `templates/postgres/pg_hba.conf.template` | replication only from the standby's tunnel address |
+| `templates/patroni/patroni.yml` | Patroni: TTL/loop timings, `maximum_lag_on_failover`, rewind + re-seed, failsafe, watchdog, archiving, pg_hba |
+| `templates/patroni/Dockerfile` | Postgres 17 + pgvector + Patroni + WAL-G image |
+| `templates/etcd/etcd.env.template` | etcd member env for the three voters, WAN timeouts |
+| `templates/compose.ha.yml` | HA override for both CRM nodes: Patroni `db`, workers behind profile `promoted`, `SKIP_MIGRATIONS`, autoheal, etcd |
+| `templates/haproxy/haproxy.cfg` | India box: n8n API and DB traffic to whichever node leads |
 | `templates/walg.env.example` | WAL-G env names for Cloudflare R2 (values on the box only) |
-| `templates/compose.standby.yml` | standby override: workers + scheduler behind profile `promoted` |
-| `templates/wireguard/wg0.conf.template` | two-node tunnel, if the tailnet is not used |
-| `scripts/promote-standby.sh` | the one promotion command (human runs it after fencing) |
+| `templates/wireguard/wg0.conf.template` | three-member mesh, if the tailnet is not used |
+| `templates/systemd/role-watcher.service` | runs the role watcher |
+| `scripts/role-watcher.sh` | workers + scheduler only on the Patroni leader |
+| `scripts/ha-checks.sh` | disk / etcd / lag / archive / WAL / backup-age checks to Healthchecks.io, prunes old dumps |
+| `tests/test_ha_scripts.py` | shell tests with fake curl/docker/etcdctl/df: `python3 -m pytest infra/tests -q` |
 
-The app side is already in this repo: `GET /api/v1/health/role` (Cloudflare LB monitor) and the
-scheduler leader guard (`sorento_crm_backend/app/scheduler/leader.py`, env
+The app side is already in this repo: `GET /api/v1/health/role` (Cloudflare LB monitor and the
+HAProxy check) and the scheduler leader guard (`sorento_crm_backend/app/scheduler/leader.py`, env
 `SCHEDULER_LEADER_DATABASE_URL` = a DIRECT Postgres URL, not pgbouncer).

@@ -1,0 +1,83 @@
+# Patroni config for BOTH CRM nodes (KL and IN). Only the env differs per node:
+#   PATRONI_NAME=kl|in, PATRONI_RESTAPI_CONNECT_ADDRESS=<THIS_WG_IP>:8008,
+#   PATRONI_POSTGRESQL_CONNECT_ADDRESS=<THIS_WG_IP>:5432, plus the passwords below.
+# Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md section 2 (timings table).
+scope: sorento-crm
+namespace: /sorento/
+
+restapi:
+  listen: 0.0.0.0:8008          # published on the tunnel address only (compose)
+  # connect_address from PATRONI_RESTAPI_CONNECT_ADDRESS
+
+etcd3:
+  hosts: <KL_WG_IP>:2379,<IN_WG_IP>:2379,<WITNESS_WG_IP>:2379
+
+bootstrap:
+  dcs:
+    ttl: 30
+    loop_wait: 10
+    retry_timeout: 10
+    maximum_lag_on_failover: 16777216     # 16 MB: further behind = no automatic promotion
+    failsafe_mode: true
+    synchronous_mode: false               # async: India RTT stays off the commit path
+    postgresql:
+      use_pg_rewind: true
+      remove_data_directory_on_rewind_failure: true
+      remove_data_directory_on_diverged_timelines: true
+      use_slots: true
+      parameters:
+        wal_level: replica
+        wal_log_hints: "on"               # required by pg_rewind
+        hot_standby: "on"
+        max_wal_senders: 5
+        max_replication_slots: 5
+        max_wal_size: 4GB
+        wal_keep_size: 1GB
+        max_slot_wal_keep_size: 20GB      # a dead replica can never fill the leader's disk
+        max_standby_streaming_delay: 30s
+        archive_mode: "on"
+        archive_command: "wal-g wal-push %p"
+        archive_timeout: 60               # PITR RPO bound about 60 s
+        shared_preload_libraries: ""      # pgvector needs no preload
+    # Permanent slots so the leader keeps WAL for the other member across restarts.
+    slots: {}
+
+postgresql:
+  listen: 0.0.0.0:5432           # published on 127.0.0.1 and the tunnel address only (compose)
+  # connect_address from PATRONI_POSTGRESQL_CONNECT_ADDRESS
+  data_dir: /var/lib/postgresql/data/pgdata
+  pgpass: /tmp/pgpass
+  authentication:
+    superuser:
+      username: postgres          # password: PATRONI_SUPERUSER_PASSWORD
+    replication:
+      username: replicator        # password: PATRONI_REPLICATION_PASSWORD
+    rewind:
+      username: rewinder          # password: PATRONI_REWIND_PASSWORD
+  # Replicas: fall back to the archive if streaming falls out of the slot window.
+  recovery_conf:
+    restore_command: "wal-g wal-fetch %f %p"
+  create_replica_methods: [basebackup]
+  basebackup:
+    checkpoint: fast
+  pg_hba:
+    - local   all          all                                  peer
+    - host    all          all          127.0.0.1/32            scram-sha-256
+    - host    all          all          <DOCKER_NET_CIDR>       scram-sha-256
+    - hostssl replication  replicator   <KL_WG_IP>/32           scram-sha-256
+    - hostssl replication  replicator   <IN_WG_IP>/32           scram-sha-256
+    - hostssl all          rewinder     <KL_WG_IP>/32           scram-sha-256
+    - hostssl all          rewinder     <IN_WG_IP>/32           scram-sha-256
+    # n8n's sorento-crm-db credential via the India HAProxy (plan section 2):
+    - hostssl all          <N8N_DB_USER> <IN_WG_IP>/32          scram-sha-256
+
+watchdog:
+  mode: automatic                 # "required" once /dev/watchdog is proven in the container
+  device: /dev/watchdog
+  safety_margin: 5
+
+tags:
+  nofailover: false
+  noloadbalance: false
+  clonefrom: false
+  nosync: false

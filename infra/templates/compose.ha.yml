@@ -1,0 +1,76 @@
+# HA override for BOTH CRM nodes (KL and IN):
+#   docker compose -f docker-compose.yml -f compose.ha.yml up -d
+# Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md sections 2 and 8b.
+#
+# - Patroni replaces the plain `db` service (same service name, so pgbouncer and the deploy
+#   script's DB_SERVICE keep working). Which node leads is Patroni's call, never this file's.
+# - Workers and the scheduler sit behind profile `promoted`; infra/scripts/role-watcher.sh
+#   starts them only while the local Postgres leads and stops them otherwise.
+# - Backend colours skip migrations unless the release sets SKIP_MIGRATIONS=0 on the leader
+#   (start.sh would otherwise run `alembic upgrade head` against a read-only replica).
+# - autoheal restarts any container whose healthcheck turns unhealthy.
+services:
+  db:
+    image: <REGISTRY>/sorento-patroni-pg17:<PIN>    # built from templates/patroni/Dockerfile
+    env_file: [patroni.env, walg.env]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./patroni.yml:/etc/patroni/patroni.yml:ro
+    devices:
+      - /dev/watchdog:/dev/watchdog                 # softdog loaded on the host (modprobe softdog)
+    ports:
+      - "127.0.0.1:5432:5432"
+      - "<THIS_WG_IP>:5432:5432"
+      - "127.0.0.1:8008:8008"
+      - "<THIS_WG_IP>:8008:8008"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8008/liveness || exit 1"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    labels:
+      autoheal: "true"
+    restart: unless-stopped
+
+  backend_blue:
+    environment:
+      SKIP_MIGRATIONS: ${SKIP_MIGRATIONS:-1}
+    labels:
+      autoheal: "true"
+  backend_green:
+    environment:
+      SKIP_MIGRATIONS: ${SKIP_MIGRATIONS:-1}
+    labels:
+      autoheal: "true"
+  frontend:
+    labels:
+      autoheal: "true"
+
+  worker:
+    profiles: ["promoted"]
+    environment:
+      ENABLE_SCHEDULER: "true"
+      # Direct to Postgres, not pgbouncer (sorento_crm_backend/app/scheduler/leader.py).
+      SCHEDULER_LEADER_DATABASE_URL: ${SCHEDULER_LEADER_DATABASE_URL:?set a direct Postgres URL (not pgbouncer)}
+  worker_fast:
+    profiles: ["promoted"]
+
+  etcd:
+    image: <ETCD_IMAGE>:<PIN>
+    env_file: [etcd.env]                             # from templates/etcd/etcd.env.template
+    network_mode: host                               # binds the tunnel address + 127.0.0.1 only
+    volumes:
+      - etcd_data:/etcd-data
+    restart: unless-stopped
+
+  autoheal:
+    image: <AUTOHEAL_IMAGE>:<PIN>
+    environment:
+      AUTOHEAL_CONTAINER_LABEL: autoheal
+      AUTOHEAL_INTERVAL: "15"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    restart: unless-stopped
+
+volumes:
+  etcd_data:
