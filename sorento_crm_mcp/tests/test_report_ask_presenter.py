@@ -199,3 +199,18 @@ def test_one_printed_row_reads_singular():
                  rows=[{"rank": 1, "name": "CBN-200", "qty": 10, "amount": 1000.0}],
                  more=0, total_count=1, total={"qty": 10, "amount": 1000.0})
     assert _report_ask(body).splitlines()[0].startswith("Top 1 product by delivered sales")
+
+
+@pytest.mark.parametrize(
+    "basis, label, head",
+    [
+        ("outstanding", "outstanding orders", "Undelivered orders"),
+        ("pending_delivery", "pending delivery", "Pending delivery"),
+        ("unpaid", "unpaid invoices", "Unpaid invoices"),
+        ("delivered", "delivered sales", "Sales by delivered sales"),
+    ],
+)
+def test_a_total_is_headed_by_its_kind_not_as_a_sale_when_it_is_an_outstanding_kind(basis, label, head):
+    """REPORT-UNIFY phase 3 nit: an outstanding total reads "Undelivered orders", never "Sales by outstanding orders"."""
+    text = _report_ask(_body(basis=basis, basis_label=label, group_by=None, group_label=None, rows=[], more=0, total_count=0))
+    assert text.splitlines()[0] == head, text

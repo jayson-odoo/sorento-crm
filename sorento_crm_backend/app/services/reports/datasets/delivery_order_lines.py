@@ -333,8 +333,8 @@ DEFINITION = reg.ReportDefinition(
     module_key="order_management",
 )
 
-#: Delivery order lines of DOs not yet delivered: the chatbot's `pending_delivery` basis (never
-#: registered on the Reports screen). The columns, base and params are the delivered ones.
+#: Delivery order lines of DOs not yet delivered: the chatbot's `pending_delivery` basis, also registered on the
+#: "Sales & outstanding" screen (`definitions/sales_and_outstanding`). The columns, base and params are the delivered ones.
 PENDING_DATASET = dataclasses.replace(DATASET, key=PENDING_KEY)
 PENDING_DEFINITION = dataclasses.replace(
     DEFINITION, key=PENDING_KEY, title="Pending delivery", dataset=PENDING_DATASET,

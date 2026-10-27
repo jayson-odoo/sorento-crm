@@ -938,7 +938,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "or products with a sale ('how many dealers sell product Y'); ask the person which measure when they did not say, as for top_n. `basis` "
             "invoiced | delivered | ordered | outstanding | pending_delivery (delivery order lines not yet delivered) | unpaid "
             "(RM still owed on posted invoices; group by customer, sales_agent or month only; product, brand, category, spec, location and channel come back under `not_applied`); ask the person which basis when they did not say "
-            "(the bot asks 'Invoiced, delivered, ordered or outstanding?'). "
+            "(the bot asks 'Invoiced, delivered, ordered or outstanding?', and for an outstanding ask 'Undelivered orders, pending delivery or unpaid invoices?'). "
             "`compare_to` previous_period (the same number of days just before) | last_year (the "
             "same dates a year earlier), only when the person asks to compare, never with group_by month: every row and the "
             "total then carry `prev` and `change_pct` on the sort measure. "

@@ -1,8 +1,11 @@
 'use client';
 
 import { ReportPage } from '@/components/reports/ReportPage';
+import { Container } from '@/components/common/container';
+import { PageHeader } from '@/components/common/PageHeader';
+import { Card, CardContent } from '@/components/ui/card';
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs';
-import { useHasPermission } from '@/hooks/usePermissions';
+import { useHasPermission, usePermissions } from '@/hooks/usePermissions';
 import { useUrlTab } from '@/hooks/useUrlTab';
 
 const REPORTS_VIEW = 'sales.reports.view';
@@ -27,7 +30,10 @@ export const SALES_AND_OUTSTANDING_TABS = [
 
 type TabValue = (typeof SALES_AND_OUTSTANDING_TABS)[number]['value'];
 
+const CRUMBS = [{ title: 'Sales' }, { title: 'Sales & outstanding' }];
+
 export function SalesAndOutstandingView() {
+  const { isLoading } = usePermissions();
   const canReports = useHasPermission(REPORTS_VIEW);
   const canOrders = useHasPermission(ORDERS_VIEW);
   const canFinance = useHasPermission(FINANCE_VIEW);
@@ -43,7 +49,21 @@ export function SalesAndOutstandingView() {
     basePath: '/sales/sales-and-outstanding',
   });
   const current = visible.find((t) => t.value === active) ?? visible[0];
-  if (!current) return null;
+  if (!current) {
+    // No tab permitted: an explicit empty state (heading and hint, no button), once the permissions have loaded.
+    if (isLoading) return null;
+    return (
+      <Container>
+        <PageHeader title="Sales & outstanding" crumbs={CRUMBS} />
+        <Card>
+          <CardContent className="space-y-1 py-10 text-center">
+            <h2 className="text-base font-medium">No reports available</h2>
+            <p className="text-sm text-muted-foreground">Your account has no sales or outstanding reports.</p>
+          </CardContent>
+        </Card>
+      </Container>
+    );
+  }
 
   return (
     <ReportPage

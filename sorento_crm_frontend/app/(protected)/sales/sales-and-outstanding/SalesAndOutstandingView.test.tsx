@@ -7,6 +7,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent } from '@testing-library/react';
 
 const state = vi.hoisted(() => ({
+  loading: false,
   tab: null as string | null,
   perms: new Set<string>(),
   replace: vi.fn(),
@@ -23,6 +24,7 @@ vi.mock('next/navigation', () => ({
 
 vi.mock('@/hooks/usePermissions', () => ({
   useHasPermission: (slug: string) => state.perms.has(slug),
+  usePermissions: () => ({ isLoading: state.loading }),
 }));
 
 // The page body is the kernel's; here only the report it was given and the strip under its header matter.
@@ -44,6 +46,14 @@ vi.mock('@/components/reports/ReportPage', () => ({
   ),
 }));
 
+vi.mock('@/components/common/container', () => ({
+  Container: ({ children }: { children?: React.ReactNode }) => <div>{children}</div>,
+}));
+
+vi.mock('@/components/common/PageHeader', () => ({
+  PageHeader: ({ title }: { title: React.ReactNode }) => <h1>{title}</h1>,
+}));
+
 import { SalesAndOutstandingView } from './SalesAndOutstandingView';
 
 const ALL = ['sales.reports.view', 'order_management.orders.view', 'finance.billing_documents.view'];
@@ -51,6 +61,7 @@ const LABELS = ['Invoiced', 'Delivered', 'Ordered', 'Undelivered orders', 'Pendi
 
 beforeEach(() => {
   state.tab = null;
+  state.loading = false;
   state.perms = new Set(ALL);
   state.replace.mockClear();
 });
@@ -116,8 +127,19 @@ describe('SalesAndOutstandingView', () => {
     expect(screen.getByTestId('report-key').textContent).toBe('sales_order_lines_ask_delivered');
   });
 
-  it('renders nothing for a user with neither permission', () => {
+  it('shows an empty state (heading and hint, no button) to a user with no report permission', () => {
     state.perms = new Set();
+    render(<SalesAndOutstandingView />);
+    expect(screen.getByRole('heading', { name: 'Sales & outstanding' })).toBeTruthy();
+    expect(screen.getByRole('heading', { name: 'No reports available' })).toBeTruthy();
+    expect(screen.queryByRole('tab')).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
+    expect(screen.queryByRole('link')).toBeNull();
+  });
+
+  it('renders nothing while the permissions are still loading', () => {
+    state.perms = new Set();
+    state.loading = true;
     const { container } = render(<SalesAndOutstandingView />);
     expect(container.textContent).toBe('');
   });

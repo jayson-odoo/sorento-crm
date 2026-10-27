@@ -3542,7 +3542,13 @@ def _report_ask(body: dict) -> str:
     basis = body.get("basis_label")
     group_by = body.get("group_by")
     if not group_by:
-        head = basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid") else f"Sales by {basis}"
+        # An outstanding kind is not a sale: "Undelivered orders", "Pending delivery", "Unpaid invoices" (the kinds'
+        # own words); every sales basis reads "Sales by <basis>".
+        head = (
+            "Undelivered orders" if body.get("basis") == "outstanding"
+            else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
+            else f"Sales by {basis}"
+        )
         return "\n".join([head, *facts, f"Total {figures}"])
     rows = _ask_rows(body.get("rows") or [], group_by, measure, body.get("sort"))
     if not rows:

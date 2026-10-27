@@ -1,8 +1,9 @@
 """chatbot: the three retired sales and outstanding tools leave the `order` and `sales` rows
 
 PLAN-report-unify-27oct.md, section 2 (owner ruling Q1). Every sales total, breakdown and
-outstanding ask now runs on `crm_report_ask`, so no chatbot path reaches `crm_sales_report`,
-`crm_outstanding_report` or `crm_sales_analysis` any more. They are removed from every
+outstanding ask now runs on `crm_report_ask`, so no chatbot path reaches `crm_sales_report` or
+`crm_outstanding_report` any more; `crm_sales_analysis` is reached only by the Yearly comparison
+(axis year), a `run_fetch` override that needs no row. All three are removed from every
 `chatbot_domains.tools` row that lists them, so the Chatbot Domains screen agrees with the frozen
 seed in `turn/policy_rows.py` (the allow-list itself is derived from that seed). The routes, the
 MCP tools and the analytics connector keep them.

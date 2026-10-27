@@ -6,7 +6,8 @@ own balance, in ringgit; NULL is "not synced" and is out). Dated by the document
 has no product, so the report has no product, brand, category, spec, location or channel axis: the route
 answers those under `not_applied` (`per_document`).
 
-Registered NOWHERE (no `reg.register`): `ask.run_ask` runs this definition directly.
+Registered on the Reports API as the "Sales & outstanding" screen's Unpaid invoices report
+(`definitions/sales_and_outstanding`), the very object `ask.run_ask` runs, so the screen and the bot cannot drift.
 """
 from __future__ import annotations
 
