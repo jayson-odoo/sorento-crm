@@ -89,6 +89,13 @@ All are `other_location`; no `other_project` row exists on the copy.
    (b) Hand-made links stop holding; automatic ones keep it.
    **Recommendation: (a)**, because the ruling is about board decisions, and a link is what tells
    purchasing which incoming goods are for which line.
+   Addendum (28 Oct): one kind of Borrow is itself such a link. A step-3 "supply" Borrow (taking another
+   order's INCOMING SPO / PO) writes no allocation; Confirm moves the donor's placement onto the borrower as
+   an `ORDER_BACK` row with the link (`project_supply_service.py:8956-8963`, `_place_supply_borrows`
+   :7696-7730), and Stock Debt pins it like any link. With (a) it keeps binding the incoming goods to the
+   borrower first. Making it a plan too would mean not moving the placement at all, a change to what
+   purchasing sees, so **recommendation: (a), supply Borrows unchanged in this lane**; this lane changes
+   stock Borrows (`other_location` / `other_project` allocations) only.
 3. **The donor's "71 lent to SO415472" on the board.**
    (a) Keep it as today: it is the plan CS agreed with the donor, and it explains why the donor may read short.
    (b) Drop it, because nothing is held.
