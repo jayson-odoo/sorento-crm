@@ -89,6 +89,8 @@ class UploadActivitySession(BaseModel):
     failed_rows: Optional[int] = None
     skipped_rows: Optional[int] = None
     job_error: Optional[str] = None
+    # Where the drawer entry opens, when the job has a page of its own.
+    link_path: Optional[str] = None
 
 
 class UploadActivityResponse(BaseModel):

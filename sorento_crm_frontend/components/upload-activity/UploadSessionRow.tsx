@@ -107,7 +107,7 @@ export function UploadSessionRow({
           onClick={() => {
             if (!session.import_job_id) return;
             onCloseDrawer?.();
-            router.push(`/system-management/import-jobs/${session.import_job_id}`);
+            router.push(session.link_path ?? `/system-management/import-jobs/${session.import_job_id}`);
           }}
           className="w-full flex items-start gap-2 px-4 py-3 hover:bg-muted/40 text-start"
         >
