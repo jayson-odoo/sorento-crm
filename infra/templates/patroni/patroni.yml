@@ -6,11 +6,20 @@ scope: sorento-crm
 namespace: /sorento/
 
 restapi:
-  listen: 0.0.0.0:8008          # published on the tunnel address only (compose)
+  listen: 0.0.0.0:8008          # published on the tunnel address + 127.0.0.1 only (compose)
   # connect_address from PATRONI_RESTAPI_CONNECT_ADDRESS
+  # Unsafe endpoints (POST/PATCH: failover, switchover, restart, config) need this login:
+  # PATRONI_RESTAPI_USERNAME / PATRONI_RESTAPI_PASSWORD from patroni.env. GETs (/primary,
+  # /cluster, /liveness) stay open for HAProxy, the role watcher and ha-checks.
+  # Without this login anything that reaches the port (n8n's Code nodes on the India box
+  # included) could POST a failover.
+  authentication:
+    username: patroni-admin
 
 etcd3:
   hosts: <KL_WG_IP>:2379,<IN_WG_IP>:2379,<WITNESS_WG_IP>:2379
+  # etcd auth is on (templates/etcd/etcd.env.template): PATRONI_ETCD3_USERNAME=patroni,
+  # PATRONI_ETCD3_PASSWORD from patroni.env. A user that can write /sorento/ can move the leader.
 
 bootstrap:
   dcs:
@@ -38,14 +47,19 @@ bootstrap:
         archive_mode: "on"
         archive_command: "wal-g wal-push %p"
         archive_timeout: 60               # PITR RPO bound about 60 s
-        shared_preload_libraries: ""      # pgvector needs no preload
-    # Permanent slots so the leader keeps WAL for the other member across restarts.
-    slots: {}
+        # Copy prod's current value (SHOW shared_preload_libraries) before adopting; pgvector
+        # itself needs no preload. Never leave this empty if prod preloads something today.
+        shared_preload_libraries: "<PROD_SHARED_PRELOAD_LIBRARIES>"
+    # use_slots creates a slot per member automatically; Patroni drops it when that member's
+    # key expires (member_slots_ttl on Patroni 4), so a member gone for good stops pinning WAL.
 
 postgresql:
   listen: 0.0.0.0:5432           # published on 127.0.0.1 and the tunnel address only (compose)
   # connect_address from PATRONI_POSTGRESQL_CONNECT_ADDRESS
-  data_dir: /var/lib/postgresql/data/pgdata
+  # MUST be prod's current data directory (`SHOW data_directory` on prod, or the container's
+  # $PGDATA). A wrong path looks empty: Patroni would initdb a NEW cluster and take the leader
+  # key with an empty database. Check before the first start (plan section 9 step 6).
+  data_dir: <PROD_DATA_DIRECTORY>
   pgpass: /tmp/pgpass
   authentication:
     superuser:
@@ -60,19 +74,25 @@ postgresql:
   create_replica_methods: [basebackup]
   basebackup:
     checkpoint: fast
+  # `host`, not `hostssl`: these addresses exist only inside WireGuard, which already encrypts
+  # and authenticates the link. Switch to hostssl only together with ssl=on + certs.
   pg_hba:
     - local   all          all                                  peer
     - host    all          all          127.0.0.1/32            scram-sha-256
     - host    all          all          <DOCKER_NET_CIDR>       scram-sha-256
-    - hostssl replication  replicator   <KL_WG_IP>/32           scram-sha-256
-    - hostssl replication  replicator   <IN_WG_IP>/32           scram-sha-256
-    - hostssl all          rewinder     <KL_WG_IP>/32           scram-sha-256
-    - hostssl all          rewinder     <IN_WG_IP>/32           scram-sha-256
-    # n8n's sorento-crm-db credential via the India HAProxy (plan section 2):
-    - hostssl all          <N8N_DB_USER> <IN_WG_IP>/32          scram-sha-256
+    - host    replication  replicator   <KL_WG_IP>/32           scram-sha-256
+    - host    replication  replicator   <IN_WG_IP>/32           scram-sha-256
+    - host    all          rewinder     <KL_WG_IP>/32           scram-sha-256
+    - host    all          rewinder     <IN_WG_IP>/32           scram-sha-256
+    # n8n's sorento-crm-db credential reaches KL's pgbouncer via the India HAProxy over the
+    # tunnel; pgbouncer then connects locally, so no extra Postgres rule is needed for it.
 
+# Arms only if the container's postgres user can open /dev/watchdog: the host needs softdog
+# loaded and the udev rule in templates/host/ (root-owned 0600 by default, and Patroni runs as
+# postgres). In "automatic" mode a missing watchdog is only a log line, so check for
+# "watchdog activated" in the Patroni log, then switch to "required".
 watchdog:
-  mode: automatic                 # "required" once /dev/watchdog is proven in the container
+  mode: automatic
   device: /dev/watchdog
   safety_margin: 5
 

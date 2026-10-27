@@ -6,7 +6,7 @@ Requires=docker.service
 
 [Service]
 WorkingDirectory=/opt/sorento-crm2
-Environment=COMPOSE_FILES=-f docker-compose.yml -f compose.ha.yml
+Environment="COMPOSE_FILES=-f docker-compose.yml -f compose.ha.yml"
 ExecStart=/opt/sorento-crm2/infra/scripts/role-watcher.sh
 Restart=always
 RestartSec=5

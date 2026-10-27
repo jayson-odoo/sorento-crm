@@ -28,6 +28,9 @@ case " $* " in
     q="$FAKE_DIR/codes"
     if [ -s "$q" ]; then code=$(head -1 "$q"); tail -n +2 "$q" > "$q.tmp"; mv "$q.tmp" "$q"; else code=${FAKE_HTTP_CODE:-200}; fi
     printf '%s' "$code"; [ "$code" = "000" ] && exit 7; exit 0 ;;
+  *"/cluster"*)
+    if [ -n "${FAKE_CLUSTER:-}" ]; then echo "$FAKE_CLUSTER"; else echo '{"members": [{"role": "leader"}, {"role": "replica"}]}'; fi
+    exit 0 ;;
 esac
 exit 0
 """,
@@ -36,17 +39,14 @@ exit 0
 echo "docker $*" >> "$FAKE_LOG"
 args=" $* "
 case "$args" in
-  *" ps "*) for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
+  *" ps "*) [ -n "${FAKE_PS_FAIL:-}" ] && exit 1; for c in ${FAKE_RUNNING:-}; do echo "$c"; done; exit 0 ;;
+  *"etcdctl endpoint health"*) for i in $(seq 1 "${FAKE_ETCD_HEALTHY:-3}"); do echo "http://m$i:2379 is healthy: took 2ms"; done; exit 0 ;;
   *" backup-list "*) echo "${FAKE_BACKUPS:-[]}"; exit 0 ;;
   *"pg_stat_replication WHERE"*) echo "${FAKE_REPLICAS:-1}"; exit 0 ;;
   *"pg_wal_lsn_diff"*) echo "${FAKE_LAG:-0}"; exit 0 ;;
   *"pg_stat_archiver"*) echo "${FAKE_ARCHIVER:-30 0}"; exit 0 ;;
   *"pg_ls_waldir"*) echo "${FAKE_WAL:-1000}"; exit 0 ;;
 esac
-exit 0
-""",
-    "etcdctl": r"""#!/usr/bin/env bash
-for i in $(seq 1 "${FAKE_ETCD_HEALTHY:-3}"); do echo "http://m$i:2379 is healthy: took 2ms"; done
 exit 0
 """,
     "df": r"""#!/usr/bin/env bash
@@ -75,6 +75,7 @@ def env(tmp_path):
         "FAKE_LOG": str(log),
         "FAKE_DIR": str(tmp_path),
         "HOME": str(tmp_path),
+        "PROJECT_DIR": str(tmp_path),
     }
     return e, log, tmp_path
 
@@ -98,7 +99,7 @@ def test_watcher_starts_workers_only_after_two_leader_readings(env):
     assert not any("up -d" in c for c in calls(log)), "one reading must not act"
 
     r = run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200)
-    ups = [c for c in calls(log) if "--profile promoted up -d worker worker_fast" in c]
+    ups = [c for c in calls(log) if "--profile promoted up -d --no-deps worker worker_fast" in c]
     assert len(ups) == 1
 
 
@@ -108,17 +109,34 @@ def test_watcher_leaves_running_workers_alone_on_the_leader(env):
     assert not any("up -d" in c or " stop " in c for c in calls(log))
 
 
+def test_watcher_leader_retries_start_when_ps_fails(env):
+    e, log, _ = env
+    run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=200, FAKE_PS_FAIL=1)
+    assert any("up -d --no-deps" in c for c in calls(log))
+
+
+def _stops(log):
+    return [c for c in calls(log) if c.endswith("--profile promoted stop worker worker_fast")]
+
+
 def test_watcher_stops_workers_on_a_replica(env):
     e, log, _ = env
     run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE=503, FAKE_RUNNING="a b")
-    assert any(c.endswith("stop worker worker_fast") for c in calls(log))
+    assert len(_stops(log)) == 1
     assert not any("up -d" in c for c in calls(log))
+
+
+def test_watcher_stops_on_a_replica_even_when_ps_cannot_tell(env):
+    """An unreadable `ps` or a worker stuck restarting must never leave one running."""
+    e, log, _ = env
+    run(WATCHER, e, MAX_TICKS=3, FAKE_HTTP_CODE=503, FAKE_PS_FAIL=1)
+    assert len(_stops(log)) == 2  # ticks 2 and 3
 
 
 def test_watcher_treats_unreachable_patroni_as_not_leader(env):
     e, log, _ = env
     run(WATCHER, e, MAX_TICKS=2, FAKE_HTTP_CODE="000", FAKE_RUNNING="a")
-    assert any(c.endswith("stop worker worker_fast") for c in calls(log))
+    assert len(_stops(log)) == 1
 
 
 def test_watcher_flapping_reading_never_acts(env):
@@ -155,6 +173,9 @@ def test_checks_all_ok_pings_success(env):
         ({"FAKE_WAL": 20000000000}, "pg_wal"),
         ({"FAKE_ETCD_HEALTHY": 2}, "etcd 2/3"),
         ({"FAKE_BACKUPS": "[]"}, "base backup age"),
+        ({"FAKE_CLUSTER": '{"members": [{"role": "replica"}, {"role": "replica"}]}'}, "cluster has 0 leaders"),
+        ({"FAKE_CLUSTER": '{"members": [{"role": "leader"}, {"role": "leader"}]}'}, "cluster has 2 leaders"),
+        ({"FAKE_CLUSTER": "not json"}, "cluster state unreadable"),
     ],
 )
 def test_checks_each_problem_pings_fail_with_its_reason(env, extra, reason):
@@ -165,6 +186,15 @@ def test_checks_each_problem_pings_fail_with_its_reason(env, extra, reason):
     assert reason in r.stdout
     fails = [c for c in calls(log) if "hc.example/abc/fail" in c]
     assert fails and reason in fails[0]
+
+
+def test_checks_accept_go_nanosecond_backup_timestamps(env):
+    from datetime import datetime, timedelta, timezone
+
+    t = (datetime.now(timezone.utc) - timedelta(hours=2)).strftime("%Y-%m-%dT%H:%M:%S") + ".123456789Z"
+    e, _, _ = env
+    r = run(CHECKS, e, FAKE_BACKUPS=f'[{{"time": "{t}"}}]')
+    assert r.returncode == 0, r.stdout
 
 
 def test_checks_skip_leader_checks_on_a_replica(env):

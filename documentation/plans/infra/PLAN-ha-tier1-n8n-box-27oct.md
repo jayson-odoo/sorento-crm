@@ -1,7 +1,7 @@
 # PLAN: HA plan v2, Tier 1 on the n8n box with automatic failover (HA-TIER1-N8N-BOX)
 
-Status: plan + code guards + templates in review, PR #1915. Owner rulings D1-D5 recorded 27 Oct
-(section 10); three small items still open (section 10, "Still open"). Track: docs + infra
+Status: plan + code guards + templates in review, PR #1915. Owner rulings D1-D5, O2 and O3
+recorded 27 Oct (section 10); O1 (witness host) still open, Hetzner as the working assumption. Track: docs + infra
 templates + two small backend guards (health role endpoint, scheduler leader guard). No migration,
 no auth/RBAC change, no new ingest surface: small fix track for the code slice.
 
@@ -95,6 +95,10 @@ failover needs no edit anywhere.
 - Owner ruling D5: failover is automatic. With two nodes that is unsafe (each side of a network cut
   would promote itself); a third voter makes it safe, because only the side that still reaches a
   majority may hold the leader key.
+- Why the Cloudflare LB cannot be the tie-breaker: it only routes users to whichever node
+  answers its health check; it cannot stop a cut-off KL Postgres from accepting writes or tell
+  India it may promote, so with the LB alone both sides of a network cut would act as primary.
+  The vote has to happen next to the databases, which is what the witness is for.
 - **Patroni + etcd** (recommended): the most used Postgres HA manager; the leader key in etcd has a
   TTL, the leader must renew it every loop, and a leader that cannot renew it DEMOTES ITSELF before
   the TTL ends, so the old primary fences itself on a network cut. It also restarts a crashed
@@ -118,7 +122,7 @@ failover needs no edit anywhere.
 | `remove_data_directory_on_rewind_failure` | true | if rewind fails, Patroni wipes and re-seeds it from the leader automatically |
 | `wal_log_hints` | on | required by `pg_rewind` |
 | `failsafe_mode` | true | if etcd itself is unreachable (for example the witness AND the etcd on one node are down) but the leader still reaches every Patroni member, it keeps running instead of demoting |
-| `watchdog.mode` | `automatic` | Linux softdog: if Patroni itself hangs, the box reboots before the TTL ends, so a frozen old primary cannot keep accepting writes (needs `/dev/watchdog` passed into the container; `required` once proven) |
+| `watchdog.mode` | `automatic` | Linux softdog: if Patroni itself hangs, the box reboots before the TTL ends, so a frozen old primary cannot keep accepting writes. Arms ONLY after the host prep in `infra/templates/host/` (softdog loaded, udev rule giving the container's postgres uid the device); until the Patroni log shows "watchdog activated" the TTL self-demotion is the only fence. Then `required` |
 | `synchronous_mode` | false | async (section 3: India RTT would be paid on every commit) |
 | etcd `heartbeat-interval` / `election-timeout` | 300 ms / 3000 ms | WAN between KL, India and the witness |
 
@@ -130,8 +134,10 @@ promote. The Cloudflare monitor then needs its interval x consecutive failures t
 
 `infra/scripts/role-watcher.sh` (systemd unit, every 5 s, on both CRM nodes) asks the LOCAL
 Patroni (`GET http://127.0.0.1:8008/primary`, 200 only on the leader). Two readings in a row as
-leader: `docker compose --profile promoted up -d worker worker_fast`. Two readings as not-leader:
-`docker compose stop worker worker_fast`. So after an automatic failover the India node starts
+leader: `docker compose --profile promoted up -d --no-deps worker worker_fast` when fewer than
+both are running (`--no-deps`, so it can never recreate the Patroni `db` or pgbouncer). Two
+readings as not-leader: `stop worker worker_fast` on every tick (idempotent, so an unreadable
+`ps` or a worker stuck restarting can never stay up on a replica). So after an automatic failover the India node starts
 its workers and scheduler within about 10 s of promotion, and the demoted KL node stops its own.
 Defence in depth: the scheduler leader guard (section 8) refuses to start on a replica and, with
 `SCHEDULER_LEADER_DATABASE_URL`, holds a lock so two schedulers can never run against one primary
@@ -142,12 +148,15 @@ even if the watcher misfires.
 - **App on each node**: its LOCAL Postgres through its local pgbouncer. A node serves users only
   while its own DB leads (the LB checks `/api/v1/health/role`), so it never pays cross-site
   per-statement latency (section 4).
-- **n8n and MCP** (India box): `crm-private.internal` resolves to a local HAProxy
-  (`infra/templates/haproxy/haproxy.cfg`) with two backends, the local CRM and the KL CRM over the
-  tunnel, health-checked on the same `/api/v1/health/role`. So n8n follows the primary with no
-  `.env` flip (replaces the manual `CRM_PRIVATE_IP` step of
-  `documentation/runbooks/n8n-private-path.md:641-663`). The n8n DB credential `sorento-crm-db`
-  points at the same HAProxy's Postgres frontend, checked on Patroni's `/primary`.
+- **n8n and MCP** (India box): n8n maps `<CRM_DOMAIN>` and `crm-private.internal` to
+  `CRM_PRIVATE_IP` and uses :443 (API), :8765 (MCP) and :6432 (DB credential `sorento-crm-db`)
+  (`documentation/runbooks/n8n-private-path.md:400-410`). A local HAProxy
+  (`infra/templates/haproxy/haproxy.cfg`, host networking) listens on exactly those three ports
+  on one bridge address, each with two backends (the local node and KL over the tunnel), all
+  checked on that node's Patroni `/primary`, so the three move together. `CRM_PRIVATE_IP` is set
+  to the HAProxy address ONCE; after that a failover needs no `.env` flip (replaces the manual
+  step of `documentation/runbooks/n8n-private-path.md:641-663`). The India nginx must then bind
+  the public address only, not `0.0.0.0:443`.
 - **Redis**: local per node. On failover the dead node's queued RQ jobs are lost; import rows left
   `queued` or `processing` are settled by the existing orphan reconcile
   (`sorento_crm_backend/app/scheduler/task_scheduler.py:79-86`); chatbot turns live in Postgres
@@ -182,8 +191,13 @@ alone, under 0.5 GB.
 
 - WireGuard full mesh between the three members (`infra/templates/wireguard/wg0.conf.template`),
   or the tailnet from HA-N8N-PRIVATE-PATH if applied (WireGuard underneath).
-- Over the tunnel only: etcd 2379/2380 (all three), Patroni REST 8008 and Postgres 5432 (the two
-  CRM nodes), SSH 22. Nothing of this on a public interface.
+- Over the tunnel only: etcd 2379/2380 (all three); between the two CRM nodes Patroni REST 8008
+  and Postgres 5432; from the India HAProxy to KL 443, 8765 and 6432; SSH 22. Nothing of this on
+  a public interface. Postgres rules are `host` (not `hostssl`): the link is already WireGuard.
+- Control plane auth: Patroni's unsafe REST calls (failover, switchover, restart, config) need a
+  login, and etcd runs with auth on (a `patroni` user limited to the `/sorento/` prefix), so
+  nothing else that reaches a tunnel address (n8n's Code nodes on the India box included) can
+  move the leader.
 - Public on the two CRM nodes: 80/443 limited to Cloudflare ranges (the HA-SEC-EDGE rules), 22
   key-only. The India node needs the same edge rules before it joins the LB. Witness: 22 + the
   WireGuard UDP port only.
@@ -194,8 +208,9 @@ alone, under 0.5 GB.
   or `postgres:17`, `documentation/runbooks/backups.md:121`; crew confirms the tag). Physical
   streaming replication copies pgvector indexes as-is.
 - Patroni seeds the India replica itself (`pg_basebackup` from the leader) when it first joins, and
-  manages a permanent replication slot per member with `max_slot_wal_keep_size = 20GB`, so a dead
-  replica can never fill the leader's disk.
+  creates a replication slot per member automatically (`use_slots`; dropped when that member's key
+  expires), with `max_slot_wal_keep_size = 20GB`, so a dead replica can never fill the leader's
+  disk.
 - **WAL-G** to a dedicated Cloudflare R2 bucket from whichever node leads (archive settings live in
   the Patroni config, so they move with the leader): `archive_command = 'wal-g wal-push %p'`,
   `archive_timeout = 60`, nightly `wal-g backup-push` from the leader (cron on both nodes, the
@@ -208,9 +223,11 @@ alone, under 0.5 GB.
 
 Automatic for the database: when the KL node comes back, Patroni rejoins it as a replica of the
 India leader (`pg_rewind`, or a full re-seed if that fails). It is not automatically promoted back
-(that would flap). Moving the primary back to KL, which is closer to users (section 3), is one
-`patronictl switchover` in a quiet window: a 5-15 s write pause, no data loss. Whether that runs on
-a schedule or by hand is open item O3 (section 10).
+(that would flap). Owner ruling O3 (a): the primary moves back to KL AUTOMATICALLY.
+`infra/scripts/switchback.sh` (cron every 5 minutes on the KL node) runs `patronictl switchover
+--leader <current> --candidate kl` only when KL has been a streaming replica 0 MB behind for 24 h
+in a row (any other reading resets the clock) and the time is inside 03:00-03:10 MYT: a 5-15 s
+write pause at night, no data loss. Tests: `infra/tests/test_ha_scripts.py`.
 
 ## 3. Location (owner ruling D2: India)
 
@@ -227,7 +244,7 @@ a schedule or by hand is open item O3 (section 10).
   in Singapore or Jakarta would fail exactly the case the owner named, so not there. Recommended:
   Europe (Hostinger KVM 1 in a European location, same account and billing; or Hetzner, an
   independent provider, so one provider's account or billing problem cannot take two of three
-  voters). Open item O1.
+  voters). Open item O1, including the shared-service box as option (c) (section 10).
 
 ### Latency and what users feel
 
@@ -328,9 +345,14 @@ reason not to is the database, not the LB.
 - The endpoint answers 200 only where the local DB leads, so exactly one pool is healthy at a time
   and the LB follows Patroni by itself: no API call, no DNS edit, no human. When the old primary
   comes back it is a replica (503), so traffic does not flap back.
-- Interval: 60 s on the base add-on; shorter intervals cost more (unverified, owner confirms on the
-  dashboard). With 60 s x 2 failures the LB can take up to about 2 minutes after promotion to move
-  traffic; with 15 s, about 30 s. Open item O2.
+- Interval: owner ruling O2 (b), **15 s** checks, so traffic moves about 30 s after promotion
+  (15 s x 2 failures) instead of up to 2 minutes. Cloudflare's pricing page (via search; the page
+  itself could not be fetched here) lists 60 s as included, 30 s at +$10/month and 15 s at
+  +$15/month, one check location included; its monitor docs instead list 15 s as the Business
+  plan minimum, so on a Business zone it may be free. Owner confirms the figure on the dashboard
+  (Traffic, Load Balancing, add-on settings) before buying
+  ([Cloudflare LB monitors](https://developers.cloudflare.com/load-balancing/monitors/create-monitor/)).
+  Check location: one, in Asia.
 - `scripts/ops/cf-proxy.py` (HA-MONITOR) stays the escape for "Cloudflare itself is down"; with the
   LB in place its runbook step must point the DNS-only record at whichever node leads
   (`patronictl list` names it).
@@ -429,7 +451,7 @@ With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 12
    200 `{"status":"healthy","role":"primary"}` when the DB answers and `pg_is_in_recovery()` is
    false; 503 `{"status":"standby","role":"standby","replay_lag_seconds":N}` on a replica; 503
    `{"status":"unhealthy","role":"unknown"}` when the DB is unreachable. The LB monitor (section 5),
-   the n8n HAProxy check (section 2) and the lag number Phase B would use. No host, no error text.
+   and the lag number Phase B would use. No host, no error text.
 2. **Scheduler leader guard** (`sorento_crm_backend/app/scheduler/leader.py`, called first in
    `start_scheduler`, `sorento_crm_backend/app/scheduler/task_scheduler.py`):
    - Always: the database must be writable (`pg_is_in_recovery()` false), else
@@ -456,13 +478,17 @@ With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 12
      `templates/patroni/Dockerfile` (pgvector pg17 + Patroni + WAL-G).
    - `templates/etcd/etcd.env.template` (all three members, WAN timeouts).
    - `templates/compose.ha.yml` (Patroni replaces the `db` service; workers behind profile
-     `promoted`; `SKIP_MIGRATIONS=1` on the backend colours of a node that is not leading).
-   - `templates/haproxy/haproxy.cfg` (n8n and MCP on the India box follow the primary).
+     `promoted`; `SKIP_MIGRATIONS` defaults to 0, a non-leading node must start with 1).
+   - `templates/haproxy/haproxy.cfg` (n8n's API, MCP and DB ports on the India box follow the primary).
+   - `templates/host/` (softdog + udev rule so the watchdog actually arms).
    - `templates/walg.env.example`, `templates/wireguard/wg0.conf.template` (three-peer mesh).
-   - `scripts/role-watcher.sh` + `templates/systemd/role-watcher.service` (+ shell test
-     `infra/tests/test_role_watcher.sh`): workers and scheduler run only on the leader.
-   - `scripts/ha-checks.sh` (+ shell test `infra/tests/test_ha_checks.sh`): disk, WAL, lag, members,
+   - `scripts/role-watcher.sh` + `templates/systemd/role-watcher.service`: workers and scheduler
+     run only on the leader.
+   - `scripts/ha-checks.sh`: disk, etcd members, exactly one Patroni leader, WAL, lag, archive,
      backup age, pinging Healthchecks; prunes old pre-migrate dumps when disk is high.
+   - `scripts/switchback.sh`: the automatic move back to KL (O3).
+   - Shell tests for the three scripts: `infra/tests/test_ha_scripts.py`
+     (`python3 -m pytest infra/tests -q`).
 
 Follow-ups named, not built: `SNAPSHOT_KEEP_COUNT` in `scripts/blue_green_deploy.sh` (section 7);
 the release deploying both nodes with migrations only on the leader (section 11); phase B read
@@ -474,7 +500,7 @@ offload on its trigger (section 4).
 |---|---|---|
 | Primary box or its Postgres dies | Patroni promotes the India replica after the leader key expires (about 30-40 s); the role watcher starts workers + scheduler there; the LB moves traffic; HAProxy moves n8n | section 2, 5 |
 | Network cut isolates the primary | it cannot renew the leader key and demotes itself before the TTL ends; the side with the majority promotes | Patroni |
-| Patroni itself hangs on the primary | watchdog reboots the box before the TTL ends | `watchdog` in `patroni.yml` |
+| Patroni itself hangs on the primary | watchdog reboots the box before the TTL ends (once the host prep has armed it) | `watchdog` in `patroni.yml`, `infra/templates/host/` |
 | Postgres crashes but the box is fine | Patroni restarts it in place (failover only if it stays down past the TTL) | Patroni |
 | Old primary comes back | rejoins as a replica with `pg_rewind`; if that fails it is wiped and re-seeded from the leader | `use_pg_rewind`, `remove_data_directory_on_rewind_failure` |
 | Replica fell out of its slot window | catches up from the WAL-G archive (`restore_command`), else re-seeds | `patroni.yml` |
@@ -483,6 +509,7 @@ offload on its trigger (section 4).
 | Scheduler lost its lock (Postgres restart, demotion) | worker exits, restarts, re-takes or refuses | section 8 |
 | Disk filling with pre-migrate dumps | `ha-checks.sh` keeps the newest 2 when disk use passes 85%, and alerts | `infra/scripts/ha-checks.sh` |
 | WAL piling up, replica lagging, member missing, base backup older than 26 h, archive stalled | `ha-checks.sh` alerts through Healthchecks.io (outside our servers, as HA-MONITOR) | same |
+| After a failover, KL back and healthy for 24 h | `switchback.sh` moves the primary back at 03:00 MYT | O3 |
 | Witness dies | nothing to heal: KL + India are still a majority; `ha-checks.sh` alerts | etcd |
 
 ## 9. Owner-side steps (crew/owner apply; nothing here touches prod from the lane)
@@ -493,10 +520,22 @@ offload on its trigger (section 4).
 3. WireGuard mesh between the three (or confirm the tailnet reaches all three).
 4. R2 bucket + scoped token for WAL-G.
 5. etcd on all three members; check `etcdctl endpoint health --cluster` shows 3 healthy.
-6. Adopt the prod Postgres into Patroni (Patroni's documented "convert a standalone" path: same
-   data directory, Patroni takes the leader key) in one planned window, about 1-2 minutes of
-   downtime for the restart that also turns on `wal_log_hints` and archiving.
-7. Start the India node: Patroni seeds the replica itself; the role watcher keeps its workers off.
+5b. Turn on etcd auth (commands in `templates/etcd/etcd.env.template`) and set the Patroni REST
+   login in each node's `patroni.env`.
+6. Adopt the prod Postgres into Patroni (Patroni's documented "convert a standalone" path) in one
+   planned window, about 1-2 minutes of downtime for the restart that also turns on
+   `wal_log_hints` and archiving. Before the first start:
+   - `data_dir` in `patroni.yml` must be prod's real data directory (`SHOW data_directory`): a
+     wrong path looks empty, and Patroni would initdb a NEW cluster with an empty database.
+   - Copy prod's `shared_preload_libraries` into `patroni.yml`.
+   - Create the `replicator` (REPLICATION) and `rewinder` roles by hand: adopting an existing
+     cluster skips Patroni's bootstrap, which would otherwise create them.
+   - Do the host prep in `infra/templates/host/` (watchdog).
+   Later changes to the `bootstrap.dcs` block take effect only through `patronictl edit-config`
+   (bootstrap is read once); that belongs in the `ha-failover.md` runbook.
+7. Ship the release follow-up (both nodes deployed, `SKIP_MIGRATIONS=1` on the non-leader) BEFORE
+   starting the India stack, then start it: Patroni seeds the replica itself; the role watcher
+   keeps its workers off.
 8. Allowlists: add the India box's egress address to the OpenAI API key's IP allowlist (OpenAI
    dashboard, project / API keys, allowed IPs), and to any other provider with one (Respond.io API,
    AutoCount: crew checks). Without this a failover works but the bot fails.
@@ -520,19 +559,67 @@ Owner rulings, 27 Oct about 19:35 (recorded verbatim where quoted):
   split-brain risk is solved with a third voter (witness) + Patroni's self-demotion + watchdog
   (section 2), not by a human.
 
-Still open (one crew-ask on the PR):
+- **O2 LB check interval: (b) 15 s checks** (27 Oct about 19:45). Cost in section 5 and 11.
+- **O3 Moving the primary back to KL: (a) automatic**, 03:00 MYT after 24 h healthy and caught
+  up (27 Oct about 19:45). `infra/scripts/switchback.sh`, section 2 "Failback".
 
-- **O1 Witness host**: (a) Hetzner smallest cloud VPS in Germany or Finland, about EUR 4-5/month,
-  independent provider; (b) Hostinger KVM 1 in a European location, about $5-7/month (promo,
-  renewal higher), same account. Recommend (a): a Hostinger account, billing or platform problem
-  then cannot take two of the three voters. Prices unverified.
-- **O2 LB check interval**: (a) 60 s base, traffic moves up to about 2 minutes after promotion;
-  (b) the faster interval add-on (15 s or less), about 30 s. Recommend (b) if it is under $10/month
-  extra: it is the largest single piece of the outage.
-- **O3 Moving the primary back to KL after a failover**: (a) automatic, a scheduled
-  `patronictl switchover` at 03:00 MYT once KL has been a healthy, caught-up replica for 24 h;
-  (b) a human runs the same command. Recommend (a): about a 5-15 s write pause at night, no data
-  loss, and it removes the last routine human step.
+Still open:
+
+- **O1 Witness host** (the third etcd voter; it votes on which DB is primary, the LB cannot, see
+  section 2). Working assumption: (a).
+  - (a) Hetzner smallest cloud VPS in Germany or Finland, about EUR 4-5/month, independent
+    provider (prices unverified).
+  - (b) Hostinger KVM 1 in a European location, about $5-7/month promo, renewal higher, same
+    account.
+  - (c) the existing shared-service box (owner, 27 Oct about 19:47). See "O1 (c)" below.
+
+### O1 (c): the shared-service box as the witness
+
+What the repo says about the box (no provider, plan size, region or load is recorded anywhere):
+
+- It is the deployment of the separate `foundryx-shared-service` repo behind the public host
+  `chat.foundryx.my` (Caddy, `/be/*` to its backend, Let's Encrypt origin cert):
+  `documentation/runbooks/monitoring.md:25`, `:113-116`, `:130-132`, `:382-384`;
+  `scripts/ops/cf-proxy.py:30-36`.
+- It serves the CRM the Claude connector (OAuth + MCP, JWT-signed calls,
+  `sorento_crm_backend/app/services/analytics_connector/access.py:4-5`), ideation
+  (`sorento_crm_backend/app/services/ideation_embed_service.py:4-21`) and AutoCount document
+  mapping (`documentation/plans/autocount/PLAN-autocount-cancel-crm-13oct.md:4`).
+- Its deployed config is not in this repo and its firewall review is still pending
+  (`documentation/runbooks/prod-edge-lockdown.md:115-116`, `:539-557`); it is not on the tailnet
+  (the private-path runbook covers only the CRM and n8n boxes); its DB backup coverage was
+  "probably not" in place on 14 Oct (`documentation/plans/ops/PLAN-ha-backup-check-14oct.md:14`);
+  a failed migration on 26 Sep ran new code on the old schema
+  (`documentation/runbooks/memory-and-deploy-guards.md:11`).
+- Provider, data centre, IP range, spare CPU/RAM/disk: **unverified, not in the repo.** Crew reads
+  them (provider panel location; `nproc`, `free -m`, `df -h`, and whether its address range or
+  ASN matches the CRM box's).
+
+Resources: an etcd voter needs about 0.5 GB RAM, a fraction of a core and under 1 GB of disk, but
+fsync-sensitive disk (etcd misses heartbeats on a saturated disk). Almost any box has that spare.
+The question is location, not size.
+
+The key test, plainly: **if the shared-service box is in the same region, provider data centre or
+network as the KL CRM box, a KL region outage takes out 2 of the 3 voters at once. India alone
+then has no majority and CANNOT take over automatically, which is exactly the case this HA is
+for** (the owner's "in case SEA got problem"). A witness anywhere in SEA fails the same way. India
+would sit as a healthy replica while the CRM is down, until a human forces the promotion.
+
+Other failure cases, if it is outside SEA and India:
+
+- Its own deploys, reboots or incidents (like 26 Sep) take the witness down for a while: harmless
+  alone (KL + India are still a majority), but a KL failure DURING one of them means no automatic
+  failover. A dedicated witness has no deploys.
+- Its public apps (Claude connector, ideation) make it the most exposed of the three boxes; root
+  on the witness can write etcd, so a compromise there could move the leader. etcd auth limits
+  the damage from other processes, not from root on that box.
+- Joining it means WireGuard on a box whose config lives outside this repo.
+
+Verdict: **(c) only if crew confirms the box is outside SEA and India (for example in Europe or
+the US) and on a different provider from the KL box; otherwise keep (a), the tiny separate voter
+at about EUR 4-5/month**, which is the cheapest fix and also removes the deploy and exposure
+coupling above. Recommendation stays (a) even if (c) passes the location test, because EUR 4-5 a
+month buys a voter that nothing else restarts.
 
 ## 11. Costs, effort, RTO/RPO, what still needs a human, risks
 
@@ -541,11 +628,11 @@ Still open (one crew-ask on the PR):
 | Item | Per month | Status |
 |---|---|---|
 | Cloudflare Load Balancing, 2 endpoints, 60 s checks | about $5 | unverified |
-| Faster checks (O2 b) | about $5-10 more | unverified |
-| Witness VPS (O1) | about $5-7 | unverified |
+| 15 s checks (O2 b) | about $15 more, possibly $0 on a Business zone | Cloudflare pricing page via search, unverified; owner confirms on the dashboard |
+| Witness VPS (O1 a; $0 with O1 c) | about EUR 4-5 (about $5) | unverified |
 | R2 for WAL-G: 7 compressed fulls + WAL, about 50-150 GB at $0.015/GB (10 GB free); about 50-100k writes, inside the free million | about $1-3 | depends on DB size D, unverified |
 | India region for the KVM 8 | $0 expected | unverified (Hostinger may charge for a location change) |
-| **Total** | **about $11-25** | |
+| **Total** | **about $26-28** (about $11 if 15 s checks are included in the zone plan) | |
 
 ### Effort
 
@@ -564,14 +651,14 @@ Still open (one crew-ask on the PR):
 
 | | Today | After Tier 1 |
 |---|---|---|
-| Unplanned: primary box dies | hours (rebuild from the nightly dump) | about 40 s to promotion, plus the LB move: about 1 minute with 15 s checks, about 2.5 minutes with 60 s checks |
+| Unplanned: primary box dies | hours (rebuild from the nightly dump) | about 40 s to promotion plus about 30 s for the LB (15 s checks): about 1-1.5 minutes |
 | Planned switchover | n/a | 5-15 s write pause |
 | Deploy | zero downtime (blue/green) | unchanged |
-| RPO unplanned | up to 24 h | normally under 1 s of commits; at most 16 MB of WAL (else no automatic promotion) |
+| RPO unplanned | up to 24 h | normally under 1 s of commits; at most 16 MB of WAL (else no automatic promotion). Commits the old primary had not replicated are discarded when it rejoins (rewind, or the automatic wipe and re-seed); they survive only in the WAL-G archive if they were archived before the crash |
 | RPO from backups (PITR) | 24 h | about 60 s (`archive_timeout`) |
 
 "0% downtime" honestly: deploys and planned moves are already near zero; an unplanned box loss
-becomes about 1-2.5 minutes instead of hours. Lower than that needs synchronous replication and
+becomes about 1-1.5 minutes instead of hours, inside respond.io's roughly 3-minute retry window. Lower than that needs synchronous replication and
 active-active, which section 4 and section 3 rule out for this latency.
 
 ### What still needs a human
@@ -583,19 +670,22 @@ active-active, which section 4 and section 3 rule out for this latency.
 2. Two of the three members are down at once (for example KL and the witness): no majority, so no
    automatic promotion, by design. A human confirms and forces it.
 3. A member is gone for good (VPS deleted, disk lost): provision a replacement from the infra repo;
-   Patroni then re-seeds it on its own.
+   Patroni then re-seeds it on its own. A lost etcd member also needs `etcdctl member remove/add`
+   and a start with `ETCD_INITIAL_CLUSTER_STATE=existing` (`templates/etcd/etcd.env.template`).
 4. Cloudflare itself is down: `scripts/ops/cf-proxy.py`.
 5. Bad data (a wrong migration, a mass delete): a point-in-time restore from WAL-G is always a
    human decision.
 6. Approving releases (the `production` environment gate, as today), changing allowlists and DNS
-   when an address changes, and O3 if the owner picks (b).
+   when an address changes.
 
 ### Risks
 
 - etcd across 150-250 ms links: tuned timeouts (section 2); a flapping link to the witness costs
   nothing while KL and India see each other. Drill 4 tests it.
-- Watchdog in containers needs `/dev/watchdog` passed through; until proven, `mode: automatic`
-  (best effort) and the TTL demotion are the fence.
+- Watchdog in containers needs the host prep (`infra/templates/host/`); until the Patroni log shows
+  "watchdog activated", the TTL self-demotion is the only fence.
+- The failover control plane (Patroni REST, etcd) is itself an attack surface: logins on both, and
+  a security review of the infra repo before go-live.
 - Deploys touch two nodes: the release must deploy both, same image, migrations only on the leader
   (`SKIP_MIGRATIONS=1` elsewhere: `sorento_crm_backend/start.sh` otherwise runs
   `alembic upgrade head` against a read-only replica and the container fails to start).
@@ -610,11 +700,12 @@ active-active, which section 4 and section 3 rule out for this latency.
 | # | When | What | Pass |
 |---|---|---|---|
 | 1 | before go-live, then monthly | `patronictl switchover` KL to India and back in a quiet window | write pause under 15 s each way; LB follows; workers move; `/api/v1/health/role` 200 on exactly one node |
-| 2 | before go-live, then quarterly | hard stop of the KL VPS in hPanel (unplanned failover) | India promoted within 60 s; LB moved within the O2 bound; bot answers a test WhatsApp; OpenAI calls succeed from India; respond.io messages from the gap backfilled by reconcile |
+| 2 | before go-live, then quarterly | hard stop of the KL VPS in hPanel (unplanned failover) | India promoted within 60 s; LB moved within about 30 s after that; bot answers a test WhatsApp; OpenAI calls succeed from India; respond.io messages from the gap backfilled by reconcile |
 | 3 | after drill 2 | start KL again | it rejoins as a replica with no human step; lag back to under 1 s |
 | 4 | before go-live, then quarterly | cut the tunnel on KL only (firewall rule) | KL demotes itself within 30 s; India promotes; never two primaries (`patronictl list`, both role endpoints) |
 | 5 | quarterly | stop the witness | nothing changes; alert fires |
 | 6 | monthly | `scripts/ops/restore-test.sh` + a WAL-G PITR restore to a chosen minute in a throwaway container | restore finishes; row counts match |
 | 7 | monthly | `ha-checks.sh` with a lowered threshold | Healthchecks alert reaches the owner |
+| 8 | after drill 2, at the next 03:00 MYT past 24 h | leave `switchback.sh` alone | primary back on KL with a write pause under 15 s; LB, workers and n8n follow |
 
 Each drill's numbers go into `documentation/runbooks/` (follow-up runbook `ha-failover.md`).

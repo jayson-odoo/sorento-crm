@@ -20,5 +20,6 @@ Endpoint = <PEER_B_PUBLIC_ADDRESS>:51820
 AllowedIPs = <PEER_B_WG_IP>/32
 PersistentKeepalive = 25
 
-# Host firewall: 51820/udp from the two peers only. Over wg0: etcd 2379-2380 (all three),
-# Patroni REST 8008 + Postgres 5432 (the two CRM nodes), SSH 22.
+# Host firewall: 51820/udp from the two peers only. Over wg0: etcd 2379-2380 (all three);
+# between the two CRM nodes: Patroni REST 8008, Postgres 5432 (replication, rewind), and for the
+# India HAProxy toward KL: 443 (API), 8765 (MCP), 6432 (pgbouncer); SSH 22.
