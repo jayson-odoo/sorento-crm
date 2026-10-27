@@ -50,8 +50,9 @@ PINNED_PICK: dict[str, str] = {
     # captured turn can carry it - one tool, no choice to measure.
     "purchase_cost": "crm_procurement_po_last_cost_list",
     # R7 (PLAN-prompt-dynamic-30sep D9): the `sales` domain's first tool. A sales status
-    # never reaches it (`run_fetch`'s three overrides pick), so no captured turn does.
-    "sales": "crm_sales_report",
+    # never reaches it (`run_fetch`'s overrides pick), so no captured turn does. REPORT-UNIFY (Q1): the report ask,
+    # now the domain's only tool.
+    "sales": "crm_report_ask",
     # CA-3: what customers ask the bot; one tool, picked by the `chat_report` override.
     "chat_analytics": "crm_report_ask",
 }
@@ -314,25 +315,21 @@ class TestSeamsAreGone:
         assert offenders == [], f"{name} still appears in: {', '.join(sorted(offenders))}"
 
 
-class TestSalesReportToolIsOnTheReadOnlyAllowList:
-    """Coder 25's own pins table (20 Sep 2026): main's deleted `test_domain_spec.py`
-    pinned `crm_sales_report` in `CHATBOT_READ_ONLY_TOOLS` (the MCP catalogue's own
-    read-only allow-list, `test_tool_pick_from_domain_spec.py`'s whole subject) -
-    ported here rather than against the retired `contracts.DOMAIN_SPEC`, against the
-    two real seams that now carry the same fact: `fetch.CHATBOT_READ_ONLY_TOOLS`
-    itself, and `turn/policy_rows.py::DEFAULT_DOMAIN_ROWS`'s `order` domain row (the
-    seed `chatbot_domains.tools` derives from, S9's sales-report port)."""
+class TestTheReportAskIsOnTheReadOnlyAllowList:
+    """Coder 25's own pins table (20 Sep 2026), moved by REPORT-UNIFY (Q1): the sales report tool the order and
+    sales domains used to offer is retired from the chatbot, and `crm_report_ask` is the read tool both rows carry."""
 
-    def test_crm_sales_report_is_read_only(self) -> None:
-        assert "crm_sales_report" in fetch_mod.CHATBOT_READ_ONLY_TOOLS, (
-            "a domain that can pick crm_sales_report must never reach a write path"
+    def test_crm_report_ask_is_read_only(self) -> None:
+        assert "crm_report_ask" in fetch_mod.CHATBOT_READ_ONLY_TOOLS, (
+            "a domain that can pick crm_report_ask must never reach a write path"
         )
+        assert "crm_sales_report" not in fetch_mod.CHATBOT_READ_ONLY_TOOLS
 
     def test_the_order_domain_seed_row_carries_the_tool(self) -> None:
         from app.services.chatbot.turn.policy_rows import DEFAULT_DOMAIN_ROWS
 
         order_row = next(row for row in DEFAULT_DOMAIN_ROWS if row["name"] == "order")
-        assert "crm_sales_report" in order_row["tools"], (
-            f"the order domain's seed must offer crm_sales_report as a pickable tool: "
-            f"{order_row['tools']}"
+        assert "crm_report_ask" in order_row["tools"], (
+            f"the order domain's seed must offer crm_report_ask as a pickable tool: {order_row['tools']}"
         )
+        assert "crm_sales_report" not in order_row["tools"], order_row["tools"]

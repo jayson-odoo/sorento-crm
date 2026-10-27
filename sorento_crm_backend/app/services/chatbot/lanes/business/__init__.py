@@ -1876,7 +1876,7 @@ def run_fetch(
         # REPORT-UNIFY (Q1): every sales total or breakdown and every outstanding ask that holds a filter or an
         # axis is the report ask. The engine seam (`report_ask.by_capability`) converts it before grounding; this is
         # the same conversion for a verdict that skipped it (a live session, a direct call).
-        routed = report_ask.by_capability(parse_output, subject=bool(entities))  # a resolved row is a subject
+        routed = report_ask.by_capability(parse_output, subject=bool(entities), seam=False)
         if routed.get("order_status") == report_ask.ASK_NAME:
             parse_output, order_status_raw = report_ask.take_words(routed, ""), report_ask.ASK_NAME
 

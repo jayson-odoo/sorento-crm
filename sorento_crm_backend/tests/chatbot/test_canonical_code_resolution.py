@@ -34,7 +34,8 @@ from tests.chatbot._turn_helpers import make_office_access_type
 from tests.chatbot.test_engine import CONTACT_ID
 from tests.chatbot.test_engine import seeded, stub_access, stub_parser  # noqa: F401
 from tests.chatbot.test_entities_only_arm import _focus_products
-from tests.chatbot.test_outstanding_lane import REPORT_HIT, _qf, _run_turn, _seed_contact, _parser_output
+from tests.chatbot._turn_helpers import do_window
+from tests.chatbot.test_outstanding_lane import _qf, _run_turn, _seed_contact, _parser_output
 
 TAP = "ZZTWT5608"
 TYPED = "TAP ZZTWT5608"
@@ -345,11 +346,11 @@ class TestRealResolver:
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="so_outstanding", entities=[_entity(TYPED, TAP)]),
-            text_body="TAP ZZTWT5608 x 5 sales order outstanding",
+            qf=_qf(order_status=None, **do_window(), entities=[_entity(TYPED, TAP)]),
+            text_body="TAP ZZTWT5608 x 5 delivery orders",
             msg_id="ZZT-canon-1",
             attributes=["sales_orders.outstanding"],
-            mcp_response={**REPORT_HIT, "product_code": TAP},
+            mcp_response={"has_result": True, "response": "ZZT DO ROWS"},
             real_resolver=True,
         )
 
@@ -374,11 +375,11 @@ class TestRealResolver:
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="so_outstanding", entities=[_entity(TYPED, TAP), _entity(MISS_TYPED, MISS)]),
-            text_body="TAP ZZTWT5608 x 5 TAP ZZTX9999 x 1 sales order outstanding",
+            qf=_qf(order_status=None, **do_window(), entities=[_entity(TYPED, TAP), _entity(MISS_TYPED, MISS)]),
+            text_body="TAP ZZTWT5608 x 5 TAP ZZTX9999 x 1 delivery orders",
             msg_id="ZZT-canon-2",
             attributes=["sales_orders.outstanding"],
-            mcp_response={**REPORT_HIT, "product_code": TAP},
+            mcp_response={"has_result": True, "response": "ZZT DO ROWS"},
             real_resolver=True,
         )
 
@@ -406,17 +407,17 @@ class TestRealResolver:
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="so_outstanding", entities=[_entity(TYPED, None)]),
-            text_body="TAP ZZTWT5608 x 5 sales order outstanding",
+            qf=_qf(order_status=None, **do_window(), entities=[_entity(TYPED, None)]),
+            text_body="TAP ZZTWT5608 x 5 delivery orders",
             msg_id="ZZT-canon-3",
             attributes=["sales_orders.outstanding"],
-            mcp_response={**REPORT_HIT, "product_code": TAP},
+            mcp_response={"has_result": True, "response": "ZZT DO ROWS"},
             real_resolver=True,
         )
 
         reply = (result.reply or {}).get("text") or ""
         assert asked and asked[0][0] == [("TAPZZTWT5608", TYPED)], asked
-        assert asked[0][1] == "TAP ZZTWT5608 x 5 sales order outstanding"
+        assert asked[0][1] == "TAP ZZTWT5608 x 5 delivery orders"
         # The route's `dry_run` reaches the reader as sent (pinned in
         # `tests/test_resolver_semantic_fallback.py`); this harness turn is a live one.
         assert asked[0][2] is False
@@ -510,11 +511,11 @@ class TestRealResolver:
         result, captured = _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="so_outstanding", entities=entities),
-            text_body=text_body + " sales order outstanding",
+            qf=_qf(order_status=None, **do_window(), entities=entities),
+            text_body=text_body + " delivery orders",
             msg_id="ZZT-canon-15",
             attributes=["sales_orders.outstanding"],
-            mcp_response={**REPORT_HIT, "product_code": unique[0]},
+            mcp_response={"has_result": True, "response": "ZZT DO ROWS"},
             real_resolver=True,
         )
 
@@ -535,11 +536,11 @@ class TestRealResolver:
         _run_turn(
             session_factory,
             monkeypatch,
-            qf=_qf(order_status="so_outstanding", entities=[_entity(TAP, TAP)]),
-            text_body="ZZTWT5608 sales order outstanding",
+            qf=_qf(order_status=None, **do_window(), entities=[_entity(TAP, TAP)]),
+            text_body="ZZTWT5608 delivery orders",
             msg_id="ZZT-canon-4",
             attributes=["sales_orders.outstanding"],
-            mcp_response={**REPORT_HIT, "product_code": TAP},
+            mcp_response={"has_result": True, "response": "ZZT DO ROWS"},
             real_resolver=True,
         )
 

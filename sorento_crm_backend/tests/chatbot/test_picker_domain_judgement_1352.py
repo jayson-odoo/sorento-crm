@@ -334,11 +334,30 @@ def test_c_the_stock_quantity_asked_after_a_roster_takes_the_bare_number(
 from tests.chatbot import test_outstanding_lane as outstanding  # noqa: E402
 
 
-def test_c_outstanding_customer_pick_then_the_document_question(session_factory, monkeypatch):
-    """AC-PK010: the outstanding chain, customer pick then SO / DO. "1" picks the customer
-    (no domain word: the roster's own outstanding ask), the scope question is asked, and
-    "delivery order" (a document word, the parser also reading position 2) answers it."""
-    outstanding._seed_open_outstanding_customer_pick(session_factory)
+def test_c_outstanding_customer_pick_then_the_kind_question(session_factory, monkeypatch):
+    """AC-PK010, moved by REPORT-UNIFY (Q2): the outstanding chain, customer pick then the kind. The ask names a
+    customer word that matches two accounts (the picker), "1" picks one (no domain word: the roster's own ask), which
+    names no kind, so the kind question is asked ("Undelivered orders, pending delivery or unpaid invoices?");
+    "pending delivery" answers it and runs the report ask for the picked customer."""
+    grants = ["sales_orders.outstanding", "sales_orders.sales_report"]
+    outstanding._seed_contact(session_factory, variables={})
+    from tests.chatbot._turn_helpers import make_office_access_type
+
+    make_office_access_type(session_factory, outstanding.CONTACT_ID)
+    result, captured = outstanding._run_turn(
+        session_factory,
+        monkeypatch,
+        qf=outstanding._parser_output(
+            domain_hint="order", intent_hint="check_order", order_status="outstanding",
+            entities=[{"raw": "hanlim", "hint": "customer", "canonical_code": None, "current_message": True,
+                       "confident": True}],
+        ),
+        text_body="outstanding for hanlim",
+        msg_id="ZZT-1352-outstanding-0",
+        attributes=grants,
+        resolve_services=outstanding._ambiguous_hanlim_resolve_services(lambda **_: {"items": [], "has_result": False}),
+    )
+    assert captured == [] and "Which one do you mean?" in ((result.reply or {}).get("text") or ""), result.reply
     result, captured = outstanding._run_turn(
         session_factory,
         monkeypatch,
@@ -348,28 +367,32 @@ def test_c_outstanding_customer_pick_then_the_document_question(session_factory,
         ),
         text_body="1",
         msg_id="ZZT-1352-outstanding-1",
-        attributes=["sales_orders.outstanding"],
+        attributes=grants,
     )
     reply = (result.reply or {}).get("text") or ""
-    assert captured == [] and "Outstanding for which document?" in reply, (captured, reply)
+    assert captured == [] and "Undelivered orders, pending delivery or unpaid invoices?" in reply, (captured, reply)
     result, captured = outstanding._run_turn(
         session_factory,
         monkeypatch,
         qf=outstanding._parser_output(
-            message_type="business_query", intent_hint="check_order", domain_hint="order",
-            entities=[], document=["DO"], reference_positions=[2], domain_in_message=True,
-            order_status="outstanding",
+            message_type="business_query", intent_hint="check_product", domain_hint="master_products", entities=[],
+            basis="pending_delivery", domain_in_message=False, order_status=None,
         ),
-        text_body="delivery order",
+        text_body="pending delivery",
         msg_id="ZZT-1352-outstanding-2",
-        attributes=["sales_orders.outstanding"],
-        mcp_response=outstanding.REPORT_HIT,
+        attributes=grants,
+        mcp_response={
+            "status": "ok", "message": None, "basis": "pending_delivery", "basis_label": "pending delivery",
+            "measure": "amount", "sort": "desc", "group_by": None, "group_label": None, "date_from": None,
+            "date_to": None, "filters": [], "rows": [], "more": 0, "total_count": 0,
+            "total": {"qty": 10, "amount": 100.0},
+        },
     )
-    assert captured, "the document answer runs the report"
+    assert captured, "the kind answer runs the report"
     name, args = captured[0]
-    assert name == "crm_outstanding_report", name
+    assert name == "crm_report_ask", name
     assert args.get("customer_ids") == [outstanding.HANLIM_UUID_1], args
-    assert args.get("scope") == "do", args
+    assert args.get("basis") == "pending_delivery", args
 
 
 # =============================================================================== #

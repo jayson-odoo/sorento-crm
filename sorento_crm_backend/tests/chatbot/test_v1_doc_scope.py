@@ -343,12 +343,18 @@ class TestDoListWithNoNumber:
 # Security review round 1: the other arms that list customer documents
 # --------------------------------------------------------------------------- #
 
-REPORT = "crm_outstanding_report"
+#: REPORT-UNIFY (Q1): the outstanding report is `crm_report_ask`.
+REPORT = "crm_report_ask"
+ASK_HIT = {
+    "status": "ok", "message": None, "basis": "outstanding", "basis_label": "outstanding orders", "measure": "amount",
+    "sort": "desc", "group_by": None, "group_label": None, "date_from": None, "date_to": None, "filters": [],
+    "rows": [], "more": 0, "total_count": 0, "total": {"qty": 10, "amount": 100.0},
+}
 PRODUCT_UUID = "aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"
 PRODUCT_CODE = "SRTWT7445"
 
 
-def _outstanding_turn(session_factory, monkeypatch):
+def _outstanding_turn(session_factory, monkeypatch, attributes=None):
     """"SRTWT7445 sales order outstanding": the outstanding report, whose rows carry DO / SO numbers
     and customer names (`outstanding_report_service`)."""
     result, captured = _run_turn(
@@ -364,21 +370,23 @@ def _outstanding_turn(session_factory, monkeypatch):
         ),
         text_body=f"outstanding for {PRODUCT_CODE}",
         msg_id=f"ZZT-docscope-out-{uuid.uuid4().hex[:10]}",
-        attributes=[OUTSTANDING_KEY],
+        attributes=list(attributes or [OUTSTANDING_KEY, "sales_orders.sales_report"]),
         matches={PRODUCT_CODE: {"uuid": PRODUCT_UUID, "entity_type": "product", "canonical_code": PRODUCT_CODE}},
-        mcp_response=FOREIGN_DO_LIST,
+        mcp_response=ASK_HIT,
     )
     return ((result.reply or {}).get("text") or ""), captured
 
 
 class TestOutstandingReport:
     def test_unlinked_non_staff_gets_no_report(self, session_factory, monkeypatch) -> None:
+        """REPORT-UNIFY: the report ask is for the contact the sales report reveal is granted to; one without it
+        (here an unlinked non-staff contact) is refused before anything runs."""
         _seed_contact(session_factory, variables={})
 
-        reply, captured = _outstanding_turn(session_factory, monkeypatch)
+        reply, captured = _outstanding_turn(session_factory, monkeypatch, attributes=[OUTSTANDING_KEY])
 
         assert _calls(captured, REPORT) == [], captured
-        assert reply.strip() == NO_LINK_REFUSAL, reply
+        assert reply.strip() == "Sales report is not enabled for your account.", reply
 
     def test_staff_unchanged_gets_the_report(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
@@ -1398,36 +1406,6 @@ class TestGrantedReportsRunNoDoProbe:
     # no longer reach the analysis picker. A word the parser tagged brand is not rerouted
     # (`turn_runtime._report_status_means_order_domain` reads product / customer hints only) and
     # still reaches it: the non-staff skip (AC-14) and the staff stamps are pinned there.
-
-    def test_a_granted_unlinked_contact_gets_no_do_probe_on_the_analysis_picker(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        qf = _parser_output(
-            domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
-            entities=[], date_filter_start="2026-10-01", date_filter_end="2026-10-31",
-        )
-
-        reply, _captured, probes, _asked = _picker_turn(
-            session_factory, monkeypatch, "brand", qf=qf, attributes=(OUTSTANDING_KEY, SALES_GRANT)
-        )
-
-        assert "Which one do you mean?" in reply, reply
-        assert probes == [], probes
-        assert " - no DO" not in reply and " - has DO" not in reply, reply
-
-    def test_document_staff_keep_the_do_stamps_on_the_analysis_picker(self, session_factory, monkeypatch) -> None:
-        _seed_contact(session_factory, variables={})
-        make_office_access_type(session_factory, CONTACT_ID)
-        qf = _parser_output(
-            domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
-            entities=[], date_filter_start="2026-10-01", date_filter_end="2026-10-31",
-        )
-
-        _reply, _captured, probes, _asked = _picker_turn(
-            session_factory, monkeypatch, "brand", qf=qf, attributes=(OUTSTANDING_KEY, SALES_GRANT)
-        )
-
-        assert probes, "staff keep the analysis picker's DO probe as today"
-
 
 class TestHiddenCustomerRowsEverywhere:
     """Reviewer on 70bd1c303: `_without_customer_rows` also drops the customer rows a miss would

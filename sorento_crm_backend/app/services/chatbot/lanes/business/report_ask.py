@@ -390,8 +390,9 @@ def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
     return {**verdict, "group_by": None}
 
 
-def by_capability(verdict: dict[str, Any], *, subject: bool = False) -> dict[str, Any]:
-    """Engine seam, before grounding (REPORT-SMART-1021 step 2, REPORT-UNIFY Q1): every sales figure ask
+def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool = True) -> dict[str, Any]:
+    """Engine seam, before grounding (REPORT-SMART-1021 step 2, REPORT-UNIFY Q1; `seam=False` is `run_fetch`'s own
+    pass over what the seam left, which lets a pick or a document through): every sales figure ask
     (`SALES_STATUSES`, any axis the report ask has or none) and every outstanding ask that holds a filter or an
     axis (`as_outstanding`) is a sales ranking, read whole by `settle`: its filters, period, count, metric and
     basis, with every missing one asked in one numbered reply. A breakdown (no count, no direction, from a kind
@@ -402,8 +403,15 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False) -> dict[str
     if status == "top_selling":
         return from_top_selling(verdict)
     answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
-    if (answer.get("mode") == "pick" and jsc.array(answer.get("picked"))) or jsc.array(verdict.get("reference_positions")):
+    if seam and (
+        (answer.get("mode") == "pick" and jsc.array(answer.get("picked"))) or jsc.array(verdict.get("reference_positions"))
+    ):
         return verdict  # a pick of a position on an open roster answers it, whatever report type the parser also read
+    if seam and jsc.array(verdict.get("document")):
+        # The parser read an order DOCUMENT (an SO / DO list ask): the so_status seams decide it from the words; an
+        # outstanding or sales report status it carried with it is converted later, at `run_fetch` (`seam=False`),
+        # if it stands.
+        return verdict
     if status in OUTSTANDING_STATUSES:
         return as_outstanding(verdict, subject=subject)
     if status not in SALES_STATUSES:
