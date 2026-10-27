@@ -26,7 +26,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
-from app.utils.multi_value import multi_values
+from app.utils.multi_value import multi_text, multi_values
 from app.database import get_db
 from app.dependencies import (
     require_any_permission_with_api_key,
@@ -642,7 +642,9 @@ async def products_carrying_spec(
         .filter(ProductSpecifications.values.has_key(spec_key))  # noqa: W601
         .filter(Product.is_active.is_(True))
     )
-    values = multi_values(value)
+    values = multi_text(value)
+    # The Value options are counted BEFORE the value filter, so picking one leaves the others on offer.
+    base_all_values = base
     if values:
         base = base.filter(stored_value.in_(values))
     if q and q.strip():
@@ -666,7 +668,7 @@ async def products_carrying_spec(
     tallies = {
         "by_value": [
             {"value": v, "count": n}
-            for v, n in base.with_entities(stored_value, func.count()).group_by(stored_value)
+            for v, n in base_all_values.with_entities(stored_value, func.count()).group_by(stored_value)
             .order_by(func.count().desc()).limit(30).all()
         ],
         "by_class": [
@@ -681,7 +683,7 @@ async def products_carrying_spec(
         ],
     }
 
-    class_labels, sources = multi_values(class_label), multi_values(source_filter)
+    class_labels, sources = multi_text(class_label), multi_values(source_filter)
     if class_labels:
         base = base.filter(stored_class.in_(class_labels))
     if sources:

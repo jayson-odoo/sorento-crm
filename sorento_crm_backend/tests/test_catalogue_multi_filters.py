@@ -251,7 +251,7 @@ def test_worklist_unknown_state_refused(client, worklist):
 
 def test_worklist_class_union_and_summary_counts_both_classes(client, worklist):
     s = worklist
-    body = _wl(client, s, [("class_label", f"{s['classes']['u']},{s['classes']['v']}")])
+    body = _wl(client, s, [("class_label", s['classes']['u']), ("class_label", s['classes']['v'])])
     assert _wl_codes(body) == {s["codes"]["u"], s["codes"]["v"]}
     assert body["pagination"]["total"] == 2
     assert body["summary"] == {"total": 2, "verified": 1, "needs_reverify": 0, "unverified": 1}
@@ -268,7 +268,8 @@ def test_worklist_state_and_class_are_and_ed(client, worklist):
     s = worklist
     body = _wl(client, s, [
         ("state", "verified,needs_reverify"),
-        ("class_label", f"{s['classes']['u']},{s['classes']['r']}"),
+        ("class_label", s['classes']['u']),
+        ("class_label", s['classes']['r']),
     ])
     assert _wl_codes(body) == {s["codes"]["r"]}
     assert body["pagination"]["total"] == 1
@@ -331,14 +332,14 @@ def _codes(s, *keys):
 def test_seen_value_single_union_repeated(client, seen):
     s = seen
     assert _seen(client, s, [("value", "gloss")])[0] == _codes(s, "b")
-    assert _seen(client, s, [("value", "gloss,satin")])[0] == _codes(s, "b", "c")
+    assert _seen(client, s, [("value", "gloss"), ("value", "satin")])[0] == _codes(s, "b", "c")
     assert _seen(client, s, [("value", "gloss"), ("value", "satin")])[0] == _codes(s, "b", "c")
 
 
 def test_seen_class_single_union_repeated(client, seen):
     s = seen
     assert _seen(client, s, [("class_label", "Sink")])[0] == _codes(s, "a")
-    assert _seen(client, s, [("class_label", "Sink,Tap")])[0] == _codes(s, "a", "c")
+    assert _seen(client, s, [("class_label", "Sink"), ("class_label", "Tap")])[0] == _codes(s, "a", "c")
     assert _seen(client, s, [("class_label", "Sink"), ("class_label", "Basin")])[0] == _codes(s, "a", "b", "d")
 
 
@@ -351,6 +352,6 @@ def test_seen_source_single_union_repeated(client, seen):
 
 def test_seen_filters_and_across_and_total(client, seen):
     s = seen
-    codes, body = _seen(client, s, [("value", "matte,gloss"), ("class_label", "Sink,Basin"), ("source", "human")])
+    codes, body = _seen(client, s, [("value", "matte"), ("value", "gloss"), ("class_label", "Sink"), ("class_label", "Basin"), ("source", "human")])
     assert codes == _codes(s, "b", "d")
     assert body["total"] == 2

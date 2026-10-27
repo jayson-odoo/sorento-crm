@@ -42,6 +42,12 @@ filter should be able to multi select". Same family as "every grid column sortab
   (`status=draft,submitted`); the backend reads comma-joined, repeated and single values alike
   (`app/utils/multi_value.py`). An old link or saved view holding one value reads as a one-value
   filter, so no saved-view version bump and no data migration.
+- **Comma-joining is for ids and codes only** (PR4 review, 28 Oct). A filter whose values are free
+  text from data (spec values, class labels, supplier / customer names) sends each value as a
+  repeated param (`class_label=Sink, Undermount&class_label=Tap`), keeps `string[]` state on the FE,
+  and the backend reads it without splitting. Audited 28 Oct: Seen in products Value / Class, Spec
+  verification Class, SCM plan-row Supplier / Customer (client-side). API call log Source and
+  chatbot Domain carry header / identifier tokens and stay comma-joined.
 - **Options always come from a list**, never typed text (import-jobs / import-logs Type and Status
   and the workflow submission State code are text boxes today; they become dropdowns).
 

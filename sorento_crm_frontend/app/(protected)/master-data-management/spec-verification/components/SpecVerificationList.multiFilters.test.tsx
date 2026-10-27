@@ -78,7 +78,8 @@ const lastUrlParam = (key: string): string[] => {
   const calls = nav.replace.mock.calls;
   if (!calls.length) return [];
   const target = String(calls[calls.length - 1][0]);
-  return setOf(new URLSearchParams(target.split('?')[1] ?? '').get(key));
+  // Class labels are free text and ride the URL as repeated params, so every value of the key counts.
+  return setOf(new URLSearchParams(target.split('?')[1] ?? '').getAll(key).join(','));
 };
 const boxesWith = (value: string) =>
   screen.queryAllByRole('listbox').filter(
@@ -171,7 +172,7 @@ describe('Spec verification - multi State and Class filters', () => {
   });
 
   it('a link with several states and classes restores both controls and the request', async () => {
-    nav.params = new URLSearchParams('state=verified%2Cneeds_reverify&class_label=ZZT+Sink%2CZZT+Tap');
+    nav.params = new URLSearchParams('state=verified%2Cneeds_reverify&class_label=ZZT+Sink&class_label=ZZT+Tap');
     const user = userEvent.setup();
     await openFilters(user);
     await waitFor(() => {

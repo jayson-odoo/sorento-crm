@@ -53,8 +53,8 @@ export function SeenInProductsTab({
   valueLabels?: Record<string, string>;
 }) {
   const pathname = usePathname();
-  const [valueFilter, setValueFilter] = useState<string | undefined>();
-  const [classFilter, setClassFilter] = useState<string | undefined>();
+  const [valueFilter, setValueFilter] = useState<string[]>([]);
+  const [classFilter, setClassFilter] = useState<string[]>([]);
   const [sourceFilter, setSourceFilter] = useState<string | undefined>();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -72,9 +72,9 @@ export function SeenInProductsTab({
   }, [query, valueFilter, classFilter, sourceFilter]);
 
   const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useSpecKeyProductsQuery(specKey, {
-    value: valueFilter,
+    value: valueFilter.length ? valueFilter : undefined,
     q: query || undefined,
-    classLabel: classFilter,
+    classLabel: classFilter.length ? classFilter : undefined,
     source: sourceFilter,
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
@@ -188,8 +188,8 @@ export function SeenInProductsTab({
   );
 
   const filtersActiveCount =
-    (valueFilter !== undefined ? 1 : 0) +
-    (classFilter !== undefined ? 1 : 0) +
+    (valueFilter.length ? 1 : 0) +
+    (classFilter.length ? 1 : 0) +
     (sourceFilter !== undefined ? 1 : 0);
 
   return (
@@ -225,8 +225,8 @@ export function SeenInProductsTab({
                 content: (
                   <div className="space-y-3">
                     <SearchableMultiSelect
-                      value={splitMulti(valueFilter)}
-                      onChange={(v) => setValueFilter(joinMulti(v) || undefined)}
+                      value={valueFilter}
+                      onChange={setValueFilter}
                       clearable
                       placeholder="Value"
                       options={(data?.by_value ?? []).map((row) => ({
@@ -235,8 +235,8 @@ export function SeenInProductsTab({
                       }))}
                     />
                     <SearchableMultiSelect
-                      value={splitMulti(classFilter)}
-                      onChange={(v) => setClassFilter(joinMulti(v) || undefined)}
+                      value={classFilter}
+                      onChange={setClassFilter}
                       clearable
                       placeholder="Class"
                       options={(data?.by_class ?? []).map((row) => ({

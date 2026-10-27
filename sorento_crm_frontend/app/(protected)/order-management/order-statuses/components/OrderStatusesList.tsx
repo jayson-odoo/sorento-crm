@@ -29,6 +29,7 @@ import { useOrderStatuses } from '../hooks/useOrderStatuses';
 import type { OrderStatus } from '../types/orderStatus.types';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 
 export default function OrderStatusesList() {
   const router = useRouter();
@@ -60,10 +61,8 @@ export default function OrderStatusesList() {
     setRowSelection({});
   }, [searchQuery, finalFilter, pagination.pageIndex, pagination.pageSize, sorting]);
 
-  // A different Final choice is a different set: back to page one.
-  useEffect(() => {
-    setPagination((p) => ({ ...p, pageIndex: 0 }));
-  }, [finalFilter]);
+  // A different Final choice is a different set: back to page one (never on mount).
+  useResetPageOnFilterChange(setPagination, [finalFilter]);
 
   // A search brings the reader back to page 0 to see the matches.
   const searchMounted = useRef(false);

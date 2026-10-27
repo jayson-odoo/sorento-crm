@@ -19,7 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.utils.multi_value import multi_values
+from app.utils.multi_value import multi_text, multi_values
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Brand, Product, ProductCategory
@@ -743,7 +743,7 @@ def spec_verification_worklist(
         limit=limit,
         query=query,
         state=states,
-        class_label=multi_values(class_label),
+        class_label=multi_text(class_label),
         include_discontinued=include_discontinued,
         sort=sort,
         direction=direction,
