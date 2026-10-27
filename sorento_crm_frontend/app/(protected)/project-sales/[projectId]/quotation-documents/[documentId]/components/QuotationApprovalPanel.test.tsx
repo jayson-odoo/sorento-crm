@@ -207,6 +207,21 @@ describe('QuotationApprovalPanel: the block', () => {
     expect(screen.queryByRole('button', { name: 'Reject' })).not.toBeInTheDocument();
   });
 
+  it('says it is waiting with a manager while it sits resubmitted (RESUBMITTED-STATUS)', () => {
+    granted = new Set();
+    renderPanel(
+      quotationDocument({
+        approval_status_id: 's-resubmitted',
+        approval_status_key: 'resubmitted',
+        requires_approval: true,
+        below_floor_line_count: 1,
+      }),
+    );
+
+    expect(screen.getByText(/with a manager for approval/i)).toBeInTheDocument();
+    expect(screen.queryByText(/needs a manager's approval before/i)).not.toBeInTheDocument();
+  });
+
   it('C3: shows the manager reason on a rejected quotation, with no Back to draft and no buttons', () => {
     granted = new Set();
     renderPanel(
