@@ -8,6 +8,7 @@ Fake data only (public repo). No test reaches Respond.io: the client is a record
 from __future__ import annotations
 
 import copy
+import json
 import logging
 import uuid
 
@@ -210,19 +211,66 @@ def test_wu10_wa_id_different_is_not_accepted():
     assert _mod().accepted_card_phone(body) is None
 
 
-def test_wu11_missing_wa_id_is_not_accepted():
+def test_sl1_missing_wa_id_is_accepted():
+    # WA-PHONE-SHARE-LOOP: a username-only user can arrive with the BSUID and no wa_id; origin
+    # contact_request (plus the signed ingress the engine checks) is the proof, wa_id only a cross-check.
     body = _tap()
     del body["channel"]["meta"]["wa_id"]
-    assert _mod().accepted_card_phone(body) is None
+    assert _mod().accepted_card_phone(body) == E164
     no_channel = _tap()
     del no_channel["channel"]
-    assert _mod().accepted_card_phone(no_channel) is None
+    assert _mod().accepted_card_phone(no_channel) == E164
     no_meta = _tap()
     del no_meta["channel"]["meta"]
-    assert _mod().accepted_card_phone(no_meta) is None
+    assert _mod().accepted_card_phone(no_meta) == E164
     empty = _tap()
     empty["channel"]["meta"]["wa_id"] = ""
-    assert _mod().accepted_card_phone(empty) is None
+    assert _mod().accepted_card_phone(empty) == E164
+
+
+def _prod_meta(meta: dict) -> str:
+    """`channel.meta` as Respond.io really sends it: a JSON STRING wrapping a nested `meta`."""
+    return json.dumps({"meta": {"profile": {"name": "ZZT"}, **meta}})
+
+
+def test_sl1_prod_shaped_meta_string_with_matching_wa_id_is_accepted():
+    body = _tap()
+    body["channel"]["meta"] = _prod_meta({"wa_id": "60100000001", "user_id": "MY.0000000000000001"})
+    assert _mod().accepted_card_phone(body) == E164
+
+
+def test_sl1_prod_shaped_meta_string_with_a_different_wa_id_is_refused():
+    body = _tap()
+    body["channel"]["meta"] = _prod_meta({"wa_id": "60100000009", "user_id": "MY.0000000000000001"})
+    assert _mod().accepted_card_phone(body) is None
+    assert _mod().card_refusal(body) == "wa_id_mismatch"
+
+
+def test_sl1_prod_shaped_meta_string_without_wa_id_is_accepted():
+    body = _tap()
+    body["channel"]["meta"] = _prod_meta({"user_id": "MY.0000000000000001"})
+    assert _mod().accepted_card_phone(body) == E164
+
+
+@pytest.mark.parametrize("meta", ["not json", "[1, 2]", '"x"', "", None, 7])
+def test_sl1_unreadable_meta_is_read_as_no_wa_id(meta):
+    body = _tap()
+    body["channel"]["meta"] = meta
+    assert _mod().accepted_card_phone(body) == E164
+
+
+def test_sl5_card_refusal_names_the_check():
+    mod = _mod()
+    assert mod.card_refusal(_tap()) is None
+    assert mod.card_refusal(_tap(origin="other")) == "origin"
+    assert mod.card_refusal(_tap(origin=_MISSING)) == "origin"
+    assert mod.card_refusal(_tap(phone="")) == "no_phone"
+    text_body = copy.deepcopy(TAP)
+    text_body["message"]["message"] = {"type": "text", "text": "hi"}
+    assert mod.card_refusal(text_body) == "not_a_card"
+    mismatch = _tap()
+    mismatch["channel"]["meta"]["wa_id"] = "60100000009"
+    assert mod.card_refusal(mismatch) == "wa_id_mismatch"
 
 
 @pytest.mark.parametrize("empty", ["", None, "   "])
