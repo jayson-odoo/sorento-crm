@@ -354,3 +354,14 @@ if __name__=="__main__": run(sys.argv[1], sys.argv[2])
   `master_data.products.edit`.
 - `counts` also carries `attached` (rows with `attached_at`), so the Attach step reads as done after a
   reload (S0 coder note). The coder adds a test for it; existing assertions are not edited.
+
+### Lead rulings on the S1/S2 coder's notes (27 Oct)
+- The reading detail carries a top-level `attached_count`; `counts` keeps its five keys (two tests pin it).
+- A replaced row counts in `replaced` only. Toast: "Attached {attached + replaced} photos to {products}
+  products. {replaced} replaced, {skipped} already on file."
+- The stored PDF keeps a bare storage key in `file_path` (every reader goes through `extract_key`).
+- Extra column `catalogue_photos.other_block_products` (JSONB). A human pick sets rung `manual`, High.
+- `tests/test_company_scope.py` owned-table tripwire 170 -> 171 for `catalogue_photo_readings`.
+- Test copies upload to the staging R2 bucket (`sorento-crm-staging`, lane `.env`), and the look-alike
+  check reads existing photos from that same storage, so on a test copy a photo whose bytes are not in
+  staging is simply not compared (no failure). The look-alike count at the hand test is therefore a lower bound.
