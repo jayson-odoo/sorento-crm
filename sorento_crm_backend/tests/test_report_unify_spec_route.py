@@ -343,13 +343,13 @@ def test_ac_ru_4_a_numeric_spec_matching_no_product_is_no_products(client, db):
 
 
 def test_ac_ru_5_a_key_hidden_from_the_contact_is_not_applied(client, db):
-    """AC-RU-5: the contact's policy hides trap_type: not narrowed, echoed under not_applied (hidden)."""
+    """AC-RU-5: the contact's policy hides trap_type: not narrowed, echoed under not_applied as an unknown spec (N1: a hidden key reads the same as an unregistered one)."""
     _trap_world(db)
     contact = _staff(db)
     hide_spec_keys(db, contact, ["trap_type"])
     db.commit()
     body = _ok(client, contact, spec="trap_type:p_trap")
-    assert _has_na(body, "spec", "hidden"), body.get("not_applied")
+    assert _has_na(body, "spec", "unknown_spec"), body.get("not_applied")
     assert _tot(body) == (21, D("6300.00")), body["total"]
     assert not _spec_echo(body), body["filters"]
 
@@ -361,7 +361,7 @@ def test_ac_ru_5_a_hidden_key_beside_a_visible_one_leaves_the_visible_narrowing(
     hide_spec_keys(db, contact, ["trap_type"])
     db.commit()
     body = _ok(client, contact, spec=["trap_type:p_trap", "length:250"])
-    assert _has_na(body, "spec", "hidden"), body.get("not_applied")
+    assert _has_na(body, "spec", "unknown_spec"), body.get("not_applied")
     assert _tot(body) == (7, D("1100.00")), body["total"]
 
 
@@ -374,7 +374,7 @@ def test_ac_ru_5_a_contact_the_policy_does_not_hide_it_from_is_narrowed(client, 
     other = _staff(db)
     body = _ok(client, other, spec="trap_type:p_trap")
     assert _tot(body) == (6, D("700.00")), body["total"]
-    assert not _has_na(body, "spec", "hidden"), body.get("not_applied")
+    assert not _has_na(body, "spec", "unknown_spec"), body.get("not_applied")
 
 
 # ================================================================ AC-RU-9: the echo
@@ -592,3 +592,37 @@ def test_ac_ru_4_a_spec_matching_no_product_is_no_products_on_invoiced(client, d
     body = _ok(client, _staff(db), basis="invoiced", spec="trap_type:wall")
     assert body["status"] == "no_products", body
     assert body["rows"] == [] and body["total"]["qty"] == 0, body
+
+
+# ================================================================ security round: N1, N2
+
+
+def test_n1_a_hidden_key_and_an_unregistered_key_are_not_applied_for_the_same_reason(client, db):
+    _trap_world(db)
+    contact = _staff(db)
+    hide_spec_keys(db, contact, ["trap_type"])
+    db.commit()
+    hidden = _ok(client, contact, spec="trap_type:p_trap")
+    missing = _ok(client, contact, spec="nosuchkey:p_trap")
+    assert [n["reason"] for n in _not_applied(hidden)] == [n["reason"] for n in _not_applied(missing)] == ["unknown_spec"]
+
+
+def test_n1_group_by_a_hidden_key_answers_exactly_like_an_unregistered_key_even_for_a_count_measure(client, db):
+    _trap_world(db)
+    contact = _staff(db)
+    hide_spec_keys(db, contact, ["trap_type"])
+    db.commit()
+    for measure in ("amount", "customers"):
+        hidden = _ask(client, contact, group_by="spec:trap_type", top_n=5, measure=measure)
+        missing = _ask(client, contact, group_by="spec:nosuchkey", top_n=5, measure=measure)
+        assert hidden.status_code == missing.status_code == 422, (measure, hidden.text, missing.text)
+        assert hidden.json().get("code") == missing.json().get("code") == "unknown_group_by", (hidden.text, missing.text)
+
+
+def test_n2_more_spec_terms_than_the_value_cap_is_422_too_many_values(client, db):
+    _trap_world(db)
+    resp = _ask(client, _staff(db), spec=[f"trap_type:v{n}" for n in range(51)])
+    assert resp.status_code == 422, resp.text
+    assert resp.json().get("code") == "too_many_values", resp.text
+    ok = _ask(client, _staff(db), spec=[f"trap_type:v{n}" for n in range(50)])
+    assert ok.status_code == 200, ok.text

@@ -3483,7 +3483,6 @@ def _ask_rows(rows: list, group_by: Any, measure: Any = None, sort: Any = None) 
 _NOT_APPLIED_REASONS = {
     "per_document": "unpaid invoices are per document",
     "unknown_spec": "not a specification I know",
-    "hidden": "not available",
     "unit": "unit not recognised",
     "invalid_value": "value not readable",
 }

@@ -77,7 +77,8 @@ def resolve(
     not_applied: list[dict[str, str]] = []
     for key, value in terms:
         row = rows.get(key)
-        reason = "unknown_spec" if row is None else "hidden" if key in hidden else None
+        # A key the contact may not see reads as one that does not exist: the reason must not confirm it is registered.
+        reason = "unknown_spec" if row is None or key in hidden else None
         typed = None
         if reason is None:
             typed, reason = _typed(row, value)

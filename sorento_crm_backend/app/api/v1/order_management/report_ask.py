@@ -311,6 +311,8 @@ def report_ask(
         )
     if date_from > date_to:
         raise _unprocessable("date_from is after date_to", "date_range_inverted")
+    if len(spec or []) > _MAX_VALUES:
+        raise _unprocessable(f"Too many values for 'spec' (max {_MAX_VALUES})", "too_many_values", "spec")
     try:
         spec_terms = spec_set.parse(spec or [])
     except ValueError as exc:
@@ -334,9 +336,6 @@ def report_ask(
         ("product" in dimensions and spec_key in spec_rows) if spec_group else group_norm in dimensions
     ):
         raise _unprocessable(f"Unknown group_by value '{group_by}'", "unknown_group_by", _allowed(dimensions))
-    if spec_group and measure_norm in ask.COUNT_MEASURES:
-        # Distinct counts do not add up across the products of a group.
-        raise _unprocessable("A spec breakdown ranks by amount or qty", "unknown_measure", _allowed(ask.MEASURES))
     if group_norm is not None and top_n is None:
         raise _unprocessable("A ranking needs top_n", "top_n_required")
     if top_n is not None and not 1 <= top_n <= TOP_SELLING_N_CEILING:
@@ -441,6 +440,10 @@ def report_ask(
         hidden = contact_hidden_keys(db, contact_id, space_id)
     if spec_group and spec_key in hidden:
         raise _unprocessable(f"Unknown group_by value '{group_by}'", "unknown_group_by", _allowed(dimensions))
+    if spec_group and measure_norm in ask.COUNT_MEASURES:
+        # Distinct counts do not add up across the products of a group. After the hidden-key check, so a hidden key
+        # answers exactly as an unregistered one does.
+        raise _unprocessable("A spec breakdown ranks by amount or qty", "unknown_measure", _allowed(ask.MEASURES))
 
     common = {
         "basis": basis_norm,
