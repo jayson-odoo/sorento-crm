@@ -185,8 +185,12 @@ function onDragMove(event: PointerEvent) {
       return;
     }
     // The finger's pointer is captured by the pressed box, so the row comes from the point.
-    const under = document.elementFromPoint?.(event.clientX, event.clientY) ?? event.target;
-    moveDragTo(rowIdAt(under, drag.tableEl));
+    // No element under the finger (off the viewport): ignore the move. Only where the lookup
+    // does not exist at all (jsdom) does the event target stand in.
+    const under = document.elementFromPoint
+      ? document.elementFromPoint(event.clientX, event.clientY)
+      : event.target;
+    if (under) moveDragTo(rowIdAt(under, drag.tableEl));
     return;
   }
   // The release happened somewhere this drag never heard about (another window, a context
@@ -216,9 +220,10 @@ function endDrag() {
   if (drag.timer) clearTimeout(drag.timer);
   if (drag.moved) {
     anchors.set(drag.table, drag.lastId);
-    setTextSelectable(true);
     swallowNextClick();
   }
+  // A touch hold turns text selection off before any move, so every end path restores it.
+  setTextSelectable(true);
   drag = null;
   setMovingTable(null);
   window.removeEventListener('pointermove', onDragMove);
@@ -279,7 +284,11 @@ export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TDat
         const started = drag;
         started.timer = setTimeout(() => {
           started.timer = null;
-          if (drag === started) started.live = true;
+          if (drag !== started) return;
+          started.live = true;
+          // Text selection goes off as soon as the hold fires, not on the first move.
+          setTextSelectable(false);
+          window.getSelection?.()?.removeAllRanges();
         }, TOUCH_HOLD_MS);
       }
       window.addEventListener('pointermove', onDragMove);

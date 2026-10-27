@@ -75,6 +75,7 @@ export function buildSelectColumn<TData>(options?: {
           disabled={blocked}
           onCheckedChange={(value) => row.toggleSelected(!!value)}
           aria-label={options?.rowLabel?.(row) ?? 'Select row'}
+          className="select-none [-webkit-touch-callout:none]"
           {...range}
           onClick={(e: React.MouseEvent) => {
             e.stopPropagation();

@@ -1159,7 +1159,7 @@ function DataGridTableRowSelect<TData>({ row, size }: { row: Row<TData>; size?: 
         aria-label="Select row"
         {...range}
         size={size ?? 'sm'}
-        className="align-[inherit]"
+        className={cn('align-[inherit] select-none [-webkit-touch-callout:none]')}
       />
     </div>
   );

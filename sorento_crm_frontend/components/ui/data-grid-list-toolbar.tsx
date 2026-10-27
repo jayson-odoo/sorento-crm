@@ -489,7 +489,7 @@ export function DataGridListToolbar<TData extends object>({
                 {allRecordsActive && selectAllMatching
                   ? matchingCapped
                     ? `${matchingCount.toLocaleString('en-US')} selected`
-                    : `All ${selectAllMatching.total} selected`
+                    : `All ${selectAllMatching.total.toLocaleString('en-US')} selected`
                   : `${stripSelectionCount} selected`}
               </Badge>
               {bulkActionsSlot == null && exportButtonEl}
@@ -691,7 +691,7 @@ export function DataGridListToolbar<TData extends object>({
                   </span>
                 ) : (
                   <span>
-                    All <span className="font-medium">{selectAllMatching.total}</span> records matching the current filters are selected.
+                    All <span className="font-medium">{selectAllMatching.total.toLocaleString('en-US')}</span> records matching the current filters are selected.
                   </span>
                 )}
                 <Button variant="link" size="sm" className="h-auto p-0" onClick={clearSelection}>
@@ -701,12 +701,12 @@ export function DataGridListToolbar<TData extends object>({
             ) : (
               <>
                 <span>
-                  All <span className="font-medium">{selectAllMatching.loadedCount}</span> on this page selected.
+                  All <span className="font-medium">{selectAllMatching.loadedCount.toLocaleString('en-US')}</span> on this page selected.
                 </span>
                 <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAllMatching.onSelectAll}>
                   {matchingCapped
                     ? `Select first ${matchingCount.toLocaleString('en-US')} of ${selectAllMatching.total.toLocaleString('en-US')}`
-                    : `Select all ${selectAllMatching.total} records`}
+                    : `Select all ${selectAllMatching.total.toLocaleString('en-US')} records`}
                 </Button>
               </>
             )}
