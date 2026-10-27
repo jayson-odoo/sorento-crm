@@ -508,19 +508,19 @@ def report_ask(
     company_name: Optional[str] = None
     if (company or "").strip():
         # REPORT-UNIFY (phase 3, R1): one of the contact's OWN companies, by name, code or id (the sales analysis
-        # route's reading); a company the contact does not hold is 403, one that does not exist 422.
+        # route's reading). One that does not exist and one the contact does not hold are the same 403, so no company
+        # name can be probed; of several sharing a name or code, the one the contact holds wins.
         wanted = company.strip().casefold()
         everyone = db.query(Company.id, Company.name, Company.code).all()
         found = [
             str(i) for i, name, code in everyone
             if wanted in (str(i).casefold(), str(name or "").casefold(), str(code or "").casefold())
         ]
-        if not found:
-            raise _unprocessable(f"Unknown company '{company}'", "unknown_company", "company")
-        if found[0] not in grants:
+        chosen = next((f for f in found if f in grants), None)
+        if chosen is None:
             raise AppException(403, "You do not have access to that company", code="COMPANY_FORBIDDEN")
-        grants = {found[0]}
-        company_name = next(str(n) for i, n, _c in everyone if str(i) == found[0])
+        grants = {chosen}
+        company_name = next(str(n) for i, n, _c in everyone if str(i) == chosen)
 
     if brands:
         # A brand named by id that belongs to a company outside the contact's own is dropped

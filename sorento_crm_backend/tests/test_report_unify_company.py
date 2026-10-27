@@ -1,6 +1,7 @@
 """REPORT-UNIFY phase 3 fix round, R1: the report ask takes a `company` (a name, code or id) that narrows the contact's
 companies to that one. A company the contact does not hold is 403 `COMPANY_FORBIDDEN` (the sales analysis route's own
-pattern), an unknown one 422 `unknown_company`; the header names the company."""
+pattern), and so is an unknown one (the same code and message, so no company name can be probed); the header names the
+company."""
 from __future__ import annotations
 
 import pytest
@@ -81,7 +82,7 @@ def test_r1_the_header_names_the_company(client, db) -> None:
     assert filters["company"]["label"] == "Company"
 
 
-def test_r1_a_company_the_contact_does_not_hold_is_403_and_an_unknown_one_422(client, db) -> None:
+def test_r1_a_company_the_contact_does_not_hold_and_an_unknown_one_are_the_same_403(client, db) -> None:
     contact, names = _world(db)
     db.query(RespondContactCompany).filter(
         RespondContactCompany.respond_contact_id == contact.id, RespondContactCompany.company_id == MOCHA_ID
@@ -90,4 +91,19 @@ def test_r1_a_company_the_contact_does_not_hold_is_403_and_an_unknown_one_422(cl
     refused = _ask(client, contact, company=names[MOCHA_ID][0])
     assert refused.status_code == 403 and refused.json()["code"] == "COMPANY_FORBIDDEN", refused.text
     unknown = _ask(client, contact, company="ZZT NO SUCH COMPANY")
-    assert unknown.status_code == 422 and unknown.json()["code"] == "unknown_company", unknown.text
+    assert unknown.status_code == 403, unknown.text
+    assert unknown.json() == refused.json(), (unknown.text, refused.text)
+
+
+def test_r1_two_companies_sharing_a_name_resolve_to_the_one_the_contact_holds(client, db) -> None:
+    contact, names = _world(db)
+    twin = Company(id="00000000-0000-4000-8000-0000000000aa", name=names[DEFAULT_COMPANY_ID][0], code="TWIN1")
+    db.add(twin)
+    db.flush()
+    db.query(RespondContactCompany).filter(
+        RespondContactCompany.respond_contact_id == contact.id, RespondContactCompany.company_id == DEFAULT_COMPANY_ID
+    ).delete()
+    db.add(RespondContactCompany(respond_contact_id=contact.id, company_id=twin.id))
+    db.commit()
+    resp = _ask(client, contact, company=names[DEFAULT_COMPANY_ID][0])
+    assert resp.status_code == 200, resp.text
