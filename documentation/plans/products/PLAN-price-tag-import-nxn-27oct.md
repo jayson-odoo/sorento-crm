@@ -1,6 +1,6 @@
 # PLAN: price tag import, dimension spacing and line order count as the same text
 
-Status: In progress. Track: small fix (script only, no migration, no auth). Lane: PRICE-TAG-IMPORT-NXN.
+Status: Review complete (reviewer READY round 2 on 876c19a7); awaiting CI, merge and owner re-run of the import. Track: small fix (script only, no migration, no auth). Lane: PRICE-TAG-IMPORT-NXN.
 
 ## Problem
 
