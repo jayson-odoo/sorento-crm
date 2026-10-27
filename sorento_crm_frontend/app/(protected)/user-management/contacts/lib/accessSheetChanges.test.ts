@@ -3,7 +3,14 @@
  * added items marked; unchanged facets named once.
  */
 import { describe, it, expect } from 'vitest';
-import { allExactConfirmed, changeLines, confirmAllExact, initialSelection, unchangedFacets } from './accessSheet';
+import {
+  allExactConfirmed,
+  changeLines,
+  confirmAllExact,
+  initialSelection,
+  resultCsv,
+  unchangedFacets,
+} from './accessSheet';
 import type { AccessSheetResult } from '@/services/contactAccessSheetService';
 
 describe('changeLines', () => {
@@ -31,7 +38,7 @@ describe('changeLines', () => {
     expect(lines.after.map((i) => i.added)).toEqual([true, true]);
   });
 
-  it('null before is no line; a switch shows on / off', () => {
+  it('null before is no line; a switch shows on / off with no + (only list items are added)', () => {
     expect(
       changeLines({ facet: 'stock_locations', before: null, after: ['BRW'] })
         .before,
@@ -42,7 +49,14 @@ describe('changeLines', () => {
       after: false,
     });
     expect(sw.before).toEqual([{ text: 'on', added: false }]);
-    expect(sw.after).toEqual([{ text: 'off', added: true }]);
+    expect(sw.after).toEqual([{ text: 'off', added: false }]);
+    expect(
+      changeLines({
+        facet: 'stock_check_mode',
+        before: null,
+        after: 'availability',
+      }).after,
+    ).toEqual([{ text: 'availability', added: false }]);
   });
 });
 
@@ -61,9 +75,18 @@ describe('unchangedFacets', () => {
 
 describe('confirmAllExact (owner question 27 Oct, built on the crew recommendation: skip)', () => {
   const block = (key: string, warnings: string[] = []) => ({
-    key, dealer: key, alt_dealers: [], companies: ['SRT'], status: 'exact', warnings, accounts: [], contacts: [],
+    key,
+    dealer: key,
+    alt_dealers: [],
+    companies: ['SRT'],
+    status: 'exact',
+    warnings,
+    accounts: [],
+    contacts: [],
   });
-  const preview = { blocks: [block('a'), block('b', ['rows_disagree'])] } as unknown as AccessSheetResult;
+  const preview = {
+    blocks: [block('a'), block('b', ['rows_disagree'])],
+  } as unknown as AccessSheetResult;
 
   it('leaves a Rows disagree card unconfirmed', () => {
     const sel = confirmAllExact(preview, initialSelection(preview));
@@ -71,6 +94,56 @@ describe('confirmAllExact (owner question 27 Oct, built on the crew recommendati
   });
 
   it('reads as all confirmed once every card it can confirm is', () => {
-    expect(allExactConfirmed(preview, confirmAllExact(preview, initialSelection(preview)))).toBe(true);
+    expect(
+      allExactConfirmed(
+        preview,
+        confirmAllExact(preview, initialSelection(preview)),
+      ),
+    ).toBe(true);
+  });
+});
+
+describe('resultCsv (BULK-ACCESS-PREVIEW)', () => {
+  it('carries holds-more items and links outside the row, as the preview showed them', () => {
+    const csv = resultCsv({
+      dry_run: false,
+      counts: {},
+      errors: [],
+      blocks: [
+        {
+          key: 'a',
+          dealer: 'A',
+          alt_dealers: [],
+          companies: ['SRT'],
+          status: 'exact',
+          warnings: [],
+          accounts: [],
+          contacts: [
+            {
+              line: 2,
+              name: 'Ann',
+              phone: '+60100000001',
+              in_crm: true,
+              contact_id: 'x',
+              role: 'owner',
+              companies: ['SRT'],
+              template: 'SRT owner',
+              status: 'applied',
+              skip_reason: null,
+              changes: [],
+              warnings: ['holds_more'],
+              not_applied: [],
+              holds_more_items: [{ facet: 'brands', items: ['BRAVAT'] }],
+              outside_links: ['300-Y055 YOO A (MCH)'],
+            },
+          ],
+        },
+      ],
+    } as unknown as AccessSheetResult);
+    const [header, row] = csv.split('\n');
+    expect(header).toContain('Holds more');
+    expect(header).toContain('Linked outside row');
+    expect(row).toContain('brands: BRAVAT');
+    expect(row).toContain('300-Y055 YOO A (MCH)');
   });
 });

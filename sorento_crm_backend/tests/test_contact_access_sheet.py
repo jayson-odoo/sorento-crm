@@ -1502,3 +1502,20 @@ def test_p5_stock_locations_change_is_one_location_per_item(client, db, w):
     (bob,) = [c for c in by["ZZT Bob"]["changes"] if c["facet"] == "stock_locations"]
     assert bob["before"] is None
     assert bob["after"] == ["BRW", "MWH"]
+
+
+def test_p4_u19_a_link_to_a_customer_outside_the_callers_scope_never_shows(client, db, w):
+    from app.models.access import RespondContactCustomer
+
+    _cust(db, w, w.srt, DEALER)
+    hidden = _cust(db, w, w.zzo, "ZZT SECRET TRADING SDN BHD")
+    third = _cust(db, w, w.zzx, "ZZT THIRD TRADING SDN BHD")
+    cid = _contact(db, w, 1)
+    set_company_scope(db, w.all)
+    db.add(RespondContactCustomer(contact_id=cid, customer_id=hidden, company_id=w.zzo, source="manual"))
+    db.add(RespondContactCustomer(contact_id=cid, customer_id=third, company_id=w.zzx, source="manual"))
+    db.commit()
+    resp = _post(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))]))
+    assert "SECRET" not in resp.text and "ZZO" not in resp.text
+    (link,) = _by_name(resp.json())["ZZT Ann"]["outside_links"]
+    assert "ZZT THIRD TRADING" in link and "(ZZX)" in link

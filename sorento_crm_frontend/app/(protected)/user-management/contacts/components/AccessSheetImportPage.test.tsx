@@ -480,4 +480,18 @@ describe('AccessSheetImportPage', () => {
     fireEvent.click(await screen.findByRole('button', { name: /^Done$/ }));
     expect(routerMock.push).toHaveBeenCalledWith('/user-management/contact-access-agents');
   });
+
+  it('P3: an unticked account links to Nobody, as Apply will do', async () => {
+    await openFull();
+    const row = () => screen.getByRole('checkbox', { name: 'Link 300-Y065' }).closest('tr') as HTMLElement;
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Link 300-Y065' }));
+    await waitFor(() => expect(within(row()).getByText('Nobody')).toBeInTheDocument());
+    expect(within(row()).queryByText('Shi')).toBeNull();
+  });
+
+  it('a11y: the Before / After labels stay readable to a screen reader at every width', async () => {
+    await openFull();
+    const labels = within(screen.getByTestId('contact-Shi')).getAllByText('Before');
+    for (const l of labels) expect(l.className).not.toMatch(/(^|\s)sm:hidden(\s|$)/);
+  });
 });
