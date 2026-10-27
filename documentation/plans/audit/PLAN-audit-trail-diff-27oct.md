@@ -1,6 +1,6 @@
 # PLAN: Audit Trail shows every field change (AUDIT-TRAIL-DIFF)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, expected diff under ~300 lines)
+Status: in review (small fix track: no migration, no auth/RBAC change; about 750 changed lines, most of them tests and docs)
 
 ## Journey
 
