@@ -112,12 +112,14 @@ def test_ac_kc_6_apply_restores_po_and_so_lines_cancelled_with_original_values(
     assert out == {"purchase_order_lines": 1, "sales_order_lines": 1}
     po_line = _line(env, "purchase_order_lines", w.line_a)
     assert po_line is not None and po_line["line_status"] == "cancelled"
+    assert po_line["removed_unreferenced"] is True  # it was deleted: it counts in no total
     for column in ("purchase_order_id", "product_id", "source_ref", "qty_ordered",
                    "qty_received", "unit_cost", "company_id"):
         assert po_line[column] == before_po[column], column
     assert po_line["qty_received"] == Decimal(10)
     so_line = _line(env, "sales_order_lines", line_x["id"])
     assert so_line is not None and so_line["line_status"] == "cancelled"
+    assert so_line["removed_unreferenced"] is True
     assert so_line["source_ref"] == line_x["source_ref"]
     # untouched siblings
     assert _line(env, "purchase_order_lines", w.line_b)["line_status"] == "open"

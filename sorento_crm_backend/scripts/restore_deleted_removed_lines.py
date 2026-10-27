@@ -26,8 +26,9 @@ of these hold:
   `skipped` otherwise).
 
 The row is inserted with its original id and every column the snapshot holds, except
-`line_status` = `cancelled` and `updated_at` = now. Its warehouse is set NULL when that
-warehouse is gone. No order inquiry link, claim or allocation is recreated: the linkage
+`line_status` = `cancelled`, `updated_at` = now and `removed_unreferenced` = true (it was
+deleted, so it counted in no total; `--apply` refuses to run before migration akc_0001).
+Its warehouse is set NULL when that warehouse is gone. No order inquiry link, claim or allocation is recreated: the linkage
 stays gone, which is the ruling.
 
 A second run finds nothing: every restored id is live.
@@ -66,6 +67,8 @@ from sqlalchemy.engine import Connection
 logger = logging.getLogger("scripts.restore_deleted_removed_lines")
 
 CANCELLED = "cancelled"
+# Set on every restored line: it was deleted, so it counts in no total (akc_0001).
+MARK = "removed_unreferenced"
 
 
 @dataclass(frozen=True)
@@ -191,11 +194,16 @@ def find_candidates(
 
 def insert_cancelled(live: Connection, kind: Kind, entries: list[dict], snapshot_cols: list[str]) -> int:
     live_cols = set(_columns(live, kind.line_table))
+    if MARK not in live_cols:
+        # A restored line was deleted, so it counted in no total; without the mark it would
+        # start counting (owner via crew, 27 Oct). Deploy akc_0001 first.
+        raise RuntimeError(f"{kind.line_table}.{MARK} is missing: deploy migration akc_0001 first")
     cols = [c for c in snapshot_cols if c in live_cols]
-    names = [c for c in cols if c not in ("line_status", "updated_at")]
+    fixed = ("line_status", "updated_at", MARK)
+    names = [c for c in cols if c not in fixed]
     sql = text(
-        f"INSERT INTO {kind.line_table} ({', '.join(names + ['line_status', 'updated_at'])}) "
-        f"VALUES ({', '.join(':' + n for n in names)}, :line_status, now())"
+        f"INSERT INTO {kind.line_table} ({', '.join(names + list(fixed))}) "
+        f"VALUES ({', '.join(':' + n for n in names)}, :line_status, now(), true)"
     )
     for entry in entries:
         params = {n: entry["row"].get(n) for n in names}
