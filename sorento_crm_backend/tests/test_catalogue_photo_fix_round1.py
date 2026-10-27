@@ -456,6 +456,20 @@ def _repeated_pdf(times: int, *, rgba: bool = False) -> bytes:
     return data
 
 
+def _distinct_pdf(times: int) -> bytes:
+    """``times`` DIFFERENT images, so the (xref, crop) cache cannot hide the limit stop."""
+    import pymupdf
+
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    for n in range(times):
+        x, y = 20 + 110 * (n % 5), 100 + 150 * (n // 5)
+        page.insert_image(pymupdf.Rect(x, y, x + 100, y + 100), stream=png_of(100 + n))
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
 class TestExtractionCaps:
     def _spy(self, monkeypatch):
         from app.services.dealer_kit import catalog_photos as cp
@@ -475,7 +489,7 @@ class TestExtractionCaps:
         monkeypatch.setattr(svc, "CATALOGUE_MAX_PHOTOS", 3, raising=False)
         _photo_type(api.db)
         with TestClient(app) as client:
-            rid = _upload(client, data=_repeated_pdf(10)).json()["id"]
+            rid = _upload(client, data=_distinct_pdf(10)).json()["id"]
             _run(api, rid)
             detail = _detail(client, rid)
         assert detail["status"] == "failed"
