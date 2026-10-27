@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Stock position (mock)</title>
+<style>
+  :root { --bg:#fff; --fg:#111827; --muted:#6b7280; --line:#e5e7eb; --head:#f9fafb; --neg:#b91c1c; --accent:#2563eb; }
+  body { margin:0; font:14px/1.4 system-ui, sans-serif; color:var(--fg); background:var(--bg); }
+  .page { padding:16px; max-width:1400px; margin:0 auto; }
+  h1 { font-size:20px; margin:0 0 4px; }
+  .crumb { color:var(--muted); font-size:12px; margin-bottom:12px; }
+  .bar { display:flex; flex-wrap:wrap; gap:8px; margin-bottom:12px; align-items:center; }
+  .bar input, .bar .sel { border:1px solid var(--line); border-radius:6px; padding:6px 10px; min-width:140px; background:#fff; }
+  .bar .sel::after { content:" \25BE"; color:var(--muted); }
+  .bar .spacer { flex:1; }
+  .btn { border:1px solid var(--line); border-radius:6px; padding:6px 12px; background:#fff; }
+  .wrap { overflow-x:auto; border:1px solid var(--line); border-radius:8px; }
+  table { border-collapse:collapse; width:max-content; min-width:100%; table-layout:fixed; }
+  th, td { border-bottom:1px solid var(--line); padding:6px 10px; white-space:nowrap; }
+  th { background:var(--head); font-weight:600; font-size:12px; text-align:right; position:relative; }
+  th.l, td.l { text-align:left; }
+  td { text-align:right; font-variant-numeric:tabular-nums; }
+  th .grp { display:block; font-weight:500; color:var(--muted); font-size:11px; }
+  th.sorted::after { content:" \25BC"; font-size:10px; }
+  td.neg { color:var(--neg); }
+  td a { color:var(--accent); text-decoration:none; }
+  .sticky { position:sticky; left:0; background:#fff; z-index:1; }
+  th.sticky { background:var(--head); }
+  .foot { color:var(--muted); font-size:12px; margin-top:8px; display:flex; justify-content:space-between; }
+</style>
+</head>
+<body>
+<div class="page">
+  <div class="crumb">Inventory / Stock position</div>
+  <h1>Stock position</h1>
+  <div class="bar">
+    <input placeholder="Search item code">
+    <span class="sel">Supplier</span>
+    <span class="sel">Brand</span>
+    <span class="sel">Warehouse</span>
+    <span class="spacer"></span>
+    <button class="btn">Columns</button>
+    <button class="btn">Export to Excel</button>
+  </div>
+  <div class="wrap">
+    <table>
+      <thead>
+        <tr>
+          <th class="l sticky" style="width:150px">Item code</th>
+          <th class="l" style="width:140px">Supplier</th>
+          <th class="l" style="width:100px">Brand</th>
+          <th style="width:70px"><span class="grp">Stock</span>BRW</th>
+          <th style="width:70px"><span class="grp">Stock</span>MWH</th>
+          <th style="width:70px"><span class="grp">Stock</span>WH3</th>
+          <th style="width:70px"><span class="grp">Stock</span>DC1</th>
+          <th style="width:70px"><span class="grp">Stock</span>RSW</th>
+          <th style="width:90px">Incoming BRW</th>
+          <th style="width:90px" class="sorted">Total stock</th>
+          <th style="width:110px">Incoming (Project)</th>
+          <th style="width:100px">Total incoming</th>
+          <th style="width:120px">Packing list, no SPO</th>
+          <th style="width:110px">Outstanding dealer</th>
+          <th style="width:110px">Outstanding PO</th>
+          <th style="width:100px">Monthly sales</th>
+          <th style="width:100px">Highest / month</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr><td class="l sticky"><a href="#">ITEM-A</a></td><td class="l">Supplier 1</td><td class="l">Brand X</td>
+          <td>40</td><td>0</td><td>0</td><td>244</td><td>0</td><td>352</td><td>636</td><td>880</td><td>1,232</td><td>40</td><td class="neg">-70</td><td>1,820</td><td>284</td><td>850</td></tr>
+        <tr><td class="l sticky"><a href="#">ITEM-B</a></td><td class="l">Supplier 2</td><td class="l">Brand Y</td>
+          <td>42</td><td>846</td><td>81</td><td>0</td><td>0</td><td>84</td><td>1,053</td><td>51</td><td>135</td><td>0</td><td class="neg">-59</td><td>75</td><td>181</td><td>864</td></tr>
+        <tr><td class="l sticky"><a href="#">ITEM-C</a></td><td class="l">Supplier 1</td><td class="l">Brand X</td>
+          <td>98</td><td>85</td><td>0</td><td>594</td><td>0</td><td>0</td><td>777</td><td>0</td><td>0</td><td>0</td><td>0</td><td>0</td><td>93</td><td>216</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <div class="foot"><span>3 items</span><span>Rows per page 50</span></div>
+</div>
+</body>
+</html>
