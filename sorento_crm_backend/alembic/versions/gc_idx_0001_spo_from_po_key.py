@@ -8,10 +8,11 @@ every call read the whole table. The PO line side, read backwards by
 each PO named (crew profiling on the local clone: 1.2 s for ~949 keys, 28 ms with
 ``ix_purchase_order_lines_src_key``).
 
-Same names and shapes as the indexes the owner built by hand on prod on 27 Oct, so there a
-VALID one is kept as it is. An INVALID one (the owner's first CONCURRENTLY build of the
-spo_allocations index was interrupted and left one, which IF NOT EXISTS then kept) is dropped
-and rebuilt.
+On prod (27 Oct): ``ix_spo_allocations_from_po_key`` was built by hand, same name and shape,
+and is VALID, so it is kept as it is. ``ix_purchase_order_lines_src_key`` ships only through
+this revision (owner: no more hand-run SQL on prod). Either way an INVALID index of that name
+(the owner's first CONCURRENTLY build of the spo_allocations one was interrupted and left one,
+which IF NOT EXISTS then kept) is dropped and rebuilt.
 
 Revision ID: gc_idx_0001_spo_from_po_key
 Revises: eem_0001_span_pass
