@@ -491,3 +491,24 @@ def test_ac_ru_9a_a_linked_dealer_with_the_outstanding_reveal_sees_only_its_own_
     assert _tot(body) == (0, D("550.00")), body["total"]
     named = _ask(client, contact, basis="unpaid", period=None, customer_ids=[w.c2.id])
     assert named.status_code == 403, named.text  # another customer's documents are not its own
+
+
+# ================================================================ security S1: unpaid is receivables, finance data
+
+
+def test_s1_unpaid_needs_the_finance_view_slug_on_the_act_as_user_besides_the_contact_reveal(db) -> None:
+    """Security review S1: `basis=unpaid` is AR, behind `finance.billing_documents.view` everywhere else. A contact holding
+    the Outstanding reveal is still refused (403 `unpaid_needs_finance_view`) when the act-as user lacks the slug; the other
+    outstanding kinds need no such slug."""
+    from tests.test_sales_yearly_routes import _client, _user
+
+    contact = _staff(db)
+    principal = _user(db, DEFAULT_COMPANY_ID)
+    with _client(db, principal, allow=("order_management.orders.view",)) as c:
+        refused = _ask(c, contact, basis="unpaid")
+        assert refused.status_code == 403, refused.text
+        assert refused.json()["code"] == "unpaid_needs_finance_view", refused.text
+        for kind in ("outstanding", "pending_delivery"):
+            assert _ask(c, contact, basis=kind).status_code == 200, kind
+    with _client(db, principal, allow=("order_management.orders.view", "finance.billing_documents.view")) as c:
+        assert _ask(c, contact, basis="unpaid").status_code == 200

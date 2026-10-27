@@ -366,6 +366,12 @@ def report_ask(
         from app.services.sales.invoiced_sales import require_invoiced_access
 
         require_invoiced_access(db, current_user)
+    if basis_norm == "unpaid":
+        # Receivables are finance data: the billing documents' slug on the act-as principal, besides the contact's
+        # Outstanding reveal (security review S1).
+        from app.services.sales.invoiced_sales import require_unpaid_access
+
+        require_unpaid_access(db, current_user)
     if basis_norm == "invoiced" and (codes or group_norm == "location"):
         # A billing document line has no warehouse (SALES-UNIFIED, contract section 7).
         raise _unprocessable(
