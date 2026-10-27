@@ -25,6 +25,7 @@ from app.models.access import (
     RespondContactCustomer,
 )
 from app.models.base import set_company_scope
+from app.models.company import Company
 from app.models.order import Customer
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from app.services.company_scope_resolver import apply_company_scope
@@ -69,6 +70,7 @@ def client(db, state, perms, monkeypatch):
     db.add(actor)
     db.flush()
     principal = {"id": actor.id, "email": actor.email}
+    state["actor_id"] = actor.id
 
     def _override_db():
         yield db
@@ -368,17 +370,64 @@ def test_do_default_on_access_differs_from_compares_the_effective_do_reveals(cli
 # ---------------------------------------------------------------- A2.6
 
 
-def test_a2_6_customer_id_matches_only_links_inside_the_callers_company_scope(client, db, state):
+def _grant(db, user_id, *company_ids):
+    from app.models.company import UserCompany
+
+    for company_id in company_ids:
+        db.add(UserCompany(user_id=user_id, company_id=company_id))
+    db.flush()
+
+
+def _row(resp, contact):
+    assert resp.status_code == 200, resp.text
+    (row,) = [r for r in resp.json()["data"] if r["id"] == contact.id]
+    return row
+
+
+def test_a2_6_customer_id_matches_links_in_any_company_the_viewer_is_granted(client, db, state):
+    """ACCESS-SHEET-FIXES (owner 27 Oct): Internal Users is company-less, so a viewer working in
+    Sorento who also holds Mocha finds the contact linked to a Mocha customer."""
     tag = unique_code("S", alpha=True)
     contact = _contact(db, tag, "x")
-    other_company_customer = _customer(db, company_id=MOCHA_ID)
-    _link(db, contact, other_company_customer)
-
+    mocha_customer = _customer(db, company_id=MOCHA_ID)
+    _link(db, contact, mocha_customer)
     state["scope"] = frozenset({SORENTO})
-    assert contact.id not in _ids(_list(client, query=tag, customer_id=other_company_customer.id))
+    _grant(db, state["actor_id"], SORENTO, MOCHA_ID)
+    assert _ids(_list(client, query=tag, customer_id=mocha_customer.id)) == {contact.id}
 
-    state["scope"] = frozenset({SORENTO, MOCHA_ID})
-    assert _ids(_list(client, query=tag, customer_id=other_company_customer.id)) == {contact.id}
+
+def test_a2_6_customer_id_never_matches_links_outside_the_viewers_grants(client, db, state):
+    tag = unique_code("S", alpha=True)
+    contact = _contact(db, tag, "x")
+    mocha_customer = _customer(db, company_id=MOCHA_ID)
+    _link(db, contact, mocha_customer)
+    state["scope"] = frozenset({SORENTO})
+    _grant(db, state["actor_id"], SORENTO)
+    assert contact.id not in _ids(_list(client, query=tag, customer_id=mocha_customer.id))
+
+
+def test_customers_column_shows_granted_other_company_codes_tagged_with_their_company(client, db, state):
+    """Codes repeat across companies, so a code outside the viewer's active company carries it."""
+    tag = unique_code("S", alpha=True)
+    contact = _contact(db, tag, "x")
+    srt = _customer(db, company_id=SORENTO)
+    mch = _customer(db, company_id=MOCHA_ID)
+    _link(db, contact, srt)
+    _link(db, contact, mch)
+    state["scope"] = frozenset({SORENTO})
+    _grant(db, state["actor_id"], SORENTO, MOCHA_ID)
+    mch_code = db.query(Company.code).filter(Company.id == MOCHA_ID).scalar()
+    row = _row(_list(client, query=tag), contact)
+    assert row["customer_codes"] == sorted([srt.customer_code, f"{mch.customer_code} ({mch_code})"])
+
+
+def test_customers_column_hides_codes_of_companies_the_viewer_is_not_granted(client, db, state):
+    tag = unique_code("S", alpha=True)
+    contact = _contact(db, tag, "x")
+    _link(db, contact, _customer(db, company_id=MOCHA_ID))
+    state["scope"] = frozenset({SORENTO})
+    _grant(db, state["actor_id"], SORENTO)
+    assert _row(_list(client, query=tag), contact)["customer_codes"] == []
 
 
 def test_n1_malformed_customer_id_is_422_not_500(client):

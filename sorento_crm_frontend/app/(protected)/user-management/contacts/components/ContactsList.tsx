@@ -7,6 +7,7 @@ import { extractApiError } from '@/lib/api-client';
 import { useHasPermission } from '@/hooks/usePermissions';
 
 import {
+  Column,
   ColumnDef,
   PaginationState,
   RowSelectionState,
@@ -100,7 +101,6 @@ function yesNoColumn(
       <DataGridColumnHeader title={title} column={column} />
     ),
     size: 110,
-    enableSorting: false,
     cell: ({ row }) =>
       isOn(row.original) ? (
         <Badge variant="success" appearance="light">
@@ -440,7 +440,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Customers" column={column} />
         ),
         size: 200,
-        enableSorting: false,
         cell: ({ row }) => {
           const label = (row.original.customer_codes ?? []).join(', ');
           return label ? (
@@ -463,7 +462,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Access types" column={column} />
         ),
         size: 220,
-        enableSorting: false,
         cell: ({ row }) => {
           const types = row.original.access_types ?? [];
           if (types.length === 0) {
@@ -492,7 +490,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Tags" column={column} />
         ),
         size: 200,
-        enableSorting: false,
         cell: ({ row }) => <ContactTagsCell contact={row.original} />,
         meta: {
           headerTitle: 'Tags',
@@ -506,7 +503,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Tag settings" column={column} />
         ),
         size: 140,
-        enableSorting: false,
         cell: ({ row }) => <ContactTagSettingsCell contact={row.original} />,
         meta: {
           headerTitle: 'Tag settings',
@@ -521,7 +517,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Brands" column={column} />
         ),
         size: 180,
-        enableSorting: false,
         cell: ({ row }) => {
           const label = (row.original.brands ?? [])
             .map((b) => b.brand_name)
@@ -547,7 +542,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Tier" column={column} />
         ),
         size: 100,
-        enableSorting: false,
         cell: ({ row }) =>
           row.original.chatbot_tier ? (
             <span
@@ -604,7 +598,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Regions" column={column} />
         ),
         size: 200,
-        enableSorting: false,
         cell: ({ row }) => {
           const text = (row.original.regions ?? ['west'])
             .map(regionLabel)
@@ -638,9 +631,11 @@ export default function ContactsList() {
         ? [
             {
               id: 'linked_user',
-              header: 'User',
+              accessorFn: (row: RespondContact) => row.linked_user_name ?? '',
+              header: ({ column }: { column: Column<RespondContact> }) => (
+                <DataGridColumnHeader title="User" column={column} />
+              ),
               size: 180,
-              enableSorting: false,
               cell: ({ row }: { row: { original: RespondContact } }) =>
                 row.original.linked_user_id ? (
                   <Link
@@ -666,7 +661,6 @@ export default function ContactsList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Outbound" column={column} />
         ),
-        enableSorting: false,
         cell: ({ row }) => (
           <ContactOutboundCell
             enabled={row.original.outbound_enabled}
