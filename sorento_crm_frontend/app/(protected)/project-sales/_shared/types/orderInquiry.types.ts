@@ -717,9 +717,10 @@ export interface OrderInquiryWorklistParams {
    * S5 (`PLAN-oi-project-label-from-so.md` section 5): the Project column's own text,
    * exact match - a registered project's title or an adopted order's SO-level label,
    * off the summary's own `projects` facet. Separate from `project_id`, which stays
-   * UUID-only for an existing deep link; the filter picker sends this one now.
+   * UUID-only for an existing deep link; the filter picker sends this one now. One title or
+   * several (OR-ed), each sent whole.
    */
-  project?: string;
+  project?: string | string[];
   supplier_id?: string;
   /** The id of the person who raised the rows, picked off the summary's own list. */
   raised_by?: string;
@@ -1210,8 +1211,8 @@ export interface UnplaceAllRequest {
   delivery_month?: string;
   raised_date?: string;
   project_id?: string;
-  /** S5: text, exact match on the Project column - separate from `project_id`. */
-  project?: string;
+  /** S5: text, exact match on the Project column - separate from `project_id`. One or several. */
+  project?: string | string[];
   supplier_id?: string;
   raised_by?: string;
 }
@@ -1468,8 +1469,8 @@ export interface OrderInquiryHeaderListParams {
   agent?: string;
   /** Exact match on the Project column's own text (reviewer B2, fix round 22 Sep
    * 2026) - never a `projects.id`: 0 of 738 headers on the prod copy carry a
-   * registered project. */
-  project?: string;
+   * registered project. One title or several (OR-ed), each sent whole. */
+  project?: string | string[];
   /** OIs with a reserve request row in this status (AC-SN-30). */
   reserve?: 'parked' | 'needs_reserve' | 'notice_parked' | 'reserved';
   page?: number;

@@ -26,7 +26,15 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import {
+  idFilterLabels,
+  joinMulti,
+  multiChipLabel,
+  splitMulti,
+  splitText,
+} from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
@@ -116,12 +124,16 @@ export function OrderInquiryHeadersList() {
     debouncedValue: searchQuery,
     isSettling: searchSettling,
   } = useDebouncedSearch(searchParams.get('query') ?? '');
-  const [raisedByFilter, setRaisedByFilter] = useState(
-    () => searchParams.get('raised_by') ?? '',
+  // Raised by (ids) and Agent (codes) ride comma-joined; Project is a free-text title, so one entry
+  // per project and a repeated param, never joined.
+  const [raisedByFilter, setRaisedByFilter] = useState(() =>
+    joinMulti(splitMulti(searchParams.get('raised_by'))),
   );
-  const [agentFilter, setAgentFilter] = useState(() => searchParams.get('agent') ?? '');
-  const [projectFilter, setProjectFilter] = useState(
-    () => searchParams.get('project') ?? '',
+  const [agentFilter, setAgentFilter] = useState(() =>
+    joinMulti(splitMulti(searchParams.get('agent'))),
+  );
+  const [projectFilter, setProjectFilter] = useState<string[]>(() =>
+    splitText(searchParams.getAll('project')),
   );
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: Math.max(0, Number(searchParams.get('page') ?? '1') - 1),
@@ -143,7 +155,7 @@ export function OrderInquiryHeadersList() {
     if (pagination.pageSize !== 25) next.set('limit', String(pagination.pageSize));
     if (raisedByFilter) next.set('raised_by', raisedByFilter);
     if (agentFilter) next.set('agent', agentFilter);
-    if (projectFilter) next.set('project', projectFilter);
+    for (const title of projectFilter) next.append('project', title);
     if (reserveFilter) next.set('reserve', reserveFilter);
     const nextQuery = next.toString();
     if (nextQuery === searchParams.toString()) return;
@@ -185,7 +197,7 @@ export function OrderInquiryHeadersList() {
       query: searchQuery || undefined,
       raised_by: raisedByFilter || undefined,
       agent: agentFilter || undefined,
-      project: projectFilter || undefined,
+      project: projectFilter.length ? projectFilter : undefined,
       reserve: reserveFilter || undefined,
       sort: sorting[0]?.id ?? 'raised_at',
       dir: sorting[0]?.desc ? 'desc' : 'asc',
@@ -259,30 +271,31 @@ export function OrderInquiryHeadersList() {
 
   const rows = useMemo<OrderInquiryHeader[]>(() => data?.data ?? [], [data]);
 
-  const detailSearch = useMemo(
-    () =>
-      buildDetailSearch(
+  const detailSearch = useMemo(() => {
+    const base = buildDetailSearch(
         { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery },
         {
           state: stateFilter !== 'outstanding' ? stateFilter : undefined,
           raised_by: raisedByFilter || undefined,
           agent: agentFilter || undefined,
-          project: projectFilter || undefined,
           reserve: reserveFilter || undefined,
         },
-      ),
-    [
-      pagination.pageIndex,
-      pagination.pageSize,
-      sorting,
-      searchQuery,
-      stateFilter,
-      raisedByFilter,
-      agentFilter,
-      projectFilter,
-      reserveFilter,
-    ],
-  );
+      );
+    if (!projectFilter.length) return base;
+    const withProjects = new URLSearchParams(base);
+    for (const title of projectFilter) withProjects.append('project', title);
+    return withProjects.toString();
+  }, [
+    pagination.pageIndex,
+    pagination.pageSize,
+    sorting,
+    searchQuery,
+    stateFilter,
+    raisedByFilter,
+    agentFilter,
+    projectFilter,
+    reserveFilter,
+  ]);
   const detailHref = useCallback(
     (header: OrderInquiryHeader) =>
       `/project-sales/order-inquiries/${header.id}${detailSearch ? `?${detailSearch}` : ''}`,
@@ -538,7 +551,7 @@ export function OrderInquiryHeadersList() {
   const filtersActive =
     (raisedByFilter ? 1 : 0) +
     (agentFilter ? 1 : 0) +
-    (projectFilter ? 1 : 0) +
+    (projectFilter.length ? 1 : 0) +
     (reserveFilter ? 1 : 0);
   const isFiltered = Boolean(searchQuery) || filtersActive > 0;
 
@@ -653,25 +666,34 @@ export function OrderInquiryHeadersList() {
                     <Label htmlFor="oi-header-raised-by" className="mb-1 block">
                       Raised by
                     </Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       id="oi-header-raised-by"
-                      value={raisedByFilter}
-                      onChange={setRaisedByFilter}
+                      value={splitMulti(raisedByFilter)}
+                      onChange={(value) => setRaisedByFilter(joinMulti(value))}
                       options={filterOptions.raisedBy}
                       loadError={usersQuery.error}
                       onRetry={() => void usersQuery.refetch()}
                       placeholder="Anyone"
                       clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">
+                            {multiChipLabel('Raised by', idFilterLabels(chosen))}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">Anyone</span>
+                        )
+                      }
                     />
                   </div>
                   <div>
                     <Label htmlFor="oi-header-agent" className="mb-1 block">
                       Agent
                     </Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       id="oi-header-agent"
-                      value={agentFilter}
-                      onChange={setAgentFilter}
+                      value={splitMulti(agentFilter)}
+                      onChange={(value) => setAgentFilter(joinMulti(value))}
                       options={filterOptions.agents}
                       placeholder="Any agent"
                       clearable
@@ -681,7 +703,7 @@ export function OrderInquiryHeadersList() {
                     <Label htmlFor="oi-header-project" className="mb-1 block">
                       Project
                     </Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       id="oi-header-project"
                       value={projectFilter}
                       onChange={setProjectFilter}
@@ -698,7 +720,7 @@ export function OrderInquiryHeadersList() {
                         onClick={() => {
                           setRaisedByFilter('');
                           setAgentFilter('');
-                          setProjectFilter('');
+                          setProjectFilter([]);
                           setReserveFilter('');
                         }}
                       >

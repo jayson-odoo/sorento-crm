@@ -3120,8 +3120,11 @@ class OrderInquiryWorklistService:
         moment you use it cannot be used a second time.
         """
         visible = self._base(**filters)
+        # The State control's own counts are taken with its own filter dropped, so picking one state
+        # does not zero the others (the same rule every axis below follows).
+        state_scope = self._base(**{**filters, "state": None})
         state_rows = (
-            visible.with_entities(
+            state_scope.with_entities(
                 OrderInquiryRow.state,
                 func.count(OrderInquiryRow.id),
                 func.coalesce(func.sum(OrderInquiryRow.qty), 0),
@@ -3134,8 +3137,12 @@ class OrderInquiryWorklistService:
         total_qty = _ZERO
         for state, count, qty in state_rows:
             by_state[state] = int(count)
-            total_rows += int(count)
-            total_qty += _dec(qty)
+        # The totals describe what is on screen, so they honour the State filter.
+        total_rows, total_qty_value = visible.with_entities(
+            func.count(OrderInquiryRow.id), func.coalesce(func.sum(OrderInquiryRow.qty), 0)
+        ).one()
+        total_rows = int(total_rows or 0)
+        total_qty = _dec(total_qty_value)
         # S5/AC-OH-52: `visible` above already hides `cancelled` by default (AC-OH-50), so
         # `by_state["cancelled"]` would otherwise read 0 the moment the State filter most
         # needs to offer its real count. The State facet is the one reader that must see
