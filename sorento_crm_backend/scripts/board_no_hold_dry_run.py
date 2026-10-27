@@ -163,88 +163,102 @@ def main() -> None:
     from sqlalchemy import text
 
     from app.database import SessionLocal
-    from app.services.scm.stock_debt_service import StockDebtService
 
     db = SessionLocal()
     try:
         db.execute(text("SET TRANSACTION READ ONLY"))
-        products = _held_products(db)
-        codes = {pid: code for pid, code, _name in products}
-        ids = [pid for pid, _c, _n in products]
-        print(f"Products with a decision hold today: {len(products)}")
-        totals = _hold_totals(db, ids) if ids else {}
-        print(f"Decision holds released by the change: {totals}")
-        if not ids:
-            return
-
-        span = StockDebtService(db)._warehouses(None, "all")
-        before = _lines(StockDebtService(db)._assignments(products, span, view=True))
-        with _decisions_hold_nothing():
-            after = _lines(StockDebtService(db)._assignments(products, span, view=True))
-
-        changed = []
-        for key in sorted(set(before) | set(after)):
-            a, b = before.get(key), after.get(key)
-            if a is None or b is None:
-                continue
-            if (a["assigned"], a["short"], a["status"]) != (b["assigned"], b["short"], b["status"]):
-                changed.append((key, a, b))
-
-        per_product: Dict[str, Dict[str, float]] = defaultdict(
-            lambda: {"lines": 0, "newly_short": 0, "short_before": 0.0, "short_after": 0.0}
-        )
-        for _key, a, b in changed:
-            row = per_product[codes.get(a["product_id"], a["product_id"])]
-            row["lines"] += 1
-            row["short_before"] += a["short"]
-            row["short_after"] += b["short"]
-            if a["short"] <= 0 < b["short"]:
-                row["newly_short"] += 1
-
-        print(f"\nOpen SO lines whose Stock Debt reading changes: {len(changed)} "
-              f"over {len(per_product)} products")
-        gained = sum(1 for _k, a, b in changed if b["short"] < a["short"])
-        lost = sum(1 for _k, a, b in changed if b["short"] > a["short"])
-        print(f"  less short after: {gained} lines; more short after: {lost} lines")
-        print(f"  short qty before {sum(a['short'] for _k, a, _b in changed):.2f}, "
-              f"after {sum(b['short'] for _k, _a, b in changed):.2f}")
-
-        print("\nPer product (code | lines changed | newly short | short before -> after)")
-        for code in sorted(per_product):
-            row = per_product[code]
-            print(f"  {code:<20} {row['lines']:>4} {row['newly_short']:>4} "
-                  f"{row['short_before']:>10.2f} -> {row['short_after']:.2f}")
-
-        print("\nFocus: every open line of the named products / SOs, before | after")
-        for key in sorted(before, key=lambda k: (codes.get(before[k]["product_id"], ""),
-                                                 str(before[k]["required"]))):
-            a, b = before[key], after.get(key, {})
-            if codes.get(a["product_id"]) not in focus_products and a["so"] not in focus_sos:
-                continue
-            print(f"  {codes.get(a['product_id'])} {a['so']} L{a['line_no']} {a['warehouse']} "
-                  f"due {a['required']} open {a['open']:g} | "
-                  f"{a['status']} assigned {a['assigned']:g} short {a['short']:g} [{a['sources']}] | "
-                  f"{b.get('status')} assigned {b.get('assigned')} short {b.get('short')} "
-                  f"[{b.get('sources')}]")
-
-        if args.csv:
-            with open(args.csv, "w", newline="") as handle:
-                writer = csv.writer(handle)
-                writer.writerow([
-                    "product", "so", "line", "location", "required", "open",
-                    "status_before", "assigned_before", "short_before",
-                    "status_after", "assigned_after", "short_after",
-                ])
-                for _key, a, b in changed:
-                    writer.writerow([
-                        codes.get(a["product_id"]), a["so"], a["line_no"], a["warehouse"],
-                        a["required"], a["open"], a["status"], a["assigned"], a["short"],
-                        b["status"], b["assigned"], b["short"],
-                    ])
-            print(f"\nWrote {len(changed)} rows to {args.csv}")
+        report(db, focus_products=focus_products, focus_sos=focus_sos, csv_path=args.csv)
     finally:
         db.rollback()
         db.close()
+
+
+def report(db, *, focus_products, focus_sos, csv_path=None) -> list:
+    """The whole dry run on an open session; returns the changed lines. Writes nothing."""
+    from app.services.scm.stock_debt_service import StockDebtService
+
+    products = _held_products(db)
+    codes = {pid: code for pid, code, _name in products}
+    ids = [pid for pid, _c, _n in products]
+    print(f"Products with a decision hold today: {len(products)}")
+    totals = _hold_totals(db, ids) if ids else {}
+    print(f"Decision holds released by the change: {totals}")
+    if not ids:
+        return []
+
+    span = StockDebtService(db)._warehouses(None, "all")
+    before = _lines(StockDebtService(db)._assignments(products, span, view=True))
+    with _decisions_hold_nothing():
+        after = _lines(StockDebtService(db)._assignments(products, span, view=True))
+
+    changed = []
+    for key in sorted(set(before) | set(after)):
+        a, b = before.get(key), after.get(key)
+        if a is None or b is None:
+            continue
+        if (a["assigned"], a["short"], a["status"]) != (b["assigned"], b["short"], b["status"]):
+            changed.append((key, a, b))
+
+    per_product: Dict[str, Dict[str, float]] = defaultdict(
+        lambda: {"lines": 0, "newly_short": 0, "short_before": 0.0, "short_after": 0.0}
+    )
+    for _key, a, b in changed:
+        row = per_product[codes.get(a["product_id"], a["product_id"])]
+        row["lines"] += 1
+        row["short_before"] += a["short"]
+        row["short_after"] += b["short"]
+        if a["short"] <= 0 < b["short"]:
+            row["newly_short"] += 1
+
+    print(f"\nOpen SO lines whose Stock Debt reading changes: {len(changed)} "
+          f"over {len(per_product)} products")
+    gained = sum(1 for _k, a, b in changed if b["short"] < a["short"])
+    lost = sum(1 for _k, a, b in changed if b["short"] > a["short"])
+    print(f"  less short after: {gained} lines; more short after: {lost} lines")
+    print(f"  short qty before {sum(a['short'] for _k, a, _b in changed):.2f}, "
+          f"after {sum(b['short'] for _k, _a, b in changed):.2f}")
+
+    stranded = sorted(
+        code for code, row in per_product.items()
+        if row["short_after"] - row["short_before"] > 0.0001
+    )
+    print(f"  products whose total short RISES (released stock no other line may draw today:"
+          f" cross-group or site-pool plans): {len(stranded)} {stranded[:30]}")
+
+    print("\nPer product (code | lines changed | newly short | short before -> after)")
+    for code in sorted(per_product):
+        row = per_product[code]
+        print(f"  {code:<20} {row['lines']:>4} {row['newly_short']:>4} "
+              f"{row['short_before']:>10.2f} -> {row['short_after']:.2f}")
+
+    print("\nFocus: every open line of the named products / SOs, before | after")
+    for key in sorted(before, key=lambda k: (codes.get(before[k]["product_id"], ""),
+                                             str(before[k]["required"]))):
+        a, b = before[key], after.get(key, {})
+        if codes.get(a["product_id"]) not in focus_products and a["so"] not in focus_sos:
+            continue
+        print(f"  {codes.get(a['product_id'])} {a['so']} L{a['line_no']} {a['warehouse']} "
+              f"due {a['required']} open {a['open']:g} | "
+              f"{a['status']} assigned {a['assigned']:g} short {a['short']:g} [{a['sources']}] | "
+              f"{b.get('status')} assigned {b.get('assigned')} short {b.get('short')} "
+              f"[{b.get('sources')}]")
+
+    if csv_path:
+        with open(csv_path, "w", newline="") as handle:
+            writer = csv.writer(handle)
+            writer.writerow([
+                "product", "so", "line", "location", "required", "open",
+                "status_before", "assigned_before", "short_before",
+                "status_after", "assigned_after", "short_after",
+            ])
+            for _key, a, b in changed:
+                writer.writerow([
+                    codes.get(a["product_id"]), a["so"], a["line_no"], a["warehouse"],
+                    a["required"], a["open"], a["status"], a["assigned"], a["short"],
+                    b["status"], b["assigned"], b["short"],
+                ])
+        print(f"\nWrote {len(changed)} rows to {csv_path}")
+    return changed
 
 
 if __name__ == "__main__":
