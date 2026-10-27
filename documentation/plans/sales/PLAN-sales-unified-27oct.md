@@ -1,7 +1,7 @@
 # PLAN: Sales unified (one sales definition + AutoCount-matching reports)
 
 Status: Build, round 3 (27 Oct 2026): card approved (Lavish 16:12, Q2 to Q5 (a)); Q1 re-ruled (b)
-at 16:2x; round 3 (section 2.9) fixes the sales order type at the source, Q6 to Q10 open. Track: full (size L: migration, new permission slug, finance
+at 16:2x; round 3 (section 2.9) Q6 to Q10 ruled (a); chatbot basis question ruled (b). Track: full (size L: migration, new permission slug, finance
 figures). crew-lane: SALES-UNIFIED.
 UAC: `sales-unified-27oct-acceptance-criteria.md` alongside. Mock: `mockups/sales-unified-27oct.html`.
 
@@ -32,6 +32,15 @@ on origin/main 14e29e1e.
   be traced to a sales order goes to its own visible bucket, **No sales order**: never hidden,
   never guessed. The tally shows how far the SO-based split lands from the AutoCount agent-list
   figures (Jan Dealer 6,513,047.67, Project team 6,084,471.57).
+- **27 Oct, chatbot basis question: (b)**: the bot keeps asking the basis, with Invoiced first:
+  "Invoiced, delivered, ordered or outstanding?".
+- **27 Oct, round 3 Q6 to Q10: all (a)** (section 2.9): `sales.agent_classes`; a third class
+  `other` shown "Other"; the stored SO class re-derived after a dry-run report; invoices read the SO
+  class through the chain at run time; the data fix by crew SQL after the dry run.
+- **27 Oct, the owner's bar, verbatim**: "the figures should tally between the provided report and
+  our system, simple as that". Every report this lane changes carries a tally against the AutoCount
+  report for the same period and filters, to the cent, in a crew-note before the hand test
+  (`scripts/sales_unified_tally.py` prints the CRM side; crew holds the AutoCount side).
 - **Consequence of Q1 (b)**: agent groups are not built. The blocks are the sales type, the rows are
   agents, so an agent who sold both types appears in both blocks; no agent list decides anything.
   Q5 (the fixed pair of groups) has nothing left to apply to. Set-apart customers stay (Q3 (a)).
