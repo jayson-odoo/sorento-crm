@@ -731,8 +731,10 @@ def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
     document status is dropped (it never turns the refine into an order list). The lane applies
     only the keys the parser changed (`_refine`)."""
     status = jsc.js_string(verdict.get("order_status") or "").strip()
+    # `by_capability` (before grounding) has already typed these reports as the ask; `capability_from` is the kind.
+    kind = jsc.js_string(verdict.get("capability_from") or "").strip() if status == ASK_NAME else status
     if (
-        status in _COUNTLESS_REPORTS
+        kind in _COUNTLESS_REPORTS
         and verdict.get("top_n") is not None
         and verdict.get("sales_channel") in ("dealer", "project")
         and not jsc.js_string(verdict.get("group_by") or "").strip()
