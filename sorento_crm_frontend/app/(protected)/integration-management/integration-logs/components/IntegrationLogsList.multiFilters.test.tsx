@@ -49,6 +49,9 @@ const lastArgs = () => {
   const calls = useIntegrationLogs.mock.calls;
   return calls[calls.length - 1][0] as Record<string, unknown>;
 };
+
+/** The picked values in any order: the multi control joins them in option order. */
+const sortedValues = (v: unknown) => String(v ?? '').split(',').sort();
 const filtersButton = () => screen.getByRole('button', { name: /^filters/i });
 
 beforeEach(() => {
@@ -102,7 +105,7 @@ describe('Integration logs - multi Status, Channel and Table filters', () => {
     await openFilters(user);
     const [status] = await screen.findAllByRole('listbox');
     await user.selectOptions(status, ['failed', 'pending']);
-    await waitFor(() => expect(lastArgs().status).toBe('failed,pending'));
+    await waitFor(() => expect(sortedValues(lastArgs().status)).toEqual(['failed', 'pending']));
     expect(String(lastArgs().status)).not.toContain('all');
     await user.keyboard('{Escape}');
     await waitFor(() => expect(within(filtersButton()).getByText('1')).toBeInTheDocument());
@@ -128,7 +131,10 @@ describe('Integration logs - multi Status, Channel and Table filters', () => {
     const boxes = await screen.findAllByRole('listbox');
     await user.selectOptions(boxes[0], ['failed', 'pending']);
     await user.selectOptions(boxes[1], ['n8n']);
-    await waitFor(() => expect(lastArgs()).toMatchObject({ status: 'failed,pending', integration_channel: 'n8n' }));
+    await waitFor(() => {
+      expect(sortedValues(lastArgs().status)).toEqual(['failed', 'pending']);
+      expect(lastArgs().integration_channel).toBe('n8n');
+    });
   });
 
   it('a comma-joined link reads back into the filters (guard)', async () => {

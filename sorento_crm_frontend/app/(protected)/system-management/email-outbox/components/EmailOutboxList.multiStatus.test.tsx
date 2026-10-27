@@ -45,6 +45,9 @@ const lastArgs = () => {
   const calls = useEmailOutbox.mock.calls;
   return calls[calls.length - 1][0] as Record<string, unknown>;
 };
+
+/** The picked values in any order: the multi control joins them in option order. */
+const sortedValues = (v: unknown) => String(v ?? '').split(',').sort();
 const filtersButton = () => screen.getByRole('button', { name: /^filters/i });
 
 beforeEach(() => {
@@ -91,7 +94,7 @@ describe('Email outbox - multi Status filter', () => {
     const user = userEvent.setup();
     await openFilters(user);
     await user.selectOptions(await screen.findByRole('listbox'), ['failed', 'pending']);
-    await waitFor(() => expect(lastArgs().status).toBe('failed,pending'));
+    await waitFor(() => expect(sortedValues(lastArgs().status)).toEqual(['failed', 'pending']));
     expect(String(lastArgs().status)).not.toContain('__all__');
     await user.keyboard('{Escape}');
     await waitFor(() => expect(within(filtersButton()).getByText('1')).toBeInTheDocument());
@@ -101,7 +104,7 @@ describe('Email outbox - multi Status filter', () => {
     const user = userEvent.setup();
     await openFilters(user);
     await user.selectOptions(await screen.findByRole('listbox'), ['failed', 'pending']);
-    await waitFor(() => expect(lastArgs().status).toBe('failed,pending'));
+    await waitFor(() => expect(sortedValues(lastArgs().status)).toEqual(['failed', 'pending']));
     await user.click(screen.getByRole('button', { name: /clear filters/i }));
     await waitFor(() => expect(lastArgs().status).toBeUndefined());
   });

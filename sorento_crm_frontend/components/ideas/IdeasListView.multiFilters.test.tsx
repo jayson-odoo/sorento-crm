@@ -118,6 +118,13 @@ const boxWith = async (option: string) => {
   if (!found) throw new Error(`no multi control offers ${option}`);
   return found as HTMLSelectElement;
 };
+/** Status sits in the toolbar; picking there dismisses the non-modal Filters menu, so reopen it. */
+async function inFilters(user: ReturnType<typeof userEvent.setup>, option: string) {
+  if (!screen.queryAllByRole('listbox').some((b) => within(b).queryByText(option))) {
+    await user.click(screen.getByRole('button', { name: /^filters/i }));
+  }
+  return boxWith(option);
+}
 const shown = () => ['A', 'B', 'C', 'D'].filter((k) => screen.queryByText(`ZZT idea ${k}`) !== null).join('');
 
 describe('Ideas - multi Status, Submitter and Channel filters', () => {
@@ -154,9 +161,9 @@ describe('Ideas - multi Status, Submitter and Channel filters', () => {
     const user = userEvent.setup();
     await open(user);
     await user.selectOptions(await boxWith('ZZT Review'), ['ZZT New', 'ZZT Review']);
-    await user.selectOptions(await boxWith('Email'), ['manual', 'email']);
+    await user.selectOptions(await inFilters(user, 'Email'), ['manual', 'email']);
     await waitFor(() => expect(shown()).toBe('AB'));
-    await user.selectOptions(await boxWith('Cy Ong'), ['Ben Tan']);
+    await user.selectOptions(await inFilters(user, 'Cy Ong'), ['Ben Tan']);
     await waitFor(() => expect(shown()).toBe('B'));
   });
 
