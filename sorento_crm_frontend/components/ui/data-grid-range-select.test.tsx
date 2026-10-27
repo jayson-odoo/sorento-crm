@@ -11,7 +11,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, within } from '@testing-library/react';
 import {
   flexRender,
   getCoreRowModel,
@@ -127,6 +127,13 @@ describe('A. Shift+click ticks a range', () => {
     fireEvent.click(box(2));
     fireEvent.click(box(5), { shiftKey: true });
     expect(selected()).toBe('r2,r3,r4,r5');
+  });
+
+  it('Shift+click on the last clicked box itself toggles it like a plain click', () => {
+    render(<Harness />);
+    fireEvent.click(box(2));
+    fireEvent.click(box(2), { shiftKey: true });
+    expect(selected()).toBe('');
   });
 
   it('toggles just the one box when nothing was clicked before', () => {
@@ -266,6 +273,83 @@ describe('B. Drag down the checkbox column', () => {
     expect(onRowClick).not.toHaveBeenCalled();
   });
 
+  it('a drag released on the first row\'s text does not open that row', () => {
+    const onRowClick = vi.fn();
+    render(<Harness onRowClick={onRowClick} />);
+    fireEvent.pointerDown(box(2), mouse);
+    fireEvent.pointerMove(screen.getByTestId('name-r4'), mouse);
+    fireEvent.pointerMove(screen.getByTestId('name-r2'), mouse);
+    fireEvent.pointerUp(screen.getByTestId('name-r2'), mouse);
+    // Browser: press and release both inside row 2, so the click targets row 2.
+    fireEvent.click(screen.getByTestId('name-r2'));
+    expect(onRowClick).not.toHaveBeenCalled();
+    expect(selected()).toBe('r2');
+  });
+
+  it('a right-button press does not start a drag', () => {
+    render(<Harness />);
+    fireEvent.pointerDown(box(1), { ...mouse, button: 2, buttons: 2 });
+    fireEvent.pointerMove(screen.getByTestId('name-r3'), { ...mouse, buttons: 2 });
+    expect(selected()).toBe('');
+  });
+
+  it('a move with the button already up ends the drag instead of ticking on hover', () => {
+    render(<Harness />);
+    fireEvent.pointerDown(box(1), mouse);
+    fireEvent.pointerMove(screen.getByTestId('name-r2'), mouse);
+    // Released outside the window: no pointerup ever arrives.
+    fireEvent.pointerMove(screen.getByTestId('name-r4'), { ...mouse, buttons: 0 });
+    fireEvent.pointerMove(screen.getByTestId('name-r5'), { ...mouse, buttons: 0 });
+    expect(selected()).toBe('r1,r2');
+    expect(document.documentElement.style.userSelect).toBe('');
+  });
+
+  it('leaving the window ends the drag and gives text selection back', () => {
+    render(<Harness />);
+    fireEvent.pointerDown(box(1), mouse);
+    fireEvent.pointerMove(screen.getByTestId('name-r3'), mouse);
+    fireEvent.blur(window);
+    expect(document.documentElement.style.userSelect).toBe('');
+    fireEvent.pointerMove(screen.getByTestId('name-r5'), mouse);
+    expect(selected()).toBe('r1,r2,r3');
+  });
+
+  it('a pointerup something else stops from bubbling still ends the drag', () => {
+    render(<Harness />);
+    const cell = screen.getByTestId('name-r2');
+    cell.addEventListener('pointerup', (e) => e.stopPropagation());
+    fireEvent.pointerDown(box(1), mouse);
+    fireEvent.pointerMove(cell, mouse);
+    fireEvent.pointerUp(cell, mouse);
+    fireEvent.pointerMove(screen.getByTestId('name-r5'), mouse);
+    expect(selected()).toBe('r1,r2');
+  });
+
+  it('puts back an inline user-select the page had before the drag', () => {
+    document.documentElement.style.userSelect = 'text';
+    render(<Harness />);
+    drag(1, [2]);
+    expect(document.documentElement.style.userSelect).toBe('text');
+    document.documentElement.style.userSelect = '';
+  });
+
+  it('stays inside its own table when two grids share row ids', () => {
+    render(
+      <>
+        <div data-testid="a"><Harness /></div>
+        <div data-testid="b"><Harness /></div>
+      </>,
+    );
+    const [a, b] = [screen.getByTestId('a'), screen.getByTestId('b')];
+    const inA = within(a);
+    fireEvent.pointerDown(inA.getByRole('checkbox', { name: 'Select Row 1' }), mouse);
+    // Pointer wanders into grid B's row 4: grid A must not tick its own row 4.
+    fireEvent.pointerMove(within(b).getByTestId('name-r4'), mouse);
+    fireEvent.pointerUp(window, mouse);
+    expect(inA.getByTestId('selected').textContent).toBe('');
+    expect(within(b).getByTestId('selected').textContent).toBe('');
+  });
+
   it('a drag after Shift+click starts from the dragged box', () => {
     render(<Harness />);
     fireEvent.click(box(1));
@@ -286,6 +370,19 @@ describe('D. Keyboard on the checkbox column', () => {
     fireEvent.keyDown(box(2), { key: 'ArrowUp' });
     expect(document.activeElement).toBe(box(1));
     expect(selected()).toBe('');
+  });
+
+  it('steps over a row that cannot be selected', () => {
+    const data = DATA.map((r) => (r.id === 'r3' ? { ...r, locked: true } : r));
+    render(<Harness data={data} />);
+    fireEvent.click(box(2));
+    act(() => box(2).focus());
+    fireEvent.keyDown(box(2), { key: 'ArrowDown' });
+    expect(document.activeElement).toBe(box(4));
+    fireEvent.keyDown(box(4), { key: 'ArrowUp', shiftKey: true });
+    expect(document.activeElement).toBe(box(2));
+    fireEvent.keyDown(box(2), { key: 'ArrowDown', shiftKey: true });
+    expect(selected()).toBe('r2,r4');
   });
 
   it('stops at the ends', () => {

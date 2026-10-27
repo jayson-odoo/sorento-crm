@@ -81,10 +81,20 @@ function withRange(
   return next;
 }
 
+/** `<html>`'s own inline user-select before a drag turned it off, put back after. */
+let savedUserSelect: [string, string] | null = null;
+
 function setTextSelectable(on: boolean) {
   const style = document.documentElement.style;
-  style.userSelect = on ? '' : 'none';
-  style.setProperty('-webkit-user-select', on ? '' : 'none');
+  if (!on) {
+    savedUserSelect ??= [style.userSelect, style.getPropertyValue('-webkit-user-select')];
+    style.userSelect = 'none';
+    style.setProperty('-webkit-user-select', 'none');
+  } else if (savedUserSelect) {
+    style.userSelect = savedUserSelect[0];
+    style.setProperty('-webkit-user-select', savedUserSelect[1]);
+    savedUserSelect = null;
+  }
 }
 
 function rowIdAt(target: EventTarget | null, tableEl: Element | null): string | null {
@@ -95,6 +105,12 @@ function rowIdAt(target: EventTarget | null, tableEl: Element | null): string | 
 
 function onDragMove(event: PointerEvent) {
   if (!drag) return;
+  // The release happened somewhere this drag never heard about (another window, a context
+  // menu): a move with the button up ends it, never ticks rows on hover.
+  if (!(event.buttons & 1)) {
+    endDrag();
+    return;
+  }
   const id = rowIdAt(event.target, drag.tableEl);
   if (id === null || id === drag.lastId) return;
   if (!drag.moved) {
@@ -116,8 +132,9 @@ function endDrag() {
   }
   drag = null;
   window.removeEventListener('pointermove', onDragMove);
-  window.removeEventListener('pointerup', endDrag);
-  window.removeEventListener('pointercancel', endDrag);
+  window.removeEventListener('pointerup', endDrag, { capture: true });
+  window.removeEventListener('pointercancel', endDrag, { capture: true });
+  window.removeEventListener('blur', endDrag);
 }
 
 function focusRowBox(tableEl: Element | null, id: string) {
@@ -141,7 +158,8 @@ export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TDat
       const anchorId = anchors.get(table);
       const anchor = anchorId ? rowsOf(table).find((r) => r.id === anchorId) : undefined;
       anchors.set(table, row.id);
-      if (!event.shiftKey || !anchor) return; // the box toggles itself
+      // No range to make (or Shift+click on the anchor itself): the box toggles itself.
+      if (!event.shiftKey || !anchor || anchor.id === row.id) return;
       // preventDefault stops the box's own toggle; the range sets this row too.
       event.preventDefault();
       table.setRowSelection((old) => withRange(table, old, anchor.id, row.id, anchor.getIsSelected()));
@@ -161,8 +179,10 @@ export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TDat
         moved: false,
       };
       window.addEventListener('pointermove', onDragMove);
-      window.addEventListener('pointerup', endDrag);
-      window.addEventListener('pointercancel', endDrag);
+      // Capture: a handler that stops pointerup from bubbling must not strand the drag.
+      window.addEventListener('pointerup', endDrag, { capture: true });
+      window.addEventListener('pointercancel', endDrag, { capture: true });
+      window.addEventListener('blur', endDrag);
     },
 
     onKeyDown: (event: React.KeyboardEvent) => {
@@ -170,8 +190,12 @@ export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TDat
       event.preventDefault();
       const rows = rowsOf(table);
       const here = rows.findIndex((r) => r.id === row.id);
-      // Past either end there is no next row: focus stays where it is.
-      const next = rows[here + (event.key === 'ArrowDown' ? 1 : -1)];
+      // The next row whose box can take focus; a disabled box cannot, so it is stepped over.
+      // Past either end there is none and focus stays where it is.
+      const step = event.key === 'ArrowDown' ? 1 : -1;
+      let at = here + step;
+      while (rows[at] && !rows[at].getCanSelect()) at += step;
+      const next = rows[at];
       const tableEl = (event.currentTarget as Element).closest('table');
       if (!next) return;
       if (event.shiftKey) {
