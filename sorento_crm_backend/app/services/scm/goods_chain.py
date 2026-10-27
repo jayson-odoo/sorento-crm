@@ -49,7 +49,8 @@ from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import Any, Dict, Iterable, List, Optional, Sequence, Set, Tuple
 
-from sqlalchemy import and_, func, or_, tuple_
+from sqlalchemy import String, and_, cast, column, func, or_, select, tuple_, union
+from sqlalchemy.dialects.postgresql import ARRAY, UUID
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
@@ -228,6 +229,37 @@ def po_spo_key_clause() -> Any:
     )
 
 
+#: Key column types for `key_rows`: text, or a uuid column compared as uuid.
+KEY_TEXT = String
+KEY_UUID = UUID(as_uuid=False)
+
+
+def key_rows(keys: Iterable[Tuple[Any, ...]], **columns: Any) -> Any:
+    """GOODSCHAIN-INDEX-QUERY: `keys` as a derived table with one column per keyword
+    (name = type, `KEY_TEXT` or `KEY_UUID`, in tuple order), to JOIN on instead of a literal
+    `tuple_(...).in_(keys)`.
+
+    A row-IN of N tuples is N ORed ANDs in the SQL text. Without an index each is one more
+    filter on a sequential scan (Stock Debt's ~6,800 keys: 6.3 s a call on `spo_allocations`,
+    prod incident 27 Oct 2026); with one, planning a BitmapOr of N arms still costs more as N
+    grows; and an expression that deep overflows the default 2MB `max_stack_depth` (about
+    7,500 keys in the sandbox). One `unnest` of one array per column is the same SQL for 5
+    keys or 50,000, and a join against it can use the key's index. Each array is cast to its column's type so a uuid
+    column is compared as uuid. `keys` must not be empty and no part may be None (it would
+    reach the cast as the text 'None'): callers keep only complete keys."""
+    names = list(columns)
+    distinct = sorted({tuple(str(value) for value in key) for key in keys})
+    arrays = [
+        cast(list(values), ARRAY(columns[name]))
+        for name, values in zip(names, zip(*distinct))
+    ]
+    return (
+        func.unnest(*arrays)
+        .table_valued(*(column(name, columns[name]) for name in names))
+        .render_derived()
+    )
+
+
 def _transfer_key(row: Any) -> Tuple[str, str, str, str]:
     """OI-SPO-EXACT plus company, off a PO line row carrying `po_number`, `po_line_ref`
     (trimmed), `po_product_id` and `po_company_id`."""
@@ -279,15 +311,28 @@ def transferred_allocations(
             lines_by_key.setdefault(_transfer_key(row), set()).add(line_id)
     if not company_of:
         return {}
-    routes = [SPOAllocation.po_line_id.in_(sorted(company_of))]
+    # Each route is its own SELECT of ids, so each can use its own index (`po_line_id`;
+    # `ix_spo_allocations_from_po_key` for the key): an OR across the two in one WHERE reads
+    # the whole table. The UNION also lists an allocation reached both ways once.
+    routes = [select(SPOAllocation.id).where(SPOAllocation.po_line_id.in_(sorted(company_of)))]
     if lines_by_key:
+        keys = key_rows(
+            lines_by_key,
+            po_number=KEY_TEXT,
+            line_ref=KEY_TEXT,
+            product_id=KEY_UUID,
+            company_id=KEY_UUID,
+        )
         routes.append(
-            tuple_(
-                SPOAllocation.from_po_number,
-                func.btrim(SPOAllocation.from_po_line_ref),
-                SPOAllocation.product_id,
-                SPOAllocation.company_id,
-            ).in_(sorted(lines_by_key))
+            select(SPOAllocation.id).join(
+                keys,
+                and_(
+                    SPOAllocation.from_po_number == keys.c.po_number,
+                    func.btrim(SPOAllocation.from_po_line_ref) == keys.c.line_ref,
+                    SPOAllocation.product_id == keys.c.product_id,
+                    SPOAllocation.company_id == keys.c.company_id,
+                ),
+            )
         )
     company_predicate = build_company_predicate(SPOAllocation, get_company_scope(db))
     rows = (
@@ -314,7 +359,7 @@ def transferred_allocations(
         )
         .outerjoin(Warehouse, Warehouse.id == SPOAllocation.warehouse_id)
         .filter(
-            or_(*routes),
+            SPOAllocation.id.in_(union(*routes) if len(routes) > 1 else routes[0]),
             *(() if include_withdrawn else spo_supply.visible_line_clauses()),
             *((company_predicate,) if company_predicate is not None else ()),
         )
@@ -682,24 +727,31 @@ def _po_lines_feeding(db: Session, spo_rows: Sequence[Any]) -> Set[str]:
             str(row.spo_company_id),
         )
         for row in spo_rows
-        if row.spo_from_po_number and row.spo_from_ref and row.spo_product_id
+        if row.spo_from_po_number
+        and row.spo_from_ref
+        and row.spo_product_id
+        and row.spo_company_id
     }
     if not keys:
         return named
     company_predicate = build_company_predicate(PurchaseOrderLine, get_company_scope(db))
+    wanted = key_rows(
+        keys, po_number=KEY_TEXT, line_ref=KEY_TEXT, product_id=KEY_UUID, company_id=KEY_UUID
+    )
     return named | {
         str(line_id)
         for (line_id,) in db.query(PurchaseOrderLine.id)
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-        .filter(
-            tuple_(
-                PurchaseOrder.po_number,
-                func.btrim(PurchaseOrderLine.source_ref),
-                PurchaseOrderLine.product_id,
-                PurchaseOrderLine.company_id,
-            ).in_(sorted(keys)),
-            *((company_predicate,) if company_predicate is not None else ()),
+        .join(
+            wanted,
+            and_(
+                PurchaseOrder.po_number == wanted.c.po_number,
+                func.btrim(PurchaseOrderLine.source_ref) == wanted.c.line_ref,
+                PurchaseOrderLine.product_id == wanted.c.product_id,
+                PurchaseOrderLine.company_id == wanted.c.company_id,
+            ),
         )
+        .filter(*((company_predicate,) if company_predicate is not None else ()))
         .all()
     }
 

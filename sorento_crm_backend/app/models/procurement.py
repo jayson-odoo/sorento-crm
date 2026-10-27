@@ -650,6 +650,15 @@ class SPOAllocation(Base, CompanyScopedMixin):
         # D6 (migration 477): the relink sweep's own lookup, and a container is
         # unique per company only (the same code legitimately arrives twice).
         Index("ix_spo_allocations_company_container", "company_id", "container_number"),
+        # The OI-SPO-EXACT PO -> SPO key `goods_chain.transferred_allocations` joins on
+        # (GOODSCHAIN-INDEX-QUERY, migration `gc_idx_0001_spo_from_po_key`).
+        Index(
+            "ix_spo_allocations_from_po_key",
+            "from_po_number",
+            func.btrim(from_po_line_ref),
+            "product_id",
+            "company_id",
+        ),
         # One DtlKey can adopt at most one line, company-wide - partial so the
         # countless ref-less xlsx-era rows never collide with each other or with it.
         Index(
@@ -1003,6 +1012,15 @@ class PurchaseOrderLine(Base, CompanyScopedMixin):
         # test_the_index_exists` failing in CI while passing against the hand-migrated
         # shared dev DB.
         Index("ix_purchase_order_lines_source_ref_system", "source_ref", "source_system"),
+        # The PO line side of the PO -> SPO key `goods_chain._po_lines_feeding` and Stock
+        # Debt's `_follow_totals` join on (GOODSCHAIN-INDEX-QUERY, migration
+        # `gc_idx_0001_spo_from_po_key`).
+        Index(
+            "ix_purchase_order_lines_src_key",
+            func.btrim(source_ref),
+            "product_id",
+            "company_id",
+        ),
     )
 
 
