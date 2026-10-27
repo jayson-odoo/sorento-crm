@@ -6,7 +6,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { getMyCompanyContext } from '@/app/(protected)/system-management/companies/services/companyService';
-import { multiValueSummary } from '@/lib/list-filters/multiValue';
+import { multiChipLabel, multiValueSummary } from '@/lib/list-filters/multiValue';
 import { useContactAccessTypes } from '../../contact-access-types/hooks/useContactAccessTypes';
 import { getContact } from '../[id]/services/contactService';
 import { customerFilterLabel, customerFilterLabelKey } from '../lib/customerFilterLabel';
@@ -115,7 +115,18 @@ export function useContactFiltersToolbar(s: State) {
           onChange={s.setCompanyIds}
           options={companyOptions}
           placeholder="Company: any"
+          // Names the filter like its siblings ("Access type: Dealer"), several values summarised.
+          renderTriggerLabel={(chosen) =>
+            chosen.length ? (
+              <span className="block truncate">
+                {multiChipLabel('Company', chosen.map((o) => o.label))}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">Company: any</span>
+            )
+          }
           triggerClassName="w-full"
+          clearable
         />
         <ContactAccessFilters
           value={s.accessFilters}
