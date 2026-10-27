@@ -809,6 +809,8 @@ def last_purchase_costs(db: Session, product_id: str) -> dict[str, dict]:
         # merely knowing less about them.
         "WHERE pol.product_id = :pid AND pol.unit_cost IS NOT NULL "
         "  AND po.supplier_id IS NOT NULL "
+        # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+        "  AND NOT pol.removed_unreferenced "
         "ORDER BY po.supplier_id, po.issue_date DESC NULLS LAST, pol.created_at DESC"
     ), {"pid": product_id}).mappings().all()
     return {

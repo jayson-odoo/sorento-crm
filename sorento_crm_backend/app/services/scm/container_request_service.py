@@ -1815,6 +1815,8 @@ def history(
         JOIN sales_orders so ON so.id = sol.sales_order_id
         WHERE sol.product_id = ANY(CAST(:pids AS uuid[]))
           AND so.order_date >= :since AND so.order_date < :until
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT sol.removed_unreferenced
           {("AND " + co) if co else ""}
         GROUP BY 1, 2, 3
     """
