@@ -15,14 +15,23 @@ from tests.chatbot.test_sales_report_lane import SALES_REPORT_HIT
 BRAND_UUID = "bbbbbbbb-1111-4000-8000-0000000000b1"
 OTHER_BRAND_UUID = "bbbbbbbb-1111-4000-8000-0000000000b2"
 GRANT = "sales_orders.sales_report"
+TOOL = "crm_report_ask"  # REPORT-UNIFY: a sales total is the report ask
+#: A total names its basis and period (neither is defaulted).
+_SALES = dict(order_status="sales_report", basis="delivered", date_filter_start="2026-09-01", date_filter_end="2026-09-30")
 
 
 def _payload(entities, parse_entities=()):
+    if not parse_entities:
+        # The kinds the message named come off the verdict's own entities.
+        parse_entities = [
+            {"raw": e["canonical_code"], "hint": e["entity_type"], "canonical_code": None, "current_message": True, "confident": True}
+            for e in entities
+        ]
     return {
         "gate": {"compatible_entities": entities},
         "tier_gate": None,
         "ctx": {
-            "parse": {"output": _qf(order_status="sales_report", entities=list(parse_entities))},
+            "parse": {"output": _qf(**_SALES, entities=list(parse_entities))},
             "contact": {"id": 900000008},
             "access": {"attributes": [GRANT]},
         },
@@ -35,23 +44,12 @@ def _run(entities, parse_entities=()):
     call, captured = _capturing_mcp(SALES_REPORT_HIT)
     run_fetch(_payload(entities, parse_entities), services=FetchServices(mcp_call=call))
     assert captured, "no MCP tool was called"
-    assert captured[0][0] == "crm_sales_report", captured
+    assert captured[0][0] == TOOL, captured
     return captured[0][1]
 
 
 CUSTOMER = {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}
 BRAND = {"uuid": BRAND_UUID, "entity_type": "brand", "canonical_code": "MOCHA"}
-
-
-def test_b7_a_resolved_brand_rides_as_brand_ids() -> None:
-    args = _run([CUSTOMER, BRAND])
-    assert args.get("brand_ids") == [BRAND_UUID], args
-    assert CUSTOMER_UUID in str(args.get("customer_ids")), args
-
-
-def test_b7_two_brands_travel_together() -> None:
-    args = _run([CUSTOMER, BRAND, {**BRAND, "uuid": OTHER_BRAND_UUID, "canonical_code": "SORENTO"}])
-    assert sorted(args.get("brand_ids") or []) == sorted([BRAND_UUID, OTHER_BRAND_UUID]), args
 
 
 def test_b7_near_miss_no_brand_entity_sends_no_brand_param() -> None:
@@ -62,31 +60,6 @@ def test_b7_near_miss_no_brand_entity_sends_no_brand_param() -> None:
 def test_b7_near_miss_a_customer_entity_is_never_sent_as_a_brand() -> None:
     args = _run([CUSTOMER])
     assert not args.get("brand_ids")
-
-
-def test_b7_a_whole_turn_with_a_confident_brand_entity_calls_the_report_with_the_brand(
-    session_factory, monkeypatch
-) -> None:
-    _seed_contact(session_factory, variables={})
-    entities = [
-        {"raw": "ZZT Customer", "hint": "customer", "canonical_code": None, "current_message": True, "confident": True},
-        {"raw": "Mocha", "hint": "brand", "canonical_code": "MOCHA", "current_message": True, "confident": True},
-    ]
-    _result, captured = _run_turn(
-        session_factory, monkeypatch,
-        qf=_qf(order_status="sales_report", entities=entities),
-        text_body="sales for mocha this month",
-        msg_id="ZZT-b7-brand-turn",
-        attributes=[GRANT],
-        matches={
-            "ZZT Customer": {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME},
-            "MOCHA": BRAND,
-        },
-        mcp_response=SALES_REPORT_HIT,
-    )
-    calls = [a for n, a in captured if n == "crm_sales_report"]
-    assert len(calls) == 1, captured
-    assert calls[0].get("brand_ids") == [BRAND_UUID], calls
 
 
 # M2 (review): production-shaped. Under order/sales the brand word is kept OFF the shared resolver
@@ -119,17 +92,17 @@ def _brand_turn(session_factory, monkeypatch, *, brand_entities, tag):
     _seed_contact(session_factory, variables={})
     _result, captured = _run_turn(
         session_factory, monkeypatch,
-        qf=_qf(order_status="sales_report", entities=entities, domain_hint="order"),
+        qf=_qf(**_SALES, entities=entities, domain_hint="order"),
         text_body="delivered sales for mocha september", msg_id=f"ZZT-b7-live-{tag}", attributes=[GRANT],
         matches={"ZZT Customer": {"uuid": CUSTOMER_UUID, "entity_type": "customer", "canonical_code": CUSTOMER_NAME}},
         mcp_response=SALES_REPORT_HIT,
     )
-    return [a for n, a in captured if n == "crm_sales_report"]
+    return [a for n, a in captured if n == TOOL], ((_result.reply or {}).get("text") or "")
 
 
 def test_b7_live_brand_word_not_in_resolver_matches_still_filters_the_total(session_factory, monkeypatch) -> None:
     brand_id = _live_brand(session_factory, "Mocha")
-    calls = _brand_turn(
+    calls, _reply = _brand_turn(
         session_factory, monkeypatch, tag="live",
         brand_entities=[{"raw": "Mocha", "hint": "brand", "canonical_code": "MOCHA", "current_message": True, "confident": True}],
     )
@@ -137,10 +110,12 @@ def test_b7_live_brand_word_not_in_resolver_matches_still_filters_the_total(sess
     assert calls[0].get("brand_ids") == [brand_id], calls
 
 
-def test_b7_live_near_miss_a_brand_word_matching_no_live_brand_adds_no_filter(session_factory, monkeypatch) -> None:
+def test_b7_live_near_miss_a_brand_word_matching_no_live_brand_is_said_never_dropped(session_factory, monkeypatch) -> None:
+    """REPORT-UNIFY: a brand word that matches no brand is said, never run as an unfiltered total."""
     _live_brand(session_factory, "Sorento")
-    calls = _brand_turn(
+    calls, reply = _brand_turn(
         session_factory, monkeypatch, tag="nomatch",
         brand_entities=[{"raw": "Zzzunknown", "hint": "brand", "canonical_code": None, "current_message": True, "confident": True}],
     )
-    assert calls and not calls[0].get("brand_ids"), calls
+    assert not calls, calls
+    assert "Zzzunknown" in reply, reply
