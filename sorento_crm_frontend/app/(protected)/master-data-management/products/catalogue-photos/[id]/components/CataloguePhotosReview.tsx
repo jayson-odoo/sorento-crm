@@ -58,7 +58,8 @@ export function CataloguePhotosReview({ id }: { id: string }) {
   const inProgress = data.status === 'queued' || data.status === 'reading';
   const ready = data.status === 'ready';
   const toAttach = data.counts.to_attach;
-  const step = data.attached_count > 0 && data.counts.to_attach === 0 ? 'attach' : ready ? 'review' : 'upload';
+  const finished = data.attached_count > 0 && data.counts.to_attach === 0;
+  const step = finished ? 'attach' : ready ? 'review' : 'upload';
   const counts = data.counts;
 
   const tabs: { value: CatalogPhotoTab; label: string; count: number }[] = [
@@ -118,7 +119,7 @@ export function CataloguePhotosReview({ id }: { id: string }) {
         </div>
       </dl>
 
-      <WizardSteps steps={STEPS} currentId={step} className="mb-4 max-w-md" />
+      <WizardSteps steps={STEPS} currentId={step} allDone={finished} className="mb-4 max-w-md" />
 
       {data.status === 'failed' ? (
         <Alert variant="destructive">

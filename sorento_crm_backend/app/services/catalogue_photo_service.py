@@ -251,7 +251,13 @@ def create_from_upload(
     return reading
 
 
-def _finish_job(db: Session, reading: CataloguePhotoReading, *, error: Optional[str] = None) -> None:
+def _finish_job(
+    db: Session,
+    reading: CataloguePhotoReading,
+    *,
+    error: Optional[str] = None,
+    result: Optional[dict] = None,
+) -> None:
     """Best effort: the drawer entry follows the reading; a failure here never changes the reading."""
     if not reading.job_id:
         return
@@ -262,7 +268,11 @@ def _finish_job(db: Session, reading: CataloguePhotoReading, *, error: Optional[
         if error is None:
             count = reading.photo_count or 0
             service.complete_job(
-                reading.job_id, successful_rows=count, processed_rows=count, total_rows=count
+                reading.job_id,
+                result=result,
+                successful_rows=count,
+                processed_rows=count,
+                total_rows=count,
             )
         else:
             service.fail_job(reading.job_id, error)
@@ -328,7 +338,11 @@ def _image_hash_of(attachment: Attachment) -> Optional[str]:
 
 
 def _lookalike(
-    db: Session, product_id: str, photo_hash: str, cache: Optional[dict] = None
+    db: Session,
+    product_id: str,
+    photo_hash: str,
+    cache: Optional[dict] = None,
+    stats: Optional[dict] = None,
 ) -> Optional[tuple[str, int]]:
     """The closest image already linked to the product, within the threshold.
 
@@ -347,6 +361,8 @@ def _lookalike(
         key = str(attachment.id)
         if key not in cache:
             cache[key] = _image_hash_of(attachment)
+            if stats is not None and (attachment.mime_type or "").lower().startswith("image/"):
+                stats["lookalike_compared" if cache[key] else "lookalike_unreadable"] += 1
         existing = cache[key]
         if existing is None:
             continue
@@ -364,7 +380,7 @@ def _photo_name(code: Optional[str], page: int, index_on_page: int, ext: str, us
     return f"{code}{suffix}.{ext}"
 
 
-def process_reading(db: Session, reading: CataloguePhotoReading) -> None:
+def process_reading(db: Session, reading: CataloguePhotoReading) -> dict:
     """Cut every kept photo out of the stored PDF, store it, propose a product.
 
     Raises on failure. Files already uploaded are deleted (best effort) before it does, and the
@@ -411,6 +427,7 @@ def process_reading(db: Session, reading: CataloguePhotoReading) -> None:
 
     uploaded: list = []
     hashes: dict = {}
+    stats = {"lookalike_compared": 0, "lookalike_unreadable": 0, "lookalike_flagged": 0}
     used: dict[str, int] = {}
     per_page: dict[int, int] = {}
     try:
@@ -444,7 +461,11 @@ def process_reading(db: Session, reading: CataloguePhotoReading) -> None:
                     entry = {"id": other.product_id, "product_code": other.product_code}
                     if entry not in others:
                         others.append(entry)
-            duplicate = _lookalike(db, product_id, photo_hash, hashes) if product_id else None
+            duplicate = (
+                _lookalike(db, product_id, photo_hash, hashes, stats) if product_id else None
+            )
+            if duplicate:
+                stats["lookalike_flagged"] += 1
             db.add(
                 CataloguePhoto(
                     id=str(uuid.uuid4()),
@@ -477,6 +498,7 @@ def process_reading(db: Session, reading: CataloguePhotoReading) -> None:
         for provider, key in uploaded:
             storage_router.delete_object_best_effort(provider, key)
         raise
+    return stats
 
 
 # --------------------------------------------------------------------------- #

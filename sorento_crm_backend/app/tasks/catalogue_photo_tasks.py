@@ -38,8 +38,8 @@ def process_catalogue_photo_reading(reading_id: str, *, _db=None) -> dict:
         try:
             reading.status = "reading"
             db.commit()
-            svc.process_reading(db, reading)
-            svc._finish_job(db, reading)
+            stats = svc.process_reading(db, reading)
+            svc._finish_job(db, reading, result=stats if isinstance(stats, dict) else None)
             return {"reading_id": reading_id, "status": "ready"}
         except Exception as exc:  # noqa: BLE001 - the row records it, the queue survives
             db.rollback()
