@@ -85,6 +85,11 @@ def _container_no(text: Optional[str]) -> Optional[str]:
     return found.group(0) if found else None
 
 
+def _for_products(column, product_ids: Optional[list[str]]) -> tuple:
+    """The product predicate of a batched read: these ids, or every product when None."""
+    return () if product_ids is None else (column.in_(product_ids),)
+
+
 def _iso(value: Optional[date]) -> Optional[str]:
     return value.isoformat() if value else None
 
@@ -124,7 +129,7 @@ def stock_status(
 
     sales_orders = _sales_order_rows(db, product_id, so_due_by)
     purchase_orders = _purchase_order_rows(db, product_id)
-    spos = _spo_rows(db, product_id, eta_delay_visible)
+    spos = _spo_rows(db, [product_id], eta_delay_visible)
 
     so_qty: dict[str, float] = defaultdict(float)
     po_qty: dict[str, float] = defaultdict(float)
@@ -168,6 +173,7 @@ def stock_status(
     incoming_pl = _incoming_pl(db, product_id, spos, eta_delay_visible)
     for r in spos:
         r.pop("inbound_shipment_id")
+        r.pop("product_id")
 
     totals = {
         key: sum(loc[key] for loc in locations)
@@ -255,6 +261,18 @@ def _sales_order_rows(db: Session, product_id: str, so_due_by: Optional[date]) -
     return out
 
 
+def po_outstanding_clauses() -> tuple:
+    """Open PO lines still to transfer (`OPEN_PO_SQL`'s rule, `scm.po_ordered_v`), for a query
+    that has joined `PurchaseOrder`. `qty_received` is AutoCount's TransferedQty: what has moved
+    onto an SPO, so the remainder is the PO nobody has shipped against yet."""
+    return (
+        PurchaseOrderLine.warehouse_id.isnot(None),
+        PurchaseOrder.status.in_(OPEN_PO_STATUSES),
+        PurchaseOrderLine.line_status == "open",
+        PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
+    )
+
+
 def _purchase_order_rows(db: Session, product_id: str) -> list[dict]:
     """Open PO lines, `OPEN_PO_SQL`'s rule, still to receive."""
     rows = (
@@ -272,13 +290,7 @@ def _purchase_order_rows(db: Session, product_id: str) -> list[dict]:
         )
         .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
         .outerjoin(Supplier, Supplier.id == PurchaseOrder.supplier_id)
-        .filter(
-            PurchaseOrderLine.product_id == product_id,
-            PurchaseOrderLine.warehouse_id.isnot(None),
-            PurchaseOrder.status.in_(OPEN_PO_STATUSES),
-            PurchaseOrderLine.line_status == "open",
-            PurchaseOrderLine.qty_ordered > PurchaseOrderLine.qty_received,
-        )
+        .filter(PurchaseOrderLine.product_id == product_id, *po_outstanding_clauses())
         .all()
     )
     out = [{
@@ -296,11 +308,13 @@ def _purchase_order_rows(db: Session, product_id: str) -> list[dict]:
     return out
 
 
-def _spo_rows(db: Session, product_id: str, eta_delay_visible: bool) -> list[dict]:
-    """Open SPO rows (`spo_supply.open_incoming_clauses`), allocated less received."""
+def _spo_rows(db: Session, product_ids: Optional[list[str]], eta_delay_visible: bool) -> list[dict]:
+    """Open SPO rows (`spo_supply.open_incoming_clauses`), allocated less received, for these
+    products: the panel asks for one, the stock position report for every item (None)."""
     rows = (
         db.query(
             SPOAllocation.id,
+            SPOAllocation.product_id,
             SPOAllocation.warehouse_id,
             SPOAllocation.spo_number,
             SPOAllocation.spo_line_number,
@@ -317,7 +331,7 @@ def _spo_rows(db: Session, product_id: str, eta_delay_visible: bool) -> list[dic
         )
         .outerjoin(InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id)
         .filter(
-            SPOAllocation.product_id == product_id,
+            *_for_products(SPOAllocation.product_id, product_ids),
             SPOAllocation.warehouse_id.isnot(None),
             *spo_supply.open_incoming_clauses(),
         )
@@ -353,7 +367,9 @@ def _spo_rows(db: Session, product_id: str, eta_delay_visible: bool) -> list[dic
             "container_number": r.container_number,
             "qty": balance,
             "warehouse_id": str(r.warehouse_id),
-            # Internal: which packing list it carries (`_incoming_pl`); popped before returning.
+            # Internal: the item, and which packing list it carries (`_incoming_pl`); the panel
+            # pops both before returning.
+            "product_id": str(r.product_id),
             "inbound_shipment_id": str(r.inbound_shipment_id) if r.inbound_shipment_id else None,
         })
     out.sort(key=lambda d: (d["arrival_date"] is None, d["arrival_date"] or "", d["spo_number"] or ""))
@@ -362,8 +378,18 @@ def _spo_rows(db: Session, product_id: str, eta_delay_visible: bool) -> list[dic
 
 def _incoming_pl(db: Session, product_id: str, spos: list[dict], eta_delay_visible: bool) -> list[dict]:
     """Packing lists still to land, net of the open SPO rows (`spos`, the SPO column) on them (R3)."""
+    return incoming_pl_by_product(db, [product_id], spos, eta_delay_visible).get(str(product_id), [])
+
+
+def incoming_pl_by_product(
+    db: Session, product_ids: Optional[list[str]], spos: list[dict], eta_delay_visible: bool
+) -> dict[str, list[dict]]:
+    """`_incoming_pl` for many items at once: per product id, its packing lists still to land,
+    each net of that item's open SPO rows on it (`spos` carries `product_id`). The netting is
+    per item, exactly as the panel does it for one."""
     lines = (
         db.query(
+            InboundShipmentLine.product_id,
             InboundShipment.id,
             InboundShipment.shipment_number,
             InboundShipment.shipping_container_number,
@@ -374,7 +400,7 @@ def _incoming_pl(db: Session, product_id: str, spos: list[dict], eta_delay_visib
         )
         .join(InboundShipment, InboundShipment.id == InboundShipmentLine.shipment_id)
         .filter(
-            InboundShipmentLine.product_id == product_id,
+            *_for_products(InboundShipmentLine.product_id, product_ids),
             InboundShipmentLine.line_status != "received",
             InboundShipment.actual_arrival_date.is_(None),
             InboundShipment.shipment_status.notin_(_LANDED_SHIPMENT_STATES),
@@ -382,12 +408,12 @@ def _incoming_pl(db: Session, product_id: str, spos: list[dict], eta_delay_visib
         )
         .all()
     )
-    shipments: dict[str, dict] = {}
+    by_product: dict[str, dict[str, dict]] = defaultdict(dict)
     for ln in lines:
         still = max(_num(ln.quantity_shipped) - _num(ln.quantity_received), 0.0)
         if still <= 0:
             continue
-        s = shipments.setdefault(str(ln.id), {
+        s = by_product[str(ln.product_id)].setdefault(str(ln.id), {
             "shipment_id": str(ln.id),
             "shipment_number": ln.shipment_number,
             "container_number": ln.shipping_container_number,
@@ -395,9 +421,17 @@ def _incoming_pl(db: Session, product_id: str, spos: list[dict], eta_delay_visib
             "still_to_land": 0.0,
         })
         s["still_to_land"] += still
-    if not shipments:
-        return []
+    spos_by_product: dict[str, list[dict]] = defaultdict(list)
+    for row in spos:
+        spos_by_product[row["product_id"]].append(row)
+    return {
+        pid: _net_against_spo(shipments, spos_by_product.get(pid, []))
+        for pid, shipments in by_product.items()
+    }
 
+
+def _net_against_spo(shipments: dict[str, dict], spos: list[dict]) -> list[dict]:
+    """One item's packing lists, each net of the SPO rows on it."""
     # A container number can recur across voyages; an unlinked SPO row goes to the earliest
     # still-to-land packing list carrying it. Matched on the number alone, never the text
     # around it (ISO 6346, owner ruling 17 Oct).
