@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { extractApiError } from '@/lib/api-client';
 import { useHasPermission } from '@/hooks/usePermissions';
 
@@ -43,7 +44,6 @@ import ContactCreateDialog from './ContactCreateDialog';
 import ContactDeleteDialog from './ContactDeleteDialog';
 import ContactBulkDeleteDialog from './ContactBulkDeleteDialog';
 import BulkCopyAccessDialog from './BulkCopyAccessDialog';
-import AccessSheetImportDialog from './AccessSheetImportDialog';
 import ApplyTagSettingsDialog from './ApplyTagSettingsDialog';
 import BulkTagDialog from './BulkTagDialog';
 import ContactTagFilters from './ContactTagFilters';
@@ -116,6 +116,7 @@ function yesNoColumn(
 }
 
 export default function ContactsList() {
+  const router = useRouter();
   const queryClient = useQueryClient();
   const canViewUsers = useHasPermission('user_management.users.view');
   const canAddUsers = useHasPermission('user_management.users.add');
@@ -187,7 +188,6 @@ export default function ContactsList() {
   const [bulkDeleteDialogOpen, setBulkDeleteDialogOpen] = useState(false);
   const [bulkCopyDialogOpen, setBulkCopyDialogOpen] = useState(false);
   const [bulkLinkOpen, setBulkLinkOpen] = useState(false);
-  const [accessSheetOpen, setAccessSheetOpen] = useState(false);
   const [bulkTagMode, setBulkTagMode] = useState<'add' | 'remove' | null>(null);
   // Apply tag settings: the selection, or the one row whose menu opened it.
   const [applyIds, setApplyIds] = useState<string[] | null>(null);
@@ -863,7 +863,7 @@ export default function ContactsList() {
                       key: 'import-access-sheet',
                       label: 'Import access sheet',
                       icon: FileSpreadsheet,
-                      onClick: () => setAccessSheetOpen(true),
+                      onClick: () => router.push('/user-management/contacts/access-sheet'),
                     },
                   ]
                 : undefined
@@ -962,7 +962,6 @@ export default function ContactsList() {
         }}
       />
 
-      <AccessSheetImportDialog open={accessSheetOpen} onOpenChange={setAccessSheetOpen} />
 
       <BulkCopyAccessDialog
         open={bulkCopyDialogOpen}

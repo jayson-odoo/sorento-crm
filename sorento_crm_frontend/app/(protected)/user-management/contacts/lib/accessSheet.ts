@@ -23,9 +23,15 @@ export function initialSelection(preview: AccessSheetResult): AccessSheetSelecti
   return { confirmed, ticked };
 }
 
+/** Owner question 27 Oct, built on the crew recommendation: a card whose rows disagree on
+ * companies is left for the admin to confirm by hand. */
+function confirmableExact(block: AccessSheetBlock): boolean {
+  return block.status === 'exact' && !block.warnings.includes('rows_disagree');
+}
+
 export function confirmAllExact(preview: AccessSheetResult, sel: AccessSheetSelection): AccessSheetSelection {
   const confirmed = { ...sel.confirmed };
-  for (const block of preview.blocks) if (block.status === 'exact') confirmed[block.key] = true;
+  for (const block of preview.blocks) if (confirmableExact(block)) confirmed[block.key] = true;
   return { ...sel, confirmed };
 }
 
@@ -49,7 +55,7 @@ export function toConfirmedPayload(sel: AccessSheetSelection): AccessSheetConfir
 }
 
 export function allExactConfirmed(preview: AccessSheetResult, sel: AccessSheetSelection): boolean {
-  const exact = preview.blocks.filter((b) => b.status === 'exact');
+  const exact = preview.blocks.filter(confirmableExact);
   return exact.length > 0 && exact.every((b) => sel.confirmed[b.key]);
 }
 

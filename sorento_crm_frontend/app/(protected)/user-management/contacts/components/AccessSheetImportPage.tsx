@@ -1,23 +1,18 @@
 'use client';
 
 import { Fragment, useState } from 'react';
+import { useRouter } from 'next/navigation';
 import { ChevronDown, ChevronUp, Download, LoaderCircle } from 'lucide-react';
 import { Alert, AlertContent, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
-import {
-  Dialog,
-  DialogBody,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
+import { Card, CardContent } from '@/components/ui/card';
 import { FileDropzone } from '@/components/common/FileDropzone';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { toast } from '@/lib/toast';
 import { saveBlobAs } from '@/lib/save-blob';
+import { ScmPager } from '@/app/(protected)/scm/components/ScmPager';
 import { useCustomerMultiPicker } from '@/app/(protected)/order-management/customers/hooks/useCustomerMultiPicker';
 import type {
   AccessSheetAccount,
@@ -42,6 +37,9 @@ import {
 } from '../lib/accessSheet';
 
 type Step = 'upload' | 'preview' | 'result';
+
+const PAGE_SIZE = 20;
+const LIST_PATH = '/user-management/contact-access-agents';
 
 const BLOCK_BADGE = {
   exact: { label: 'Exact', variant: 'success' },
@@ -87,17 +85,13 @@ function Cell({ children }: { children: React.ReactNode }) {
 }
 
 /**
- * BULK-CONTACT-ACCESS (UAC U11, U13-U15, U20): Import access sheet. Upload the Respond export,
- * read the server's preview (a dry run, nothing written), confirm each dealer's accounts, apply
- * in one call, read the result. A failed read stays on upload; a failed apply stays on preview.
+ * BULK-CONTACT-ACCESS (UAC U11, U13-U15, U20), a page since BULK-ACCESS-PREVIEW (owner 27 Oct):
+ * upload the Respond export, read the server's preview (a dry run, nothing written) page by page,
+ * confirm each dealer's accounts, apply in one call, read the result. A failed read stays on
+ * upload; a failed apply stays on preview. The actions sit in a bar pinned to the bottom.
  */
-export default function AccessSheetImportDialog({
-  open,
-  onOpenChange,
-}: {
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
-}) {
+export default function AccessSheetImportPage() {
+  const router = useRouter();
   const [step, setStep] = useState<Step>('upload');
   const [files, setFiles] = useState<File[]>([]);
   const [preview, setPreview] = useState<AccessSheetResult | null>(null);
@@ -110,28 +104,16 @@ export default function AccessSheetImportDialog({
   const file = files[0] ?? null;
   const busy = previewMutation.isPending || applyMutation.isPending;
 
-  const reset = () => {
-    setStep('upload');
-    setFiles([]);
-    setPreview(null);
-    setResult(null);
-    setSelection(null);
-    setExtraLabels({});
-  };
-  const close = (next: boolean) => {
-    if (!next) reset();
-    onOpenChange(next);
-  };
-
   const runPreview = async () => {
     if (!file) return;
     try {
       const out = await previewMutation.mutateAsync(file);
       setPreview(out);
       setSelection(initialSelection(out));
+      setExtraLabels({});
       setStep('preview');
     } catch {
-      // The hook toasted the reason; the dialog stays on upload.
+      // The hook toasted the reason; the page stays on upload.
     }
   };
 
@@ -142,24 +124,17 @@ export default function AccessSheetImportDialog({
       setResult(out);
       setStep('result');
     } catch {
-      // The hook toasted the reason; the dialog stays on the preview.
+      // The hook toasted the reason; the page stays on the preview.
     }
   };
 
+  const allConfirmed = preview && selection ? allExactConfirmed(preview, selection) : false;
+
   return (
-    <Dialog open={open} onOpenChange={close}>
-      <DialogContent className="max-h-[90dvh] sm:max-w-5xl">
-        <DialogHeader>
-          <DialogTitle>
-            {step === 'upload'
-              ? 'Import access sheet'
-              : step === 'preview'
-                ? `Preview: ${file?.name ?? ''}`
-                : 'Import finished'}
-          </DialogTitle>
-        </DialogHeader>
-        <DialogBody className="space-y-4">
-          {step === 'upload' ? (
+    <div className="space-y-4">
+      {step === 'upload' ? (
+        <Card>
+          <CardContent className="space-y-4 p-4">
             <FileDropzone
               files={files}
               onFilesChange={setFiles}
@@ -178,62 +153,70 @@ export default function AccessSheetImportDialog({
               inputTestId="access-sheet-file"
               aria-label="Access sheet file"
             />
-          ) : null}
-          {busy ? (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <LoaderCircle className="size-4 animate-spin" aria-hidden />
-              {previewMutation.isPending ? 'Reading the file...' : 'Applying...'}
-            </div>
-          ) : null}
-          {step === 'preview' && preview && selection ? (
-            <PreviewStep
-              preview={preview}
-              selection={selection}
-              onChange={setSelection}
-              extraLabels={extraLabels}
-              onExtraLabels={(found) => setExtraLabels((prev) => ({ ...prev, ...found }))}
-            />
-          ) : null}
-          {step === 'result' && result ? <ResultStep result={result} /> : null}
-        </DialogBody>
-        <DialogFooter>
-          {step === 'upload' ? (
-            <>
-              <Button variant="outline" onClick={() => close(false)}>
-                Cancel
-              </Button>
-              <Button onClick={() => void runPreview()} disabled={!file || busy}>
-                Preview
-              </Button>
-            </>
-          ) : null}
-          {step === 'preview' ? (
-            <>
-              <Button variant="outline" onClick={() => setStep('upload')} disabled={busy}>
-                Back
-              </Button>
-              <Button onClick={() => void runApply()} disabled={busy}>
-                Apply access
-              </Button>
-            </>
-          ) : null}
-          {step === 'result' && result ? (
-            <>
-              <Button
-                variant="outline"
-                onClick={() =>
-                  saveBlobAs(new Blob([resultCsv(result)], { type: 'text/csv;charset=utf-8' }), 'access-sheet-result.csv')
-                }
-              >
-                <Download className="size-4" />
-                Download result
-              </Button>
-              <Button onClick={() => close(false)}>Done</Button>
-            </>
-          ) : null}
-        </DialogFooter>
-      </DialogContent>
-    </Dialog>
+          </CardContent>
+        </Card>
+      ) : null}
+      {busy ? (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <LoaderCircle className="size-4 animate-spin" aria-hidden />
+          {previewMutation.isPending ? 'Reading the file...' : 'Applying...'}
+        </div>
+      ) : null}
+      {step === 'preview' && preview && selection ? (
+        <PreviewStep
+          preview={preview}
+          selection={selection}
+          onChange={setSelection}
+          extraLabels={extraLabels}
+          onExtraLabels={(found) => setExtraLabels((prev) => ({ ...prev, ...found }))}
+        />
+      ) : null}
+      {step === 'result' && result ? <ResultStep result={result} /> : null}
+      <div className="sticky bottom-0 z-10 -mx-1 flex flex-wrap items-center justify-end gap-2 border-t bg-background px-1 py-3">
+        {step === 'upload' ? (
+          <>
+            <Button variant="outline" onClick={() => router.push(LIST_PATH)}>
+              Cancel
+            </Button>
+            <Button onClick={() => void runPreview()} disabled={!file || busy}>
+              Preview
+            </Button>
+          </>
+        ) : null}
+        {step === 'preview' && preview && selection ? (
+          <>
+            <Button
+              variant="outline"
+              className="me-auto"
+              disabled={preview.counts.blocks_exact === 0 || allConfirmed}
+              onClick={() => setSelection(confirmAllExact(preview, selection))}
+            >
+              {allConfirmed ? 'All exact confirmed' : 'Confirm all exact'}
+            </Button>
+            <Button variant="outline" onClick={() => setStep('upload')} disabled={busy}>
+              Back
+            </Button>
+            <Button onClick={() => void runApply()} disabled={busy}>
+              Apply access
+            </Button>
+          </>
+        ) : null}
+        {step === 'result' && result ? (
+          <>
+            <Button
+              variant="outline"
+              onClick={() =>
+                saveBlobAs(new Blob([resultCsv(result)], { type: 'text/csv;charset=utf-8' }), 'access-sheet-result.csv')
+              }
+            >
+              <Download className="size-4" />
+              Download result
+            </Button>
+            <Button onClick={() => router.push(LIST_PATH)}>Done</Button>
+          </>
+        ) : null}
+      </div>
+    </div>
   );
 }
 
@@ -263,31 +246,19 @@ function PreviewStep({
   onExtraLabels: (found: Record<string, string>) => void;
 }) {
   const { counts } = preview;
-  const allConfirmed = allExactConfirmed(preview, selection);
   return (
     <div className="space-y-3">
-      <div className="flex flex-wrap items-center gap-2">
-        <Chips
-          items={[
-            `${counts.rows} contacts in sheet`,
-            `${counts.contacts_found} found in CRM`,
-            counts.not_in_crm ? `${counts.not_in_crm} not in CRM yet` : null,
-            counts.ambiguous ? `${counts.ambiguous} with a shared phone` : null,
-            counts.row_errors ? `${counts.row_errors} rows with errors` : null,
-            counts.already_configured ? `${counts.already_configured} already have access` : null,
-            `${counts.blocks} dealers`,
-          ]}
-        />
-        <span className="flex-1" />
-        <Button
-          variant="outline"
-          size="sm"
-          disabled={counts.blocks_exact === 0 || allConfirmed}
-          onClick={() => onChange(confirmAllExact(preview, selection))}
-        >
-          {allConfirmed ? 'All exact confirmed' : 'Confirm all exact'}
-        </Button>
-      </div>
+      <Chips
+        items={[
+          `${counts.rows} contacts in sheet`,
+          `${counts.contacts_found} found in CRM`,
+          counts.not_in_crm ? `${counts.not_in_crm} not in CRM yet` : null,
+          counts.ambiguous ? `${counts.ambiguous} with a shared phone` : null,
+          counts.row_errors ? `${counts.row_errors} rows with errors` : null,
+          counts.already_configured ? `${counts.already_configured} already have access` : null,
+          `${counts.blocks} dealers`,
+        ]}
+      />
       {preview.errors.length ? (
         <ul className="space-y-0.5 text-xs text-muted-foreground">
           {preview.errors.map((e) => (
@@ -340,13 +311,19 @@ function BlockList({
   extraLabels?: Record<string, string>;
   onExtraLabels?: (found: Record<string, string>) => void;
 }) {
-  const [openKeys, setOpenKeys] = useState<Record<string, boolean>>(() =>
-    blocks[0] ? { [blocks[0].key]: true } : {},
+  // Every card starts open: the page scrolls, so nothing is hidden behind a click.
+  const [closedKeys, setClosedKeys] = useState<Record<string, boolean>>({});
+  const [page, setPage] = useState(1);
+  const pageCount = Math.max(1, Math.ceil(blocks.length / PAGE_SIZE));
+  const shown = blocks.slice((page - 1) * PAGE_SIZE, page * PAGE_SIZE);
+  const pager = (
+    <ScmPager page={page} pageCount={pageCount} total={blocks.length} unit="dealer" onPageChange={setPage} />
   );
   return (
-    <div className="max-h-[60dvh] space-y-2 overflow-auto">
-      {blocks.map((block) => {
-        const isOpen = !!openKeys[block.key];
+    <div className="space-y-2">
+      {pager}
+      {shown.map((block) => {
+        const isOpen = !closedKeys[block.key];
         const badge = BLOCK_BADGE[block.status];
         return (
           <div key={block.key} className="rounded-lg border">
@@ -362,7 +339,7 @@ function BlockList({
                 type="button"
                 className="flex min-w-0 flex-1 items-center gap-2 text-start"
                 aria-expanded={isOpen}
-                onClick={() => setOpenKeys((prev) => ({ ...prev, [block.key]: !isOpen }))}
+                onClick={() => setClosedKeys((prev) => ({ ...prev, [block.key]: isOpen }))}
               >
                 <span className="min-w-0 break-words font-medium">
                   {block.dealer}
@@ -408,6 +385,7 @@ function BlockList({
           </div>
         );
       })}
+      {pageCount > 1 ? pager : null}
     </div>
   );
 }

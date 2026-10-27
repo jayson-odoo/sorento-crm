@@ -438,11 +438,11 @@ describe('AccessSheetImportPage', () => {
     await screen.findByText('DEALER 01 SDN BHD');
     expect(screen.getByText('DEALER 20 SDN BHD')).toBeInTheDocument();
     expect(screen.queryByText('DEALER 21 SDN BHD')).toBeNull();
-    expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
-    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(screen.getAllByText(/Page 1 of 2/)).toHaveLength(2);
+    fireEvent.click(screen.getAllByRole('button', { name: 'Next page' })[0]); // pager above and below the cards
     expect(await screen.findByText('DEALER 21 SDN BHD')).toBeInTheDocument();
     expect(screen.queryByText('DEALER 01 SDN BHD')).toBeNull();
-    expect(screen.getByText(/Page 2 of 2/)).toBeInTheDocument();
+    expect(screen.getAllByText(/Page 2 of 2/)).toHaveLength(2);
   });
 
   it('page: a dealer confirmed on page 2 and Confirm all exact on page 1 are both sent', async () => {
@@ -453,9 +453,9 @@ describe('AccessSheetImportPage', () => {
     pickFile();
     fireEvent.click(screen.getByRole('button', { name: /^Preview/ }));
     await screen.findByText('DEALER 01 SDN BHD');
-    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Next page' })[0]); // pager above and below the cards
     fireEvent.click(await screen.findByRole('checkbox', { name: /confirm DEALER 23/i }));
-    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    fireEvent.click(screen.getAllByRole('button', { name: 'Previous page' })[0]);
     await screen.findByText('DEALER 01 SDN BHD');
     fireEvent.click(screen.getByRole('button', { name: /confirm all exact/i }));
     fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
