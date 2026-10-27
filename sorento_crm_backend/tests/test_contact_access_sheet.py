@@ -396,12 +396,12 @@ def _expected(w, companies, role):
         brands |= {w.brands["S1"], w.brands["S2"]}
         wh |= {w.wh["BRW"], w.wh["MWH"]}
     if "MCH" in companies:
-        brands |= {w.brands["M1"], w.brands["M2"]}
         wh |= {w.wh["HQ"], w.wh["MOCHA-WH"]}
     return {
         "types": sorted(types),
         "companies": sorted(w.co[c] for c in companies),
-        "brands": sorted(brands),
+        # ACCESS-SHEET-FIXES (owner 27 Oct): a contact holding MCH keeps every brand (NULL).
+        "brands": None if "MCH" in companies else sorted(brands),
         "warehouses": sorted(wh),
     }
 
@@ -556,7 +556,7 @@ def test_u4_u6_template_per_company_and_role(client, db, w, companies, role):
 
     assert s["types"] == want["types"], "U4 access types"
     assert s["companies"] == want["companies"], "U5 companies = the row's companies"
-    assert s["brands"] == want["brands"], "U5 brands = active brands whose dealer_company_id is a row company"
+    assert s["brands"] == want["brands"], "U5 brands = the row companies' dealer brands; every brand once MCH is held"
     assert s["stock"] == {
         "mode": "availability", "warehouses": want["warehouses"], "excluded": None, "hide_zero": False,
     }, "U5 locations by warehouse code per company"
@@ -583,11 +583,40 @@ def test_u5_inactive_and_other_company_brands_never_added(client, db, w):
     assert w.brands["P1"] not in brands and w.brands["OWN-MCH"] not in brands
 
 
-def test_u5_mocha_only_row_gets_exactly_the_mocha_dealer_brands(client, db, w):
+def test_u5_mocha_only_row_keeps_every_brand(client, db, w):
+    """ACCESS-SHEET-FIXES (owner 27 Oct: "give back every brands for all the mocha contacts")."""
     _dealer(db, w, companies=("MCH",))
     cid = _contact(db, w, 1)
-    _apply_all(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["MCH"], EMPLOYEE))]))
-    assert _state(db, w, cid)["brands"] == sorted([w.brands["M1"], w.brands["M2"]])
+    _, result = _apply_all(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["MCH"], EMPLOYEE))]))
+    assert _state(db, w, cid)["brands"] is None
+    assert not [c for c in _by_name(result)["ZZT Ann"]["changes"] if c["facet"] == "brands"]
+
+
+def test_u5_srt_and_mch_row_on_every_brand_is_not_narrowed(client, db, w):
+    _dealer(db, w)
+    cid = _contact(db, w, 1, brand_ids=None)
+    body = _post(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT", "MCH"], OWNER))])).json()
+    assert not [c for c in _by_name(body)["ZZT Ann"]["changes"] if c["facet"] == "brands"], "no narrowing"
+    _apply_all(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT", "MCH"], OWNER))]))
+    assert _state(db, w, cid)["brands"] is None
+
+
+def test_u5_a_narrowed_contact_that_holds_mch_goes_back_to_every_brand(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    cid = _contact(db, w, 1, companies=[w.mch], brand_ids=[w.brands["S1"], w.brands["S2"]])
+    body = _post(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])).json()
+    (change,) = [c for c in _by_name(body)["ZZT Ann"]["changes"] if c["facet"] == "brands"]
+    assert change["after"] == "every brand"
+    assert change["before"] == ["ZZT ZSB-1", "ZZT ZSB-2"]
+    _apply_all(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))]))
+    assert _state(db, w, cid)["brands"] is None
+
+
+def test_u5_srt_only_contact_without_mch_still_narrows_to_the_srt_brands(client, db, w):
+    _dealer(db, w, companies=("SRT",))
+    cid = _contact(db, w, 1, brand_ids=None)
+    _apply_all(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))]))
+    assert _state(db, w, cid)["brands"] == sorted([w.brands["S1"], w.brands["S2"]])
 
 
 def test_u7_a_brand_outside_the_template_is_kept_and_warns_holds_more(client, db, w):

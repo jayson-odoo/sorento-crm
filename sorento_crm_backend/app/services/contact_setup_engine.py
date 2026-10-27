@@ -171,13 +171,23 @@ def _plan_contact(
                        "set" if loc_changed else "already", loc_changed))
     todo["stock"] = (mode_changed or loc_changed, None if keep_all else include_ids, hide)
 
-    # brands (sheet template only): NULL -> the template set; a set list -> union, never removed
+    # brands (sheet template only): NULL -> the template set; a set list -> union, never removed.
+    # A contact that holds (or is given) a company in `world["every_brand_company_ids"]` keeps
+    # every brand instead: NULL stays NULL, a narrowed list goes back to NULL (owner 27 Oct).
     if "brands" in world:
         want_brands = sorted({b for c in d.companies for b in world["brands"].get(c, ())})
         held_brands = list(snap.brands)
         label = {**names.brands, **world.get("brand_names", {})}
         add_brands = sorted(set(want_brands) - set(held_brands)) if want_brands else []
-        if add_brands:
+        held_after = set(snap.companies) | (set() if "companies" in skip else want_ids)
+        if set(world.get("every_brand_company_ids", ())) & held_after:
+            if held_brands:
+                out.append(_change(contact, d, "brands", sorted(label.get(b, "other brand") for b in held_brands),
+                                   "every brand", "set", True))
+                todo["brands_every"] = True
+            else:
+                out.append(_change(contact, d, "brands", "every brand", "every brand", "already", False))
+        elif add_brands:
             after_brands = sorted({*held_brands, *want_brands})
             out.append(_change(contact, d, "brands",
                                sorted(label.get(b, "other brand") for b in held_brands) if held_brands else "every brand",
@@ -261,7 +271,11 @@ def _apply_contact(db, contact, d: Desired, todo: dict, rules: dict, actor_id: O
             row.warehouse_ids = list(include_ids)
         row.excluded_warehouse_ids = None
         row.hide_zero_locations = hide
-    if todo.get("brands"):
+    if todo.get("brands_every"):
+        db.query(RespondContact).filter(RespondContact.id == cid).update(
+            {"brand_ids": None}, synchronize_session=False
+        )
+    elif todo.get("brands"):
         db.query(RespondContact).filter(RespondContact.id == cid).update(
             {"brand_ids": todo["brands"]}, synchronize_session=False
         )

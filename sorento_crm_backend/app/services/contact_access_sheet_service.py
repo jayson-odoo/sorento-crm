@@ -56,6 +56,9 @@ TEMPLATE: dict[str, Any] = {
     "switches_off": ["escalation_allowed", "packing_list_allowed"],
 }
 COMPANY_ORDER = ("SRT", "MCH")
+#: A contact holding one of these companies keeps every brand: the import never narrows its
+#: brands, and a narrowed list goes back to every brand (owner 27 Oct, ACCESS-SHEET-FIXES).
+EVERY_BRAND_COMPANIES = ("MCH",)
 OWNER_WORDS = {"business owner": "owner", "employee": "employee"}
 CONTACT_COLUMNS = engine.CONTACT_COLUMNS + (
     RespondContact.brand_ids, RespondContact.chatbot_allowed, RespondContact.regions,
@@ -216,6 +219,11 @@ def _world(db: Session, used: set) -> dict:
         names[str(brand.id)] = brand.brand_name
     world["brands"] = {c: sorted(ids) for c, ids in by_company.items()}
     world["brand_names"] = names
+    # By code from the companies table, not the sheet's world: a contact may hold MCH already
+    # while the sheet tags SRT alone.
+    world["every_brand_company_ids"] = {
+        str(r[0]) for r in db.query(Company.id).filter(Company.code.in_(EVERY_BRAND_COMPANIES))
+    }
     return world
 
 
@@ -477,7 +485,9 @@ def _holds_more_items(snap, tpl: dict, names: Names, world: dict) -> list[dict]:
          lambda i: company_code.get(i) or names.companies.get(i, (None, None))[0] or "other company"),
         ("stock_locations", held_locations - tpl["locations"],
          lambda i: warehouse_code.get(i) or names.warehouses.get(i) or "other location"),
-        ("brands", set(snap.brands) - tpl["brands"],
+        # A contact that keeps every brand holds nothing extra there.
+        ("brands", set() if world["every_brand_company_ids"] & (set(snap.companies) | tpl["companies"])
+         else set(snap.brands) - tpl["brands"],
          lambda i: world["brand_names"].get(i) or names.brands.get(i) or "other brand"),
     )
     return [{"facet": f, "items": sorted(label(i) for i in extra)} for f, extra, label in facets if extra]
