@@ -158,11 +158,15 @@ Why: today the list vectors are embedded lazily by the first turn (`lookup_lists
   `tests/conftest.py` turns it off like `CHATBOT_INBOX_SWEEPER_ENABLED`. The warm reads row texts only, in its own
   read session with company scope None (all companies; the texts go only to the per-process vector cache and to the
   same embedding provider a turn already sends them to), and closes the session before embedding.
-- **AC-S3-13 [BE]** (measured 27 Oct 11:2x: a 4,652-text warm on gemini-embedding-001 got HTTP 429 part-way, twice,
-  even paced at one 100-text request per 3 s; one request right after succeeded, so it is a per-minute limit, about
-  30k tokens a minute on the org key by estimate, UNVERIFIED) The background warm (`fill`) retries a chunk that hits a
-  rate limit (Gemini 429, or an OpenAI RateLimitError) after 15, 30 and 60 s, then gives up on that chunk; chunks
-  already stored stay cached; other errors are not retried. The turn path never retries and never sleeps.
+- **AC-S3-13 [BE]** (measured 27 Oct 11:2x-11:3x on ONE process: a 4,652-text warm on gemini-embedding-001 got HTTP
+  429 part-way three times, even at ~1.5k texts a minute; a single request right after succeeded; the exact limit is
+  UNVERIFIED) The background warm (`fill`) retries a chunk that hits a rate limit (`llm_call.is_rate_limited`, not an
+  out-of-credit 429) after 15, 30 and 60 s, each stretched by a random 0-50% so the 4 workers of a container do not
+  retry in lockstep; after the last wait the fill stops (texts already stored stay cached, the next turn's lazy warm
+  goes on). Other errors are not retried. The turn path never retries and never sleeps. Before the production label
+  moves to Gemini, a 4-worker start must be checked (4 warms start at once).
 - **AC-S3-14 [BE]** A finished warm logs one INFO line naming the embedder model, the texts cached and the seconds
   taken ("lookup lists warm: N texts cached on <model> in S s"), so the copy's log shows which embedder is live; a
   failed warm logs a WARNING.
+- **AC-S3-15 [BE]** `warm` does nothing when every text is already cached: no thread, no log line (every turn
+  calls it; the reviewer saw three "texts cached ... in 0.0 s" lines after one request).
