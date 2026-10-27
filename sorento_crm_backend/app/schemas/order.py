@@ -93,6 +93,8 @@ class CustomerResponse(CustomerBase):
     customer_group_id: Optional[str] = None
     customer_group_name: Optional[str] = None
     debtor_type: Optional[DebtorTypeValue] = None
+    # AutoCount `Debtor.DebtorType` (SALES-UNIFIED 2.3), read-only: the master ingest writes it.
+    autocount_debtor_type: Optional[str] = None
     # Shown as columns on a sales agent's Customers tab.
     region: Optional[str] = None
     market_segment_code: Optional[str] = None

@@ -109,6 +109,9 @@ class Column:
     #: A ratio measure: (numerator key, denominator key) of two other measures. Computed
     #: AFTER aggregation from their sums, in every cell and total; `expr` is not read.
     ratio_of: Optional[Tuple[str, str]] = None
+    #: How this dimension's blank bucket READS ("(no agent)"): it stays the blank bucket (last
+    #: in every order, one row), only its label changes (SALES-UNIFIED).
+    blank_label: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.agg not in AGGS:

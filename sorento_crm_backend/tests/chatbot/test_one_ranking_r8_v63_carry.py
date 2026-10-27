@@ -15,7 +15,7 @@ from tests.chatbot.test_report_ask_lane import PRODUCT_CODE, SEP, TOOL, _e, _nam
 SALES_REPORT_TOOL = "crm_sales_report"
 HOW_MANY = "How many? For example top 5."
 PERIOD_Q = "Which period?"
-BASIS_Q = "Delivered, ordered or outstanding?"
+BASIS_Q = "Invoiced, delivered, ordered or outstanding?"
 FILL = {"mode": "fill", "items": [], "picked": [], "qty_for_all": None}
 OTHER_CODE = "ZZTREIGHT1"
 

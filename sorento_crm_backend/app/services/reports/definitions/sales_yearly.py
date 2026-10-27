@@ -53,7 +53,9 @@ def _of(ctx):
 
 
 #: On the order bases, a sales type -> the sales order demand class it reads (None: blank).
-_ORDER_CLASSES = {inv.DEALER: "retail", inv.PROJECT: "project", inv.TYPE_NOT_SET: None}
+_ORDER_CLASSES = {
+    inv.DEALER: "retail", inv.PROJECT: "project", inv.OTHER: "other", inv.TYPE_NOT_SET: None,
+}
 
 
 def _channel_condition(ctx, values):

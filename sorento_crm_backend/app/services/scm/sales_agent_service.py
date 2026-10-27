@@ -192,11 +192,23 @@ def set_demand_class(db: Session, code: str, demand_class: Optional[str]) -> Sal
             status_code=404,
             message=f"No sales agent is held under the code {normalize_code(code)!r}.",
         )
-    agent.demand_class = demand_class
-    db.flush()
+    _write_class(db, agent, demand_class)
+    return agent
+
+
+def _write_class(db: Session, agent: SalesAgent, demand_class: Optional[str]) -> None:
+    """The agent's class is now `demand_class`: written as its dated rows
+    (`sales.agent_classes`, SALES-UNIFIED Q6 (a)), which mirror onto `agent.demand_class` and
+    re-derive the agent's orders from the change; then the agent's still-unclassified orders
+    are filled as before."""
+    from app.services.sales import agent_class_service
+
+    agent_class_service.set_current(
+        db, str(agent.id), demand_class, today=agent_class_service.today_malaysia()
+    )
+    db.refresh(agent)
     if demand_class:
         _backfill_null_class_orders(db, agent, demand_class)
-    return agent
 
 
 def normalize_location_group(value: Optional[str]) -> Optional[str]:
@@ -257,10 +269,7 @@ def annotate(
     """
     if write_demand_class:
         assert_demand_class(demand_class)
-        agent.demand_class = demand_class
-        db.flush()
-        if demand_class:
-            _backfill_null_class_orders(db, agent, demand_class)
+        _write_class(db, agent, demand_class)
     if write_person_label:
         cleaned = (person_label or "").strip()
         agent.person_label = cleaned or None

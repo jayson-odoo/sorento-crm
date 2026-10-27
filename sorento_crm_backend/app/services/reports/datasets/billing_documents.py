@@ -90,7 +90,7 @@ COLUMNS: Tuple[reg.Column, ...] = (
                lambda c: sa.func.coalesce(SalesAgent.sales_agent, BillingDocument.agent_code),
                size=140),
     reg.Column("sales_agent", "Sales agent", "text", "dimension",
-               lambda c: sa.func.coalesce(inv.agent_label(), inv.NO_AGENT), size=140),
+               lambda c: inv.agent_label(), size=140, blank_label=inv.NO_AGENT),
     reg.Column("debtor_type", "Debtor type", "text", "dimension",
                lambda c: inv.debtor_type(), size=120),
     reg.Column("channel", "Channel", "text", "dimension",

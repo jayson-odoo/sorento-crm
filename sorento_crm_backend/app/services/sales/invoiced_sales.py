@@ -47,6 +47,7 @@ NO_AGENT = "(no agent)"
 
 DEALER = "dealer"
 PROJECT = "project"
+OTHER = "other"
 SET_APART = "set_apart"
 MIXED = "mixed"
 TYPE_NOT_SET = "type_not_set"
@@ -56,6 +57,7 @@ NO_SALES_ORDER = "no_sales_order"
 SALES_TYPES: Tuple[Tuple[str, str], ...] = (
     (DEALER, "Dealer"),
     (PROJECT, "Project team"),
+    (OTHER, "Other"),
     (SET_APART, "Set apart"),
     (MIXED, "Mixed sales order types"),
     (TYPE_NOT_SET, "Sales order type not set"),
@@ -64,10 +66,11 @@ SALES_TYPES: Tuple[Tuple[str, str], ...] = (
 SALES_TYPE_LABELS = dict(SALES_TYPES)
 
 #: A sales order's `demand_class` -> the sales type it gives an invoice.
-_CLASS_TYPES = {"retail": DEALER, "project": PROJECT}
+_CLASS_TYPES = {"retail": DEALER, "project": PROJECT, "other": OTHER}
 
 #: The words the order-based callers use for a channel, read as the sales type they mean.
 CHANNEL_ALIASES = {"retail": DEALER, "dealer": DEALER, "project": PROJECT}
+# (`other` is its own value in both vocabularies.)
 
 
 # ------------------------------------------------------------------------------ the figure
@@ -109,7 +112,7 @@ def _agent_source() -> Any:
     return (
         sa.select(company.sales_agent_source)
         .where(company.id == BillingDocument.company_id)
-        .scalar_subquery()
+        .correlate(BillingDocument).scalar_subquery()
     )
 
 
@@ -120,7 +123,7 @@ def agent_id() -> Any:
     customer_agent = (
         sa.select(customer.sales_agent_id)
         .where(customer.id == BillingDocument.customer_id)
-        .scalar_subquery()
+        .correlate(BillingDocument).scalar_subquery()
     )
     return sa.case(
         (_agent_source() == AGENT_FROM_CUSTOMER, customer_agent),
@@ -132,7 +135,7 @@ def agent_label() -> Any:
     """The agent's code; on the document setting an unresolved code shows as AutoCount sent it;
     NULL (the pivot's blank) when there is none."""
     agent = aliased(SalesAgent)
-    code = sa.select(agent.sales_agent).where(agent.id == agent_id()).scalar_subquery()
+    code = sa.select(agent.sales_agent).where(agent.id == agent_id()).correlate(BillingDocument).scalar_subquery()
     as_sent = sa.case(
         (_agent_source() == AGENT_FROM_CUSTOMER, sa.null()),
         else_=sa.func.nullif(sa.func.btrim(BillingDocument.agent_code), ""),
@@ -155,7 +158,7 @@ def debtor_type() -> Any:
     return (
         sa.select(customer.autocount_debtor_type)
         .where(customer.id == BillingDocument.customer_id)
-        .scalar_subquery()
+        .correlate(BillingDocument).scalar_subquery()
     )
 
 
@@ -187,6 +190,7 @@ def _traced_sales_order_ids(document_id: Any, company_id: Any) -> Any:
     # `relations_for_billing_document` resolves it), then that DO's own sales orders.
     do_ids = (
         sa.select(do.id)
+        .correlate(BillingDocument)
         .join(line, sa.and_(line.from_doc_type == "DO", line.from_doc_no == do.order_number))
         .where(
             line.document_id == document_id,
@@ -213,7 +217,12 @@ def _traced_sales_order_ids(document_id: Any, company_id: Any) -> Any:
     via_do_header = sa.select(do.sales_order_id).where(
         do.id.in_(do_ids), do.sales_order_id.isnot(None)
     )
-    return sa.union(via_line, via_so_number, via_do_line, via_do_number, via_do_header)
+    return sa.union(
+        *(
+            part.correlate(BillingDocument)
+            for part in (via_line, via_so_number, via_do_line, via_do_number, via_do_header)
+        )
+    )
 
 
 def _sales_order_class_kind(in_traced: Any) -> Any:
@@ -234,7 +243,7 @@ def _sales_order_class_kind(in_traced: Any) -> Any:
             )
         )
         .where(in_traced(so.id))
-        .scalar_subquery()
+        .correlate(BillingDocument).scalar_subquery()
     )
 
 
@@ -243,7 +252,7 @@ def in_traced_sales_orders(so_id: Any) -> Any:
     orders, else (a credit or debit note with no traced line) its invoice's."""
     own = _traced_sales_order_ids(BillingDocument.id, BillingDocument.company_id)
     has_own = (
-        sa.select(sa.func.count()).select_from(own.subquery("own_ids")).scalar_subquery() > 0
+        sa.select(sa.func.count()).select_from(own.subquery("own_ids")).correlate(BillingDocument).scalar_subquery() > 0
     )
     inherited = _traced_sales_order_ids(
         BillingDocument.against_document_id, BillingDocument.company_id
@@ -263,7 +272,7 @@ def _set_apart() -> Any:
             row.customer_id == BillingDocument.customer_id,
             row.from_month <= month,
             sa.or_(row.to_month.is_(None), row.to_month >= month),
-        )
+        ).correlate(BillingDocument)
     )
 
 
@@ -302,3 +311,41 @@ def normalise_sales_types(values: List[str]) -> List[str]:
 
 def sales_type_filter(values: List[str]) -> Optional[Any]:
     return sales_type().in_(normalise_sales_types(values))
+
+
+# ------------------------------------------------------------------------ entry points
+
+
+def quantity_by_product_month(
+    db: Any,
+    since: Any,
+    until: Any,
+    product_ids: Optional[List[str]] = None,
+) -> List[Tuple[str, str, Any]]:
+    """`(product_id, 'YYYY-MM', signed quantity)` over posted invoice, cash sale, debit note and
+    credit note lines (a credit note negative), `since <= doc_date < until`, lines with a
+    product only, in the session's company scope; `product_ids` None = every product. Every
+    sales type counts. The stock position report's Monthly sales and Highest per month read
+    this (STOCK-POSITION-REPORT #1913, owner ruling 27 Oct: one shared sales function)."""
+    month = sa.func.to_char(BillingDocument.doc_date, "YYYY-MM")
+    q = (
+        sa.select(
+            BillingDocumentLine.product_id,
+            month.label("month"),
+            sa.func.sum(signed_line_quantity()).label("quantity"),
+        )
+        .join(BillingDocument, BillingDocument.id == BillingDocumentLine.document_id)
+        .where(
+            posted(),
+            BillingDocumentLine.product_id.isnot(None),
+            BillingDocument.doc_date >= since,
+            BillingDocument.doc_date < until,
+        )
+        .group_by(BillingDocumentLine.product_id, month)
+        .order_by(BillingDocumentLine.product_id, month)
+    )
+    if product_ids is not None:
+        if not product_ids:
+            return []
+        q = q.where(BillingDocumentLine.product_id.in_(product_ids))
+    return [(str(p), str(m), qty) for p, m, qty in db.execute(q).all()]

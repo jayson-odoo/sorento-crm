@@ -869,7 +869,9 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
         title=layout.title,
         row_dim=ReportPivotDimension(key=row_column.key, label=row_column.label),
         row_value_labels=(
-            _value_labels(row_column, row_values) if row_column.fixed_values else None
+            _value_labels(row_column, row_values)
+            if row_column.fixed_values or row_column.blank_label
+            else None
         ),
         col_dim=ReportPivotColumnDimension(
             key=col_column.key,
@@ -927,6 +929,13 @@ def _axis_values(
 
 
 def _value_labels(column: reg.Column, values: List[str]) -> Optional[Dict[str, str]]:
+    labels = _plain_value_labels(column, values)
+    if column.blank_label and BLANK_VALUE in values:
+        labels = {**(labels or {}), BLANK_VALUE: column.blank_label}
+    return labels
+
+
+def _plain_value_labels(column: reg.Column, values: List[str]) -> Optional[Dict[str, str]]:
     if column.fixed_values is not None:
         labels = dict(column.fixed_values)
         return {value: labels.get(value, value) for value in values}

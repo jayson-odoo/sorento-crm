@@ -206,6 +206,24 @@ register(
 )
 
 
+def _delete_set_apart_customer(db: Session, payload: dict):
+    from app.services.sales import set_apart_service
+
+    return set_apart_service.delete_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_set_apart.delete",
+        entity_types=("sales_set_apart",),
+        execute=_delete_set_apart_customer,
+        window=WINDOW_DESTRUCTIVE,
+        permission="sales.set_apart.edit",
+        label="Remove set-apart customer",
+    )
+)
+
+
 def _delete_sales_opportunity(db: Session, payload: dict):
     from app.services.sales import opportunity_service
 

@@ -94,8 +94,8 @@ def test_r7_5_guard_a_typed_count_on_the_total_answer_changes_nothing(console, m
 
 # ------------------------------------------------ review: a reply that fills no owed field is not the answer
 
-BASIS_ONLY = "Delivered, ordered or outstanding?"
-SWAP_ASKS = "1. How many? For example top 5.\n2. Delivered, ordered or outstanding?"
+BASIS_ONLY = "Invoiced, delivered, ordered or outstanding?"
+SWAP_ASKS = "1. How many? For example top 5.\n2. Invoiced, delivered, ordered or outstanding?"
 
 
 def _delivered(console, monkeypatch):

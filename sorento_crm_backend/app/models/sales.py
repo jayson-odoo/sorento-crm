@@ -672,3 +672,53 @@ class SetApartCustomer(CompanyScopedMixin, Base):
         Index("ix_sales_set_apart_customers_company_customer", "company_id", "customer_id"),
         {"schema": SCHEMA},
     )
+
+
+class SalesAgentClass(Base):
+    """An agent's demand class for a run of months (SALES-UNIFIED round 3, owner ruling Q6
+    (a)): `retail` (Dealer), `project` (Project team) or `other`. A sales order takes the
+    class in effect on its own date, so moving an agent re-decides only the months it covers.
+
+    `from_month` NULL is "from the beginning" (the agent's first class), `to_month` NULL is
+    open; both are first days of a month. One open row per agent, no two rows of one agent
+    overlap (checked in `agent_class_service`, the only writer). Not company-scoped: the agent
+    master it hangs on is a shared row (`sales_agents.company_id` NULL), and so is its class.
+    `sales_agents.demand_class` mirrors the open row for the readers that want "now".
+    """
+
+    __tablename__ = "agent_classes"
+    __audit_track__ = True
+    __audit_entity_type__ = "sales_agent_classes"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    sales_agent_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey("sales_agents.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    demand_class = Column(String(32), nullable=False)
+    from_month = Column(Date, nullable=True)
+    to_month = Column(Date, nullable=True)
+    created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
+    updated_at = Column(
+        DateTime(timezone=False), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    __table_args__ = (
+        CheckConstraint(
+            "from_month IS NULL OR to_month IS NULL OR to_month >= from_month",
+            name="ck_sales_agent_classes_months",
+        ),
+        CheckConstraint(
+            "demand_class IN ('project', 'retail', 'other')",
+            name="ck_sales_agent_classes_class",
+        ),
+        Index(
+            "uq_sales_agent_classes_open",
+            "sales_agent_id",
+            unique=True,
+            postgresql_where=text("to_month IS NULL"),
+        ),
+        {"schema": SCHEMA},
+    )

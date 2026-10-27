@@ -96,7 +96,12 @@ def customer_agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:
     card link), whoever is on the document."""
     owner = aliased(Customer)
     ids = [v for v in values if v != "none"]
-    agent = sa.select(owner.sales_agent_id).where(owner.id == BillingDocument.customer_id).scalar_subquery()
+    agent = (
+        sa.select(owner.sales_agent_id)
+        .where(owner.id == BillingDocument.customer_id)
+        .correlate(BillingDocument)
+        .scalar_subquery()
+    )
     parts = [agent.in_(ids)] if ids else []
     if "none" in values:
         parts.append(sa.and_(BillingDocument.customer_id.isnot(None), agent.is_(None)))

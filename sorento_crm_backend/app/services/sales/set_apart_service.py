@@ -139,6 +139,15 @@ def delete(db: Session, row_id: str) -> None:
     db.commit()
 
 
+def delete_by_id(db: Session, row_id: str) -> None:
+    """The deferred `sales_set_apart.delete` action's handler: flushes, the action runner
+    commits. Already gone is not an error (the `sales_team.delete` rule)."""
+    row = db.query(SetApartCustomer).filter(SetApartCustomer.id == row_id).first()
+    if row is not None:
+        db.delete(row)
+        db.flush()
+
+
 def customer_options(db: Session, *, query: Optional[str], limit: int = 20) -> List[Dict[str, str]]:
     """Customers for the screen's searchable picker: debtor code and name, by code."""
     q = db.query(Customer.id, Customer.customer_code, Customer.customer_name)

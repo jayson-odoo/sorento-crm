@@ -128,7 +128,7 @@ def test_cf4_guard_with_nothing_held_the_parse_is_today_s(console, monkeypatch) 
     assert _ran(log) == [], (text, log)
     assert text == (
         "1. Which period? For example this month, September, 2026, or 1 to 15 Sep.\n2. How many? For example top 5.\n"
-        "3. By quantity or by amount?\n4. Delivered, ordered or outstanding?"
+        "3. By quantity or by amount?\n4. Invoiced, delivered, ordered or outstanding?"
     ), text
 
 

@@ -216,7 +216,7 @@ def _category_codes(db: Session, names: list[str], company_grants: Any) -> dict[
 
 
 #: The delivered dataset's raw channel values, as the ordered dataset already prints them.
-_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team"}
+_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team", "other": "Other"}
 
 MEASURES = ("amount", "qty")
 #: REPORT-SMART-1021: distinct counts, ranked by the count (ties by amount, then quantity).

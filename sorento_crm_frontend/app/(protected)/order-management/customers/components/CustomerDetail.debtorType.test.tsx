@@ -84,3 +84,24 @@ describe('CustomerDetail - Debtor type', () => {
     expect(screen.queryByText(/^Project cash$/)).not.toBeInTheDocument();
   });
 });
+
+describe('CustomerDetail - AutoCount debtor type', () => {
+  it('shows the AutoCount debtor type next to the CRM one', async () => {
+    getCustomer.mockResolvedValue({ ...BASE, account_level: null, debtor_type: null, autocount_debtor_type: 'BRAVAT' });
+    render(<CustomerDetail customerId="cust-1" />);
+
+    const heading = await screen.findByText('AutoCount debtor type');
+    expect(heading.parentElement).toHaveTextContent('BRAVAT');
+    expect(heading.closest('[data-slot="card"]')).toBe(
+      screen.getByText('Debtor type').closest('[data-slot="card"]'),
+    );
+  });
+
+  it('shows "-" when AutoCount sent none', async () => {
+    getCustomer.mockResolvedValue({ ...BASE, account_level: null, debtor_type: null, autocount_debtor_type: null });
+    render(<CustomerDetail customerId="cust-1" />);
+
+    const heading = await screen.findByText('AutoCount debtor type');
+    expect(heading.parentElement).toHaveTextContent('-');
+  });
+});
