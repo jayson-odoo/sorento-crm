@@ -5,12 +5,11 @@ Owner, 27 Oct ~17:55 MYT: "board decision don't hold stock, board decision is ju
 **Owner answers (27 Oct ~18:05):** Q1 (a). Q2: "should be same as now" - no new mechanism: a
 decided line that ends short stays decided as today (out of the board queue) and its short shows
 in Stock Debt like any other short line; no "Plan not covered" re-entry, no automatic buy demand.
-Q3-Q5 still open with the owner; built on the recommendations below, trimmed to "as today":
-Q3 Borrow is a plan like Reserve, the "lent to" display and the buy-back OI row unchanged
-(trimmed: the "planned for" relabel). Q4 (a) kept: the reorder-run deduction is one of the holds
-the ruling removes, not a new mechanism. Q5 wording unchanged on the board (trimmed: "Planned:"
-pill and "Plan not covered"); in Stock Debt a decided line simply reads covered / late / short by
-date instead of `pinned`, with its source named as today ("On hand BRW").
+Owner answers (27 Oct ~18:15): Q3 "borrow should work like today": Borrow is out of scope and
+unchanged in every way (it keeps holding, Stock Debt pin and "lent to" as today); only Reserve
+stops holding. Q4 yes (a): reorder runs stop deducting Reserve from retail planning supply; the
+same Reserve also lowers a project line's own Buy (Lane F), kept as today pending the crew-ask
+of 27 Oct. Q5: no wording change except a Reserve no longer reads "pinned" / held.
 
 Plan: `documentation/plans/scm/PLAN-board-no-hold-27oct.md` (code map with file:line).
 Dry run: `sorento_crm_backend/scripts/board_no_hold_dry_run.py` (read only, rolled back).

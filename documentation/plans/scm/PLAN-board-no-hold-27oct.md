@@ -1,6 +1,6 @@
 # PLAN: BOARD-NO-HOLD - a Fulfilment Planning decision is a plan, not a stock hold
 
-Status: Plan, card answered 27 Oct ~18:05 (Q1 a, Q2 as today; Q3-Q5 built on trimmed recommendations); red-first starts once the crew dry-run numbers are in. Track: full
+Status: Build, review round 1 fixes in progress. Owner answers 27 Oct: Q1 (a) the plan is a route; Q2 as today; Q3 Borrow unchanged in every way (only Reserve stops holding); Q4 (a) retail stops seeing a Reserve, the project-side Buy reduction pending crew-ask (built as kept); Q5 no wording change beyond losing `pinned` for a Reserve. Track: full
 (size L, touches every free-stock reader). Lane is LEAD pattern (tester + coder + reviewer subagents).
 
 ## Journey
@@ -10,8 +10,6 @@ Case CB4702: SO400884 (required 28 Dec) has a confirmed "Reserve from BRW 36" de
 honoured first at any date, so SO426986 (earlier need) shows short while the 36 sit pinned.
 
 ## Findings
-
-To be filled from the code read (file:line) in the next commit.
 
 Code read on main e027b6b5 (file:line):
 
@@ -60,7 +58,8 @@ Backend, Postgres scratch schema (`tests/_pg_fixture.py`), seeded with the `_dec
    `held_stock_by_location` = 0. Rewrites `test_project_supply_holds.py` AC-S1-1/5 (those assert the hold).
 3. **Board strip / group drill**: free and held on the board's stock detail read the same as (2).
 4. **Location stock**: `location_stock_service` free equals on hand - reserved with a decision present.
-5. **Reorder runs** (Q4 a): `_project_supply_reduction_map` returns nothing for an active Reserve / Borrow.
+5. **Reorder runs** (Q4 a): a Reserve no longer lowers retail's figure (`retail_net`); a Borrow still does; the project
+   half's own Buy is still lowered by both (Lane F, pending crew-ask).
 6. **Route, cross-group** (Q1 a): a decided line in group BB planned from an IB bin draws that bin at its own date;
    an earlier IB line due first takes it first; an undecided BB line still cannot draw IB.
 7. **Route, site pool** (Q1 a): a project line planned "Reserve from BRW" draws BRW at its date; an earlier dealer line
@@ -70,10 +69,22 @@ Backend, Postgres scratch schema (`tests/_pg_fixture.py`), seeded with the `_dec
 9. **Confirm**: two orders may both confirm Reserve 36 of a 36 pile; no short recorded for the second because of the first.
 10. **Board queue as today** (Q2): a decided line Stock Debt reads short stays decided and out of the queue; no new
     buy demand row appears for it.
-11. **Borrow as today** (Q3): the donor's "lent to" entry and the buy-back OI ORDER_BACK demand are unchanged; the
-    borrowed qty no longer nets the donor bin's free stock.
+11. **Borrow as today** (Q3): a Borrow keeps holding everywhere (free stock, Stock Debt pin, confirm floor, reorder
+    runs), the donor's "lent to" entry and the buy-back OI ORDER_BACK demand are unchanged.
 
 No frontend change (Q5 trimmed to as today); browser pass checks Stock Debt + the board strip numbers only.
 
 Kill tests (reviewer): put the old `or_(decision_id IS NULL, state = ACTIVE)` back in `_hold_query` and tests 1-5 must go
 red; drop the route join and 6-7 must go red; widen the change to `_holds`' placement half and 8 must go red.
+
+## Built (as of review round 1)
+
+- One predicate: `_decision_allocation_query` (the old hold rule), `_hold_query` = it minus Reserve sources
+  (`project_supply_service.py`); every free / held reader, the confirm floor and the Allocation panel read `_hold_query`.
+- Stock Debt `_holds` splits the same read: Borrow -> pinned `Hold`, Reserve -> `Hold(route=True)`.
+- `supply_assignment.py`: rule 7, a Reserve plan is a ROUTE (drawn at the line's own date, before its own group's pile;
+  out-of-span bins via a stand-in only route lines draw, its untaken part never free stock).
+- Reorder runs: retail's figure deducts Borrow only; the project Buy reduction keeps Reserve + Borrow.
+- Planning-change reallocation: `_reserve_rival` also fires on an all-Buy re-run, capped by the Reserve bin's live free stock.
+- One confirm still cannot give the same pile twice (kept); separate confirms may plan the same stock, Stock Debt decides by date.
+- `scripts/board_no_hold_dry_run.py`: one-shot, models the rule on the pre-wiring engine (6dc173c2); retired before merge.
