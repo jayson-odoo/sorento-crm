@@ -1,6 +1,7 @@
 # PLAN: access-sheet preview shows full per-contact changes; account links follow each contact's own row (BULK-ACCESS-PREVIEW)
 
-Status: Plan. Mockup + behaviour card pending owner approval before code. Track: M (LEAD pattern), no migration.
+Status: Build done, review round 1 fixed; browser pass + hand test next. Mock v2 + card approved 27 Oct (preview as
+its own paginated page). Track: M (LEAD pattern; diff over 300 lines, no migration, no auth change).
 Parent: `PLAN-bulk-contact-access-26oct.md` (#1875). UAC: `bulk-access-preview-27oct-acceptance-criteria.md`.
 
 ## Owner rulings (27 Oct)

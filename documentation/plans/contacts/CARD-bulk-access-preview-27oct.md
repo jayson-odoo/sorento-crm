@@ -1,6 +1,7 @@
 # CARD: access-sheet account links follow each contact's own row (BULK-ACCESS-PREVIEW)
 
-Status: asked 27 Oct, awaiting owner. Mockup: `documentation/mockups/BULK-ACCESS-PREVIEW/index.html`.
+Status: APPROVED 27 Oct (rule and edge cases as recommended); the Confirm all exact question is still open and is
+built as recommended (skip). Mockup: `documentation/mockups/BULK-ACCESS-PREVIEW/index.html`.
 
 ## Rule (owner ruling 27 Oct)
 An account in a confirmed dealer card is linked to a contact only when that contact's OWN sheet row tags the

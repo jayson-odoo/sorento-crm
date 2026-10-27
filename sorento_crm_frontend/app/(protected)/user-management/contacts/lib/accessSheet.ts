@@ -86,13 +86,24 @@ function items(value: unknown): string[] {
   return [String(value)];
 }
 
-/** One change as before -> after lines, one item each; an after item not held before is `added`. */
+/** One change as before -> after lines, one item each. In a list facet an after item not held
+ * before is `added`; a single value (a switch, the stock mode) is replaced, never added. */
 export function changeLines(change: AccessSheetChange): { before: ChangeItem[]; after: ChangeItem[] } {
   const before = items(change.before);
+  const isList = Array.isArray(change.after);
   return {
     before: before.map((text) => ({ text, added: false })),
-    after: items(change.after).map((text) => ({ text, added: !before.includes(text) })),
+    after: items(change.after).map((text) => ({ text, added: isList && !before.includes(text) })),
   };
+}
+
+/** The changes in the order the template lists its facets, so they match the No change line. */
+export function orderedChanges(changes: AccessSheetChange[]): AccessSheetChange[] {
+  const rank = (facet: string) => {
+    const i = (TEMPLATE_FACETS as readonly string[]).indexOf(facet);
+    return i < 0 ? TEMPLATE_FACETS.length : i;
+  };
+  return [...changes].sort((a, b) => rank(a.facet) - rank(b.facet));
 }
 
 /** Template facets this contact neither changes nor was refused (`not_applied`). */
@@ -111,7 +122,20 @@ function show(value: unknown): string {
   return Array.isArray(value) ? value.join('; ') : value === null || value === undefined ? '' : String(value);
 }
 
-const HEADER = ['Line', 'Name', 'Phone', 'Dealer', 'Status', 'Reason', 'Template', 'Changes', 'Warnings', 'Not applied'];
+const HEADER = [
+  'Line',
+  'Name',
+  'Phone',
+  'Dealer',
+  'Status',
+  'Reason',
+  'Template',
+  'Changes',
+  'Warnings',
+  'Not applied',
+  'Holds more',
+  'Linked outside row',
+];
 
 /** The result as a CSV for download. Cells starting with = + - @ are prefixed with a quote. */
 export function resultCsv(result: AccessSheetResult): string {
@@ -130,12 +154,15 @@ export function resultCsv(result: AccessSheetResult): string {
           c.changes.map((ch) => `${ch.facet}: ${show(ch.before)} -> ${show(ch.after)}`).join(' | '),
           c.warnings.join('; '),
           c.not_applied.join('; '),
+          (c.holds_more_items ?? []).map((h) => `${h.facet}: ${h.items.join(', ')}`).join(' | '),
+          (c.outside_links ?? []).join('; '),
         ]
           .map(cell)
           .join(','),
       );
     }
   }
-  for (const e of result.errors) lines.push([e.line, '', '', '', 'skipped', 'row_error', '', e.reason, '', ''].map(cell).join(','));
+  for (const e of result.errors)
+    lines.push([e.line, '', '', '', 'skipped', 'row_error', '', e.reason, '', '', '', ''].map(cell).join(','));
   return lines.join('\n');
 }

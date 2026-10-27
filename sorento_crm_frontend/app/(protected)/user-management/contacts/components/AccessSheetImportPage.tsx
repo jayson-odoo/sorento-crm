@@ -26,6 +26,7 @@ import {
   changeLines,
   confirmAllExact,
   initialSelection,
+  orderedChanges,
   resultCsv,
   setConfirmed,
   setTicked,
@@ -450,7 +451,8 @@ function AccountsTable({
               <Cell>{a.sales_agent ?? '-'}</Cell>
               <Cell>{a.sheet_agent ?? '-'}</Cell>
               <Cell>
-                {a.links_to.length ? (
+                {/* Apply links an account only when it is ticked (and its block confirmed). */}
+                {a.links_to.length && ticked.includes(a.customer_id) ? (
                   <ul>
                     {a.links_to.map((name, i) => (
                       <li key={`${name}:${i}`}>{name}</li>
@@ -517,8 +519,8 @@ const HOLDS_MORE_FACET: Record<string, string> = {
 
 function ItemList({ label, items }: { label: string; items: ChangeItem[] }) {
   return (
-    <div className="border-t px-3 py-1.5 sm:border-t">
-      <div className="text-xs text-muted-foreground sm:hidden">{label}</div>
+    <div className="border-t px-3 py-1.5">
+      <div className="text-xs text-muted-foreground sm:sr-only">{label}</div>
       <ul className="break-words">
         {items.length ? (
           items.map((item, i) => (
@@ -573,7 +575,7 @@ function ContactPanel({ contact: c, dryRun }: { contact: AccessSheetContact; dry
           <div className="hidden border-t px-3 py-1 text-xs text-muted-foreground sm:block">Before</div>
           <div className="hidden border-t sm:block" />
           <div className="hidden border-t px-3 py-1 text-xs text-muted-foreground sm:block">After</div>
-          {c.changes.map((change) => {
+          {orderedChanges(c.changes).map((change) => {
             const lines = changeLines(change);
             return (
               <Fragment key={change.facet}>
