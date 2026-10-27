@@ -48,6 +48,7 @@ from app.models.procurement import (
 )
 from app.models.product import Product, ProductCategory
 from app.models.project_so import (
+    ALLOC_RESERVE_SOURCES,
     INQUIRY_CANCELLED,
     OrderInquiry,
     OrderInquiryLink,
@@ -1695,8 +1696,9 @@ class StockDebtService:
         anybody queues (AC-S2-2), and both are keyed to the CORE sales-order line, which is
         what the demand read above is keyed on.
 
-        **The allocation half is `ProjectSupplyService._hold_query`, not a second spelling of
-        it.** That is the one predicate for "this row is holding stock right now" - confirmed,
+        **The allocation half is `ProjectSupplyService._hold_query` (Borrows, pinned) and
+        `_decision_allocation_query` split by source (Reserves are `Hold.route`: a plan, not a hold, BOARD-NO-HOLD),
+        not a second spelling of it.** That is the one predicate for "this row is holding stock right now" - confirmed,
         located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
         it is shared with the free-stock arithmetic precisely so the two cannot come to
         disagree. Restated by hand here, it had already lost `confirmed_at IS NOT NULL`, so a
@@ -1774,16 +1776,19 @@ class StockDebtService:
         IS the line's landed goods (SO381065's 88 at BRW-BB reach the assignment this way,
         through the auto placement on SPO-2026/05-0001, and `_landed_holds` then nets its
         own read to nothing), so without the mark here the feature lent nothing on the real
-        book. A decision hold (`so_line_allocations`) is never lendable: it is a Reserve
-        somebody confirmed, not goods that landed for the line. `None` marks nothing.
+        book. A decision allocation (`so_line_allocations`) is never lendable: a Borrow
+        pins and a Reserve is a route, neither is goods that landed for the line. `None` marks nothing.
         """
         if not line_keys:
             return []
         keys = list(line_keys)
         out: List[Hold] = []
 
-        rows = (
-            self.supply._hold_query(
+        # BOARD-NO-HOLD: ONE read of the live decision allocations (the base `_hold_query`
+        # narrows), split here: a Borrow is a pin, a Reserve is a plan the walk takes as a
+        # ROUTE (the line may draw the bin at its own date, `Hold.route`).
+        tagged = (
+            self.supply._decision_allocation_query(
                 [str(pid) for pid in product_ids],
                 exclude_line_ids=None,
                 entities=(
@@ -1792,6 +1797,7 @@ class StockDebtService:
                     held_qty_expr(),
                     Warehouse.warehouse_code,
                     _hold_product,
+                    SOLineAllocation.source_type,
                 ),
             )
             .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
@@ -1805,6 +1811,8 @@ class StockDebtService:
             )
             .all()
         )
+        rows = [r[:5] for r in tagged if r[5] not in ALLOC_RESERVE_SOURCES]
+        route_rows = [r[:5] for r in tagged if r[5] in ALLOC_RESERVE_SOURCES]
 
         links = (
             self.db.query(
@@ -1862,7 +1870,8 @@ class StockDebtService:
                 if event.kind == KIND_ON_HAND
             }
 
-        for core_line_id, warehouse_id, qty, warehouse_code, product_id in rows:
+        walked = [(False, row) for row in rows] + [(True, row) for row in route_rows]
+        for is_route, (core_line_id, warehouse_id, qty, warehouse_code, product_id) in walked:
             # STOCK-DEBT-STALE-PIN (see the docstring): a pin on stock the bin no longer
             # holds (or never held: the own location may be chosen at 0) covers nobody.
             if _float(qty) <= 0 or found_empty(str(product_id), str(warehouse_id)):
@@ -1874,6 +1883,7 @@ class StockDebtService:
                     qty=_float(qty),
                     kind=KIND_ON_HAND,
                     warehouse=warehouse_code,
+                    route=is_route,
                 )
             )
 

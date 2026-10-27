@@ -2520,8 +2520,13 @@ def test_a_reason_does_not_push_a_reserve_past_on_hand_and_records_the_short(api
     10 on hand at the own location; this line then asks for 15 more of it, with a reason -
     R14 still refuses, because 15 is more than what physically remains (10 - 2 = 8).
 
-    R14 no longer refuses: the line holds only the 8 that physically remain and records
-    7 short, so the two orders together never hold more than the 10 on hand.
+    R14 no longer refuses: the line holds only what physically remains and records the rest
+    short.
+
+    BOARD-NO-HOLD (owner, 27 Oct 2026): the earlier order's confirmed Reserve is a plan, not
+    a hold, so it takes nothing off the floor. This line holds the whole 10 on hand and
+    records 5 short (was: 8 held, 7 short); the two plans together may name more than the
+    10 on hand.
 
     Owner rule 12 Oct 2026 (OI-CLOSED-LINE): a stock shortfall is a warning, never a refusal.
     """
@@ -2572,13 +2577,12 @@ def test_a_reason_does_not_push_a_reserve_past_on_hand_and_records_the_short(api
         },
     )
     assert response.status_code == 200, response.text
-    _assert_short_notice(response.json(), line, free=8, short=7)
+    _assert_short_notice(response.json(), line, free=10, short=5)
     held = _held_by_line(db, [earlier_line.id, line.id])
     assert held == {
         (earlier_line.id, world.own_wh.id): Decimal("2"),
-        (line.id, world.own_wh.id): Decimal("8"),
+        (line.id, world.own_wh.id): Decimal("10"),
     }, held
-    assert sum(held.values()) <= Decimal("10")
 
 
 # ------------------------------------------------- AC-D1: what the engine had said
