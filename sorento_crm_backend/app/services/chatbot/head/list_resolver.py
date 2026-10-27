@@ -64,6 +64,8 @@ TYPE_MARGIN = 0.15
 TOKEN_SIMILARITY = 0.6
 #: One edit is allowed only in words at least this long.
 EDIT_MIN_LETTERS = 4
+#: A consonant skeleton (the word without a e i o u) must have at least this many letters to match.
+SKELETON_MIN_LETTERS = 3
 #: Row sets whose text structures are kept (the last few), so a turn prepares only its own spans.
 _PREPARED_SETS = 2
 
@@ -110,6 +112,10 @@ def spec_key_rows(registry: Iterable[Any]) -> list[LookupRow]:
     return out
 
 
+def _skeleton(word: str) -> str:
+    return "".join(ch for ch in word if ch not in "aeiou")
+
+
 class _ListIndex:
     """The texts of one list, folded and tokenised once: trigrams, word IDF, and an inverted word index."""
 
@@ -145,11 +151,17 @@ class _ListIndex:
             if len(w) >= EDIT_MIN_LETTERS:
                 for k in range(len(w)):
                     self.deletions[w[:k] + w[k + 1 :]].add(w)
+        #: consonant skeleton -> the vocabulary words having it (typos that drop vowels)
+        self.skeletons: dict[str, set[str]] = defaultdict(set)
+        for w in self.vocab:
+            sk = _skeleton(w)
+            if len(sk) >= SKELETON_MIN_LETTERS:
+                self.skeletons[sk].add(w)
         self._matches: dict[str, dict[str, float]] = {}
 
     def matching_words(self, word: str) -> dict[str, float]:
         """The vocabulary words a span word stands for, with how well: 1.0 equal, the trigram similarity when it
-        is at least `TOKEN_SIMILARITY`, `1 - 1/letters` for one edit."""
+        is at least `TOKEN_SIMILARITY`, `1 - 1/letters` for one edit or an equal consonant skeleton."""
         hit = self._matches.get(word)
         if hit is None:
             hit = {}
@@ -166,6 +178,11 @@ class _ListIndex:
                     near |= self.deletions.get(word[:k] + word[k + 1 :], set())
                 for w in near:
                     if len(w) >= EDIT_MIN_LETTERS and abs(len(w) - len(word)) <= 1 and w != word:
+                        hit[w] = max(hit.get(w, 0.0), 1.0 - 1.0 / max(len(w), len(word)))
+            sk = _skeleton(word)
+            if len(sk) >= SKELETON_MIN_LETTERS:
+                for w in self.skeletons.get(sk, ()):
+                    if w != word and w[0] == word[0]:
                         hit[w] = max(hit.get(w, 0.0), 1.0 - 1.0 / max(len(w), len(word)))
             self._matches[word] = hit
         return hit

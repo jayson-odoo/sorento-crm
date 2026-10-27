@@ -415,7 +415,7 @@ def test_a_two_consonant_skeleton_does_not_match():
 
 
 def test_a_different_first_letter_does_not_match():
-    res = _one("rstq", "brand", [R("brand", "u1", "arstq")])
+    res = _one("rstn", "brand", [R("brand", "u1", "arosten")])
     assert res.status != "resolved", res
 
 
