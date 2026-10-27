@@ -65,6 +65,8 @@ REPORT_HIT = {
 }
 OUTSTANDING_KEY = "sales_orders.outstanding"
 SALES_KEY = "sales_orders.sales_report"
+#: Owner Q6: an outstanding kind is read under its own reveal, a sales figure under the Sales report one.
+OUTSTANDING_KEY = "sales_orders.outstanding"
 ORDER_UUID = "cccccccc-cccc-cccc-cccc-cccccccccccc"
 
 OWN_A = "ZZT OWN A"
@@ -94,7 +96,7 @@ def _ask(entities: list[dict[str, Any]] | None = None, **over: Any) -> dict[str,
     return _parser_output(**base)
 
 
-def _turn(session_factory, monkeypatch, qf, body="outstanding for hanlim", *, attributes=(SALES_KEY,), **kw):
+def _turn(session_factory, monkeypatch, qf, body="outstanding for hanlim", *, attributes=(SALES_KEY, OUTSTANDING_KEY), **kw):
     result, captured = _run_turn(
         session_factory, monkeypatch, qf=qf, text_body=body,
         msg_id=f"ZZT-cscope-{uuid.uuid4().hex[:10]}", attributes=list(attributes), **kw,
@@ -515,7 +517,7 @@ class TestForcedToTheLinks:
         _link_customers(session_factory, OWN_A)
         services, looked_up = _spied(_hanlim_services())
         reply, captured = _turn(
-            session_factory, monkeypatch, _ask([_ent("hanlim")], order_status="sales_report"),
+            session_factory, monkeypatch, _ask([_ent("hanlim")], order_status="sales_report", basis="delivered"),
             "sales report for hanlim", attributes=(SALES_KEY,), resolve_services=services,
         )
         assert reply.strip() == refusal(OWN_A), reply
@@ -708,7 +710,7 @@ def _scope_events(session_factory, result) -> list[dict[str, Any]]:
 
 
 def _run(session_factory, monkeypatch, qf: dict[str, Any], body: str, **kw):
-    kw.setdefault("attributes", [SALES_KEY])
+    kw.setdefault("attributes", [SALES_KEY, OUTSTANDING_KEY])
     result, captured = _run_turn(
         session_factory, monkeypatch, qf=qf, text_body=body, msg_id=f"ZZT-selfref-{uuid.uuid4().hex[:10]}", **kw,
     )
@@ -825,7 +827,7 @@ class TestScopeDecisionsAreTraced:
         _link_customers(session_factory, OWN_A)
         result, reply, captured = _run(
             session_factory, monkeypatch, _ask([_ent("hanlim")]), "outstanding for hanlim",
-            attributes=[SALES_KEY], resolve_services=_hanlim_services(),
+            attributes=[SALES_KEY, OUTSTANDING_KEY], resolve_services=_hanlim_services(),
         )
         assert reply.strip() == refusal(OWN_A), reply
         (event,) = _scope_events(session_factory, result)
