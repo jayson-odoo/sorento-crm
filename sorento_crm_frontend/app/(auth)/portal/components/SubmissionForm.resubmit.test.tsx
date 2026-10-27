@@ -15,7 +15,6 @@ import type {
   PortalRevisionPolicy,
   PortalSubmissionDetail,
 } from '../lib/portal-client';
-import { portalHomePath } from '../lib/portal-paths';
 
 const push = vi.fn();
 const replace = vi.fn();

@@ -1021,6 +1021,7 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   rejected: 'Rejected',
   responded: 'Responded',
   submitted: 'Submitted',
+  resubmitted: 'Resubmitted',
   processed_by_cs: 'Processed by CS',
   closed: 'Closed',
   completed: 'Completed',
@@ -1033,6 +1034,15 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   collected: 'Collected',
   void: 'Void',
 };
+
+/**
+ * The verb on a portal form's send button. A form that was rejected goes back as a
+ * resubmission (owner, 27 Oct 2026), and every portal kind surfaces a rejected record
+ * as `status: 'rejected'`, so this one rule covers them all.
+ */
+export function submitVerb(status: string | null | undefined): 'Submit' | 'Resubmit' {
+  return (status ?? '').trim().toLowerCase() === 'rejected' ? 'Resubmit' : 'Submit';
+}
 
 export function statusLabel(status: string | null | undefined): string {
   const s = (status ?? '').trim();
