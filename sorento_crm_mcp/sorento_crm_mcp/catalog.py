@@ -963,7 +963,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "answers `status: refused`), `channel` dealer | project. OMIT a filter you do not "
             "use: an empty value is 422 `empty_filter` (it never reads as 'no filter'), and an "
             "id naming nothing is 404.\n\n"
-            "ACCESS: the contact needs the Sales report reveal (403 `sales_report_not_enabled`). "
+            "ACCESS: the contact needs the Sales report reveal (403 `sales_report_not_enabled`); the outstanding, "
+            "pending_delivery and unpaid bases need the Outstanding reveal instead (403 `outstanding_not_enabled`). "
             "A customer-linked dealer sees only its own customers' sales and may group or "
             "filter by product, brand, category and month ONLY; anything else is 403 "
             "`report_dimension_not_allowed` - say 'That breakdown is not available for your "
@@ -999,6 +1000,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         escalation_team="sales",
         restricted_fields=(
             ("sales_orders.sales_report", "Sales report"),
+            ("sales_orders.outstanding", "Sales order outstanding"),
             ("chatbot.analytics", "Chat analytics"),
         ),
     ),
