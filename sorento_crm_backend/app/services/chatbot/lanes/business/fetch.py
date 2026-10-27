@@ -1221,7 +1221,7 @@ def entity_ids_transformer(
         if channel in ("dealer", "project"):
             out["channel"] = channel
         basis = jsc.get(semantic_input, "sales_basis")
-        out["basis"] = "delivered"  # the sales analysis route's own default basis
+        out["basis"] = "invoiced"  # SALES-UNIFIED: sales is invoiced unless the person names a basis
         if basis in SALES_ANALYSIS_BASES:
             out["basis"] = basis
         company = jsc.get(semantic_input, "sales_company")

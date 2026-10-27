@@ -38,7 +38,7 @@ def _axis(group_by: str, **over: Any) -> dict[str, Any]:
 def _total_then_answer(console, monkeypatch, answer: dict[str, Any]):
     _state_on(console)
     text, log = _say_all(console, monkeypatch, _row1(), f"Top sales for {PRODUCT_CODE} in 2026")
-    assert _ran(log) == [] and "Delivered" in text, ("setup", text, log)
+    assert _ran(log) == [] and "Invoiced, delivered" in text, ("setup", text, log)
     return _say_all(console, monkeypatch, answer, "qty, delivered")
 
 
