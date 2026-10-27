@@ -395,6 +395,44 @@ def test_c_outstanding_customer_pick_then_the_kind_question(session_factory, mon
     assert args.get("basis") == "pending_delivery", args
 
 
+def test_c_outstanding_customer_pick_then_the_document_question(session_factory, monkeypatch):
+    """AC-PK010: the outstanding chain, customer pick then the kind. "1" picks the customer (no domain word: the
+    roster's own outstanding ask), the kind question is asked (REPORT-UNIFY Q2: it replaces SO / DO), and a reply
+    naming the kind (the parser also reading position 2) answers it."""
+    outstanding._seed_open_outstanding_customer_pick(session_factory)
+    result, captured = outstanding._run_turn(
+        session_factory,
+        monkeypatch,
+        qf=outstanding._parser_output(
+            message_type="business_query", intent_hint=None, domain_hint="order", entities=[],
+            reference_positions=[1], domain_in_message=False, order_status=None,
+        ),
+        text_body="1",
+        msg_id="ZZT-1352-outstanding-1",
+        attributes=["sales_orders.outstanding"],
+    )
+    reply = (result.reply or {}).get("text") or ""
+    assert captured == [] and "Undelivered orders, pending delivery or unpaid invoices?" in reply, (captured, reply)
+    result, captured = outstanding._run_turn(
+        session_factory,
+        monkeypatch,
+        qf=outstanding._parser_output(
+            message_type="business_query", intent_hint="check_order", domain_hint="order",
+            entities=[], reference_positions=[2], domain_in_message=True,
+            order_status="outstanding", basis="pending_delivery",
+        ),
+        text_body="pending delivery",
+        msg_id="ZZT-1352-outstanding-2",
+        attributes=["sales_orders.outstanding"],
+        mcp_response=outstanding.REPORT_HIT,
+    )
+    assert captured, "the document answer runs the report"
+    name, args = captured[0]
+    assert name == "crm_report_ask", name
+    assert args.get("customer_ids") == [outstanding.HANLIM_UUID_1], args
+    assert args.get("basis") == "pending_delivery", args
+
+
 # =============================================================================== #
 # D. The prompt (AC-PK020 to AC-PK024)
 # =============================================================================== #
