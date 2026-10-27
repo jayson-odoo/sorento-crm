@@ -1,8 +1,8 @@
 # PLAN: Stock position report (all suppliers)
 
-Status: Review (built on the recommended answers to Q1-Q5 while the owner's answers are pending; owner
-review of the mock 27 Oct: warehouse headers carry the code alone). Track: standard (new endpoint + page, no
-migration, no RBAC change: reuses the Stock Status read permissions).
+Status: Build round 2 on the owner's answers (27 Oct ~16:55). Q4 and Q5 done; Q3 waits for
+SALES-UNIFIED #1916 to merge (its shared `invoiced_sales.quantity_by_product_month`). Track: standard (no
+migration, no RBAC change).
 
 Lane: STOCK-POSITION-REPORT. Owner request 27 Oct 2026: reproduce the supplier stock sheet ("<SUPPLIER> STOCK AS AT
 <date>") inside the CRM for ALL suppliers in one report, one row per item code, with a Supplier column.
@@ -61,32 +61,38 @@ land with 60 of it on an SPO (counts 40), dealer SO lines owing 70, a supplier P
 transferred to SPO, and 12 months of SO lines summing 3,408 (avg 284) with an 850 month. B and C likewise
 (B: 12-month sum 2,172; C: 1,116).
 
-## Decisions (Q1-Q5)
+## Decisions (Q1-Q5): owner answers, 27 Oct ~16:55
 
-Posted as a crew-ask on PR #1913. The owner has NOT answered yet. The lane is built on the recommendation
-for each question (crew instruction, 27 Oct), and each one is a single place in the code to change if the
-answer differs. Only owner ruling so far: Lavish's mock review, "don't need the stock word" (warehouse headers
-are the code alone).
-
-- **Q1 where (recommended a):** a dedicated Inventory > Stock position DataGrid and endpoint, not a
-  reporting-engine report (reasons under "Where it lives").
-- **Q2 Outstanding dealer (recommended a):** dealer SO still owed (`so_outstanding_clauses`, demand class not
-  `project`, NULL counted as dealer), printed NEGATIVE as the sheet prints it. Not "total stock minus dealer SO".
-- **Q3 sales basis (recommended a, switchable):** `so_ordered` = SO quantity ordered by order date over every
-  channel (the loading plan's history). `invoiced` = IV + CS + DN - CN line quantity by document date, posted
-  documents only. A filter on the page picks one.
-- **Q4 supplier:** the primary supplier; else the only linked supplier; else none (shown "-"). The supplier
-  filter matches the supplier shown.
-- **Q5 columns and totals:** one column per ACTIVE SITE-POOL warehouse holding stock for any item. Project
-  bins and inactive locations get no column and are not in Total stock. The packing-list column is in neither
-  total (sheet: 352 + 880 = 1232). Excel export is included.
-- Side effect of Q5: an open SPO to an INACTIVE site-pool warehouse still counts in Incoming BRW (an SPO is
-  supply until the book closes it, `spo_supply`), while that warehouse's on-hand is no column.
+- **Q1 (a):** its own page, Inventory > Stock position.
+- **Q2 (a):** Outstanding dealer = dealer SO still owed (`so_outstanding_clauses`, demand class not
+  `project`, NULL counted as dealer), printed negative as the sheet prints it.
+- **Q3:** "our sales calculation should be the same across all, using a shared function". Monthly sales and
+  Highest / month come from SALES-UNIFIED's ONE function, `invoiced_sales.quantity_by_product_month`
+  (#1916: IV + CS + DN - CN line quantity, by document date, cancelled excluded, every sales type). This
+  report adds only the window (12 full months before this one), the mean over all 12 (an empty month is 0)
+  and the peak. The SO-ordered basis and the page's basis switch are removed: no second calculation. Lands
+  after #1916 merges (decided: wait, not stack, so #1916's 2,200 lines do not ride in this PR).
+- **Q4:** supplier = the LAST PO's supplier, ONE shared rule: `app/services/scm/last_po_supplier.py`.
+  Measured: Stock Debt (`stock_debt_service._last_supplier_map`) and the low stock report
+  (`summary_order_service._last_po_supplier_map`) were two functions with different tiebreaks (line
+  `created_at` vs PO `created_at` + `supplier_id`), and Stock Debt also falls back to the primary product
+  supplier. The helper takes STOCKDEBT-PERF's ordering (#1901): `issue_date` desc NULLS last, line
+  `created_at`, `po_number`, line id. The low stock report and this report read it now. Stock Debt moves
+  onto it when #1901 merges; editing that function now would conflict with #1901, #1902 and #1906. No PO =
+  no supplier (no link fallback: the live links nearly all name DEFAULT). Not moved in this lane, named
+  as follow-ups: `supply_origin` and `scripts/backfill_product_supplier_from_last_po.py` still spell the
+  older tiebreak in their own SQL.
+- **Q5:** the user picks which warehouse columns show, with the DataGrid's own Columns chooser and the saved
+  per-user column preferences (listing key = the page path). The grid mounts once the warehouse columns are
+  known, so a saved choice applies to them. Export to Excel writes only the shown warehouse columns (`wh`).
+  Hiding a column does not take that warehouse out of Total stock (a display choice, not a filter).
+- Side effect kept from round 1: an open SPO to an INACTIVE site-pool warehouse still counts in Incoming BRW
+  (an SPO is supply until the book closes it, `spo_supply`), while that warehouse's on-hand is no column.
 
 ## Performance
 
-Every request computes every item, then filters, sorts and pages in Python. Measured in the sandbox only
-(3 items, 43 ms). No prod-copy measurement yet. Trigger for moving the work into SQL: a page load over ~2 s on
+Every request computes every item, then filters, sorts and pages in Python. Sandbox, synthetic supplier of 3,000 items
+(27 Oct, head 9c9c88e9): 2.6 s from the sidebar click to rows, API 0.8 to 2.4 s. No prod-copy measurement yet. Trigger for moving the work into SQL: a page load over ~2 s on
 the live item count, which the hand test will show.
 
 ## Built (27 Oct)
