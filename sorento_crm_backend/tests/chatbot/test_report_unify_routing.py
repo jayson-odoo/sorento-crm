@@ -472,6 +472,21 @@ def test_ac_ru_16_a_sales_total_with_no_basis_is_asked_and_nothing_runs(bot) -> 
     assert calls == [], calls
     lowered = text.lower()
     assert "delivered" in lowered and "ordered" in lowered and "?" in text, text
+    # Owner ruling 27 Oct ~23:35 (lane SALES-TOTAL-ASK): Invoiced is offered, and offered first.
+    assert "invoiced" in lowered and lowered.index("invoiced") < lowered.index("delivered"), text
+
+
+def test_ac_ru_16_a_total_naming_no_subject_and_no_basis_is_asked_never_defaulted_to_invoiced(bot) -> None:
+    """AC-RU-16 (owner ruling 27 Oct ~23:35): "total sales 2026" with no basis is asked, Invoiced first; the
+    old sales analysis default (invoiced) never answers it."""
+    text, calls = bot.say(
+        _status("sales_analysis", group_by=None, measure=None, sales_basis=None, sales_company=None, basis=None),
+        "total sales 2026",
+    )
+    assert calls == [], calls
+    lowered = text.lower()
+    assert "?" in text and "invoiced" in lowered and "delivered" in lowered, text
+    assert lowered.index("invoiced") < lowered.index("delivered"), text
 
 
 # ================================================================ AC-RU-17: the retired tools are gone

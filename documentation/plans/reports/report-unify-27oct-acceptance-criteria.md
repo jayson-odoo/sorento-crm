@@ -54,7 +54,8 @@ Status: Agreed (owner answers 27 Oct ~19:15). Plan: `PLAN-report-unify-27oct.md`
   was the only subject, the bot asks instead (Q4, P11).
 - **AC-RU-15.** A product named this turn replaces the carried subject's products (P4).
 - **AC-RU-16.** The standing rulings still hold:
-  - one question for missing period + measure + basis, with Invoiced first and never defaulted;
+  - one question for missing period + measure + basis, with Invoiced first and never defaulted. This includes a
+    sales TOTAL, with or without a subject (owner 27 Oct ~23:35, lane SALES-TOTAL-ASK on main);
   - "by X" keeps the filters;
   - the Sales report switch;
   - "my ..." from an ungranted salesperson = own customers, "Limited to: your customers".
