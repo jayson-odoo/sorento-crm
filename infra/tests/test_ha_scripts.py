@@ -208,3 +208,120 @@ def test_checks_no_prune_below_threshold(env):
     r = run(CHECKS, e, ETCD_ONLY=1, SNAPSHOT_DIR=snap)
     assert len(list(snap.glob("*.dump"))) == 4
     assert r.returncode == 1 and "disk 82% used" in r.stdout
+
+
+# ---------------------------------------------------------------- switchback
+
+SWITCHBACK = SCRIPTS / "switchback.sh"
+
+# 03:02 MYT on 27 Oct 2026 (19:02 UTC on 26 Oct).
+IN_WINDOW = 1793041320
+DAY = 24 * 3600
+
+
+def _members(kl_role="Replica", kl_state="streaming", kl_lag=0, leader="in"):
+    import json
+
+    rows = [{"Member": "kl", "Role": kl_role, "State": kl_state, "Lag in MB": kl_lag}]
+    if leader != "kl":
+        rows.append({"Member": leader, "Role": "Leader", "State": "running"})
+    return json.dumps(rows)
+
+
+@pytest.fixture
+def sb(env, tmp_path):
+    e, log, _ = env
+    patroni = tmp_path / "bin" / "docker"
+    patroni.write_text(
+        r"""#!/usr/bin/env bash
+echo "docker $*" >> "$FAKE_LOG"
+case " $* " in
+  *" list "*) echo "$FAKE_MEMBERS" ;;
+  *" switchover "*) exit ${FAKE_SWITCH_RC:-0} ;;
+esac
+"""
+    )
+    patroni.chmod(0o755)
+    state = tmp_path / "state"
+    return {**e, "STATE_DIR": str(state)}, log, state / "kl-healthy-since"
+
+
+def _switches(log):
+    return [c for c in calls(log) if " switchover " in c]
+
+
+def test_switchback_after_24h_healthy_inside_the_window(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - DAY - 60))
+    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
+    assert r.returncode == 0, r.stdout + r.stderr
+    sw = _switches(log)
+    assert len(sw) == 1 and "--leader in --candidate kl --force" in sw[0]
+    assert not marker.exists()
+
+
+def test_switchback_waits_until_24h(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - DAY + 600))
+    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
+    assert _switches(log) == []
+
+
+def test_switchback_outside_the_window_does_nothing(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - 3 * DAY))
+    run(SWITCHBACK, e, NOW=IN_WINDOW + 3600, FAKE_MEMBERS=_members())  # 04:02 MYT
+    assert _switches(log) == []
+
+
+def test_first_healthy_reading_starts_the_clock(sb):
+    e, log, marker = sb
+    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members())
+    assert marker.read_text().strip() == str(IN_WINDOW)
+    assert _switches(log) == []
+
+
+@pytest.mark.parametrize(
+    "members",
+    [
+        _members(kl_lag=3),
+        _members(kl_state="starting"),
+        _members(kl_role="Replica", kl_state="stopped"),
+    ],
+)
+def test_any_unhealthy_reading_resets_the_clock(sb, members):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - 3 * DAY))
+    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=members)
+    assert not marker.exists()
+    assert _switches(log) == []
+
+
+def test_nothing_when_kl_already_leads(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - 3 * DAY))
+    run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(kl_role="Leader", kl_state="running", leader="kl"))
+    assert _switches(log) == []
+    assert not marker.exists()
+
+
+def test_failed_switchover_keeps_the_clock_and_exits_nonzero(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - 2 * DAY))
+    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS=_members(), FAKE_SWITCH_RC=1)
+    assert r.returncode == 1
+    assert marker.exists()
+
+
+def test_patronictl_failure_resets_and_fails(sb):
+    e, log, marker = sb
+    marker.parent.mkdir()
+    marker.write_text(str(IN_WINDOW - 2 * DAY))
+    r = run(SWITCHBACK, e, NOW=IN_WINDOW, FAKE_MEMBERS="not json")
+    assert r.returncode == 1 and not marker.exists()
