@@ -3196,15 +3196,13 @@ class ProjectSupplyService:
             text("select current_setting('max_parallel_workers_per_gather')")
         ).scalar()
         self.db.execute(text("select set_config('max_parallel_workers_per_gather', '0', true)"))
-        try:
-            yield
-        finally:
-            # A failed statement aborts the transaction, which drops the local setting.
-            if self.db.get_transaction() is not None and self.db.is_active:
-                self.db.execute(
-                    text("select set_config('max_parallel_workers_per_gather', :prev, true)"),
-                    {"prev": previous},
-                )
+        yield
+        # Success path only: on any exception the setting is transaction-local, so the
+        # rollback ends it, and a restore on an aborted transaction would mask the error.
+        self.db.execute(
+            text("select set_config('max_parallel_workers_per_gather', :prev, true)"),
+            {"prev": previous},
+        )
 
     def _po_received_by_product(
         self, refs_by_product: Mapping[str, Iterable[str]]
