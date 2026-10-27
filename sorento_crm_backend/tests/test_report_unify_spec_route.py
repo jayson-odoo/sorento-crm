@@ -65,7 +65,9 @@ NOT_STATED = "Not stated"
 
 
 def _ask(client, contact, **params):
-    q = {**PERIOD, **_as_contact(contact), **params}
+    # The seeded worlds are sales order lines, so a call naming no basis reads them as delivered (the
+    # route's own default became invoiced with SALES-UNIFIED #1916).
+    q = {**PERIOD, "basis": "delivered", **_as_contact(contact), **params}
     q = {k: v for k, v in q.items() if v is not None}
     return client.get(ROUTE, params=q, headers=KEY)
 

@@ -54,7 +54,7 @@ def test_the_catalogue_has_a_dataset_axis_and_sales_keeps_its_three_bases():
     from app.services.reports.ask import CATALOGUE
 
     # REPORT-UNIFY (owner Q2, 27 Oct 2026) adds the two other outstanding kinds beside the three.
-    assert set(CATALOGUE["sales"]) == {"delivered", "ordered", "outstanding", "pending_delivery", "unpaid"}
+    assert set(CATALOGUE["sales"]) == {"invoiced", "delivered", "ordered", "outstanding", "pending_delivery", "unpaid"}
     assert set(CATALOGUE["chat"]) == {"asks", "turns"}
 
 

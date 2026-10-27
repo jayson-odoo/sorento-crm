@@ -1778,7 +1778,7 @@ export interface SpoCoverageLine {
   /** `sales_orders.demand_class` as stored - what the SO ITSELF is classified as, distinct
    *  from `kind` (which family the row came from). A project row is always `'project'`; a
    *  book line carries whatever its own sales order was stamped, including `null` (R3). */
-  demand_class: 'project' | 'retail' | null;
+  demand_class: 'project' | 'retail' | 'other' | null;
 }
 
 /** One candidate destination warehouse for a line's SPO qty, ranked. */

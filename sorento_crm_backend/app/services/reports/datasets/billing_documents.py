@@ -2,17 +2,19 @@
 PLAN-finance-billing-documents-27sep 3.4, #1309).
 
 **IV + CS + DN - CN, excluding tax, in ringgit.** One row per document header (a report with
-no product axis needs no lines). The value is `local_net_total`, AutoCount's own MYR net
-(ruling Q12), signed in exactly one place, `_signed`: a credit note is stored positive as
-AutoCount prints it and subtracts here. A cancelled document is nowhere (ruling Q13).
+no product axis needs no lines). Every figure, filter and attribution comes from the one shared
+calculation, `app/services/sales/invoiced_sales.py` (SALES-UNIFIED, owner ruling 27 Oct 16:12):
+the value is `local_net_total`, AutoCount's own MYR net (ruling Q12), negative on a credit note;
+a cancelled document is nowhere (ruling Q13).
 
 **Filed by the document's own date** (`doc_date`), never the order's: a credit note counts in
 its own month (UAC S1-2).
 
-**The blocks are the sales order type** (ruling Q14): the stored `demand_class` the ingest
-decided with `classify_document`, read through the order dataset's own `channel_label` and
-`channel_filter`, so the words, the vocabulary and the `(blank)` fallback are the order
-bases' (UAC S1-4, S1-9). The agent is the document's own (ruling Q15).
+**The blocks are the sales type** (SALES-UNIFIED Q1 (b), "the sales type should depend on sales
+order"): derived at read time from the sales orders each document traces to, never the stored
+`demand_class` (which falls back to the agent's class and the customer's segment). A document
+that traces to none is "No sales order". The agent is the document's own, or the customer's on a
+company whose `sales_agent_source` says so (`invoiced_sales.agent_label`).
 
 **The keys are the order dataset's where the meaning is the same** (`year`, `month_of_year`,
 `year_month`, `channel`, `customer`, `agent_code`, `sales_value`, and the `order_date` date
@@ -26,16 +28,13 @@ from typing import Any, List, Optional, Sequence, Tuple
 
 import sqlalchemy as sa
 
-from app.models.finance import CREDIT_NOTE, DOCUMENT_TYPES, POSTED, BillingDocument
+from app.models.finance import BillingDocument
 from app.models.order import Customer
 from app.models.sales_agent import SalesAgent
 from app.services.reports import registry as reg
-from app.services.reports.datasets.sales_order_lines import (
-    MONTH_OF_YEAR,
-    channel_filter,
-    channel_label,
-)
+from app.services.reports.datasets.sales_order_lines import MONTH_OF_YEAR
 from app.services.reports.engine import month_label
+from app.services.sales import invoiced_sales as inv
 
 #: How a document type reads in the detail.
 TYPE_WORDS: Tuple[Tuple[str, str], ...] = (
@@ -50,11 +49,6 @@ _TYPE_LABEL = sa.case(
     else_=BillingDocument.document_type,
 )
 
-#: The one place a credit note's sign is applied (plan 3.1).
-_signed = sa.case(
-    (BillingDocument.document_type == CREDIT_NOTE, -BillingDocument.local_net_total),
-    else_=BillingDocument.local_net_total,
-)
 
 
 def _base(ctx) -> sa.Select:
@@ -63,15 +57,12 @@ def _base(ctx) -> sa.Select:
         .select_from(BillingDocument)
         .outerjoin(Customer, Customer.id == BillingDocument.customer_id)
         .outerjoin(SalesAgent, SalesAgent.id == BillingDocument.sales_agent_id)
-        .where(
-            BillingDocument.status == POSTED,
-            BillingDocument.document_type.in_(DOCUMENT_TYPES),
-        )
+        .where(inv.posted())
     )
 
 
 def channel_condition(ctx, values: List[str]) -> Optional[Any]:
-    return channel_filter(BillingDocument.demand_class, values)
+    return inv.sales_type_filter(values)
 
 
 def order_by(ctx) -> Sequence[Any]:
@@ -98,8 +89,13 @@ COLUMNS: Tuple[reg.Column, ...] = (
     reg.Column("agent_code", "Sales agent code", "text", "text",
                lambda c: sa.func.coalesce(SalesAgent.sales_agent, BillingDocument.agent_code),
                size=140),
+    reg.Column("sales_agent", "Sales agent", "text", "dimension",
+               lambda c: inv.agent_label(), size=140, blank_label=inv.NO_AGENT),
+    reg.Column("debtor_type", "Debtor type", "text", "dimension",
+               lambda c: inv.debtor_type(), size=120),
     reg.Column("channel", "Channel", "text", "dimension",
-               lambda c: channel_label(BillingDocument.demand_class), size=120),
+               lambda c: inv.sales_type_label(), size=170,
+               fixed_values=tuple((label, label) for _value, label in inv.SALES_TYPES)),
     reg.Column(
         "year",
         "Year",
@@ -130,7 +126,7 @@ COLUMNS: Tuple[reg.Column, ...] = (
         period_months=True,
         value_label=month_label,
     ),
-    reg.Column("sales_value", "RM", "money", "measure", lambda c: _signed, size=130),
+    reg.Column("sales_value", "RM", "money", "measure", lambda c: inv.signed_amount(), size=130),
 )
 
 DATASET = reg.Dataset(

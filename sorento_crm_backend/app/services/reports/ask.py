@@ -19,6 +19,7 @@ from sqlalchemy.orm import Session
 
 from app.services.reports import spec_set
 from app.services.reports.datasets import (
+    billing_document_lines,
     chat_asks,
     chat_report_ask,
     delivery_order_lines,
@@ -46,10 +47,17 @@ CHAT_MEASURES = ("asks", "failed", "failure_rate", "contacts")
 #: The dimensions that are a run of time: a trend lists every bucket, oldest first.
 CHAT_TRENDS = frozenset({"week", "month", "day"})
 
-#: Dataset -> basis -> entry. Sales: one entry per basis, every one over sales order lines.
-#: Chat: `asks` counts every ask, `turns` each message once.
+#: Dataset -> basis -> entry. Sales: `invoiced` (SALES-UNIFIED: the one sales definition, on the
+#: billing lines the Top selling items report reads, so the two cannot disagree) and one entry
+#: per order basis over sales order lines. Chat: `asks` counts every ask, `turns` each message once.
 CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
     "sales": {
+        "invoiced": {
+            "definition": billing_document_lines.ASK_DEFINITION,
+            "label": "invoiced sales",
+            "dimensions": DIMENSIONS,
+            "filters": FILTERS,
+        },
         **{
             basis: {
                 "definition": sales_order_lines_ask.DEFINITIONS[basis],
@@ -236,7 +244,7 @@ def _category_codes(db: Session, names: list[str], company_grants: Any) -> dict[
 
 
 #: The delivered dataset's raw channel values, as the ordered dataset already prints them.
-_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team"}
+_CHANNEL_NAMES = {"retail": "Dealer", "project": "Project team", "other": "Other"}
 
 MEASURES = ("amount", "qty")
 #: REPORT-SMART-1021: distinct counts, ranked by the count (ties by amount, then quantity).

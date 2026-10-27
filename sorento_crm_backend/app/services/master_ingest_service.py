@@ -483,6 +483,11 @@ def _customer_columns(payload: Any, db: Session, company_id: str, warnings: list
     # warning `segment_unknown` rather than failing the whole customer over
     # one optional column - `market_segment_code` is a foreign key.
     if "market_segment_code" in payload.model_fields_set and payload.market_segment_code:
+        # SALES-UNIFIED 2.3: the raw AutoCount `Debtor.DebtorType` is kept whatever the fold
+        # below decides, so an unknown segment no longer loses the sales reports' debtor type.
+        raw_type = payload.market_segment_code.strip().upper()
+        if raw_type:
+            columns["autocount_debtor_type"] = raw_type
         canonical = customer_rules.fold_market_segment(db, payload.market_segment_code)
         if canonical is None:
             warnings.append("segment_unknown")

@@ -55,7 +55,7 @@ def test_catalogue_has_the_three_bases():
 
     CATALOGUE = _DATASETS["sales"]
 
-    assert set(CATALOGUE) == {*BASES, "pending_delivery", "unpaid"}, set(CATALOGUE)
+    assert set(CATALOGUE) == {"invoiced", *BASES, "pending_delivery", "unpaid"}, set(CATALOGUE)
 
 
 def test_the_basis_labels():

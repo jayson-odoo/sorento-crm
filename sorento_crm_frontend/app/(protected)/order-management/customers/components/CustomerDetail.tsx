@@ -176,6 +176,10 @@ export default function CustomerDetail({ customerId }: CustomerDetailProps) {
                   </p>
                 </div>
                 <div>
+                  <p className="text-sm text-muted-foreground">AutoCount debtor type</p>
+                  <p className="font-medium">{customer.autocount_debtor_type || '-'}</p>
+                </div>
+                <div>
                   <p className="text-sm text-muted-foreground">Group</p>
                   <p className="font-medium">
                     {customer.customer_group_id && customer.customer_group_name ? (

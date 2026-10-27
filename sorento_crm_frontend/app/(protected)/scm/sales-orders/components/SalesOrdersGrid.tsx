@@ -114,6 +114,7 @@ const DEMAND_CLASS_FILTER_OPTIONS = [
   { value: '', label: 'All types' },
   { value: 'project', label: 'Project' },
   { value: 'retail', label: 'Retail' },
+  { value: 'other', label: 'Other' },
   { value: 'unclassified', label: 'Unclassified' },
 ];
 
