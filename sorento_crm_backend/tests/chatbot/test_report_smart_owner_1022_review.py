@@ -139,13 +139,13 @@ def _sales_report_turn(session_factory, monkeypatch, token: str, matches: list[t
 
 
 @pytest.mark.parametrize("body", ["sales report for zq6635", "销售报告 zq6635", "laporan jualan zq6635", "zq6635 sales lah"])
-def test_4_a_mixed_code_set_on_the_report_ask_path_runs_on_the_whole_set_never_one_unrelated_code(session_factory, monkeypatch, body) -> None:
-    """REPORT-UNIFY: a word that fanned out to unrelated codes is never frozen on one of them: the route takes the
-    whole set as `product_ids` (past the cap the product is asked)."""
-    _result, captured = _sales_report_turn(session_factory, monkeypatch, "ZQ6635", MIXED, body, f"zzt-rev4-{abs(hash(body))}")
-    sent = [a for name, a in captured if name == "crm_report_ask"]
-    assert len(sent) == 1 and not sent[0].get("product_code"), captured
-    assert sorted(sent[0].get("product_ids") or []) == sorted(u for _c, u in MIXED), sent
+def test_4_a_mixed_code_set_on_the_sales_report_path_asks_which_product(session_factory, monkeypatch, body) -> None:
+    result, captured = _sales_report_turn(session_factory, monkeypatch, "ZQ6635", MIXED, body, f"zzt-rev4-{abs(hash(body))}")
+    reply = (result.reply or {}).get("text") or ""
+    sent = [a for name, a in captured if name == "crm_report_ask"]  # the sales report is the report ask now
+    assert not sent, ("ran on one unrelated code", [a.get("product_code") for a in sent])
+    assert "?" in reply or "1." in reply, reply
+    assert sum(code in reply for code, _u in MIXED) != 1, reply
 
 
 def test_4_near_miss_a_shared_prefix_family_still_sends_the_prefix(session_factory, monkeypatch) -> None:

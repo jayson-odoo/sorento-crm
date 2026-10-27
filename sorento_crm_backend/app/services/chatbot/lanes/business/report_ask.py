@@ -1010,13 +1010,9 @@ def _product_args(entities: Any) -> tuple[dict[str, Any] | None, str | None]:
     products = [e for e in jsc.array(entities) if isinstance(e, dict) and e.get("entity_type") == "product"]
     found = outstanding_product_codes(products, {})
     if is_mixed_code_set(found):
-        # A word that fanned out to unrelated codes is never frozen on the first of them: the
-        # route takes the whole set as `product_ids`; past its cap (or with no resolved row)
-        # the product is asked, never guessed.
-        ids = _gate_ids(products, "product")
-        if not ids or len(ids) > DRILL_MAX_KEYS:
-            return None, MIXED_PRODUCTS_LINE
-        return {"product_ids": ids}, None
+        # A word that fanned out to unrelated codes is never frozen on the first of them, and never run on the
+        # whole set either: the product is asked (owner review 22 Oct, item 4).
+        return None, MIXED_PRODUCTS_LINE
     code = sales_report_product_code(products, {})
     return ({"product_code": code} if code else {}), None
 
