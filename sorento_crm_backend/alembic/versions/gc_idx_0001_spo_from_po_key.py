@@ -38,16 +38,19 @@ def _index_valid(bind):
     ).scalar()
 
 
-def _ensure_index(bind) -> None:
+def _ensure_index(bind, *, concurrently: bool) -> None:
     """Build the index unless a VALID one exists; drop an INVALID leftover of a failed
-    CONCURRENTLY build first, which IF NOT EXISTS would otherwise keep forever."""
+    CONCURRENTLY build first, which IF NOT EXISTS would otherwise keep forever. That is
+    prod's case: the owner's first hand-made CONCURRENTLY build on 27 Oct was interrupted
+    and left this index INVALID, and his IF NOT EXISTS retry then did nothing."""
     if _index_valid(bind) is True:
         return
+    c = "CONCURRENTLY" if concurrently else ""
     if _index_valid(bind) is False:
-        bind.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {INDEX}"))
+        bind.execute(sa.text(f"DROP INDEX {c} IF EXISTS {INDEX}"))
     bind.execute(
         sa.text(
-            f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {INDEX} ON spo_allocations "
+            f"CREATE INDEX {c} IF NOT EXISTS {INDEX} ON spo_allocations "
             "(from_po_number, btrim(from_po_line_ref), product_id, company_id)"
         )
     )
@@ -67,7 +70,7 @@ def upgrade():
         previous = bind.execute(sa.text("SELECT current_setting('lock_timeout')")).scalar()
         bind.execute(sa.text(f"SET lock_timeout = '{INDEX_LOCK_TIMEOUT}'"))
         try:
-            _ensure_index(bind)
+            _ensure_index(bind, concurrently=True)
         finally:
             bind.execute(sa.text("SELECT set_config('lock_timeout', :v, false)"), {"v": previous})
 
