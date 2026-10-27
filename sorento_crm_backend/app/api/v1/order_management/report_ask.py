@@ -26,7 +26,7 @@ from app.api.v1.order_management.orders import _normalize_entities
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.base import company_scope, set_brand_scope
-from app.models.company import RespondContactCompany
+from app.models.company import Company, RespondContactCompany
 from app.models.order import Customer
 from app.models.product import Brand, Product, ProductCategory
 from app.models.sales_agent import SalesAgent
@@ -61,7 +61,7 @@ _PARAMS = frozenset(
     {
         "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort", "product_code",
         "product_ids", "brand_ids", "category_ids", "sales_agent_ids", "customer_ids", "warehouse_codes",
-        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine", "spec",
+        "channel", "contact_id", "space_id", "customer_agent_ids", "dataset", "compare_to", "mine", "spec", "company",
     }
 )
 #: The chat dataset's own query keys (CA-3); any other is 422 `unknown_param`.
@@ -258,6 +258,9 @@ def report_ask(
         None, description="previous_period (the same number of days just before) | last_year (the same dates)."
     ),
     mine: bool = Query(False, description="A salesperson's own customers only."),
+    company: Optional[str] = Query(
+        None, description="A company name, code or id; narrows the contact's own companies to that one (403 if not theirs)."
+    ),
     spec: Optional[list[str]] = Query(
         None,
         description="key:value product spec; the same key repeated = any of, different keys = all of. "
@@ -499,6 +502,23 @@ def report_ask(
         if c
     }
 
+    company_name: Optional[str] = None
+    if (company or "").strip():
+        # REPORT-UNIFY (phase 3, R1): one of the contact's OWN companies, by name, code or id (the sales analysis
+        # route's reading); a company the contact does not hold is 403, one that does not exist 422.
+        wanted = company.strip().casefold()
+        everyone = db.query(Company.id, Company.name, Company.code).all()
+        found = [
+            str(i) for i, name, code in everyone
+            if wanted in (str(i).casefold(), str(name or "").casefold(), str(code or "").casefold())
+        ]
+        if not found:
+            raise _unprocessable(f"Unknown company '{company}'", "unknown_company", "company")
+        if found[0] not in grants:
+            raise AppException(403, "You do not have access to that company", code="COMPANY_FORBIDDEN")
+        grants = {found[0]}
+        company_name = next(str(n) for i, n, _c in everyone if str(i) == found[0])
+
     if brands:
         # A brand named by id that belongs to a company outside the contact's own is dropped
         # silently (one brand name can exist per company); 404 only when none remain, so
@@ -551,6 +571,8 @@ def report_ask(
         channel=channel_norm,
         card_agents=card_agents,
     )
+    if company_name:
+        echo.insert(0, {"key": "company", "label": ask.FILTER_LABELS["company"], "values": [company_name]})
     not_applied: list[dict[str, str]] = []
     spec_ids: Optional[list[str]] = None
     if per_document:

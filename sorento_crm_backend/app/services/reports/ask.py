@@ -145,7 +145,7 @@ CHAT_ITEM_AXES = frozenset({"product", "category", "brand"})
 
 #: The filter words' labels, as the route echoes them: the dimensions' own, plus the customer
 #: card link a drill down uses (REPORT-DRILLDOWN, owner 8 Oct 2026), named so the reply says it.
-FILTER_LABELS = {**GROUP_LABELS, "customer_agent": "Customers assigned to", "spec": "Specification"}
+FILTER_LABELS = {**GROUP_LABELS, "customer_agent": "Customers assigned to", "spec": "Specification", "company": "Company"}
 
 NO_AGENT_KEY = sales_order_lines_ask.NO_AGENT_KEY
 
