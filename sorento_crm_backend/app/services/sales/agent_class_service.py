@@ -126,7 +126,7 @@ def _check(db: Session, agent_id: str, cls: str, start: Optional[date], end: Opt
         raise _invalid(f"Class is one of {', '.join(DEMAND_CLASSES)}", "invalid_class")
     if start is not None and end is not None and end < start:
         raise _invalid("To month is before from month", "class_months_inverted")
-    if db.query(SalesAgent.id).filter(SalesAgent.id == agent_id).first() is None:
+    if not agent_visible(db, agent_id):
         raise AppException(status_code=404, message="Sales agent not found", code="NOT_FOUND")
     overlap = db.query(SalesAgentClass.id).filter(
         SalesAgentClass.sales_agent_id == agent_id,
@@ -136,6 +136,19 @@ def _check(db: Session, agent_id: str, cls: str, start: Optional[date], end: Opt
     ).first()
     if overlap is not None:
         raise _invalid("This agent already has a class for some of those months", "class_overlap")
+
+
+def agent_visible(db: Session, agent_id: str) -> bool:
+    """The agent exists and the caller's company scope may see it (shared, or its own company:
+    `sales_agent_service.scope_filter`, security review L2)."""
+    from app.models.base import get_company_scope
+    from app.services.scm.sales_agent_service import scope_filter
+
+    q = db.query(SalesAgent.id).filter(SalesAgent.id == agent_id)
+    predicate = scope_filter(get_company_scope(db))
+    if predicate is not None:
+        q = q.filter(predicate)
+    return q.first() is not None
 
 
 def _mirror(db: Session, agent_id: str) -> None:
@@ -180,7 +193,7 @@ def add(db: Session, agent_id: str, *, demand_class: str, from_month: Optional[d
 
 def update(db: Session, row_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
     row = db.query(SalesAgentClass).filter(SalesAgentClass.id == row_id).first()
-    if row is None:
+    if row is None or not agent_visible(db, str(row.sales_agent_id)):
         raise AppException(status_code=404, message="Class row not found", code="NOT_FOUND")
     before = row.from_month
     cls = fields.get("demand_class", row.demand_class)
@@ -200,7 +213,7 @@ def delete_by_id(db: Session, row_id: str) -> None:
     """The deferred `sales_agent_class.delete` action's handler: flushes (the runner commits);
     already gone is not an error."""
     row = db.query(SalesAgentClass).filter(SalesAgentClass.id == row_id).first()
-    if row is None:
+    if row is None or not agent_visible(db, str(row.sales_agent_id)):
         return
     agent_id, start = str(row.sales_agent_id), row.from_month
     db.delete(row)
@@ -211,7 +224,7 @@ def delete_by_id(db: Session, row_id: str) -> None:
 
 def delete(db: Session, row_id: str) -> None:
     row = db.query(SalesAgentClass).filter(SalesAgentClass.id == row_id).first()
-    if row is None:
+    if row is None or not agent_visible(db, str(row.sales_agent_id)):
         raise AppException(status_code=404, message="Class row not found", code="NOT_FOUND")
     agent_id, start = str(row.sales_agent_id), row.from_month
     db.delete(row)
@@ -285,7 +298,19 @@ def rederive(
 ) -> List[Move]:
     """Every sales order whose stored class differs from the rule's answer, grouped per agent
     per month (orders and RM, from -> to), and written when `apply`. Cancelled orders are
-    re-derived too (the class is a fact about the order, not about whether it counts)."""
+    re-derived too (the class is a fact about the order, not about whether it counts).
+
+    Every company's orders, whatever the caller's scope (security review L3): the agent and
+    its class are shared, so one company's edit must not leave another's orders stale. The
+    dry run reports what it reads the same way."""
+    from app.models.base import company_scope
+
+    with company_scope(db, None):
+        return _rederive(db, agent_ids=agent_ids, company_id=company_id, from_month=from_month,
+                         to_month=to_month, apply=apply)
+
+
+def _rederive(db, *, agent_ids, company_id, from_month, to_month, apply) -> List[Move]:
     q = db.query(
         SalesOrder.id,
         SalesOrder.sales_agent_id,

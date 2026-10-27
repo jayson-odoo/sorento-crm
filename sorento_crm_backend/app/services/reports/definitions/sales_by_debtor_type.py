@@ -46,7 +46,14 @@ def this_month() -> dict:
 
 
 def agent_options(db) -> list:
-    rows = db.query(SalesAgent.id, SalesAgent.sales_agent).filter(SalesAgent.is_active.is_(True)).all()
+    from app.models.base import get_company_scope
+    from app.services.scm.sales_agent_service import scope_filter
+
+    q = db.query(SalesAgent.id, SalesAgent.sales_agent).filter(SalesAgent.is_active.is_(True))
+    predicate = scope_filter(get_company_scope(db))
+    if predicate is not None:
+        q = q.filter(predicate)
+    rows = q.all()
     return sorted(((str(i), str(code)) for i, code in rows), key=lambda r: r[1])
 
 

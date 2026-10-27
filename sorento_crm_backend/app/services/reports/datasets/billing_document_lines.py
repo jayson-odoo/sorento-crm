@@ -72,19 +72,19 @@ def channel_condition(ctx: Any, values: List[str]) -> Optional[Any]:
 
 
 def customer_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return BillingDocument.customer_id.in_(values)
+    return BillingDocument.customer_id.in_(inv.uuid_values(values, "customer"))
 
 
 def product_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return BillingDocumentLine.product_id.in_(values)
+    return BillingDocumentLine.product_id.in_(inv.uuid_values(values, "product"))
 
 
 def brand_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return Product.brand_id.in_(values)
+    return Product.brand_id.in_(inv.uuid_values(values, "brand"))
 
 
 def category_condition(ctx: Any, values: List[str]) -> Optional[Any]:
-    return Product.category_id.in_(values)
+    return Product.category_id.in_(inv.uuid_values(values, "category"))
 
 
 def agent_condition(ctx: Any, values: List[str]) -> Optional[Any]:

@@ -143,9 +143,23 @@ def agent_label() -> Any:
     return sa.func.coalesce(code, as_sent)
 
 
+def uuid_values(values: List[str], name: str) -> List[str]:
+    """`values` when every one is a UUID, else 422 (never a 500 from the uuid cast)."""
+    import uuid as _uuid
+
+    for value in values:
+        try:
+            _uuid.UUID(str(value))
+        except ValueError:
+            raise AppException(
+                status_code=422, message=f"'{name}' takes ids", code="REPORT_INVALID_PARAMS"
+            )
+    return list(values)
+
+
 def agent_condition(values: List[str]) -> Any:
     """The sale's agent among `values` (agent ids); `none` means a sale with no agent."""
-    ids = [v for v in values if v != "none"]
+    ids = uuid_values([v for v in values if v != "none"], "agent")
     parts = [agent_id().in_(ids)] if ids else []
     if "none" in values:
         parts.append(agent_id().is_(None))
@@ -313,6 +327,26 @@ def sales_type_filter(values: List[str]) -> Optional[Any]:
     return sales_type().in_(normalise_sales_types(values))
 
 
+# ------------------------------------------------------------------------ access
+
+#: Invoiced figures are finance data: the reports read them under this slug, and so must every
+#: route that answers them (security review M1: the order routes are gated on orders.view).
+INVOICED_SLUG = "sales.reports.view"
+
+
+def require_invoiced_access(db: Any, current_user: dict) -> None:
+    """403 unless the caller (a user, or an API key's act-as user) holds `sales.reports.view`."""
+    from app.services.user_service import UserPermissionService
+
+    # The route dependencies' own check (superadmin and admin pass), so the rule is one rule.
+    if not UserPermissionService(db).check_user_has_permission(str(current_user["id"]), INVOICED_SLUG):
+        raise AppException(
+            status_code=403,
+            message="Invoiced sales need the sales reports permission; ask delivered or ordered sales",
+            code="invoiced_needs_sales_reports",
+        )
+
+
 # ------------------------------------------------------------------------ entry points
 
 
@@ -321,12 +355,29 @@ def quantity_by_product_month(
     since: Any,
     until: Any,
     product_ids: Optional[List[str]] = None,
+    *,
+    company_ids: Optional[List[str]] = None,
 ) -> List[Tuple[str, str, Any]]:
     """`(product_id, 'YYYY-MM', signed quantity)` over posted invoice, cash sale, debit note and
     credit note lines (a credit note negative), `since <= doc_date < until`, lines with a
     product only, in the session's company scope; `product_ids` None = every product. Every
     sales type counts. The stock position report's Monthly sales and Highest per month read
-    this (STOCK-POSITION-REPORT #1913, owner ruling 27 Oct: one shared sales function)."""
+    this (STOCK-POSITION-REPORT #1913, owner ruling 27 Oct: one shared sales function).
+
+    The companies are explicit: `company_ids`, else the session's company scope, and an
+    unrestricted or unset scope is refused rather than summing every company (security
+    review L6)."""
+    from app.models.base import get_company_scope
+
+    if company_ids is None:
+        scope = get_company_scope(db)
+        if not isinstance(scope, frozenset):
+            raise AppException(
+                status_code=500,
+                message="quantity_by_product_month needs a company",
+                code="company_required",
+            )
+        company_ids = sorted(scope)
     month = sa.func.to_char(BillingDocument.doc_date, "YYYY-MM")
     q = (
         sa.select(
@@ -340,6 +391,7 @@ def quantity_by_product_month(
             BillingDocumentLine.product_id.isnot(None),
             BillingDocument.doc_date >= since,
             BillingDocument.doc_date < until,
+            BillingDocument.company_id.in_(list(company_ids)),
         )
         .group_by(BillingDocumentLine.product_id, month)
         .order_by(BillingDocumentLine.product_id, month)

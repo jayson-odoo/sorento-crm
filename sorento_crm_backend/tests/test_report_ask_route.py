@@ -477,7 +477,7 @@ def test_ac_re_12_a_contact_without_the_grant_is_refused(client, db):
 
 def test_ac_re_12_an_unknown_contact_is_refused(client, db):
     resp = client.get(ROUTE, params={**PERIOD, "contact_id": str(uuid.uuid4()), "space_id": "zzt-space",
-                                     "group_by": "product", "top_n": 3}, headers=KEY)
+                                     "group_by": "product", "top_n": 3, "basis": "delivered"}, headers=KEY)
     assert resp.status_code == 403 and _code(resp) == "sales_report_not_enabled", resp.text
 
 

@@ -330,6 +330,12 @@ def report_ask(
     agents = _agent_values(sales_agent_ids, "sales_agent_ids")
     card_agents = _agent_values(customer_agent_ids, "customer_agent_ids")
     codes = _normalize_entities(warehouse_codes) or []
+    if basis_norm == "invoiced":
+        # Finance data: the reports' own slug on the act-as principal, not only orders.view
+        # (SALES-UNIFIED security review M1).
+        from app.services.sales.invoiced_sales import require_invoiced_access
+
+        require_invoiced_access(db, current_user)
     if basis_norm == "invoiced" and (codes or group_norm == "location"):
         # A billing document line has no warehouse (SALES-UNIFIED, contract section 7).
         raise _unprocessable(

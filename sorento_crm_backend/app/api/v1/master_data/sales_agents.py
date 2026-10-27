@@ -240,6 +240,8 @@ def list_agent_classes(
     from app.services.sales import agent_class_service
 
     agent_id = validate_uuid_path(sales_agent_id, resource=_RESOURCE)
+    if not agent_class_service.agent_visible(db, agent_id):
+        raise handle_not_found(_RESOURCE, agent_id)
     return {"data": [agent_class_service.serialize(r) for r in agent_class_service.rows_of(db, agent_id)]}
 
 
