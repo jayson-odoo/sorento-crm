@@ -215,7 +215,7 @@ class PurchaseOrderService:
                 else max(float(ln.qty_ordered or 0) - float(ln.qty_received or 0), 0.0)
             )
             outstanding_qty += line_outstanding
-            if wh_code is None and ln.warehouse is not None:
+            if wh_code is None and ln.warehouse is not None and not ln.removed_unreferenced:
                 wh_code = ln.warehouse.warehouse_code
                 wh_name = ln.warehouse.warehouse_name or ln.warehouse.warehouse_code
             lines.append({
@@ -303,7 +303,8 @@ class PurchaseOrderService:
             # The currency the order is written IN. The header's own, or the first line
             # that names one - the import states it per row and older orders carry none.
             "currency": po.currency or next(
-                (ln.currency for ln in po.lines if ln.currency), None
+                (ln.currency for ln in po.lines if ln.currency and not ln.removed_unreferenced),
+                None,
             ),
             "lines": lines,
             # What order inquiries have OCCUPIED on this order (section 3.G). The SUM is on
