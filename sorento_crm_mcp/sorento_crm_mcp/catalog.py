@@ -927,14 +927,15 @@ CATALOG: tuple[ToolSpec, ...] = (
             "set, the resolved period, `basis` and the applied `filters` by name "
             "(`view=render` prints it).\n\n"
             "REQUIRED: `date_from` and `date_to` (ISO dates; 422 `period_required` otherwise - "
-            "ask the person which period, never guess one) and `contact_id` + `space_id`. "
+            "ask the person which period, never guess one; outstanding, pending_delivery and unpaid may leave both off = every date) and `contact_id` + `space_id`. "
             "`group_by` = customer | product | brand | category | sales_agent | location | "
-            "channel | month; absent = ONE total. With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
+            "channel | month | spec:<key> (a product spec's value, e.g. spec:trap_type; amount or qty only); absent = ONE total. With `group_by`, `top_n` (1 to 1,000) is REQUIRED "
             "(422 `top_n_required`): the number the person named, or ask. `sort` desc (top, "
             "default) | asc (bottom). `measure` amount (RM) | qty | customers | orders | "
             "products (what the ranking sorts by), the last three COUNT distinct customers, orders "
             "or products with a sale ('how many dealers sell product Y'); ask the person which measure when they did not say, as for top_n. `basis` "
-            "delivered | ordered | outstanding; ask the person which basis when they did not say. "
+            "delivered | ordered | outstanding | pending_delivery (delivery order lines not yet delivered) | unpaid "
+            "(RM still owed on posted invoices; group by customer, sales_agent or month only; product, brand, category, spec, location and channel come back under `not_applied`); ask the person which basis when they did not say. "
             "`compare_to` previous_period (the same number of days just before) | last_year (the "
             "same dates a year earlier), only when the person asks to compare, never with group_by month: every row and the "
             "total then carry `prev` and `change_pct` on the sort measure. "
@@ -949,6 +950,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`category_ids`, `sales_agent_ids`, `customer_ids` (repeated or csv UUIDs), "
             "`customer_agent_ids` (customers whose assigned agent on the customer card is one "
             "of these; `none` in either agent list = no agent), "
+            "`spec` (repeatable `key:value`, e.g. `trap_type:p_trap`; the same key = any of, different keys = all of; "
+            "a spec that cannot narrow comes back under `not_applied`, no match is `status: no_products`), "
             "`warehouse_codes` (exact codes; a location outside the contact's visibility "
             "answers `status: refused`), `channel` dealer | project. OMIT a filter you do not "
             "use: an empty value is 422 `empty_filter` (it never reads as 'no filter'), and an "
@@ -982,7 +985,7 @@ CATALOG: tuple[ToolSpec, ...] = (
             "date_from", "date_to", "basis", "measure", "group_by", "top_n", "sort",
             "product_code", "product_ids", "brand_ids", "category_ids", "sales_agent_ids",
             "customer_ids", "warehouse_codes", "channel", "contact_id", "space_id",
-            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine",
+            "customer_agent_ids", "dataset", "subjects", "askers", "compare_to", "mine", "spec",
         ),
         domain="orders",
         related_tools=("crm_sales_report", "crm_top_selling_report"),
