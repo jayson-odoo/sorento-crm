@@ -6,7 +6,7 @@
  */
 import React from 'react';
 import { afterEach, beforeEach, describe, it, expect, vi } from 'vitest';
-import { act, fireEvent, render, screen, within } from '@testing-library/react';
+import { act, fireEvent, render, screen } from '@testing-library/react';
 import {
   flexRender,
   getCoreRowModel,
@@ -81,7 +81,6 @@ function Harness({
 
 const box = (n: number) => screen.getByRole('checkbox', { name: `Select Row ${n}` });
 const selected = () => screen.getByTestId('selected').textContent;
-const mouse = { pointerType: 'mouse', button: 0, buttons: 1, isPrimary: true, pointerId: 1 };
 
 
 const touch = { pointerType: 'touch', button: 0, buttons: 1, isPrimary: true, pointerId: 7 };
@@ -239,6 +238,26 @@ describe('B-touch. Press and hold, then drag', () => {
     moveTo(1, 2);
     expect(document.documentElement.style.userSelect).toBe('none');
     release(1);
+    expect(document.documentElement.style.userSelect).toBe('');
+  });
+
+  it('R6: a move with the finger off the viewport (no element under it) is ignored', () => {
+    render(<Harness />);
+    pressBox(1);
+    hold();
+    moveTo(1, 3);
+    expect(selected()).toBe('r1,r2,r3');
+    // elementFromPoint returns null off the viewport
+    moveTo(1, 99);
+    expect(selected()).toBe('r1,r2,r3');
+  });
+
+  it('R7: text selection is off as soon as the hold fires, before any move', () => {
+    render(<Harness />);
+    pressBox(1);
+    hold();
+    expect(document.documentElement.style.userSelect).toBe('none');
+    fireEvent.pointerUp(box(1), touch);
     expect(document.documentElement.style.userSelect).toBe('');
   });
 });

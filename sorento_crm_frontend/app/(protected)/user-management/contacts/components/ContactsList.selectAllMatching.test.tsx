@@ -1,11 +1,11 @@
 /**
- * GRID-DRAG-SELECT (owner Q4/Q5, 28 Oct): Internal Users gets Odoo's "select every matching
+ * GRID-DRAG-SELECT (owner Q4/Q5, 28 Oct): Contacts gets Odoo's "select every matching
  * record": tick the header (this page), then the banner link ticks every contact matching the
  * filters, capped at 1,000 (the list endpoint's max page). The ids land in the ordinary
  * selection, so every existing bulk action works unchanged.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
+import { act, render, screen, fireEvent, cleanup, within, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -66,10 +66,11 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
   useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
 }));
 
+const nav = vi.hoisted(() => ({ search: '' }));
 vi.mock('next/navigation', () => ({
   useRouter: () => ({ replace: vi.fn(), push: vi.fn() }),
   usePathname: () => '/user-management/contacts',
-  useSearchParams: () => ({ get: () => null }),
+  useSearchParams: () => new URLSearchParams(nav.search),
 }));
 
 const toastError = vi.hoisted(() => vi.fn());
@@ -87,6 +88,24 @@ vi.mock('./BulkTagDialog', () => ({
   default: ({ targetContacts }: { targetContacts: unknown[] }) => (
     <div role="dialog">Tag dialog for {targetContacts.length} contacts</div>
   ),
+}));
+
+// The link dialog is not under test: its success path just reports every contact as linked.
+vi.mock('./BulkLinkCustomersDialog', () => ({
+  default: ({
+    open,
+    contacts,
+    onLinked,
+  }: {
+    open: boolean;
+    contacts: { id: string }[];
+    onLinked: (ids: string[]) => void;
+  }) =>
+    open ? (
+      <button type="button" onClick={() => onLinked(contacts.map((c) => c.id))}>
+        Finish link
+      </button>
+    ) : null,
 }));
 
 const contact = (n: number) => ({
@@ -119,16 +138,19 @@ import ContactsList from './ContactsList';
 
 function renderList() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
-  return render(
+  const ui = () => (
     <QueryClientProvider client={client}>
       <ContactsList />
-    </QueryClientProvider>,
+    </QueryClientProvider>
   );
+  const view = render(ui());
+  return { ...view, rerenderList: () => view.rerender(ui()) };
 }
 
 beforeEach(() => {
   vi.clearAllMocks();
   total = 1248;
+  nav.search = '';
   getContactsMock.mockImplementation(async (params: { pageSize: number }) =>
     params.pageSize === 1000
       ? { data: Array.from({ length: Math.min(total, 1000) }, (_, i) => contact(i + 1)), pagination: { total } }
@@ -149,7 +171,7 @@ async function openActions() {
   return screen.findByRole('menu');
 }
 
-describe('Internal Users: select every matching contact (Odoo pattern, capped at 1,000)', () => {
+describe('Contacts: select every matching contact (Odoo pattern, capped at 1,000)', () => {
   it('after the header tick, offers "Select first 1,000 of 1,248"', async () => {
     renderList();
     await waitForRows();
@@ -248,5 +270,127 @@ describe('Internal Users: select every matching contact (Odoo pattern, capped at
     const rows = generateExcelFileMock.mock.calls[0][0] as Record<string, unknown>[];
     expect(rows).toHaveLength(1000);
     expect(rows.some((r) => Object.values(r).includes('Contact 1000'))).toBe(true);
+  });
+
+  const mouse = { pointerType: 'mouse', button: 0, buttons: 1, isPrimary: true, pointerId: 1 };
+  const rowBox = (n: number) =>
+    within(screen.getByLabelText(new RegExp(`outbound for Demo Contact ${n}$`, 'i')).closest('tr')!).getByRole('checkbox');
+  const pageBigFetches = () =>
+    getContactsMock.mock.calls.filter(([p]) => (p as { pageSize: number }).pageSize === 1000);
+
+  async function enterMode() {
+    const view = renderList();
+    await waitForRows();
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    await screen.findByText('1,000 selected');
+    return view;
+  }
+
+  it('R1: a drag that unticks the page rows leaves no hidden selection', async () => {
+    await enterMode();
+    fireEvent.pointerDown(rowBox(1), mouse);
+    fireEvent.pointerMove(rowBox(2), mouse);
+    fireEvent.pointerMove(rowBox(3), mouse);
+    fireEvent.pointerUp(window, mouse);
+    fireEvent.click(rowBox(3).closest('tbody')!);
+
+    expect(screen.queryByText(/\d+ selected/)).toBeNull();
+    expect(screen.queryByText(/matching records are selected/)).toBeNull();
+    fireEvent.click(rowBox(1));
+    expect(screen.getByText('1 selected')).toBeInTheDocument();
+    const menu = await openActions();
+    expect(within(menu).getByRole('menuitem', { name: 'Delete (1)' })).toBeInTheDocument();
+  });
+
+  it('R2: a second click on the link while the first fetch is pending fires no second fetch', async () => {
+    renderList();
+    await waitForRows();
+    getContactsMock.mockImplementationOnce(() => new Promise(() => {}));
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    expect(pageBigFetches()).toHaveLength(1);
+  });
+
+  it('R2: unticking while the fetch is pending, then it resolves: nothing is selected', async () => {
+    renderList();
+    await waitForRows();
+    let resolve!: (v: unknown) => void;
+    getContactsMock.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    // the user unticks the page while the fetch is out
+    fireEvent.click(headerBox());
+    expect(screen.queryByText(/\d+ selected/)).toBeNull();
+    await act(async () => {
+      resolve({ data: Array.from({ length: 1000 }, (_, i) => contact(i + 1)), pagination: { total } });
+    });
+    expect(screen.queryByText(/matching records are selected/)).toBeNull();
+    expect(screen.queryByText('1,000 selected')).toBeNull();
+  });
+
+  it('R2: a sort change during the fetch discards the old result', async () => {
+    nav.search = 'sort=last_name&dir=asc';
+    const view = renderList();
+    await waitForRows();
+    let resolve!: (v: unknown) => void;
+    getContactsMock.mockImplementationOnce(() => new Promise((r) => (resolve = r)));
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+
+    nav.search = 'sort=first_name&dir=asc';
+    view.rerenderList();
+    // the sort really changed: the list refetched on it
+    await waitFor(() =>
+      expect(
+        getContactsMock.mock.calls.some(([p]) => JSON.stringify((p as { sorting: unknown }).sorting) === '[{"id":"first_name","desc":false}]'),
+      ).toBe(true),
+    );
+    await act(async () => {
+      resolve({ data: Array.from({ length: 1000 }, (_, i) => contact(i + 1)), pagination: { total } });
+    });
+    expect(screen.queryByText(/matching records are selected/)).toBeNull();
+    expect(screen.queryByText('1,000 selected')).toBeNull();
+  });
+
+  it('R3: the 1,000-row fetch carries the list\'s non-default search, filter and sort', async () => {
+    nav.search = 'query=zed&sort=last_name&dir=asc&chatbot_memory_level=own';
+    renderList();
+    await waitForRows();
+    fireEvent.click(headerBox());
+    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    await screen.findByText('1,000 selected');
+
+    const [params, filters] = pageBigFetches()[0];
+    expect(params).toMatchObject({
+      pageIndex: 0,
+      pageSize: 1000,
+      searchQuery: 'zed',
+      sorting: [{ id: 'last_name', desc: false }],
+    });
+    expect(filters).toEqual({ chatbot_memory_level: 'own' });
+  });
+
+  it('R4: changing the search in the mode clears the banner and every tick', async () => {
+    const view = await enterMode();
+    // the search box is hidden by the bulk strip, so the change arrives as the list's own URL state
+    nav.search = 'query=zed';
+    view.rerenderList();
+    await waitFor(() =>
+      expect(getContactsMock.mock.calls.some(([p]) => (p as { searchQuery?: string }).searchQuery === 'zed')).toBe(true),
+    );
+    await waitFor(() => expect(screen.queryByText(/matching records are selected/)).toBeNull());
+    expect(screen.queryByText(/\d+ selected/)).toBeNull();
+  });
+
+  it('R5: after Link customers succeeds on all of them, the strip and banner are gone', async () => {
+    await enterMode();
+    const menu = await openActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Link customers (1000)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Finish link' }));
+
+    expect(screen.queryByText('1,000 selected')).toBeNull();
+    expect(screen.queryByText(/matching records are selected/)).toBeNull();
   });
 });

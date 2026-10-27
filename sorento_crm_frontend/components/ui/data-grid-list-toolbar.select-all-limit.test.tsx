@@ -61,11 +61,30 @@ describe('selectAllMatching.limit wording', () => {
   });
 
   it('with no limit, keeps today\'s wording', () => {
-    const { unmount } = render(<Harness total={1248} active={false} />);
-    expect(screen.getByRole('button', { name: 'Select all 1248 records' })).toBeInTheDocument();
+    const { unmount } = render(<Harness total={120} active={false} />);
+    expect(screen.getByRole('button', { name: 'Select all 120 records' })).toBeInTheDocument();
     unmount();
-    render(<Harness total={1248} active />);
-    expect(screen.getByText('All 1248 selected')).toBeInTheDocument();
+    render(<Harness total={120} active />);
+    expect(screen.getByText('All 120 selected')).toBeInTheDocument();
     expect(screen.getByText(/records matching the current filters are selected\./)).toBeInTheDocument();
   });
+
+  it('R8: a total exactly at the limit is grouped like every other number', () => {
+    const { unmount } = render(<Harness total={1000} limit={1000} active={false} />);
+    expect(screen.getByRole('button', { name: 'Select all 1,000 records' })).toBeInTheDocument();
+    unmount();
+    render(<Harness total={1000} limit={1000} active />);
+    expect(screen.getByText('All 1,000 selected')).toBeInTheDocument();
+    expect(screen.getByText('1,000')).toBeInTheDocument();
+  });
+
+  it('R8: with no limit a total over 999 is still grouped', () => {
+    const { unmount } = render(<Harness total={1500} active={false} />);
+    expect(screen.getByRole('button', { name: 'Select all 1,500 records' })).toBeInTheDocument();
+    unmount();
+    render(<Harness total={1500} active />);
+    expect(screen.getByText('All 1,500 selected')).toBeInTheDocument();
+    expect(screen.getByText('1,500')).toBeInTheDocument();
+  });
 });
+
