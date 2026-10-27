@@ -142,7 +142,9 @@ def assert_demand_class(value: Optional[str]) -> Optional[str]:
     )
 
 
-def _backfill_null_class_orders(db: Session, agent: SalesAgent, demand_class: str) -> int:
+def _backfill_null_class_orders(
+    db: Session, agent: SalesAgent, demand_class: str, since=None
+) -> int:
     """Give the agent's still-unclassified orders the agent's class.
 
     PLAN-demand-class-agent-arrival.md (captain ruling 28 Aug 2026): the ladder puts the
@@ -166,9 +168,10 @@ def _backfill_null_class_orders(db: Session, agent: SalesAgent, demand_class: st
                SET demand_class = :demand_class
              WHERE sales_agent_id = :agent_id
                AND demand_class IS NULL
+               AND (CAST(:since AS date) IS NULL OR order_date IS NULL OR order_date >= :since)
             """
         ),
-        {"agent_id": agent.id, "demand_class": demand_class},
+        {"agent_id": agent.id, "demand_class": demand_class, "since": since},
     ).rowcount or 0
     if updated:
         logger.info(
@@ -203,12 +206,12 @@ def _write_class(db: Session, agent: SalesAgent, demand_class: Optional[str]) ->
     are filled as before."""
     from app.services.sales import agent_class_service
 
-    agent_class_service.set_current(
-        db, str(agent.id), demand_class, today=agent_class_service.today_malaysia()
-    )
+    today = agent_class_service.today_malaysia()
+    agent_class_service.set_current(db, str(agent.id), demand_class, today=today)
     db.refresh(agent)
     if demand_class:
-        _backfill_null_class_orders(db, agent, demand_class)
+        # This month on only (SALES-UNIFIED AC-35): a past month follows the dated rows.
+        _backfill_null_class_orders(db, agent, demand_class, agent_class_service.month_start(today))
 
 
 def normalize_location_group(value: Optional[str]) -> Optional[str]:

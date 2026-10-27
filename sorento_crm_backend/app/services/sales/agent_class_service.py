@@ -174,6 +174,7 @@ def add(db: Session, agent_id: str, *, demand_class: str, from_month: Optional[d
     )
     if (
         open_row is not None
+        and to_month is None  # only a new OPEN row moves the agent on; a bounded one is history
         and from_month is not None
         and (open_row.from_month is None or open_row.from_month < from_month)
     ):

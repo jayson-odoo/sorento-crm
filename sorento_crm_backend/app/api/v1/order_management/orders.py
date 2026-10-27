@@ -2201,7 +2201,13 @@ async def get_top_selling(
     direction_norm = _choice(direction, "direction", ("top", "bottom"), default="top")
     channel_norm = (channel or "").strip().lower() or None
     if channel_norm is not None:
-        channel_norm = _choice(channel_norm, "channel", ("dealer", "project"))
+        from app.services.sales.invoiced_sales import SALES_TYPE_LABELS
+
+        allowed_channels = ("dealer", "project") + (
+            tuple(v for v in SALES_TYPE_LABELS if v not in ("dealer", "project"))
+            if basis_norm == "invoiced" else ()
+        )
+        channel_norm = _choice(channel_norm, "channel", allowed_channels)
     if basis_norm == "invoiced":
         # SALES-UNIFIED: the invoiced basis is the Top selling items report, items only, and
         # finance data: it needs the reports' own slug, not only orders.view (security M1).

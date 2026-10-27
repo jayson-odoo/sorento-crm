@@ -126,8 +126,14 @@ def test_q8_the_class_is_now_x_moves_only_this_month_on(db):
     db.add(SalesAgentClass(sales_agent_id=a.id, demand_class="retail"))
     db.flush()
     past, _ = _order(db, a, date(2025, 1, 10), demand_class="retail")
+    # Stored differently from what the dated rule says: an all-time re-derive WOULD move it.
+    stale, _ = _order(db, a, date(2025, 2, 10), demand_class="project")
+    blank, _ = _order(db, a, date(2025, 3, 10), demand_class=None)
+    now, _ = _order(db, a, date(2026, 7, 5), demand_class="retail")
     svc.set_current(db, str(a.id), "project", today=date(2026, 7, 20))
     assert _class_of(db, past) == "retail"
+    assert _class_of(db, stale) == "project" and _class_of(db, blank) is None
+    assert _class_of(db, now) == "project"
     rows = svc.rows_of(db, str(a.id))
     assert [(r.demand_class, r.from_month, r.to_month) for r in rows] == [
         ("retail", None, date(2026, 6, 1)),
@@ -193,3 +199,28 @@ def test_quantity_by_product_month_nets_credit_notes_by_month_and_product(db):
         (str(p.id), D("1")), (str(q.id), D("4")),
     }
     assert quantity_by_product_month(db, date(2026, 1, 6), date(2026, 1, 20)) == []
+
+
+def test_b2_a_bounded_past_row_does_not_close_the_current_class(db):
+    from app.services.sales import agent_class_service as svc
+
+    a = agent(db, unique_code("ZZTCLS"))
+    may, _ = _order(db, a, date(2026, 5, 10), demand_class="retail")
+    march, _ = _order(db, a, date(2026, 3, 10), demand_class="retail")
+    svc.add(db, str(a.id), demand_class="retail", from_month=None, to_month=None)
+    with pytest.raises(AppException) as clash:
+        svc.add(db, str(a.id), demand_class="project", from_month=date(2026, 3, 1), to_month=date(2026, 4, 1))
+    assert clash.value.code == "class_overlap"  # history goes in by editing, never by closing "now"
+    assert _class_of(db, may) == "retail" and _class_of(db, march) == "retail"
+    db.expire_all()
+    assert db.get(type(a), a.id).demand_class == "retail"
+
+
+def test_s1_the_screens_class_edit_fills_blank_orders_from_this_month_only(db):
+    from app.services.scm import sales_agent_service
+
+    a = agent(db, unique_code("ZZTCLS"))
+    old_blank, _ = _order(db, a, date(2020, 7, 10), demand_class=None)
+    sales_agent_service.annotate(db, a, demand_class="project", write_demand_class=True)
+    db.flush()
+    assert _class_of(db, old_blank) is None

@@ -731,8 +731,12 @@ def _sorted_rows(sort, row_values, col_values, cells, row_sums, measures, row_co
     blank = [v for v in row_values if v == BLANK_VALUE]
     real = [v for v in row_values if v != BLANK_VALUE]
     if sort.key == ROW_SORT:
-        labels = (_value_labels(row_column, real) if row_column.fixed_values else None) or {}
-        return sorted(real, key=lambda v: _natural_key(labels.get(v, v)), reverse=reverse) + blank
+        if row_column.fixed_values:
+            # A fixed axis (JAN..DEC) sorts in its own order, never by its labels' spelling.
+            position = {value: i for i, (value, _label) in enumerate(row_column.fixed_values)}
+            return sorted(real, key=lambda v: (position.get(v, len(position)), _natural_key(v)),
+                          reverse=reverse) + blank
+        return sorted(real, key=_natural_key, reverse=reverse) + blank
 
     first = measures[0].key
 

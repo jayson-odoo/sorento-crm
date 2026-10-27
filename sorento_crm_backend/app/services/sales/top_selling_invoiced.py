@@ -15,6 +15,20 @@ from app.services.error_handler import AppException
 KEY = "top_selling_items"
 
 
+def _companies(db: Session) -> List[str]:
+    """The companies the caller reads: the session's scope, every active company when the
+    scope is unrestricted (None), and none at all for an empty or unset scope (fail closed)."""
+    from app.models.base import get_company_scope
+    from app.models.company import Company
+
+    scope = get_company_scope(db)
+    if scope is None:
+        return [str(i) for (i,) in db.query(Company.id).filter(Company.is_active.is_(True)).all()]
+    if isinstance(scope, frozenset):
+        return sorted(scope)
+    return []
+
+
 def _names(db: Session, model: Any, column: Any, ids: Optional[List[str]]) -> Optional[str]:
     if not ids:
         return None
@@ -60,27 +74,37 @@ def top_selling_invoiced(
     ):
         if values:
             params[key] = list(values)
-    view = ReportViewConfig.model_validate({
-        "params": params,
-        "detail": {"columns": [], "order": []},
-        "pivot": {"rows": "item_code", "cols": "year", "measures": ["quantity", "sales_value"]},
-    })
-    pivot = engine.run_summary(db, definition, params, view)
+    # The report reads ONE company per run, so the route runs it once per company the caller
+    # may read and adds the rows up (reviewer B1): a contact in two companies gets both, as the
+    # delivered basis always gave; an unrestricted caller (an API key with no contact) reads
+    # every active company, never none.
+    merged: Dict[Optional[str], List[Decimal]] = {}
+    total_qty, total_amount = Decimal(0), Decimal(0)
+    for company_id in _companies(db):
+        run_params = {**params, "company": [company_id]}
+        view = ReportViewConfig.model_validate({
+            "params": run_params,
+            "detail": {"columns": [], "order": []},
+            "pivot": {"rows": "item_code", "cols": "year", "measures": ["quantity", "sales_value"]},
+        })
+        pivot = engine.run_summary(db, definition, run_params, view,
+                                   company_grants=frozenset({company_id}))
+        for value in pivot.row_values:
+            totals = pivot.row_totals.get(value) or {}
+            key = None if value == engine.BLANK_VALUE else value
+            slot = merged.setdefault(key, [Decimal(0), Decimal(0)])
+            slot[0] += Decimal(totals.get("quantity") or 0)
+            slot[1] += Decimal(totals.get("sales_value") or 0)
+        grand = pivot.grand_total or {}
+        total_qty += Decimal(grand.get("quantity") or 0)
+        total_amount += Decimal(grand.get("sales_value") or 0)
 
-    ranked = []
-    for value in pivot.row_values:
-        totals = pivot.row_totals.get(value) or {}
-        qty = Decimal(totals.get("quantity") or 0)
-        amount = Decimal(totals.get("sales_value") or 0)
-        if not qty and not amount:
-            continue
-        ranked.append((None if value == engine.BLANK_VALUE else value, qty, amount))
+    ranked = [(code, qty, amount) for code, (qty, amount) in merged.items() if qty or amount]
     metric = 1 if rank_by == "quantity" else 2
     sign = -1 if direction == "top" else 1
     ranked.sort(key=lambda r: (sign * r[metric], sign * r[3 - metric], r[0] or ""))
     shown = ranked[:n] if n else ranked
 
-    grand = pivot.grand_total or {}
     return {
         "rank_by": rank_by,
         "basis": "invoiced",
@@ -102,8 +126,5 @@ def top_selling_invoiced(
             {"rank": i, "code": code, "quantity": int(qty), "amount": float(amount)}
             for i, (code, qty, amount) in enumerate(shown, start=1)
         ],
-        "totals": {
-            "quantity": int(Decimal(grand.get("quantity") or 0)),
-            "amount": float(Decimal(grand.get("sales_value") or 0)),
-        },
+        "totals": {"quantity": int(total_qty), "amount": float(total_amount)},
     }

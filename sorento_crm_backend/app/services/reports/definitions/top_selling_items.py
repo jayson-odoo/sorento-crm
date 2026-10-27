@@ -100,7 +100,8 @@ REPORT = reg.register(
             "pivot": {
                 "rows": "item",
                 "cols": "year",
-                "measures": ["quantity", "sales_value", "documents"],
+                # RM first: the summary's Total sort reads the first measure (ranked by RM).
+                "measures": ["sales_value", "quantity", "documents"],
                 "sort": {"key": "__total__", "dir": "desc"},
             },
         },
