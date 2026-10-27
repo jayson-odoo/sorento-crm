@@ -265,6 +265,9 @@ export default function ContactsList() {
   // "Select first 1,000 of N" (Odoo pattern): every contact matching the list, capped at the
   // list endpoint's max page. While set, bulk actions act on these rather than the page.
   const [matching, setMatching] = useState<RespondContact[] | null>(null);
+  // Bumped whenever the selection moves on, so a 1,000-row fetch that lands late is dropped.
+  const matchingSeq = useRef(0);
+  const matchingPendingSeq = useRef<number | null>(null);
   const selectedContacts = useMemo(
     () => matching ?? pageContacts.filter((c) => rowSelection[c.id]),
     [matching, pageContacts, rowSelection],
@@ -767,17 +770,14 @@ export default function ContactsList() {
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
     onRowSelectionChange: (updater) => {
-      if (matching) {
-        // A tick change leaves the all-matching mode and keeps only this page's ticks.
-        const pageIds = new Set(pageContacts.map((c) => c.id));
-        const base = typeof updater === 'function' ? updater(rowSelection) : updater;
-        setMatching(null);
-        setRowSelection(
-          Object.fromEntries(Object.entries(base).filter(([id]) => pageIds.has(id))),
-        );
-        return;
-      }
-      setRowSelection(updater);
+      // A tick change leaves the all-matching mode and keeps only this page's ticks. Always
+      // trimmed, not only on the first change: a drag writes back the snapshot it took at
+      // pointerdown, which still holds every id of the mode.
+      const pageIds = new Set(pageContacts.map((c) => c.id));
+      const base = typeof updater === 'function' ? updater(rowSelection) : updater;
+      matchingSeq.current += 1;
+      setMatching(null);
+      setRowSelection(Object.fromEntries(Object.entries(base).filter(([id]) => pageIds.has(id))));
     },
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
@@ -787,6 +787,7 @@ export default function ContactsList() {
   });
 
   const clearSelection = () => {
+    matchingSeq.current += 1;
     setMatching(null);
     setRowSelection({});
   };
@@ -814,12 +815,21 @@ export default function ContactsList() {
   };
 
   const selectAllMatchingRows = async () => {
+    const mine = matchingSeq.current;
+    // A second click while this fetch is in flight does nothing.
+    if (matchingPendingSeq.current === mine) return;
+    matchingPendingSeq.current = mine;
     try {
       const res = await fetchContactsPage({ ...listParams, pageIndex: 0, pageSize: 1000 });
+      // Filters, sort, a tick or Clear moved on while it ran: this result is stale.
+      if (matchingSeq.current !== mine) return;
       setRowSelection(Object.fromEntries(res.data.map((c) => [c.id, true])));
       setMatching(res.data);
     } catch (err) {
+      if (matchingSeq.current !== mine) return;
       toast.error(err instanceof Error ? err.message : 'Could not select all matching contacts');
+    } finally {
+      if (matchingPendingSeq.current === mine) matchingPendingSeq.current = null;
     }
   };
 
@@ -837,6 +847,7 @@ export default function ContactsList() {
   useEffect(() => {
     setRowSelection({});
     setMatching(null);
+    matchingSeq.current += 1;
   }, [
     searchQuery,
     chatbotMemoryLevel,
@@ -981,13 +992,20 @@ export default function ContactsList() {
         open={bulkLinkOpen}
         onOpenChange={setBulkLinkOpen}
         contacts={selectedContacts}
-        onLinked={(okIds) =>
+        onLinked={(okIds) => {
+          if (okIds.length === selectedContacts.length) {
+            clearSelection();
+            return;
+          }
+          // Partial: the linked ones leave the selection and the all-matching set; the failed
+          // ones stay selected, still in the mode.
+          setMatching((prev) => prev && prev.filter((c) => !okIds.includes(c.id)));
           setRowSelection((prev) => {
             const next = { ...prev };
             okIds.forEach((id) => delete next[id]);
             return next;
-          })
-        }
+          });
+        }}
       />
 
       <ContactCreateDialog
