@@ -121,6 +121,47 @@ class TestBlockCodes:
 
         assert photos[0].block_codes == ["SRTBF12613", "SRTW5112-MW"]
 
+    @pytest.mark.parametrize(
+        "code", ["SRT73-WH-DIY", "SRT-FH12-CP", "SRTWT1906-BL-DIY"]
+    )
+    def test_hyphenated_diy_codes_are_block_codes(self, code: str) -> None:
+        photos = _one([((50, 100, 250, 300), _png())], [(50, 320, code)])
+
+        assert photos[0].block_codes == [code]
+
+    def test_non_code_words_stay_out_beside_a_hyphenated_code(self) -> None:
+        photos = _one(
+            [((50, 100, 250, 300), _png())],
+            [(50, 320, "SRT73-WH-DIY MDF18 ABC12 SUS-STEEL 900x450x800 LP: RM 999")],
+        )
+
+        assert photos[0].block_codes == ["SRT73-WH-DIY"]
+
+    def test_a_code_wrapped_onto_a_hyphen_led_line_is_joined(self) -> None:
+        import pymupdf
+
+        doc = pymupdf.open()
+        page = doc.new_page(width=PAGE_W, height=PAGE_H)
+        page.insert_image(pymupdf.Rect(50, 100, 250, 300), stream=_png())
+        page.insert_text((50, 320), "SRTKT1931SS\n-BL-DIY", fontsize=9)
+        data = doc.tobytes()
+        doc.close()
+
+        photos = extract_catalog_photos(data)
+
+        assert photos[0].block_codes == ["SRTKT1931SS-BL-DIY"]
+
+    def test_a_row_one_photo_takes_its_hyphenated_caption_not_the_next_rows(self) -> None:
+        photos = _one(
+            [
+                ((50, 100, 250, 250), _png((200, 0, 0))),
+                ((50, 330, 250, 480), _png((0, 0, 200))),
+            ],
+            [(50, 270, "SRT73-WH-DIY"), (50, 500, "SRT-FH12-CP")],
+        )
+
+        assert [p.block_codes for p in photos] == [["SRT73-WH-DIY"], ["SRT-FH12-CP"]]
+
     def test_a_placeholder_is_listed_apart_and_never_a_block_code(self) -> None:
         # E2
         photos = _one(
@@ -233,9 +274,47 @@ class TestSkips:
         assert photos[0].rect[1] == pytest.approx(200, abs=1)
 
     def test_a_wide_image_lower_down_is_not_a_banner(self) -> None:
-        photos = _one([((20, 400, PAGE_W - 20, 560), _png((0, 100, 0), (600, 160)))])
+        # 70% of the page wide: well under the 80% band threshold. (Was 93%
+        # before the rule widened to "anywhere on the page", round 2.)
+        photos = _one([((90, 400, 90 + 0.7 * PAGE_W, 560), _png((0, 100, 0), (600, 160)))])
 
         assert len(photos) == 1
+
+    def test_a_band_80_percent_wide_in_the_middle_of_the_page_is_skipped(self) -> None:
+        width = 0.8 * PAGE_W
+        photos = _one([((50, 400, 50 + width, 560), _png((0, 100, 0), (600, 160)))])
+
+        assert photos == []
+
+    def test_an_image_79_percent_wide_in_the_middle_of_the_page_is_kept(self) -> None:
+        width = 0.79 * PAGE_W
+        photos = _one([((50, 400, 50 + width, 560), _png((0, 100, 0), (600, 160)))])
+
+        assert len(photos) == 1
+
+    def test_an_inline_image_with_no_xref_is_skipped(self) -> None:
+        import pymupdf
+
+        doc = pymupdf.open()
+        page = doc.new_page(width=PAGE_W, height=PAGE_H)
+        page.insert_image(pymupdf.Rect(50, 100, 250, 300), stream=_png())
+        # 8x8 RGB inline image, 8 bits, hex encoded, placed 100x100pt.
+        hexdata = "FF0000" * 64
+        inline = (
+            "\nq 100 0 0 100 300 %s cm\n"
+            "BI /W 8 /H 8 /CS /RGB /BPC 8 /F /AHx ID %s> EI\nQ\n"
+            % (PAGE_H - 300, hexdata)
+        )
+        page.wrap_contents()
+        doc.update_stream(page.get_contents()[0], page.read_contents() + inline.encode())
+        data = doc.tobytes()
+        doc.close()
+
+        photos = extract_catalog_photos(data)
+
+        # Only the xref image survives; the inline one has no xref to read.
+        assert len(photos) == 1
+        assert photos[0].rect[0] == pytest.approx(50, abs=1)
 
 
 class TestPlacements:
