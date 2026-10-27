@@ -94,7 +94,8 @@ beforeEach(() => {
 });
 function open() {
   render(<QueryClientProvider client={client()}><WorkflowSubmissionsList fixedDefinitionId="zzt-def" /></QueryClientProvider>);
-  fireEvent.pointerDown(screen.getByRole('button', { name: 'Quick filters' }), { button: 0, ctrlKey: false });
+  // A Radix Popover opens on click (a DropdownMenu would open on pointerdown).
+  fireEvent.click(screen.getByRole('button', { name: 'Quick filters' }));
 }
 
 describe('Workflow submissions - multi State code', () => {
