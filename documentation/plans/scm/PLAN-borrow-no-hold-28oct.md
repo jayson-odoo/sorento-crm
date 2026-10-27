@@ -1,7 +1,10 @@
 # PLAN: BORROW-NO-HOLD - a Borrow decision is a plan, not a stock hold
 
-Status: Plan. Behaviour card filed as one crew-ask, waiting for owner answers before any code. Track: full
-(size M, LEAD pattern: tester + coder + reviewer subagents). Base: main 71a43b3ba1 (carries #1919).
+Status: Build. Owner answers 28 Oct ~00:25: (a) on all (Q1 reach only via a plan; Q2 OI links keep holding; Q2b supply
+Borrows unchanged, "incoming doesn't come into the picture anyway"; Q3 keep the board donor cell; Q4 reorder runs stop
+deducting Borrow; Q5 keep the confirm-time donor-line check). Track: full (size M, LEAD pattern: tester + coder +
+reviewer subagents). Keep the diff apart from CONFIRM-DOUBLE-ROWS #1934 (repeat-Confirm stacking in
+`project_supply_service.py`); merge main before crew-done. Base: main 71a43b3ba1 (carries #1919).
 
 ## Journey
 
@@ -41,7 +44,7 @@ Code read on main 71a43b3ba1 (file:line, backend `app/`):
 - Stock Debt's "Lent to SO396071 (32)" is STOCK-DEBT-LENDABLE (landed goods, `stock_debt_service.py:2434-2442`),
   not a Borrow.
 
-## Shape of the change (draft on the card's recommendations; restated after the owner answers)
+## Shape of the change (owner answers 28 Oct: (a) on all)
 
 Reuse #1919's one shared rule, no per-screen copy:
 

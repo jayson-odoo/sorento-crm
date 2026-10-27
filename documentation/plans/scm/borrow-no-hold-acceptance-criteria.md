@@ -1,7 +1,7 @@
 # UAC: BORROW-NO-HOLD - a Borrow decision is a plan, not a stock hold
 
 Plan: `PLAN-borrow-no-hold-28oct.md`. Card: `CARD-borrow-no-hold-28oct.md`.
-Status: DRAFT on the card's recommendations (Q1 a, Q2 a + Q2b a, Q3 a, Q4 a, Q5 a); restated when the owner answers.
+Status: agreed. Owner answers 28 Oct ~00:25: (a) on all (Q1, Q2, Q2b, Q3, Q4, Q5).
 
 "Borrow" below means a confirmed `so_line_allocations` row with `source_type` `other_location` or
 `other_project` on an ACTIVE decision (or a NULL decision). A step-3 supply Borrow (placement link) is not

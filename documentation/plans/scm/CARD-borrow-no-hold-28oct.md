@@ -4,6 +4,10 @@ Owner, 28 Oct ~00:20 MYT: "borrow shouldn't affect the planning also". This reve
 BOARD-NO-HOLD card (`CARD-board-no-hold-27oct.md`, "Borrow should work like today"). #1919 (merged,
 3783f8c08b) already made a Reserve a plan only; this lane does the same for a Borrow.
 
+**Owner answers (28 Oct ~00:25): (a) on all.** Q1 reach to BRW / another group only via a plan; Q2 OI links to
+PO / SPO keep holding; Q2b supply Borrows unchanged ("incoming doesn't come into the picture anyway"); Q3 keep the
+board donor cell; Q4 reorder runs stop deducting Borrow; Q5 keep the confirm-time donor-line check.
+
 Code read on main 71a43b3ba1 (carries #1919). Data: dev copy `sorento_cagent_stack` (15 Oct), read only.
 
 ## The rule, in plain words
