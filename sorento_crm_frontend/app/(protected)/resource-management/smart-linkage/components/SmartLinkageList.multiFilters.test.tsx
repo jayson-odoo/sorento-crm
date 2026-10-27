@@ -107,6 +107,9 @@ describe('Smart linkage - multi Status and Channel filters', () => {
     const boxes = await screen.findAllByRole('listbox');
     await user.selectOptions(boxes[0], ['failed', 'success']);
     await user.selectOptions(boxes[1], ['n8n']);
-    await waitFor(() => expect(lastArgs()).toMatchObject({ status: 'failed,success', integration_channel: 'n8n' }));
+    await waitFor(() => {
+      expect(sortedValues(lastArgs().status)).toEqual(['failed', 'success']);
+      expect(lastArgs().integration_channel).toBe('n8n');
+    });
   });
 });
