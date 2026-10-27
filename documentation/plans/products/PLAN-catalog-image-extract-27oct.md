@@ -416,3 +416,23 @@ Browser pass
   middlewareClientMaxBodySize: "60mb"` (50 MB ceiling plus multipart overhead). Production sits behind its
   own reverse proxy without these rewrites (`next.config.mjs:54-57`); its body limit is not in this repo
   (UNVERIFIED, the 50 MB flyer upload already relies on it).
+
+## Fix round 2 (27 Oct): reviewer READY, security NOT CLEAN on one should-fix
+
+Kill-proof round 1 (reviewer, `git archive` copy): FR-1, FR-9 (job and feed exclusion), FR-8 FE all went
+red when broken and green when restored.
+
+- FR-19 (security should-fix) The 2,000-photo cap stops the extraction itself: `extract_catalog_photos`
+  takes the limit and stops decoding at limit + 1, so a PDF placing one image thousands of times never
+  decodes them all. Each (xref, crop) is re-encoded once per run and reused. A soft mask whose size cannot
+  be read is skipped, not decoded.
+- FR-20 The final commit of a read sits inside the failure path, so a failed commit also deletes the files.
+- FR-21 `thumbnail_url` / `image_url` are `string | null` in the FE type; a missing thumbnail renders an
+  empty box, never an `<img>` without a source.
+- FR-22 "Download all as ZIP" passes the folder as `directoryId` too, so the ZIP is named after the catalogue.
+- FR-23 `CATALOGUE_MAX_PAGES` declared once; `CatalogueReadError` sits with the other classes.
+- Known and accepted: Replace calls `delete_product_attachment`, which commits before the new link is made;
+  a crash between the two is recovered by re-running Attach, but the handed-over primary flag is then lost
+  (rare, and Attach shows the product's photos as they are).
+- Test copy DB: crew held the migration SQL (`SET NOT NULL` counts as destructive), so the shared dev DB
+  lacks the NOT NULL and the three indexes. Owner approval (`crew migrate --approved`) before the hand test.
