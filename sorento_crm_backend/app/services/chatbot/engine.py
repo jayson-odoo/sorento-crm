@@ -1334,10 +1334,11 @@ def _span_prep(
 
 
 def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
-    """Trace only: the rows the resolver offered for one span, best first."""
+    """Trace only: the rows the resolver offered for one span, best first, the first 8 (`close`
+    carries the full count) so the event stays inside the trace entry cap."""
     return [
         {"list": c.row.list_name, "label": c.row.label, "score": round(c.score, 3), "signal": c.signal}
-        for c in res.candidates
+        for c in res.candidates[:8]
     ]
 
 

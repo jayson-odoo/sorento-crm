@@ -95,9 +95,13 @@ export function SpanPassSection({
           <div className="text-2xs font-medium text-muted-foreground">Added from the message spelling</div>
           <div className="flex flex-wrap gap-1">
             {spanExtract.near_exact?.map((n, i) => (
-              <Badge key={i} variant={SOURCE_VARIANT.near_exact} size="sm">
+              <span
+                key={i}
+                data-testid="near-exact-label"
+                className="min-w-0 whitespace-normal break-words rounded border border-warning/40 px-1.5 py-0.5 text-xs"
+              >
                 {n.label}
-              </Badge>
+              </span>
             ))}
           </div>
         </div>

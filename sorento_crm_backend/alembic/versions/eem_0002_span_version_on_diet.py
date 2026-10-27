@@ -35,6 +35,7 @@ def publish_on_production(session: Session) -> int | None:
     its number, or None when there is no production label, the text has no lists line (or already has the span
     line), or this text is already published."""
     from app.models.ai_prompt import AIPromptVersion
+    from app.services import chatbot_prompt_diet_edits as prompt_diet_edits
     from app.services.chatbot_lookup_edits import MARKER, SPAN_MARKER
 
     row = session.execute(
@@ -54,6 +55,9 @@ def publish_on_production(session: Session) -> int | None:
         return None
     if MARKER not in stripped:
         logger.warning("eem_0002: the production parser text has no lookup lists line, nothing published")
+        return None
+    if prompt_diet_edits.build(row[0]) is not None:
+        logger.warning("eem_0002: the production parser text is pre-diet, eem_0001's case, nothing published")
         return None
     template = "\n".join(SPAN_MARKER if ln.strip() == MARKER else ln for ln in lines)
     if session.query(AIPromptVersion.version).filter(
