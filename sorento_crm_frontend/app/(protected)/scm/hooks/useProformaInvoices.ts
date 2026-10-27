@@ -14,7 +14,6 @@ import {
   type ListProformaInvoicesOptions,
   type ProformaInvoiceDetail,
   type ProformaInvoiceWrite,
-  type ProformaPlacement,
 } from '../services/proformaInvoiceService';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';

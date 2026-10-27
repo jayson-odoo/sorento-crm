@@ -54,10 +54,7 @@ import {
   useProformaInvoices,
   useProformaInvoicesApplied,
 } from '../../hooks/useProformaInvoices';
-import type {
-  ProformaInvoiceListRow,
-  ProformaPlacement,
-} from '../../services/proformaInvoiceService';
+import type { ProformaInvoiceListRow } from '../../services/proformaInvoiceService';
 import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/format';
 import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
