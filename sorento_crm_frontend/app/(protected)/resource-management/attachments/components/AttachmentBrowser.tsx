@@ -26,7 +26,9 @@ import { DataGridListToolbar, type ToolbarAction } from '@/components/ui/data-gr
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable, DataGridTableRowSelect, DataGridTableRowSelectAll } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAttachments, useAttachmentTypesList, useBulkRestoreAttachments, useDirectoryTree } from '../hooks/useAttachments';
 import { resubmitAttachmentWebhook } from '../services/attachmentService';
@@ -81,8 +83,9 @@ export default function AttachmentBrowser() {
   const [bulkEditTypeOpen, setBulkEditTypeOpen] = useState(false);
   const [setCompanyDialogOpen, setSetCompanyDialogOpen] = useState(false);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [directoryId, setDirectoryId] = useState<string | null>(null);
-  const [attachmentTypeId, setAttachmentTypeId] = useState<string>('__all__');
+  // Folder, attachment type and company hold one value or several, comma-joined (OR-ed); '' = no filter.
+  const [directoryFilter, setDirectoryFilter] = useState('');
+  const [attachmentTypeId, setAttachmentTypeId] = useState('');
   const [linkStatus, setLinkStatus] = useState<'__all__' | 'linked' | 'unlinked'>('__all__');
   const [companyFilter, setCompanyFilter] = useState('');
   const [uploadedBy, setUploadedBy] = useState('');
@@ -95,8 +98,8 @@ export default function AttachmentBrowser() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearchQuery(state.searchQuery);
-    setDirectoryId(state.filters.directory_id ?? null);
-    setAttachmentTypeId(state.filters.attachment_type_id ?? '__all__');
+    setDirectoryFilter(joinMulti(splitMulti(state.filters.directory_id)));
+    setAttachmentTypeId(joinMulti(splitMulti(state.filters.attachment_type_id)));
     setLinkStatus(
       (state.filters.link_status as 'linked' | 'unlinked') ?? '__all__',
     );
@@ -110,16 +113,19 @@ export default function AttachmentBrowser() {
   const { data: directoryTree = [] } = useDirectoryTree();
   const { data: attachmentTypes = [] } = useAttachmentTypesList();
   const { grants: companyGrants } = useCompany();
-  const isTrashView = directoryId === '__trash__';
+  const pickedFolders = splitMulti(directoryFilter);
+  const isTrashView = pickedFolders.includes('__trash__');
+  const folderIds = isTrashView ? [] : pickedFolders;
+  const directoryId = folderIds.length === 1 ? folderIds[0] : null;
 
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useAttachments({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    directory_id: isTrashView ? undefined : directoryId ?? undefined,
+    directory_id: folderIds.length ? joinMulti(folderIds) : undefined,
     is_deleted: isTrashView ? true : undefined,
-    attachment_type_id: attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+    attachment_type_id: attachmentTypeId || undefined,
     link_status: linkStatus !== '__all__' ? linkStatus : undefined,
     company: companyFilter || undefined,
     uploaded_by: uploadedBy.trim() || undefined,
@@ -140,10 +146,9 @@ export default function AttachmentBrowser() {
           searchQuery,
         },
         {
-          directory_id: isTrashView ? undefined : directoryId ?? undefined,
+          directory_id: folderIds.length ? joinMulti(folderIds) : undefined,
           is_deleted: isTrashView ? 'true' : undefined,
-          attachment_type_id:
-            attachmentTypeId !== '__all__' ? attachmentTypeId : undefined,
+          attachment_type_id: attachmentTypeId || undefined,
           link_status: linkStatus !== '__all__' ? linkStatus : undefined,
           company: companyFilter || undefined,
           uploaded_by: uploadedBy.trim() || undefined,
@@ -157,7 +162,7 @@ export default function AttachmentBrowser() {
       sorting,
       searchQuery,
       isTrashView,
-      directoryId,
+      directoryFilter,
       attachmentTypeId,
       linkStatus,
       companyFilter,
@@ -408,8 +413,8 @@ export default function AttachmentBrowser() {
   // The folder/trash selector lives in the filter popover; count it as an active
   // filter only when narrowed away from "All folders".
   const totalFilterCount =
-    (directoryId !== null ? 1 : 0) +
-    (attachmentTypeId !== '__all__' ? 1 : 0) +
+    (directoryFilter ? 1 : 0) +
+    (attachmentTypeId ? 1 : 0) +
     (linkStatus !== '__all__' ? 1 : 0) +
     (companyFilter ? 1 : 0) +
     (uploadedBy.trim() ? 1 : 0) +
@@ -450,13 +455,13 @@ export default function AttachmentBrowser() {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Folder</p>
-                      <SearchableSelect
-                        value={directoryId ?? '__all__'}
-                        onChange={(v) =>
-                          setDirectoryId(v === '__all__' ? null : v === '__trash__' ? '__trash__' : v)
-                        }
+                      <SearchableMultiSelect
+                        value={pickedFolders}
+                        onChange={(v) => {
+                          setDirectoryFilter(joinMulti(v));
+                          setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                        }}
                         options={[
-                          { value: '__all__', label: 'All folders' },
                           ...flattenDirectoryTree(directoryTree).map((d) => ({
                             value: d.id,
                             label: d.label,
@@ -465,25 +470,42 @@ export default function AttachmentBrowser() {
                         ]}
                         placeholder="All folders"
                         triggerClassName="w-full"
+                        clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Folder', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All folders</span>
+                          )
+                        }
                       />
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Attachment type</p>
-                      <SearchableSelect
-                        value={attachmentTypeId}
+                      <SearchableMultiSelect
+                        value={splitMulti(attachmentTypeId)}
                         onChange={(value) => {
-                          setAttachmentTypeId(value);
+                          setAttachmentTypeId(joinMulti(value));
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
-                        options={[
-                          { value: '__all__', label: 'All attachment types' },
-                          ...attachmentTypes.map((type) => ({
-                            value: type.id,
-                            label: type.type_name,
-                          })),
-                        ]}
-                        placeholder="Attachment type"
+                        options={attachmentTypes.map((type) => ({
+                          value: type.id,
+                          label: type.type_name,
+                        }))}
+                        placeholder="All attachment types"
                         triggerClassName="w-full"
+                        clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Type', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All attachment types</span>
+                          )
+                        }
                       />
                     </div>
                     <div className="space-y-1.5">
@@ -505,13 +527,22 @@ export default function AttachmentBrowser() {
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-xs font-medium">Company</p>
-                      <SearchableSelect
-                        value={companyFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(companyFilter)}
                         onChange={(value) => {
-                          setCompanyFilter(value);
+                          setCompanyFilter(joinMulti(value));
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
                         clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Company', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">All companies</span>
+                          )
+                        }
                         options={[
                           ...companyGrants.map((c) => ({ value: c.id, label: c.name })),
                           { value: SHARED_COMPANY_VALUE, label: 'Shared' },
