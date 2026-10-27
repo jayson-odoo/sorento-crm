@@ -1296,13 +1296,10 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     Every non-Buy claim (Reserve and Borrow) counts: this is what lowers the PROJECT Buy.
     RETAIL's net is lowered by none (BOARD-NO-HOLD / BORROW-NO-HOLD: a decision is a plan).
 
-    > "every confirmed non-Buy component of an active Project decision (Reserve, Borrow,
-    >  and timely SPO cover) is removed from Retail planning supply at its recorded source
-    >  location"   (front planning 1.3, 5.3, AC-F07)
-
-    Confirmed cover that stays free in the next Retail calculation is the double count the
-    whole read model exists to prevent: CS promised those units to a project, so Retail
-    must not net against them a second time. Every non-Buy `so_line_allocations` row of a
+    The earlier ruling (front planning 1.3, 5.3, AC-F07) also removed these claims from
+    RETAIL's planning supply so Retail did not net against them a second time. That is
+    superseded for retail: a decision holds no stock, so only the project Buy is lowered.
+    Every non-Buy `so_line_allocations` row of a
     decided SO counts, at `warehouse_id` when it names one (BRW-pool Reserve names the
     pool, Borrow names the donor) and at the core line's fulfilment location otherwise
     (own-location Reserve). `source_type = 'order'` is the Buy leg and is NOT a claim on

@@ -1695,10 +1695,12 @@ class StockDebtService:
         anybody queues (AC-S2-2), and both are keyed to the CORE sales-order line, which is
         what the demand read above is keyed on.
 
-        **The allocation half is `ProjectSupplyService._hold_query` (Borrows, pinned) and
-        `_decision_allocation_query` split by source (Reserves are `Hold.route`: a plan, not a hold, BOARD-NO-HOLD),
-        not a second spelling of it.** That is the one predicate for "this row is holding stock right now" - confirmed,
-        located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
+        **The allocation half is `ProjectSupplyService._decision_allocation_query`, not a
+        second spelling of it.** No decision holds stock (BOARD-NO-HOLD, BORROW-NO-HOLD), so
+        every one of its rows, Reserve or Borrow, is a `Hold.route`: a plan the line may
+        draw at its own date. `_hold_query` is that base minus those sources and matches no
+        decision row now. It is the one predicate for "this row is holding stock right now"
+        - confirmed, located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
         it is shared with the free-stock arithmetic precisely so the two cannot come to
         disagree. Restated by hand here, it had already lost `confirmed_at IS NOT NULL`, so a
         decision saved but never confirmed held stock on this screen and nowhere else.
@@ -1765,7 +1767,7 @@ class StockDebtService:
         holds. A bin OUTSIDE the span is still honoured off a stand-in (AC-S2-1b), which
         `assign()` caps at that bin's free stock (`stand_in_floors`, read by
         `_stand_in_floors`). Either way the bin is shared by the pins on it in the order
-        they were made: confirmed decisions first, then placements, each the earliest
+        they were made: confirmed decisions (routes), then placements, each the earliest
         first. The cap stays in `assign()`, the one place that knows whether a line still
         needs the pin: spent here, a second pin of a line its first pin already covered
         took a bin the next line was pinned on (dev, 14 Oct 2026).

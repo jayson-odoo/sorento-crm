@@ -23,8 +23,13 @@ Reserve does since #1919:
   everyone else who may draw there (the #1919 "route", `supply_assignment.py` walk rule 7, `Hold.route`
   :351-353, drawn at the line's own step :1088-1104). Today a Borrow is a pin taken first at any date
   (`stock_debt_service.py:1814`, `supply_assignment.py:749-752`).
-- Deciding and confirming on the board keep working as today: the same ladder rungs, the same confirm,
-  the same transfer proposal and buy-back Order Inquiry row (both read the decision, not the hold, below).
+- Deciding and confirming on the board keep working as today: the same confirm, the same transfer proposal
+  and buy-back Order Inquiry row (both read the decision, not the hold, below). One ladder rung goes quiet
+  (found in review, 28 Oct): "Borrow from project X" (`other_project`, `project_supply_service.py:10808-10836`;
+  the Allocation panel's `other_project` candidate, `project_allocation_service.py:234`) listed stock another
+  project HELD; nothing is held now, so that stock reads free and is offered as a Reserve instead, as Reserve-held
+  stock already was after #1919. Board-proposed Borrows are `other_location` (`planning_change_service.py:2845-2873`)
+  and the dev copy has no `other_project` row. A Borrow already posted still confirms.
 
 Still binding first, unchanged: AutoCount reserved, OI placements on SPO/PO (question 2), goods landed for
 a line's own purchase, PO/SPO S/O pins.
