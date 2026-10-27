@@ -148,3 +148,40 @@ def test_ac_kc_5_a_ref_less_leftover_nothing_points_at_is_still_deleted(env):
     assert _line(env, "purchase_order_lines", refless_id) is None
     assert _sweep_counts(res)["deleted"] == 1
     assert _line(env, "purchase_order_lines", w.line_a)["line_status"] == "cancelled"
+
+
+# ================================================== review fix: duplicate-ref winner
+def test_a_cancelled_duplicate_ref_row_never_wins_over_the_live_line(env):
+    """A duplicate-ref row is now kept (cancelled), so the live line must win the ref on
+    every later push, whatever order the rows come back in."""
+    from datetime import datetime, timedelta
+
+    from app.models.procurement import PurchaseOrderLine
+
+    w = _push_po(env)
+    older = PurchaseOrderLine(
+        id=_uid(), company_id=env.company_a, purchase_order_id=w.header_id,
+        product_id=w.product_id, qty_ordered=Decimal(QTY), line_status="cancelled",
+        source_ref=w.payload_b["source_ref"], source_system="autocount",
+        created_at=datetime(2020, 1, 1),
+    )
+    env.db.add(older)
+    env.db.commit()
+    dup_id = str(older.id)
+    # Re-insert the live line (same id, same values) so it sits AFTER the duplicate on
+    # disk: an unordered scan then returns the duplicate first.
+    env.db.execute(
+        text(
+            "CREATE TEMP TABLE zzt_line_b ON COMMIT DROP AS "
+            "SELECT * FROM purchase_order_lines WHERE id = :i; "
+            "DELETE FROM purchase_order_lines WHERE id = :i; "
+            "INSERT INTO purchase_order_lines SELECT * FROM zzt_line_b"
+        ),
+        {"i": w.line_b},
+    )
+    env.db.commit()
+
+    for _ in range(2):
+        _repush_without_a(env, w)
+        assert _line(env, "purchase_order_lines", w.line_b)["line_status"] == "open"
+        assert _line(env, "purchase_order_lines", dup_id)["line_status"] == "cancelled"

@@ -1,6 +1,6 @@
 # PLAN: AutoCount-removed PO/SO lines stay Cancelled, never deleted
 
-Status: in progress (small fix track, URGENT hotfix; backend only; no migration)
+Status: in review (small fix track, URGENT hotfix; backend only; no migration)
 
 ## Owner ruling (27 Oct 2026)
 

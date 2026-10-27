@@ -1478,9 +1478,17 @@ class DocumentIngestService(MasterRefResolver):
         physical line, matched by what it actually is rather than replaced,
         keeps every allocation, claim and GRN link that already hangs off it.
         """
+        # AC-REMOVED-KEEP-CANCELLED review fix: a duplicate-ref row is now kept (cancelled)
+        # rather than deleted, so which row wins `by_ref` must not depend on scan order -
+        # a live row first, then the oldest - or the two could swap on a later push.
         existing = (
             self.db.query(spec.line_model)
             .filter(getattr(spec.line_model, spec.line_fk) == str(header.id))
+            .order_by(
+                spec.line_model.line_status == CANCELLED,
+                spec.line_model.created_at,
+                spec.line_model.id,
+            )
             .all()
         )
         by_ref: dict[str, Any] = {}
