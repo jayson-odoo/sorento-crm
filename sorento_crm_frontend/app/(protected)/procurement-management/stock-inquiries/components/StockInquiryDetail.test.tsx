@@ -352,3 +352,23 @@ describe('ProductInquiryDetail - Print / Download PDF gear-menu item', () => {
     expect(await screen.findByText('Print / Download PDF')).toBeTruthy();
   });
 });
+
+describe('StockInquiryDetail - a resubmitted inquiry (RESUBMITTED-STATUS)', () => {
+  it.each(['pending_project_sales', 'resubmitted'])(
+    'offers project sales Approve and Reject at status %s',
+    async (status) => {
+      permissionMap = {
+        ...permissionMap,
+        'procurement.stock_inquiries.project_sales_approve': true,
+        'procurement.stock_inquiries.project_sales_reject': true,
+      };
+      useStockInquiryMock.mockReturnValue({ data: inquiry({ status }), isLoading: false });
+      renderPage();
+
+      expect(
+        await screen.findByRole('button', { name: /Approve \(send to purchasing\)/ }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Reject$/ })).toBeInTheDocument();
+    },
+  );
+});

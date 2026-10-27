@@ -1,3 +1,4 @@
+import { isAwaitingReview } from '@/lib/submission-status';
 import type { QuotationDocument } from '../services/quotationDocumentService';
 
 /**
@@ -21,6 +22,9 @@ export function quotationStanding(document: QuotationDocument): QuotationStandin
   // customer said about the one they hold.
   if (document.approval_status_key === 'pending_approval') {
     return { label: 'Pending approval', variant: 'warning' };
+  }
+  if (document.approval_status_key === 'resubmitted') {
+    return { label: 'Resubmitted', variant: 'warning' };
   }
   if (document.approval_status_key === 'approved') {
     return { label: 'Approved', variant: 'primary' };
@@ -58,12 +62,14 @@ export function isBlockedByApproval(document: QuotationDocument): boolean {
   return Boolean(document.requires_approval) && document.approval_status_key !== 'approved';
 }
 
-/** Pending or approved: nobody edits the quotation until the creator revises it (D1, D2). */
+/** With a manager: pending, or resubmitted after a rejection (RESUBMITTED-STATUS). */
+export function isWithManager(document: QuotationDocument): boolean {
+  return isAwaitingReview(document.approval_status_key, 'pending_approval');
+}
+
+/** With a manager or approved: nobody edits the quotation until the creator revises it (D1, D2). */
 export function isLockedForApproval(document: QuotationDocument): boolean {
-  return (
-    document.approval_status_key === 'pending_approval' ||
-    document.approval_status_key === 'approved'
-  );
+  return isWithManager(document) || document.approval_status_key === 'approved';
 }
 
 export type NextAction = {
@@ -81,7 +87,7 @@ export function nextAction(
   document: QuotationDocument,
   { canEdit, canApprove, isSigned }: { canEdit: boolean; canApprove: boolean; isSigned: boolean },
 ): NextAction {
-  if (document.approval_status_key === 'pending_approval') {
+  if (isWithManager(document)) {
     if (canApprove) return { kind: 'approve' };
     if (canEdit && !isSigned) return { kind: 'sign', hint: 'With a manager for approval' };
     return { kind: 'none', hint: 'With a manager for approval' };

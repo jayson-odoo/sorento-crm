@@ -49,6 +49,7 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: '__all__', label: 'All statuses' },
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
+  { value: 'resubmitted', label: 'Resubmitted' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'completed', label: 'Completed' },

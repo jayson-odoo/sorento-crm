@@ -60,6 +60,7 @@ const STATUS_VARIANT_MAP: Record<string, StatusBadgeVariant> = {
   // Info / updated / neutral-positive
   updated: 'info',
   submitted: 'info',
+  resubmitted: 'info',
   overstock: 'secondary',
 
   // Destructive / negative

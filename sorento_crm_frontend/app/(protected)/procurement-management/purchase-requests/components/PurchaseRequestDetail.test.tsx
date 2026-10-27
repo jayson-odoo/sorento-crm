@@ -346,3 +346,25 @@ describe('PurchaseRequestDetail - sponsorship form Sales Type (SF-SALES-TYPE)', 
     expect(labels.indexOf(salesType as Element)).toBe(labels.indexOf(subject as Element) + 1);
   });
 });
+
+describe('PurchaseRequestDetail - a resubmitted request (RESUBMITTED-STATUS)', () => {
+  it.each(['submitted', 'resubmitted'])(
+    'offers Change to pending approval and Reject at status %s',
+    async (status) => {
+      permissionMap = {
+        ...permissionMap,
+        'procurement.purchase_requests.send_for_approval': true,
+      };
+      usePurchaseRequestMock.mockReturnValue({
+        data: purchaseRequest({ status, approval_status: null }),
+        isLoading: false,
+      });
+      renderPage();
+
+      expect(
+        await screen.findByRole('button', { name: /Change to pending approval/ }),
+      ).toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /^Reject$/ })).toBeInTheDocument();
+    },
+  );
+});
