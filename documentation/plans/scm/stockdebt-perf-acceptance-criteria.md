@@ -39,5 +39,18 @@ export and a snapshot show stays identical.
 - AC-SDP-B3: Holds are bucketed by product once per pass, not filtered from the full list once
   per product (perf, measured by the harness, not a CI assertion).
 - AC-SDP-B4: Same equality bar as PR1: side-by-side harness, zero differences vs PR1's head.
-- PR3 (C): transferred allocations read once per request; last-supplier and remaining reads
-  tuned. Same equality bar; no statement count increase.
+## PR3: read ids as text on the board's heavy reads (D), branch crew/stockdebt-perf-c stacked on PR2
+
+Measured on the dev copy (PR2 head, default view): 233k UUID cells fetched per request, each
+built as a `uuid.UUID` by the driver and turned back into `str` by the model type
+(`UUID(as_uuid=False)`, app/models/base.py:143). `_demand` 80k, goods_chain `_placements`
+(three calls) 49k, `_supply` 20k, `_holds` 10k.
+
+- AC-SDP-D1: During one default-view board build, the result columns of `_demand`, `_supply`,
+  `_holds` and goods_chain `_placements` carry no `uuid`-typed column (ids come back as text).
+- AC-SDP-D2: Every id the board and the drill emit is the same string as before (Postgres
+  `uuid::text` and Python `str(UUID)` are both lowercase hyphenated); NULL stays None.
+- AC-SDP-D3: Same equality bar (side-by-side, zero differences vs PR2's head); statement count
+  unchanged.
+- Later, after #1899 / #1897 merge: transferred allocations read once per request (its two
+  callers are in #1899's hunks today).
