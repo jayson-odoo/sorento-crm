@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -57,7 +57,6 @@ vi.mock('@/components/common/PageHeader', () => ({
 vi.mock('@/lib/toast', () => ({
   toast: Object.assign(vi.fn(), { success: vi.fn(), error: vi.fn(), warning: vi.fn() }),
 }));
-import { toast } from '@/lib/toast';
 
 let permissions = new Set<string>();
 vi.mock('@/hooks/usePermissions', () => ({
@@ -289,14 +288,6 @@ function renderPage() {
       <SnapshotClient snapshotId={SNAP} />
     </QueryClientProvider>,
   );
-}
-
-function rowOf(code: string): HTMLElement {
-  return screen.getByText(code).closest('tr') as HTMLElement;
-}
-
-function pick(scope: HTMLElement, name: string | RegExp) {
-  return within(scope).queryByRole('radio', { name }) ?? within(scope).getByRole('button', { name });
 }
 
 beforeEach(() => {
