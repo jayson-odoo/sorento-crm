@@ -8,6 +8,7 @@ import { arrayMove } from '@dnd-kit/sortable';
 import { Checkbox } from '@/components/ui/checkbox';
 import { ListLoadFailure } from '@/components/common/ListLoadFailure';
 import { useDataGrid } from '@/components/ui/data-grid';
+import { rangeSelectProps } from '@/components/ui/data-grid-range-select';
 import { DataGridTableDnd } from '@/components/ui/data-grid-table-dnd';
 import { Cell, Column, flexRender, Header, HeaderGroup, Row, Table } from '@tanstack/react-table';
 import { cva } from 'class-variance-authority';
@@ -1139,6 +1140,10 @@ function DataGridTableLoader() {
 }
 
 function DataGridTableRowSelect<TData>({ row, size }: { row: Row<TData>; size?: 'sm' | 'md' | 'lg' }) {
+  const { table } = useDataGrid();
+  // GRID-DRAG-SELECT: Shift+click, drag and Shift+Arrow ranges, same as `buildSelectColumn`.
+  // The wrapper below stops pointerdown from reaching the row; the box's own handler runs first.
+  const range = rangeSelectProps(table as Table<TData>, row);
   return (
     <div
       className="inline-flex"
@@ -1152,6 +1157,7 @@ function DataGridTableRowSelect<TData>({ row, size }: { row: Row<TData>; size?: 
         checked={row.getIsSelected()}
         onCheckedChange={(value) => row.toggleSelected(!!value)}
         aria-label="Select row"
+        {...range}
         size={size ?? 'sm'}
         className="align-[inherit]"
       />

@@ -2,6 +2,7 @@
 
 import type { ColumnDef, Row, Table } from '@tanstack/react-table';
 import { Checkbox } from '@/components/ui/checkbox';
+import { rangeSelectProps } from '@/components/ui/data-grid-range-select';
 
 /**
  * Standard row-selection column for DataGrid lists.
@@ -64,16 +65,21 @@ export function buildSelectColumn<TData>(options?: {
           aria-label="Select all rows on this page"
         />
       ),
-    cell: ({ row }: { row: Row<TData> }) => {
+    cell: ({ row, table }: { row: Row<TData>; table: Table<TData> }) => {
       const blocked = !row.getCanSelect();
       const reason = blocked ? options?.disabledReason?.(row) : undefined;
+      const range = rangeSelectProps(table, row);
       const box = (
         <Checkbox
           checked={row.getIsSelected()}
           disabled={blocked}
           onCheckedChange={(value) => row.toggleSelected(!!value)}
           aria-label={options?.rowLabel?.(row) ?? 'Select row'}
-          onClick={(e: React.MouseEvent) => e.stopPropagation()}
+          {...range}
+          onClick={(e: React.MouseEvent) => {
+            e.stopPropagation();
+            range.onClick(e);
+          }}
         />
       );
       if (!reason) return box;

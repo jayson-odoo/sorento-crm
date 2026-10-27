@@ -56,7 +56,8 @@ function Harness({
     onRowSelectionChange: setRowSelection,
     getCoreRowModel: getCoreRowModel(),
     getRowId: (row) => row.id,
-    enableRowSelection: true,
+    // Real lists pass the same predicate here as `enableRow` (react-table reads this one).
+    enableRowSelection: (row) => !row.original.locked,
   });
   return (
     <div>
