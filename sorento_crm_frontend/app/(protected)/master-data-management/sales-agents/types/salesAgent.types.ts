@@ -91,3 +91,21 @@ export interface AgentCustomer {
   sales_agent_code: string | null;
   sales_agent_name: string | null;
 }
+
+/** One dated class of a sales agent. A null month is an open end. */
+export interface SalesAgentClassRow {
+  id: string;
+  sales_agent_id: string;
+  demand_class: 'retail' | 'project' | 'other';
+  class_label: string;
+  /** `YYYY-MM`; null = from the beginning. */
+  from_month: string | null;
+  /** `YYYY-MM`; null = open. */
+  to_month: string | null;
+}
+
+export interface SalesAgentClassPayload {
+  demand_class: string;
+  from_month: string | null;
+  to_month: string | null;
+}

@@ -1170,7 +1170,10 @@ class DocumentIngestService(MasterRefResolver):
             values["order_type"] = stated_order_type
 
         agent_id = values.get("sales_agent_id")
-        agent_demand_class = self._agent_demand_class(agent_id)
+        # SALES-UNIFIED Q8 (a): the agent's class IN EFFECT ON THE ORDER'S DATE (dated rows,
+        # `sales.agent_classes`), not today's.
+        order_day = values.get("order_date") or getattr(header, "order_date", None)
+        agent_demand_class = self._agent_demand_class(agent_id, order_day)
         stored_class = getattr(header, "demand_class", None)
         agent_arriving = bool(
             stored_class and not getattr(header, "sales_agent_id", None) and agent_demand_class
@@ -1194,25 +1197,28 @@ class DocumentIngestService(MasterRefResolver):
             debtor_code=debtor_code,
             company_id=self.company_id,
             segment_cache=self._segment_cache,
+            # Never the customer's segment for a sales order (SALES-UNIFIED Q8 (a)).
+            use_segment=False,
         )
         if cls is not None:
             values["demand_class"] = cls
         else:
             warnings.append(WARN_UNCLASSIFIED_DEMAND)
 
-    def _agent_demand_class(self, agent_id: Optional[str]) -> Optional[str]:
-        """Perf round 5: memoised per batch - a busy batch names the same
-        handful of agents on hundreds of documents, and nothing in this
-        ingest writes `sales_agents.demand_class`."""
+    def _agent_demand_class(self, agent_id: Optional[str], day: Any = None) -> Optional[str]:
+        """The agent's class on `day` from its dated rows (SALES-UNIFIED Q6/Q8 (a)). Perf
+        round 5: memoised per batch - a busy batch names the same handful of agents on
+        hundreds of documents, and nothing in this ingest writes an agent's class."""
         if not agent_id:
             return None
-        if agent_id not in self._agent_class_cache:
-            self._agent_class_cache[agent_id] = (
-                self.db.query(SalesAgent.demand_class)
-                .filter(SalesAgent.id == agent_id)
-                .scalar()
-            )
-        return self._agent_class_cache[agent_id]
+        from app.services.sales.agent_class_service import ClassCache
+
+        cache = self._agent_class_cache.get("__dated__")
+        if cache is None:
+            cache = self._agent_class_cache["__dated__"] = ClassCache(self.db)
+        if hasattr(day, "date") and callable(day.date):
+            day = day.date()
+        return cache.class_on(str(agent_id), day)
 
     def _customer_code_of(self, customer_id: str) -> Optional[str]:
         """Perf round 5: memoised per batch, same reason as `_agent_demand_class`."""

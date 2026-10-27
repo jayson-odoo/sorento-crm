@@ -293,6 +293,7 @@ LABELS: dict[str, dict[str, str]] = {
     "No {basis} found": {"ms": "Tiada {basis} ditemui", "zh": "未找到{basis}"},
     "delivered sales": {"ms": "jualan dihantar", "zh": "已送货销售"},
     "ordered sales": {"ms": "jualan dipesan", "zh": "已订购销售"},
+    "invoiced sales": {"ms": "jualan diinvois", "zh": "已开票销售"},
     "outstanding orders": {"ms": "pesanan tertunggak", "zh": "未交货订单"},
     "products": {"ms": "produk", "zh": "产品"},
     "product": {"ms": "produk", "zh": "产品"},
@@ -465,7 +466,8 @@ LABELS: dict[str, dict[str, str]] = {
     "I don't know '{word}' as a brand.": {"ms": "Saya tidak mengenali '{word}' sebagai jenama.", "zh": "我不认识 '{word}' 这个品牌。"},
     "I don't know '{word}' as a sales agent.": {"ms": "Saya tidak mengenali '{word}' sebagai ejen jualan.", "zh": "我不认识 '{word}' 这个业务员。"},
     "I don't know '{word}' as a location.": {"ms": "Saya tidak mengenali '{word}' sebagai lokasi.", "zh": "我不认识 '{word}' 这个地点。"},
-    "Delivered, ordered or outstanding?": {"ms": "Dihantar, dipesan atau tertunggak?", "zh": "按已送货、已订购还是未交货统计？"},
+    "Invoiced, delivered, ordered or outstanding?": {"ms": "Diinvois, dihantar, dipesan atau tertunggak?", "zh": "按已开票、已送货、已订购还是未交货统计？"},
+    "Sales by location are for delivered or ordered sales only.": {"ms": "Jualan mengikut lokasi hanya untuk jualan dihantar atau dipesan.", "zh": "按地点统计仅适用于已送货或已订购销售。"},
     "I don't know '{word}' as a period.": {"ms": "Saya tidak mengenali '{word}' sebagai tempoh.", "zh": "我看不懂 '{word}' 这个时间段。"},
     "I don't know '{word}' as a basis.": {"ms": "Saya tidak mengenali '{word}' sebagai asas.", "zh": "我不认识 '{word}' 这个统计基准。"},
     "I don't know '{word}' as a number.": {"ms": "Saya tidak mengenali '{word}' sebagai nombor.", "zh": "我看不懂 '{word}' 这个数字。"},
@@ -854,7 +856,7 @@ _RANK_NOUNS = frozenset(
     {"products", "product", "categories", "category", "customers", "customer", "brands", "brand",
      "sales agents", "sales agent", "locations", "location", "channels", "channel", "months", "month"}
 )
-_RANK_BASES = frozenset({"delivered sales", "ordered sales", "outstanding orders"})
+_RANK_BASES = frozenset({"invoiced sales", "delivered sales", "ordered sales", "outstanding orders"})
 _RANK_MEASURES = frozenset({"customers", "orders", "products"})
 #: A count measure is said as a count ("bilangan pelanggan"), never as the grouping noun, so it has its own entries.
 _MEASURE_KEYS = {w: f"{w} (count)" for w in _RANK_MEASURES}

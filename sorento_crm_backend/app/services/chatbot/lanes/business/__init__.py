@@ -2390,6 +2390,9 @@ def run_fetch(
         if not settled.done:
             return _fixed_reply(settled.reply or "", required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
+        if location_line:
+            return _fixed_reply(location_line)
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
         if settled.extras.get("detail"):

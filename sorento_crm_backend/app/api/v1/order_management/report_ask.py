@@ -48,9 +48,9 @@ _DEFAULT_RATE_WINDOW_MINUTES = 10
 _DEALER_MESSAGE = "That breakdown is not available for your account."
 _CHANNEL_LABELS = {"dealer": "Dealer", "project": "Project team"}
 _CHANNELS = {c: _CHANNEL_LABELS[c] for c in ask.SALES_CHANNELS}
-#: The route's default basis for a direct API caller that names none. The chatbot lane never
-#: relies on it: it asks the basis and always sends one.
-DEFAULT_BASIS = "delivered"
+#: The route's default basis for a direct API caller that names none: invoiced, the one sales
+#: definition (SALES-UNIFIED). The chatbot lane never relies on it: it always sends one.
+DEFAULT_BASIS = "invoiced"
 _MAX_VALUES = 50
 _MIN_YEAR, _MAX_YEAR = 1900, 2200
 
@@ -217,8 +217,10 @@ def report_ask(
     date_to: Optional[date] = Query(None, description="Last day of the period (ISO). Required."),
     basis: str = Query(
         DEFAULT_BASIS,
-        description="delivered | ordered | outstanding. All three rank sales order lines (the SO's own agent), "
-        "dated by the line's required date, else the SO date.",
+        description="invoiced (default) | delivered | ordered | outstanding. invoiced = SALES: billing document "
+        "lines, invoices + cash sales + debit notes - credit notes, excluding tax, by document date (the "
+        "Top selling items report's figures; no location). delivered / ordered / outstanding rank SALES ORDER "
+        "lines (the SO's own agent), dated by the line's required date, else the SO date.",
     ),
     measure: str = Query(
         "amount",
@@ -328,6 +330,18 @@ def report_ask(
     agents = _agent_values(sales_agent_ids, "sales_agent_ids")
     card_agents = _agent_values(customer_agent_ids, "customer_agent_ids")
     codes = _normalize_entities(warehouse_codes) or []
+    if basis_norm == "invoiced":
+        # Finance data: the reports' own slug on the act-as principal, not only orders.view
+        # (SALES-UNIFIED security review M1).
+        from app.services.sales.invoiced_sales import require_invoiced_access
+
+        require_invoiced_access(db, current_user)
+    if basis_norm == "invoiced" and (codes or group_norm == "location"):
+        # A billing document line has no warehouse (SALES-UNIFIED, contract section 7).
+        raise _unprocessable(
+            "Invoiced sales have no location; ask delivered or ordered sales by location",
+            "location_needs_order_basis", "basis",
+        )
     resolved_filters = {
         "product_code": code,
         "product_ids": named_products,

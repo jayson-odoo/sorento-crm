@@ -21,9 +21,14 @@ import {
 import { Input } from '@/components/ui/input';
 import { Switch } from '@/components/ui/switch';
 import { Button } from '@/components/ui/button';
+import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { CompanySchema } from '../forms/company-schema';
 import { useCreateCompany, useUpdateCompany, useCompany } from '../hooks/useCompanies';
-import type { CompanyFormData } from '../types/company.types';
+import {
+  SALES_AGENT_SOURCE_OPTIONS,
+  type CompanyFormData,
+  type SalesAgentSource,
+} from '../types/company.types';
 
 interface CompanyFormDialogProps {
   open: boolean;
@@ -48,6 +53,7 @@ export default function CompanyFormDialog({
       code: '',
       is_active: true,
       so_feed_live: true,
+      sales_agent_source: 'document',
       autocount_ref: '',
       logo_url: '',
     },
@@ -61,6 +67,7 @@ export default function CompanyFormDialog({
           code: company.code,
           is_active: company.is_active,
           so_feed_live: company.so_feed_live,
+          sales_agent_source: company.sales_agent_source ?? 'document',
           autocount_ref: company.autocount_ref ?? '',
           logo_url: company.logo_url ?? '',
         });
@@ -70,6 +77,7 @@ export default function CompanyFormDialog({
           code: '',
           is_active: true,
           so_feed_live: true,
+          sales_agent_source: 'document',
           autocount_ref: '',
           logo_url: '',
         });
@@ -84,6 +92,7 @@ export default function CompanyFormDialog({
         code: data.code,
         is_active: data.is_active,
         so_feed_live: data.so_feed_live,
+        sales_agent_source: data.sales_agent_source,
         autocount_ref: data.autocount_ref ? data.autocount_ref : null,
         logo_url: data.logo_url ? data.logo_url : null,
       };
@@ -183,6 +192,25 @@ export default function CompanyFormDialog({
                   <FormControl>
                     <Switch checked={field.value} onCheckedChange={field.onChange} />
                   </FormControl>
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
+              name="sales_agent_source"
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel htmlFor="company-sales-agent-source">Sales agent on a sale</FormLabel>
+                  <FormControl>
+                    <SearchableSelect
+                      id="company-sales-agent-source"
+                      value={field.value}
+                      onChange={(value) => field.onChange(value as SalesAgentSource)}
+                      options={SALES_AGENT_SOURCE_OPTIONS}
+                    />
+                  </FormControl>
+                  <FormMessage />
                 </FormItem>
               )}
             />

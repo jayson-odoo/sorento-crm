@@ -184,6 +184,10 @@ class Customer(Base, CompanyScopedMixin):
     # project | project_cash | cash_sales (app/services/debtor_type.py). NULL = not set; the
     # insert listener below fills it on create, so only a hand-cleared row stays blank.
     debtor_type = Column(String(20), nullable=True)
+    # AutoCount `Debtor.DebtorType` as the customers push sends it (`market_segment_code`),
+    # upper and trimmed: the sales reports' debtor type axis (SALES-UNIFIED 2.3). Not the CRM's
+    # own `debtor_type` above, which is a different, office-owned concept.
+    autocount_debtor_type = Column(String(50), nullable=True)
     # The group this ledger belongs to (see `CustomerGroup`). NULL = ungrouped.
     customer_group_id = Column(
         UUID(as_uuid=False),
