@@ -99,9 +99,8 @@ class TestTwoUnplacedTokensAreBothNamed:
 
         assert captured, "the placed code must still be fetched and answered"
         reply = (result.reply or {}).get("text") or ""
-        assert f"Product: {PLACED_CODE}" in reply, (
-            f"expected a real answer for the placed code before the miss line: {reply!r}"
-        )
+        # REPORT-UNIFY: the answer for the placed code is the report ask run on it (its header is the presenter's).
+        assert captured[0][1].get("product_code") == PLACED_CODE, captured
         # HELD (see class docstring): the CURRENT wording, not the plan's target -
         # still a hard requirement that BOTH unplaced tokens are named, verbatim.
         assert f"I could not find {UNPLACED_1} or {UNPLACED_2}." in reply, (

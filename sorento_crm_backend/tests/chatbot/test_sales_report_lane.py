@@ -1279,7 +1279,7 @@ class TestReportAskNeverAnsweredByTheDeliveryOrderMissProbe:
         "order_status,attributes,tool",
         [
             ("sales_report", ["sales_orders.sales_report"], "crm_report_ask"),
-            ("so_outstanding", ["sales_orders.sales_report"], "crm_report_ask"),
+            ("so_outstanding", ["sales_orders.outstanding"], "crm_report_ask"),
         ],
     )
     def test_a_customer_hinted_token_that_resolves_as_a_product_still_runs_the_report(
@@ -1348,7 +1348,7 @@ class TestReportOrderStatusAlwaysReachesTheReportDespiteAWrongDomainHint:
         "order_status,attributes,tool,mock_hit",
         [
             ("sales_report", ["sales_orders.sales_report"], "crm_report_ask", ASK_HIT),
-            ("so_outstanding", ["sales_orders.sales_report"], "crm_report_ask", ASK_HIT),
+            ("so_outstanding", ["sales_orders.outstanding"], "crm_report_ask", ASK_HIT),
         ],
     )
     def test_a_master_products_domain_hint_still_reaches_the_report(
