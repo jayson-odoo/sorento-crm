@@ -1,0 +1,199 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Access sheet preview v2</title>
+<style>
+:root{--foreground:#09090b;--primary:#3b82f6;--muted:#f4f4f5;--muted-fg:#71717a;--border:#ececee;--input:#e4e4e7;--radius:.5rem}
+*{box-sizing:border-box}
+body{margin:0;background:#fafafa;color:var(--foreground);font:14px/1.5 Inter,system-ui,sans-serif}
+.mocknav{position:sticky;top:0;z-index:50;background:#18181b;display:flex;gap:4px;padding:8px 16px;overflow-x:auto;font-size:13px;align-items:center}
+.mocknav span{color:#a1a1aa;padding:6px 8px 6px 0;white-space:nowrap}
+.container{max-width:1280px;margin:0 auto;padding:20px 16px 60px}
+.btn{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 12px;border-radius:var(--radius);border:1px solid var(--input);background:#fff;font:inherit;font-size:13px;font-weight:500;cursor:pointer;white-space:nowrap}
+.btn.sm{height:28px;padding:0 10px;font-size:12px}
+.btn.primary{background:var(--primary);border-color:var(--primary);color:#fff}
+.pill{display:inline-flex;align-items:center;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;background:var(--muted);white-space:nowrap}
+.pill.ok{background:#dcfce7;color:#166534}.pill.warn{background:#fef3c7;color:#92400e}.pill.err{background:#fee2e2;color:#991b1b}.pill.info{background:#ede9fe;color:#5b21b6}.pill.sec{background:var(--muted);color:#52525b}
+.dialog{background:#fff;border-radius:12px;width:100%;max-width:1024px;margin:0 auto;box-shadow:0 20px 40px rgba(0,0,0,.2)}
+.dh{padding:18px 20px 6px}.dh h2{margin:0;font-size:17px;font-weight:600}
+.db{padding:12px 20px}
+.df{display:flex;justify-content:flex-end;gap:8px;padding:12px 20px 18px;flex-wrap:wrap}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px;align-items:center}
+.dealer{border:1px solid var(--border);border-radius:8px;margin-bottom:8px}
+.dealer .th{display:flex;gap:8px;align-items:center;padding:9px 12px;flex-wrap:wrap}
+.dealer .th b{font-weight:600}
+.sp{flex:1}
+.tb{border-top:1px solid var(--border);padding:10px 12px}
+.sub{font-size:12px;font-weight:500;color:var(--muted-fg);text-transform:uppercase;letter-spacing:.04em;margin:10px 0 6px}
+.inner{border:1px solid var(--border);border-radius:8px;overflow-x:auto;margin-bottom:8px}
+table{border-collapse:collapse;width:100%;font-size:13px}
+th{font-weight:500;color:var(--muted-fg);text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);white-space:nowrap}
+td{padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top}
+tr:last-child td{border-bottom:0}
+.accts{min-width:680px}
+.contact{border:1px solid var(--border);border-radius:8px;margin-bottom:10px}
+.ch{display:flex;gap:8px;align-items:center;flex-wrap:wrap;padding:8px 12px;border-bottom:1px solid var(--border);background:#fafafa;border-radius:8px 8px 0 0}
+.ch b{font-weight:600}
+.dim{color:var(--muted-fg)}
+.facets{display:grid;grid-template-columns:140px 1fr 24px 1fr;gap:0;font-size:13px}
+.facets>div{padding:6px 8px;border-bottom:1px solid var(--border)}
+.facets .hd{font-size:12px;font-weight:500;color:var(--muted-fg)}
+.facets .lbl{font-weight:500}
+.facets .arrow{color:var(--muted-fg);text-align:center}
+.facets ul{list-style:none;margin:0;padding:0}
+.facets li{padding:1px 0;overflow-wrap:anywhere}
+.added{color:#166534;font-weight:500}
+.added::before{content:"+ ";}
+.note{margin:0;padding:8px 12px;font-size:13px;border-top:1px solid var(--border)}
+.note.warn{background:#fffbeb}
+.note.info{background:#f5f3ff}
+.note ul{margin:4px 0 0;padding-left:18px}
+.unchanged{padding:6px 12px;font-size:12px;color:var(--muted-fg)}
+.sep{margin:48px 0 0;padding-top:16px;border-top:4px solid #18181b}
+.reuse td{white-space:normal}
+code{overflow-wrap:anywhere;font-size:12px;background:var(--muted);padding:1px 4px;border-radius:4px}
+@media (max-width:640px){
+  .dh,.db,.df{padding-left:12px;padding-right:12px}
+  .facets{grid-template-columns:1fr}
+  .facets .hd,.facets .arrow{display:none}
+  .facets .lbl{background:#fafafa;border-bottom:0}
+  .facets .before::before{content:"Before";display:block;font-size:11px;color:var(--muted-fg)}
+  .facets .after::before{content:"After";display:block;font-size:11px;color:var(--muted-fg)}
+}
+</style>
+</head>
+<body>
+<nav class="mocknav"><span>Access sheet preview v2 (BULK-ACCESS-PREVIEW). Real card Y** L***** H****, names and phones masked.</span></nav>
+
+<div class="container">
+<div class="dialog">
+  <div class="dh"><h2>Preview: respond-export.csv</h2></div>
+  <div class="db">
+    <div class="chips">
+      <span class="pill sec">313 contacts in sheet</span><span class="pill sec">281 found in CRM</span>
+      <span class="pill sec">32 not in CRM yet</span><span class="pill sec">96 already have access</span><span class="pill sec">114 dealers</span>
+      <span class="sp"></span><button class="btn sm">Confirm all exact</button>
+    </div>
+
+    <div class="dealer">
+      <div class="th">
+        <input type="checkbox" checked aria-label="Confirm Y** L***** H****">
+        <b>Y** L***** H****</b>
+        <span class="pill sec">SRT</span><span class="pill sec">MCH</span>
+        <span class="pill ok">Exact</span>
+        <span class="sp"></span><span class="dim">&#9650;</span>
+      </div>
+      <div class="tb">
+        <div class="sub">Accounts</div>
+        <div class="inner"><table class="accts">
+          <thead><tr><th style="width:40px"></th><th>Debtor code</th><th>Account name</th><th>Company</th><th>Active</th><th>Account agent</th><th>Sheet agent</th><th>Links to</th></tr></thead>
+          <tbody>
+            <tr><td><input type="checkbox" checked></td><td>300-Y055</td><td>Y** L***** H**** [A/C I]</td><td>MCH</td><td>Yes</td><td>Agent M</td><td>Agent M</td><td>Wo***</td></tr>
+            <tr><td><input type="checkbox" checked></td><td>300-Y056</td><td>Y** L***** H**** [A/C II]</td><td>MCH</td><td>Yes</td><td>Agent M</td><td>Agent M</td><td>Wo***</td></tr>
+            <tr><td><input type="checkbox" checked></td><td>300-Y057</td><td>Y** L***** H**** [A/C III]</td><td>MCH</td><td>Yes</td><td>Agent M</td><td>Agent M</td><td>Wo***</td></tr>
+            <tr><td><input type="checkbox" checked></td><td>300-Y065</td><td>Y** L***** H**** [A/C I]</td><td>SRT</td><td>Yes</td><td>Agent S</td><td>Agent S</td><td>Sh***<br>Wo***</td></tr>
+            <tr><td><input type="checkbox" checked></td><td>300-Y066</td><td>Y** L***** H**** [A/C II]</td><td>SRT</td><td>Yes</td><td>Agent S</td><td>Agent S</td><td>Sh***<br>Wo***</td></tr>
+            <tr><td><input type="checkbox" checked></td><td>300-Y067</td><td>Y** L***** H**** [A/C III]</td><td>SRT</td><td>Yes</td><td>Agent S</td><td>Agent S</td><td>Sh***<br>Wo***</td></tr>
+          </tbody>
+        </table></div>
+
+        <div class="sub">Contacts</div>
+
+        <!-- contact 1: Sorento-only row, already holds the MCH accounts from before -->
+        <div class="contact">
+          <div class="ch">
+            <b>Sh***</b><span class="dim">+60 12-xxx xx41</span>
+            <span class="pill sec">Business Owner</span><span class="pill sec">Template SRT owner</span>
+            <span class="sp"></span><span class="pill ok">Will change</span>
+          </div>
+          <div class="facets">
+            <div class="hd">Setting</div><div class="hd">Before</div><div class="hd"></div><div class="hd">After</div>
+            <div class="lbl">Companies</div>
+            <div class="before"><ul><li class="dim">None</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li class="added">SRT</li></ul></div>
+            <div class="lbl">Access types</div>
+            <div class="before"><ul><li>end_user</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li class="added">cabana_dealer</li><li class="added">dealer</li><li>end_user</li></ul></div>
+            <div class="lbl">Brands</div>
+            <div class="before"><ul><li>every brand</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li class="added">CABANA</li><li class="added">ELLECI</li><li class="added">NO LOGO</li><li class="added">SORENTO</li><li class="added">WDI</li></ul></div>
+            <div class="lbl">Stock locations</div>
+            <div class="before"><ul><li class="dim">Not set</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li class="added">BRW</li><li class="added">MWH</li></ul></div>
+            <div class="lbl">Accounts</div>
+            <div class="before"><ul><li>300-Y055 Y** L***** H**** [A/C I]</li><li>300-Y056 Y** L***** H**** [A/C II]</li><li>300-Y057 Y** L***** H**** [A/C III]</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li>300-Y055 Y** L***** H**** [A/C I]</li><li>300-Y056 Y** L***** H**** [A/C II]</li><li>300-Y057 Y** L***** H**** [A/C III]</li><li class="added">300-Y065 Y** L***** H**** [A/C I]</li><li class="added">300-Y066 Y** L***** H**** [A/C II]</li><li class="added">300-Y067 Y** L***** H**** [A/C III]</li></ul></div>
+            <div class="lbl">Packing list</div>
+            <div class="before"><ul><li>on</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li class="added">off</li></ul></div>
+          </div>
+          <div class="unchanged">No change: Stock mode, Segments, Media, Agent access, Stock, ETA buffer, AI replies, Escalation</div>
+          <div class="note info"><b>Linked outside this row's companies (kept, not removed)</b>
+            <ul><li>300-Y055 Y** L***** H**** [A/C I] (MCH)</li><li>300-Y056 Y** L***** H**** [A/C II] (MCH)</li><li>300-Y057 Y** L***** H**** [A/C III] (MCH)</li></ul></div>
+        </div>
+
+        <!-- contact 2: SRT + MCH row, holds an extra brand and location -->
+        <div class="contact">
+          <div class="ch">
+            <b>Wo***</b><span class="dim">+60 16-xxx xx08</span>
+            <span class="pill sec">Business Owner</span><span class="pill sec">Template SRT+MCH owner</span>
+            <span class="sp"></span><span class="pill ok">Will change</span>
+          </div>
+          <div class="facets">
+            <div class="hd">Setting</div><div class="hd">Before</div><div class="hd"></div><div class="hd">After</div>
+            <div class="lbl">Companies</div>
+            <div class="before"><ul><li>SRT</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li class="added">MCH</li><li>SRT</li></ul></div>
+            <div class="lbl">Access types</div>
+            <div class="before"><ul><li>dealer</li><li>end_user</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li class="added">cabana_dealer</li><li>dealer</li><li>end_user</li><li class="added">mocha_dealer</li></ul></div>
+            <div class="lbl">Brands</div>
+            <div class="before"><ul><li>BRAVAT</li><li>SORENTO</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li>BRAVAT</li><li class="added">CABANA</li><li class="added">ELLECI</li><li class="added">IBORN</li><li class="added">MOCHA</li><li class="added">NO LOGO</li><li>SORENTO</li><li class="added">WDI</li></ul></div>
+            <div class="lbl">Stock locations</div>
+            <div class="before"><ul><li>BRW</li><li>KCH</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li>BRW</li><li class="added">HQ</li><li>KCH</li><li class="added">MOCHA-WH</li><li class="added">MWH</li></ul></div>
+            <div class="lbl">Accounts</div>
+            <div class="before"><ul><li class="dim">None</li></ul></div><div class="arrow">&rarr;</div>
+            <div class="after"><ul><li class="added">300-Y055 Y** L***** H**** [A/C I]</li><li class="added">300-Y056 Y** L***** H**** [A/C II]</li><li class="added">300-Y057 Y** L***** H**** [A/C III]</li><li class="added">300-Y065 Y** L***** H**** [A/C I]</li><li class="added">300-Y066 Y** L***** H**** [A/C II]</li><li class="added">300-Y067 Y** L***** H**** [A/C III]</li></ul></div>
+          </div>
+          <div class="unchanged">No change: Stock mode, Segments, Media, Agent access, Stock, ETA buffer, AI replies, Escalation, Packing list</div>
+          <div class="note warn"><b>Holds more than the template (kept)</b>
+            <ul><li>Brands: BRAVAT</li><li>Stock locations: KCH</li></ul></div>
+        </div>
+      </div>
+    </div>
+
+    <div class="dealer">
+      <div class="th"><input type="checkbox" aria-label="Confirm"><b>A**** B*** S** B**</b><span class="pill sec">SRT</span><span class="pill sec">MCH</span><span class="pill ok">Exact</span><span class="pill warn">Rows disagree on companies</span><span class="sp"></span><span class="dim">&#9660;</span></div>
+    </div>
+  </div>
+  <div class="df"><button class="btn">Back</button><button class="btn primary">Apply access</button></div>
+</div>
+</div>
+
+<div class="container sep">
+  <h2 style="font-size:16px;margin:0 0 8px">What changes from v1</h2>
+  <ul>
+    <li>Each account links only to contacts whose own row tags the account's company (new "Links to" column shows who).</li>
+    <li>Each contact is its own panel: every changed setting as Before &rarr; After, one item per line, added items marked "+". Nothing is truncated; the dialog body scrolls.</li>
+    <li>Unchanged settings are named in one "No change" line.</li>
+    <li>"Holds more than the template" lists what is extra, per setting.</li>
+    <li>Accounts already linked outside the row's companies are listed as an info line. Apply never removes them.</li>
+    <li>At 375px each setting stacks: label, Before, After.</li>
+  </ul>
+  <h2 style="font-size:16px;margin:16px 0 8px">Reuses (not part of the screen)</h2>
+  <table class="reuse" style="background:#fff;border:1px solid var(--border)">
+    <tr><th>Element</th><th>Reuses</th></tr>
+    <tr><td>Dialog shell, footer, summary chips, Confirm all exact</td><td>unchanged: <code>contacts/components/AccessSheetImportDialog.tsx</code>, <code>components/ui/dialog.tsx</code>, <code>components/ui/button.tsx</code></td></tr>
+    <tr><td>Dealer block (collapsible, confirm checkbox, status pills)</td><td>unchanged: <code>BlockList</code> in <code>AccessSheetImportDialog.tsx</code>, <code>components/ui/checkbox.tsx</code>, <code>components/ui/badge.tsx</code> (appearance light)</td></tr>
+    <tr><td>Accounts table + "Links to" column</td><td><code>AccountsTable</code> in the same file (one column added; names one per line)</td></tr>
+    <tr><td>Contact panel header (name, phone, role, template, status)</td><td>bordered div as the dealer block; pills <code>components/ui/badge.tsx</code></td></tr>
+    <tr><td>Before / After grid, one item per line</td><td>plain grid inside the dialog (not a listing, so no DataGrid), stacking at 375px; added marker uses the success text colour token</td></tr>
+    <tr><td>"Holds more" and "Linked outside" lines</td><td><code>components/ui/alert.tsx</code> (variant warning / info, appearance light) with a list</td></tr>
+  </table>
+</div>
+</body>
+</html>
