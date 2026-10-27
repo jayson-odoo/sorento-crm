@@ -37,7 +37,12 @@ def _recheck(table: str, name: str, predicate: str, schema=None) -> None:
 
 
 def upgrade() -> None:
-    op.execute("CREATE SCHEMA IF NOT EXISTS sales")
+    # Guarded on pg_namespace: `CREATE SCHEMA IF NOT EXISTS` checks the CREATE privilege on the
+    # database even when the schema exists, and a non-owner role is refused (crew, 27 Oct).
+    op.execute(
+        "DO $$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_namespace WHERE nspname = 'sales') "
+        "THEN CREATE SCHEMA sales; END IF; END $$"
+    )
     op.create_table(
         "agent_classes",
         sa.Column("id", _UUID, primary_key=True),
