@@ -32,8 +32,7 @@ export function CataloguePhotosReview({ id }: { id: string }) {
   const canAttach = useHasPermission('master_data.products.edit');
   const [tab, setTab] = useState<CatalogPhotoTab>('ready');
   const [zipOpen, setZipOpen] = useState(false);
-  const [attached, setAttached] = useState(false);
-
+  
   const data = reading.data;
   if (reading.isError) {
     return (
@@ -59,7 +58,7 @@ export function CataloguePhotosReview({ id }: { id: string }) {
   const inProgress = data.status === 'queued' || data.status === 'reading';
   const ready = data.status === 'ready';
   const toAttach = data.counts.to_attach;
-  const step = attached ? 'attach' : ready ? 'review' : 'upload';
+  const step = data.attached_count > 0 && data.counts.to_attach === 0 ? 'attach' : ready ? 'review' : 'upload';
   const counts = data.counts;
 
   const tabs: { value: CatalogPhotoTab; label: string; count: number }[] = [
@@ -90,9 +89,7 @@ export function CataloguePhotosReview({ id }: { id: string }) {
             </Button>
             <Button
               disabled={!ready || !canAttach || toAttach === 0 || attach.isPending}
-              onClick={() =>
-                attach.mutate(undefined, { onSuccess: () => setAttached(true) })
-              }
+              onClick={() => attach.mutate()}
             >
               {attach.isPending
                 ? 'Attaching'

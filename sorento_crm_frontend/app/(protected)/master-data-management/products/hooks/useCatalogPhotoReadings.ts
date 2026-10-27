@@ -50,12 +50,8 @@ export function useCatalogPhotoMutations(id: string) {
   const refresh = () => queryClient.invalidateQueries({ queryKey: [CATALOG_PHOTO_READING_KEY, id] });
 
   const patch = useMutation({
-    mutationFn: ({
-      photoId,
-      pickedProductCode,
-      ...body
-    }: CatalogPhotoPatch & { photoId: string; pickedProductCode?: string }) =>
-      patchCatalogPhoto(id, photoId, body, pickedProductCode),
+    mutationFn: ({ photoId, ...body }: CatalogPhotoPatch & { photoId: string }) =>
+      patchCatalogPhoto(id, photoId, body),
     onSuccess: refresh,
     onError: (error: Error) => toast.error(error.message),
   });
@@ -64,7 +60,7 @@ export function useCatalogPhotoMutations(id: string) {
     mutationFn: () => attachCatalogPhotos(id),
     onSuccess: (result) => {
       toast.success(
-        `Attached ${result.attached} photos to ${result.products} products. ${result.replaced} replaced, ${result.skipped} skipped.`,
+        `Attached ${result.attached + result.replaced} photos to ${result.products} products. ${result.replaced} replaced, ${result.skipped} already on file.`,
       );
       return refresh();
     },

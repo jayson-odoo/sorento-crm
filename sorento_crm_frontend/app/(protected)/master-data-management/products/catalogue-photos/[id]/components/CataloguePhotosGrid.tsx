@@ -151,16 +151,7 @@ export function CataloguePhotosGrid({
         return (
           <SearchableSelect
             value={item.product?.id ?? ''}
-            // The pick is applied from onOptionChange, which carries the code the mock needs;
-            // onChange fires for the same pick and must not patch a second time.
-            onChange={() => {}}
-            onOptionChange={(option) =>
-              patch.mutate({
-                photoId: item.id,
-                product_id: option?.value ?? null,
-                pickedProductCode: option?.label,
-              })
-            }
+            onChange={(value) => patch.mutate({ photoId: item.id, product_id: value || null })}
             fetchOptions={fetchProductOptions}
             selectedOption={
               item.product

@@ -2,15 +2,11 @@
  * Catalogue photo readings (CATALOG-IMAGES): upload a supplier catalogue PDF, review the photos the
  * worker cut out of it, attach them to products. Contract: PLAN-catalog-image-extract-27oct.md "API".
  *
- * Phase 1 runs on the in-memory mock behind `USE_MOCK`. S3 deletes the switch and the mock module.
  */
 
 import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
-import { catalogPhotoMock } from './catalogPhotoReadingService.mock';
-
-const USE_MOCK = true;
 
 const BASE = '/api/v1/master-data/catalogue-photo-readings';
 
@@ -43,6 +39,8 @@ export interface CatalogPhotoReading {
   created_at: string;
   created_by_name: string | null;
   counts: CatalogPhotoCounts;
+  /** Rows already linked to a product; the Attach step reads as done once this is above 0. */
+  attached_count: number;
 }
 
 export interface CatalogPhoto {
@@ -55,7 +53,7 @@ export interface CatalogPhoto {
   block_codes: string[];
   placeholders: string[];
   product: ProductRef | null;
-  rung: 'exact' | 'normalised' | 'suffix' | 'alias' | 'none' | null;
+  rung: 'exact' | 'normalised' | 'suffix' | 'alias' | 'manual' | 'none' | null;
   confidence: CatalogPhotoConfidence;
   suggestion: string | null;
   other_block_products: ProductRef[];
@@ -87,7 +85,6 @@ export interface CatalogPhotoAttachResult {
 }
 
 export async function uploadCatalogPhotoReading(file: File): Promise<CatalogPhotoReading> {
-  if (USE_MOCK) return catalogPhotoMock.upload(file);
   const body = new FormData();
   body.append('file', file);
   const response = await apiFetch(BASE, { method: 'POST', body });
@@ -98,7 +95,6 @@ export async function uploadCatalogPhotoReading(file: File): Promise<CatalogPhot
 }
 
 export async function getCatalogPhotoReading(id: string): Promise<CatalogPhotoReading> {
-  if (USE_MOCK) return catalogPhotoMock.get(id);
   const response = await apiFetch(`${BASE}/${id}`);
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Could not load the catalogue reading'));
@@ -110,7 +106,6 @@ export async function listCatalogPhotos(
   id: string,
   params: CatalogPhotosParams,
 ): Promise<DataGridApiResponse<CatalogPhoto>> {
-  if (USE_MOCK) return catalogPhotoMock.list(id, params);
   const search = buildDataGridParams(
     {
       pageIndex: params.pageIndex,
@@ -130,10 +125,7 @@ export async function patchCatalogPhoto(
   id: string,
   photoId: string,
   patch: CatalogPhotoPatch,
-  /** Mock only (the real API answers with the product itself); S3 drops it with the mock. */
-  pickedProductCode?: string,
 ): Promise<CatalogPhoto> {
-  if (USE_MOCK) return catalogPhotoMock.patch(id, photoId, patch, pickedProductCode);
   const response = await apiFetch(`${BASE}/${id}/photos/${photoId}`, {
     method: 'PATCH',
     headers: { 'Content-Type': 'application/json' },
@@ -146,7 +138,6 @@ export async function patchCatalogPhoto(
 }
 
 export async function attachCatalogPhotos(id: string): Promise<CatalogPhotoAttachResult> {
-  if (USE_MOCK) return catalogPhotoMock.attach(id);
   const response = await apiFetch(`${BASE}/${id}/attach`, { method: 'POST' });
   if (!response.ok) {
     throw new Error(await extractApiError(response, 'Could not attach the photos'));
