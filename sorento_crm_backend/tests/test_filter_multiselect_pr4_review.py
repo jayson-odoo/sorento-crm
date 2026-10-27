@@ -77,10 +77,10 @@ def test_a_value_containing_a_comma_filters_exactly_when_repeated(finish):
     assert {r["product_code"] for r in both["products"]} == {p["commaed"].product_code, p["chrome"].product_code}
 
 
-def test_plain_values_still_union_comma_joined_and_repeated(finish):
+def test_plain_values_union_as_repeated_params(finish):
     client, p = finish
     want = {p["chrome"].product_code, p["brushed"].product_code}
-    assert {r["product_code"] for r in _read(client, ("value", "Chrome,Brushed"))["products"]} == want
+    # Text values ride repeated params only (plan section 1): a comma inside one is part of the value.
     assert {r["product_code"] for r in _read(client, ("value", "Chrome"), ("value", "Brushed"))["products"]} == want
 
 

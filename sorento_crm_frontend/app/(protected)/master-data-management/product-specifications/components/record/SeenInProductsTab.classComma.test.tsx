@@ -47,7 +47,8 @@ async function pickClass(user: ReturnType<typeof userEvent.setup>, text: RegExp)
     if (els.length < 2) throw new Error('no Class trigger');
     return els;
   });
-  await user.click(triggers[1] as HTMLElement);
+  // The popover stays open after a pick; clicking the trigger again would close it.
+  if (!document.querySelector('[role="option"]')) await user.click(triggers[1] as HTMLElement);
   const option = await waitFor(() => {
     const el = [...document.querySelectorAll('[role="option"]')].find((o) => text.test(o.textContent ?? ''));
     if (!el) throw new Error('option not offered');

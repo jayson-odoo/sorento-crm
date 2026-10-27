@@ -50,10 +50,10 @@ def test_a_class_label_with_a_comma_and_another_label_return_the_union(api, db):
     assert got == {c["comma"], c["tap"]}
 
 
-def test_plain_class_labels_still_union_comma_joined_and_repeated(api, db):
+def test_plain_class_labels_union_as_repeated_params(api, db):
     client, allow = api
     allow.add(VIEW)
     c = _seed(db)
     want = {c["tap"], c["basin"]}
-    assert _codes(client, ("class_label", "Tap,Basin")) & set(c.values()) == want
+    # Text values ride repeated params only (plan section 1): a comma inside one is part of the value.
     assert _codes(client, ("class_label", "Tap"), ("class_label", "Basin")) & set(c.values()) == want

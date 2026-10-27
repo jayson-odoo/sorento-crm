@@ -53,8 +53,8 @@ def test_a_class_label_with_a_comma_and_another_label_return_the_union(seen):
     assert got == {p["comma"].product_code, p["tap"].product_code}
 
 
-def test_plain_class_labels_still_union_comma_joined_and_repeated(seen):
+def test_plain_class_labels_union_as_repeated_params(seen):
     client, p = seen
     want = {p["tap"].product_code, p["basin"].product_code}
-    assert _codes(client, ("class_label", "Tap,Basin")) == want
+    # Text values ride repeated params only (plan section 1): a comma inside one is part of the value.
     assert _codes(client, ("class_label", "Tap"), ("class_label", "Basin")) == want
