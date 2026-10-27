@@ -23,6 +23,8 @@ export type AccessSheetAccount = {
   match: 'exact' | 'candidate';
   score: number | null;
   proposed: boolean;
+  /** Found contacts of the block whose own row tags this account's company. */
+  links_to: string[];
 };
 
 export type AccessSheetChange = { facet: string; before: unknown; after: unknown };
@@ -40,6 +42,10 @@ export type AccessSheetContact = {
   skip_reason: null | 'not_in_crm' | 'ambiguous_phone' | 'dealer_not_confirmed' | 'row_error';
   changes: AccessSheetChange[];
   warnings: string[];
+  /** Per facet, what the contact holds outside its template (warning `holds_more`). */
+  holds_more_items: { facet: string; items: string[] }[];
+  /** Accounts already linked whose company is not on the contact's row; shown, never removed. */
+  outside_links: string[];
   not_applied: string[];
 };
 
