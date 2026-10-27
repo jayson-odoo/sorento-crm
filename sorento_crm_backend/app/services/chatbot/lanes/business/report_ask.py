@@ -553,8 +553,9 @@ def take_words(verdict: dict[str, Any], text: str) -> dict[str, Any]:
             continue
         hint = jsc.js_string(e.get("hint") or "").strip().lower()
         raw = " ".join(jsc.js_string(e.get("raw") or "").split())
-        if hint == "category":
-            # AC-HT8-12: the parser's English class word, before the verbatim raw.
+        if hint in WORD_HINTS:
+            # AC-HT8-12, REPORT-UNIFY slice 3 (plan 3.2): the word the parser BOUND the mention to, a candidate's
+            # label or its row id, before the verbatim raw; the raw is read only when it bound nothing.
             raw = " ".join(jsc.js_string(e.get("canonical_code") or "").split()) or raw
         if hint not in WORD_HINTS:
             kept.append(e)
@@ -950,6 +951,23 @@ def _dealer_outside(parse_output: dict[str, Any], group_by: str | None) -> bool:
 _WORD_PARAMS = (("brand", "brand_ids"), ("sales_agent", "sales_agent_ids"), ("category", "category_ids"))
 
 
+def _bound_by_id(db: Any, hint: str, word: str) -> tuple[list[str], list[str]] | None:
+    """`(ids, names)` of the brand / sales agent / category row whose id the parser echoed (the candidate line's
+    `[id: ...]`); None when the word is not an id at all (it is a label or a raw word)."""
+    from app.services.chatbot.lanes.business.fetch import is_uuid
+
+    if db is None or not is_uuid(word):
+        return None
+    from app.models.product import Brand, ProductCategory
+    from app.models.sales_agent import SalesAgent
+
+    model, name_col = {
+        "brand": (Brand, "brand_name"), "sales_agent": (SalesAgent, "sales_agent"), "category": (ProductCategory, "category_name"),
+    }[hint]
+    row = db.query(model).filter(model.id == word).first()
+    return ([str(row.id)], [str(getattr(row, name_col) or "")]) if row is not None else ([], [])
+
+
 def _word_filters(
     db: Any, parse_output: dict[str, Any], pairs: tuple[tuple[str, str], ...] = _WORD_PARAMS
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -962,6 +980,12 @@ def _word_filters(
         for word in jsc.array(words.get(hint)):
             word = " ".join(jsc.js_string(word).split())
             if not word:
+                continue
+            bound = _bound_by_id(db, hint, word)
+            if bound is not None:
+                if not bound[0]:
+                    return None, f"I don't know that {WORD_HINTS[hint]}."
+                ids.extend(i for i in bound[0] if i not in ids)
                 continue
             if hint == "category":
                 # One category definition (owner, 4 Oct 2026): code or name, then the class
