@@ -26,7 +26,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import require_any_permission, require_any_permission_with_api_key, require_permission
 from app.models.project_so import SODraftFinding
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.project_sales_order import (
@@ -72,6 +72,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 # Deleting a draft is its own grant, the way it is on the customer PO beside it: correcting an
 # order and removing it are different privileges even though both act on a proposal.
@@ -125,7 +129,7 @@ def _order_for_edit(db: Session, pso_id: str, current_user: dict):
 )
 async def list_schedule_versions(
     po_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Across every schedule row on this PO: a revision may arrive from another company."""
@@ -198,7 +202,7 @@ async def build_sales_orders(
 async def list_schedule_findings(
     po_id: str,
     schedule_version_id: str = Query(...),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -279,7 +283,7 @@ async def list_project_sales_orders(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
     dir: str = Query("desc"),
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -314,7 +318,7 @@ async def list_project_sales_orders(
 @router.get("/sales-orders/{pso_id}", response_model=ProjectSalesOrderDetail)
 async def get_sales_order(
     pso_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -749,7 +753,7 @@ async def confirm_sales_order_costing(
 @router.get("/sales-orders/{pso_id}/worksheet", response_model=SalesOrderWorksheet)
 def sales_order_worksheet(
     pso_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The AutoCount worksheet as data (Stage 1A, J02): the same document the CSV carries.
@@ -772,7 +776,7 @@ def sales_order_worksheet(
 @router.get("/sales-orders/{pso_id}/import-file")
 def sales_order_import_file(
     pso_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The stage 1 AutoCount import file (D3), generated on demand rather than stored.
@@ -810,7 +814,7 @@ def sales_order_import_file(
 async def preview_amendment(
     pso_id: str,
     payload: AmendmentPreviewRequest,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Writes nothing. `unmatched` is never silently empty."""
@@ -856,7 +860,7 @@ async def create_amendment(
 @router.get("/amendments/{amendment_id}", response_model=AmendmentDetail)
 async def get_amendment(
     amendment_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -930,7 +934,7 @@ async def update_amendment_row_decisions(
 )
 async def get_autocount_change_list(
     amendment_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """The accepted rows, in the shape a person keys into AutoCount (section 9.4)."""
@@ -944,7 +948,7 @@ async def get_autocount_change_list(
 @router.get("/amendments/{amendment_id}/autocount-change-list.xlsx")
 async def export_autocount_change_list(
     amendment_id: str,
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     """Same rows as the JSON twin, as the workbook that is keyed into AutoCount."""

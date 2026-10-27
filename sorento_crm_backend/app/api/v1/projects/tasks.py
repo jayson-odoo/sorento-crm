@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.projects import (
     ProjectTaskCreate,
@@ -35,6 +35,10 @@ from app.services.uuid_path_param import validate_uuid_path
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 CONFIG_VIEW = "projects.types.view"
 CONFIG_EDIT = "projects.types.edit"
@@ -60,7 +64,7 @@ async def list_project_tasks(
     task_phase: Optional[str] = Query(
         None, description="pursuit | delivery. Omit for both."
     ),
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -232,7 +236,7 @@ async def delete_project_task(
 async def project_task_history(
     project_id: str,
     task_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """AC-N7. Read from the audit trail, not a bespoke history table."""
@@ -260,7 +264,7 @@ async def list_my_tasks(
     ),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """One person's open work across every project, overdue first (AC-N9).

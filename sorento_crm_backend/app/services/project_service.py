@@ -1025,12 +1025,16 @@ def list_projects(
     only_critical: bool = False,
     approval_states: Optional[List[str]] = None,
     approved_only: bool = False,
+    visible_to=None,
     page: int = 1,
     limit: int = 50,
     sort: str = "created_at",
     direction: str = "desc",
 ) -> tuple:
     """``(projects, total)``.
+
+    ``visible_to`` (an ``own_scope.Me``) narrows to that user's own projects, for a user who
+    may only see their own (PORTAL-P2-ONLY-THEIRS); ``None`` is the wide-open read.
 
     Sorting is whitelisted rather than reflected off the model: an arbitrary
     ``sort`` string would let a caller order by any column, including ones the
@@ -1044,6 +1048,10 @@ def list_projects(
         Project.company_id == company_id,
         or_(Project.approval_state.is_(None), Project.approval_state != APPROVAL_DRAFT),
     )
+    if visible_to is not None:
+        from app.services import own_scope
+
+        query = query.filter(own_scope.project_clause(visible_to))
     if approved_only:
         query = approved_projects(query)
     if approval_states:
