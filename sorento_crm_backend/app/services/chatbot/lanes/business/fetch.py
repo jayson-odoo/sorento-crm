@@ -3049,6 +3049,28 @@ _ROW_PICK_OFFERS = (
 )
 
 
+#: The filter word the route's `not_applied` names each route param by.
+_ARG_FILTERS = {
+    "product_code": "product", "product_ids": "product", "brand_ids": "brand", "category_ids": "category",
+    "spec": "spec", "warehouse_codes": "location", "channel": "channel", "customer_ids": "customer",
+    "sales_agent_ids": "sales_agent", "customer_agent_ids": "customer_agent",
+}
+
+
+def _sole_subject_question(envelope: dict[str, Any], args: Any) -> str | None:
+    """REPORT-UNIFY Q4: when every filter the ask named is one the route could not apply (a product on unpaid
+    invoices) and nothing is grouped, the figure is not what was asked: ask instead of printing it."""
+    skipped = [n for n in jsc.array(envelope.get("not_applied")) if isinstance(n, dict)]
+    if not skipped or not isinstance(args, dict) or args.get("group_by"):
+        return None
+    named = {word for key, word in _ARG_FILTERS.items() if args.get(key)}
+    if not named or not named <= {n.get("filter") for n in skipped}:
+        return None
+    labels = ", ".join(dict.fromkeys(jsc.js_string(n.get("label") or "") for n in skipped))
+    words = "; ".join(dict.fromkeys(jsc.js_string(n.get("words") or "") for n in skipped))
+    return f"{labels}: {words}. Which customer or sales agent do you want?"
+
+
 def _without_row_offers(text: str) -> str:
     for offer in _ROW_PICK_OFFERS:
         text = text.replace("\n\n" + offer, "")
@@ -3092,6 +3114,9 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                     ],
                     "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
                 }
+    question = _sole_subject_question(envelope, args)
+    if question:
+        text, frame, pick = question, None, None
     if pick is None:
         text = _without_row_offers(text)  # an offer for a list this reply never armed would hand the next number to an older list
     return {

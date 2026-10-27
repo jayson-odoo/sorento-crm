@@ -976,6 +976,27 @@ def _product_args(entities: Any) -> tuple[dict[str, Any] | None, str | None]:
     return ({"product_code": code} if code else {}), None
 
 
+def _without_carried_products(parse_output: dict[str, Any], entities: Any) -> list[Any]:
+    """REPORT-UNIFY (P4): a product named in THIS message replaces a carried one. The gate's rows carry no
+    `current_message`, so a row whose code a carried product entity says (and no current one does) is dropped."""
+    products = [e for e in jsc.array(parse_output.get("entities")) if isinstance(e, dict) and e.get("hint") == "product"]
+
+    def said(entity: dict[str, Any]) -> set[str]:
+        return {
+            jsc.js_string(entity.get(k) or "").strip().upper() for k in ("raw", "canonical_code") if entity.get(k)
+        }
+
+    current = set().union(*(said(e) for e in products if e.get("current_message") is not False))
+    carried = set().union(*(said(e) for e in products if e.get("current_message") is False)) - current
+    if not current or not carried:
+        return jsc.array(entities)
+    return [
+        e for e in jsc.array(entities)
+        if not (isinstance(e, dict) and e.get("entity_type") == "product"
+                and jsc.js_string(e.get("code") or "").strip().upper() in carried)
+    ]
+
+
 def _fresh_args(
     db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False
 ) -> tuple[dict[str, Any] | None, str | None]:
@@ -1024,7 +1045,7 @@ def _fresh_args(
     if customer_ids:
         args["customer_ids"] = customer_ids
     if "product" in kinds:
-        product_args, line = _product_args(entities)
+        product_args, line = _product_args(_without_carried_products(parse_output, entities))
         if product_args is None:
             return None, line
         args.update(product_args)
