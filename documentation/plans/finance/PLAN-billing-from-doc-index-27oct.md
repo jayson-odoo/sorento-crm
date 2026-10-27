@@ -1,6 +1,6 @@
 # PLAN: index billing_document_lines.from_doc_no (BILLING-FROM-DOC-INDEX)
 
-Status: in progress (crew lane, size S; index-only migration, so not strictly the small fix track:
+Status: in review, reviewer READY 27 Oct (crew lane, size S; index-only migration, so not strictly the small fix track:
 one coder pass, tests first, one reviewer, no screen changes so no browser pass).
 
 ## Problem
@@ -28,6 +28,15 @@ detail view reads the whole lines table (backfilled from 2023-09-01).
   (the joined header), not the line's own column, so a company-leading index would not match.
   A document number is already near-unique, the `from_doc_type` / company checks run on the few
   rows it returns.
+
+## SO lookup rewrite
+
+The index alone does not serve `billing_ids_for_sales_order`: its single OR mixes
+`sales_order_line_id IN (subquery)` and `from_doc_no IN (subquery)`, which Postgres runs as
+hashed-subplan filters over a full scan of the lines (sandbox, 300k lines: 121 ms before, still
+81 ms with the index). It is now a UNION of its three branches (same set; each branch keeps the
+header company filter), and each uses its own index: 7 ms. Evidence:
+`documentation/plans/finance/evidence/billing-from-doc-index-27oct-explain.md`.
 
 ## Build
 

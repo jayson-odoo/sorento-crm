@@ -1,4 +1,4 @@
-"""Build an index without ever stalling live work (GOODSCHAIN-INDEX-QUERY).
+"""Build an index without ever stalling live work (GOODSCHAIN-INDEX-QUERY, BILLING-FROM-DOC-INDEX).
 
 `documentation/plans/scm/PLAN-goodschain-index-query-27oct.md`. Owner requirement, 27 Oct 2026,
 after slow migrations held deploys and the chatbot before (13 Oct, runbook
@@ -15,7 +15,7 @@ after slow migrations held deploys and the chatbot before (13 Oct, runbook
 
 Retry: `scripts/ensure_goods_chain_indexes.py`, which `start.sh` runs in the background on
 every backend start, so the next deploy builds whatever the last one could not. It is a
-catalog lookup and nothing else once both indexes are VALID.
+catalog lookup and nothing else once every index here is VALID.
 """
 from __future__ import annotations
 

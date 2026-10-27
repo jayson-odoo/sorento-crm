@@ -40,9 +40,9 @@ def main() -> None:
         from app.config import settings
 
         ok = run(sa.create_engine(settings.database_url, poolclass=sa.pool.NullPool))
-        log.info("goods chain key indexes %s", "VALID" if ok else "not all built; next start retries")
+        log.info("online indexes %s", "VALID" if ok else "not all built; next start retries")
     except Exception:  # noqa: BLE001 - a retry must never take the backend down
-        log.warning("goods chain key index retry failed; next start retries", exc_info=True)
+        log.warning("online index retry failed; next start retries", exc_info=True)
 
 
 if __name__ == "__main__":

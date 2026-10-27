@@ -37,5 +37,5 @@ def upgrade():
 def downgrade():
     with op.get_context().autocommit_block():
         for table, name, _columns in online_index.BILLING_FROM_DOC_INDEXES:
-            schema = table.rsplit(".", 1)[0]
-            op.get_bind().execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {schema}.{name}"))
+            qualified = online_index._qualified(table, name)
+            op.get_bind().execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {qualified}"))
