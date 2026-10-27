@@ -1,7 +1,7 @@
 # PLAN: Sales unified (one sales definition + AutoCount-matching reports)
 
-Status: Plan - behaviour card + mock posted for the owner's OK (27 Oct 2026). Track: full (size L:
-migration, new permission slugs, finance figures). crew-lane: SALES-UNIFIED. Nothing built.
+Status: Build - card + mock approved by the owner (Lavish, 27 Oct 16:12; Q1a to Q5a). Track: full
+(size L: migration, new permission slugs, finance figures). crew-lane: SALES-UNIFIED.
 UAC: `sales-unified-27oct-acceptance-criteria.md` alongside. Mock: `mockups/sales-unified-27oct.html`.
 
 Owner (27 Oct): "Our sales definition must be very clear and unified" and CRM sales should tally
@@ -16,6 +16,19 @@ there is no Excluded group.
 
 Paths: backend under `sorento_crm_backend/`, frontend under `sorento_crm_frontend/`. Line numbers
 on origin/main 14e29e1e.
+
+## 0. Owner rulings
+
+- **Owner ruling 27 Oct 16:3x**: nothing hidden (above).
+- **Owner ruling 27 Oct 16:12 (Lavish), verbatim**: "reuse our reporting engine and calculation as
+  much as possible, and all these should be tally with how the MCP tool for chatbot calculate, all
+  using a shared function to calculation". Applied: every report in 2.5 is a reports-engine
+  definition on the existing datasets; the engine is extended only where it cannot express a
+  report, each extension named with its reason in section 2.8. The one module
+  `app/services/sales/invoiced_sales.py` feeds the engine datasets, the MCP / chatbot sales tools
+  and any page; the chatbot tools run the same engine definitions, so a figure is computed once.
+  A test asserts the MCP tool's route returns the report's figure for the same filter (UAC AC-30).
+- **Owner closed the review: Q1 (a), Q2 (a), Q3 (a), Q4 (a), Q5 (a)** as recommended in 2.7.
 
 ## 1. What exists (measured in code)
 
