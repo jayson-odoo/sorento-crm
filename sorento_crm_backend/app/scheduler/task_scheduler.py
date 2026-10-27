@@ -235,15 +235,24 @@ def _run_embedding_db_queue_fallback(db, max_jobs_per_run: int) -> dict:
 
 
 def _handler_embedding_queue_prune(db, task):
-    """Delete completed/skipped embedding_queue rows past the retention window, in batches."""
+    """Delete completed/skipped embedding_queue rows past the retention window, in batches.
+
+    Also the retry path for the pending-only indexes: one the deploy could not build in its
+    time budget is built here (a catalog read when both exist).
+    """
+    from app.database import engine
+    from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes
     from app.services.embedding_service import prune_embedding_queue
 
-    return prune_embedding_queue(
+    with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as connection:
+        indexes = ensure_embedding_queue_indexes(connection)
+    result = prune_embedding_queue(
         db,
         retention_days=settings.embedding_queue_retention_days,
         batch_size=settings.embedding_queue_prune_batch_size,
         max_batches=settings.embedding_queue_prune_max_batches,
     )
+    return {**result, "indexes": indexes}
 
 
 def _handler_embedding_queue_dedupe(db, task):

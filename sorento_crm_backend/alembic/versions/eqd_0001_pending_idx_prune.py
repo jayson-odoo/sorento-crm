@@ -10,6 +10,8 @@ rows:
 - ``ix_embedding_queue_pending_source`` answers the "is a row already pending for this
   source?" check every enqueue now makes.
 
+Neither is needed for correctness, so a build that cannot finish fast is skipped, not fatal.
+
 Also seeds two scheduled tasks; no queue row is changed here (owner, 27 Oct: the ~1.17M
 duplicate backlog is too heavy for a deploy, about 8 GB of WAL):
 
@@ -29,42 +31,6 @@ revision = "eqd_0001_pending_idx_prune"
 down_revision = "eem_0001_span_pass"
 branch_labels = None
 depends_on = None
-
-INDEX_LOCK_TIMEOUT = "30s"
-
-INDEXES = {
-    "ix_embedding_queue_pending_poll_cov": (
-        "ON embedding_queue ((CASE WHEN source_type = 'mcp_tool' THEN 0 ELSE 1 END), created_at) "
-        "INCLUDE (available_at, id) WHERE status = 'pending'"
-    ),
-    "ix_embedding_queue_pending_source": (
-        "ON embedding_queue (source_type, source_id) WHERE status = 'pending'"
-    ),
-}
-
-
-def _index_valid(bind, name):
-    """pg_index.indisvalid for the index (True / False), or None when there is none."""
-    return bind.execute(
-        sa.text(
-            "SELECT i.indisvalid FROM pg_index i JOIN pg_class c ON c.oid = i.indexrelid "
-            "WHERE i.indrelid = 'embedding_queue'::regclass AND c.relname = :name"
-        ),
-        {"name": name},
-    ).scalar()
-
-
-def _ensure_index(bind, name, definition):
-    """Build the index unless a VALID one exists; drop an INVALID leftover of a failed
-    CONCURRENTLY build first, which IF NOT EXISTS would otherwise keep forever."""
-    if _index_valid(bind, name) is True:
-        return
-    if _index_valid(bind, name) is False:
-        bind.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
-    bind.execute(sa.text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} {definition}"))
-    if _index_valid(bind, name) is not True:
-        raise RuntimeError(f"eqd_0001_pending_idx_prune: index {name} is INVALID after the build; drop it and rerun.")
-
 
 TASKS = (
     (
@@ -95,19 +61,14 @@ def upgrade():
             ),
             {"key": key, "name": name, "description": description, "unit": unit, "value": value},
         )
-    # CREATE INDEX CONCURRENTLY cannot run inside a transaction: the live colour's API and
-    # worker keep writing embedding_queue while it builds.
+    # Never a stall (owner, 27 Oct; runbook memory-and-deploy-guards.md, 13 Oct): each build is
+    # CONCURRENTLY with a 5s lock wait and a 90s cap, and a build that fails or times out drops
+    # its leftover, logs a WARNING and lets the release go on. The hourly embedding_queue_prune
+    # task retries a missing index (app/services/embedding_queue_indexes.py).
+    from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes
+
     with op.get_context().autocommit_block():
-        bind = op.get_bind()
-        # Bound the wait for open transactions so a release fails instead of hanging; the
-        # INVALID index a timeout leaves is dropped and rebuilt by the next run.
-        previous = bind.execute(sa.text("SELECT current_setting('lock_timeout')")).scalar()
-        bind.execute(sa.text(f"SET lock_timeout = '{INDEX_LOCK_TIMEOUT}'"))
-        try:
-            for name, definition in INDEXES.items():
-                _ensure_index(bind, name, definition)
-        finally:
-            bind.execute(sa.text("SELECT set_config('lock_timeout', :v, false)"), {"v": previous})
+        ensure_embedding_queue_indexes(op.get_bind())
 
 
 def downgrade():
@@ -116,5 +77,5 @@ def downgrade():
     )
     with op.get_context().autocommit_block():
         bind = op.get_bind()
-        for name in INDEXES:
+        for name in ("ix_embedding_queue_pending_poll_cov", "ix_embedding_queue_pending_source"):
             bind.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))

@@ -473,3 +473,117 @@ def test_scheduled_tasks_are_registered():
 
     register_task_handlers()
     assert {"embedding_queue_prune", "embedding_queue_dedupe"} <= set(TASK_HANDLERS)
+
+
+# --------------------------------------------------------------------------- #
+# Index builds never stall a release: CONCURRENTLY, bounded, failure is a WARNING
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture()
+def queue_schema():
+    """An autocommit connection whose search_path holds a bare copy of embedding_queue (no
+    indexes), since CREATE INDEX CONCURRENTLY cannot run inside the rolled-back test session."""
+    import os
+
+    name = f"zzs_eqd_{os.getpid()}_{uuid.uuid4().hex[:8]}"
+    conn = engine.connect().execution_options(isolation_level="AUTOCOMMIT")
+    conn.exec_driver_sql(f'CREATE SCHEMA "{name}"')
+    conn.exec_driver_sql(f'CREATE TABLE "{name}".embedding_queue (LIKE public.embedding_queue INCLUDING DEFAULTS)')
+    conn.exec_driver_sql(f'SET search_path TO "{name}"')
+    try:
+        yield conn
+    finally:
+        conn.exec_driver_sql("RESET search_path")
+        conn.exec_driver_sql(f'DROP SCHEMA "{name}" CASCADE')
+        conn.close()
+
+
+def _add_pending(conn, n=3):
+    for _ in range(n):
+        conn.execute(
+            text(
+                "INSERT INTO embedding_queue (id, source_type, source_id, event_type, event_version, payload, "
+                "status, retry_count, available_at, created_at) VALUES (gen_random_uuid(), 'order', "
+                "gen_random_uuid()::text, 'order.updated', 1, '{}', 'pending', 0, now(), now())"
+            )
+        )
+
+
+def test_index_definitions_match_the_model():
+    from app.models.embeddings import EmbeddingQueue as Model
+    from app.services.embedding_queue_indexes import EMBEDDING_QUEUE_INDEXES
+
+    model_indexes = {i.name for i in Model.__table__.indexes}
+    assert set(EMBEDDING_QUEUE_INDEXES) <= model_indexes
+
+
+def test_ensure_builds_missing_indexes_and_then_is_a_no_op(queue_schema):
+    from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes, index_valid
+
+    _add_pending(queue_schema)
+    assert ensure_embedding_queue_indexes(queue_schema) == {
+        "ix_embedding_queue_pending_poll_cov": "built",
+        "ix_embedding_queue_pending_source": "built",
+    }
+    assert index_valid(queue_schema, "ix_embedding_queue_pending_poll_cov") is True
+    assert set(ensure_embedding_queue_indexes(queue_schema).values()) == {"present"}
+
+
+def test_ensure_restores_the_session_timeouts(queue_schema):
+    from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes
+
+    queue_schema.exec_driver_sql("SET lock_timeout = '7s'")
+    queue_schema.exec_driver_sql("SET statement_timeout = '123s'")
+    ensure_embedding_queue_indexes(queue_schema)
+    assert queue_schema.execute(text("SELECT current_setting('lock_timeout')")).scalar() == "7s"
+    assert queue_schema.execute(text("SELECT current_setting('statement_timeout')")).scalar() == "123s"
+
+
+def test_a_build_that_waits_on_a_live_lock_gives_up_warns_and_does_not_raise(queue_schema, caplog):
+    """Owner, 27 Oct: an index build must never queue behind (or hold up) live work."""
+    from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes, index_valid
+
+    schema = queue_schema.execute(text("SELECT current_schema()")).scalar()
+    with engine.connect() as live:
+        live.exec_driver_sql(f'LOCK TABLE "{schema}".embedding_queue IN SHARE UPDATE EXCLUSIVE MODE')
+        with caplog.at_level("WARNING"):
+            outcome = ensure_embedding_queue_indexes(queue_schema, lock_timeout="200ms")
+        live.rollback()
+    assert set(outcome.values()) == {"failed"}
+    assert "not built" in caplog.text
+    assert index_valid(queue_schema, "ix_embedding_queue_pending_poll_cov") is None
+    # The retry path (hourly prune task) builds it once the table is free.
+    assert set(ensure_embedding_queue_indexes(queue_schema).values()) == {"built"}
+
+
+def test_a_failed_build_drops_its_invalid_leftover(queue_schema, caplog):
+    from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes, index_valid
+
+    _add_pending(queue_schema)
+    # Division by zero on the existing rows fails the build after its catalog entry exists,
+    # which is where a statement timeout mid-build leaves an INVALID index.
+    broken = {"ix_embedding_queue_pending_source": "ON embedding_queue ((1 / retry_count)) WHERE status = 'pending'"}
+    with caplog.at_level("WARNING"):
+        assert ensure_embedding_queue_indexes(queue_schema, indexes=broken) == {
+            "ix_embedding_queue_pending_source": "failed"
+        }
+    assert index_valid(queue_schema, "ix_embedding_queue_pending_source") is None
+
+
+def test_an_invalid_index_of_the_same_name_is_rebuilt(queue_schema):
+    """A hand-made prod index that ended INVALID is replaced; a valid one is reused."""
+    from sqlalchemy.exc import DBAPIError
+
+    from app.services.embedding_queue_indexes import ensure_embedding_queue_indexes, index_valid
+
+    _add_pending(queue_schema)
+    queue_schema.execute(text("UPDATE embedding_queue SET source_type = 'dup'"))
+    with pytest.raises(DBAPIError):
+        queue_schema.exec_driver_sql(
+            "CREATE UNIQUE INDEX CONCURRENTLY ix_embedding_queue_pending_source ON embedding_queue (source_type)"
+        )
+    assert index_valid(queue_schema, "ix_embedding_queue_pending_source") is False
+    outcome = ensure_embedding_queue_indexes(queue_schema)
+    assert outcome["ix_embedding_queue_pending_source"] == "built"
+    assert index_valid(queue_schema, "ix_embedding_queue_pending_source") is True
