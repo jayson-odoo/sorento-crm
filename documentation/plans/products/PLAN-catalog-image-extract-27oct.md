@@ -131,6 +131,58 @@ to gallery" quietly removes about 2,000 products' pictures from customer documen
   them (different bytes). Flag likely duplicates by comparing the images, show both thumbnails side by
   side as "Looks like an existing photo", user decides. Measure how many it flags on the real catalogue.
 
+## Baseline on the real catalogue (27 Oct, read-only; PDF never in git)
+
+`Sorento_Lite_DIY_CATALOG_UPDATE_22062026.pdf`, 32 pages, matched against the 15 Oct dev copy
+(`sorento_cagent_stack`, read-only; it has no `supplier_product_code_alias`, so the alias rung is n/a).
+Scratch evidence: `<scratchpad>/baseline/REPORT.md`, `REPORT2.md`.
+
+| Run | Photos | First code exact | Suffix | Unmatched | No caption |
+| --- | --- | --- | --- | --- | --- |
+| Owner's script | 428 saved | 327 named | - | 101 UNMATCHED | - |
+| R1-R3 with the owner's code regex | 462 | 265 | 18 | 73 | 106 |
+| Fixed code rule + wrap join | 462 | 370 | 0 | 0 | 92 |
+| ... + skip wide bands and inline (no-xref) images | 434 | 344 | 0 | 0 | 90 |
+
+Findings that change the contract:
+- The owner's regex misses this catalogue's DIY codes: under 3 digits or a hyphen in the prefix
+  (`SRT73-*-DIY` p4, `SRT-FH12-*` p6, p13, p16), so those photos took the NEXT row's caption. Codes also
+  wrap over two lines (`SRTKT1931SS` / `-BL-DIY`, p11), so the first line gave a truncated code.
+- 14 full-width "feature" bands (p9, p10, p18, p21-p25: icons + text, e.g. "High Quality Material") are
+  inline images with no xref, sitting mid-page, so the top-banner rule keeps them and the proximity rule
+  hands them a product code. Skipping any placement at least 80% of the page wide removes exactly
+  those and no product photo. The 3 narrow no-xref placements left (p15) are decorative too.
+- The only non-code the new rule catches is `SUS304` (material, p11, p21); not in the master.
+- 344 photos map to 161 products; 147 of them already have photos (92 have 1, 51 have 2, 4 have 3).
+  Nothing matches by sha256 (0), as expected: the photos were uploaded by hand from other files.
+- 121 photos share their first code with another photo on the same page (colour variants, hero shots
+  taking a caption). The review grid is where a person sorts these out.
+- E1 (multi-code block) and E2 (placeholder) do not occur in this DIY catalogue; they come from the
+  owner's example page only.
+
+Contract changes (rules R1, R2; tester adds red cases before the coder starts):
+- Code-shaped token = owner's shape OR a hyphenated token containing a digit:
+  `^[A-Z]{3,}\d{3,}[A-Z0-9\-]*$`, `^[A-Z][A-Z0-9]*\d[A-Z0-9]*(?:-[A-Z0-9]+)+$`,
+  `^[A-Z]+(?:-[A-Z0-9]+)*-[A-Z0-9]*\d[A-Z0-9]*(?:-[A-Z0-9]+)*$`. `MDF18`, `ABC12`, dimensions and
+  prices stay out.
+- Wrap join: inside a caption block, a line whose first word starts with `-` is glued onto the previous
+  line's last word.
+- R1 also skips a placement at least 80% of the page wide anywhere on the page, and an inline image
+  with no xref.
+
+## F1 answer (for the owner)
+
+Yes. Attach writes the same `product_attachments` link a hand link writes
+(`ProductAttachmentService.create_product_attachment`, `product_service.py:3250`). The chatbot reads
+that table (MCP `crm_master_product_attachments_list`, `sorento_crm_mcp/catalog.py:179` ->
+`product_attachments.py:150` -> `product_service.py:2872`), so an attached photo is sendable by the bot
+at once. Sending is unchanged: bot -> n8n sender -> Respond.io (`chatbot/turn/compose.py:1067`,
+`chatbot/direct_ingress.py:330-373`). What it skips is n8n's INTAKE: a hand upload fires the n8n
+"attachment uploaded" webhook (`resources/attachments.py:1096` -> `attachment_webhook_helper.py:40`),
+and n8n's linking comes back through `/external/product-attachments` (`external/__init__.py:100`).
+Here the review does that linking. The bot picks photos by the "Product Photos" attachment type
+(`chatbot/lanes/business/answer.py:3878`), so catalogue photos are stored with that type.
+
 ## Build (after answers)
 
 Phase 1 FE mock against fixtures. Phase 2 test-first: fixture PDFs generated in the tests with PyMuPDF
