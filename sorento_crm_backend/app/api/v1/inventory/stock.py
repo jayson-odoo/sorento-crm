@@ -50,6 +50,7 @@ def _normalize_entities(raw: Optional[list[str]]) -> Optional[list[str]]:
             out.append(piece)
     return out or None
 
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import (
     get_current_user,
@@ -266,7 +267,7 @@ def get_stock_balance(
     ),
     quantity_operator: Optional[str] = Query(None),
     quantity_value: Optional[str] = Query(None),
-    status: Optional[str] = Query(None, description="Filter by status: critical, low, normal, overstock"),
+    status: Optional[list[str]] = Query(None, description="Filter by status: critical, low, normal, overstock (several = any of them)"),
     exclude_zero_system_adjustment: bool = Query(
         False,
         description=(
@@ -376,7 +377,7 @@ def get_stock_balance(
             product_ids=parsed_product_ids,
             quantity_operator=quantity_operator,
             quantity_value=quantity_value,
-            status=status,
+            status=multi_values(status),
             entities=_normalize_entities(entities),
             exclude_zero_system_adjustment=exclude_zero_system_adjustment,
             contact_id=contact_id,

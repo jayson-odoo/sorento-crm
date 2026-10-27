@@ -661,7 +661,7 @@ class StockService:
         product_ids: Optional[list[str]] = None,
         quantity_operator: Optional[str] = None,
         quantity_value: Optional[str] = None,
-        status: Optional[str] = None,
+        status: Optional[list[str] | str] = None,
         entities: Optional[list[str]] = None,
         exclude_zero_system_adjustment: bool = False,
         contact_id: Optional[str] = None,
@@ -990,16 +990,19 @@ class StockService:
             except (ValueError, TypeError):
                 pass
 
-        if status and status in ('critical', 'low', 'normal', 'overstock'):
-            reorder = func.coalesce(Product.reorder_level, 0)
-            if status == 'critical':
-                q = q.filter(Stock.quantity_available <= 0)
-            elif status == 'low':
-                q = q.filter(Stock.quantity_available > 0, Stock.quantity_available < reorder)
-            elif status == 'normal':
-                q = q.filter(Stock.quantity_available >= reorder)
-            elif status == 'overstock':
-                q = q.filter(Stock.quantity_available > reorder * 2)
+        # Several buckets are OR-ed, and they overlap (normal also holds overstock), so each row
+        # is matched once by the OR of the predicates rather than once per bucket.
+        statuses = [status] if isinstance(status, str) else (status or [])
+        reorder = func.coalesce(Product.reorder_level, 0)
+        bucket = {
+            'critical': Stock.quantity_available <= 0,
+            'low': and_(Stock.quantity_available > 0, Stock.quantity_available < reorder),
+            'normal': Stock.quantity_available >= reorder,
+            'overstock': Stock.quantity_available > reorder * 2,
+        }
+        picked = [bucket[s] for s in statuses if s in bucket]
+        if picked:
+            q = q.filter(or_(*picked))
 
         # Hide rows whose on-hand is 0 ONLY because the most recent ledger movement
         # was a SYSTEM_ADJUSTMENT (e.g. "missing from full stock take") - a real 0
@@ -1918,7 +1921,7 @@ class StockService:
         limit: int = 50,
         product_id: Optional[str] = None,
         warehouse_id: Optional[str] = None,
-        transaction_type: Optional[str] = None
+        transaction_type: Optional[list[str] | str] = None
     ):
         """List stock ledger entries with pagination and filtering."""
         from app.schemas.common import ListResponse
@@ -1952,7 +1955,8 @@ class StockService:
                 )
             q = q.filter(StockLedger.warehouse_id.in_(warehouse_ids))
         if transaction_type:
-            q = q.filter(StockLedger.transaction_type == transaction_type)
+            types = [transaction_type] if isinstance(transaction_type, str) else transaction_type
+            q = q.filter(StockLedger.transaction_type.in_(types))
 
         total = q.count()
         offset = (page - 1) * limit
@@ -2996,12 +3000,16 @@ class StockBatchService:
         page: int = 1,
         limit: int = 50,
         product_id: Optional[str] = None,
-        warehouse_id: Optional[str] = None
+        warehouse_id: Optional[str] = None,
+        status: Optional[list[str]] = None,
     ):
-        """List stock batches."""
+        """List stock batches. `status` is any of the given statuses, matched in any case (the
+        stored values are the upper-case BatchStatus enum)."""
         q = self.db.query(StockBatch).filter(
             StockBatch.warehouse.has(Warehouse.is_active.is_(True))
         )
+        if status:
+            q = q.filter(func.upper(StockBatch.status).in_([s.upper() for s in status]))
         
         if product_id:
             resolved_pid = _resolve_stock_product_id(self.db, product_id)

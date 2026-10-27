@@ -535,10 +535,10 @@ class StockTransferService:
         *,
         query: Optional[str] = None,
         state: Optional[Sequence[str]] = None,
-        kind: Optional[str] = None,
-        from_warehouse_id: Optional[str] = None,
-        to_warehouse_id: Optional[str] = None,
-        product_id: Optional[str] = None,
+        kind: Optional[Sequence[str] | str] = None,
+        from_warehouse_id: Optional[Sequence[str] | str] = None,
+        to_warehouse_id: Optional[Sequence[str] | str] = None,
+        product_id: Optional[Sequence[str] | str] = None,
         sales_order_id: Optional[str] = None,
         so_numbers: Optional[Sequence[str]] = None,
         project_sales_order_id: Optional[str] = None,
@@ -555,14 +555,17 @@ class StockTransferService:
             # by one. Resolved through the join the base query already makes; a number this
             # system does not hold simply matches nothing.
             q = q.filter(SalesOrder.so_number.in_(list(so_numbers)))
+        def _many(value):
+            return [value] if isinstance(value, str) else list(value)
+
         if kind:
-            q = q.filter(StockTransfer.kind == kind)
+            q = q.filter(StockTransfer.kind.in_(_many(kind)))
         if from_warehouse_id:
-            q = q.filter(StockTransfer.from_warehouse_id == from_warehouse_id)
+            q = q.filter(StockTransfer.from_warehouse_id.in_(_many(from_warehouse_id)))
         if to_warehouse_id:
-            q = q.filter(StockTransfer.to_warehouse_id == to_warehouse_id)
+            q = q.filter(StockTransfer.to_warehouse_id.in_(_many(to_warehouse_id)))
         if product_id:
-            q = q.filter(StockTransfer.product_id == product_id)
+            q = q.filter(StockTransfer.product_id.in_(_many(product_id)))
         if sales_order_id:
             q = q.filter(SalesOrderLine.sales_order_id == sales_order_id)
         if project_sales_order_id:
