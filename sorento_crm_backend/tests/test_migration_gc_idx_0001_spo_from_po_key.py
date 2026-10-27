@@ -242,12 +242,19 @@ def test_a_build_past_the_statement_timeout_gives_up_and_drops_its_leftover(monk
 
 def _run_upgrade(module, schema):
     """upgrade() as `alembic/env.py` runs it: a transactional MigrationContext on its own
-    connection, search_path on the scratch schema."""
+    connection, search_path on the scratch schema. The connection goes back to the shared
+    pool, so the session-level SET is undone before it does (a leaked search_path made later
+    tests in the worker fail with 'relation users does not exist')."""
     with engine.connect() as conn:
-        ctx = MigrationContext.configure(conn)
-        with Operations.context(ctx), ctx.begin_transaction():
-            conn.exec_driver_sql(f'SET search_path TO "{schema}"')
-            module.upgrade()
+        try:
+            ctx = MigrationContext.configure(conn)
+            with Operations.context(ctx), ctx.begin_transaction():
+                conn.exec_driver_sql(f'SET search_path TO "{schema}"')
+                module.upgrade()
+        finally:
+            conn.rollback()
+            conn.exec_driver_sql("RESET search_path")
+            conn.commit()
 
 
 def test_the_migration_succeeds_when_its_builds_time_out(monkeypatch):
@@ -382,3 +389,19 @@ def test_the_retry_script_never_exits_non_zero(monkeypatch):
 
     monkeypatch.setattr(retry, "run", boom)
     retry.main()
+
+
+def test_no_session_setting_leaks_into_the_shared_pool():
+    """Every helper here that sets search_path or a timeout on a pooled connection undoes it:
+    the next test in the worker borrows the same connection."""
+    module = _load()
+    with engine.connect() as probe:
+        before = [probe.exec_driver_sql(f"SHOW {name}").scalar()
+                  for name in ("search_path", "lock_timeout", "statement_timeout")]
+    with _scratch() as (schema, _conn):
+        _run_upgrade(module, schema)
+    for _ in range(engine.pool.size() + 1):
+        with engine.connect() as probe:
+            after = [probe.exec_driver_sql(f"SHOW {name}").scalar()
+                     for name in ("search_path", "lock_timeout", "statement_timeout")]
+            assert after == before
