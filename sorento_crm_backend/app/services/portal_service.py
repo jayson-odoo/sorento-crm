@@ -42,6 +42,7 @@ from app.services.crockford import (
     CROCKFORD_TOKEN_LEN,
     crockford_token,
 )
+from app.services import submission_status
 from app.services.document_number import display_document_number
 from app.services.error_handler import (
     AppException,
@@ -1120,7 +1121,9 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit complaint with status {previous_status!r}."
                 )
-            row.status = "submitted"
+            row.status = submission_status.status_on_submit(
+                was_rejected=previous_status == "rejected"
+            )
         elif kind == "stock_inquiry":
             # A `responded` inquiry is read-only on this path - it changes only
             # through the revision endpoint (`PortalRevisionService.revise`).
