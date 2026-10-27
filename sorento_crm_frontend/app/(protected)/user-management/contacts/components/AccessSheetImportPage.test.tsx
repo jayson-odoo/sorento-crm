@@ -1,6 +1,7 @@
 /**
- * Lane BULK-CONTACT-ACCESS, UAC U11, U13-U15, U20: Import access sheet dialog.
- * Upload -> Preview -> Result, as mock v1. Red until the dialog, hook and service exist.
+ * Lane BULK-CONTACT-ACCESS, UAC U11, U13-U15, U20: Import access sheet, as a page since
+ * BULK-ACCESS-PREVIEW (owner 27 Oct: "a new page [...] so I can scroll down, have pagination").
+ * Upload -> Preview -> Result.
  * The feature service is mocked: `previewAccessSheet(file)` and `applyAccessSheet(file, confirmed)`.
  */
 import React from 'react';
@@ -23,6 +24,15 @@ vi.mock('@/lib/toast', () => ({ toast: toastMock }));
 
 const svc = vi.hoisted(() => ({ previewAccessSheet: vi.fn(), applyAccessSheet: vi.fn() }));
 vi.mock('@/services/contactAccessSheetService', () => svc);
+
+const routerMock = vi.hoisted(() => ({ push: vi.fn(), back: vi.fn() }));
+vi.mock('next/navigation', () => ({
+  useRouter: () => routerMock,
+  usePathname: () => '/user-management/contacts/access-sheet',
+}));
+vi.mock('@/components/common/PageHeader', () => ({
+  PageHeader: (props: { title: string }) => <h1>{props.title}</h1>,
+}));
 
 const customerSvc = vi.hoisted(() => ({ searchCustomersSelect: vi.fn() }));
 vi.mock('@/app/(protected)/order-management/customers/services/customerService', () => customerSvc);
@@ -55,7 +65,7 @@ vi.mock('@/components/common/SearchableMultiSelect', () => ({
   },
 }));
 
-import AccessSheetImportDialog from './AccessSheetImportDialog';
+import AccessSheetImportPage from './AccessSheetImportPage';
 
 const acct = (id: string, over: Record<string, unknown> = {}) => ({
   customer_id: id, customer_code: `300-${id}`, customer_name: `ACCOUNT ${id}`, company_code: 'SRT', is_active: true,
@@ -98,13 +108,11 @@ const RESULT = {
 
 function renderDialog() {
   const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
-  const onOpenChange = vi.fn();
   render(
     <QueryClientProvider client={qc}>
-      <AccessSheetImportDialog open onOpenChange={onOpenChange} />
+      <AccessSheetImportPage />
     </QueryClientProvider>,
   );
-  return { onOpenChange };
 }
 
 const file = new File(['First Name,Phone Number,Tags\n'], 'sheet.csv', { type: 'text/csv' });
@@ -129,7 +137,7 @@ afterEach(() => {
   vi.clearAllMocks();
 });
 
-describe('AccessSheetImportDialog', () => {
+describe('AccessSheetImportPage', () => {
   it('upload step: Preview stays off until a file is chosen, then sends the file to the dry run', async () => {
     renderDialog();
     expect((screen.getByRole('button', { name: /^Preview/ }) as HTMLButtonElement).disabled).toBe(true);
@@ -407,5 +415,69 @@ describe('AccessSheetImportDialog', () => {
     expect(within(row('300-Y065')).getByText('Wong')).toBeInTheDocument();
     expect(within(row('300-Y055')).queryByText('Shi')).toBeNull();
     expect(within(row('300-Z001')).getByText('Nobody')).toBeInTheDocument();
+  });
+
+  // BULK-ACCESS-PREVIEW page: pagination over the dealer cards, selection kept across pages.
+  const many = (n: number) => ({
+    ...PREVIEW,
+    counts: { ...PREVIEW.counts, blocks: n, blocks_exact: n, blocks_pick: 0 },
+    blocks: Array.from({ length: n }, (_, i) => ({
+      ...PREVIEW.blocks[0],
+      key: `dealer ${i + 1}`,
+      dealer: `DEALER ${String(i + 1).padStart(2, '0')} SDN BHD`,
+      accounts: [acct(`d${i + 1}`, { customer_code: `300-D${i + 1}` })],
+      contacts: [person(`Person ${i + 1}`)],
+    })),
+  });
+
+  it('page: the preview shows 20 dealer cards a page with Prev / Page X of Y / Next', async () => {
+    svc.previewAccessSheet.mockResolvedValueOnce(many(25));
+    renderDialog();
+    pickFile();
+    fireEvent.click(screen.getByRole('button', { name: /^Preview/ }));
+    await screen.findByText('DEALER 01 SDN BHD');
+    expect(screen.getByText('DEALER 20 SDN BHD')).toBeInTheDocument();
+    expect(screen.queryByText('DEALER 21 SDN BHD')).toBeNull();
+    expect(screen.getByText(/Page 1 of 2/)).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    expect(await screen.findByText('DEALER 21 SDN BHD')).toBeInTheDocument();
+    expect(screen.queryByText('DEALER 01 SDN BHD')).toBeNull();
+    expect(screen.getByText(/Page 2 of 2/)).toBeInTheDocument();
+  });
+
+  it('page: a dealer confirmed on page 2 and Confirm all exact on page 1 are both sent', async () => {
+    const data = many(25);
+    data.blocks[22] = { ...data.blocks[22], status: 'pick' };
+    svc.previewAccessSheet.mockResolvedValueOnce(data);
+    renderDialog();
+    pickFile();
+    fireEvent.click(screen.getByRole('button', { name: /^Preview/ }));
+    await screen.findByText('DEALER 01 SDN BHD');
+    fireEvent.click(screen.getByRole('button', { name: 'Next page' }));
+    fireEvent.click(await screen.findByRole('checkbox', { name: /confirm DEALER 23/i }));
+    fireEvent.click(screen.getByRole('button', { name: 'Previous page' }));
+    await screen.findByText('DEALER 01 SDN BHD');
+    fireEvent.click(screen.getByRole('button', { name: /confirm all exact/i }));
+    fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
+    await waitFor(() => expect(svc.applyAccessSheet).toHaveBeenCalledTimes(1));
+    const sent = svc.applyAccessSheet.mock.calls[0][1] as Record<string, string[]>;
+    expect(Object.keys(sent)).toHaveLength(25);
+    expect(sent['dealer 23']).toEqual(['d23']);
+  });
+
+  it('page: Back from the preview returns to the upload step with the file kept', async () => {
+    renderDialog();
+    await toPreview();
+    fireEvent.click(screen.getByRole('button', { name: /^Back$/ }));
+    expect((screen.getByRole('button', { name: /^Preview/ }) as HTMLButtonElement).disabled).toBe(false);
+  });
+
+  it('page: Done on the result goes back to the contacts list', async () => {
+    renderDialog();
+    await toPreview();
+    fireEvent.click(screen.getByRole('button', { name: /confirm all exact/i }));
+    fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^Done$/ }));
+    expect(routerMock.push).toHaveBeenCalledWith('/user-management/contact-access-agents');
   });
 });

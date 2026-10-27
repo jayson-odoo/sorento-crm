@@ -3,7 +3,8 @@
  * added items marked; unchanged facets named once.
  */
 import { describe, it, expect } from 'vitest';
-import { changeLines, unchangedFacets } from './accessSheet';
+import { allExactConfirmed, changeLines, confirmAllExact, initialSelection, unchangedFacets } from './accessSheet';
+import type { AccessSheetResult } from '@/services/contactAccessSheetService';
 
 describe('changeLines', () => {
   it('lists every item of a list facet and marks only the added ones', () => {
@@ -55,5 +56,21 @@ describe('unchangedFacets', () => {
     expect(out).not.toContain('agent_access');
     expect(out).toContain('market_segments');
     expect(out).toContain('packing_list_allowed');
+  });
+});
+
+describe('confirmAllExact (owner question 27 Oct, built on the crew recommendation: skip)', () => {
+  const block = (key: string, warnings: string[] = []) => ({
+    key, dealer: key, alt_dealers: [], companies: ['SRT'], status: 'exact', warnings, accounts: [], contacts: [],
+  });
+  const preview = { blocks: [block('a'), block('b', ['rows_disagree'])] } as unknown as AccessSheetResult;
+
+  it('leaves a Rows disagree card unconfirmed', () => {
+    const sel = confirmAllExact(preview, initialSelection(preview));
+    expect(sel.confirmed).toEqual({ a: true, b: false });
+  });
+
+  it('reads as all confirmed once every card it can confirm is', () => {
+    expect(allExactConfirmed(preview, confirmAllExact(preview, initialSelection(preview)))).toBe(true);
   });
 });
