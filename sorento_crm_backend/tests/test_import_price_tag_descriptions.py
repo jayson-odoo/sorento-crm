@@ -456,6 +456,60 @@ def test_conflicting_texts_skip_the_code_and_list_every_row_and_text(db, tmp_pat
     assert "\n\n" in r["sheet_texts"]
 
 
+@pytest.mark.parametrize("spaced", ["150 x 150", "150 X 150", "150X150", "150 × 150", "150×150"])
+def test_dimension_spacing_and_x_sign_are_format_equal_and_the_first_rows_text_wins(
+    db, tmp_path, spaced
+):
+    # Sorento Lite DIY sheet, floor traps: one row `150x150`, another `150 x 150`.
+    p = _prod(db, "SRT6531-DIY")
+    first = "Floor Trap\n150x150"
+    run = _run(db, tmp_path, [("SRT6531-DIY", first), ("SRT6531-DIY", f"Floor Trap\n{spaced}")],
+               apply=True)
+    assert _desc(db, p) == first
+    assert run.skipped == []
+
+
+def test_a_dimension_x_between_letters_is_left_alone():
+    script = _script()
+    assert script.format_key("Box x Lid") != script.format_key("Box Lid")
+    assert script.format_key("L700 x W400") == script.format_key("L700xW400") != "l700xw400"
+
+
+def test_after_dimension_spacing_the_text_with_an_extra_line_wins(db, tmp_path):
+    p = _prod(db, "SRT6531-GM-DIY")
+    gm = "Floor Trap\n150 x 150\nGunmetal"
+    run = _run(db, tmp_path, [("SRT6531-GM-DIY", "Floor Trap\n150x150"), ("SRT6531-GM-DIY", gm)],
+               apply=True)
+    assert _desc(db, p) == gm
+    assert run.skipped == []
+
+
+def test_the_same_lines_in_another_order_are_format_equal_and_the_first_rows_text_wins(
+    db, tmp_path
+):
+    p = _prod(db, "SRTKT1932SS-DIY")
+    first = "Kitchen Tap\nPillar Mounted\nStainless Steel\nH350mm"
+    second = "Kitchen Tap\nStainless Steel\nH350 mm\nPillar Mounted"
+    run = _run(db, tmp_path, [("SRTKT1932SS-DIY", first), ("SRTKT1932SS-DIY", second)], apply=True)
+    assert _desc(db, p) == first
+    assert run.skipped == []
+
+
+def test_a_contradicting_line_is_still_a_conflict_and_lists_both_sheet_rows(db, tmp_path):
+    p = _prod(db, "SRTKT1933SS-DIY", text="old")
+    pillar = "Kitchen Tap\nPillar Mounted\nStainless Steel"
+    wall = "Kitchen Tap\nStainless Steel\nWall Mounted"
+    run = _run(db, tmp_path, [("SRTX1", "other"), ("SRTKT1933SS-DIY", pillar),
+                              ("SRTKT1933SS-DIY", wall)], apply=True)
+    assert _desc(db, p) == "old"
+    rows = [r for r in run.skipped if r["sheet_code"].upper() == "SRTKT1933SS-DIY"]
+    assert len(rows) == 1
+    assert rows[0]["reason"] == "same code on several rows with different text"
+    assert rows[0]["sheet_rows"] == "3, 4"
+    assert f"row 3: {pillar}" in rows[0]["sheet_texts"]
+    assert f"row 4: {wall}" in rows[0]["sheet_texts"]
+
+
 def test_a_combo_row_and_a_plain_row_of_the_same_bf_count_as_the_same_code(db, tmp_path):
     bf = _prod(db, "SRTBF200")
     _prod(db, "SRTMR200")
