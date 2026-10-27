@@ -997,7 +997,7 @@ def _word_filters(
     return out, None
 
 
-def _product_args(entities: Any) -> tuple[dict[str, Any] | None, str | None]:
+def _product_args(entities: Any, *, total: bool = False) -> tuple[dict[str, Any] | None, str | None]:
     """The route's product param for the product entities a message named, or the one line to
     say instead. 1b code review S4: the sales report's PREFIX rule (S19), so "SRT5674" covers
     "SRT5674-N"; several codes travel as the prefix they share."""
@@ -1010,9 +1010,14 @@ def _product_args(entities: Any) -> tuple[dict[str, Any] | None, str | None]:
     products = [e for e in jsc.array(entities) if isinstance(e, dict) and e.get("entity_type") == "product"]
     found = outstanding_product_codes(products, {})
     if is_mixed_code_set(found):
-        # A word that fanned out to unrelated codes is never frozen on the first of them, and never run on the
-        # whole set either: the product is asked (owner review 22 Oct, item 4).
-        return None, MIXED_PRODUCTS_LINE
+        # A word that fanned out to unrelated codes is never frozen on the first of them. A TOTAL never runs on
+        # the whole set either: the product is asked (owner review 22 Oct, item 4). A ranking (it has an axis) takes
+        # the whole set as `product_ids` (the substring tier, as it always did); past the cap, or with no resolved
+        # row, the product is asked.
+        ids = _gate_ids(products, "product")
+        if total or not ids or len(ids) > DRILL_MAX_KEYS:
+            return None, MIXED_PRODUCTS_LINE
+        return {"product_ids": ids}, None
     code = sales_report_product_code(products, {})
     return ({"product_code": code} if code else {}), None
 
@@ -1094,7 +1099,7 @@ def _fresh_args(
     if customer_ids:
         args["customer_ids"] = customer_ids
     if "product" in kinds:
-        product_args, line = _product_args(_without_carried_products(parse_output, entities))
+        product_args, line = _product_args(_without_carried_products(parse_output, entities), total=not group_by)
         if product_args is None:
             return None, line
         args.update(product_args)

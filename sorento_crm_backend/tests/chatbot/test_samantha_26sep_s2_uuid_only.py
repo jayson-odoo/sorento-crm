@@ -118,16 +118,17 @@ def test_no_non_uuid_customer_id_reaches_state_or_tool_args():
 
     # ---- the fetch tool args (entity_ids_transformer) -----------------------------
     trigger = {
-        "tool": "crm_outstanding_report",
+        "tool": "crm_report_ask",  # REPORT-UNIFY: the outstanding report's tool
         "entities": [],
         "semantic_input": {"outstanding_carried_customer_ids": [LABEL, CHENG_HUAT_UUID]},
     }
     args = entity_ids_transformer(trigger)
     tool_customer_ids = args.get("customer_ids") or []
     assert LABEL not in tool_customer_ids, (
-        f"the label reached crm_outstanding_report's own tool args: {args!r}"
+        f"the label reached the outstanding report's own tool args: {args!r}"
     )
-    assert CHENG_HUAT_UUID in tool_customer_ids
+    # (REPORT-UNIFY: the carried customer ids of the retired outstanding report are the report ask's held frame now,
+    # so only the label rule is pinned at this seam.)
 
     # Sanity: the shared uuid check the fix is meant to re-use already exists and
     # already agrees the label is not a uuid (it just is not called at the seams
