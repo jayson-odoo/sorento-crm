@@ -1184,7 +1184,9 @@ class PortalService:
                 raise handle_validation_error(
                     f"Cannot submit {kind} with status {previous_status!r}."
                 )
-            row.status = "submitted"
+            row.status = submission_status.status_on_submit(
+                was_rejected=previous_status == "rejected" or approval_rejected
+            )
             # Top "Date" on the document = submitted date. Re-stamp on every submit,
             # including resubmit-after-rejection, so it reflects the latest submission
             # (mirrors approved_at, which also resets per approval cycle).
@@ -1987,7 +1989,7 @@ class PortalService:
                     request_number=row.request_number or "N/A",
                     project_title=row.project_title or "N/A",
                     base_url_override=None,
-                    integration_action="created",
+                    integration_action="resubmitted" if is_resubmission else "created",
                 )
             except Exception as e:  # noqa: BLE001
                 logger.warning("Purchase request submit notify failed: %s", e)
