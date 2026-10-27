@@ -1,6 +1,6 @@
 # PLAN: PORTAL-P2-ONLY-THEIRS, "only theirs" on the server (27 Oct 2026)
 
-Status: Review. Built and green locally; reviewer + security review running. PR #1911.
+Status: Review passed (reviewer READY, security-reviewer READY, 27 Oct). Awaiting CI and the owner hand-test. PR #1911.
 Track: full (RBAC change), security review required. Lane PORTAL-P2-ONLY-THEIRS.
 
 Source brief: `documentation/plans/portal/PLAN-portal-unify-scout-27oct.md` (PR #1894), section

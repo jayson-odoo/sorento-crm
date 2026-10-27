@@ -390,6 +390,11 @@ def test_fulfilment_side_deferred_actions_are_refused_to_a_limited_project_user(
             {"decision_id": uid()},
         )
         assert response.status_code == 403, response.text
+        response = _park(
+            client, "sales_order_line_attachment.delete", "sales_order_line_attachment", uid(),
+            {"line_id": uid()},
+        )
+        assert response.status_code == 403, response.text
 
 
 def test_a_limited_project_user_cannot_file_a_sample_request_on_a_foreign_project(scene):
@@ -408,4 +413,4 @@ def test_a_limited_project_user_cannot_file_a_sample_request_on_a_foreign_projec
     with acting(db, w.a, perms) as client:
         response = client.post(SR, json={"project_id": foreign.id})
         assert response.status_code == 422, response.text
-        assert response.json().get("code") == "SAMPLE_REQUEST_PROJECT_INVALID" or "not found" in response.text
+        assert "SAMPLE_REQUEST_PROJECT_INVALID" in response.text
