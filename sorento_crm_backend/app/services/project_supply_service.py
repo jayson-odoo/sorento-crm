@@ -50,6 +50,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from contextlib import contextmanager
 from collections import defaultdict
 from dataclasses import dataclass, field, replace as dataclass_replace
 from datetime import date, datetime, timedelta
@@ -70,7 +71,7 @@ from typing import (
     Tuple,
 )
 
-from sqlalchemy import and_, case, func, null, nullslast, or_
+from sqlalchemy import and_, case, func, null, nullslast, or_, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, aliased
 
@@ -183,9 +184,9 @@ logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
 # STOCKDEBT-SHM-QUERY: refs per statement in the Stock Debt board's batched PO-received
-# read, so its IN lists and hash tables stay small (PROD 27 Oct 2026: 412 refs in one
-# statement ran the db container's /dev/shm out in a parallel hash join).
-_REF_CHUNK = 200
+# read. /dev/shm ran out (PROD 27 Oct 2026) in a PARALLEL hash join, which that read now
+# never plans; the chunk stays as a size bound, one covers today's board (~10.8k refs).
+_REF_CHUNK = 20000
 
 #: The ladder that composed a proposal, stamped on every component frozen at confirm
 #: (`_proposed_component`). Read by the board so a suggestion made under an older rule can
@@ -3188,6 +3189,23 @@ class ProjectSupplyService:
             self._oi_linked_landed_by_ref(refs, product_id=product_id, company_id=company_id),
         )
 
+    @contextmanager
+    def _without_parallel_workers(self):
+        """`max_parallel_workers_per_gather` 0 for this transaction, restored after."""
+        previous = self.db.execute(
+            text("select current_setting('max_parallel_workers_per_gather')")
+        ).scalar()
+        self.db.execute(text("select set_config('max_parallel_workers_per_gather', '0', true)"))
+        try:
+            yield
+        finally:
+            # A failed statement aborts the transaction, which drops the local setting.
+            if self.db.get_transaction() is not None and self.db.is_active:
+                self.db.execute(
+                    text("select set_config('max_parallel_workers_per_gather', :prev, true)"),
+                    {"prev": previous},
+                )
+
     def _po_received_by_product(
         self, refs_by_product: Mapping[str, Iterable[str]]
     ) -> Dict[str, Dict[str, Tuple[Decimal, Optional[str]]]]:
@@ -3221,43 +3239,46 @@ class ProjectSupplyService:
         # (as the walk's own batched read does): without it the hash join built over every
         # SPO row in the company. Each row's answer depends on its own ref only, so the
         # chunked answer is the one-statement answer.
-        for start in range(0, len(all_refs), _REF_CHUNK):
-            refs = all_refs[start:start + _REF_CHUNK]
-            rows = (
-                self.db.query(
-                    PurchaseOrderLine.from_so_line_ref,
-                    SPOAllocation.quantity_received,
-                    SPOAllocation.spo_number,
-                    PurchaseOrderLine.product_id,
-                )
-                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-                .join(
-                    SPOAllocation,
-                    and_(
-                        goods_chain.po_spo_key_clause(),
-                        SPOAllocation.product_id == PurchaseOrderLine.product_id,
-                    ),
-                )
-                .filter(
-                    PurchaseOrderLine.from_so_line_ref.in_(refs),
-                    PurchaseOrderLine.product_id.in_(product_ids),
-                    SPOAllocation.product_id.in_(product_ids),
-                )
-                .all()
-            )
-            for ref, qty, spo_number, product_id in rows:
-                if str(ref) in wanted.get(str(product_id), ()):
-                    _add_landed(
-                        received.setdefault(str(product_id), {}), str(ref), spo_number, qty
+        # Parallel hash joins are what fill /dev/shm; one statement without them costs
+        # ~0.3 s where 54 chunks cost ~2.6 s (dev copy, EXPLAIN).
+        with self._without_parallel_workers():
+            for start in range(0, len(all_refs), _REF_CHUNK):
+                refs = all_refs[start:start + _REF_CHUNK]
+                rows = (
+                    self.db.query(
+                        PurchaseOrderLine.from_so_line_ref,
+                        SPOAllocation.quantity_received,
+                        SPOAllocation.spo_number,
+                        PurchaseOrderLine.product_id,
                     )
-            for ref, product_id, _company, spo_number, placed, got in self._oi_placements(
-                refs, product_ids
-            ):
-                if str(ref) in wanted.get(str(product_id), ()):
-                    _add_landed(
-                        linked.setdefault(str(product_id), {}), str(ref).strip(), spo_number,
-                        min(_dec(placed), _dec(got)),
+                    .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                    .join(
+                        SPOAllocation,
+                        and_(
+                            goods_chain.po_spo_key_clause(),
+                            SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                        ),
                     )
+                    .filter(
+                        PurchaseOrderLine.from_so_line_ref.in_(refs),
+                        PurchaseOrderLine.product_id.in_(product_ids),
+                        SPOAllocation.product_id.in_(product_ids),
+                    )
+                    .all()
+                )
+                for ref, qty, spo_number, product_id in rows:
+                    if str(ref) in wanted.get(str(product_id), ()):
+                        _add_landed(
+                            received.setdefault(str(product_id), {}), str(ref), spo_number, qty
+                        )
+                for ref, product_id, _company, spo_number, placed, got in self._oi_placements(
+                    refs, product_ids
+                ):
+                    if str(ref) in wanted.get(str(product_id), ()):
+                        _add_landed(
+                            linked.setdefault(str(product_id), {}), str(ref).strip(), spo_number,
+                            min(_dec(placed), _dec(got)),
+                        )
         return {
             product_id: _landed_for_refs(
                 received.get(product_id, {}), linked.get(product_id, {})
