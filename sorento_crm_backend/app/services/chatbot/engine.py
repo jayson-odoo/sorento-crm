@@ -5684,12 +5684,14 @@ def _run_stages_body(  # noqa: PLR0915
     # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
     verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
+    from app.services.chatbot import required_fields as _required_fields
+
     _open_required = state_in.focus.required_ask
     _answers_open_ask = (
         isinstance(_open_required, dict)
         and _open_required.get("asking")
         and _open_required.get("ask") != _report_ask.ASK_NAME
-        and required_fields.reply_verdict(
+        and _required_fields.reply_verdict(
             verdict, _open_required, jsc.js_string(jsc.get(_inner_message(envelope), "text") or "")
         )[1] == "required_ask_answer"
     )
