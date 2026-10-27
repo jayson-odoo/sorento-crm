@@ -75,7 +75,7 @@ describe('unchangedFacets', () => {
   });
 });
 
-describe('confirmAllExact (owner question 27 Oct, built on the crew recommendation: skip)', () => {
+describe('confirmAllExact (crew ruling 27 Oct: Rows disagree cards are confirmed too)', () => {
   const block = (key: string, warnings: string[] = []) => ({
     key,
     dealer: key,
@@ -90,12 +90,12 @@ describe('confirmAllExact (owner question 27 Oct, built on the crew recommendati
     blocks: [block('a'), block('b', ['rows_disagree'])],
   } as unknown as AccessSheetResult;
 
-  it('leaves a Rows disagree card unconfirmed', () => {
+  it('confirms a Rows disagree card like any exact card', () => {
     const sel = confirmAllExact(preview, initialSelection(preview));
-    expect(sel.confirmed).toEqual({ a: true, b: false });
+    expect(sel.confirmed).toEqual({ a: true, b: true });
   });
 
-  it('reads as all confirmed once every card it can confirm is', () => {
+  it('reads as all confirmed once every exact card is', () => {
     expect(
       allExactConfirmed(
         preview,
@@ -168,13 +168,13 @@ describe('orderedChanges', () => {
 });
 
 describe('hasConfirmableExact', () => {
-  it('is false when every exact card has rows that disagree (Confirm all exact has nothing to do)', () => {
-    const block = (warnings: string[]) => ({
+  it('is true for an exact card whose rows disagree, false when no card is exact', () => {
+    const block = (warnings: string[], status = 'exact') => ({
       key: 'b',
       dealer: 'b',
       alt_dealers: [],
       companies: ['SRT'],
-      status: 'exact',
+      status,
       warnings,
       accounts: [],
       contacts: [],
@@ -183,11 +183,11 @@ describe('hasConfirmableExact', () => {
       hasConfirmableExact({
         blocks: [block(['rows_disagree'])],
       } as unknown as AccessSheetResult),
-    ).toBe(false);
+    ).toBe(true);
     expect(
       hasConfirmableExact({
-        blocks: [block([])],
+        blocks: [block([], 'pick')],
       } as unknown as AccessSheetResult),
-    ).toBe(true);
+    ).toBe(false);
   });
 });

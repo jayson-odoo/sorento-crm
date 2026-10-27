@@ -509,4 +509,19 @@ describe('AccessSheetImportPage', () => {
     expect(spy).toHaveBeenCalled();
     spy.mockRestore();
   });
+
+  it('P8 (crew ruling 27 Oct): Confirm all exact confirms a Rows disagree card and its pill stays', async () => {
+    const disagree = {
+      ...PREVIEW,
+      blocks: [{ ...PREVIEW.blocks[0], warnings: ['rows_disagree'] }, PREVIEW.blocks[1]],
+    };
+    svc.previewAccessSheet.mockResolvedValueOnce(disagree);
+    renderDialog();
+    await toPreview();
+    expect(screen.getByText('Rows disagree on companies')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: /confirm all exact/i }));
+    fireEvent.click(screen.getByRole('button', { name: /apply access/i }));
+    await waitFor(() => expect(svc.applyAccessSheet).toHaveBeenCalledTimes(1));
+    expect(svc.applyAccessSheet).toHaveBeenCalledWith(file, { 'alpha bath': ['a1', 'a2'] });
+  });
 });
