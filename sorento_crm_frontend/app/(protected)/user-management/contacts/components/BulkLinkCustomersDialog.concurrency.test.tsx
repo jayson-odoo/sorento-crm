@@ -4,7 +4,7 @@
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const link = vi.hoisted(() => vi.fn());
@@ -30,11 +30,11 @@ const contacts = Array.from({ length: 20 }, (_, i) => ({
   phone_number: `+6010000${i}`,
 })) as never[];
 
-function mount(onLinked = vi.fn()) {
+function mount(onLinked = vi.fn(), onOpenChange = vi.fn()) {
   const client = new QueryClient();
   render(
     <QueryClientProvider client={client}>
-      <BulkLinkCustomersDialog open onOpenChange={vi.fn()} contacts={contacts} onLinked={onLinked} />
+      <BulkLinkCustomersDialog open onOpenChange={onOpenChange} contacts={contacts} onLinked={onLinked} />
     </QueryClientProvider>,
   );
   return onLinked;
@@ -78,5 +78,51 @@ describe('BulkLinkCustomersDialog request volume', () => {
     expect(toast.error.mock.calls[0][0]).toContain('3 of 20');
     expect(toast.error.mock.calls[0][0]).not.toContain('Contact 2:');
     expect(onLinked).toHaveBeenCalledWith(expect.not.arrayContaining(['c-2', 'c-9', 'c-15']));
+  });
+
+  describe('while a link run is in flight', () => {
+    async function startRun() {
+      const resolvers: (() => void)[] = [];
+      link.mockImplementation(() => new Promise<void>((r) => resolvers.push(r)));
+      const onOpenChange = vi.fn();
+      mount(vi.fn(), onOpenChange);
+      fireEvent.click(screen.getByRole('button', { name: 'Apply' }));
+      await waitFor(() => expect(link).toHaveBeenCalled());
+      return { onOpenChange, resolvers };
+    }
+
+    it('S2: Escape does not close the dialog', async () => {
+      const { onOpenChange } = await startRun();
+      fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape', code: 'Escape' });
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    });
+
+    it('S2: Cancel is disabled and closes nothing', async () => {
+      const { onOpenChange } = await startRun();
+      const cancel = screen.getByRole('button', { name: 'Cancel' });
+      expect(cancel).toBeDisabled();
+      fireEvent.click(cancel);
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    });
+
+    it('S2: an outside click does not close the dialog', async () => {
+      const { onOpenChange } = await startRun();
+      const overlay = document.querySelector('[data-slot="dialog-overlay"]') as HTMLElement | null;
+      fireEvent.pointerDown(overlay ?? document.body);
+      fireEvent.click(overlay ?? document.body);
+      expect(onOpenChange).not.toHaveBeenCalledWith(false);
+    });
+
+    it('S2: after the run settles the dialog closes as today', async () => {
+      const { onOpenChange, resolvers } = await startRun();
+      await act(async () => {
+        // the pool hands out new requests as earlier ones finish
+        for (let i = 0; i < 40; i++) {
+          resolvers.splice(0).forEach((r) => r());
+          await new Promise((r) => setTimeout(r, 5));
+        }
+      });
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
   });
 });

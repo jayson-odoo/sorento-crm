@@ -102,9 +102,14 @@ vi.mock('./BulkLinkCustomersDialog', () => ({
     onLinked: (ids: string[]) => void;
   }) =>
     open ? (
-      <button type="button" onClick={() => onLinked(contacts.map((c) => c.id))}>
-        Finish link
-      </button>
+      <>
+        <button type="button" onClick={() => onLinked(contacts.map((c) => c.id))}>
+          Finish link
+        </button>
+        <button type="button" onClick={() => onLinked(contacts.slice(0, 990).map((c) => c.id))}>
+          Finish partial link
+        </button>
+      </>
     ) : null,
 }));
 
@@ -392,5 +397,20 @@ describe('Contacts: select every matching contact (Odoo pattern, capped at 1,000
 
     expect(screen.queryByText('1,000 selected')).toBeNull();
     expect(screen.queryByText(/matching records are selected/)).toBeNull();
+  });
+
+  it('S1: a partial Link customers success leaves the mode and counts no hidden remainder', async () => {
+    await enterMode();
+    const menu = await openActions();
+    fireEvent.click(within(menu).getByRole('menuitem', { name: 'Link customers (1000)' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Finish partial link' }));
+
+    expect(screen.queryByText('1,000 selected')).toBeNull();
+    expect(screen.queryByText(/matching records are selected/)).toBeNull();
+    const trigger = screen.queryByRole('button', { name: /^actions$/i });
+    if (trigger) {
+      const m = await openActions();
+      expect(within(m).queryByRole('menuitem', { name: 'Add tag (10)' })).toBeNull();
+    }
   });
 });
