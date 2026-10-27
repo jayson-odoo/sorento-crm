@@ -80,7 +80,7 @@ export function SpanPassSection({
                     <span key={j} className="me-1 inline-flex items-center gap-1" title={c.label}>
                       <span>{c.label}</span>
                       <Badge variant="secondary" size="sm">
-                        {c.signal}
+                        {c.signal} {c.score.toFixed(2)}
                       </Badge>
                     </span>
                   ))}
@@ -100,7 +100,7 @@ export function SpanPassSection({
                 data-testid="near-exact-label"
                 className="min-w-0 whitespace-normal break-words rounded border border-warning/40 px-1.5 py-0.5 text-xs"
               >
-                {n.label}
+                {n.label} <span className="text-muted-foreground">{n.spelling.toFixed(2)}</span>
               </span>
             ))}
           </div>
