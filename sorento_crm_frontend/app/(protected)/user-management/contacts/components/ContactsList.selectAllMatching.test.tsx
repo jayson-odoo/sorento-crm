@@ -314,7 +314,9 @@ describe('Contacts: select every matching contact (Odoo pattern, capped at 1,000
     getContactsMock.mockImplementationOnce(() => new Promise(() => {}));
     fireEvent.click(headerBox());
     fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
-    fireEvent.click(screen.getByRole('button', { name: 'Select first 1,000 of 1,248' }));
+    const again = await screen.findByRole('button', { name: 'Selecting...' });
+    expect(again).toBeDisabled();
+    fireEvent.click(again);
     expect(pageBigFetches()).toHaveLength(1);
   });
 
