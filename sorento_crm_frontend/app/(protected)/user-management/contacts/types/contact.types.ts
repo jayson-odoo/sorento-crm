@@ -47,6 +47,8 @@ export interface RespondContact {
   chatbot_stock_allowed?: boolean;
   /** Linked customer codes, sorted (list rows). */
   customer_codes?: string[];
+  /** The distinct companies of those customers, by name, sorted (list rows). */
+  customer_companies?: string[];
   /** CONTACT-TAGS: the tags the contact holds, ordered by tag sort order then name. */
   tags?: { id: string; name: string }[];
   /** CONTACT-TAGS S2: how the contact's values compare with its tags' settings (list rows). */
