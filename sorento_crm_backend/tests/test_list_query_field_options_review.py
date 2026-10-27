@@ -1,6 +1,6 @@
 """FILTER-MULTISELECT PR7 review round. Options DISTINCT (a shared status appears once, `pagination.total` counts
 distinct values); the options search escapes LIKE wildcards (`query=%` is not "everything"); `line_product_id`
-labels read "CODE Name"; more than 200 filter values is a 422, never a 500, on purchase requests, campaigns and
+labels read "CODE - Name"; more than 200 filter values is a 422, never a 500, on purchase requests, campaigns and
 GRN. Postgres only; seeded here.
 """
 from __future__ import annotations
@@ -48,7 +48,7 @@ def test_wildcards_in_the_search_are_literal(client, orders, wild):
     assert resp.json()["data"] == []
 
 
-# ---- 5. line_product_id labels read "CODE Name" ---------------------------------------------------------------
+# ---- 5. line_product_id labels read "CODE - Name" ---------------------------------------------------------------
 
 def test_line_product_labels_lead_with_the_product_code(db, client):
     _field(db, "orders", "line_product_id", "order_line.product_id")
@@ -58,10 +58,19 @@ def test_line_product_labels_lead_with_the_product_code(db, client):
     db.add_all([uom, cat, wh])
     db.flush()
     codes = []
-    for i in range(2):
+    expected = []
+    # (name, label rule): a name -> "CODE - Name"; a blank name or one equal to the code -> just "CODE".
+    for i, name in enumerate(("ZZT Same Name", "ZZT Same Name", "", None)):
         code = unique_code(f"PC{i}")[:40]
         codes.append(code)
-        product = Product(id=_uid(), company_id=SORENTO, product_code=code, product_name="ZZT Same Name", category_id=cat.id,
+        if name is None:
+            name = code
+            expected.append(code)
+        elif name == "":
+            expected.append(code)
+        else:
+            expected.append(f"{code} - {name}")
+        product = Product(id=_uid(), company_id=SORENTO, product_code=code, product_name=name, category_id=cat.id,
                           base_uom_id=uom.id, list_price=Decimal("1.00"))
         db.add(product)
         db.flush()
@@ -71,7 +80,7 @@ def test_line_product_labels_lead_with_the_product_code(db, client):
         db.add(OrderLine(id=_uid(), order_id=order.id, product_id=product.id, warehouse_id=wh.id, quantity=Decimal("1"), company_id=SORENTO))
     db.commit()
     labels = [o["label"] for o in _opts(client, "orders", "line_product_id").json()["data"]]
-    assert sorted(labels) == sorted(f"{c} ZZT Same Name" for c in codes)
+    assert sorted(labels) == sorted(expected)
 
 
 # ---- 3. over the value cap: 422, not 500 -----------------------------------------------------------------------
