@@ -31,7 +31,7 @@
  * dialog walks the same rows in the same order.
  */
 
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import Link from 'next/link';
 import {
   getCoreRowModel,
@@ -58,6 +58,7 @@ import { TriangleAlert, Check, ImageOff, Images } from 'lucide-react';
 
 import {
   BROCHURE_IMAGE_PAGE_SIZE,
+  PROMOTION_PAGE_SIZE,
   type BrochureImageRow,
 } from '../../services/brochureImageService';
 import {
@@ -84,12 +85,6 @@ export function BrochureImagePicker() {
   });
 
   const promotionOptions = useBrochureImagePromotionOptions();
-  const { fetchOptions: fetchPromotionPage } = promotionOptions;
-  // First page of matches; stable, because the multi-select refetches when this changes.
-  const fetchPromotions = useCallback(
-    (query: string) => fetchPromotionPage(query, 0),
-    [fetchPromotionPage],
-  );
 
   // Any change of filter is a different worklist, so page 1 is where it starts.
   useEffect(() => {
@@ -326,7 +321,9 @@ export function BrochureImagePicker() {
                 onChange={(v) => setPromotionId(joinMulti(v))}
                 // Server-searched: there are hundreds of promotions, so a static option list
                 // would cap the filter at one page and hide the rest without saying so.
-                fetchOptions={fetchPromotions}
+                fetchOptions={promotionOptions.fetchOptions}
+                paginated
+                pageSize={PROMOTION_PAGE_SIZE}
                 selectedOptions={splitMulti(promotionId).map(
                   (id) => promotionOptions.optionFor(id) ?? { value: id, label: 'Selected promotion' },
                 )}

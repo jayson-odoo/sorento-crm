@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.schemas.list_query import ListSearchRequest
 from app.services.list_query_metadata_service import ListQueryMetadataService
-from app.services.marketing_service import PromotionService
+from app.services.marketing_service import PromotionService, validated_attachment_states
 from app.utils.multi_value import multi_values
 from app.services.order_service import OrderService
 from app.services.product_service import ProductService
@@ -107,7 +107,7 @@ class ListQuerySearchService:
             query=req.quick_search,
             status=req.promotion_status,
             user_type=multi_values(req.promotion_access_level),
-            attachment_state=multi_values(req.promotion_attachment_state),
+            attachment_state=validated_attachment_states(req.promotion_attachment_state),
             sort_field=sort_field or "created_at",
             sort_dir=sort_dir or "desc",
             advanced_filter_clause=clause,

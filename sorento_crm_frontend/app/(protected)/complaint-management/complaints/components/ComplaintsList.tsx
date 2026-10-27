@@ -25,7 +25,7 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -443,6 +443,13 @@ export default function ComplaintsList() {
                       placeholder="All assignees"
                       triggerClassName="mt-1"
                       clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Assigned to', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Assigned to: any</span>
+                        )
+                      }
                     />
                   </div>
                   <div>

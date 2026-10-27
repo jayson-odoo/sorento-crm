@@ -12,7 +12,7 @@ from app.dependencies import (
     require_permission_with_api_key,
 )
 
-from app.services.marketing_service import PromotionService, PromotionProductService
+from app.services.marketing_service import PromotionService, PromotionProductService, validated_attachment_states
 from app.services.query_normalizer import strip_domain_stopwords
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.marketing import (
@@ -28,10 +28,8 @@ from app.schemas.marketing import (
     PromotionProductResponse,
     PromotionServingListResponse,
 )
-from app.services.error_handler import handle_internal_error, handle_unprocessable
+from app.services.error_handler import handle_internal_error
 from app.utils.multi_value import multi_values
-
-_ATTACHMENT_STATES = ("unlinked", "linked_to_trashed", "unlinked_or_trashed")
 
 router = APIRouter()
 
@@ -182,9 +180,7 @@ async def get_promotions(
     callers cannot accidentally enumerate the whole catalog.
     """
     user_types = multi_values(user_type)
-    attachment_states = multi_values(attachment_state)
-    if attachment_states and any(v not in _ATTACHMENT_STATES for v in attachment_states):
-        raise handle_unprocessable(f"Attachment state: expected one of {', '.join(_ATTACHMENT_STATES)}")
+    attachment_states = validated_attachment_states(attachment_state)
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param

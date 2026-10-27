@@ -39,7 +39,7 @@ import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-s
 import type { Order } from '../types/order.types';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDate } from '@/lib/helpers';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { bulkImportOrders, importOrderTracking, validateOrderTracking, validateDeliveryOrderDetail } from '../services/orderService';
@@ -460,6 +460,13 @@ export default function OrdersList() {
                 }))}
                 placeholder="Status"
                 clearable
+                renderTriggerLabel={(chosen) =>
+                  chosen.length ? (
+                    <span className="block truncate">{multiChipLabel('Status', idFilterLabels(chosen))}</span>
+                  ) : (
+                    <span className="text-muted-foreground">Status: any</span>
+                  )
+                }
               />
             </div>
             <div className="flex items-center gap-2">

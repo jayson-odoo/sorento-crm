@@ -44,7 +44,7 @@ import { useSalesOrderActions } from '../actions';
 import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
+import { idFilterLabels, joinMulti, multiChipLabel, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
 import { buildPlanActions, PLAN_PERMISSION } from '../lib/planActions';
@@ -1106,6 +1106,13 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                           options={agentOptions.options}
                           placeholder="All agents"
                           clearable
+                          renderTriggerLabel={(chosen) =>
+                            chosen.length ? (
+                              <span className="block truncate">{multiChipLabel('Agent', idFilterLabels(chosen))}</span>
+                            ) : (
+                              <span className="text-muted-foreground">Agent: any</span>
+                            )
+                          }
                         />
                       </div>
                     )}
