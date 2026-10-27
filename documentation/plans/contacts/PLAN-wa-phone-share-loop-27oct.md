@@ -1,6 +1,7 @@
 # PLAN: WA-PHONE-SHARE-LOOP (tapped contact card read as "no answer")
 
-Status: in review (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: review fixes applied, ready for CI (small fix track: no migration, no RBAC change, no new ingest surface;
+it DOES change the ownership-proof rule on an existing ingest, so security-reviewer ran: ready, no blocker)
 
 ## Bug (prod, 27 Oct ~23:40 MYT)
 A username-only WhatsApp contact (no phone on its Respond.io contact) says "Hi", gets the phone-share
@@ -29,3 +30,15 @@ missing, and a missing wa_id was a refusal. #1888's fixtures used the dict shape
   only when present. Signed ingress stays mandatory (engine). The reason code goes in the trace (`card_refusal`).
 - `engine._phone_unknown_decision`: accepted card, AI off -> `NO_ACCESS_LINE` once + staff comment;
   `_card_accepted_before` stops any later ask for a contact whose card was accepted (only another tap retries).
+
+## Review round (reviewer + security-reviewer, 27 Oct)
+- Proof is weaker for a username-only user: with no wa_id the proof is signed ingress + origin `contact_request` only
+  (owner ruling, CARD rule 3). A present wa_id must still match; flat and nested wa_ids must all match.
+- Security S1: a meta present but unreadable (bad JSON, not an object, too deep) refuses the card as
+  `meta_unreadable` instead of silently dropping the cross-check.
+- Reviewer blocker: an accepted card whose link failed while an ask-cap hand-off sat in the window closed
+  `phone_ignored` with no staff note, and asks resumed after 24 h. Now `_card_accepted_before` reads any branch,
+  and only an earlier LINK-failure hand-off (`facts.link == failed`) suppresses the link-failure staff comment.
+- Security N2: the reply now tells the sender whether its own number has AI access (verified line vs no-access
+  line). Owner ruling; the card's phone comes from Meta, so a sender learns this only about its own number. This
+  supersedes the CARD design's "same line either way" note.

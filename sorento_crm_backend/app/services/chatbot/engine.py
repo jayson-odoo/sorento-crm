@@ -3152,14 +3152,30 @@ def _recent_turn_count(db: Session, *, contact_respond_id: str, branch_kind: str
 
 
 def _card_accepted_before(db: Session, *, contact_respond_id: str) -> bool:
-    """Has a live turn of this contact ever accepted a contact card (whatever the link did)?"""
+    """Has a live turn of this contact ever accepted a contact card (whatever the link did,
+    whatever branch the turn closed on)?"""
     return (
         db.query(ChatbotTurn.id)
         .filter(
             ChatbotTurn.contact_respond_id == contact_respond_id,
             ChatbotTurn.is_test.is_(False),
-            ChatbotTurn.branch_kind.in_(("phone_linked", "phone_handoff")),
             ChatbotTurn.trace.contains([{"stage": "received", "facts": {"card": "accepted"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
+def _recent_link_failure(db: Session, *, contact_respond_id: str) -> bool:
+    """Did a live turn of this contact hand a failed link to staff in the window?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.branch_kind == "phone_handoff",
+            ChatbotTurn.created_at >= _now() - PHONE_WINDOW,
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"link": "failed"}}]),
         )
         .first()
         is not None
@@ -3331,7 +3347,9 @@ def _phone_unknown_decision(
         facts["link"] = outcome.status
         if outcome.status == "failed":
             facts["reason"] = outcome.reason
-            if handoffs:
+            # WU21: one link-failure comment per 24 h. An earlier hand-off for another reason (the
+            # ask cap) told staff nothing about this phone, so it does not count.
+            if _recent_link_failure(db, contact_respond_id=contact_respond_id):
                 return "phone_ignored", "Phone link failed; staff already told in the last 24 hours"
             # After a merge the turn's own id may no longer exist: the survivor gets the comment (WU26).
             comment(

@@ -252,11 +252,32 @@ def test_sl1_prod_shaped_meta_string_without_wa_id_is_accepted():
     assert _mod().accepted_card_phone(body) == E164
 
 
-@pytest.mark.parametrize("meta", ["not json", "[1, 2]", '"x"', "", None, 7])
-def test_sl1_unreadable_meta_is_read_as_no_wa_id(meta):
+@pytest.mark.parametrize("meta", ["", None, {}, {"meta": {}}])
+def test_sl1_absent_meta_is_read_as_no_wa_id(meta):
     body = _tap()
     body["channel"]["meta"] = meta
     assert _mod().accepted_card_phone(body) == E164
+
+
+@pytest.mark.parametrize("meta", ["not json", "[1, 2]", '"x"', 7, "[" * 100000])
+def test_sl1_unreadable_meta_is_refused(meta):
+    # Security review S1: a meta the CRM cannot read must not silently drop the wa_id cross-check.
+    body = _tap()
+    body["channel"]["meta"] = meta
+    assert _mod().accepted_card_phone(body) is None
+    assert _mod().card_refusal(body) == "meta_unreadable"
+
+
+def test_sl1_flat_and_nested_wa_id_must_agree():
+    body = _tap()
+    body["channel"]["meta"] = json.dumps({"wa_id": "60100000009", "meta": {"wa_id": "60100000001"}})
+    assert _mod().card_refusal(body) == "wa_id_mismatch"
+    flat = _tap()
+    flat["channel"]["meta"] = json.dumps({"wa_id": "60100000009", "meta": {"user_id": "MY.0000000000000001"}})
+    assert _mod().card_refusal(flat) == "wa_id_mismatch"
+    agree = _tap()
+    agree["channel"]["meta"] = json.dumps({"wa_id": "60100000001", "meta": {"wa_id": "+60100000001"}})
+    assert _mod().accepted_card_phone(agree) == E164
 
 
 def test_sl5_card_refusal_names_the_check():

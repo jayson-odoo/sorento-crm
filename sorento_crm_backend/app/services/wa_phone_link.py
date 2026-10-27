@@ -60,24 +60,32 @@ def is_contact_card(body: dict) -> bool:
     return _card(body).get("type") == "contact"
 
 
-def _wa_id(body: dict) -> Optional[str]:
-    """`channel.meta.wa_id`, or None when absent or unreadable.
+_UNREADABLE = object()
+
+
+def _wa_ids(body: dict) -> Any:
+    """Every `channel.meta.wa_id` present (flat and nested), [] when there is none, or
+    `_UNREADABLE` when meta is there but is not a dict the CRM can read.
 
     Respond.io sends `channel.meta` as a JSON STRING wrapping a nested `meta`
     (`'{"meta": {"wa_id": ..., "user_id": ...}}'`, prod sample under
     tests/chatbot/replay_turns/prod_sample); a plain dict, nested or flat, is read the same way.
+    Unreadable is kept apart from absent so a shape change refuses the card instead of quietly
+    dropping the wa_id cross-check (security review S1).
     """
     channel = body.get("channel") if isinstance(body, dict) else None
     meta = channel.get("meta") if isinstance(channel, dict) else None
+    if meta in (None, ""):
+        return []
     if isinstance(meta, str):
         try:
             meta = json.loads(meta)
-        except ValueError:
-            return None
-    if isinstance(meta, dict) and isinstance(meta.get("meta"), dict):
-        meta = meta["meta"]
-    wa_id = meta.get("wa_id") if isinstance(meta, dict) else None
-    return str(wa_id) if wa_id not in (None, "") else None
+        except (ValueError, RecursionError):
+            return _UNREADABLE
+    if not isinstance(meta, dict):
+        return _UNREADABLE
+    levels = [meta, meta["meta"]] if isinstance(meta.get("meta"), dict) else [meta]
+    return [str(level["wa_id"]) for level in levels if level.get("wa_id") not in (None, "")]
 
 
 def card_refusal(body: dict) -> Optional[str]:
@@ -98,8 +106,10 @@ def card_refusal(body: dict) -> Optional[str]:
     phone = normalize_msisdn(card.get("phone"))
     if not phone:
         return "no_phone"
-    wa_id = _wa_id(body)
-    if wa_id is not None and normalize_msisdn(wa_id) != phone:
+    wa_ids = _wa_ids(body)
+    if wa_ids is _UNREADABLE:
+        return "meta_unreadable"
+    if any(normalize_msisdn(wa_id) != phone for wa_id in wa_ids):
         return "wa_id_mismatch"
     return None
 

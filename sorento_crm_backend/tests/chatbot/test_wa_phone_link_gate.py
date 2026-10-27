@@ -872,7 +872,7 @@ def _prod_tap(**kw):
     `meta`, channel source `whatsapp_business` (masked: tests/chatbot/replay_turns/prod_sample)."""
     env = _env("tap", **kw)
     env.message["channel"] = {
-        "id": 453209,
+        "id": 1,
         "name": "Internal (scrubbed)",
         "source": "whatsapp_business",
         "meta": json.dumps(
@@ -979,3 +979,41 @@ def test_sl5_a_refused_card_records_why_in_the_trace(session_factory, parser_cal
     facts = _trace_facts(session_factory, unsigned)
     assert facts["card"] == "not_accepted" and facts["card_refusal"] == "not_signed"
     assert E164 not in json.dumps(_row(session_factory, unsigned).trace)
+
+
+def _age_turns(session_factory, hours: float) -> None:
+    db = session_factory()
+    db.query(ChatbotTurn).filter(ChatbotTurn.contact_respond_id == str(CONTACT_ID)).update(
+        {ChatbotTurn.created_at: ChatbotTurn.created_at - timedelta(hours=hours)}, synchronize_session=False
+    )
+    db.commit()
+
+
+def test_sl3_link_failure_after_an_ask_cap_handoff_tells_staff_and_never_asks_again(
+    session_factory, parser_calls, world, monkeypatch
+):
+    """The prod contact's state: the ask cap already handed it to staff, then it taps."""
+    _install(world, monkeypatch)
+    _seed_turn(session_factory, "phone_handoff", hours_ago=1)  # the ask-cap hand-off, no card
+    world.phone_contact_id = None
+    req = httpx.Request("PUT", "https://api.example.test/v2/contact")
+    world.put_error = httpx.HTTPStatusError("boom", request=req, response=httpx.Response(500, request=req))
+    tap = _run(session_factory, _prod_tap())
+    assert tap.branch_kind == "phone_handoff"
+    # Staff were told about the ask cap, not about this failed link: they get the link reason too.
+    assert len(world.comments) == 1 and "could not link" in world.comments[0][1]
+    assert world.sends == [] and world.messages == []
+    _age_turns(session_factory, 30)
+    later = _run(session_factory, _env("text", text_="hello?"))
+    assert later.branch_kind == "phone_ignored"
+    assert world.sends == []
+    assert len(world.comments) == 1
+
+
+def test_sl4_asks_resume_after_an_old_handoff_with_no_card(session_factory, parser_calls, world, monkeypatch):
+    _install(world, monkeypatch)
+    _seed_turn(session_factory, "phone_handoff", hours_ago=30)
+    _seed_turn(session_factory, "phone_ignored", hours_ago=29)
+    result = _run(session_factory, _env("text"))
+    assert result.branch_kind == "phone_ask"
+    assert world.sends == [(str(CONTACT_ID), "wa_phone_share")]
