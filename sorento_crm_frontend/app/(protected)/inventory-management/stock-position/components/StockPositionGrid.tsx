@@ -1,6 +1,7 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import Link from 'next/link';
 import {
   ColumnDef,
   PaginationState,
@@ -55,6 +56,9 @@ const SALES_BASIS_OPTIONS: { value: SalesBasis; label: string }[] = [
   { value: 'invoiced', label: 'Invoiced' },
 ];
 
+/** A row opens Stock status for its item, with its documents behind every figure. */
+const stockStatusHref = (row: StockPositionRow) => `/inventory-management/stock-status?product_id=${row.product_id}`;
+
 function numberCell(value: number) {
   return <span className={`block text-right tabular-nums ${value < 0 ? 'text-destructive' : ''}`}>{formatQty(value)}</span>;
 }
@@ -99,9 +103,14 @@ export default function StockPositionGrid() {
         accessorKey: 'item_code',
         header: ({ column }) => <DataGridColumnHeader title="Item code" column={column} />,
         cell: ({ row }) => (
-          <span className="block truncate font-medium" title={row.original.description ?? row.original.item_code}>
+          <Link
+            href={stockStatusHref(row.original)}
+            onClick={(e) => e.stopPropagation()}
+            className="block truncate font-medium text-primary hover:underline"
+            title={row.original.description ?? row.original.item_code}
+          >
             {row.original.item_code}
-          </span>
+          </Link>
         ),
         size: 160,
         meta: { headerTitle: 'Item code' },
@@ -193,7 +202,7 @@ export default function StockPositionGrid() {
       error={error}
       onRetry={() => void refetch()}
       isPlaceholderData={isPlaceholderData}
-      rowHref={(row) => `/inventory-management/stock-status?product_id=${row.product_id}`}
+      rowHref={stockStatusHref}
       standardToolbar={false}
       // The warehouse columns are data: a saved column order would name columns that come and go.
       listingKey={null}
