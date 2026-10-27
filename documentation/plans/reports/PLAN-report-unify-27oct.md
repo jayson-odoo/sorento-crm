@@ -35,7 +35,8 @@ pick up `invoiced` on rebase.
 - **Measure:** RM = `outstanding` (as pushed, `outstanding_as_of`). Qty does not apply.
 - **Filters:** customer, sales agent (document agent), customers-assigned-to, month (doc date).
 - **Not applicable:** product, brand, category, spec, location and channel. Those filters print "Not applied:
-  \<filter\> (unpaid invoices are per document)". A grouping by them is answered with the same line and the total.
+  \<filter\> (unpaid invoices are per document)". A grouping by them is a 422 `unknown_group_by` at the route (the dimensions tuple). The lane answers it with the
+  same Not-applied line plus the ungrouped total.
 
 **Period on every outstanding basis.** Outstanding is "as of now", so a missing period is not asked. It means all
 dates, as the old outstanding report did ("Order date: all"). A named period filters the SO / DO / document date. So
@@ -86,6 +87,19 @@ Confirmed by SALES-UNIFIED (crew-note 6440275524 on #1922):
 - `location` on invoiced is 422 `location_needs_order_basis`. The lane maps it to a "Not applied: Location (invoices
   carry no warehouse)" line, never an error reply.
 - The spec fold runs over product rows in Python, so it needs no new column on that dataset.
+
+### Slice 1 contract details (pinned with the tester, 27 Oct)
+
+- **Echo:** `filters` stays the existing list of `{key, label, values}`. A spec is one entry `key=spec` with values
+  like "Trap type: P-trap".
+- **`not_applied`** is a top-level list of `{filter, value, reason}`.
+- **Spec group rows** are named by the value (the registry label where one exists), plus "Not stated".
+  `group_by=spec:<key>` needs `top_n` like every group.
+- **Malformed input:** a `spec` with no colon is 422 `invalid_spec`. `spec` on the chat dataset is 422
+  `unknown_param`.
+- **Period on an outstanding basis:** both dates or neither. Only one is 422 `period_required`.
+- A spec set that is non-empty but has an empty intersection with `product_ids` answers `status=ok` with zero rows,
+  as the existing AND does. Only a spec matching no product at all is `no_products`.
 
 ## 2. Slice 2: chatbot routing
 
