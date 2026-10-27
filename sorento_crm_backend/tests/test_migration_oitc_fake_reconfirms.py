@@ -166,6 +166,38 @@ def test_a_genuine_reconfirm_by_the_same_uploader_survives():
             assert db.get(OrderInquiryRow, row.id).acknowledged_at == REAL
 
 
+def test_a_stamp_match_alone_is_not_provenance_note_and_window_guards():
+    """Defence in depth past the microsecond match: a reconfirm sharing a row's exact
+    acknowledged stamp is still kept when that row is not a sheet row, or when the gap
+    from the row's birth is not the import's ~8 h shift."""
+    with blank_session() as db:
+        company_id = _sorento(db)
+        user = _user(db, f"{MARKER} Planner", f"pl.{_uid()[:8]}@zzt.test").id
+        stamp = REAL + timedelta(hours=8, seconds=5)
+        # Not a sheet row: board-raised, acknowledged at exactly the reconfirm's stamp.
+        board, board_rows, _ = _sheet_order(db, company_id, user, real=REAL, shifted=stamp)
+        for row in board_rows:
+            row.note = "Raised from the board"
+        _raise(db, company_id, board, kind=OI_RAISE_RECONFIRMED,
+               raised_by=user, raised_at=stamp)
+        # A sheet row, but acknowledged two days after its birth, not eight hours.
+        late_stamp = REAL + timedelta(days=2)
+        late, late_rows, _ = _sheet_order(db, company_id, user, real=REAL, shifted=late_stamp)
+        _raise(db, company_id, late, kind=OI_RAISE_RECONFIRMED,
+               raised_by=user, raised_at=late_stamp)
+        db.commit()
+
+        counts = _cleanup().clean_fake_reconfirms(db.connection())
+        db.commit()
+        db.expire_all()
+
+        assert counts["reconfirms_deleted"] == 0
+        assert ("reconfirmed", stamp, user) in _kinds(db, board.id)
+        assert ("reconfirmed", late_stamp, user) in _kinds(db, late.id)
+        assert db.get(OrderInquiryRow, board_rows[0].id).acknowledged_at == stamp
+        assert db.get(OrderInquiryRow, late_rows[0].id).acknowledged_at == late_stamp
+
+
 def test_other_rows_stamped_by_the_same_upload_are_shifted_others_are_not():
     with blank_session() as db:
         company_id = _sorento(db)
@@ -174,13 +206,16 @@ def test_other_rows_stamped_by_the_same_upload_are_shifted_others_are_not():
         # Closed as history / settled by the same run: same `now`.
         rows[0].actioned_at = SHIFTED
         rows[1].changed_at = SHIFTED
-        # A row on a board-raised inquiry, acknowledged by the same run.
+        # A board-raised inquiry (no fake reconfirm of its own).
         board, board_rows, _ = _sheet_order(
             db, company_id, uploader, real=REAL - timedelta(days=3),
             shifted=REAL - timedelta(days=3),
         )
-        board_rows[0].note = "Raised from the board"
         board_rows[0].acknowledged_at = SHIFTED
+        # Born weeks later, carrying the acknowledgement forward with its stamp (a split
+        # or a revision copies `acknowledged_at`, `project_order_inquiry_service.py:7364`).
+        board_rows[0].created_at = REAL + timedelta(days=12)
+        board_rows[0].note = "Superseded by revision 2"
         untouched_at = SHIFTED + timedelta(microseconds=1)
         board_rows[1].acknowledged_at = untouched_at
         db.commit()

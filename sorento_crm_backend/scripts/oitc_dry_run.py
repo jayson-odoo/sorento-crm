@@ -43,6 +43,30 @@ def _print_trails(db, so_numbers) -> None:
                       f"{entry['actor_name'] or '-'}  {entry['detail']}")
 
 
+#: What the cleanup could still have missed (reviewer, should-fix 2): a reconfirm in the
+#: header's own raiser's name ~8 h after its first row (e.g. an upload rolled back by
+#: `scripts/rollback_oi_sheet_upload.py` before 523 ran, so no row kept its stamp), and a
+#: sheet row still acknowledged ~8 h after its birth. Both expected 0, or explained.
+_LEFTOVERS = {
+    "suspect_reconfirms_left": """
+        SELECT COUNT(*) FROM projects.order_inquiry_raises r
+        JOIN projects.order_inquiries h ON h.id = r.order_inquiry_id
+        JOIN (SELECT order_inquiry_id, MIN(created_at) AS first_at
+              FROM projects.order_inquiry_rows GROUP BY order_inquiry_id) f
+          ON f.order_inquiry_id = r.order_inquiry_id
+        WHERE r.kind = 'reconfirmed' AND r.raised_by = h.raised_by
+          AND r.raised_at - f.first_at BETWEEN interval '7 hours 50 minutes'
+                                           AND interval '9 hours'
+    """,
+    "sheet_rows_still_shifted": """
+        SELECT COUNT(*) FROM projects.order_inquiry_rows
+        WHERE note LIKE 'Migrated from order inquiry sheet%%'
+          AND acknowledged_at - created_at BETWEEN interval '7 hours 50 minutes'
+                                               AND interval '9 hours'
+    """,
+}
+
+
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("so_numbers", nargs="*", default=["SO400884"])
@@ -56,6 +80,10 @@ def main() -> None:
         _print_trails(db, args.so_numbers)
         print("COUNTS", _cleanup_module().clean_fake_reconfirms(db.connection()))
         db.expire_all()
+        print("LEFTOVERS", {
+            name: db.connection().exec_driver_sql(sql).scalar()
+            for name, sql in _LEFTOVERS.items()
+        })
         print("AFTER")
         _print_trails(db, args.so_numbers)
     finally:

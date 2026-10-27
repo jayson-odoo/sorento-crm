@@ -6,14 +6,16 @@ approved deleting exactly these rows, 27 Oct 2026).
 How the rows came to exist, in order:
 
 1. The sheet import of 20 Sep 2026 (`project_order_inquiry_import_service.py` at baad8defc7,
-   `now = _now()`) stamped every header it created (`raised_at`) and every row it raised
+   `now = _now()`) stamped every header it created (`raised_at`, since corrected by 523
+   itself, below) and every row it raised
    (`acknowledged_at`, and `actioned_at` / `changed_at` where it closed or settled one) with
    a Malaysia wall clock stored as if it were naive UTC: eight hours ahead of the row's own
    `created_at` (server `now()`, real UTC).
 2. `523_oi_monthly_no_raises.backfill_raises` then read the header's shifted `raised_at` as
    "re-stamped more than a minute after its first row" and wrote a `reconfirmed` raise row in
    the uploader's name AT that shifted stamp, blanking the `raised` row's `raised_by` because
-   it believed the header's name was the last reconfirmer's. The decision trail
+   it believed the header's name was the last reconfirmer's. It also moved the header's
+   `raised_at` back to that first row's `created_at`. The decision trail
    (`decision_trail_service._raise_entries`, "later events" pass) shows it as a reconfirm.
 
 Identified by provenance, never by a timestamp list. A `reconfirmed` row is fake when, on
@@ -26,11 +28,15 @@ it. Each such `(stamp, uploader)` pair names one affected upload; every `reconfi
 that pair is then fake, including one whose inquiry's rows have since been re-acknowledged.
 
 Steps, one transaction: shift every `order_inquiry_rows.acknowledged_at` / `actioned_at` /
-`changed_at` and `order_inquiries.raised_at` equal to an affected stamp back eight hours;
-give the `raised` row back the uploader's name where 523 blanked it only because of the fake
-reconfirm; delete the fake `reconfirmed` rows. Idempotent by construction: the stamps are
-read off the fake rows this same revision deletes, so a second run finds none and touches
-nothing. Exposed as module-level functions (precedent: `523_oi_monthly_no_raises.py`) so a
+`changed_at` equal to an affected stamp back eight hours (that includes rows born later that
+carried the acknowledgement forward with its stamp, e.g. a split or a revision:
+`project_order_inquiry_service.py:7364`); give the `raised` row back the uploader's name
+where 523 blanked it only because of the fake reconfirm; delete the fake `reconfirmed` rows.
+The header's own `raised_at` needs no step: 523 already moved it to its earliest row's
+`created_at`, the real instant (measured on the 20 Oct prod copy: all 699 headers).
+
+Idempotent by construction: the stamps are read off the fake rows this same revision
+deletes, so a second run finds none and touches nothing. Exposed as module-level functions (precedent: `523_oi_monthly_no_raises.py`) so a
 test drives the same code on a scratch schema.
 
 Nothing re-creates them: 523 is a past revision and alembic never reruns it, and its own
@@ -127,12 +133,6 @@ def clean_fake_reconfirms(bind) -> Dict[str, int]:
             WHERE w.{column} IN (SELECT stamp FROM zzt_oitc_stamps)
             """
         )
-    counts["headers_raised_at"] = _count(
-        f"""
-        UPDATE {inquiries} h SET raised_at = h.raised_at - interval '8 hours'
-        WHERE h.raised_at IN (SELECT stamp FROM zzt_oitc_stamps)
-        """
-    )
     # 523 blanked the `raised` row's name only because it believed a later reconfirm had
     # overwritten the header's `raised_by`. With that reconfirm shown fake, the header's name
     # IS the raiser's (the import stamps only a header it creates, `_Raiser`).
