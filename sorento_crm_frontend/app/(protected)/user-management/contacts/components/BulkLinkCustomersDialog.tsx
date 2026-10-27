@@ -27,6 +27,8 @@ type Props = {
 
 const contactLabel = (c: RespondContact) => c.name || c.phone_number;
 
+const LINK_CONCURRENCY = 6;
+
 export default function BulkLinkCustomersDialog({ open, onOpenChange, contacts, onLinked }: Props) {
   const queryClient = useQueryClient();
   const picker = useCustomerMultiPicker(() => false);
@@ -40,9 +42,20 @@ export default function BulkLinkCustomersDialog({ open, onOpenChange, contacts, 
   const apply = async () => {
     const customerIds = picker.selected;
     setBusy(true);
-    const results = await Promise.allSettled(
-      contacts.map((c) => linkContactCustomers(c.id, customerIds)),
-    );
+    // At most LINK_CONCURRENCY requests in flight: a "Select all" can hand this 1,000 contacts.
+    const results: PromiseSettledResult<unknown>[] = new Array(contacts.length);
+    let next = 0;
+    const worker = async () => {
+      while (next < contacts.length) {
+        const i = next++;
+        try {
+          results[i] = { status: 'fulfilled', value: await linkContactCustomers(contacts[i].id, customerIds) };
+        } catch (reason) {
+          results[i] = { status: 'rejected', reason };
+        }
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(LINK_CONCURRENCY, contacts.length) }, worker));
     setBusy(false);
 
     const okIds: string[] = [];
@@ -66,7 +79,12 @@ export default function BulkLinkCustomersDialog({ open, onOpenChange, contacts, 
         `Linked ${n} customer${n === 1 ? '' : 's'} to ${m} contact${m === 1 ? '' : 's'}`,
       );
     } else {
-      toast.error(`Could not link: ${failures.join('; ')}`);
+      // One failure names its contact; several are one summary with a count.
+      toast.error(
+        failures.length === 1
+          ? `Could not link: ${failures[0]}`
+          : `Could not link customers for ${failures.length} of ${contacts.length} contacts`,
+      );
     }
     onLinked(okIds);
     handleOpenChange(false);
