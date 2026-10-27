@@ -152,7 +152,7 @@ describe('SeenInProductsTab - toolbar filters, not a pill strip (D17)', () => {
     fireEvent.click(valueCombobox);
     fireEvent.click(screen.getByText('Pp (3)'));
 
-    expect(screen.getByText('Pp (3)', { selector: '[data-slot="searchable-select-trigger"] span' })).toBeInTheDocument();
+    expect(screen.getByText('Pp (3)', { selector: '[data-slot="searchable-multi-select-trigger"] span' })).toBeInTheDocument();
   });
 });
 

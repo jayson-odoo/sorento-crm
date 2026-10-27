@@ -24,6 +24,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -63,14 +65,15 @@ import { RowActionsMenu } from '@/components/common/RowActionsMenu';
  * has to be countable at a glance before it can be triaged.
  * "Needs attention" is still one click away in the Filters popover.
  */
-const DEFAULT_VALIDITY = VALIDITY_FILTER_ALL;
-const DEFAULT_STATUS = 'all';
+const DEFAULT_VALIDITY = '';
+const DEFAULT_STATUS = '';
 
 /** `attention` expands to the two states that need a human. */
 function validityStateParam(filter: string): string | undefined {
-  if (filter === VALIDITY_FILTER_ALL) return undefined;
-  if (filter === VALIDITY_FILTER_ATTENTION) return 'expiring_soon,expired';
-  return filter;
+  const states = splitMulti(filter)
+    .filter((v) => v !== VALIDITY_FILTER_ALL)
+    .flatMap((v) => (v === VALIDITY_FILTER_ATTENTION ? ['expiring_soon', 'expired'] : [v]));
+  return states.length ? joinMulti(states) : undefined;
 }
 
 export default function CertificatesList() {
@@ -85,7 +88,7 @@ export default function CertificatesList() {
   } = useDebouncedSearch();
   const [validityFilter, setValidityFilter] = useState<string>(DEFAULT_VALIDITY);
   const [expiringWithin, setExpiringWithin] = useState<string>('any');
-  const [schemeFilter, setSchemeFilter] = useState<string>('all');
+  const [schemeFilter, setSchemeFilter] = useState<string>('');
   const [statusFilter, setStatusFilter] = useState<string>(DEFAULT_STATUS);
   const [needsReviewFilter, setNeedsReviewFilter] = useState<string>('any');
 
@@ -97,8 +100,8 @@ export default function CertificatesList() {
     resetSearchQuery(state.searchQuery);
     setValidityFilter(state.filters.validity_state ?? DEFAULT_VALIDITY);
     setExpiringWithin(state.filters.expiring_within_days ?? 'any');
-    setSchemeFilter(state.filters.scheme ?? 'all');
-    setStatusFilter(state.filters.status ?? 'all');
+    setSchemeFilter(state.filters.scheme ?? '');
+    setStatusFilter(state.filters.status ?? '');
     setNeedsReviewFilter(state.filters.needs_review === 'true' ? 'true' : 'any');
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
@@ -136,8 +139,8 @@ export default function CertificatesList() {
     searchQuery,
     validity_state: validityStateParam(validityFilter),
     expiring_within_days: expiringWithin !== 'any' ? Number(expiringWithin) : undefined,
-    scheme: schemeFilter !== 'all' ? schemeFilter : undefined,
-    status: statusFilter !== 'all' ? statusFilter : undefined,
+    scheme: schemeFilter || undefined,
+    status: statusFilter || undefined,
     needs_review: needsReviewFilter === 'true' ? true : undefined,
   });
 
@@ -145,17 +148,17 @@ export default function CertificatesList() {
   // reads 0 on arrival and any non-zero count means the user narrowed the list
   // themselves.
   const activeFilterCount =
-    (validityFilter !== VALIDITY_FILTER_ALL ? 1 : 0) +
+    (validityStateParam(validityFilter) ? 1 : 0) +
     (expiringWithin !== 'any' ? 1 : 0) +
-    (schemeFilter !== 'all' ? 1 : 0) +
-    (statusFilter !== 'all' ? 1 : 0) +
+    (schemeFilter ? 1 : 0) +
+    (statusFilter ? 1 : 0) +
     (needsReviewFilter !== 'any' ? 1 : 0);
 
   const clearFilters = () => {
-    setValidityFilter(VALIDITY_FILTER_ALL);
+    setValidityFilter('');
     setExpiringWithin('any');
-    setSchemeFilter('all');
-    setStatusFilter('all');
+    setSchemeFilter('');
+    setStatusFilter('');
     setNeedsReviewFilter('any');
   };
 
@@ -364,8 +367,8 @@ export default function CertificatesList() {
           {
             validity_state: validityStateParam(validityFilter),
             expiring_within_days: expiringWithin !== 'any' ? expiringWithin : undefined,
-            scheme: schemeFilter !== 'all' ? schemeFilter : undefined,
-            status: statusFilter !== 'all' ? statusFilter : undefined,
+            scheme: schemeFilter || undefined,
+            status: statusFilter || undefined,
             needs_review: needsReviewFilter === 'true' ? 'true' : undefined,
           },
         );
@@ -399,12 +402,13 @@ export default function CertificatesList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Validity</Label>
-                    <SearchableSelect
-                      value={validityFilter}
-                      onChange={setValidityFilter}
-                      options={VALIDITY_FILTER_OPTIONS}
+                    <SearchableMultiSelect
+                      value={splitMulti(validityFilter)}
+                      onChange={(v) => setValidityFilter(joinMulti(v))}
+                      options={VALIDITY_FILTER_OPTIONS.filter((o) => o.value !== VALIDITY_FILTER_ALL)}
                       placeholder="Validity"
                       triggerClassName="mt-1"
+                      clearable
                     />
                   </div>
                   <div>
@@ -419,22 +423,24 @@ export default function CertificatesList() {
                   </div>
                   <div>
                     <Label>Scheme</Label>
-                    <SearchableSelect
-                      value={schemeFilter}
-                      onChange={setSchemeFilter}
-                      options={SCHEME_FILTER_OPTIONS}
+                    <SearchableMultiSelect
+                      value={splitMulti(schemeFilter)}
+                      onChange={(v) => setSchemeFilter(joinMulti(v))}
+                      options={SCHEME_FILTER_OPTIONS.filter((o) => o.value !== 'all')}
                       placeholder="All schemes"
                       triggerClassName="mt-1"
+                      clearable
                     />
                   </div>
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
-                      options={STATUS_FILTER_OPTIONS}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
+                      options={STATUS_FILTER_OPTIONS.filter((o) => o.value !== 'all')}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
+                      clearable
                     />
                   </div>
                   <div>

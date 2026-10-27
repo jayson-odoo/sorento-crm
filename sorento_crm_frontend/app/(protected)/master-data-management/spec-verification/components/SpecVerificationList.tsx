@@ -51,6 +51,8 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { usePermissions } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
@@ -346,7 +348,7 @@ export default function SpecVerificationList() {
       pageSize: pagination.pageSize,
       sorting,
       searchQuery,
-      state: (stateFilter || '') as VerificationState | '',
+      state: stateFilter,
       class_label: classFilter,
       include_discontinued: includeDiscontinued,
     });
@@ -897,23 +899,23 @@ export default function SpecVerificationList() {
                       <Label htmlFor="spec-verification-state">
                         Verification
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="spec-verification-state"
-                        value={stateFilter}
+                        value={splitMulti(stateFilter)}
                         clearable
                         placeholder="Any state"
                         options={STATE_OPTIONS}
                         onChange={(value) => {
-                          setStateFilter(value);
+                          setStateFilter(joinMulti(value));
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
                       />
                     </div>
                     <div className="space-y-1.5">
                       <Label htmlFor="spec-verification-class">Class</Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="spec-verification-class"
-                        value={classFilter}
+                        value={splitMulti(classFilter)}
                         clearable
                         placeholder="Any class"
                         options={classOptions.map((label) => ({
@@ -921,7 +923,7 @@ export default function SpecVerificationList() {
                           label,
                         }))}
                         onChange={(value) => {
-                          setClassFilter(value);
+                          setClassFilter(joinMulti(value));
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
                       />
