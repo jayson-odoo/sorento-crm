@@ -427,3 +427,105 @@ class TestMatchingAndSchema:
                    for i in inspect(api.db.connection()).get_indexes("catalogue_photos")}
         for column in ("attachment_id", "product_id", "duplicate_of_attachment_id"):
             assert (column,) in indexed, column
+
+
+# --------------------------------------------------------------------------- #
+# Fix round 2: FR-19, FR-20
+# --------------------------------------------------------------------------- #
+def _repeated_pdf(times: int, *, rgba: bool = False) -> bytes:
+    """One image placed ``times`` times, fully visible, so every crop is the same."""
+    import io
+    import pymupdf
+    from PIL import Image
+
+    if rgba:
+        picture = Image.new("RGBA", (200, 200), (10, 120, 200, 255))
+        picture.paste((0, 0, 0, 0), (0, 0, 100, 100))
+        out = io.BytesIO()
+        picture.save(out, format="PNG")
+        stream = out.getvalue()
+    else:
+        stream = png_of(SEED_A)
+    doc = pymupdf.open()
+    page = doc.new_page(width=595, height=842)
+    for n in range(times):
+        x, y = 20 + 110 * (n % 5), 100 + 150 * (n // 5)
+        page.insert_image(pymupdf.Rect(x, y, x + 100, y + 100), stream=stream)
+    data = doc.tobytes()
+    doc.close()
+    return data
+
+
+class TestExtractionCaps:
+    def _spy(self, monkeypatch):
+        from app.services.dealer_kit import catalog_photos as cp
+
+        calls: list[int] = []
+        original = cp._encode
+
+        def counting(*args, **kwargs):
+            calls.append(1)
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(cp, "_encode", counting)
+        return calls
+
+    def test_fr19_extraction_stops_decoding_at_the_photo_limit(self, api, monkeypatch) -> None:
+        calls = self._spy(monkeypatch)
+        monkeypatch.setattr(svc, "CATALOGUE_MAX_PHOTOS", 3, raising=False)
+        _photo_type(api.db)
+        with TestClient(app) as client:
+            rid = _upload(client, data=_repeated_pdf(10)).json()["id"]
+            _run(api, rid)
+            detail = _detail(client, rid)
+        assert detail["status"] == "failed"
+        assert detail["error"]
+        assert len(calls) <= 4, f"{len(calls)} photos were decoded for a limit of 3"
+
+    def test_fr19_one_image_placed_five_times_is_re_encoded_once(self, monkeypatch) -> None:
+        from app.services.dealer_kit import catalog_photos as cp
+
+        calls = self._spy(monkeypatch)
+        photos = cp.extract_catalog_photos(_repeated_pdf(5))
+        assert len(photos) == 5
+        assert len(calls) == 1, f"{len(calls)} re-encodes for one (image, crop)"
+
+    def test_fr19_a_soft_mask_with_no_readable_size_is_skipped(self, monkeypatch) -> None:
+        import pymupdf
+        from app.services.dealer_kit import catalog_photos as cp
+
+        original = pymupdf.Document.xref_get_key
+
+        def unreadable(self, xref, key):
+            if key in ("Width", "Height"):
+                raise RuntimeError("no size")
+            return original(self, xref, key)
+
+        data = _repeated_pdf(1, rgba=True)
+        assert len(cp.extract_catalog_photos(data)) == 1  # control: readable mask is kept
+        monkeypatch.setattr(pymupdf.Document, "xref_get_key", unreadable)
+        assert cp.extract_catalog_photos(data) == []
+
+
+class TestFinalCommit:
+    def test_fr20_a_failed_final_commit_deletes_the_uploaded_files(self, api, monkeypatch) -> None:
+        import sys
+
+        _photo_type(api.db)
+        _seed_catalogue_products(api.db)
+        with TestClient(app) as client:
+            rid = _upload(client).json()["id"]
+            before = set(api.storage.objects)
+            original = api.db.commit
+
+            def failing_commit():
+                if sys._getframe(1).f_code.co_name == "process_reading":
+                    raise RuntimeError("commit refused")
+                return original()
+
+            monkeypatch.setattr(api.db, "commit", failing_commit)
+            _run(api, rid)
+            monkeypatch.setattr(api.db, "commit", original)
+            detail = _detail(client, rid)
+        assert detail["status"] == "failed"
+        assert set(api.storage.objects) == before

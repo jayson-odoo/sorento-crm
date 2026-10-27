@@ -281,4 +281,21 @@ describe('CataloguePhotosReview', () => {
     fireEvent.click(screen.getByRole('tab', { name: 'Needs a product (1)' }));
     expect(await screen.findByText('SRTWB_____')).toBeInTheDocument();
   });
+
+  // ---- Fix round 2 (red) ----
+
+  it('FR-22: the ZIP dialog also receives the folder as directoryId', async () => {
+    renderReview();
+    fireEvent.click(await screen.findByRole('button', { name: /Download all as ZIP/ }));
+    await waitFor(() => expect(zip.props?.open).toBe(true));
+    expect(zip.props?.directoryId).toBe('d1');
+  });
+
+  it('FR-21: a row without a thumbnail renders no img element', async () => {
+    svc.list.mockResolvedValue(page([photo({ thumbnail_url: null, image_url: null })]));
+    renderReview();
+    expect((await screen.findAllByText('SRTWT1906-BL-DIY')).length).toBeGreaterThan(0);
+    expect(screen.queryByAltText('Page 2')).toBeNull();
+    expect(document.querySelector('img')).toBeNull();
+  });
 });
