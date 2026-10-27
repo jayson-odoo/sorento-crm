@@ -149,6 +149,12 @@ def _chatbot_span_extractor_fallback() -> str:
     )
 
 
+def _chatbot_lookup_embedder_fallback() -> str:
+    """No text is rendered: the production label's provider and model pick the lookup embedder
+    (`head/lookup_lists.embedder`); unset keeps OpenAI text-embedding-3-small."""
+    return "Lookup embedder: the label's provider and model choose the embedding model."
+
+
 def _chat_report_extractor_fallback() -> str:
     """System prompt for the chat report extractor (CA-3, `chat_report_extractor`). `{today}` and
     `{domains}`, `{brands}` and `{categories}` are filled by `chatbot/analytics/chat_report_extractor.py`, not by `render`."""
@@ -1133,6 +1139,14 @@ PROMPT_KEYS: dict[str, PromptKeySpec] = {
         activates_in=None,
         variables=[],
         fallback=_chatbot_span_extractor_fallback,
+    ),
+    "chatbot_lookup_embedder": PromptKeySpec(
+        name="chatbot_lookup_embedder",
+        role="Chatbot lookup embedder - the provider and model whose vectors place a span on the lookup rows (label only, no prompt text)",
+        active=True,
+        activates_in=None,
+        variables=[],
+        fallback=_chatbot_lookup_embedder_fallback,
     ),
     "chat_report_extractor": PromptKeySpec(
         name="chat_report_extractor",

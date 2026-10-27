@@ -53,6 +53,26 @@ FLOORS: dict[str, dict[str, float]] = {
     "spec_key": {"spell": 0.5, "partial": 0.8, "meaning": 0.6},
 }
 _FLOORS_OTHER = {"spell": 0.5, "partial": 0.8, "meaning": 0.6}
+#: Per embedding model: the meaning floor of each list. text-embedding-3-small (and a plain callable with no
+#: `.model`) keeps `FLOORS`; gemini-embedding-001 is calibrated on the phase-1 gold; a model with no table here gets
+#: no meaning matches. 1.01 turns a list off.
+MEANING_FLOORS_BY_MODEL: dict[str, dict[str, float]] = {
+    "gemini-embedding-001": {
+        "category": 0.70, "spec": 0.75, "file_type": 0.65, "brand": 0.60, "promotion_kind": 0.75,
+        "location": 0.65, "salesperson": 0.70, "customer": 0.75, "sales_channel": 0.65, "spec_key": 0.75,
+    },
+}
+_OPENAI_MODEL = "text-embedding-3-small"
+
+
+def _meaning_floor(embed: Any, list_name: str) -> float:
+    model = getattr(embed, "model", _OPENAI_MODEL)
+    if model == _OPENAI_MODEL:
+        return FLOORS.get(list_name, _FLOORS_OTHER)["meaning"]
+    table = MEANING_FLOORS_BY_MODEL.get(model)
+    if table is None:
+        return 1.01
+    return table.get(list_name, 1.01)
 #: Rows whose scores differ by no more than this are the same answer to the span.
 AMBIGUITY_MARGIN = 0.03
 #: A word is common in a list when it is in two or more of its texts and its IDF is below this share of the IDF
@@ -74,6 +94,8 @@ _PREPARED_SETS = 2
 class Span:
     text: str
     type: str | None = None
+    #: The span in plain English (sizes in mm), when the model gave one; tried before `text`.
+    meaning: str | None = None
 
 
 @dataclass(frozen=True)
@@ -92,6 +114,8 @@ class Resolution:
     status: str
     #: Best first; resolved -> the row; ambiguous -> every close row.
     candidates: tuple[Candidate, ...] = field(default_factory=tuple)
+    #: "meaning" when the span's plain English form placed it, else "text".
+    matched_by: str = "text"
 
 
 def spec_key_rows(registry: Iterable[Any]) -> list[LookupRow]:
@@ -288,7 +312,7 @@ def _meaning_scores(spans: list[str], indexes: dict[str, _ListIndex], embed: Emb
     if embed is None or not spans:
         return {}
     texts = sorted({t[1] for ix in indexes.values() for t in ix.texts})
-    got = _meaning(embed, spans, texts)
+    got = _meaning(embed, spans, texts, any_model=True)
     if got is None:
         return {}
     pidx, tidx, sim = got
@@ -315,7 +339,24 @@ def unmatched_words(span_text: str, row: LookupRow, rows: Sequence[LookupRow]) -
 
 
 def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder | None = None) -> list[Resolution]:
-    """One `Resolution` per span, in input order. Never raises on an embedder failure (spelling and partial
+    """One `Resolution` per span, in input order. A span with a `meaning` is tried by that plain English form first
+    and keeps it when it resolves (resolved or ambiguous); otherwise its own text is resolved."""
+    asked = [i for i, s in enumerate(spans) if s.meaning and s.meaning.strip() and s.type != "product_code"]
+    by_meaning: dict[int, Resolution] = {}
+    if asked:
+        tried = _resolve_texts([Span(spans[i].meaning.strip(), spans[i].type) for i in asked], rows, embed)  # type: ignore[union-attr]
+        by_meaning = {
+            i: Resolution(spans[i], r.status, r.candidates, "meaning")
+            for i, r in zip(asked, tried)
+            if r.status in ("resolved", "ambiguous")
+        }
+    rest = [i for i in range(len(spans)) if i not in by_meaning]
+    by_text = dict(zip(rest, _resolve_texts([spans[i] for i in rest], rows, embed)))
+    return [by_meaning[i] if i in by_meaning else by_text[i] for i in range(len(spans))]
+
+
+def _resolve_texts(spans: Sequence[Span], rows: Sequence[LookupRow], embed: Embedder | None) -> list[Resolution]:
+    """One `Resolution` per span by its text. Never raises on an embedder failure (spelling and partial
     names still resolve); a `product_code` span is `skipped` and a span naming nothing is `unresolved`."""
     indexes = _prepare(rows) if rows else {}
     live = [s.text for s in spans if s.type != "product_code" and _fold(s.text) and s.text]
@@ -332,7 +373,7 @@ def resolve(spans: Sequence[Span], rows: Sequence[LookupRow], *, embed: Embedder
         grams = candidates.trigrams(folded)
         pool: list[tuple[float, float, int, Candidate]] = []
         for name, index in indexes.items():
-            floors = FLOORS.get(name, _FLOORS_OTHER)
+            floors = {**FLOORS.get(name, _FLOORS_OTHER), "meaning": _meaning_floor(embed, name)}
             scored = _score_list(index, folded, grams)
             for i in set(scored) | {i for (n, i) in meaning if n == name and span.text in meaning[(n, i)]}:
                 row = scored.get(i) or _RowScore(index.rows[i])

@@ -42,8 +42,12 @@ SCHEMA: dict[str, Any] = {
             "items": {
                 "type": "object",
                 "additionalProperties": False,
-                "required": ["text", "type"],
-                "properties": {"text": {"type": "string"}, "type": {"type": "string", "enum": list(SPAN_TYPES)}},
+                "required": ["text", "type", "meaning"],
+                "properties": {
+                    "text": {"type": "string"},
+                    "type": {"type": "string", "enum": list(SPAN_TYPES)},
+                    "meaning": {"type": ["string", "null"]},
+                },
             },
         }
     },
@@ -104,7 +108,9 @@ def _read(content: str | None) -> list[Span]:
         if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip():
             continue
         kind = item.get("type")
-        spans.append(Span(item["text"].strip(), kind if kind in SPAN_TYPES else None))
+        meaning = item.get("meaning")
+        meaning = meaning.strip() if isinstance(meaning, str) and meaning.strip() else None
+        spans.append(Span(item["text"].strip(), kind if kind in SPAN_TYPES else None, meaning))
     return spans[:MAX_SPANS]
 
 

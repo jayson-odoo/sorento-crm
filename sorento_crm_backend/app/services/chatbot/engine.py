@@ -1364,7 +1364,8 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
     event: dict[str, Any] = {
         "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
         "provider": config.provider if config else None, "model": config.model if config else None,
-        "model_source": config.model_source if config else None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
+        "model_source": config.model_source if config else None,
+        "embedding_model": getattr(prep.embed, "model", None) if prep.embed is not None else None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
     }
     if answer is not None and answer.usage and not dry_run:
@@ -1389,7 +1390,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 rest = [
                     list_resolver.Span(left)
                     for r in resolutions
-                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code"
+                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code" and r.matched_by == "text"
                     for left in [list_resolver.unmatched_words(r.span.text, r.candidates[0].row, all_rows)]
                     if left
                 ]
@@ -1421,11 +1422,11 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
                 event["spans"] = [
                     {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
-                     "candidates": _candidates_of(r)}
+                     "candidates": _candidates_of(r), "meaning": r.span.meaning, "matched_by": r.matched_by}
                     for r in resolutions
                 ] + [
                     {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True,
-                     "candidates": _candidates_of(r)}
+                     "candidates": _candidates_of(r), "meaning": None, "matched_by": "text"}
                     for r in extra
                 ]
                 lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}

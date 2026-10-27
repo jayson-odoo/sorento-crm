@@ -76,6 +76,8 @@ PROMPT_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 EMBED_MODEL = "text-embedding-3-small"
+#: The prompt-registry key whose production label (provider, model) picks the lookup embedder.
+EMBEDDER_PROMPT_KEY = "chatbot_lookup_embedder"
 #: One request's timeout, and the whole embed step's budget, in seconds.
 EMBED_TIMEOUT = 3.0
 EMBED_CHUNK = 500
@@ -287,12 +289,14 @@ def _unit_rows(mat):
     return (mat / norms).astype(np.float32)
 
 
-def _meaning(embed: Embedder | None, usable: list[str], texts: list[str]):
+def _meaning(embed: Embedder | None, usable: list[str], texts: list[str], *, any_model: bool = False):
     """(piece index, text index, S) with S[p, t] the cosine of piece p and row text t, or None when there
     is no embedder or it fails (spelling only). The provider embedder hands over its cached row matrix
     (built once per row set) and embeds only the message pieces; any other embedder is called once."""
     if embed is None or not texts:
         return None
+    if not any_model and getattr(embed, "model", EMBED_MODEL) != EMBED_MODEL:
+        return None  # the n-gram floors are calibrated on OpenAI vectors: any other model reads spelling only
     try:
         if hasattr(embed, "matrix"):
             m = embed.matrix(texts)  # type: ignore[attr-defined]
@@ -717,64 +721,60 @@ _pieces: dict[str, Any] = {}
 _PIECES_CAP = 512
 
 
-def _key(text: str) -> tuple[str, str]:
-    return (EMBED_MODEL, hashlib.sha1(text.encode()).hexdigest())
+def _key(text: str, model: str = EMBED_MODEL) -> tuple[str, str]:
+    return (model, hashlib.sha1(text.encode()).hexdigest())
 
 
-def provider_embedder(api_key: str) -> Embedder:
-    """OpenAI `text-embedding-3-small`: row vectors cached per process by (model, sha1 of text) as unit
-    float32, the uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget. `matrix` is the
-    row matrix of a row set (built once); `pieces` embeds a message's pieces without storing them as rows."""
-    from app.services.llm_provider import OpenAIProvider
+#: Gemini's batchEmbedContents takes at most 100 texts per request.
+GEMINI_EMBED_CHUNK = 100
 
-    def client():
-        return OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
 
-    def store(chunk: list[str], resp) -> None:
-        vectors = _unit_rows([item.embedding for item in resp.data])
+def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
+    """A row-vector embedder over `request` (texts -> raw vectors): vectors cached per process by (model, sha1 of
+    text) as unit float32, the uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget. `matrix`
+    is the row matrix of a row set (built once); `pieces` embeds a message's pieces without storing them as rows.
+    The model is part of the cache key, so a model switch never mixes vector spaces."""
+
+    def store(chunk: list[str], raw: list[Any]) -> None:
+        vectors = _unit_rows(raw)
         with _store_lock:
             for t, vec in zip(chunk, vectors):
-                _cache[_key(t)] = vec
+                _cache[_key(t, model)] = vec
 
     def embed(texts: list[str]) -> list[Any]:
         deadline = time.monotonic() + EMBED_TIMEOUT
         with _store_lock:
-            todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
+            todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
             if len(_cache) + len(todo) > _CACHE_CAP:
                 _cache.clear()
                 _matrices.clear()
                 todo = list(dict.fromkeys(texts))
-        if todo:
-            api = client()
-            for i in range(0, len(todo), EMBED_CHUNK):
-                if time.monotonic() > deadline:
-                    raise TimeoutError("lookup list embedding budget spent")
-                chunk = todo[i : i + EMBED_CHUNK]
-                store(chunk, api.embeddings.create(model=EMBED_MODEL, input=chunk))
+        for i in range(0, len(todo), chunk_size):
+            if time.monotonic() > deadline:
+                raise TimeoutError("lookup list embedding budget spent")
+            chunk = todo[i : i + chunk_size]
+            store(chunk, request(chunk))
         with _store_lock:
-            return [_cache[_key(t)] for t in texts]
+            return [_cache[_key(t, model)] for t in texts]
 
     def fill(texts: list[str]) -> None:
         """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
         total deadline; chunks are kept as they complete."""
         with _store_lock:
-            todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
-        if not todo:
-            return
-        api = client()
-        for i in range(0, len(todo), EMBED_CHUNK):
-            chunk = todo[i : i + EMBED_CHUNK]
-            store(chunk, api.embeddings.create(model=EMBED_MODEL, input=chunk))
+            todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+        for i in range(0, len(todo), chunk_size):
+            chunk = todo[i : i + chunk_size]
+            store(chunk, request(chunk))
 
     def matrix(texts: list[str]):
         import numpy as np
 
         embed(texts)
-        key = hashlib.sha1("\0".join(texts).encode()).hexdigest()
+        key = hashlib.sha1((model + "\0" + "\0".join(texts)).encode()).hexdigest()
         with _store_lock:
             built = _matrices.get(key)
             if built is None:
-                built = np.stack([_cache[_key(t)] for t in texts])
+                built = np.stack([_cache[_key(t, model)] for t in texts])
                 while len(_matrices) >= _MATRIX_SETS:
                     _matrices.pop(next(iter(_matrices)))
                 _matrices[key] = built
@@ -786,15 +786,14 @@ def provider_embedder(api_key: str) -> Embedder:
         # The message's own vectors are read before the cache evicts: a cached piece at the front of the cache is
         # still this message's piece (CHAT-V66-REGRESSIONS: it raised KeyError and the turn lost its meaning scores).
         with _store_lock:
-            got = {t: _pieces[t] for t in texts if t in _pieces}
+            got = {t: _pieces[(model, t)] for t in texts if (model, t) in _pieces}
         todo = [t for t in dict.fromkeys(texts) if t not in got]
         if todo:
-            resp = client().embeddings.create(model=EMBED_MODEL, input=todo)
-            vectors = _unit_rows([item.embedding for item in resp.data])
+            vectors = _unit_rows(request(todo))
             got.update(zip(todo, vectors))
             with _store_lock:
                 for t, vec in zip(todo, vectors):
-                    _pieces[t] = vec
+                    _pieces[(model, t)] = vec
                 while len(_pieces) > _PIECES_CAP:
                     _pieces.pop(next(iter(_pieces)))
         return np.stack([got[t] for t in texts])
@@ -803,8 +802,41 @@ def provider_embedder(api_key: str) -> Embedder:
     embed.matrix = matrix  # type: ignore[attr-defined]
     embed.pieces = pieces_matrix  # type: ignore[attr-defined]
     embed.needs_warm = True  # type: ignore[attr-defined]
-    embed.is_cached = lambda texts: all(_key(t) in _cache for t in list(texts))  # type: ignore[attr-defined]
+    embed.model = model  # type: ignore[attr-defined]
+    embed.is_cached = lambda texts: all(_key(t, model) in _cache for t in list(texts))  # type: ignore[attr-defined]
     return embed
+
+
+def provider_embedder(api_key: str) -> Embedder:
+    """OpenAI `text-embedding-3-small` (see `_vector_embedder`)."""
+    from app.services.llm_provider import OpenAIProvider
+
+    def request(chunk: list[str]) -> list[Any]:
+        client = OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
+        return [item.embedding for item in client.embeddings.create(model=EMBED_MODEL, input=chunk).data]
+
+    return _vector_embedder(EMBED_MODEL, request, EMBED_CHUNK)
+
+
+def gemini_embedder(api_key: str, model: str) -> Embedder:
+    """Gemini `batchEmbedContents` on `model` (see `_vector_embedder`), one request per batch of texts."""
+    from app.services.llm_provider import GeminiProvider
+
+    def request(chunk: list[str]) -> list[Any]:
+        body = GeminiProvider(api_key)._request(
+            "POST",
+            f"models/{model}:batchEmbedContents",
+            json_body={
+                "requests": [{"model": f"models/{model}", "content": {"parts": [{"text": t}]}} for t in chunk]
+            },
+            timeout=EMBED_TIMEOUT,
+        )
+        vectors = [e.get("values") or [] for e in body.get("embeddings") or []]
+        if len(vectors) != len(chunk) or not all(vectors):
+            raise RuntimeError("Gemini batchEmbedContents returned the wrong number of vectors.")
+        return vectors
+
+    return _vector_embedder(model, request, GEMINI_EMBED_CHUNK)
 
 
 _warm_lock = threading.Lock()
@@ -827,7 +859,7 @@ def prefetch(message: str, embed: Embedder | None) -> Callable[[], bool]:
     says whether the pieces arrived; when they did not (late or failed) the turn reads spelling only rather than send
     the request a second time. Only the provider embedder (`pieces`) is prefetched; anything else is ready at once."""
     usable = [p for p in pieces(message) if not _code_like(p)]
-    if embed is None or not hasattr(embed, "pieces") or not usable:
+    if embed is None or not hasattr(embed, "pieces") or not usable or getattr(embed, "model", EMBED_MODEL) != EMBED_MODEL:
         return lambda: True
     arrived: list[bool] = []
 
@@ -881,12 +913,19 @@ def usable_embedder(rows: list[LookupRow], embed: Embedder | None) -> Embedder |
 
 
 def embedder(db: "Session") -> Embedder | None:
-    """`EMBED` as the engine uses it: a set value (a callable or None) wins; the default builds the
-    provider embedder from the assistant config's OpenAI key, or None (spelling only) with no key."""
+    """`EMBED` as the engine uses it: a set value (a callable or None) wins; the default follows the production
+    label of prompt key `chatbot_lookup_embedder`: provider gemini plus a model -> a Gemini embedder with the AI
+    config's Gemini key; otherwise the OpenAI embedder with its key. No key for the chosen provider -> None
+    (spelling only)."""
     if EMBED is not USE_PROVIDER:
         return EMBED
-    from app.services import llm_provider
+    from app.services import ai_prompt_registry, llm_provider
     from app.services.ai_assistant_service import AIAssistantConfigService
 
-    key = llm_provider.resolve_api_key(AIAssistantConfigService(db).get(), "openai")
+    config = AIAssistantConfigService(db).get()
+    provider, model = ai_prompt_registry.agent_model(db, EMBEDDER_PROMPT_KEY)
+    if provider == "gemini" and model:
+        key = llm_provider.resolve_api_key(config, "gemini")
+        return gemini_embedder(key, model) if key else None
+    key = llm_provider.resolve_api_key(config, "openai")
     return provider_embedder(key) if key else None
