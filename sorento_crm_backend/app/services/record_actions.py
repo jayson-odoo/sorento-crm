@@ -224,6 +224,24 @@ register(
 )
 
 
+def _delete_agent_class(db: Session, payload: dict):
+    from app.services.sales import agent_class_service
+
+    return agent_class_service.delete_by_id(db, _entity_id(payload))
+
+
+register(
+    FormAction(
+        key="sales_agent_class.delete",
+        entity_types=("sales_agent_class",),
+        execute=_delete_agent_class,
+        window=WINDOW_DESTRUCTIVE,
+        permission="master_data.sales_agents.edit",
+        label="Remove class row",
+    )
+)
+
+
 def _delete_sales_opportunity(db: Session, payload: dict):
     from app.services.sales import opportunity_service
 

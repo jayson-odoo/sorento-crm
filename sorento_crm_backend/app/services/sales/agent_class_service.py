@@ -196,6 +196,19 @@ def update(db: Session, row_id: str, fields: Dict[str, Any]) -> Dict[str, Any]:
     return serialize(row)
 
 
+def delete_by_id(db: Session, row_id: str) -> None:
+    """The deferred `sales_agent_class.delete` action's handler: flushes (the runner commits);
+    already gone is not an error."""
+    row = db.query(SalesAgentClass).filter(SalesAgentClass.id == row_id).first()
+    if row is None:
+        return
+    agent_id, start = str(row.sales_agent_id), row.from_month
+    db.delete(row)
+    db.flush()
+    _mirror(db, agent_id)
+    rederive(db, agent_ids=[agent_id], from_month=start, apply=True)
+
+
 def delete(db: Session, row_id: str) -> None:
     row = db.query(SalesAgentClass).filter(SalesAgentClass.id == row_id).first()
     if row is None:
@@ -212,18 +225,20 @@ def set_current(db: Session, agent_id: str, demand_class: Optional[str], *, toda
     """The Sales Agents screen's (and the importers') "the class is now X": written as dated
     rows so history stays. No row yet: one open row from the beginning (today's meaning of a
     class). An open row of another class: closed last month, the new one open from this month.
-    None: the open row closes last month. Re-derives the agent's orders from the change.
+    None: the open row closes last month. Re-derives the agent's orders from THIS month on.
     Flushes, never commits (the caller's transaction)."""
     rows = rows_of(db, agent_id)
     this_month = month_start(today)
     open_row = next((r for r in rows if r.to_month is None), None)
     if open_row is not None and open_row.demand_class == demand_class:
         return
-    start: Optional[date] = this_month
     if not rows:
         if demand_class is None:
+            agent = db.query(SalesAgent).filter(SalesAgent.id == agent_id).first()
+            if agent is not None:
+                agent.demand_class = None
+                db.flush()
             return
-        start = None
         db.add(SalesAgentClass(sales_agent_id=agent_id, demand_class=demand_class))
     else:
         if open_row is not None:
@@ -236,7 +251,9 @@ def set_current(db: Session, agent_id: str, demand_class: Optional[str], *, toda
             db.add(SalesAgentClass(sales_agent_id=agent_id, demand_class=demand_class, from_month=this_month))
     db.flush()
     _mirror(db, agent_id)
-    rederive(db, agent_ids=[agent_id], from_month=start, apply=True)
+    # "Now" moves orders from this month on only: past months move by a dated edit on the
+    # class history, or by the owner's backfill after its dry run (Q8, Q10 (a)).
+    rederive(db, agent_ids=[agent_id], from_month=this_month, apply=True)
 
 
 # ------------------------------------------------------------------------- re-derivation
