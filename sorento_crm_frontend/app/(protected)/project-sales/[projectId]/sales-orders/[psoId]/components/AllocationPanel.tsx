@@ -21,7 +21,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { useSalesOrderAllocations } from '../../../../_shared/hooks/useProjectAllocations';
 import type {
@@ -41,7 +42,6 @@ const STATE_BADGE: Record<AllocationState, 'secondary' | 'success' | 'warning' |
 };
 
 const STATE_OPTIONS = [
-  { value: 'all', label: 'Every line' },
   { value: 'unallocated', label: ALLOCATION_STATE_LABEL.unallocated },
   { value: 'pending_claim', label: ALLOCATION_STATE_LABEL.pending_claim },
   { value: 'refused', label: ALLOCATION_STATE_LABEL.refused },
@@ -70,7 +70,7 @@ export function AllocationPanel({ psoId }: { psoId: string }) {
     setValue: setSearchInput,
     debouncedValue: search,
   } = useDebouncedSearch();
-  const [stateFilter, setStateFilter] = React.useState('all');
+  const [stateFilter, setStateFilter] = React.useState('');
   const [sourcing, setSourcing] = React.useState<AllocationLineRow | null>(null);
   const [pagination, setPagination] = React.useState<PaginationState>({
     pageIndex: 0,
@@ -81,8 +81,9 @@ export function AllocationPanel({ psoId }: { psoId: string }) {
 
   const rows = React.useMemo(() => {
     const needle = search.trim().toLowerCase();
+    const picked = splitMulti(stateFilter);
     return lines.filter((line) => {
-      if (stateFilter !== 'all' && line.state !== stateFilter) return false;
+      if (picked.length && !picked.includes(line.state)) return false;
       if (!needle) return true;
       return [line.product_code, line.description, line.stock_location]
         .filter(Boolean)
@@ -314,14 +315,17 @@ export function AllocationPanel({ psoId }: { psoId: string }) {
               }
               filters={{
                 kind: 'custom',
-                active: stateFilter !== 'all',
+                active: stateFilter !== '',
+                activeCount: stateFilter ? 1 : 0,
                 content: (
                   <div className="space-y-2">
                     <p className="text-sm font-medium">State</p>
-                    <SearchableSelect
-                      value={stateFilter}
-                      onChange={setStateFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(stateFilter)}
+                      onChange={(value) => setStateFilter(joinMulti(value))}
                       options={STATE_OPTIONS}
+                      placeholder="Every line"
+                      clearable
                     />
                   </div>
                 ),

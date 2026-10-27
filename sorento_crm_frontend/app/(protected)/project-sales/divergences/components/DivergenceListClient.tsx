@@ -21,7 +21,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { useDivergences } from '../../_shared/hooks/useSoDivergence';
 import type { DivergenceSummary } from '../../_shared/types/soDivergence.types';
@@ -31,7 +32,6 @@ import { PageHeader } from '@/components/common/PageHeader';
 const STATUS_OPTIONS = [
   { value: 'open', label: 'Still to reconcile' },
   { value: 'resolved', label: 'Reconciled' },
-  { value: 'all', label: 'Any' },
 ];
 
 /**
@@ -67,7 +67,8 @@ export function DivergenceListClient() {
   });
 
   const divergences = useDivergences({
-    status: statusFilter === 'all' ? undefined : statusFilter,
+    // Nothing chosen asks for every state (no param); the backend no longer defaults it to open.
+    status: statusFilter || undefined,
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
   });
@@ -274,13 +275,15 @@ export function DivergenceListClient() {
                 content: (
                   <div className="space-y-1.5">
                     <p className="text-sm font-medium">State</p>
-                    <SearchableSelect
-                      value={statusFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
                       onChange={(value) => {
-                        setStatusFilter(value);
+                        setStatusFilter(joinMulti(value));
                         setPagination((current) => ({ ...current, pageIndex: 0 }));
                       }}
                       options={STATUS_OPTIONS}
+                      placeholder="Any state"
+                      clearable
                     />
                   </div>
                 ),

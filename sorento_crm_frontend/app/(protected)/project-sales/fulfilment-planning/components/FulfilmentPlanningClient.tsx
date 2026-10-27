@@ -23,7 +23,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useFulfilmentPlanning,
@@ -79,7 +80,6 @@ const SORTABLE_COLUMNS = new Set<string>(FULFILMENT_PLANNING_SORT_FIELDS);
 const DEFAULT_SORTING: SortingState = [{ id: 'earliest_required_date', desc: false }];
 
 const REVIEW_STATE_OPTIONS = [
-  { value: 'all', label: 'Any' },
   { value: 'not_started', label: REVIEW_STATE_LABELS.not_started },
   {
     value: 'awaiting_reconciliation',
@@ -111,7 +111,7 @@ export function FulfilmentPlanningClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [reviewState, setReviewState] = React.useState('all');
+  const [reviewState, setReviewState] = React.useState('');
   const {
     value: search,
     setValue: setSearch,
@@ -222,7 +222,7 @@ export function FulfilmentPlanningClient() {
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
     query: debounced || undefined,
-    review_state: reviewState === 'all' ? undefined : (reviewState as ReviewState),
+    review_state: reviewState || undefined,
     sort: sorting[0]?.id,
     dir: sorting[0] ? (sorting[0].desc ? 'desc' : 'asc') : undefined,
   });
@@ -608,7 +608,7 @@ export function FulfilmentPlanningClient() {
     columnResizeMode: 'onChange',
   });
 
-  const filtersActive = reviewState !== 'all' ? 1 : 0;
+  const filtersActive = reviewState ? 1 : 0;
 
   /**
    * Every sales-order number this session has seen, by row key.
@@ -791,10 +791,12 @@ export function FulfilmentPlanningClient() {
                 content: (
                   <div className="space-y-1.5">
                     <p className="text-sm font-medium">Review state</p>
-                    <SearchableSelect
-                      value={reviewState}
-                      onChange={(value) => setReviewState(value)}
+                    <SearchableMultiSelect
+                      value={splitMulti(reviewState)}
+                      onChange={(value) => setReviewState(joinMulti(value))}
                       options={REVIEW_STATE_OPTIONS}
+                      placeholder="Any review state"
+                      clearable
                     />
                   </div>
                 ),
@@ -841,7 +843,7 @@ export function FulfilmentPlanningClient() {
                           : 'Nothing is outstanding'}
                 </h3>
                 <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-                  {reviewState === 'all'
+                  {!reviewState
                     ? 'An outstanding project sales order appears here on its own, with no upload and nothing to publish.'
                     : 'Clear the review state filter to see the rest of the sales orders.'}
                 </p>
