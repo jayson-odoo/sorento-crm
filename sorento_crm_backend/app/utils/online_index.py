@@ -1,4 +1,4 @@
-"""Build an index without ever stalling live work (GOODSCHAIN-INDEX-QUERY).
+"""Build an index without ever stalling live work (GOODSCHAIN-INDEX-QUERY, BILLING-FROM-DOC-INDEX).
 
 `documentation/plans/scm/PLAN-goodschain-index-query-27oct.md`. Owner requirement, 27 Oct 2026,
 after slow migrations held deploys and the chatbot before (13 Oct, runbook
@@ -15,7 +15,7 @@ after slow migrations held deploys and the chatbot before (13 Oct, runbook
 
 Retry: `scripts/ensure_goods_chain_indexes.py`, which `start.sh` runs in the background on
 every backend start, so the next deploy builds whatever the last one could not. It is a
-catalog lookup and nothing else once both indexes are VALID.
+catalog lookup and nothing else once every index here is VALID.
 """
 from __future__ import annotations
 
@@ -42,6 +42,17 @@ GOODS_CHAIN_KEY_INDEXES: Tuple[Tuple[str, str, str], ...] = (
         "purchase_order_lines",
         "ix_purchase_order_lines_src_key",
         "(btrim(source_ref), product_id, company_id)",
+    ),
+)
+
+#: BILLING-FROM-DOC-INDEX: DOC-RELATIONS finds an SO's / DO's billing documents by the raw
+#: `from_doc_no` (`app/services/document_relations.py` billing_ids_for_*); the company filter
+#: there is on the joined header, so a plain single-column index. Schema-qualified table.
+BILLING_FROM_DOC_INDEXES: Tuple[Tuple[str, str, str], ...] = (
+    (
+        "finance.billing_document_lines",
+        "ix_finance_billing_document_lines_from_doc_no",
+        "(from_doc_no)",
     ),
 )
 
@@ -74,6 +85,12 @@ def duration_ms(value: str) -> int:
     return int(number) * _UNIT_MS[unit or ""]
 
 
+def _qualified(table: str, name: str) -> str:
+    """`name` in `table`'s schema: an index lives in its table's schema, and an unqualified
+    drop resolves along search_path, so it would miss one under `finance.`."""
+    return f"{table.rsplit('.', 1)[0]}.{name}" if "." in table else name
+
+
 def _set_limits(bind, lock: str, statement: str) -> None:
     bind.execute(sa.text(f"SET lock_timeout = '{lock}'"))
     bind.execute(sa.text(f"SET statement_timeout = '{statement}'"))
@@ -102,7 +119,7 @@ def ensure_index_online(
     try:
         try:
             if index_valid(bind, table, name) is False:
-                bind.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
+                bind.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {_qualified(table, name)}"))
             bind.execute(sa.text(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {table} {columns}"))
             if index_valid(bind, table, name) is True:
                 return True
@@ -118,7 +135,7 @@ def ensure_index_online(
             try:
                 if duration_ms(statement) and duration_ms(statement) < DROP_FLOOR_MS:
                     _set_limits(bind, lock, f"{DROP_FLOOR_MS}ms")
-                bind.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {name}"))
+                bind.execute(sa.text(f"DROP INDEX CONCURRENTLY IF EXISTS {_qualified(table, name)}"))
             except sa.exc.DBAPIError as exc:
                 log.warning(
                     "INVALID index %s left in place (%s); the next retry drops it first.",
@@ -143,7 +160,7 @@ def ensure_indexes_online(bind, indexes: Sequence[Tuple[str, str, str]]) -> bool
         return True
     if not bind.execute(sa.text("SELECT pg_try_advisory_lock(:k)"), {"k": ADVISORY_LOCK_KEY}).scalar():
         log.warning(
-            "another backend is building the goods chain key indexes; leaving them to it "
+            "another backend is building the online indexes; leaving them to it "
             "(the next backend start retries whatever it does not finish)."
         )
         return False

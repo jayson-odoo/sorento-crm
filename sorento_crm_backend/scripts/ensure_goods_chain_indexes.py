@@ -1,9 +1,9 @@
-"""Retry the goods chain key indexes migration `gc_idx_0001_spo_from_po_key` could not build.
+"""Retry the indexes `gc_idx_0001_spo_from_po_key` and `bfd_idx_0001_billing_from_doc_no` could not build.
 
-GOODSCHAIN-INDEX-QUERY. That revision lets a deploy succeed when an index build times out
-(`app/utils/online_index.py`), so something has to try again: `start.sh` runs this in the
-background on every backend start, after `alembic upgrade head`. With both indexes VALID it is
-one catalog lookup per index. Two builders at once (blue and green starting together, or a
+GOODSCHAIN-INDEX-QUERY, BILLING-FROM-DOC-INDEX. Those revisions let a deploy succeed when an
+index build times out (`app/utils/online_index.py`), so something has to try again: `start.sh`
+runs this in the background on every backend start, after `alembic upgrade head`. With every
+index VALID it is one catalog lookup per index. Two builders at once (blue and green starting together, or a
 migration still running) are serialised by the advisory lock `ensure_indexes_online` takes;
 the one that does not get it does nothing.
 
@@ -23,10 +23,12 @@ log = logging.getLogger("ensure_goods_chain_indexes")
 
 def run(engine) -> bool:
     """True when every index is VALID afterwards."""
-    from app.utils.online_index import GOODS_CHAIN_KEY_INDEXES, ensure_indexes_online
+    from app.utils import online_index
 
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as bind:
-        return ensure_indexes_online(bind, GOODS_CHAIN_KEY_INDEXES)
+        return online_index.ensure_indexes_online(
+            bind, online_index.GOODS_CHAIN_KEY_INDEXES + online_index.BILLING_FROM_DOC_INDEXES
+        )
 
 
 def main() -> None:
@@ -38,9 +40,9 @@ def main() -> None:
         from app.config import settings
 
         ok = run(sa.create_engine(settings.database_url, poolclass=sa.pool.NullPool))
-        log.info("goods chain key indexes %s", "VALID" if ok else "not all built; next start retries")
+        log.info("online indexes %s", "VALID" if ok else "not all built; next start retries")
     except Exception:  # noqa: BLE001 - a retry must never take the backend down
-        log.warning("goods chain key index retry failed; next start retries", exc_info=True)
+        log.warning("online index retry failed; next start retries", exc_info=True)
 
 
 if __name__ == "__main__":

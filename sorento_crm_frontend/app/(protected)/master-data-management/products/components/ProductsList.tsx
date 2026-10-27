@@ -23,6 +23,7 @@ import {
   MessageSquare,
   CloudDownload,
   Barcode,
+  ImagePlus,
 } from 'lucide-react';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Badge, BadgeDot } from '@/components/ui/badge';
@@ -47,6 +48,7 @@ import { bulkImportProducts, validateProductsImport } from '../services/productS
 import ProductBulkChatSearchDialog from './ProductBulkChatSearchDialog';
 import { UploadCostPriceAction } from './UploadCostPriceAction';
 import { BarcodeImportDialog } from './BarcodeImportDialog';
+import { CatalogueUploadDialog } from './CatalogueUploadDialog';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { useImportJobDrawer } from '@/components/upload-activity';
@@ -182,6 +184,8 @@ const ProductsList = () => {
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadDialogOpen, setUploadDialogOpen] = useState(false);
   const [barcodeImportOpen, setBarcodeImportOpen] = useState(false);
+  const [catalogueUploadOpen, setCatalogueUploadOpen] = useState(false);
+  const canExtractCataloguePhotos = useHasPermission('dealer_kit.page.edit');
   const canEditProducts = useHasPermission('master_data.products.edit');
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [advancedFilterDialogOpen, setAdvancedFilterDialogOpen] = useState(false);
@@ -1024,6 +1028,16 @@ const ProductsList = () => {
                     },
                   ]
                 : []),
+              ...(canExtractCataloguePhotos
+                ? [
+                    {
+                      key: 'extract-catalogue-photos',
+                      label: 'Extract photos from catalogue',
+                      icon: ImagePlus,
+                      onClick: () => setCatalogueUploadOpen(true),
+                    },
+                  ]
+                : []),
               ...(autocountPull.visible
                 ? [
                     {
@@ -1090,6 +1104,7 @@ const ProductsList = () => {
         accept=".xlsx,.xls"
       />
       <BarcodeImportDialog open={barcodeImportOpen} onOpenChange={setBarcodeImportOpen} />
+      <CatalogueUploadDialog open={catalogueUploadOpen} onOpenChange={setCatalogueUploadOpen} />
       <ListQueryFilterDialog
         resourceKey="products"
         open={advancedFilterDialogOpen}

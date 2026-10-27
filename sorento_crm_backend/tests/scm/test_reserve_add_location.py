@@ -137,11 +137,12 @@ def test_a_manually_added_pool_reserve_within_on_hand_confirms_and_names_the_poo
     ]
 
 
-def test_a_manually_added_pool_reserve_above_on_hand_holds_what_is_left_and_records_the_short(api):
+def test_a_manually_added_pool_reserve_above_on_hand_holds_on_hand_and_records_the_short(api):
     """AC-3.3: the server's on-hand guard is the same one `test_confirm_reserve_guard.py`
     pins for an own location, retargeted at a SITE POOL a planner just added by hand - it
-    caps a Reserve at what is on hand there less what another order already holds: the
-    earlier order's 1 of the 10 stays, this line holds the 9 left and is recorded 6 short.
+    caps a Reserve at what is on hand there. BOARD-NO-HOLD (owner, 27 Oct 2026): another
+    order's confirmed Reserve is a plan, not a hold, so the earlier order's 1 of the 10 does
+    not come off; this line holds the 10 and is recorded 5 short.
 
     Owner rule 12 Oct 2026 (OI-CLOSED-LINE): a stock shortfall is a warning, never a refusal.
     """
@@ -181,8 +182,8 @@ def test_a_manually_added_pool_reserve_above_on_hand_holds_what_is_left_and_reco
     assert response.status_code == 200, response.text
     notices = response.json()["stock_short_notices"]
     assert [notice["line_no"] for notice in notices] == [22], notices
-    assert f"only 9 free at {world.pool_wh.warehouse_code}" in notices[0]["reason"], notices
-    assert ", 6 short" in notices[0]["reason"], notices
+    assert f"only 10 free at {world.pool_wh.warehouse_code}" in notices[0]["reason"], notices
+    assert ", 5 short" in notices[0]["reason"], notices
     db.expire_all()
     held = {
         (row.so_line_id, row.warehouse_id): row.qty
@@ -192,7 +193,7 @@ def test_a_manually_added_pool_reserve_above_on_hand_holds_what_is_left_and_reco
     }
     assert held == {
         (held_by_line.id, world.pool_wh.id): Decimal("1"),
-        (line.id, world.pool_wh.id): Decimal("9"),
+        (line.id, world.pool_wh.id): Decimal("10"),
     }, held
     assert (
         db.query(SOSupplyDecision)

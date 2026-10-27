@@ -161,7 +161,11 @@ def _held_at(db, world, warehouse) -> Decimal:
 def test_confirm_reserve_plus_an_over_asked_own_location_borrow_passes_short(enabled):
     """The owner's flow: Reserve what is free at the own location, Borrow the rest from the
     same location. Confirm passes; the borrow beyond what is free is confirmed as decided and
-    recorded short, and nothing is held twice."""
+    recorded short.
+
+    BOARD-NO-HOLD (27 Oct 2026): the Reserve of 8 holds nothing, so the HELD figure is the
+    Borrow's alone, and it holds 0.
+    """
     with blank_session() as db:
         world = _own_world(db, on_hand=8)
         _set_borrow_order(db, enabled)
@@ -172,10 +176,10 @@ def test_confirm_reserve_plus_an_over_asked_own_location_borrow_passes_short(ena
         code = world["own"].warehouse_code
         notices = body["stock_short_notices"]
         assert len(notices) == 1, notices
-        assert notices[0]["reason"].startswith(
-            f"Borrow 2 at {code} confirmed as decided; only 0 free at {code}"
-        ), notices[0]["reason"]
-        assert _held_at(db, world, world["own"]) == Decimal("8"), "never more than on hand"
+        # Same confirm, same pile, counted once: one press cannot sell 10 off 8.
+        assert f"only 0 free at {code}" in notices[0]["reason"], notices[0]["reason"]
+        assert "2 short" in notices[0]["reason"], notices[0]["reason"]
+        assert _held_at(db, world, world["own"]) == Decimal("0")
 
 
 def test_re_confirming_the_same_reserve_and_own_borrow_never_holds_more_than_on_hand():
@@ -186,9 +190,12 @@ def test_re_confirming_the_same_reserve_and_own_borrow_never_holds_more_than_on_
         body = dict(reserve=[(world["own"], "8")], borrow=[_own_borrow(world, "2")])
         _confirm(db, world, **body)
         again = _confirm(db, world, **body)
-        assert _held_at(db, world, world["own"]) == Decimal("8"), "never more than on hand"
+        # Same confirm, same pile, counted once: one press cannot sell 10 off 8.
+        assert _held_at(db, world, world["own"]) == Decimal("0")
         notices = again["stock_short_notices"]
-        assert len(notices) == 1 and "2 short" in notices[0]["reason"], notices
+        assert len(notices) == 1, notices
+        assert "only 0 free" in notices[0]["reason"], notices
+        assert "2 short" in notices[0]["reason"], notices
 
 
 def test_confirm_an_own_location_borrow_with_free_stock_holds_it():
