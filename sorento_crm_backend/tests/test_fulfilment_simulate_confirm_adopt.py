@@ -181,7 +181,8 @@ def test_t2_the_simulation_matches_the_real_adopt_then_confirm(api, monkeypatch)
 
 def test_t3_a_later_order_sees_an_earlier_orders_holds(api, monkeypatch):
     """T3 (D2): pool 50, A reserves 50 then B reserves 50; the simulation answers what the
-    real press answers - A clean, B short."""
+    real press answers. BOARD-NO-HOLD (owner, 27 Oct 2026): A's Reserve is a plan, not a
+    hold, so B is clean too (was: A clean, B short); the simulation still equals the press."""
     client, world = api
     _as_role(monkeypatch, "admin")
     db = world.db
@@ -218,7 +219,7 @@ def test_t3_a_later_order_sees_an_earlier_orders_holds(api, monkeypatch):
     def shape(results):
         return [(r["ok"], bool(r.get("stock_short_notices"))) for r in results]
 
-    assert shape(real) == [(True, False), (True, True)], real
+    assert shape(real) == [(True, False), (True, False)], real
     assert shape(sim) == shape(real), sim
 
 

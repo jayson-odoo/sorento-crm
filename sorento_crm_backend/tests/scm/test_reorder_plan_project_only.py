@@ -663,7 +663,8 @@ def test_ac_po_12_project_run_buys_the_row_in_full_even_when_on_hand_covers_it(s
 def test_ac_po_12b_project_run_reduces_the_confirmed_buy_by_a_confirmed_reserve_against_the_line(scm_app):
     """R1a = A's other half, FLIPPED (captain ruling, 23 Sep 2026, Lane F fix round 3,
     `PLAN-order-sheet-oi-reports-22sep.md`): a confirmed Reserve/Borrow supply reduction
-    against the SAME line (`so_line_allocations`, `source_type='reserve'`) now reduces a
+    against the SAME line (`so_line_allocations`; BOARD-NO-HOLD, 27 Oct 2026: the seed is a
+    Borrow, `source_type='other_location'`, because a Reserve no longer reduces) now reduces a
     Project run's own row Buy too - R1a's "not netted against stock" carves out on-hand/
     SPO/PO, never a Reserve, which is CS's own explicit decision to use the stock (the
     exact case R1a's own docstring names as the pushback path, "purchasing pushes back
