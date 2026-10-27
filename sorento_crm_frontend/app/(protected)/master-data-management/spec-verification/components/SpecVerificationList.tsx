@@ -51,7 +51,7 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Switch } from '@/components/ui/switch';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
+import { joinMulti, splitMulti, splitText } from '@/lib/list-filters/multiValue';
 import { usePermissions } from '@/hooks/usePermissions';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useDeferredBulkAction } from '@/hooks/useDeferredBulkAction';
@@ -265,8 +265,9 @@ export default function SpecVerificationList() {
   const [stateFilter, setStateFilter] = useState(
     () => searchParams.get('state') ?? '',
   );
-  const [classFilter, setClassFilter] = useState(
-    () => searchParams.get('class_label') ?? '',
+  // One entry per class: a label is free text and can contain a comma, so no joining.
+  const [classFilter, setClassFilter] = useState<string[]>(() =>
+    splitText(searchParams.getAll('class_label')),
   );
   const [includeDiscontinued, setIncludeDiscontinued] = useState(
     () => searchParams.get('include_discontinued') === 'true',
@@ -313,7 +314,7 @@ export default function SpecVerificationList() {
     const next = new URLSearchParams();
     if (searchQuery) next.set('query', searchQuery);
     if (stateFilter) next.set('state', stateFilter);
-    if (classFilter) next.set('class_label', classFilter);
+    for (const label of classFilter) next.append('class_label', label);
     if (includeDiscontinued) next.set('include_discontinued', 'true');
     if (sortField) {
       next.set('sort', sortField);
@@ -348,7 +349,7 @@ export default function SpecVerificationList() {
       sorting,
       searchQuery,
       state: stateFilter,
-      class_label: classFilter,
+      class_label: classFilter.length ? classFilter : undefined,
       include_discontinued: includeDiscontinued,
     });
   const { verify } = useSpecVerificationMutations();
@@ -404,13 +405,13 @@ export default function SpecVerificationList() {
   if (data?.classes?.length) classOptionsRef.current = data.classes;
   const classOptions = classOptionsRef.current;
   const filtersActive = Boolean(
-    searchQuery || stateFilter || classFilter || includeDiscontinued,
+    searchQuery || stateFilter || classFilter.length || includeDiscontinued,
   );
 
   const clearFilters = () => {
     resetSearchQuery('');
     setStateFilter('');
-    setClassFilter('');
+    setClassFilter([]);
     setIncludeDiscontinued(false);
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
@@ -681,7 +682,7 @@ export default function SpecVerificationList() {
   // Resetting empties `rowSelection`, so the effect above sheds `selected` from the URL
   // in the same pass. Guarded on the key actually moving rather than left to run on
   // mount too, which would wipe the selection the URL just restored.
-  const visibleSetKey = `${pageIndex}:${pageSize}:${searchQuery}:${stateFilter}:${classFilter}:${includeDiscontinued}`;
+  const visibleSetKey = `${pageIndex}:${pageSize}:${searchQuery}:${stateFilter}:${classFilter.join('|')}:${includeDiscontinued}`;
   const pageKey = useRef(visibleSetKey);
   useEffect(() => {
     if (pageKey.current === visibleSetKey) return;
@@ -886,11 +887,11 @@ export default function SpecVerificationList() {
               filters={{
                 kind: 'custom',
                 active: Boolean(
-                  stateFilter || classFilter || includeDiscontinued,
+                  stateFilter || classFilter.length || includeDiscontinued,
                 ),
                 activeCount:
                   (stateFilter ? 1 : 0) +
-                  (classFilter ? 1 : 0) +
+                  (classFilter.length ? 1 : 0) +
                   (includeDiscontinued ? 1 : 0),
                 content: (
                   <div className="space-y-3">
@@ -914,7 +915,7 @@ export default function SpecVerificationList() {
                       <Label htmlFor="spec-verification-class">Class</Label>
                       <SearchableMultiSelect
                         id="spec-verification-class"
-                        value={splitMulti(classFilter)}
+                        value={classFilter}
                         clearable
                         placeholder="Any class"
                         options={classOptions.map((label) => ({
@@ -922,7 +923,7 @@ export default function SpecVerificationList() {
                           label,
                         }))}
                         onChange={(value) => {
-                          setClassFilter(joinMulti(value));
+                          setClassFilter(value);
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
                       />

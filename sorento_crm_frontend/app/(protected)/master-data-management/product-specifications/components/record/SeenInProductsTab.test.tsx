@@ -165,7 +165,7 @@ describe('SeenInProductsTab - Class and Source narrow the query, not the page (D
     fireEvent.click(classCombobox);
     fireEvent.click(screen.getByText('Sinks (2)'));
 
-    expect(lastParams).toMatchObject({ classLabel: 'Sinks' });
+    expect(lastParams).toMatchObject({ classLabel: ['Sinks'] });
   });
 
   it('choosing a Source option reaches the query hook as source, not a client-side filter', () => {

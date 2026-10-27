@@ -216,21 +216,39 @@ export default function SPOAllocationsList() {
     };
   }, [productSearch]);
 
-  // Every product and warehouse seen so far, so a pick keeps its name once the search moves on.
-  const seenProducts = useRef(new Map<string, { value: string; label: string; searchText: string }>());
-  products.forEach((p) =>
-    seenProducts.current.set(p.id, {
-      value: p.id,
-      label: codeWithName(p.product_code, p.product_name),
-      searchText: `${p.product_code} ${p.product_name ?? ''}`,
-    }),
-  );
-  const productOptions = [
-    ...products.map((p) => seenProducts.current.get(p.id)!),
-    ...splitMulti(productFilter)
-      .filter((id) => !products.some((p) => p.id === id))
-      .flatMap((id) => seenProducts.current.get(id) ?? []),
-  ];
+  // Every product seen so far, so a pick keeps its name once the search moves on.
+  const [seenProducts, setSeenProducts] = useState<
+    Record<string, { value: string; label: string; searchText: string }>
+  >({});
+  useEffect(() => {
+    if (!products.length) return;
+    setSeenProducts((prev) => {
+      const next = { ...prev };
+      for (const p of products) {
+        next[p.id] = {
+          value: p.id,
+          label: codeWithName(p.product_code, p.product_name),
+          searchText: `${p.product_code} ${p.product_name ?? ''}`,
+        };
+      }
+      return next;
+    });
+  }, [products]);
+  const productOptions = Object.values({
+    ...Object.fromEntries(
+      splitMulti(productFilter).flatMap((id) => (seenProducts[id] ? [[id, seenProducts[id]]] : [])),
+    ),
+    ...Object.fromEntries(
+      products.map((p) => [
+        p.id,
+        {
+          value: p.id,
+          label: codeWithName(p.product_code, p.product_name),
+          searchText: `${p.product_code} ${p.product_name ?? ''}`,
+        },
+      ]),
+    ),
+  });
   const productSearchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(
     () => () => {

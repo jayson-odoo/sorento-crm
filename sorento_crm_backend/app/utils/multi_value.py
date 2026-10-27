@@ -28,6 +28,27 @@ def multi_values(raw: Iterable[str] | str | None) -> Optional[list[str]]:
     return out or None
 
 
+def multi_text(raw: Iterable[str] | str | None) -> Optional[list[str]]:
+    """``multi_values`` for FREE-TEXT values (a class label, a spec value), which can contain commas.
+
+    The frontend sends these as repeated params, one value each, read whole. An item is split on
+    commas only when it is a legacy comma-joined list of plain values ("Tap,Basin"); an item with a
+    comma followed by a space ("Sink, Undermount", `["Gold", "Matt Black"]`) is one value.
+    """
+    if raw is None:
+        return None
+    items = [raw] if isinstance(raw, str) else raw
+    out: list[str] = []
+    for item in items:
+        text = str(item or "")
+        parts = [text] if ", " in text else text.split(",")
+        for part in parts:
+            value = part.strip()
+            if value and value not in out:
+                out.append(value)
+    return out or None
+
+
 def multi_uuids(raw: Iterable[str] | str | None, label: str) -> Optional[list[str]]:
     """``multi_values`` for ids: each must be a UUID, else a 422 naming the filter."""
     values = multi_values(raw)
