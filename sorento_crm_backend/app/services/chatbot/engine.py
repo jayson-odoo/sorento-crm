@@ -41,7 +41,7 @@ from app.models.base import set_brand_scope, set_company_scope
 from app.models.chatbot_turn import ChatbotTurn
 from app.services import llm_cassette
 from app.services.reports.ask import SALES_CHANNELS
-from app.services.chatbot import direct_ingress, dispatch, jsc, llm_call, media_intake, send_order, trace as trace_mod
+from app.services.chatbot import direct_ingress, dispatch, inbox_queue, jsc, llm_call, media_intake, send_order, trace as trace_mod
 from app.services.chatbot import user_turn as user_turn_mod
 from app.services.chatbot.contracts import (
     BUSINESS_BRANCH_KINDS,
@@ -61,12 +61,17 @@ from app.services.customer_group_service import family_overrides
 from app.services.error_handler import AppException
 from app.utils.build_info import GIT_SHA
 from app.services.ledger_family import customer_groups
-from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, scheme_index
+from app.services.chatbot.head import candidates as candidates_mod, closed_lists_index, grounding, held_family, parser, lookup_lists, scheme_index
+from app.services.chatbot.head import list_resolver, span_extract
 from app.services.chatbot.head import access as access_mod
 from app.services.chatbot.head.access import check_access, default_space_id
 from app.services.chatbot.head.build_ctx import build_ctx
 from app.services.chatbot.lanes import business, canned as canned_lanes, casual
 from app.services.chatbot.lanes import fallback as fallback_mod
+# SALES-TARGET-CHAT slice 2: imported here, not only at its seam, so `OPPORTUNITY_ASK` is registered in
+# `required_fields.ASKS` the moment the engine is (a fresh process's first turn answering the lane's field
+# question must not read as `required_ask_dropped`).
+from app.services.chatbot.lanes import opportunity as opportunity_lane
 from app.services.chatbot.lanes.escalation import run as run_escalation_lane, routing_line as escalation_routing_line
 from app.services.chatbot.lanes.business import resolve_gate, services as business_services
 from app.services.chatbot.analytics import facts as chat_facts
@@ -1182,6 +1187,255 @@ def _candidate_lines(
     return (indexed or lines), codes, picks
 
 
+def _may_see_salespeople(db: Session, resolved: str) -> bool:
+    """The Salesperson block is built only for a contact the sales ranking lets ask by agent: the
+    `sales_orders.sales_report` reveal, or a live salesperson user (`contact_asker.may_ask_sales_ranking`,
+    the rule the report route shares). Raises on a lookup error; `_lookup_lines` runs it in a savepoint
+    and a failure means no block."""
+    from app.services import contact_asker, contact_field_reveal_service
+
+    granted = "sales_orders.sales_report" in contact_field_reveal_service.granted_keys(db, resolved)
+    return contact_asker.may_ask_sales_ranking(db, str(resolved), granted=granted)[0] != "not_granted"
+
+
+def _customer_visibility(db: Session, resolved: str) -> tuple[bool, frozenset[str] | None]:
+    """(include, ids) for the Customer block: office staff see every active customer; a dealer (linked
+    customers, no office access type, `ContactCustomerScope.enforced`) only its own links; a contact with
+    neither gets no Customer block. Raises on a lookup error (run in a savepoint by `_lookup_lines`)."""
+    from app.services import contact_customer_scope
+
+    scope = contact_customer_scope.contact_customer_scope(db, str(resolved))
+    if scope.staff:
+        return True, None
+    if scope.enforced:
+        return True, frozenset(scope.customer_ids)
+    return False, None
+
+
+def _guarded(db: Session, fn: Any, default: Any) -> Any:
+    """`fn()` in its own savepoint; `default` (fail closed) when it raises, with the session still usable."""
+    try:
+        with db.begin_nested():
+            return fn()
+    except Exception:  # noqa: BLE001 - fail closed
+        logger.warning("chatbot: lookup list check failed", exc_info=True)
+        return default
+
+
+def _lookup_visibility(
+    db: Session, contact_respond_id: str, space_id: Any
+) -> tuple[bool, bool, frozenset[str] | None]:
+    """(include_salespeople, include_customers, customer_ids) for the contact: the contact is resolved once and each
+    check runs in its own savepoint, so a database error in one drops only that block."""
+    from app.services.field_access import resolve_contact_with_null_workspace_fallback
+
+    resolved = _guarded(
+        db,
+        lambda: resolve_contact_with_null_workspace_fallback(
+            db, contact_id=contact_respond_id, space_id=(str(space_id).strip() or None) if space_id else None
+        ),
+        None,
+    )
+    include_salespeople = bool(resolved) and _guarded(db, lambda: _may_see_salespeople(db, str(resolved)), False)
+    include_customers, customer_ids = (
+        _guarded(db, lambda: _customer_visibility(db, str(resolved)), (False, None)) if resolved else (False, None)
+    )
+    return include_salespeople, include_customers, customer_ids
+
+
+def _lookup_lines(
+    db: Session, message: str, config: Any, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None = None, held: dict[str, tuple[str, ...]] | None = None,
+) -> tuple[list[str], dict[str, Any]]:
+    """CHAT-SLIM-INDEX: the lookup-list blocks for the message's own line and the values the State already holds
+    (`held`, CHAT-V66-REGRESSIONS), plus the trace event
+    (`pieces` and `hits`). Advisory like `_candidate_lines`: a failure (loader, embedder, anything)
+    leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
+    resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
+    database error in one drops only that block (fail closed)."""
+    try:
+        # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
+        embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
+        pieces_ready = lookup_lists.prefetch(message, embed)
+        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        with db.begin_nested():
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+            )
+            brand_words = lookup_lists.brand_words(db, brands)
+            lookup_lists.warm(rows, embed)
+            usable = lookup_lists.usable_embedder(rows, embed)
+            if usable is not None and not pieces_ready():
+                usable = None  # the round trip did not arrive in time: spelling only, never a second request
+            hits = lookup_lists.shortlist(message, rows, usable, brand_words=brand_words, held=held)
+            # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
+            if numbers:
+                hits["spec"] = [*numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+        event = {
+            "pieces": lookup_lists.pieces(message),
+            "hits": [
+                {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
+                for name in hits
+                for h in hits[name]
+            ],
+        }
+        return lookup_lists.render(hits), event
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
+        return [], {"pieces": [], "hits": [], "failed": True}
+
+
+@dataclass
+class _SpanPrep:
+    """What the span pass needs from the turn's session, so the span call itself runs with none open."""
+
+    message: str
+    rows: list[lookup_lists.LookupRow]
+    spec_key_rows: list[lookup_lists.LookupRow]
+    brand_words: frozenset[str]
+    numbers: list[lookup_lists.Hit]
+    held: dict[str, tuple[str, ...]]
+    embed: Any
+    config: span_extract.SpanConfig | None
+
+
+def _span_prep(
+    db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
+    brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
+) -> _SpanPrep | None:
+    """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
+    rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
+    try:
+        embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
+        include_salespeople, include_customers, customer_ids = _lookup_visibility(db, contact_respond_id, space_id)
+        with db.begin_nested():
+            from app.services.product_spec_registry import active_registry
+
+            rows = lookup_lists.load_rows(
+                db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+            )
+            spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
+            brand_words = lookup_lists.brand_words(db, brands)
+            numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
+        config = None
+        try:
+            with db.begin_nested():
+                config = span_extract.resolve_config(db, llm_choice=llm_choice)
+        except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
+            logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
+        lookup_lists.warm([*rows, *spec_keys], embed)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config)
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
+        return None
+
+
+def _hits_of(resolutions: list[list_resolver.Resolution]) -> dict[str, list[lookup_lists.Hit]]:
+    """The resolver's matched rows as lookup hits: per list, best first, one hit per row. Spec-name rows have no
+    block (`lookup_lists.render` knows no such list); they are in the resolver so "colour" is not read as a value."""
+    best: dict[str, dict[str, lookup_lists.Hit]] = {}
+    for res in resolutions:
+        for c in res.candidates:
+            seen = best.setdefault(c.row.list_name, {})
+            if c.row.key not in seen or seen[c.row.key].spelling + seen[c.row.key].meaning < c.score:
+                spelled = c.signal != "meaning"
+                seen[c.row.key] = lookup_lists.Hit(c.row, res.span.text, c.score if spelled else 0.0, 0.0 if spelled else c.score)
+    return {name: sorted(h.values(), key=lambda x: (-(x.spelling + x.meaning), x.row.label)) for name, h in best.items()}
+
+
+def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_respond_id: str, dry_run: bool,
+                 turn_id: str | None) -> tuple[list[str], dict[str, Any], dict[str, Any]]:
+    """The span call, then the lookup blocks. Runs with no DB session open. Returns (lines, `lookup_lists` event,
+    `span_extract` event). A call that fails or answers unreadably leaves today's n-gram lines (`fallback`)."""
+    config = prep.config
+    answer = span_extract.extract(config, prep.message) if config is not None else None
+    event: dict[str, Any] = {
+        "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
+        "provider": config.provider if config else None, "model": config.model if config else None,
+        "model_source": config.model_source if config else None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
+        "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
+    }
+    if answer is not None and answer.usage and not dry_run:
+        try:
+            with _session(session_factory) as db:
+                record_turn_llm_usage(
+                    db, feature=span_extract.FEATURE, usage=answer.usage, response_time_ms=answer.ms,
+                    contact_respond_id=contact_respond_id, answered=answer.spans is not None, chatbot_turn_id=turn_id,
+                )
+        except Exception:  # noqa: BLE001 - telemetry must never fail a customer's turn
+            logger.warning("chatbot turn %s: span usage log failed", turn_id, exc_info=True)
+    reason = "no_config" if answer is None else answer.failure
+    try:
+        hits: dict[str, list[lookup_lists.Hit]] | None = None
+        if answer is not None and answer.spans is not None:
+            try:
+                all_rows = [*prep.rows, *prep.spec_key_rows]
+                embed = lookup_lists.usable_embedder(all_rows, prep.embed)
+                resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
+                # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
+                # resolved as their own untyped span, one level only.
+                rest = [
+                    list_resolver.Span(left)
+                    for r in resolutions
+                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code"
+                    for left in [list_resolver.unmatched_words(r.span.text, r.candidates[0].row, all_rows)]
+                    if left
+                ]
+                extra = list_resolver.resolve(rest, all_rows, embed=embed) if rest else []
+                hits = _hits_of([*resolutions, *extra])
+                # V2: rows the message spells near-exactly join the span rows (after them, no duplicates). Spelling
+                # only: no embedder is passed, so this makes no network call after the session closed.
+                near_exact = 0
+                for name, spelled in lookup_lists.shortlist(
+                    prep.message, prep.rows, None, brand_words=prep.brand_words
+                ).items():
+                    have = {h.row.key for h in hits.get(name, [])}
+                    added = [h for h in spelled if h.spelling >= lookup_lists.NEAR_EXACT_SPELLING and h.row.key not in have]
+                    near_exact += len(added)
+                    hits[name] = [*hits.get(name, []), *added]
+                event["near_exact_rows"] = near_exact
+                for name, held_hits in lookup_lists.shortlist("", prep.rows, None, held=prep.held).items():
+                    known = {h.row.key for h in held_hits}
+                    hits[name] = [*held_hits, *(h for h in hits.get(name, []) if h.row.key not in known)]
+                hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
+                event["spans"] = [
+                    {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates)}
+                    for r in resolutions
+                ] + [
+                    {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True}
+                    for r in extra
+                ]
+                lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}
+            except Exception:  # noqa: BLE001 - the resolver or the adapter failed: today's n-gram lines take over
+                logger.warning("chatbot: span matching failed; using the n-gram lookup", exc_info=True)
+                hits, reason = None, "resolver_error"
+        if hits is None:
+            event["fallback"], event["fallback_reason"] = True, reason
+            hits = lookup_lists.shortlist(
+                prep.message, prep.rows, lookup_lists.usable_embedder(prep.rows, prep.embed),
+                brand_words=prep.brand_words, held=prep.held,
+            )
+            lookup_event = {"pieces": lookup_lists.pieces(prep.message), "fallback": True}
+        # Spec NUMBERS join the spec block on every path, as in `_lookup_lines`.
+        if prep.numbers:
+            hits["spec"] = [*prep.numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+        lines = lookup_lists.render(hits)
+        event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
+        lookup_event["hits"] = [
+            {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
+            for name in hits
+            for h in hits[name]
+        ]
+        return lines, lookup_event, event
+    except Exception:  # noqa: BLE001 - advisory block, never a failed turn
+        logger.warning("chatbot: span lookup failed; parsing without lookup lists", exc_info=True)
+        event["fallback"], event["fallback_reason"] = True, "resolver_error"
+        return [], {"pieces": [], "hits": [], "failed": True}, event
+
+
 def _scoped_factory(
     factory: SessionFactory, scope: frozenset, brand_scope: frozenset | None = None
 ) -> SessionFactory:
@@ -1749,8 +2003,31 @@ def _close_turn(
         f"{stage!r} is not a declared turn stage - a typo here lands in the column and "
         f"reads as an unknown state on the trace screen. Declared: {TURN_FAILURE_STAGES}"
     )
+    # CHAT-INBOX-QUEUE: on the inbox drain a turn may still yield here (look-ahead), before
+    # anything is written, and its close leaves the row `processing`: the drain marks it
+    # with this status only once the sender POST has returned (`inbox_queue._finish`).
+    drain_run = inbox_queue.current_run(turn_id)
+    if drain_run is not None:
+        inbox_queue.checkpoint(turn_id)
     row = db.query(ChatbotTurn).filter(ChatbotTurn.id == turn_id).first()
     if row is None:  # pragma: no cover - the row was inserted two lines earlier
+        return
+    if drain_run is not None:
+        if drain_run.close is not None and drain_run.close[0] in _TERMINAL_STATUSES:
+            logger.debug("chatbot turn %s: refused a second close on the inbox drain", turn_id)
+            return
+        drain_run.close = (status, stage)
+        if status not in _TERMINAL_STATUSES:
+            # `delegated`: the in-process tail (`complete_turn`) runs from this state.
+            row.status = status
+            row.stage = stage
+        row.branch_kind = branch_kind
+        row.error = error
+        marker = [] if inbox_queue.inbox_records(records) else inbox_queue.inbox_records(row.trace)
+        row.trace = [*marker, *records]
+        row.response = trace_mod.cap_document(response)
+        row.finished_at = _now()
+        db.commit()
         return
     if row.finished_at is not None and row.status in _TERMINAL_STATUSES:
         # Debug, not warning: this is an EXPECTED sequence on the failure path (the tail
@@ -2569,10 +2846,21 @@ def _positions_read_elsewhere(state: Any) -> bool:
 
 
 def run_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    offload: bool | None = None,
+    queued_turn_id: str | None = None,
 ) -> TurnResult:
     """One turn, then the final reply pass (`_localize_result`, called by `_run_turn` at its
-    one exit, just before the messages answered ahead are put in front of the actions)."""
+    one exit, just before the messages answered ahead are put in front of the actions).
+
+    `queued_turn_id` (CHAT-INBOX-QUEUE): the inbox drain runs a row it already claimed, in
+    this process (`inbox_queue.drain`)."""
+    if queued_turn_id is not None:
+        return _run_turn(
+            envelope, session_factory=session_factory, offload=False, queued_turn_id=queued_turn_id
+        )
     return _run_turn(envelope, session_factory=session_factory, offload=offload)
 
 
@@ -2639,7 +2927,11 @@ def _ai_allowed(session_factory: SessionFactory, contact_respond_id: str) -> boo
 
 
 def _ai_not_allowed_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, contact_respond_id: str
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    contact_respond_id: str,
+    turn_id: str | None = None,
 ) -> TurnResult:
     """Close a turn for a contact the CRM does not let the AI answer, sending nothing.
 
@@ -2658,8 +2950,13 @@ def _ai_not_allowed_turn(
     dry_run = envelope.dry_run
     message_id = _message_id(envelope)
     with _session(session_factory) as db:
-        existing = _existing_turn(
-            db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+        # `turn_id`: the inbox drain's claimed row (CHAT-INBOX-QUEUE), closed in place.
+        existing = (
+            None
+            if turn_id is not None
+            else _existing_turn(
+                db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+            )
         )
         retrying = existing if _awaiting_retry(existing) else None
         if existing is not None and retrying is None:
@@ -2670,24 +2967,25 @@ def _ai_not_allowed_turn(
             .first()
             is not None
         )
-        try:
-            row = _insert_turn(
-                db,
-                envelope=envelope,
-                contact_respond_id=contact_respond_id,
-                retrying=retrying,
-                queued=False,
-            )
-        except IntegrityError:
-            # Same TOCTOU as `_run_turn`: a racing delivery inserted first; read its row.
-            db.rollback()
-            winner = _select_turn(
-                db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
-            )
-            if winner is None or _awaiting_retry(winner):
-                raise
-            return _duplicate_result(winner)
-        turn_id = str(row.id)
+        if turn_id is None:
+            try:
+                row = _insert_turn(
+                    db,
+                    envelope=envelope,
+                    contact_respond_id=contact_respond_id,
+                    retrying=retrying,
+                    queued=False,
+                )
+            except IntegrityError:
+                # Same TOCTOU as `_run_turn`: a racing delivery inserted first; read its row.
+                db.rollback()
+                winner = _select_turn(
+                    db, contact_respond_id=contact_respond_id, message_id=message_id, is_test=dry_run
+                )
+                if winner is None or _awaiting_retry(winner):
+                    raise
+                return _duplicate_result(winner)
+            turn_id = str(row.id)
         turn_trace.record(
             "received",
             status="skipped",
@@ -2720,7 +3018,11 @@ def _ai_not_allowed_turn(
 
 @_refer_tracked
 def _run_turn(
-    envelope: Envelope, *, session_factory: SessionFactory, offload: bool | None = None
+    envelope: Envelope,
+    *,
+    session_factory: SessionFactory,
+    offload: bool | None = None,
+    queued_turn_id: str | None = None,
 ) -> TurnResult:
     """Run the head of one turn. NEVER raises for a business failure; records it.
 
@@ -2738,6 +3040,10 @@ def _run_turn(
     `offload` exists for ONE caller: the RQ job (`app/tasks/chat_turns.py`) passes `False`
     so the worker actually runs the turn instead of enqueuing it to itself forever. Every
     other caller leaves it None and gets whatever `CHATBOT_TURN_ON_WORKER` says.
+
+    `queued_turn_id` (CHAT-INBOX-QUEUE): the row the inbox drain claimed. It already exists
+    and the drain holds the contact's mutex, so there is no dedup, no ticket, no insert and
+    no answering of earlier messages (the drain takes them in send order).
     """
     contact_respond_id = _contact_respond_id(envelope)
     # H56. BEFORE the offload branch, so the invariant reads the same on every entry:
@@ -2756,7 +3062,10 @@ def _run_turn(
     # "could not tell" must never answer the customer.
     if not _ai_allowed(session_factory, contact_respond_id):
         return _ai_not_allowed_turn(
-            envelope, session_factory=session_factory, contact_respond_id=contact_respond_id
+            envelope,
+            session_factory=session_factory,
+            contact_respond_id=contact_respond_id,
+            turn_id=queued_turn_id,
         )
 
     if offload is None:
@@ -2797,15 +3106,23 @@ def _run_turn(
             # this contact, EVERY live turn of it takes the ticket: the direct turn, and the
             # n8n copy of a later message that would otherwise run beside it.
             ordered = (
-                _s7_mode(db, switches)
-                or envelope.ingress == DIRECT_INGRESS
-                or direct_ingress.covers(switches, contact_respond_id)
-            ) and not dry_run
-            existing = _existing_turn(
-                db,
-                contact_respond_id=contact_respond_id,
-                message_id=message_id,
-                is_test=dry_run,
+                (
+                    _s7_mode(db, switches)
+                    or envelope.ingress == DIRECT_INGRESS
+                    or direct_ingress.covers(switches, contact_respond_id)
+                )
+                and not dry_run
+                and queued_turn_id is None
+            )
+            existing = (
+                None
+                if queued_turn_id is not None
+                else _existing_turn(
+                    db,
+                    contact_respond_id=contact_respond_id,
+                    message_id=message_id,
+                    is_test=dry_run,
+                )
             )
             retrying = existing if _awaiting_retry(existing) else None
             if existing is not None and retrying is None:
@@ -2858,33 +3175,36 @@ def _run_turn(
                     )
                     ticket = None
 
-            try:
-                row = _insert_turn(
-                    db,
-                    envelope=envelope,
-                    contact_respond_id=contact_respond_id,
-                    retrying=retrying,
-                    queued=ticket is not None,
-                )
-            except IntegrityError:
-                # The SELECT above is a TOCTOU window, not a lock: a webhook delivery
-                # racing a poller re-delivery can both miss and both insert. The unique
-                # index is the real guarantee, so the loser reads the winner's row rather
-                # than 500ing. The ticket it took is released by the `finally` below.
-                db.rollback()
-                winner = _select_turn(
-                    db,
-                    contact_respond_id=contact_respond_id,
-                    message_id=message_id,
-                    is_test=dry_run,
-                )
-                if winner is None or _awaiting_retry(winner):
-                    # Either some OTHER constraint failed, or two retries of one message
-                    # raced - neither is a duplicate, and guessing would answer the
-                    # customer from a turn that never ran.
-                    raise
-                return _duplicate_result(winner)
-            turn_id = str(row.id)
+            if queued_turn_id is not None:
+                turn_id = str(queued_turn_id)
+            else:
+                try:
+                    row = _insert_turn(
+                        db,
+                        envelope=envelope,
+                        contact_respond_id=contact_respond_id,
+                        retrying=retrying,
+                        queued=ticket is not None,
+                    )
+                except IntegrityError:
+                    # The SELECT above is a TOCTOU window, not a lock: a webhook delivery
+                    # racing a poller re-delivery can both miss and both insert. The unique
+                    # index is the real guarantee, so the loser reads the winner's row rather
+                    # than 500ing. The ticket it took is released by the `finally` below.
+                    db.rollback()
+                    winner = _select_turn(
+                        db,
+                        contact_respond_id=contact_respond_id,
+                        message_id=message_id,
+                        is_test=dry_run,
+                    )
+                    if winner is None or _awaiting_retry(winner):
+                        # Either some OTHER constraint failed, or two retries of one message
+                        # raced - neither is a duplicate, and guessing would answer the
+                        # customer from a turn that never ran.
+                        raise
+                    return _duplicate_result(winner)
+                turn_id = str(row.id)
 
         # The stage the turn is currently in, for the catch-all below. A plain list because
         # the inner stages update it and the handler reads it.
@@ -2964,7 +3284,7 @@ def _run_turn(
             # Issue #1262: every earlier-SENT message of this contact the CRM already
             # knows about is answered before this one, on its own row, and its actions go
             # out ahead of this turn's. No timer: only messages the CRM has seen count.
-            if not dry_run:
+            if not dry_run and queued_turn_id is None:
                 earlier_actions, send_order_facts = _answer_earlier_messages(
                     envelope,
                     session_factory=session_factory,
@@ -3736,6 +4056,8 @@ def _close_the_episode(
             logger.warning("chatbot: the open topic read did not run", exc_info=True)
     close_trigger = episode_digest_mod.close_trigger(verdict, this_domain, open_domain)
     if close_trigger is not None and may_write_episode:
+        # CHAT-INBOX-QUEUE look-ahead: the episode is conversation state too.
+        inbox_queue.checkpoint(turn_id)
         try:
             written_frame = memory_mod.write_episode_for_reset(
                 db,
@@ -4464,17 +4786,32 @@ def _run_stages_body(  # noqa: PLR0915
         # CLOSED-LISTS-INDEX-MODE: the two full catalogue lines are indexed instead (the
         # candidate lines name the product types and spec values the words say; the index
         # lines the held products' own values), so index mode reads neither.
-        product_types = None if parser_config.closed_lists_index else turn_runtime.product_type_names(db)
-        product_details = None if parser_config.closed_lists_index else turn_runtime.product_detail_values(db)
+        # CHAT-SLIM-INDEX: a version with the LOOKUP LISTS line gets the blocks instead of the five lists.
+        lists_free = parser_config.closed_lists_index or parser_config.lookup_lists
+        product_types = None if lists_free else turn_runtime.product_type_names(db)
+        product_details = None if lists_free else turn_runtime.product_detail_values(db)
         # CHAT-CLOSED-LISTS: what is on file under the words of this message, for a
         # version carrying the CLOSED LISTS section only (code shortlists, the parser picks).
         # H1: the contact's hidden spec keys (the real policy, `head/access`), read once here and
         # applied at the parser's two entries (the block it is shown, the spec entities it emits).
         hidden_spec = (
             frozenset(access_mod._hidden_spec_keys(db, contact_id=str(contact_respond_id), space_id=default_space_id(db)))
-            if parser_config.closed_lists
+            if parser_config.closed_lists or parser_config.lookup_lists
             else frozenset()
         )
+        lookup_lines, lookup_event, span_prep, span_event = None, None, None, None
+        if parser_config.lookup_spans:
+            # ENTITY-EXTRACT-MATCH S2: the rows are read here; the span call runs once this session is closed.
+            span_prep = _span_prep(
+                db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+                lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
+            )
+            lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
+        elif parser_config.lookup_lists:
+            lookup_lines, lookup_event = _lookup_lines(
+                db, user_turn.own_text, parser_config, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
+                lookup_lists.held_values(chat_state._subject(state_in.focus)),
+            )
         index_matches: list[dict] = []
         index_failed: list[bool] = []
         candidate_lines, listed_codes, pick_info = (
@@ -4490,6 +4827,12 @@ def _run_stages_body(  # noqa: PLR0915
             )
             if parser_config.closed_lists
             else (None, frozenset(), {})
+        )
+
+    if span_prep is not None:
+        lookup_lines, lookup_event, span_event = _span_lookup(
+            span_prep, session_factory=session_factory, contact_respond_id=str(contact_respond_id), dry_run=dry_run,
+            turn_id=turn_id,
         )
 
     # -- B PARSER (NO DB SESSION IS OPEN HERE) ------------------------------ #
@@ -4533,15 +4876,18 @@ def _run_stages_body(  # noqa: PLR0915
         media_line=None,
         task_lines=parser.open_task_lines(state_in.focus, open_question),
         open_question_line=parser.open_question_line(open_question),
-        brands=brands,
-        promotion_kinds=promotion_kinds,
+        brands=None if parser_config.lookup_lists else brands,
+        promotion_kinds=None if parser_config.lookup_lists else promotion_kinds,
         # REPORT-SMART-L R9: printed only when the prompt names the line (`ParserConfig.sales_channels`; owner ruling
         # 22 Oct 23:20, PLAN-report-smart-owner-1022.md:40-45: the line pairs with the template rule that names it).
-        sales_channels=list(SALES_CHANNELS) if parser_config.sales_channels else None,
+        sales_channels=(
+            list(SALES_CHANNELS) if parser_config.sales_channels and not parser_config.lookup_lists else None
+        ),
         product_types=product_types,
         product_details=product_details,
         recent_exchanges=recent,
         candidate_lines=candidate_lines,
+        lookup_lines=lookup_lines,
         state_block=state_block,
     )
     user_block, context_report = context_mod.assemble(context_layers)
@@ -4714,6 +5060,10 @@ def _run_stages_body(  # noqa: PLR0915
         raw={"parser_raw": parser_raw, "derived": verdict},
     )
     turn_trace.add("prompt_text", {"text": user_block})
+    if lookup_event is not None:
+        turn_trace.add("lookup_lists", lookup_event)
+    if span_event is not None:
+        turn_trace.add("span_extract", span_event)
     if parser_config.closed_lists_index:
         turn_trace.add(
             "closed_lists_index",
@@ -4970,6 +5320,8 @@ def _run_stages_body(  # noqa: PLR0915
     # so grounding never splits one ("ZZT SINK" into the class SINK plus a spec word).
     from app.services.chatbot.lanes.business import report_ask as _report_ask
 
+    # CHAT-CUSTOMER-PICK-RESUME: a pick's axis naming the roster's own kind is the pick, not a breakdown.
+    verdict = _report_ask.without_pick_axis(verdict, state_in.pending)
     # REPORT-SMART-1021: an axis the named report kind's tool cannot draw is the report ask's.
     verdict = _report_ask.by_capability(verdict)
     verdict, _ranking_words = _report_ask.hold_words(verdict)
@@ -5136,6 +5488,41 @@ def _run_stages_body(  # noqa: PLR0915
         open_ask = state_in.focus.required_ask
         state_in.focus.required_ask = None
         asked_before, replaced_ask = open_ask, None
+        # SALES-TARGET-CHAT slice 2: a salesperson logging an opportunity. The parser's
+        # `log_opportunity` status, a declared answer to the lane's own field question, or a
+        # yes / no to its read-back is the lane's turn, answered whole before any other seam
+        # reads the verdict (`lanes/opportunity.py`). Any other ask drops an open read-back.
+        # Reachable only when the active parser prompt carries the LOG OPPORTUNITY line
+        # (`ParserConfig.opportunity`): a prompt without it (production v63) never offers the lane.
+        if (
+            access.get("allowed") is True
+            and parser_config.opportunity
+            and opportunity_lane.takes_turn(verdict, open_ask, state_in.pending)
+        ):
+            return _run_opportunity_arm(
+                db,
+                turn_id=turn_id,
+                envelope=envelope,
+                verdict=verdict,
+                parser_verdict=parser_verdict,
+                open_ask=open_ask,
+                state=state_in,
+                access=access,
+                actions=actions,
+                dry_run=dry_run,
+                session_factory=session_factory,
+                turn_trace=turn_trace,
+                stage=stage,
+                contact_respond_id=contact_respond_id,
+                session_block=session_block,
+                known_phone=known_phone,
+                remembered_before=remembered_before,
+                recalled=recalled,
+                user_turn=user_turn,
+                profile=profile,
+            )
+        if opportunity_lane.own_pending(state_in.pending) is not None:
+            state_in = dataclasses_replace(state_in, pending=None)
         parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and report_ask.names_its_own_ask(
             verdict, open_ask, parser_ops=parser_ops
@@ -5595,6 +5982,11 @@ def _run_stages_body(  # noqa: PLR0915
         ) or (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
             and _SALES_REPORT_GRANT in _granted
+        ) or (
+            # SALES-TARGET-CHAT: the target ask is exempt under its own grant; whose customer
+            # it may name is the route's call (403 customer_not_permitted).
+            jsc.js_string(parsed_output.get("order_status") or "").strip() == "sales_target"
+            and "sales.sales_target" in _granted
         )
         # The grant opens the report's customers, never their delivery orders: the picker's DO
         # probe stays off for any unlinked contact that is not document staff.
@@ -7748,7 +8140,12 @@ def _run_stages_body(  # noqa: PLR0915
                     "delegate_error": lane_error_text,
                 },
             )
-        elif delegate is not None and (s7_mode or envelope.ingress == DIRECT_INGRESS) and not dry_run:
+        elif (
+            delegate is not None
+            and (s7_mode or envelope.ingress == DIRECT_INGRESS or inbox_queue.draining())
+            and not dry_run
+        ):
+            # CHAT-INBOX-QUEUE (IQ-44): a queued turn has no n8n spine waiting on it either.
             # CHAT-SPEED: a webhook-started turn has no n8n spine behind it either, so a lane
             # that still delegates is closed the S7 way rather than left as a ghost.
             # S7 mode retires the n8n tail: a turn that still delegates has NOBODY to
@@ -7760,6 +8157,10 @@ def _run_stages_body(  # noqa: PLR0915
                 f"system_settings.chatbot_completed_lanes on a build that can complete "
                 f"it, or turn S7 mode off."
                 if s7_mode
+                else f"This turn ran on the inbox queue, which has no n8n spine to finish "
+                f"the {delegate!r} lane. Leave this lane's messages to n8n by turning "
+                f"direct ingress off until the CRM completes {branch_kind!r}."
+                if inbox_queue.draining()
                 else f"This turn came through direct ingress (the respond.io webhook), "
                 f"which has no n8n spine to finish the {delegate!r} lane. Leave this "
                 f"lane's messages to n8n by turning direct ingress off until the CRM "
@@ -8350,7 +8751,7 @@ def _run_answer(
             written=written,
             facts_saved=facts_saved,
         )
-        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run)]
+        lane_actions = [*actions, *_answer_actions(answer, dry_run=dry_run, reply=reply)]
         turn_trace.record(
             "sent",
             summary="Handed the reply to the caller to send.",
@@ -8484,6 +8885,93 @@ def _dropped_reason(db: Session, key: str, value: Any) -> str:
     if profile_facts_mod._normalize_for_stated(key, spec, value, db) is None:
         return "invalid value"
     return "outranked"
+
+
+def _run_opportunity_arm(
+    db: Session,
+    *,
+    turn_id: str,
+    envelope: Envelope,
+    verdict: dict[str, Any],
+    parser_verdict: dict[str, Any],
+    open_ask: Any,
+    state: Any,
+    access: dict[str, Any],
+    actions: list[dict[str, Any]],
+    dry_run: bool,
+    session_factory: SessionFactory,
+    turn_trace: Any,
+    stage: list[str],
+    contact_respond_id: str,
+    session_block: Any,
+    known_phone: str | None,
+    remembered_before: dict[str, Any],
+    recalled: list[dict[str, Any]],
+    user_turn: Any,
+    profile: Any,
+) -> TurnResult:
+    """SALES-TARGET-CHAT slice 2: the `log_opportunity` arm. The lane answers the whole turn
+    (`lanes/opportunity.run`: who may log, the field asked, the read-back or the save); this
+    routes it, carries its open field question (`focus.required_ask`) and its read-back
+    (`pending`) to the next message, and hands the reply to the ONE answer tail. A dry run
+    calls the lane too: the write goes with `dry_run`, so nothing is saved (LESSONS-LEARNT 101)."""
+    branch_kind = opportunity_lane.BRANCH_KIND
+    space_id = default_space_id(db)
+    salesperson = opportunity_lane.is_salesperson(db, contact_respond_id, space_id)
+    item = _stamp_item(access, branch_kind, {})
+    item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
+    turn_trace.record(
+        "routed",
+        summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
+        why="The parser read the message as logging a sales opportunity, or as the answer to its question.",
+        facts={"lane": branch_kind, "salesperson": salesperson, "domains": ["sales"]},
+        raw={"item": item},
+    )
+    stage[0] = "looked_up"
+    lane = opportunity_lane.run(
+        verdict,
+        open_ask=open_ask,
+        pending=state.pending,
+        salesperson=salesperson,
+        contact_respond_id=contact_respond_id,
+        space_id=space_id,
+        dry_run=dry_run,
+        turn_no=state.turn_no,
+    )
+    turn_trace.add("opportunity", {"called": list(lane.called), "asking": (lane.slot or {}).get("asking"),
+                                   "read_back": lane.pending is not None, "dry_run": dry_run})
+    state_out = dataclasses_replace(state, pending=lane.pending)
+    state_out.focus.required_ask = lane.slot
+    ctx = build_ctx(
+        contact=_contact_block(envelope, known_phone),
+        text=_tf_message(envelope),
+        session=session_block,
+        parse={"output": verdict, "_parser_raw": parser_verdict},
+        access=access,
+        media=getattr(envelope, "media", None),
+    )[0]["json"]["ctx"]
+    # The routing session read only; it is done before the answer tail writes, as on the main
+    # path (whose tail runs after that session's block has closed it).
+    db.close()
+    return _run_answer(
+        turn_id=turn_id,
+        ctx=ctx,
+        item=item,
+        branch_kind=branch_kind,
+        actions=actions,
+        answer=turn_compose.Answer(text=lane.text),
+        state=state_out,
+        remembered_before=remembered_before,
+        dry_run=dry_run,
+        session_factory=session_factory,
+        turn_trace=turn_trace,
+        stage=stage,
+        contact_respond_id=contact_respond_id,
+        verdict=verdict,
+        recalled=recalled,
+        chat_console=_chat_console(envelope),
+        refused=not salesperson,
+    )
 
 
 def _run_entities_only_arm(
@@ -8673,8 +9161,9 @@ def _run_entities_only_arm(
     )
 
 
-def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
-    """What the caller executes: the message, then any files, in that order."""
+def _answer_actions(answer: Any, *, dry_run: bool, reply: dict[str, Any]) -> list[dict[str, Any]]:
+    """What the caller executes: the message, then any files, in that order. The files
+    action carries the persisted `reply`, as the tail's and the formatter's do."""
     built: list[dict[str, Any]] = []
     words = getattr(answer, "text", "") or ""
     if words.strip():
@@ -8687,7 +9176,12 @@ def _answer_actions(answer: Any, *, dry_run: bool) -> list[dict[str, Any]]:
         )
     if answer.files:
         built.append(
-            {"kind": "send_attachments", "attachments_src": answer.files, "dry_run": dry_run}
+            {
+                "kind": "send_attachments",
+                "attachments_src": answer.files,
+                "reply": dict(reply),
+                "dry_run": dry_run,
+            }
         )
     return built
 
@@ -9137,6 +9631,8 @@ def _remember_on_delegated_arm(
     write to `complete_turn` (casual, escalation): apply the verdict's statements and
     record the `memory` event, so a statement-only turn is remembered and traced like
     any other (reviewer pass at d89110c0, B1 and S22)."""
+    # CHAT-INBOX-QUEUE (IQ-45): on the inbox drain the turn gives way BEFORE it commits facts.
+    inbox_queue.checkpoint(turn_id)
     if verdict is None or remembered_before is None or contact_respond_id is None:
         return
     facts_saved = _apply_profile_statements(
@@ -9541,6 +10037,9 @@ def _run_escalation_arm(
     # or a newer product already replaced it). The lane reads its brand off the product
     # row. On the lane's item only: the row keeps the route-turn item it always had.
     lane_item = {**item, "focus_products": _focus_products(state)}
+    # CHAT-INBOX-QUEUE (IQ-27): the lane commits an SLA row and a round-robin draw it cannot
+    # undo, so on the inbox drain the turn gives way to an earlier-sent message HERE.
+    inbox_queue.checkpoint(turn_id)
     try:
         # The lane opens its OWN session (its writes are a unit of work of their own), and
         # it opens it off THIS factory rather than `SessionLocal`, so the contact's company

@@ -266,6 +266,29 @@ def test_do_lines_that_do_not_belong_are_left_out(db):
     assert everything == ["DO-KEEP"]
 
 
+def test_do_line_naming_the_so_with_a_product_not_on_it_is_in_others_with_its_sku(db):
+    """DO-SO-LINK-SURFACE (crew 25 Oct): the DO page shows such a line under this SO (it names
+    it in FromDocNo), so the SO's Delivery tab lists it too - under no line or group (Q5 of
+    SO-DELIVERIES-VIEW still holds for the lightbox), in `others`, with its own SKU."""
+    w = _world(db)
+    so_no = w["so"].so_number
+    stranger = seed_product(db, DEFAULT_COMPANY_ID, unique_code("PP"))
+    d = seed_do(db, DEFAULT_COMPANY_ID, number="DO-PP")
+    seed_do_line(db, d, stranger, w["wh1"], from_doc_no=so_no, qty=0)
+    on_line = seed_do(db, DEFAULT_COMPANY_ID, number="DO-ON-LINE")
+    seed_do_line(db, on_line, w["pa"], w["wh1"], from_doc_no=so_no)
+    other_so = seed_do(db, DEFAULT_COMPANY_ID, number="DO-ELSEWHERE")
+    seed_do_line(db, other_so, stranger, w["wh1"], from_doc_no=unique_code("SO"))
+
+    out = so_line_history(db, w["so"])
+
+    assert [(r["do_number"], r["sku"], r["qty"]) for r in out["others"]] == [
+        ("DO-PP", stranger.product_code, 0)
+    ]
+    placed = [r["do_number"] for line in out["lines"] for r in line["deliveries"]]
+    assert "DO-PP" not in placed and "DO-ON-LINE" in placed
+
+
 def test_a_do_line_of_another_document_type_is_not_a_delivery_of_this_so(db):
     w = _world(db)
     d = seed_do(db, DEFAULT_COMPANY_ID, number="DO-QT")
@@ -454,7 +477,7 @@ def test_route_returns_the_history_with_iso_dates_for_a_permitted_user(route_wor
 
     assert res.status_code == 200, res.text
     body = res.json()
-    assert set(body) == {"lines", "groups"}
+    assert set(body) == {"lines", "groups", "others"}  # others: DO-SO-LINK-SURFACE
     row = next(r for r in body["lines"] if r["line_id"] == str(line.id))
     assert row["deliveries"] == [{
         "order_id": str(d.id), "do_number": "DO-ROUTE", "do_date": "2026-09-12",

@@ -82,12 +82,13 @@ def _issue_or_404(db: Session, document, issue_id: str):
     return record
 
 
-def _editable_project(db: Session, project_id: str, current_user: dict):
+def _editable_project(db: Session, project_id: str, current_user: dict, *, write: bool = True):
+    """`write=False` for a read behind the edit right (the letter templates): it does not
+    need the project approved, only the right to work it."""
     validate_uuid_path(project_id, resource="Project")
     project = projects.get_project_or_404(db, project_id)
-    projects.assert_can_edit_project(
-        db, project, current_user["id"], permission_slugs(db, current_user["id"])
-    )
+    check = projects.assert_can_write_project if write else projects.assert_can_edit_project
+    check(db, project, current_user["id"], permission_slugs(db, current_user["id"]))
     return project
 
 
@@ -152,7 +153,7 @@ async def get_quotation_letter_templates(
     """The company's cover letter and terms for the create form's own tabs (#1341). Declared
     before ``/{document_id}`` so the literal segment is not read as a document id."""
     try:
-        project = _editable_project(db, project_id, current_user)
+        project = _editable_project(db, project_id, current_user, write=False)
         return svc.letter_templates(db, project=project)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

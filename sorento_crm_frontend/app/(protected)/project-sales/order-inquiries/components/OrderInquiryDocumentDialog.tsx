@@ -30,6 +30,7 @@ import type {
   OrderInquirySpoDetailLine,
 } from '../../_shared/types/orderInquiry.types';
 import { BookSoCell, bookSoSortValue } from '@/app/(protected)/scm/components/BookSoCell';
+import { PoLineSpoCell } from './orderInquiryDocumentPills';
 import { sameDisplayText } from '@/lib/product-display';
 
 /**
@@ -248,6 +249,7 @@ export function OrderInquiryDocumentLink({
   spoLineId,
   suggestedLineId,
   highlightLines,
+  whole = false,
 }: {
   kind: 'po' | 'spo';
   document: string;
@@ -257,6 +259,9 @@ export function OrderInquiryDocumentLink({
   spoLineId?: string | null;
   suggestedLineId?: string | null;
   highlightLines?: number[];
+  /** LINKAGE-UNIFY U3 round 5 (owner): the number never truncates - the PO/SPO cells,
+   * where the pills beside it give way first. Off, it truncates with its `title`. */
+  whole?: boolean;
 }) {
   const [open, setOpen] = React.useState(false);
   return (
@@ -264,7 +269,9 @@ export function OrderInquiryDocumentLink({
       <button
         type="button"
         data-testid={`document-detail-trigger-${document}`}
-        className="block max-w-full truncate rounded-sm font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className={`block rounded-sm font-medium tabular-nums text-primary hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
+          whole ? 'shrink-0 whitespace-nowrap' : 'min-w-[9ch] max-w-full truncate'
+        }`}
         title={document}
         onClick={(event) => {
           event.stopPropagation();
@@ -366,17 +373,19 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     meta: { headerTitle: 'Ordered' },
   },
   {
+    // LINKAGE-UNIFY U4 (owner ruling): the PO line's figure is AutoCount's TRANSFER onto a
+    // shipping order, never a receipt - what landed is on the SPO cells beside it.
     accessorKey: 'qty_received',
     header: ({ column }) => (
-      <DataGridColumnHeader title="Received" column={column} className="justify-end" />
+      <DataGridColumnHeader title="Transferred" column={column} className="justify-end" />
     ),
     cell: ({ row }) => (
       <span className="block text-end tabular-nums">
         {formatInquiryQty(row.original.qty_received)}
       </span>
     ),
-    size: 100,
-    meta: { headerTitle: 'Received' },
+    size: 110,
+    meta: { headerTitle: 'Transferred' },
   },
   {
     accessorKey: 'remaining',
@@ -427,6 +436,36 @@ const PO_LINE_COLUMNS: ColumnDef<OrderInquiryPoDetailLine>[] = [
     cell: ({ row }) => <BookSoCell line={row.original} />,
     size: 150,
     meta: { headerTitle: 'S/O' },
+  },
+  {
+    // SUPPLY-SPO-LINK (owner, mock v2): the shipping order(s) this line was transferred
+    // onto, each the same document link an SPO number is everywhere else. LINKAGE-UNIFY U4:
+    // one entry per SPO LINE with the U3 document pills - where its goods landed, or red
+    // "SPO withdrawn" - through the piece the SCM purchase order's Lines tab draws too.
+    id: 'spo_numbers',
+    accessorFn: (line) =>
+      (line.spos ?? []).map((spo) => spo.spo_number ?? '').join(', ') ||
+      (line.spo_numbers ?? []).join(', '),
+    header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
+    cell: ({ row }) => (
+      <PoLineSpoCell
+        lineDeadReason={row.original.dead_reason}
+        // `spo_numbers` (numbers only) still rides the wire beside `spos`; read only when
+        // `spos` is absent.
+        spos={
+          row.original.spos ??
+          (row.original.spo_numbers ?? []).map((spoNumber) => ({
+            spo_number: spoNumber,
+            line_label: null,
+          }))
+        }
+        renderDocument={(spoNumber) => (
+          <OrderInquiryDocumentLink kind="spo" document={spoNumber} whole />
+        )}
+      />
+    ),
+    size: 320,
+    meta: { headerTitle: 'SPO' },
   },
 ];
 
@@ -800,11 +839,21 @@ function SpoBody({
 export function ViaSpoPoNumber({
   poNumber,
   purchaseOrderId,
+  whole = false,
 }: {
   poNumber: string;
   purchaseOrderId?: string | null;
+  /** As `OrderInquiryDocumentLink`'s own. */
+  whole?: boolean;
 }) {
-  return <OrderInquiryDocumentLink kind="po" document={poNumber} poId={purchaseOrderId ?? null} />;
+  return (
+    <OrderInquiryDocumentLink
+      kind="po"
+      document={poNumber}
+      poId={purchaseOrderId ?? null}
+      whole={whole}
+    />
+  );
 }
 
 export default OrderInquiryDocumentDialog;

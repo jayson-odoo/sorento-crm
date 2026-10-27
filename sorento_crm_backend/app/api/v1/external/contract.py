@@ -85,7 +85,13 @@ router = APIRouter()
 FIELDS_ADDED: dict[str, list[str]] = {
     "products": ["is_discontinued", "remark", "brand_code", "item_type_code"],
     "customers": ["market_segment_code", "region", "sales_agent_code"],
-    "sales_orders": ["customer_segment", "customer_region"],
+    "sales_orders": [
+        "customer_segment",
+        "customer_region",
+        "ship_info",
+        "line_remark",
+        "section_heading",
+    ],
     "purchase_orders": [
         "is_shipping_order",
         "from_so_numbers",

@@ -11,6 +11,7 @@ import DetailActions from '@/components/common/DetailActions';
 import { useOrder, ordersPagerQuery } from '../hooks/useOrders';
 import { useOrderActions } from '../actions';
 import { useDeletedRecordGuard } from '@/hooks/useDeletedRecordGuard';
+import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDate } from '@/lib/helpers';
 import OrderLinesCard from './OrderLinesCard';
 import OrderFulfilledComplaintsCard from './OrderFulfilledComplaintsCard';
@@ -26,6 +27,9 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
   const router = useRouter();
   const { data: order, isLoading } = useOrder(orderId);
   const listQs = listSearch ? `?${listSearch}` : '';
+  // DO-SO-LINK-SURFACE: the SO column's numbers open the sales order only for a user who can
+  // see it (the SCM sales-order page's own gate).
+  const canOpenSo = useHasPermission('scm.dashboard.view');
   const { actions, dialogs, pending } = useOrderActions(order, {
     onDeleted: () => router.push(`/order-management/orders${listQs}`),
   });
@@ -196,6 +200,7 @@ export default function OrderDetail({ orderId, listSearch }: OrderDetailProps) {
             orderId={orderId}
             lines={order.lines ?? []}
             readOnly={(order.autocount_owned_fields ?? []).length > 0}
+            canOpenSo={canOpenSo}
           />
         </TabsContent>
 

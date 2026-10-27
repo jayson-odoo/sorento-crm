@@ -845,6 +845,77 @@ CATALOG: tuple[ToolSpec, ...] = (
         restricted_fields=(("sales_orders.sales_report", "Sales report"),),
     ),
     ToolSpec(
+        "crm_sales_target_progress",
+        (
+            "SALES TARGET progress for the asking contact: what has been achieved against a "
+            "target, the tier reached, the next tier and the gap to it. A dealer sees the targets "
+            "of its own accounts; a salesperson sees their own target, their team's and their "
+            "dealers' (smallest gap first). The figure is the CRM target engine's own.\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` - the answer "
+            "is per contact (422 `contact_identity_required` otherwise). `date_from`/`date_to` "
+            "pick the target periods that overlap the window; omit both for today. "
+            "`customer_ids` (repeatable) narrows the dealer lines to those customers; one outside "
+            "the contact's scope answers 403 `customer_not_permitted`. A contact without the "
+            "Sales target grant answers 403 `sales_target_not_enabled`."
+        ),
+        "/api/v1/sales/target-progress",
+        (),
+        ("contact_id", "space_id", "date_from", "date_to", "customer_ids"),
+        domain="orders",
+        related_tools=("crm_sales_report",),
+        escalation_team="sales",
+        restricted_fields=(("sales.sales_target", "Sales target"),),
+    ),
+    ToolSpec(
+        "crm_sales_opportunity_customer_options",
+        (
+            "The asking SALESPERSON's own customers matching `q`, for logging a sales opportunity "
+            "in chat: each item has the customer's `code`, `name` and account `label` (A/C I, "
+            "A/C III ...). `blocked` is true when the exact name belongs only to another agent's "
+            "customer; `prospect` is true when no customer has that name (log it as a prospect).\n\n"
+            "REQUIRED: pass BOTH `contact_id` (Respond.io contact id) and `space_id` (422 "
+            "`contact_identity_required` otherwise). A contact who is not a salesperson answers 403 "
+            "`not_a_salesperson`; one who may not log opportunities answers 403 "
+            "`opportunity_not_enabled`."
+        ),
+        "/api/v1/external/sales-opportunities/customer-options",
+        (),
+        ("contact_id", "space_id", "q"),
+        domain="orders",
+        related_tools=("crm_sales_opportunity_log",),
+        escalation_team="sales",
+    ),
+    ToolSpec(
+        "crm_sales_opportunity_log",
+        (
+            "LOG a sales opportunity for the asking SALESPERSON (WRITE action: it creates a real "
+            "opportunity in stage New under the agent who owns the customer). Pass `contact_id` and "
+            "`space_id`, then `customer_id` (from `crm_sales_opportunity_customer_options`) OR "
+            "`prospect_name`, plus `title`, `expected_amount` (RM, more than zero) and "
+            "`expected_close_date` (YYYY-MM-DD). `dry_run` true runs every check and saves nothing. "
+            "RETURNS `{opportunity_no, stage, customer, prospect_name, title, expected_amount, "
+            "expected_close_date, pipeline, dry_run}`; `pipeline` is the owning agent's current "
+            "target end date and the open pipeline closing within it, null with no current target."
+        ),
+        "/api/v1/external/sales-opportunities",
+        (),
+        (),
+        method="POST",
+        body_params=(
+            "contact_id",
+            "space_id",
+            "customer_id",
+            "prospect_name",
+            "title",
+            "expected_amount",
+            "expected_close_date",
+            "dry_run",
+        ),
+        domain="orders",
+        related_tools=("crm_sales_opportunity_customer_options",),
+        escalation_team="sales",
+    ),
+    ToolSpec(
         "crm_report_ask",
         (
             "ONE flexible sales report: rank or total sales by any one dimension, for a REQUIRED "
@@ -1463,7 +1534,8 @@ CATALOG: tuple[ToolSpec, ...] = (
             "`include_summary=true` adds `summary` (po_placed_qty/po_placed_count over the "
             "filtered lines).\n\n"
             "COMPANY SCOPE: optionally pass `contact_id` (Respond.io contact id) + `space_id` to scope "
-            "results to that contact's company/companies; omit both for all-company results."
+            "results to that contact's company/companies and to the locations its stock answers may "
+            "show; omit both for all-company results."
         ),
         "/api/v1/procurement/purchase-orders/placed",
         (),
@@ -1616,6 +1688,9 @@ CATALOG: tuple[ToolSpec, ...] = (
             "<developer>', 'projects at tendering stage', 'critical projects', 'what is <salesperson> "
             "working on'. NOT for delivery orders or purchase orders -- a project is a pursuit, not a "
             "transaction.\n\n"
+            "Only APPROVED projects are listed: a portal project registration still waiting for "
+            "approval (or rejected) is not a project yet and is left out, so every row carries a "
+            "project_code.\n\n"
             "Each row returns project_code, title, developer_name, type_name, status_label, outcome "
             "(open / won / lost / partial), owner_name, estimated_sales_value, launch_date, "
             "days_since_last_activity, next_action_date, next_action_overdue, stale_level (0 fine, "

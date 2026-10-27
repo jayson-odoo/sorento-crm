@@ -8,13 +8,16 @@ S4-3 and S5-10. Schema reference: `REF-autocount-billing-schema.md`. Contract: c
 
 1. AutoCount admin grants the read-only SQL login SELECT on `IV, IVDTL, CS, CSDTL, CN, CNDTL, DN, DNDTL,
    DODTL, ARInvoice, ARDN, ARCN` (Debtor and Item are already readable), on every company DB that is in
-   scope. `DODTL` is for the DO-line hop (foundryx-shared-service PR #127, BL-SS-306): a line with
-   `FromDocType = 'DO'` joins `DODTL ON DODTL.DtlKey = <line>.FromDocDtlKey` to build the exact DO line
-   ref `{db}:DO:{DODTL.DocKey}:{DODTL.DtlKey}`, which the CRM resolves to its own DO line and that line's
-   sales order line. The ref needs `DODTL` only: `FromDocNo` already sits on the billing line, so the `DO`
-   header is not granted. Crew ruling: the link is exact, never by `FromDocNo`; if `DODTL` is unreadable the
-   shared service fails loudly at Preview rather than pushing DO-sourced lines unlinked. Check it before the
-   dry run: `SELECT TOP 1 DtlKey FROM DODTL` under the read-only login, on every company DB.
+   scope. Done 27 Oct for `AED_SORENTO` only (plus `DO`, `ARPayment*`, `ARCNKnockOff`); the login cannot
+   open the other company DBs yet. `DODTL` is for the DO-line hop (foundryx-shared-service PR #127,
+   restored by PR #132): a line with `FromDocType = 'DO'` joins `DODTL ON DODTL.DtlKey =
+   <line>.FromDocDtlKey` to build the exact DO line ref `{book}:DO:{DODTL.DocKey}:{DODTL.DtlKey}` (`book`
+   = the company's Delivery Orders feed book), which the CRM resolves to its own DO line and that line's
+   sales order line. Crew ruling: the link is exact, never by `FromDocNo`; if `DODTL` is unreadable the
+   shared service fails loudly at Preview rather than pushing DO-sourced lines unlinked. A 2025-26 line
+   carries only `FromDocNo` (`FromDocDtlKey` NULL): it goes out with type + number and no line ref, so its
+   order class falls back to the agent / debtor rungs. Check before the dry run: `SELECT TOP 1 DtlKey FROM
+   DODTL` under the read-only login, on every company DB.
 2. The REF section 6 checks have run and every [I] that the presets rely on is confirmed; the presets are
    corrected where a check failed. Record the results in section 5 below.
 3. The `finance` module is switched on for the tenant (App Store).
@@ -77,7 +80,7 @@ GROUP BY 1, 2, 3 ORDER BY abs(c.ar_outstanding - coalesce(sum(b.outstanding), 0)
 
 | Check | Result |
 |---|---|
-| REF section 6 checks (per item) | |
-| Test months (2024 or later) and per-type counts vs AutoCount | |
+| REF section 6 checks (per item) | 27 Oct, `AED_SORENTO`, read-only: drafts = `D` (filtered by the shared-service preset, PR #132); `E` kept, meaning open; `CS` has 0 rows and no `DocStatus`; `DNDTL` has no `FromDoc*`; ARDN/ARCN carry `Cancelled` (excluded); `NetTotal = TotalExTax + Tax`, `FinalTotal = NetTotal + RoundAdj`, `LocalNetTotal - LocalTax = LocalAnalysisNetTotal`: 0 exceptions; non-MYR 0 (ARInvoice: 2 USD rows all time); package children carry no money; `ARInvoice.SourceType`/`SourceKey` agrees with `DocNo` + `DebtorCode` on 370,532/370,532 rows |
+| Test months (2024 or later) and per-type counts vs AutoCount | Raw tables only (no AutoCount UI access), PR #132 presets replayed read-only: IV 22-26 Oct 2026 593 docs = raw non-draft count, NetTotal RM 1,193,742.30 exact, 1,597 lines, 0 fingerprint mismatches (14 drafts dropped); IV 1-3 Mar 2023 887 docs and 1-2 Oct 2024 998 docs exact, every DO line linked through `DODTL`; CN Jul-Oct 2026 463 docs exact; DN 2026 44 docs exact; CS 0 rows; AR 3,304 debtors, total RM 37,285,479.04 = raw IV + DN - CN excluding cancelled (cancelled ARDN RM 74,620.55 and ARCN RM 1,384,734.44 no longer counted). Comparison against AutoCount's own screens: pending the owner |
 | Yearly comparison, Basis = Invoiced, vs the AutoCount PDF (S4-3, within RM 1 per cell) | |
 | Three debtors: CRM outstanding vs AutoCount Outstanding AR Invoice report (S5-10) | |

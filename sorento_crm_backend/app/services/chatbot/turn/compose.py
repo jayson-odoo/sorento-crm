@@ -7,6 +7,7 @@
 # composer (kept, unchanged per the plan) has somewhere familiar to write into.
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field, replace
 from typing import Any
 
@@ -145,8 +146,16 @@ def _types_without_files(
     return out
 
 
+def _hashable(value: Any) -> Any:
+    """An object or list field value as a stable string, so the dedupe set below never meets
+    an unhashable value (CHAT-GROUPED-ORDER-STATUS: a raw status object crashed a turn)."""
+    if isinstance(value, (dict, list)):
+        return json.dumps(value, sort_keys=True, default=str)
+    return value
+
+
 def _row_key(fig: dict[str, Any]) -> tuple:
-    return tuple((f.get("label"), f.get("value")) for f in fig.get("fields") or [])
+    return tuple((f.get("label"), _hashable(f.get("value"))) for f in fig.get("fields") or [])
 
 
 def _render_row(n: int, fig: dict[str, Any]) -> str:

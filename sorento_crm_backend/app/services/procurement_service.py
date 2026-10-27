@@ -3100,6 +3100,48 @@ class SPOAllocationService:
                         "qty": float(link_qty or 0),
                     }
                 )
+            # LINKAGE-UNIFY U4: the placements that reached these lines through their PO
+            # line (placed on the PO, its goods transferred here), by the goods chain's own
+            # split - the quantity is what of each sits on this SPO line - marked with the
+            # PO number they came through.
+            from app.services.scm import goods_chain
+
+            via = [
+                placement
+                for placement in goods_chain.placements_on(
+                    self.db, spo_allocation_ids=alloc_ids, with_bins=False
+                )
+                if placement.via_po
+            ]
+            if via:
+                sales_side = {
+                    str(row_id): (doc_no or provisional, project_title)
+                    for row_id, doc_no, provisional, project_title in self.db.query(
+                        OrderInquiryRow.id,
+                        ProjectSalesOrder.autocount_doc_no,
+                        ProjectSalesOrder.provisional_ref,
+                        _Project.title,
+                    )
+                    .join(OrderInquiry, OrderInquiry.id == OrderInquiryRow.order_inquiry_id)
+                    .join(
+                        ProjectSalesOrder,
+                        ProjectSalesOrder.id == OrderInquiry.project_sales_order_id,
+                    )
+                    .outerjoin(_Project, _Project.id == ProjectSalesOrder.project_id)
+                    .filter(OrderInquiryRow.id.in_({p.chain.row_id for p in via}))
+                    .all()
+                }
+                for placement in via:
+                    document, customer = sales_side.get(placement.chain.row_id, (None, None))
+                    so_covered_by_alloc.setdefault(placement.document_id, []).append(
+                        {
+                            "document": document,
+                            "customer": customer,
+                            "demand_class": "project",
+                            "qty": float(placement.qty),
+                            "via_po": placement.via_po,
+                        }
+                    )
             from app.services.scm import spo_conversion_service as _spo_conv
 
             # The FIRST allocation of each SPO line, in the order this document's own query
@@ -9347,6 +9389,12 @@ class PurchaseRequestService:
         if respond_inbox_url is not None:
             dump["respond_inbox_url"] = respond_inbox_url
         requestor_value = dump.pop("requested_by_contact_id", None)
+        from app.services.project_service import assert_linkable_project
+
+        # Never a portal registration waiting for approval (PROJECT-REG-PORTAL R4).
+        assert_linkable_project(
+            self.db, dump.get("project_id"), code="purchase_request_project_not_approved"
+        )
         if "customer_id" in dump:
             from app.services.debtor_type import link_customer
 
@@ -9424,6 +9472,16 @@ class PurchaseRequestService:
         elif contact_id is None and space_id is None:
             payload["respond_inbox_url"] = None
         self._apply_sponsor_subject_to_payload(payload, header)
+        if "project_id" in payload:
+            from app.services.project_service import assert_linkable_project
+
+            # Only a CHANGED link is checked, so an older one keeps saving (R4).
+            assert_linkable_project(
+                self.db,
+                payload["project_id"],
+                header.project_id,
+                code="purchase_request_project_not_approved",
+            )
         requestor_value = payload.pop("requested_by_contact_id", _UNSET_REQUESTOR)
         self._apply_customer_link(header, payload)
         for key, value in payload.items():

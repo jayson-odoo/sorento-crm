@@ -1507,7 +1507,10 @@ export function FulfilmentBoardPanel({
    * the server adopts it inside the simulation.
    */
   const buildConfirmOrders = React.useCallback(
-    async (excludeKeys: ReadonlySet<string>, options: { adopt?: 'now' | 'defer' } = {}) => {
+    async (
+      excludeKeys: ReadonlySet<string>,
+      options: { adopt?: 'now' | 'defer'; soRemarks?: ReadonlyMap<string, string> } = {},
+    ) => {
       const adoptFirst = options.adopt !== 'defer';
       if (!board.data) return null;
       let liveBoard = board.data;
@@ -1636,6 +1639,8 @@ export function FulfilmentBoardPanel({
         batch_id: string | null;
         rejected_line_ids: string[];
         cancelled_lines: ReturnType<typeof cancelledLinesFor>;
+        /** FULFIL-SO-REMARK: the Confirm guide's Remark for this order; absent = the default. */
+        so_remark?: string;
       }[] = [];
       // An order whose planning change is already applied is NOT sent again (AC-P3-4). It is
       // reported instead, in the same place a server refusal is reported, so a press that
@@ -1814,6 +1819,9 @@ export function FulfilmentBoardPanel({
           batch_id: orderBatchId,
           rejected_line_ids: rejectedLineIds,
           cancelled_lines: cancelledLines,
+          ...(options.soRemarks?.has(salesOrderId)
+            ? { so_remark: options.soRemarks.get(salesOrderId) as string }
+            : {}),
         });
       }
       // Per-order `batch_id` above answers AC-P3-4/AC-B5 on its own. The body-level
@@ -1870,7 +1878,9 @@ export function FulfilmentBoardPanel({
    * OI-SPLIT-GUIDE (UAC F6): the guided Confirm's last step runs this press unchanged. It
    * resolves false when a call failed (the guide stays open), true once the press finished.
    */
-  const runConfirmAll = React.useCallback(async (): Promise<boolean> => {
+  const runConfirmAll = React.useCallback(async (
+    soRemarks?: ReadonlyMap<string, string>,
+  ): Promise<boolean> => {
     if (!board.data) return false;
     setConfirmingAll(true);
     setBatchResults(null);
@@ -1881,7 +1891,7 @@ export function FulfilmentBoardPanel({
     // stays on screen after the fact.
     const leftOutAtConfirm = unpostable.length;
     try {
-      const built = await buildConfirmOrders(new Set());
+      const built = await buildConfirmOrders(new Set(), { soRemarks });
       if (!built) {
         if (confirmSummary.toConfirm > 0) toast.error('Nothing could be sent for this press');
         return true;
@@ -2240,6 +2250,7 @@ export function FulfilmentBoardPanel({
           salesOrderId: order.sales_order_id,
           soNumber: order.so_number,
           soDate: order.so_date ?? null,
+          remarkType: order.remark_type ?? null,
           covered: lines.map((line) => {
             // UAC F25, F26: the planner's own remark lives in the line's saved decision.
             const facts = remarkFactsOf(line);
@@ -2254,6 +2265,7 @@ export function FulfilmentBoardPanel({
               savedRemark: facts.words,
               ownRemark: facts.own,
               remarkEditable: facts.editable,
+              isMockup: Boolean(line.is_mockup),
             };
           }),
         },

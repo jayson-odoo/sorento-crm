@@ -1051,6 +1051,9 @@ class DocumentIngestService(MasterRefResolver):
             po_ref = (payload.po_ref or "").strip() or None
             values["po_ref"] = po_ref
             values["po_ref_key"] = po_ref_key(po_ref)
+        # `ship_info` (FULFIL-SO-REMARK): same shape rule as `po_ref`, own column.
+        if "ship_info" in getattr(payload, "model_fields_set", ()) and hasattr(payload, "ship_info"):
+            values["ship_info"] = (payload.ship_info or "").strip() or None
         # PO currency default (D1): only a spec that carries a `currency`
         # header column reaches this, which today is `purchase_orders` alone -
         # so the fill is shape-driven rather than a hardcoded entity check.
@@ -1390,6 +1393,11 @@ class DocumentIngestService(MasterRefResolver):
         # re-push must never clear what an earlier push recorded - proven
         # by an explicit `null`, which DOES clear (S1 review fix), since
         # `model_fields_set` is presence, not truthiness.
+        # FULFIL-SO-REMARK: sales-order lines only; absent leaves the stored value alone.
+        if spec.entity_type == "sales_orders":
+            for column in ("line_remark", "section_heading"):
+                if column in line.model_fields_set:
+                    values[column] = (getattr(line, column) or "").strip() or None
         if "from_so_line_ref" in line.model_fields_set:
             values["from_so_line_ref"] = line.from_so_line_ref
         if "from_po_line_ref" in line.model_fields_set:
@@ -1628,6 +1636,13 @@ class DocumentIngestService(MasterRefResolver):
         # same thing for every row of THIS line table in THIS sweep - fetched
         # once here rather than once per row inside `is_referenced`.
         line_referrers = referrers_of(self.db, line_table)
+        # AC-REMOVED-LINES (owner, 26 Oct 2026): an AutoCount line (`by_ref`: it has a DtlKey
+        # this push no longer carries) that ends cancelled on a header this push does NOT
+        # cancel was REMOVED, not cancelled. Pool, duplicate-ref and already-cancelled rows
+        # are not removed AutoCount lines, and the TRANSITION guard keeps a later push of the
+        # same reduced document from releasing again.
+        removed_ids = {id(row) for row in by_ref.values()}
+        removed_lines: list[Any] = []
         for row in [*by_ref.values(), *pool, *dup_ref, *already_cancelled]:
             prior_line_status = row.line_status
             if is_referenced(self.db, line_table, row.id, referrers=line_referrers):
@@ -1644,10 +1659,27 @@ class DocumentIngestService(MasterRefResolver):
                 # re-confirmed on every later push of the same reduced document.
                 if spec.entity_type == "sales_orders" and prior_line_status != CANCELLED:
                     newly_cancelled_so_line_ids.append(row.id)
+                if (
+                    id(row) in removed_ids
+                    and prior_line_status != CANCELLED
+                    and header.status != CANCELLED
+                ):
+                    removed_lines.append(row)
             else:
                 self.db.delete(row)
                 counts["deleted"] += 1
         self.db.flush()
+        # AC-RL-07: a push carrying no lines at all (header-only, failed detail) releases
+        # nothing; the sweep above still runs as before.
+        if removed_lines and (line_values or dropped_refs):
+            from app.services.project_order_inquiry_service import ProjectOrderInquiryService
+
+            oi_service = ProjectOrderInquiryService(self.db)
+            if spec.entity_type == "purchase_orders":
+                oi_service.release_removed_lines(po_line_ids=[r.id for r in removed_lines])
+            elif spec.entity_type == "sales_orders":
+                # Retire BEFORE the flag below, which then only meets actioned rows.
+                oi_service.retire_rows_for_removed_so_lines(removed_lines)
         if newly_cancelled_so_line_ids:
             from app.services.project_order_inquiry_service import (
                 flag_rows_for_cancelled_lines,

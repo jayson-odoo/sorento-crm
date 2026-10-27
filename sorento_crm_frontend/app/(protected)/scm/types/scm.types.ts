@@ -267,6 +267,9 @@ export type SalesOrderStatus =
 
 export interface SalesOrderLine {
   id: string;
+  /** FULFIL-SO-REMARK: the line reads as a mockup line; `mockup_label` = wear the badge. */
+  is_mockup?: boolean;
+  mockup_label?: boolean;
   /** AC-CONSIGN-CRM: what a Consignment Return handed back; reporting only. */
   qty_returned?: number;
   /**
@@ -524,6 +527,9 @@ export interface SalesOrder {
   project_label_source?: 'inquiry' | 'note' | 'ref' | 'delivery' | null;
   /** The customer's own PO number as AutoCount printed it; read-only, null when blank. */
   po_ref?: string | null;
+  /** FULFIL-SO-REMARK: AutoCount Shipping Info, and the default SO remark over all lines. */
+  ship_info?: string | null;
+  remark?: string;
   /** Every distinct location its lines ship from. Plural: one order can land in two. */
   stock_locations?: string[];
   /** The planning class this order was classified into, or `null` when nobody has ever
@@ -721,6 +727,20 @@ export interface PurchaseOrderLine {
   /** True when the book named a sales order this CRM does not hold. Three display states,
    *  not two - see `BookSoCell`. */
   book_so_unresolved?: boolean | null;
+  /** LINKAGE-UNIFY U4: every SPO line this line was transferred onto, with where its goods
+   *  landed or why it brings nothing. Filled on the detail read; the list leaves it empty. */
+  spos?: PurchaseOrderLineSpo[];
+  /** `po_cancelled` when the line itself brings nothing; the SPO cell draws the red pill. */
+  dead_reason?: 'po_cancelled' | null;
+}
+
+/** LINKAGE-UNIFY U4: one SPO line a PO line was transferred onto (same shape as the order
+ *  inquiry PO popup's own). */
+export interface PurchaseOrderLineSpo {
+  spo_number: string | null;
+  line_label: string | null;
+  receipts: { qty: string; bin: string | null }[];
+  dead_reason: 'po_cancelled' | 'spo_withdrawn' | null;
 }
 
 /**
@@ -940,6 +960,11 @@ export interface SoLineDeliveryRow {
   qty: number;
 }
 
+/** A DO line naming the SO whose product is on no line of it: it names its own SKU. */
+export interface SoOtherDeliveryRow extends SoLineDeliveryRow {
+  sku: string | null;
+}
+
 /** One Cancel SO line placed under a sales-order line; `qty` is null for `group_whole`. */
 export interface SoLineCancelRow {
   doc_no: string;
@@ -966,4 +991,6 @@ export interface SoProductGroupHistory {
 export interface SalesOrderDeliveries {
   lines: SoLineHistory[];
   groups: SoProductGroupHistory[];
+  /** DO lines naming this SO whose product is on no line of it (DO-SO-LINK-SURFACE). */
+  others?: SoOtherDeliveryRow[];
 }

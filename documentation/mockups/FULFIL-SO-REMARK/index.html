@@ -1,0 +1,160 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>FULFIL-SO-REMARK mock v3</title>
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light theme), same set as documentation/mockups/OI-SPLIT-VIEW */
+:root{--foreground:#09090b;--muted:#f4f4f5;--muted-fg:#71717a;--border:#e4e4e7;--input:#e4e4e7;--primary:#3b82f6;--primary-soft:#eff6ff;--success:#15803d;--success-soft:#f0fdf4;--success-line:#bbf7d0;--warning:#a16207;--warning-soft:#fefce8;--warning-line:#fde68a;--info:#1d4ed8;--info-soft:#eff6ff;--info-line:#bfdbfe;--page:#f7f7f8;--ease:cubic-bezier(.2,0,0,1)}
+*{box-sizing:border-box}
+body{margin:0;background:var(--page);color:var(--foreground);font:14px/1.45 Inter,ui-sans-serif,system-ui,sans-serif}
+h1{font-size:22px;margin:0 0 4px}
+.doc{max-width:1360px;margin:0 auto;padding:16px}
+.intro{color:var(--muted-fg);font-size:13px;margin:0 0 12px;max-width:1040px}
+section{margin:0 0 30px}
+section>h2{font-size:15px;margin:0 0 6px}
+.why{font-size:12.5px;color:var(--muted-fg);margin:0 0 10px;max-width:1040px}
+.card{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px;max-width:1100px}
+.card ol{margin:6px 0 0;padding-left:20px;font-size:13px}
+.card li{margin:0 0 5px}
+.qs label{display:block;font-size:12.5px;margin:2px 0 2px 4px;color:#3f3f46}
+.qs input{margin-right:6px}
+.qs .rec{color:var(--success);font-weight:500}
+.mut{color:var(--muted-fg)}
+.num{text-align:right;font-variant-numeric:tabular-nums}
+.desk{width:1280px;max-width:100%;background:#fff;border:1px solid var(--border);border-radius:12px;overflow:hidden;position:relative;min-height:760px}
+.main{padding:20px 24px}
+.phone{width:375px;background:#fff;border:1px solid var(--border);border-radius:16px;overflow:hidden;position:relative;height:760px}
+/* components/ui/button.tsx */
+.btn{display:inline-flex;align-items:center;gap:5px;height:32px;padding:0 12px;border-radius:6px;border:1px solid var(--input);background:#fff;font:500 13px Inter,ui-sans-serif,system-ui,sans-serif;color:var(--foreground);cursor:pointer;white-space:nowrap}
+.btn.pri{background:var(--primary);border-color:var(--primary);color:#fff}
+.btn[disabled]{opacity:.5;cursor:not-allowed}
+.btn:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.badge{display:inline-flex;align-items:center;border-radius:6px;padding:0 7px;font-size:11.5px;line-height:20px;font-weight:500;border:1px solid transparent}
+.badge.warn{background:var(--warning-soft);color:var(--warning);border-color:var(--warning-line)}
+.badge.ok{background:var(--success-soft);color:var(--success);border-color:var(--success-line)}
+/* FulfilmentBoardPanel summary bar */
+.strip{border:1px solid var(--border);border-radius:12px;padding:12px 16px;display:flex;align-items:center;gap:10px;font-size:13.5px;color:var(--muted-fg)}
+.strip .r{margin-left:auto;display:flex;gap:8px}
+/* components/ui/dialog.tsx */
+.scrim{position:absolute;inset:0;background:rgba(9,9,11,.4);display:flex;align-items:flex-start;justify-content:center;padding-top:24px;z-index:20}
+.scrim[hidden]{display:none}
+.dlg{width:1180px;max-width:calc(100% - 24px);height:calc(100% - 48px);background:#fff;border-radius:12px;border:1px solid var(--border);box-shadow:0 20px 50px rgba(0,0,0,.2);display:flex;flex-direction:column}
+.dlg .hd{padding:16px 20px 10px;border-bottom:1px solid var(--border)}
+.dlg .hd h3{margin:0;font-size:16px}
+.dlg .bd{flex:1;overflow:auto;padding:14px 20px}
+.dlg .ft{padding:12px 20px;border-top:1px solid var(--border);display:flex;gap:8px;align-items:center}
+.dlg .ft .sp{flex:1}
+.phone .scrim{padding-top:0}
+.phone .dlg{width:100%;max-width:100%;height:100%;border-radius:0}
+/* components/common/WizardSteps.tsx */
+.steps{display:flex;gap:18px;margin:8px 0 0;font-size:12.5px;color:var(--muted-fg);flex-wrap:wrap}
+.steps span{display:flex;align-items:center;gap:6px}
+.steps i{font-style:normal;display:inline-flex;width:20px;height:20px;border-radius:50%;border:1px solid var(--border);align-items:center;justify-content:center;font-size:11px}
+.steps .on{color:var(--foreground);font-weight:500}
+.steps .on i{background:var(--primary);border-color:var(--primary);color:#fff}
+.steps .done i{background:var(--success-soft);border-color:var(--success-line);color:var(--success)}
+/* LineSplitSheet readOnly (fulfilment-planning/components/LineSplitSheet.tsx), as on the crew copy 20 Oct */
+.sheetwrap{overflow-x:auto;border:1px solid var(--border);border-radius:8px}
+table.sh{border-collapse:collapse;font-size:12.5px;min-width:1000px;width:100%}
+table.sh th{font-size:10.5px;letter-spacing:.02em;text-transform:uppercase;color:#3f3f46;font-weight:600;padding:8px 6px;border:1px solid var(--border);background:#fafafa;text-align:center}
+table.sh td{padding:8px 6px;border:1px solid var(--border);text-align:center;white-space:nowrap}
+table.sh td.b{font-weight:600}
+table.sh td.l{text-align:left}
+.pill{display:inline-flex;border-radius:999px;padding:0 8px;font-size:11px;line-height:19px;font-weight:600;margin-left:6px}
+.pill.ADVANCE,.pill.DELAY{background:var(--info-soft);color:var(--info)}
+.rem{color:var(--muted-fg)}
+.orderhd{display:flex;align-items:center;gap:10px;margin:0 0 10px}
+.orderhd b{font-size:15px}
+.empty{padding:40px 10px;text-align:center}
+.empty b{display:block;font-size:14px;margin-bottom:10px}
+.result{border:1px solid var(--border);border-radius:12px;padding:12px 16px;margin-top:12px;font-size:13.5px}
+.result .ok{color:var(--success)}
+.map{font-size:12.5px;border-collapse:collapse;width:100%;max-width:1100px;background:#fff}
+.map td,.map th{border:1px solid var(--border);padding:6px 10px;text-align:left;vertical-align:top}
+.map code{font-size:11.5px}
+.note{font-size:11.5px;color:var(--muted-fg);margin:8px 0 0}
+.badge{white-space:nowrap}
+/* phone: the sheet's own narrow behaviour (LineSplitSheet max-md:hidden on Line, SO date, S/O no, Location) */
+.phone .dk{display:none}
+.phone .orderhd{flex-wrap:wrap}
+.phone .orderhd .act{margin-left:0!important;width:100%}
+.phone table.sh{min-width:640px}
+.phone .ph-only{display:inline!important}
+
+.panels{display:grid;grid-template-columns:minmax(0,1.15fr) minmax(0,1fr);gap:20px;align-items:start}
+@media(max-width:900px){.panels{grid-template-columns:1fr}.panels>*{min-width:0}.sheetwrap,.email,.map{overflow-x:auto;max-width:100%}.orderhd,.rmk{flex-wrap:wrap}table.map{display:block;overflow-x:auto}}
+.dlg{height:auto;max-width:100%;width:100%}
+.dlg .bd{overflow:visible}
+.rmk{display:flex;align-items:center;gap:10px;margin:0 0 10px;flex-wrap:wrap}
+.rmk label{font-size:13px;font-weight:500;min-width:52px}
+.inp{position:relative;flex:1;min-width:200px;max-width:460px}
+.inp input{width:100%;height:32px;border:1px solid var(--input);border-radius:6px;padding:0 28px 0 10px;font:13px Inter,ui-sans-serif,system-ui,sans-serif;background:#fff;color:var(--foreground)}
+.inp input:focus-visible{outline:2px solid var(--primary);outline-offset:1px}
+.inp .x{position:absolute;right:4px;top:4px;width:24px;height:24px;border:0;background:none;color:var(--muted-fg);font-size:16px;cursor:pointer}
+.newtag,.newc{}
+.newtag{font-size:10px;font-weight:700;color:var(--info);background:var(--info-soft);border:1px solid var(--info-line);border-radius:4px;padding:0 5px}
+.pg{margin:0 0 14px}
+.pg.cur{padding-bottom:4px}
+.minis .pg{border:1px solid var(--border);border-radius:10px;padding:10px 12px;background:#fcfcfd}
+.minis h4{margin:14px 0 6px;font-size:12.5px;color:var(--muted-fg);font-weight:500}
+.email{background:#fff;border:1px solid var(--border);border-radius:12px;padding:16px 18px;overflow-x:auto}
+.email .meta{font-size:12px;color:var(--muted-fg);margin:0 0 10px}
+.email h2{font-size:16px;margin:4px 0 10px;text-align:center;letter-spacing:.04em}
+.email table{width:100%;border-collapse:collapse;font:11px/15px Arial,Helvetica,sans-serif;margin:0 0 12px;min-width:560px;color:#111}
+.email th{text-align:left;padding:4px;white-space:nowrap;border-bottom:1px solid #888}
+.email td{vertical-align:top}
+.email tr.grp td{background:#f4f4f5;font-weight:700;padding:4px}
+.newc{background:#fff7d6}
+.pg .sh th,.pg .sh td{font-size:12px}
+.stepsline{margin-top:6px}
+</style></head><body><div class="doc">
+<h1>FULFIL-SO-REMARK mock v3: a Remark per SO in the Confirm guide, printed in the purchasing email</h1>
+<p class="intro">Confirm (N) opens the guide. On each SO page a Remark field sits under the SO header row, prefilled with a default and clearable. It prints in the SO table of the purchasing email beside that SO. The remark is one word, decided from the lines chosen in this Confirm: Sponsorship or Purchase Request from Shipping Info; else Mockup when any chosen line is a mockup line; else blank. Only when the chosen lines mix mockup and actual units does each chosen mockup line carry a Mockup label (split page badge, email line REMARK). Panel C shows SO419417 with other line choices. Data: dev copy, read-only (item codes and quantities real; contacts masked as [contact]). Yellow cells and NEW tags mark what is new.</p>
+<section><h2>Panel A: Confirm guide, Review split step, current page SO419417 (mixed)</h2>
+<div class="panels"><div>
+<div class="dlg" role="dialog" aria-labelledby="gt"><div class="hd"><h3 id="gt">Confirm SO421287, SO423072, SO419417, SO424062</h3>
+<div class="steps"><span class="done"><i>&#10003;</i>Split</span><span class="on"><i>2</i>Review</span><span><i>3</i>Confirm</span><span class="mut">Order 3 of 4</span></div></div>
+<div class="bd">
+<div class="orderhd"><b>SO419417</b><span class="mut" style="font-size:12.5px">UNIJOH DEVELOPMENT SDN BHD (PROJECT)</span><span class="act" style="margin-left:auto"><button type="button" class="btn">Split delivery SO419417</button></span></div>
+<div class="rmk"><label for="r1">Remark</label><div class="inp"><input id="r1" type="text" placeholder="Remark (optional)" value="Mockup"><button type="button" class="x" aria-label="Clear remark">&times;</button></div><span class="newtag">NEW</span></div>
+<div class="sheetwrap"><table class="sh" style="min-width:700px"><thead><tr><th>Item code</th><th class="dk">Location</th><th>Qty</th><th>Delivery date</th><th>Split</th></tr></thead><tbody>
+<tr><td class="b l">SRTWB1515 <span class="badge warn">Mockup</span></td><td class="dk">BRW-BB</td><td>8</td><td>29/09/2026</td><td>No split</td></tr><tr><td class="b l">SRTWB7109 </td><td class="dk">BRW-BB</td><td>4</td><td>29/09/2026</td><td>No split</td></tr><tr><td class="b l">BT012-CR </td><td class="dk">BRW-BB</td><td>12</td><td>05/10/2026</td><td>No split</td></tr><tr><td class="b l">CB2829-DIY <span class="badge warn">Mockup</span></td><td class="dk">BRW-BB</td><td>2</td><td>05/10/2026</td><td>No split</td></tr><tr><td class="b l">SRT2403-CR <span class="badge warn">Mockup</span></td><td class="dk">BRW-BB</td><td>10</td><td>05/10/2026</td><td>No split</td></tr><tr><td class="b l">SRTPW0035-CR </td><td class="dk">BRW-BB</td><td>12</td><td>05/10/2026</td><td>No split</td></tr>
+<tr><td colspan="5" class="mut l">First 6 of 14 lines shown</td></tr></tbody></table></div>
+</div><div class="ft"><button type="button" class="btn">Cancel</button><span class="sp"></span><button type="button" class="btn">Back</button><button type="button" class="btn pri">Next order</button></div></div>
+</div>
+<div class="minis"><h4>The other SO pages in this Confirm (each with its default Remark)</h4><div class="pg">
+<div class="orderhd"><b>SO421287</b><span class="mut" style="font-size:12.5px">MAH SING TRADING SDN BHD (PROJECT)</span><span class="act" style="margin-left:auto"><button type="button" class="btn">Split delivery SO421287</button></span></div>
+<div class="rmk"><label for="r-SO421287">Remark</label><div class="inp"><input id="r-SO421287" type="text" placeholder="Remark (optional)" value="Sponsorship"><button type="button" class="x" aria-label="Clear remark">&times;</button></div><span class="newtag">NEW</span></div>
+<div class="sheetwrap"><table class="sh" style="min-width:640px"><thead><tr><th>Item code</th><th class="dk">Location</th><th>Qty</th><th>Delivery date</th><th>Split</th></tr></thead><tbody><tr><td class="b l">B2155-NL-BLUE </td><td class="dk">BRW-IR</td><td>15</td><td>16/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">C-FH14 </td><td class="dk">BRW-IR</td><td>15</td><td>16/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">CB310-CR-PJ </td><td class="dk">BRW-IR</td><td>6</td><td>16/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">CKS819 </td><td class="dk">BRW-IR</td><td>3</td><td>16/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">CSK14A </td><td class="dk">BRW-IR</td><td>9</td><td>16/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">M25-CR </td><td class="dk">BRW-IR</td><td>6</td><td>16/11/2026</td><td>1 row, no split</td></tr><tr><td colspan="5" class="mut l">First 6 of 14 lines shown</td></tr></tbody></table></div>
+</div><div class="pg">
+<div class="orderhd"><b>SO423072</b><span class="mut" style="font-size:12.5px">JADE GRAPHIX SDN BHD (PROJECT)</span><span class="act" style="margin-left:auto"><button type="button" class="btn">Split delivery SO423072</button></span></div>
+<div class="rmk"><label for="r-SO423072">Remark</label><div class="inp"><input id="r-SO423072" type="text" placeholder="Remark (optional)" value="Purchase Request"><button type="button" class="x" aria-label="Clear remark">&times;</button></div><span class="newtag">NEW</span></div>
+<div class="sheetwrap"><table class="sh" style="min-width:640px"><thead><tr><th>Item code</th><th class="dk">Location</th><th>Qty</th><th>Delivery date</th><th>Split</th></tr></thead><tbody><tr><td class="b l">BRC21461UW-2-MY </td><td class="dk">BRW-BB</td><td>5</td><td>03/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">WESERP10B </td><td class="dk">BRW-BB</td><td>5</td><td>03/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">BRCX21467UW-2-MY </td><td class="dk">BRW-BB</td><td>5</td><td>03/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">BRCY21467W-MY </td><td class="dk">BRW-BB</td><td>5</td><td>03/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">WESERP10B </td><td class="dk">BRW-BB</td><td>5</td><td>03/11/2026</td><td>1 row, no split</td></tr><tr><td class="b l">BRBC22131W-ENG </td><td class="dk">BRW-BB</td><td>10</td><td>03/11/2026</td><td>1 row, no split</td></tr><tr><td colspan="5" class="mut l">First 6 of 16 lines shown</td></tr></tbody></table></div>
+</div><div class="pg">
+<div class="orderhd"><b>SO424062</b><span class="mut" style="font-size:12.5px">UNIBASE TRADING SDN BHD (PROJECT)</span><span class="act" style="margin-left:auto"><button type="button" class="btn">Split delivery SO424062</button></span></div>
+<div class="rmk"><label for="r-SO424062">Remark</label><div class="inp"><input id="r-SO424062" type="text" placeholder="Remark (optional)"></div><span class="newtag">NEW</span></div>
+<div class="sheetwrap"><table class="sh" style="min-width:640px"><thead><tr><th>Item code</th><th class="dk">Location</th><th>Qty</th><th>Delivery date</th><th>Split</th></tr></thead><tbody><tr><td class="b l">SRTWB245 </td><td class="dk">BRW</td><td>1</td><td>02/10/2026</td><td>1 row, no split</td></tr><tr><td class="b l">CKS1050 </td><td class="dk">BRW-BB</td><td>8</td><td>02/10/2026</td><td>1 row, no split</td></tr><tr><td class="b l">CKSW015 </td><td class="dk">BRW-BB</td><td>8</td><td>02/10/2026</td><td>1 row, no split</td></tr><tr><td colspan="5" class="mut l">First 6 of 3 lines shown</td></tr></tbody></table></div>
+</div></div>
+</div></section>
+<section><h2>Panel B: purchasing email for the 4 SOs</h2>
+<div class="email"><p class="meta">Subject: Order inquiry (4 SOs) &middot; To: purchasing</p><h2>ORDER INQUIRY</h2>
+<table><thead><tr><th>S/O NO</th><th>SO DATE</th><th>CUSTOMER</th><th>PROJECT</th><th>REMARK</th></tr></thead><tbody><tr><td style="padding:4px;">SO421287</td><td style="padding:4px;">14/09/2026</td><td style="padding:4px;">MAH SING TRADING SDN BHD (PROJECT)</td><td style="padding:4px;">M GRAND MINORI 2 - 1335U SERVICE APT 56 STOREY @ JLN SERI PELANGI, JOHOR BAHRU</td><td style="padding:4px;" class="newc">Sponsorship</td></tr><tr><td style="padding:4px;">SO423072</td><td style="padding:4px;">25/09/2026</td><td style="padding:4px;">JADE GRAPHIX SDN BHD (PROJECT)</td><td style="padding:4px;">PARK GREEN @ BUKIT JALIL</td><td style="padding:4px;" class="newc">Purchase Request</td></tr><tr><td style="padding:4px;">SO419417</td><td style="padding:4px;">02/09/2026</td><td style="padding:4px;">UNIJOH DEVELOPMENT SDN BHD (PROJECT)</td><td style="padding:4px;">UNIJOH / PAMIR / 100 UNITS / JB</td><td style="padding:4px;" class="newc">Mockup</td></tr><tr><td style="padding:4px;">SO424062</td><td style="padding:4px;">02/10/2026</td><td style="padding:4px;">UNIBASE TRADING SDN BHD (PROJECT)</td><td style="padding:4px;">100 UNITS DSTH & 8UNITS DS SEMI-D AT USA UTAMA</td><td style="padding:4px;" class="newc"></td></tr></tbody></table>
+<table><thead><tr><th>LOCATION</th><th>ITEM CODE</th><th>QTY</th><th>DELIVERY</th><th>REMARK</th></tr></thead><tbody><tr class="grp"><td colspan="5">SO421287 (MAH SING TRADING SDN BHD)</td></tr><tr><td style="padding:4px;">BRW-IR</td><td style="padding:4px;">B2155-NL-BLUE</td><td style="padding:4px;">15</td><td style="padding:4px;">16/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-IR</td><td style="padding:4px;">C-FH14</td><td style="padding:4px;">15</td><td style="padding:4px;">16/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-IR</td><td style="padding:4px;">CB310-CR-PJ</td><td style="padding:4px;">6</td><td style="padding:4px;">16/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-IR</td><td style="padding:4px;">CKS819</td><td style="padding:4px;">3</td><td style="padding:4px;">16/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-IR</td><td style="padding:4px;">CSK14A</td><td style="padding:4px;">9</td><td style="padding:4px;">16/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-IR</td><td style="padding:4px;">M25-CR</td><td style="padding:4px;">6</td><td style="padding:4px;">16/11/2026</td><td style="padding:4px;" class=""></td></tr><tr class="grp"><td colspan="5">SO423072 (JADE GRAPHIX SDN BHD)</td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">BRC21461UW-2-MY</td><td style="padding:4px;">5</td><td style="padding:4px;">03/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">WESERP10B</td><td style="padding:4px;">5</td><td style="padding:4px;">03/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">BRCX21467UW-2-MY</td><td style="padding:4px;">5</td><td style="padding:4px;">03/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">BRCY21467W-MY</td><td style="padding:4px;">5</td><td style="padding:4px;">03/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">WESERP10B</td><td style="padding:4px;">5</td><td style="padding:4px;">03/11/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">BRBC22131W-ENG</td><td style="padding:4px;">10</td><td style="padding:4px;">03/11/2026</td><td style="padding:4px;" class=""></td></tr><tr class="grp"><td colspan="5">SO419417 (UNIJOH DEVELOPMENT SDN BHD)</td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">SRTWB1515</td><td style="padding:4px;">8</td><td style="padding:4px;">29/09/2026</td><td style="padding:4px;" class="newc">Mockup</td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">SRTWB7109</td><td style="padding:4px;">4</td><td style="padding:4px;">29/09/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">BT012-CR</td><td style="padding:4px;">12</td><td style="padding:4px;">05/10/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">CB2829-DIY</td><td style="padding:4px;">2</td><td style="padding:4px;">05/10/2026</td><td style="padding:4px;" class="newc">Mockup</td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">SRT2403-CR</td><td style="padding:4px;">10</td><td style="padding:4px;">05/10/2026</td><td style="padding:4px;" class="newc">Mockup</td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">SRTPW0035-CR</td><td style="padding:4px;">12</td><td style="padding:4px;">05/10/2026</td><td style="padding:4px;" class=""></td></tr><tr class="grp"><td colspan="5">SO424062 (UNIBASE TRADING SDN BHD)</td></tr><tr><td style="padding:4px;">BRW</td><td style="padding:4px;">SRTWB245</td><td style="padding:4px;">1</td><td style="padding:4px;">02/10/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">CKS1050</td><td style="padding:4px;">8</td><td style="padding:4px;">02/10/2026</td><td style="padding:4px;" class=""></td></tr><tr><td style="padding:4px;">BRW-BB</td><td style="padding:4px;">CKSW015</td><td style="padding:4px;">8</td><td style="padding:4px;">02/10/2026</td><td style="padding:4px;" class=""></td></tr></tbody></table>
+<p class="note">SO424062 prints a blank remark. Grey rows are the email's existing S/O group row, printed when one email covers several SOs.</p></div></section>
+<section><h2>Panel C: SO419417, other line choices in a Confirm</h2>
+<table class="map"><thead><tr><th class="l">Lines chosen</th><th>Remark default</th><th class="l">Line labels</th></tr></thead><tbody>
+<tr><td class="l">All 24 lines (3 mockup + 21 actual)</td><td class="newc">Mockup</td><td class="l">Mockup on SRTWB1515, SRT2403-CR, CB2829-DIY</td></tr>
+<tr><td class="l">Only SRTWB1515, SRT2403-CR, CB2829-DIY (all mockup)</td><td class="newc">Mockup</td><td class="l">none</td></tr>
+<tr><td class="l">Only the other 21 lines (no mockup)</td><td>blank</td><td class="l">none</td></tr>
+</tbody></table>
+<p class="note">Whole-SO mockup by Note (e.g. SO427088): every line is mockup, so Mockup and no line labels. Sponsorship / Purchase Request come from Shipping Info and win over Mockup.</p></section>
+<section><h2>Element &rarr; reused component</h2><table class="map">
+<tr><th>Element</th><th>Reused component (repo path)</th></tr>
+<tr><td>Dialog shell + header + steps + footer buttons</td><td>sorento_crm_frontend/app/(protected)/project-sales/fulfilment-planning/components/ConfirmGuideDialog.tsx (Dialog, WizardSteps)</td></tr>
+<tr><td>SO header row (SO no, customer, Split delivery button)</td><td>ConfirmGuideDialog.tsx :278-296</td></tr>
+<tr><td>Remark input with clear</td><td><b>NEW</b> field built on sorento_crm_frontend/components/ui/input.tsx + components/ui/label.tsx, placed under the SO header row in ConfirmGuideDialog.tsx</td></tr>
+<tr><td>Mockup badge on chosen mockup lines (mixed choice only)</td><td><b>NEW</b> use of sorento_crm_frontend/components/ui/badge.tsx (warning variant) in the split editor rows</td></tr>
+<tr><td>Split editor rows</td><td>LineSplitEditor, ConfirmGuideDialog.tsx :340-384</td></tr>
+<tr><td>Email heading and SO table (S/O NO, SO DATE, CUSTOMER, PROJECT)</td><td>sorento_crm_backend/alembic/versions/oihr_0008_so_table_on_top.py (HTML frozen in oihr_0006_no_remark_column.py)</td></tr>
+<tr><td>Email SO table REMARK column</td><td><b>NEW</b> column appended to the SO table of the same template (next migration after oihr_0009_split_rows.py)</td></tr>
+<tr><td>Email line table (LOCATION, ITEM CODE, QTY, DELIVERY, REMARK)</td><td>oihr_0008 / oihr_0009_split_rows.py line table; only the value Mockup in REMARK is new</td></tr>
+</table></section></div></body></html>

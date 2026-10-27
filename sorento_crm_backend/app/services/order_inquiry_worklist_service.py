@@ -98,7 +98,7 @@ from app.services.project_order_inquiry_service import (
 )
 from app.services.project_line_split_service import remark_for_row  # noqa: F401 - AC-G5, the one REMARK function
 from app.services.project_supply_service import ProjectSupplyService
-from app.services.scm import order_link_service, priority, spo_supply
+from app.services.scm import goods_chain, order_link_service, priority, spo_supply
 from app.services.scm.front_planning_engine import DEFAULT_LEAD_TIME_DAYS
 from app.services.scm.raise_event_matching import nearest_raise_event
 
@@ -1102,10 +1102,75 @@ class OrderInquiryWorklistService:
 
     def __init__(self, db: Session):
         self.db = db
+        # LINKAGE-UNIFY U3: `_dead_document_rows` per reason, read once per service (the
+        # summary asks for both reasons, the list for one).
+        self._dead_rows: Dict[str, set] = {}
+
+    # -------------------------------------------------------------- dead documents
+
+    def _dead_document_rows(self, reason: str) -> set:
+        """LINKAGE-UNIFY U3 (owner ruling Q5): the ids of the rows holding a live link
+        whose document is dead for `reason` (`goods_chain.PO_CANCELLED` /
+        `SPO_WITHDRAWN`) - the "Dead document" filter.
+
+        Narrowed in SQL to the links that can be dead (a PO line off order that moved
+        nothing past what a Cancel PO took; an SPO line retired, or no longer incoming,
+        with nothing received), then confirmed by the goods chain in one batched read, so
+        the filter and the row's own red pill never disagree.
+        """
+        if reason in self._dead_rows:
+            return self._dead_rows[reason]
+        links = self.db.query(OrderInquiryLink.id).join(
+            OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id
+        )
+        if reason == goods_chain.PO_CANCELLED:
+            links = (
+                links.join(
+                    PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id
+                )
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .filter(
+                    ~and_(*ProjectSupplyService.open_po_line_clauses()),
+                    func.coalesce(PurchaseOrderLine.qty_received, 0)
+                    <= func.coalesce(PurchaseOrderLine.qty_cancelled, 0),
+                )
+            )
+        else:
+            links = (
+                links.join(
+                    SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
+                )
+                .outerjoin(
+                    InboundShipment, InboundShipment.id == SPOAllocation.inbound_shipment_id
+                )
+                .filter(
+                    func.coalesce(SPOAllocation.quantity_received, 0) == 0,
+                    or_(
+                        SPOAllocation.retired_at.isnot(None),
+                        ~and_(*spo_supply.open_incoming_clauses()),
+                    ),
+                )
+            )
+        chains = goods_chain.chains_for_links(
+            self.db,
+            [link_id for (link_id,) in links.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)],
+            with_bins=False,
+        )
+        rows = {
+            chain.row_id
+            for chain in chains.values()
+            if any(
+                hop.state == goods_chain.DEAD and hop.reason == reason for hop in chain.hops
+            )
+        }
+        self._dead_rows[reason] = rows
+        return rows
 
     # -------------------------------------------------------------- derived SPO
 
-    def _derived_spo_query(self, *columns: Any, extra_where: tuple = ()) -> Any:
+    def _derived_spo_query(
+        self, *columns: Any, extra_where: tuple = (), every_state: bool = False
+    ) -> Any:
         """S5 (R-D/R-E/R-F): every OPEN SPO allocation this row's own PO LINKS' LINES
         became - `from_po_number = po_number AND trim(from_po_line_ref) =
         trim(po_line.source_ref) AND product_id = po_line.product_id`, open per
@@ -1134,7 +1199,22 @@ class OrderInquiryWorklistService:
         session. Every reader wraps it - an `EXISTS` (`kind=spo`, `linked=spo`,
         `spo_number`) or a `SUM` (`_derived_cover_qty`) - so the filters and the cards
         can never disagree about what counts as incoming.
+
+        `every_state` (LINKAGE-UNIFY U3, the `spo_number` filter only): the SPOs the
+        row's placements reach by the goods chain's own key in every state that is not
+        dead - in transit, or landed (received, arrived, or a received status) - so a
+        row reads under the SPO its goods landed on, as its derived entry shows. The
+        chain's key adds the company and the allocation's own `po_line_id` (a
+        CRM-raised SPO) to the text key. The cards (`kind`, `linked`) keep the open-only
+        reading: they count what is still incoming (owner: cards unchanged).
         """
+        same_text_key = and_(
+            SPOAllocation.from_po_number == PurchaseOrder.po_number,
+            func.btrim(SPOAllocation.from_po_line_ref)
+            == func.btrim(PurchaseOrderLine.source_ref),
+            func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
+            SPOAllocation.product_id == PurchaseOrderLine.product_id,
+        )
         reached_by_a_po_link = (
             select(OrderInquiryLink.id)
             .select_from(OrderInquiryLink)
@@ -1142,14 +1222,34 @@ class OrderInquiryWorklistService:
             .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
             .where(
                 OrderInquiryLink.row_id == OrderInquiryRow.id,
-                SPOAllocation.from_po_number == PurchaseOrder.po_number,
-                func.btrim(SPOAllocation.from_po_line_ref)
-                == func.btrim(PurchaseOrderLine.source_ref),
-                func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
-                SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                *(
+                    (
+                        SPOAllocation.company_id == PurchaseOrderLine.company_id,
+                        or_(same_text_key, SPOAllocation.po_line_id == PurchaseOrderLine.id),
+                    )
+                    if every_state
+                    else (same_text_key,)
+                ),
             )
             .correlate(OrderInquiryRow, SPOAllocation)
             .exists()
+        )
+        state_clauses = (
+            (
+                *spo_supply.visible_line_clauses(),
+                or_(
+                    and_(
+                        *spo_supply.open_incoming_clauses(),
+                        SPOAllocation.allocated_quantity
+                        > func.coalesce(SPOAllocation.quantity_received, 0),
+                    ),
+                    func.coalesce(SPOAllocation.quantity_received, 0) > 0,
+                    InboundShipment.actual_arrival_date.isnot(None),
+                    SPOAllocation.receipt_status.in_(spo_supply.RECEIVED_RECEIPT_STATUSES),
+                ),
+            )
+            if every_state
+            else derived_spo_open_clauses()
         )
         company_predicate = build_company_predicate(
             SPOAllocation, get_company_scope(self.db)
@@ -1162,7 +1262,7 @@ class OrderInquiryWorklistService:
             )
             .where(
                 reached_by_a_po_link,
-                *derived_spo_open_clauses(),
+                *state_clauses,
                 *((company_predicate,) if company_predicate is not None else ()),
                 *extra_where,
             )
@@ -1283,6 +1383,9 @@ class OrderInquiryWorklistService:
         inquiry_id: Optional[str] = None,
         # OI-BULK-RESERVE v4: keep a line when one of ITS request rows is in this status.
         reserve: Optional[str] = None,
+        # LINKAGE-UNIFY U3 (Q5): keep a row holding a link whose document is dead for
+        # this reason (`po_cancelled` / `spo_withdrawn`).
+        dead_document: Optional[str] = None,
         # Lane C, PLAN-order-sheet-oi-reports-22sep.md (AC-C3): the OI worksheet's own
         # row set - a run's `run_scope_oi_rows` result, fed in as the row ids to print
         # rather than as a new set of filter clauses. `None` (the default) means "every
@@ -1395,6 +1498,17 @@ class OrderInquiryWorklistService:
             )
         if row_ids is not None:
             base = base.filter(OrderInquiryRow.id.in_(list(row_ids)))
+        if dead_document:
+            if dead_document not in (goods_chain.PO_CANCELLED, goods_chain.SPO_WITHDRAWN):
+                raise AppException(
+                    422,
+                    f"'{dead_document}' is not a dead document. Use po_cancelled or "
+                    "spo_withdrawn.",
+                    code="invalid_dead_document_filter",
+                )
+            base = base.filter(
+                OrderInquiryRow.id.in_(sorted(self._dead_document_rows(dead_document)))
+            )
         if supplier_id:
             base = base.filter(Supplier.id == supplier_id)
         if raised_by:
@@ -1538,13 +1652,14 @@ class OrderInquiryWorklistService:
                         OrderInquiryLink.document.ilike(like, escape=_LIKE_ESCAPE),
                     ),
                     # AC-F6b (round 2): the row's only REAL link is a PO, but that PO
-                    # carries a derived SPO cover (S5, R-E) whose own number starts
-                    # with the typed text - `_has_derived_spo()`'s own read, narrowed to
-                    # this prefix rather than "any open allocation at all".
+                    # carries a derived SPO (S5, R-E) whose own number starts with the
+                    # typed text. LINKAGE-UNIFY U3: in every state that is not dead, so
+                    # a row whose goods landed on that SPO still answers to its number.
                     self._derived_spo_query(
                         extra_where=(
                             SPOAllocation.spo_number.ilike(like, escape=_LIKE_ESCAPE),
-                        )
+                        ),
+                        every_state=True,
                     ).exists(),
                 )
             )
@@ -1738,15 +1853,6 @@ class OrderInquiryWorklistService:
         split_views = ProjectOrderInquiryService(self.db).split_views_for_lines(
             [row.so_line_id for row in rows]
         )
-        # AC-RR-6: one query for every PO line on the page that has an open SPO chained from it.
-        blocked = ProjectOrderInquiryService(self.db).po_lines_with_open_chained_spo(
-            [
-                link.get("po_line_id")
-                for row_links in links.values()
-                for link in row_links
-                if link.get("received") and link.get("po_line_id")
-            ]
-        )
         return {
             "data": [
                 self._serialize(
@@ -1760,7 +1866,6 @@ class OrderInquiryWorklistService:
                     host_changes_by_row_id,
                     suggested_links,
                     raise_events_by_row,
-                    blocked,
                     splits_by_line,
                     split_views,
                 )
@@ -1810,8 +1915,8 @@ class OrderInquiryWorklistService:
         open need (never a row on the SAME SO line), delivery date ascending then open
         need descending - the first candidate is the suggested target (ruling 17 Sep:
         list all, earliest first) - `{"kind": "unlink"}` when there is none, or `None`
-        on a received link, one still inside the window, or one of the two S3
-        exemptions below.
+        on a received link, a PO link with nothing left on order (LINKAGE-UNIFY U2), one
+        still inside the window, or one of the two S3 exemptions below.
 
         S3 (review round 1, `PLAN-oi-cascade-skip-early-arrival.md`): a link the
         automatic pass was TOLD to honour regardless of the window earns no pill
@@ -1852,6 +1957,11 @@ class OrderInquiryWorklistService:
             for link in row_links:
                 link["suggestion"] = None
                 if link.get("received"):
+                    continue
+                # LINKAGE-UNIFY U2: a PO link with nothing left on order (all of it moved
+                # onto an SPO still in transit) is not judged by the PO's date - the goods
+                # are no longer on it. Read off `links_for_rows`' own chain, no new query.
+                if link.get("kind") == "po" and link.get("on_order") is False:
                     continue
                 expected_date = link.get("expected_date")
                 if not product_id or not delivery_date or not expected_date:
@@ -2384,7 +2494,6 @@ class OrderInquiryWorklistService:
         host_changes_by_row_id: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         suggested_links: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         raise_events_by_row: Optional[Dict[str, Dict[str, Any]]] = None,
-        blocked: Optional[set] = None,
         splits_by_line: Optional[Dict[str, List[Dict[str, Any]]]] = None,
         split_views: Optional[Dict[str, Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
@@ -2400,14 +2509,15 @@ class OrderInquiryWorklistService:
         )
         # OI-RESERVE-RECEIVED (AC-RR-5): what a reserve request may still ask for -
         # `order_inquiry_reserve_service._requestable`, worked off the links already
-        # loaded: qty less the OPEN links, the reserve links and the bundle (a link on a
-        # fully received document does not count against it).
+        # loaded: qty less the OPEN links, the reserve links and the bundle (a fully
+        # received placement does not count against it). AC-RR-6's chained-SPO block is
+        # gone: `received` is the goods chain's (LINKAGE-UNIFY U2), so a PO link whose
+        # goods are still on an SPO in transit is not received in the first place.
         open_linked = sum(
             (
                 _dec(link["qty"])
                 for link in row_links
-                if not link.get("derived")
-                and (not link.get("received") or link.get("po_line_id") in (blocked or ()))
+                if not link.get("derived") and not link.get("received")
             ),
             _ZERO,
         )
@@ -2635,6 +2745,11 @@ class OrderInquiryWorklistService:
             .all()
         )
         line_ids = [str(line[0]) for line in lines]
+        spo_numbers_by_line = self._spo_numbers_by_po_line(po)
+        # LINKAGE-UNIFY U4: each line's SPO lines with where their goods landed (GR bins)
+        # or why they bring nothing - one read for the document, the goods chain's own.
+        spos_by_line = goods_chain.spo_lines_of(self.db, line_ids)
+        dead_ids = goods_chain.dead_po_line_ids(self.db, line_ids)
         # ONE query for the whole document (AC-A5's rule, on this THIRD surface), never one
         # per line - the same reader the SCM purchase-order detail's Lines tab already
         # calls, so the book's linkage reads identically wherever a line is shown.
@@ -2693,6 +2808,11 @@ class OrderInquiryWorklistService:
                     # (`order_link_service.book_so_fields`, review of PR #764, F5) rather
                     # than a second copy of the derivation.
                     **order_link_service.book_so_fields(from_so_line_ref, book_so_by_ref),
+                    "spo_numbers": spo_numbers_by_line.get(str(line_id), []),
+                    "spos": spos_by_line.get(str(line_id), []),
+                    # Owner Q5 (a): a placement on a dead PO line reads "PO cancelled", by
+                    # the chain's own rule (`goods_chain.po_line_is_dead`).
+                    "dead_reason": "po_cancelled" if str(line_id) in dead_ids else None,
                 }
                 for (
                     line_id,
@@ -2710,6 +2830,47 @@ class OrderInquiryWorklistService:
             # only - a suggestion never appears here (AC-LT-34).
             "allocations": self._allocations_on(po_line_ids=line_ids),
         }
+
+    def _spo_numbers_by_po_line(self, po: PurchaseOrder) -> Dict[str, List[str]]:
+        """SUPPLY-SPO-LINK: by PO line id, every SPO the line was transferred onto, sorted
+        and each once - one read for the whole document.
+
+        OI-SPO-EXACT, the key `_derived_spo_query` resolves a PO link's SPOs by:
+        `from_po_number = po_number AND trim(from_po_line_ref) = trim(source_ref) AND
+        product_id = line.product_id`. Every VISIBLE allocation (`visible_line_clauses()`),
+        not only the open ones: the popup states where the line's goods went, landed or
+        not. A line with no `source_ref` reaches nothing. The company predicate is stated
+        by hand for the same reason `_derived_spo_query` states it: the join is on plain
+        text off the AutoCount feed.
+        """
+        company_predicate = build_company_predicate(
+            SPOAllocation, get_company_scope(self.db)
+        )
+        rows = (
+            self.db.query(PurchaseOrderLine.id, SPOAllocation.spo_number)
+            .join(
+                SPOAllocation,
+                and_(
+                    SPOAllocation.from_po_number == po.po_number,
+                    func.btrim(SPOAllocation.from_po_line_ref)
+                    == func.btrim(PurchaseOrderLine.source_ref),
+                    SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                ),
+            )
+            .filter(
+                PurchaseOrderLine.purchase_order_id == po.id,
+                func.coalesce(func.btrim(PurchaseOrderLine.source_ref), "") != "",
+                *spo_supply.visible_line_clauses(),
+                *((company_predicate,) if company_predicate is not None else ()),
+            )
+            .distinct()
+            .all()
+        )
+        out: Dict[str, List[str]] = {}
+        for line_id, spo_number in sorted(rows, key=lambda row: (str(row[0]), row[1] or "")):
+            if spo_number:
+                out.setdefault(str(line_id), []).append(spo_number)
+        return out
 
     # -------------------------------------------------------------- spo detail
 
@@ -2981,6 +3142,18 @@ class OrderInquiryWorklistService:
             # The four acknowledgement counts, computed with the ACK FILTER ITSELF
             # DROPPED, for the reason every other axis here drops its own.
             "ack": self._acks({**filters, "ack": None}),
+            # LINKAGE-UNIFY U3 (Q5): the "Dead document" filter's own counts, with that
+            # filter dropped for the reason every other axis here drops its own.
+            "dead_documents": {
+                reason: int(
+                    self._base(**{**filters, "dead_document": reason})
+                    .with_entities(func.count(OrderInquiryRow.id))
+                    .order_by(None)
+                    .scalar()
+                    or 0
+                )
+                for reason in (goods_chain.PO_CANCELLED, goods_chain.SPO_WITHDRAWN)
+            },
             # Where the page's "Link up to" date starts (AC-LH5). The latest completed
             # reorder run's own "Plan until", read off the run rather than guessed at on
             # the page: one date, so a plan that netted to October and a buyer linking to
@@ -3455,10 +3628,10 @@ class OrderInquiryWorklistService:
         """The filtered set as their own workbook, on ONE sheet.
 
         Owner, 16 Oct 2026: "our OI excel cannot split by month, this applies to all
-        places where OI excel is printed" - the list export, the export tasks and the
-        handover attachment (Confirm and resend, `store_handover_excel`) all print
-        through here, so every delivery month and the undated rows share one
-        sheet.
+        places where OI excel is printed" - the list export and the export tasks print
+        through here, so every delivery month and the undated rows share one sheet. The
+        handover attachment is one sheet too, written from the email's own lines instead
+        (`handover_xlsx`, OI-EMAIL-PURCHASING-FOCUS).
         A row with no date is still an instruction and is never dropped from the file.
 
         Within the sheet the rows go SUPPLIER then ITEM CODE then delivery date, which is
@@ -3773,6 +3946,97 @@ class OrderInquiryWorklistService:
         return out
 
 
+#: OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026, Q5 (a)): the handover Excel's columns, the
+#: email's own line table plus the S/O facts each row needs on a sheet, in the owner's words for
+#: the change columns (QTY CHANGE TO / DELIVERY DATE CHANGE TO, ruled with Q5 (a)). The three
+#: change columns print only when a line in this email has one, as the email's own do.
+HANDOVER_HEADINGS = (
+    "SO DATE",
+    "S/O NO",
+    "ITEM CODE",
+    "NEW ITEM CODE",
+    "QTY",
+    "QTY CHANGE TO",
+    "DELIVERY DATE",
+    "DELIVERY DATE CHANGE TO",
+    "PROJECT/CUSTOMER",
+    "LOCATION",
+    "REMARK",
+)
+_HANDOVER_CHANGE_KEYS = {
+    "NEW ITEM CODE": "item_code",
+    "QTY CHANGE TO": "qty",
+    "DELIVERY DATE CHANGE TO": "delivery_date",
+}
+
+
+def _sheet_date(value: Any) -> Any:
+    """A handover line's `21/07/2026` as a date, so the sheet formats it like every other."""
+    if not value:
+        return None
+    try:
+        return datetime.strptime(str(value), "%d/%m/%Y").date()
+    except ValueError:
+        return value
+
+
+def _sheet_qty(value: Any) -> Optional[float]:
+    return float(_dec(value)) if value not in (None, "") else None
+
+
+def handover_xlsx(lines: Sequence[Dict[str, Any]]) -> bytes:
+    """The OI Excel a handover email attaches, written from that email's OWN lines
+    (`handover.lines`, `_build_handover_context`), so its rows are the email's rows: the same
+    lines, in the same order, with the same values (owner, 26 Oct 2026: "the rows in OI must be
+    truthful to the rows in the email"). One sheet, the house style."""
+    import openpyxl
+
+    from app.services.project_order_inquiry_service import project_customer_label
+
+    def was(line: Dict[str, Any], key: str) -> Any:
+        return (line.get("was") or {}).get(key)
+
+    columns = [
+        heading
+        for heading in HANDOVER_HEADINGS
+        if heading not in _HANDOVER_CHANGE_KEYS
+        or any(was(line, _HANDOVER_CHANGE_KEYS[heading]) for line in lines)
+    ]
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = EXPORT_TITLE
+    sheet.append([EXPORT_TITLE])
+    sheet.append(columns)
+    for line in lines:
+        # As the email prints a changed line: the old value, then the new one beside it.
+        values = {
+            "SO DATE": _sheet_date(line.get("so_date")),
+            "S/O NO": line.get("so_number") or "",
+            "ITEM CODE": was(line, "item_code") or line.get("item_code") or "",
+            "NEW ITEM CODE": line.get("item_code") if was(line, "item_code") else None,
+            "QTY": _sheet_qty(was(line, "qty") or line.get("qty")),
+            "QTY CHANGE TO": _sheet_qty(line.get("qty")) if was(line, "qty") else None,
+            "DELIVERY DATE": _sheet_date(was(line, "delivery_date") or line.get("delivery_date")),
+            "DELIVERY DATE CHANGE TO": _sheet_date(line.get("delivery_date"))
+            if was(line, "delivery_date")
+            else None,
+            "PROJECT/CUSTOMER": project_customer_label(line.get("customer"), line.get("project"))
+            or "",
+            "LOCATION": line.get("location") or "",
+            "REMARK": line.get("remark") or "",
+        }
+        if line.get("continued"):
+            # A split line's later rows, as the email prints them (`oihr_0009`, AC-G6):
+            # LOCATION, ITEM CODE, QTY and DELIVERY on the line's first row only.
+            for heading in ("LOCATION", "ITEM CODE", "QTY", "DELIVERY DATE"):
+                values[heading] = None
+        sheet.append([values[heading] for heading in columns])
+    _style_sheet(sheet, columns)
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    return buffer.getvalue()
+
+
 #: OI-DOWNLOAD (owner, 21 Oct: "nicer, like the LOW STOCK REPORT"): each heading's width, by
 #: NAME so a cut column list (the 10-column worksheet) or a heading added later keeps its own;
 #: a heading not listed takes `_EXPORT_DEFAULT_WIDTH`.
@@ -3795,10 +4059,15 @@ _EXPORT_WIDTHS = {
     "SUGGESTED": 20,
     "CHANGE QUANTITY": 12,
     "CHANGE DATE": 13,
+    "NEW ITEM CODE": 18,
+    "QTY CHANGE TO": 11,
+    "DELIVERY DATE CHANGE TO": 14,
     "REMARK": 30,
 }
 _EXPORT_DEFAULT_WIDTH = 14
-_EXPORT_DATE_HEADINGS = frozenset({"SO DATE", "DELIVERY DATE", "CHANGE DATE"})
+_EXPORT_DATE_HEADINGS = frozenset(
+    {"SO DATE", "DELIVERY DATE", "CHANGE DATE", "DELIVERY DATE CHANGE TO"}
+)
 
 
 def _style_sheet(sheet, columns: Sequence[str]) -> None:

@@ -18,9 +18,11 @@ column carries a status. Database names and anything not needed for the mapping 
 - Header PK `DocKey` bigint; detail PK `DtlKey` bigint, FK `DocKey`, `Seq`.
 - Header: `DocNo` (editable, never an identity), `DocDate`, `DebtorCode` (-> `Debtor.AccNo`), `DebtorName`,
   `SalesAgent`, `CurrencyCode`, `CurrencyRate`, `Cancelled` 'T'/'F' (cancel = VOID, row stays), `DocStatus`
-  [C-live XS], `LastModified` (datetime, server local time, not indexed on the siblings).
+  [C-live XS] (on IV/CN/DN only: `CS` has NO `DocStatus` column, checked 27 Oct), `LastModified` (datetime,
+  server local time, not indexed on the siblings).
 - Delete in AutoCount is a hard delete [C-off].
-- Transfer matrix [C-3p]: IV from QT/SO/DO; CS from QT/SO/DO; CN only from IV; DN has no transfer source.
+- Transfer matrix [C-3p]: IV from QT/SO/DO; CS from QT/SO/DO; CN only from IV; DN has no transfer source
+  (`DNDTL` has no `FromDocType` / `FromDocNo` / `FromDocDtlKey` columns at all, checked 27 Oct).
   CN and DN name their invoice in header text `OurInvoiceNo` (may be blank, hand-typed, or a comma list).
 
 ## 2. Header columns -> CRM `finance.billing_documents` (contract 2.6)
@@ -65,8 +67,8 @@ Billing line cut (differs from SO): keep any line whose `SubTotal` is non-zero; 
 | Table | Key columns | Status |
 |---|---|---|
 | `ARInvoice` (one per IV and per CS, plus hand-keyed AR invoices) | `DocKey`, `DocNo`, `DebtorCode`, `DocDate`, `DueDate`, `Outstanding`, `Cancelled`, `LastModified`, `NetTotal`, `CurrencyCode`; `SourceType`/`SourceKey` back to the IV/CS | [C-3p]; Source* as API fields [C-off], as columns [I] |
-| `ARDN` | `DocKey`, `DocNo`, `DebtorCode`, `DocDate`, `DueDate`, `NetTotal`, `Outstanding`, `LastModified` | [C-off] O4 |
-| `ARCN` | `DocKey`, `DocNo`, `DebtorCode`, `DocDate`, `NetTotal`, `KnockOffAmt`, `LastModified`; unapplied = `NetTotal - KnockOffAmt` | [C-off] O3 |
+| `ARDN` | `DocKey`, `DocNo`, `DebtorCode`, `DocDate`, `DueDate`, `NetTotal`, `Outstanding`, `Cancelled`, `LastModified` | [C-off] O4; `Cancelled` checked 27 Oct (15 cancelled rows on AED_SORENTO) |
+| `ARCN` | `DocKey`, `DocNo`, `DebtorCode`, `DocDate`, `NetTotal`, `KnockOffAmt`, `Cancelled`, `LastModified`; unapplied = `NetTotal - KnockOffAmt` | [C-off] O3; `Cancelled` checked 27 Oct (345 cancelled rows) |
 | `ARPaymentKnockOff`, `ARCNKnockOff` | `DocKey` (payment / CN) -> `KnockOffDocKey`, `KnockOffDocType` ('RI' invoice, 'RD' debit note), `Amount`; no `LastModified` | [C-3p] |
 | `Debtor` | `IsCashSaleDebtor` (the shared walk-in account) | [C-3p] |
 
@@ -85,19 +87,25 @@ Billing line cut (differs from SO): keep any line whose `SubTotal` is non-zero; 
 4. Send `NetTotal`, not `FinalTotal`, or the CRM's `total = net_total + tax_total` (0.01) check fails.
 5. Footer charges are header-only money: header totals need not equal the sum of lines.
 6. DocNo is not an identity (an IV can take its DO's number); key on `{db}:{type}:{DocKey}`.
-7. `FromDocDtlKey` may be NULL while `FromDocNo` is filled (on XSDTL always NULL since Dec 2024): link only exactly.
+7. `FromDocDtlKey` may be NULL while `FromDocNo` is filled (on XSDTL always NULL since Dec 2024; on DO-sourced
+   IVDTL lines 0% NULL in 2023, 15% in 2024, 100% in 2025-26; on CNDTL lines from IV 100% NULL since 2025,
+   checked 27 Oct): link only exactly. `FromDocNo` on those lines matches exactly one DO.
 8. A CN cannot be transferred from a CS; a CN against a CS has only `OurInvoiceNo` text.
 9. Line-only edits do not bump the header `LastModified` (proven on SO): keep the line-fingerprint sweep.
-10. Drafts (2.2) have no AR entry; exclude them and send a deletion if a pushed draft disappears.
-11. IV line -> DO line -> SO line needs `DODTL`, which the read-only login could not read when this was
-    written: the backfill runbook (section 0.1) now asks for that grant, and the shared service links the
-    DO line exactly by `FromDocDtlKey` (PR #127) and fails at Preview when `DODTL` is unreadable.
+10. Drafts (2.2) have no AR entry; exclude them and send a deletion if a pushed draft disappears. The draft
+    letter is `D` (27 Oct: 19 IV + 3 CN in Oct 2026, none with an AR row). `A` = posted, `V` = void (=
+    `Cancelled = 'T'`). `E` (5 IV in 2025, one with an AR row): meaning not known, kept (shared service
+    BL-SS-311).
+11. IV line -> DO line -> SO line needs `DODTL`. The read-only login has had SELECT on `DODTL` (and `DO`)
+    since 27 Oct. The shared service joins it by `FromDocDtlKey` (PR #127, restored by PR #132 after the
+    25 Oct ledger detour of PR #130) and fails at Preview when `DODTL` is unreadable. A line with only
+    `FromDocNo` (2025-26) goes out with `from_doc_type` + `from_doc_no` and no `from_line_ref`.
 
 ## 6. First checks once access is granted (read-only)
 
 1. `INFORMATION_SCHEMA.COLUMNS` for the 8 billing tables plus `ARInvoice`, `ARCN`, `ARDN`, `ARPayment`,
    `ARPaymentKnockOff`, `ARCNKnockOff` on every company DB; flip each [I] to confirmed or wrong.
-2. `DocStatus` x `Cancelled` counts: find the draft letter.
+2. `DocStatus` x `Cancelled` counts: find the draft letter. Done 27 Oct: `D` (gotcha 10).
 3. `FromDocType` distribution and `FromDocDtlKey` NULL rate by year.
 4. Totals identities on a sample: `NetTotal = TotalExTax + Tax`, `FinalTotal = NetTotal + RoundAdj`,
    `LocalNetTotal - LocalTax` vs `LocalAnalysisNetTotal`.

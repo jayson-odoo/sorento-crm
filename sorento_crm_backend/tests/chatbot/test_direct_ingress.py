@@ -1,19 +1,16 @@
-"""CHAT-SPEED direct ingress, the job half (UAC AC-6..AC-10).
+"""CHAT-SPEED direct ingress, what is left after CHAT-INBOX-QUEUE (UAC AC-6..AC-10).
 
-`app.tasks.chat_turns.run_direct_turn_job` runs a turn the respond.io webhook enqueued and
-hands its actions to the n8n sender, which executes them exactly as the spine does after
-`/chat/turn`. The n8n copy of the same message, arriving seconds later through the producer
-and dispatcher, must come back `duplicate: true` with no second turn (D15), because its
-`duplicate` arm sends nothing.
+The webhook-started turn job (`chat_turns.run_direct_turn_job`) is gone: a covered message
+is queued and answered by the inbox drain (`tests/chatbot/test_inbox_queue_*.py` covers the
+send, the takeover check and the failures). What stays here is the engine's ordering of an
+n8n copy and the switch and workspace helpers the queue reuses.
 
-Real, committed Postgres via `SessionLocal`, like `test_d15_duplicate_race.py`: the ordering
-test needs two genuinely concurrent connections. Rows are `ZZT-` prefixed and removed by hand.
-The sender is faked at `httpx.post`; the outbound guard is graded in its own tests below.
+Real, committed Postgres via `SessionLocal`, like `test_d15_duplicate_race.py`. Rows are
+`ZZT-` prefixed and removed by hand.
 """
 from __future__ import annotations
 
 import json
-import threading
 import time
 import types
 import uuid
@@ -30,8 +27,6 @@ from app.services.chatbot import direct_ingress
 from app.services.chatbot import engine as engine_mod
 from app.services.chatbot.contracts import Envelope
 from app.services.chatbot.head import parser as parser_mod
-from app.services.outbound_url_guard import OutboundUrlRejected
-from app.tasks import chat_turns
 from app.utils.field_encryption import encrypt_secret
 from tests.chatbot.test_engine import _parser_output
 
@@ -212,73 +207,9 @@ def _outbound_logs(contact: str) -> list[IntegrationLog]:
 # --------------------------------------------------------------------------- #
 
 
-def test_job_posts_actions_then_n8n_copy_is_duplicate(contacts, stub_engine_seams, sender):
-    contact = contacts("run")
-    payload = _payload(contact, _message_id())
-
-    outcome = chat_turns.run_direct_turn_job(payload)
-
-    turns = _turns(contact)
-    assert len(turns) == 1
-    assert turns[0].ingress == "respond_webhook"
-    assert outcome["turn_id"] == str(turns[0].id)
-    assert outcome["sent"] is True
-
-    assert len(sender.posts) == 1
-    post = sender.posts[0]
-    assert post["url"] == SENDER_URL
-    assert post["follow_redirects"] is False
-    assert post["headers"]["X-Chatbot-Sender-Key"] == SENDER_KEY
-    body = post["json"]
-    assert body["turn_id"] == str(turns[0].id)
-    assert body["contact_id"] == contact
-    assert body["actions"] and all("kind" in a for a in body["actions"])
-    assert body["actions"] == (turns[0].response or {}).get("actions")
-
-    logs = _outbound_logs(contact)
-    assert len(logs) == 1 and logs[0].status == "success"
-
-    # The n8n producer's copy of the SAME message, seconds later.
-    replay = engine_mod.run_turn(_n8n_copy(payload), session_factory=SessionLocal)
-    assert replay.duplicate is True
-    assert len(_turns(contact)) == 1
-
-
-def test_the_job_envelope_is_live_never_a_test_turn(contacts, stub_engine_seams, sender):
-    contact = contacts("live")
-    chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    turn = _turns(contact)[0]
-    assert turn.is_test is False
-    stored = turn.envelope
-    assert stored["ingress"] == "respond_webhook"
-    assert stored["message"]["message"]["traffic"] == "incoming"
-
-
 # --------------------------------------------------------------------------- #
 # AC-7: nothing to send
 # --------------------------------------------------------------------------- #
-
-
-def test_job_posts_nothing_for_duplicate(contacts, stub_engine_seams, sender):
-    """The n8n copy got there first: the job's turn is the duplicate and sends nothing."""
-    contact = contacts("dup")
-    payload = _payload(contact, _message_id())
-    first = engine_mod.run_turn(_n8n_copy(payload), session_factory=SessionLocal)
-    assert first.duplicate is False
-
-    outcome = chat_turns.run_direct_turn_job(payload)
-    assert outcome["sent"] is False
-    assert outcome["duplicate"] is True
-    assert sender.posts == []
-    assert _outbound_logs(contact) == []
-
-
-def test_job_posts_nothing_when_the_turn_has_no_actions(contacts, stub_engine_seams, sender, monkeypatch):
-    contact = contacts("quiet")
-    monkeypatch.setattr(engine_mod, "_ai_allowed", lambda session_factory, contact: False)
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    assert outcome["sent"] is False
-    assert sender.posts == []
 
 
 # --------------------------------------------------------------------------- #
@@ -290,93 +221,9 @@ def _trace_stages(turn: ChatbotTurn) -> list[dict]:
     return [r for r in (turn.trace or []) if isinstance(r, dict) and r.get("stage") == "sent"]
 
 
-@pytest.mark.parametrize("failure", ["status", "transport"])
-def test_sender_failure_is_recorded(contacts, stub_engine_seams, sender, failure):
-    contact = contacts(f"fail-{failure}")
-    if failure == "status":
-        sender.state["status"] = 502
-    else:
-        sender.state["raise"] = httpx.ConnectError("unreachable (zzt)")
-
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-
-    assert outcome["sent"] is False
-    logs = _outbound_logs(contact)
-    assert len(logs) == 1 and logs[0].status == "failed"
-    turn = _turns(contact)[0]
-    failed = [r for r in _trace_stages(turn) if r.get("status") == "failed"]
-    assert failed, f"no failed `sent` trace record on the turn: {turn.trace}"
-
-
-def test_sender_url_guarded(contacts, stub_engine_seams, sender, monkeypatch):
-    from app.services import outbound_url_guard
-
-    contact = contacts("guard")
-    sender.workspace.chatbot_sender_url = "https://127.0.0.1/webhook/zzt"
-    monkeypatch.setattr(
-        direct_ingress, "assert_safe_outbound_url", outbound_url_guard.assert_safe_outbound_url
-    )
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    assert outcome["sent"] is False
-    assert sender.posts == []
-    assert [log.status for log in _outbound_logs(contact)] == ["failed"]
-    with pytest.raises(OutboundUrlRejected):
-        outbound_url_guard.assert_safe_outbound_url("https://127.0.0.1/x", label="zzt")
-
-
-def test_no_sender_configured(contacts, stub_engine_seams, sender):
-    contact = contacts("nosender")
-    sender.workspace.chatbot_sender_url = None
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    assert outcome["sent"] is False
-    assert sender.posts == []
-    turn = _turns(contact)[0]
-    assert any(r.get("status") == "failed" for r in _trace_stages(turn)), turn.trace
-
-
 # --------------------------------------------------------------------------- #
 # AC-10: ordered per contact even with S7 ordering off
 # --------------------------------------------------------------------------- #
-
-
-def test_direct_turn_is_ordered_with_s7_off(contacts, stub_engine_seams, sender, monkeypatch):
-    monkeypatch.setattr(engine_mod, "_s7_mode", lambda *args, **kwargs: False)
-    contact = contacts("order")
-
-    lock = threading.Lock()
-    timeline: list[tuple[str, float]] = []
-
-    def slow_parse(config, user_block):
-        with lock:
-            timeline.append(("start", time.monotonic()))
-        time.sleep(0.4)
-        with lock:
-            timeline.append(("end", time.monotonic()))
-        return _parser_output()
-
-    monkeypatch.setattr(parser_mod, "parse", slow_parse)
-    errors: list[BaseException] = []
-
-    def _run(message_id: str) -> None:
-        try:
-            chat_turns.run_direct_turn_job(_payload(contact, message_id))
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    first, second = _message_id(2.0), _message_id(1.0)
-    t1 = threading.Thread(target=_run, args=(first,))
-    t2 = threading.Thread(target=_run, args=(second,))
-    t1.start()
-    time.sleep(0.05)
-    t2.start()
-    t1.join(timeout=20)
-    t2.join(timeout=20)
-
-    assert errors == []
-    starts = [ts for kind, ts in timeline if kind == "start"]
-    ends = [ts for kind, ts in timeline if kind == "end"]
-    assert len(starts) == 2 and len(ends) == 2, timeline
-    assert starts[1] >= ends[0], f"two direct turns of one contact overlapped: {timeline}"
 
 
 def test_n8n_copy_with_s7_off_still_takes_no_ticket(contacts, stub_engine_seams, monkeypatch):
@@ -392,64 +239,6 @@ def test_n8n_copy_with_s7_off_still_takes_no_ticket(contacts, stub_engine_seams,
         _n8n_copy(_payload(contact, _message_id())), session_factory=SessionLocal
     )
     assert result.duplicate is False
-
-
-def test_n8n_copy_of_a_covered_contact_waits_for_the_direct_turn(
-    contacts, stub_engine_seams, sender, monkeypatch
-):
-    """Message A runs through the direct path; message B's n8n copy arrives while A is still
-    running (B's own direct job is stuck behind A on the single fast worker). With S7 off the
-    n8n copy used to take no ticket, so B could be answered beside A, out of order. While
-    direct ingress covers the contact, every live turn of it takes the ticket."""
-    monkeypatch.setattr(engine_mod, "_s7_mode", lambda *args, **kwargs: False)
-    contact = contacts("mixed")
-    monkeypatch.setattr(
-        engine_mod,
-        "_read_switches",
-        _switches_with(engine_mod._read_switches, mode="contacts", contacts=contact),
-    )
-
-    lock = threading.Lock()
-    timeline: list[tuple[str, float]] = []
-
-    def slow_parse(config, user_block):
-        with lock:
-            timeline.append(("start", time.monotonic()))
-        time.sleep(0.4)
-        with lock:
-            timeline.append(("end", time.monotonic()))
-        return _parser_output()
-
-    monkeypatch.setattr(parser_mod, "parse", slow_parse)
-    errors: list[BaseException] = []
-
-    def _direct() -> None:
-        try:
-            chat_turns.run_direct_turn_job(_payload(contact, _message_id(2.0)))
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    def _n8n() -> None:
-        try:
-            engine_mod.run_turn(
-                _n8n_copy(_payload(contact, _message_id(1.0))), session_factory=SessionLocal
-            )
-        except BaseException as exc:  # noqa: BLE001
-            errors.append(exc)
-
-    t1 = threading.Thread(target=_direct)
-    t2 = threading.Thread(target=_n8n)
-    t1.start()
-    time.sleep(0.05)
-    t2.start()
-    t1.join(timeout=20)
-    t2.join(timeout=20)
-
-    assert errors == []
-    starts = [ts for kind, ts in timeline if kind == "start"]
-    ends = [ts for kind, ts in timeline if kind == "end"]
-    assert len(starts) == 2 and len(ends) == 2, timeline
-    assert starts[1] >= ends[0], f"the n8n copy ran beside the direct turn: {timeline}"
 
 
 def _switches_with(real, *, mode: str, contacts: str):
@@ -470,60 +259,9 @@ def _switches_with(real, *, mode: str, contacts: str):
 # --------------------------------------------------------------------------- #
 
 
-def test_the_looked_up_contact_is_the_envelope_contact(contacts, stub_engine_seams, sender, lookup):
-    contact = contacts("lookup")
-    lookup.records[contact] = {
-        "id": contact,
-        "firstName": "ZZT",
-        "custom_fields": [
-            {"name": "is_human_intervened", "value": None},
-            {"name": "lifecycle", "value": "dealer"},
-        ],
-    }
-    chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    assert lookup.calls == [contact]
-    stored = _turns(contact)[0].envelope["contact"]
-    assert stored["custom_fields"] == lookup.records[contact]["custom_fields"]
-
-
-@pytest.mark.parametrize("value", [True, "true"])
-def test_human_takeover_runs_no_turn(contacts, stub_engine_seams, sender, lookup, value):
-    """n8n's If1 drops a message whose contact is human-intervened; so does this path, and
-    the n8n copy is dropped by the producer too, so the bot stays silent as today."""
-    contact = contacts("takeover")
-    lookup.records[contact] = {
-        "id": contact,
-        "custom_fields": [{"name": "is_human_intervened", "value": value}],
-    }
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    assert outcome["skipped"] == "human_intervened"
-    assert outcome["sent"] is False
-    assert _turns(contact) == []
-    assert sender.posts == []
-
-
-def test_failed_lookup_runs_no_turn(contacts, stub_engine_seams, sender, lookup, monkeypatch):
-    """A lookup that fails leaves the message to the n8n copy rather than guessing."""
-    contact = contacts("lookupfail")
-    monkeypatch.setattr(direct_ingress, "_lookup_contact", lambda db, contact_id: None)
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    assert outcome["skipped"] == "lookup_failed"
-    assert _turns(contact) == []
-    assert sender.posts == []
-
-
 # --------------------------------------------------------------------------- #
 # Security review L3: the sender speaks for the DEFAULT workspace only
 # --------------------------------------------------------------------------- #
-
-
-def test_a_contact_of_another_workspace_runs_no_turn(contacts, stub_engine_seams, sender, monkeypatch):
-    contact = contacts("otherws")
-    monkeypatch.setattr(direct_ingress, "_on_default_workspace", lambda db, contact_id: False)
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    assert outcome["skipped"] == "non_default_workspace"
-    assert _turns(contact) == []
-    assert sender.posts == []
 
 
 def test_on_default_workspace_reads_the_contacts_own_workspace():
@@ -571,27 +309,3 @@ def test_read_switches_carries_the_direct_ingress_fields():
         assert direct_ingress.covers(switches, "ZZT-c") is False
 
 
-def test_a_delegating_direct_turn_is_closed_not_left_delegated(
-    contacts, stub_engine_seams, sender, monkeypatch
-):
-    """S3: no n8n spine waits on a direct turn, so a lane that would delegate fails it with
-    an error that names direct ingress (not S7, which is off here)."""
-    monkeypatch.setattr(engine_mod, "_s7_mode", lambda *args, **kwargs: False)
-    monkeypatch.setattr(engine_mod, "CRM_COMPLETED_BRANCH_KINDS", frozenset())
-    contact = contacts("delegate")
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id()))
-    turn = _turns(contact)[0]
-    assert turn.status == "failed", (turn.status, turn.error)
-    assert "direct ingress" in (turn.error or "").lower()
-    assert "turn s7 mode off" not in (turn.error or "").lower()
-    assert outcome["duplicate"] is False
-
-
-def test_a_job_that_runs_late_is_dropped(contacts, stub_engine_seams, sender, lookup):
-    """S5: the 120 s window is re-checked when the job starts, so a turn that waited behind a
-    backlog never answers a message the n8n copy has long since handled."""
-    contact = contacts("late")
-    outcome = chat_turns.run_direct_turn_job(_payload(contact, _message_id(age_seconds=121)))
-    assert outcome["skipped"] == "stale"
-    assert lookup.calls == []
-    assert _turns(contact) == []

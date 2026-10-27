@@ -1,0 +1,431 @@
+/**
+ * LINKAGE-UNIFY U3 (AC-D1, AC-D3, AC-D4; PLAN section 9): the PO and SPO document cells of
+ * the worklist AND the Lines tab draw the same pills off the same link entries.
+ *
+ *  - a PO chip never carries a "received" pill (owner note on mock v1);
+ *  - an SPO chip carries "Received <qty> at <bin>" from `receipts` (L880: "Received 486 at
+ *    BRW-BB");
+ *  - class d (no SPO): the PO chip itself carries "Received <qty> at <bin>";
+ *  - `dead_reason` prints "PO cancelled" / "SPO withdrawn".
+ *
+ * `receipts` and `dead_reason` are not on the app's link type yet; the fixtures cast.
+ */
+import React from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
+import { fireEvent, render, renderHook, screen, waitFor } from '@testing-library/react';
+import { flexRender, getCoreRowModel, useReactTable } from '@tanstack/react-table';
+import { describe, expect, it, vi } from 'vitest';
+
+vi.mock('@/components/ui/tooltip', async () => {
+  const actual = await vi.importActual<typeof import('@/components/ui/tooltip')>(
+    '@/components/ui/tooltip',
+  );
+  return {
+    ...actual,
+    TooltipContent: ({ children }: { children: React.ReactNode }) => <>{children}</>,
+  };
+});
+
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
+  useListingColumnPreferences: () => ({ resetToDefaults: vi.fn(), isLoading: false }),
+}));
+
+const getOrderInquirySpoDetail = vi.fn();
+vi.mock('../../_shared/services/orderInquiryService', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../_shared/services/orderInquiryService')>();
+  return {
+    ...actual,
+    getOrderInquirySpoDetail: (...args: unknown[]) => getOrderInquirySpoDetail(...args),
+  };
+});
+
+import { useOrderInquiryWorklistColumns } from './orderInquiryWorklistColumns';
+import { useOrderInquiryHeaderLinesColumns } from '../[id]/components/orderInquiryHeaderLinesColumns';
+import { foldInquiryLines, toLineRows } from '../../_shared/lib/orderInquiryLineFold';
+import type { OrderInquiryWorklistRow } from '../../_shared/types/orderInquiry.types';
+
+type Link = Record<string, unknown>;
+
+function rowWith(links: Link[], over: Record<string, unknown> = {}): OrderInquiryWorklistRow {
+  return {
+    id: 'row-1',
+    core_line_id: 'cl-1',
+    line_no: 1,
+    verb: 'ORDER',
+    state: 'placed',
+    qty: '486',
+    linked_qty: '486',
+    reserved_qty: '0',
+    bundled_qty: '0',
+    item_code: 'SRTWT7202',
+    links,
+    ...over,
+  } as unknown as OrderInquiryWorklistRow;
+}
+
+const PO_LINK: Link = {
+  id: 'l-po', kind: 'po', document: '202607-S0083', po_id: 'po-1', po_line_id: 'pl-1',
+  qty: '486', received: false, receipts: [], dead_reason: null,
+};
+const SPO_RECEIVED: Link = {
+  id: 'derived-1', kind: 'spo', document: 'SPO-2026/09-0107', derived: true,
+  source_po_number: '202607-S0083', qty: '486', received: true, received_qty: '486',
+  receipts: [{ qty: '486', bin: 'BRW-BB' }], dead_reason: null,
+};
+
+type Where = 'worklist' | 'lines';
+
+function cellOf(where: Where, columnId: 'po_number' | 'spo_number', row: OrderInquiryWorklistRow) {
+  if (where === 'worklist') {
+    const { result } = renderHook(() => useOrderInquiryWorklistColumns());
+    const column = result.current.find(
+      (c) => (c as { id?: string }).id === columnId,
+    ) as { cell: (ctx: unknown) => React.ReactNode } | undefined;
+    expect(column).toBeDefined();
+    return column!.cell({ row: { original: row } });
+  }
+  const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+  const column = result.current.find(
+    (c) => (c as { id?: string }).id === columnId,
+  ) as { cell: (ctx: unknown) => React.ReactNode } | undefined;
+  expect(column).toBeDefined();
+  const [lineRow] = toLineRows(foldInquiryLines([row]));
+  return column!.cell({ row: { original: lineRow } });
+}
+
+function show(node: React.ReactNode) {
+  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
+}
+
+describe.each<Where>(['worklist', 'lines'])('document pills on the %s', (where) => {
+  it('seed: the PO chip names the document', () => {
+    show(cellOf(where, 'po_number', rowWith([PO_LINK, SPO_RECEIVED])));
+    expect(screen.getByText('202607-S0083')).toBeTruthy();
+  });
+
+  it('AC-D1: the PO chip carries no "received" pill, even with its SPO landed', () => {
+    show(cellOf(where, 'po_number', rowWith([{ ...PO_LINK, received: true }, SPO_RECEIVED])));
+    expect(screen.queryByText(/received/i)).toBeNull();
+  });
+
+  it('AC-D1: the SPO chip reads "Received 486 at BRW-BB" off the receipts', () => {
+    show(cellOf(where, 'spo_number', rowWith([PO_LINK, SPO_RECEIVED])));
+    expect(screen.getByText('SPO-2026/09-0107')).toBeTruthy();
+    expect(screen.getByText('Received 486 at BRW-BB')).toBeTruthy();
+  });
+
+  it('AC-D1: an SPO still in transit has no received pill', () => {
+    show(
+      cellOf(
+        where,
+        'spo_number',
+        rowWith([PO_LINK, { ...SPO_RECEIVED, received: false, receipts: [] }]),
+      ),
+    );
+    expect(screen.queryByText(/received/i)).toBeNull();
+  });
+
+  it('AC-D1: class d, the PO chip itself reads "Received 50 at BRW-BB"', () => {
+    show(
+      cellOf(
+        where,
+        'po_number',
+        rowWith([{ ...PO_LINK, qty: '50', received: true, receipts: [{ qty: '50', bin: 'BRW-BB' }] }]),
+      ),
+    );
+    expect(screen.getByText('Received 50 at BRW-BB')).toBeTruthy();
+  });
+
+  it('AC-D3: a cancelled PO line says "PO cancelled" on the PO chip', () => {
+    show(cellOf(where, 'po_number', rowWith([{ ...PO_LINK, dead_reason: 'po_cancelled' }])));
+    expect(screen.getByText('PO cancelled')).toBeTruthy();
+  });
+
+  it('AC-D3: a withdrawn SPO says "SPO withdrawn" on the SPO chip', () => {
+    show(
+      cellOf(
+        where,
+        'spo_number',
+        rowWith([
+          {
+            id: 'l-spo', kind: 'spo', document: 'SPO-2026/09-0200', qty: '50',
+            spo_allocation_id: 'a-1', received: false, receipts: [], dead_reason: 'spo_withdrawn',
+          },
+        ]),
+      ),
+    );
+    expect(screen.getByText('SPO withdrawn')).toBeTruthy();
+  });
+});
+
+
+// ---------------------------------------------------------------------------- round 2
+
+const SPO = 'SPO-2026/09-0107';
+const L12_RECEIVED: Link = {
+  id: 'l12', kind: 'spo', document: SPO, line_label: 'L12', spo_allocation_id: 'a-12',
+  qty: '60', received: true, received_qty: '60', receipts: [{ qty: '60', bin: 'BRW-BB' }],
+  dead_reason: null,
+};
+const L7_DEAD: Link = {
+  id: 'l7', kind: 'spo', document: SPO, line_label: 'L7', spo_allocation_id: 'a-7',
+  qty: '294', received: false, receipts: [], dead_reason: 'spo_withdrawn',
+};
+
+describe.each<Where>(['worklist', 'lines'])('F1 one chip per SPO line on the %s', (where) => {
+  it('the visible chip is the live line with its receipt; the withdrawn line waits under +1', async () => {
+    // The dead link is FIRST in the data: dead chips sort after live ones.
+    show(cellOf(where, 'spo_number', rowWith([L7_DEAD, L12_RECEIVED])));
+    expect(screen.getByText(SPO)).toBeTruthy();
+    expect(screen.getByText('Received 60 at BRW-BB')).toBeTruthy();
+    expect(screen.queryByText('SPO withdrawn')).toBeNull();
+
+    fireEvent.click(screen.getByText('+1'));
+    expect(await screen.findByText('SPO withdrawn')).toBeTruthy();
+    expect(screen.getAllByText(/L7/).length).toBeGreaterThan(0);
+  });
+});
+
+describe('F2 the Lines tab sums one SPO line across the SO line\'s OI rows', () => {
+  it('L12 reads "Received 354 at BRW-BB" and L7 keeps its red pill under +1', async () => {
+    const poLink: Link = {
+      id: 'l-po', kind: 'po', document: '202607-S0100', po_id: 'po-1', po_line_id: 'pl-1',
+      qty: '294', received: false, receipts: [], dead_reason: null,
+    };
+    const derived: Link = {
+      id: 'derived-12', kind: 'spo', derived: true, document: SPO, line_label: 'L12',
+      source_po_number: '202607-S0100', qty: '294', received: true,
+      receipts: [{ qty: '294', bin: 'BRW-BB' }], dead_reason: null,
+    };
+    const rowA = rowWith([poLink, derived], { id: 'row-a' });
+    const rowB = rowWith([L7_DEAD, L12_RECEIVED], { id: 'row-b', qty: '354' });
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    const column = result.current.find(
+      (c) => (c as { id?: string }).id === 'spo_number',
+    ) as { cell: (ctx: unknown) => React.ReactNode };
+    const [lineRow] = toLineRows(foldInquiryLines([rowA, rowB]));
+    show(column.cell({ row: { original: lineRow } }));
+
+    expect(screen.getByText('Received 354 at BRW-BB')).toBeTruthy();
+    expect(screen.queryByText('SPO withdrawn')).toBeNull();
+    fireEvent.click(screen.getByText('+1'));
+    expect(await screen.findByText('SPO withdrawn')).toBeTruthy();
+  });
+});
+
+describe.each<Where>(['worklist', 'lines'])('F3 and F4 receipts on one chip, on the %s', (where) => {
+  it('F3: a real link and a derived entry on the same SPO line add up to one pill', () => {
+    const real: Link = { ...L12_RECEIVED, receipts: [{ qty: '194', bin: 'B1' }] };
+    const derived: Link = {
+      ...L12_RECEIVED, id: 'derived-x', derived: true, receipts: [{ qty: '194', bin: 'B1' }],
+    };
+    show(cellOf(where, 'spo_number', rowWith([real, derived])));
+    expect(screen.getByText('Received 388 at B1')).toBeTruthy();
+    expect(screen.queryByText('+1')).toBeNull();
+  });
+
+  it('F4: several bins are several visible pills, never a hover-only +N', () => {
+    const link: Link = {
+      ...L12_RECEIVED,
+      receipts: [{ qty: '30', bin: 'B1' }, { qty: '20', bin: 'B2' }],
+    };
+    show(cellOf(where, 'spo_number', rowWith([link])));
+    expect(screen.getByText('Received 30 at B1')).toBeTruthy();
+    expect(screen.getByText('Received 20 at B2')).toBeTruthy();
+    expect(screen.queryByText(/^\+\d+$/)).toBeNull();
+  });
+});
+
+describe('F5 the Lines tab receipt pill is clickable like the worklist\'s', () => {
+  it('clicking "Received 60 at BRW-BB" opens the SPO document, as the document link does', async () => {
+    getOrderInquirySpoDetail.mockResolvedValue({
+      spo_number: SPO, supplier_name: 'S', lines: [], allocations: [],
+    });
+    show(cellOf('lines', 'spo_number', rowWith([L12_RECEIVED])));
+    fireEvent.click(screen.getByText('Received 60 at BRW-BB'));
+    await waitFor(() => expect(getOrderInquirySpoDetail).toHaveBeenCalled());
+  });
+});
+
+// ---------------------------------------------------------------------------- round 3 (layout)
+// jsdom has no layout, so these pin the structure that keeps the SPO number readable: a width
+// floor on the number, pills that never shrink or truncate, and a column wide enough for
+// number + "via PO" + "Received <qty> at <bin>" side by side.
+
+const SPO_VIA_RECEIVED: Link = {
+  id: 'derived-9', kind: 'spo', derived: true, document: SPO, line_label: 'L12',
+  qty: '60', received: true, receipts: [{ qty: '60', bin: 'BRW-BB' }], dead_reason: null,
+};
+
+describe.each<Where>(['worklist', 'lines'])('R3 layout of the SPO cell on the %s', (where) => {
+  it('(1) the SPO number never truncates: shrink-0, no truncate / max-w, title holds the full number', () => {
+    // Owner ruling (26 Oct, #1870 hand test) SUPERSEDES the round-3 "min-width floor": the
+    // number is the focus and never gives way; the receipt pill gives way first (R5 below).
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    const button = screen.getByText(SPO).closest('button') as HTMLElement;
+    expect(button.getAttribute('title')).toContain(SPO);
+    expect(button.className).toContain('shrink-0');
+    expect(button.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis|(^|\s)max-w-/);
+  });
+
+  it('(2) the pills keep their full text: shrink-0 and no truncation class', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    // (The receipt pill is the one that gives way first now: see R5.)
+    for (const text of ['via PO']) {
+      const pill = screen.getByText(text);
+      expect(pill.className).toContain('shrink-0');
+      expect(pill.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis/);
+    }
+  });
+});
+
+describe('R3 the SPO column is wide enough on both tables', () => {
+  function sizeOf(columns: unknown[]) {
+    const column = columns.find((c) => (c as { id?: string }).id === 'spo_number') as
+      | { size?: number }
+      | undefined;
+    expect(column).toBeDefined();
+    return column!.size ?? 0;
+  }
+
+  it('(3) the worklist SPO column is at least 320 wide', () => {
+    const { result } = renderHook(() => useOrderInquiryWorklistColumns());
+    expect(sizeOf(result.current)).toBeGreaterThanOrEqual(320);
+  });
+
+  it('(3) the Lines tab SPO column is at least 320 wide', () => {
+    const { result } = renderHook(() => useOrderInquiryHeaderLinesColumns());
+    expect(sizeOf(result.current)).toBeGreaterThanOrEqual(320);
+  });
+});
+
+
+/**
+ * R4, as amended by the round-6 ruling (lead, from the owner's "if I resize, I still need to
+ * see the number"): the SPO column may shrink to what still fits the full number + "via PO"
+ * + the compact chip, so the chip is reachable. Measured: worklist number 124 px, Lines tab
+ * number 143 px, "via PO" 52, chip 66, padding ~24. A saved narrower width clamps UP to that
+ * table's own minimum, not to the old 320.
+ *
+ * ROUND 8 (owner, #1870 hand test: one pill at every width, truncating like other components)
+ * SUPERSEDES the compact chip: the floor is number + "via PO" + a TRUNCATED pill, so the
+ * ranges become worklist 240-270 and Lines tab 260-290.
+ * ROUND 8b: browser measure (a 2 px sliver at 250, "R..." at 270) moves both floors to
+ * 285-300, so a pill still shows "Rec..." (about 40 px).
+ */
+describe('R4 the SPO column resizes exactly like the PO column (round 9)', () => {
+  // ROUND 9 (owner hand test 3, #1870: "my PO can shrink until the number just fits ... my
+  // SPO also should be able, but it has a min width") SUPERSEDES the round-4/6/8/8b floors
+  // above: the SPO column carries no floor of its own, the same as the PO column.
+  const tables: Array<[string, () => unknown[]]> = [
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[]],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[]],
+  ];
+
+  function def(columns: unknown[], id: string) {
+    return columns.find((c) => (c as { id?: string }).id === id) as { minSize?: number };
+  }
+
+  it.each(tables)('(a) the %s SPO column minSize equals the PO column minSize', (_n, build) => {
+    const { result } = renderHook(build);
+    expect(def(result.current, 'spo_number').minSize).toBe(def(result.current, 'po_number').minSize);
+  });
+
+  it.each(tables)('(b) the %s table keeps a saved width of 170 for spo_number, as it does for po_number', (_n, build) => {
+    const { result } = renderHook(() => {
+      const columns = build();
+      return useReactTable({
+        data: [] as unknown[],
+        columns: columns as never,
+        getCoreRowModel: getCoreRowModel(),
+        state: { columnSizing: { spo_number: 170, po_number: 170 } },
+      });
+    });
+    expect(result.current.getColumn('po_number')!.getSize()).toBe(170);
+    expect(result.current.getColumn('spo_number')!.getSize()).toBe(170);
+  });
+});
+
+// ---------------------------------------------------------------------------- round 5
+
+function receiptPill() {
+  return screen.getByText('Received 60 at BRW-BB');
+}
+
+describe.each<Where>(['worklist', 'lines'])('R5 the number leads, the receipt gives way, on the %s', (where) => {
+  it('T1 a PO number never truncates either', () => {
+    show(cellOf(where, 'po_number', rowWith([PO_LINK])));
+    const button = screen.getByText('202607-S0083').closest('button') as HTMLElement;
+    expect(button.getAttribute('title')).toContain('202607-S0083');
+    expect(button.className).toContain('shrink-0');
+    expect(button.className).not.toMatch(/truncate|overflow-hidden|text-ellipsis|(^|\s)max-w-/);
+  });
+
+  // ROUND 8 (owner, #1870 hand test, 26 Oct): "reuse our pill component ... when I shrink it
+  // should truncate like 'Rec..'". SUPERSEDES round-5 T2 (quiet text-2xs pill), T3 (compact
+  // "Received" fallback chip) and T4 (container queries): one pill, at every width.
+
+  it('R1 the receipt tag is the SAME pill component as "via PO" (the app Badge, same variant)', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    const via = screen.getByText('via PO').closest('[data-slot="badge"]') as HTMLElement | null;
+    const receipt = receiptPill().closest('[data-slot="badge"]') as HTMLElement | null;
+    expect(via).not.toBeNull();
+    expect(receipt).not.toBeNull();
+    const receiptClasses = new Set(receipt!.className.split(/\s+/));
+    for (const cls of via!.className.split(/\s+/).filter(Boolean)) {
+      expect(receiptClasses.has(cls), `receipt pill lacks "${cls}"`).toBe(true);
+    }
+  });
+
+  it('R2 one pill at every width: no compact "Received" chip, no container queries', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    expect(screen.queryByText(/^Received$/)).toBeNull();
+    expect(document.querySelector('button[aria-label*="Received 60"]')).toBeNull();
+    expect(document.body.innerHTML).not.toMatch(/@container|@max-/);
+  });
+
+  it('R3 the pill truncates: ellipsis on its text, shrinkable, title holds the full text', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    const text = receiptPill();
+    const badge = text.closest('[data-slot="badge"]') as HTMLElement;
+    expect(badge).not.toBeNull();
+    expect(text.className).toContain('truncate');
+    expect(badge.className).toContain('min-w-0');
+    const titled = text.closest('[title]') as HTMLElement;
+    expect(titled.getAttribute('title')).toBe('Received 60 at BRW-BB');
+  });
+
+  it('R4 "+N" only counts extra document lines: one SPO line with receipts shows none', () => {
+    show(cellOf(where, 'spo_number', rowWith([SPO_VIA_RECEIVED])));
+    expect(screen.queryByText(/^\+\d+$/)).toBeNull();
+  });
+
+  it('R4 two bins on one line are two pills and still no "+N"', () => {
+    const link: Link = {
+      ...SPO_VIA_RECEIVED,
+      receipts: [{ qty: '30', bin: 'B1' }, { qty: '20', bin: 'B2' }],
+    };
+    show(cellOf(where, 'spo_number', rowWith([link])));
+    expect(screen.getByText('Received 30 at B1')).toBeTruthy();
+    expect(screen.getByText('Received 20 at B2')).toBeTruthy();
+    expect(screen.queryByText(/^\+\d+$/)).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------- round 7
+
+describe('R7 the default SPO column width shows the full receipt pill', () => {
+  // number + "via PO" + "Received 486 at BRW-BB" (147 px) + gaps/padding: worklist ~355,
+  // Lines tab (wider number) ~374; measured in the browser: full at 400 / 420, clipped at 360 / 380.
+  it.each([
+    ['worklist', () => useOrderInquiryWorklistColumns() as unknown[], 400],
+    ['lines', () => useOrderInquiryHeaderLinesColumns() as unknown[], 420],
+  ] as Array<[string, () => unknown[], number]>)('the %s default size is >= %i', (_n, build, floor) => {
+    const { result } = renderHook(build);
+    const column = result.current.find((c) => (c as { id?: string }).id === 'spo_number') as {
+      size?: number;
+    };
+    expect(column.size ?? 0).toBeGreaterThanOrEqual(floor);
+  });
+});

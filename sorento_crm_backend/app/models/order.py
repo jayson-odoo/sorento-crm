@@ -703,6 +703,9 @@ class SalesOrder(Base, CompanyScopedMixin):
     # only by the ESB ingest, never touches `project_label`. Migration sopr_0001.
     po_ref = Column(String(255), nullable=True)
     po_ref_key = Column(String(255), nullable=True)
+    # AutoCount `SO.ShipInfo` (FULFIL-SO-REMARK): the customer PO number, or the words
+    # PURCHASE REQUEST / SPONSORSHIP. Read only by `so_remark_rules.remark_type`.
+    ship_info = Column(String(255), nullable=True)
     # AC-CONSIGN-CRM (owner ruling 1, 13 Oct): `consignment` is an AutoCount Consignment (CG)
     # written as demand by the consignments ingest; every other order is `sales_order`. It
     # labels the order "Consignment" and keeps it out of the SO-based sales figures (Q5 a).
@@ -776,6 +779,11 @@ class SalesOrderLine(Base, CompanyScopedMixin):
     # did not carry it at all. Mapped now because the demand drill quotes it: "who ordered
     # it and at what price" is the question the buyer opens that popover with.
     unit_price = Column(Numeric(15, 2), nullable=True)
+    # FULFIL-SO-REMARK: AutoCount's line remark (`SODTL.FurtherDescription`, RTF stripped at
+    # the edge) and the text-only heading line above this one (`section_heading`). Read only
+    # by `so_remark_rules.is_mockup_line`.
+    line_remark = Column(Text, nullable=True)
+    section_heading = Column(Text, nullable=True)
     # The rest of the money the sales book states per line, and the reason the detail page
     # could only ever print a unit price beside a quantity. Both NULL when the file said
     # nothing: a discount of 0 claims a discount of nothing was given, and a line total of

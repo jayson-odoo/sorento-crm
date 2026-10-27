@@ -112,6 +112,19 @@ export function buildBrandColumns(handlers: {
       cell: ({ row }) => <span className="tabular-nums">{row.original.chatbot_weight ?? 0}</span>,
     },
     {
+      id: 'dealer_company',
+      accessorFn: (row) => row.dealer_company_name ?? '',
+      header: ({ column }) => <DataGridColumnHeader title="Dealer group" column={column} />,
+      size: 160,
+      enableSorting: false,
+      meta: { headerTitle: 'Dealer group' },
+      cell: ({ row }) => (
+        <div className="truncate" title={row.original.dealer_company_name ?? undefined}>
+          {row.original.dealer_company_name ?? '-'}
+        </div>
+      ),
+    },
+    {
       id: 'product_count',
       accessorFn: (row) => row.product_count ?? 0,
       header: ({ column }) => <DataGridColumnHeader title="Products" column={column} />,

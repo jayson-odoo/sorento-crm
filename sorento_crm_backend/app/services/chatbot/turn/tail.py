@@ -282,8 +282,11 @@ def write_merged(
     """
     from sqlalchemy import text
 
-    from app.services.chatbot import session_state
+    from app.services.chatbot import inbox_queue, session_state
 
+    # CHAT-INBOX-QUEUE look-ahead: on the inbox drain, a turn yields here, before it
+    # writes any state, when an earlier-sent message of the contact is queued.
+    inbox_queue.checkpoint(turn_id)
     merged = payload
     clobbered: list[str] = []
     merged_any = False

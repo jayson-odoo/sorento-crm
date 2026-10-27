@@ -391,32 +391,27 @@ def warehouse_criterion(policy: Optional[Policy], column):
     return sa.and_(*clauses)
 
 
-def visible_location_codes(
-    db: Session, contact_id: str, space_id: Optional[str] = None
-) -> Optional[set[str]]:
-    """The location codes a contact may be told, for a read that names locations outside
-    the stock balance (the on-order rung's `location`, STOCK-TOTAL-OS-SCOPE).
+def scope_warehouse_ids(db: Session, policy: Policy) -> Optional[list[str]]:
+    """The warehouse ids a policy lets a contact be told about, for a read outside the
+    stock balance (the on-order rung, CHAT-PO-LOCATION-SCOPE).
 
-    None = every location (the policy names neither list). A set = only these codes: the
+    None = every location (the policy names neither list). A list = only these: the
     active warehouses `warehouse_criterion` allows, the same set the stock lines and the
-    `stock_visibility.warehouse_codes` echo are built from. `availability` names no
-    location at all, and an unresolvable contact fails closed, so both are the empty set.
+    `stock_visibility.warehouse_codes` echo are built from. Exact rows, never a pool: BRW
+    does not take in BRW-BB. `[]` = none at all.
     """
     import sqlalchemy as sa
 
     from app.models.inventory import Warehouse
 
-    policy = resolve_policy(db, contact_id, space_id)
-    if policy is None or policy.mode == "availability":
-        return set()
     if policy.warehouse_ids is None and policy.excluded_warehouse_ids is None:
         return None
     rows = (
-        db.query(Warehouse.warehouse_code)
+        db.query(Warehouse.id)
         .filter(Warehouse.is_active.is_(sa.true()), warehouse_criterion(policy, Warehouse.id))
         .all()
     )
-    return {str(code) for (code,) in rows if code}
+    return [str(wid) for (wid,) in rows]
 
 
 def upsert_policy(

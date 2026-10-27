@@ -1,0 +1,282 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Project registration v2</title>
+<!-- PROJECT-REG-PORTAL mock v2 (25 Oct, legacy desktop form per owner 12:30). Static, existing components only; every callout names its component and repo path (FE = sorento_crm_frontend/). Every name, lot, code and number is invented (public repo). -->
+<!-- NEW-PRODUCT-APP mock v4 (18 Oct): the owner kept the flow ("the flow is ok already") and asked the application to LOOK LIKE the company's paper NPA form. Layout follows crew's masked layout spec (18 Oct). The case is the invented sandbox case (SI26-0412 / XY-1234); every name, number and code is invented (public repo). No value from the owner's uploaded form is used. D1-D4 are drawn with crew's recommended answers as defaults; each is tagged on the frames so the owner can correct them in one pass. Built only from existing components; every callout names its component and repo path. FE = sorento_crm_frontend/. -->
+<style>
+:root{--fg:#09090b;--muted:#71717a;--border:#e4e4e7;--muted-bg:#f4f4f5;--primary:#1b84ff;--destructive:#dc2626;--callout:#e11d74;--dec:#7c3aed;--decbg:#f5f3ff;
+  --font:Inter,ui-sans-serif,system-ui,-apple-system,"Segoe UI",sans-serif}
+*{box-sizing:border-box}
+body{margin:0;background:#f4f4f5;color:var(--fg);font:14px/1.45 var(--font)}
+.doc{max-width:1760px;margin:0 auto;padding:24px 16px 64px}
+.doc>h1{font-size:22px;margin:0 0 4px}.sub{color:var(--muted);margin:0 0 8px;max-width:980px}
+h2.ft{font-size:15px;margin:32px 0 10px;color:var(--muted);font-weight:600;text-transform:uppercase;letter-spacing:.04em}
+.layout{display:flex;gap:24px;align-items:flex-start;flex-wrap:wrap}
+.scroll{overflow-x:auto;max-width:100%}
+.frame{background:#fff;border:1px solid var(--border);border-radius:12px;position:relative;overflow:hidden}
+.w1280{width:1280px}.w375{width:375px;flex:none}
+.notes{flex:1 1 360px;min-width:300px;max-width:620px}
+.notes ol{margin:0;padding:0;list-style:none}
+.notes li{display:flex;gap:10px;background:#fff;border:1px solid var(--border);border-radius:8px;padding:10px 12px;margin-bottom:8px}
+.notes li b{display:block;margin-bottom:2px}
+.ref{display:block;color:var(--muted);font-size:12px;margin-top:4px;font-family:ui-monospace,Menlo,monospace;word-break:break-word}
+.co{display:inline-flex;align-items:center;justify-content:center;flex:none;min-width:22px;height:22px;padding:0 3px;border-radius:50%;background:var(--callout);color:#fff;font-size:12px;font-weight:700;box-shadow:0 0 0 2px #fff}
+.pin{position:absolute;z-index:5;right:-8px;top:-8px}.rel{position:relative}
+.dtag{display:inline-flex;align-items:center;gap:4px;border:1px dashed var(--dec);background:var(--decbg);color:var(--dec);border-radius:6px;padding:1px 7px;font-size:11px;font-weight:700;white-space:nowrap}
+.muted{color:var(--muted)}.xs{font-size:12px}.b{font-weight:600}
+.shell{display:flex}.side{width:232px;flex:none;border-right:1px solid var(--border);padding:16px 12px;background:#fcfcfd;font-size:13px}
+.side .brand{font-weight:700;font-size:16px;margin:0 8px 18px}.side .grp{color:var(--muted);font-size:11px;text-transform:uppercase;margin:14px 8px 6px}
+.side .it{padding:6px 8px;border-radius:6px}.side .it.on{background:#e9f3ff;color:var(--primary);font-weight:600}
+.main{flex:1;min-width:0}.topbar{height:52px;border-bottom:1px solid var(--border)}.content{padding:20px 28px 28px}
+.phdr{display:flex;justify-content:space-between;align-items:center;margin-bottom:16px;gap:8px}.phdr h1{font-size:20px;font-weight:600;margin:0}
+.crumb{font-size:12px;color:var(--muted)}
+.banner{border:1px solid #bfdbfe;background:#eff6ff;color:#1e3a8a;border-radius:8px;padding:8px 12px;font-size:13px;margin-bottom:14px}
+.banner.ok{border-color:#bbf7d0;background:#f0fdf4;color:#14532d}
+.btn{display:inline-flex;align-items:center;gap:6px;border:1px solid var(--primary);background:var(--primary);color:#fff;border-radius:6px;padding:7px 14px;font:500 13px var(--font);white-space:nowrap}
+.btn.out{background:#fff;color:var(--fg);border-color:var(--border)}.btn.sm{padding:4px 10px;font-size:12px}
+.pill{display:inline-flex;border-radius:999px;padding:2px 8px;font-size:12px;font-weight:600;background:#f1f5f9;color:#334155}
+.pill.ok{background:#dcfce7;color:#166534}.pill.blue{background:#dbeafe;color:#1e40af}
+.badge2{display:inline-flex;border-radius:6px;background:var(--muted-bg);padding:1px 8px;font-size:12px;font-weight:500}
+.inp{border:1px solid var(--border);border-radius:6px;padding:6px 10px;min-height:34px;display:flex;justify-content:space-between;align-items:center;gap:6px;background:#fff;font-size:14px;width:100%}
+.inp.ph{color:var(--muted)}.inp.ta{min-height:56px;align-items:flex-start}
+.req{color:var(--destructive)}
+.dd{border:1px solid var(--border);border-radius:6px;margin-top:4px;box-shadow:0 2px 6px rgba(0,0,0,.08);font-size:13px;background:#fff}
+.dd div{padding:6px 10px}.dd div.hl{background:var(--muted-bg)}
+
+/* the paper form: a bordered 2-column label:value sheet */
+.paper{max-width:860px;margin:0 auto;border:1px solid var(--border);border-radius:12px;background:#fff;padding:22px 26px 26px}
+.paper .ttl{text-align:center;font-size:20px;font-weight:700;text-decoration:underline;text-underline-offset:4px;letter-spacing:.02em;margin:4px 0 18px}
+.paper .sec{text-align:center;font-size:16px;font-weight:700;letter-spacing:.02em;margin:22px 0 10px}
+table.sheet{border-collapse:collapse;width:100%;table-layout:fixed}
+table.sheet th{width:200px;text-align:right;font-weight:700;font-size:13px;letter-spacing:.02em;padding:8px 12px;border:1px solid #d4d4d8;background:#fafafa;vertical-align:top}
+table.sheet td{padding:6px 10px;border:1px solid #d4d4d8;vertical-align:top;font-size:14px}
+table.sheet td .inp{border-color:transparent;padding:4px 2px;min-height:28px}
+table.sheet td.edit .inp{border-color:var(--border);padding:5px 8px}
+table.sheet tr.app th{color:var(--muted);font-weight:600}
+.prodhdr{display:flex;justify-content:space-between;align-items:center;background:var(--muted-bg);border:1px solid #d4d4d8;border-bottom:none;padding:6px 10px;font-weight:600;font-size:13px;margin-top:14px}
+.img{display:flex;gap:10px;flex-wrap:wrap}
+.ph-img{width:150px;height:110px;border:1px dashed #a1a1aa;border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--muted);font-size:12px;text-align:center;background:repeating-linear-gradient(45deg,#fafafa,#fafafa 8px,#f4f4f5 8px,#f4f4f5 16px)}
+.ph-add{width:150px;height:110px;border:1px dashed var(--primary);border-radius:6px;display:flex;align-items:center;justify-content:center;color:var(--primary);font-size:12px;text-align:center}
+.ro{color:var(--muted)}
+.opened{border:1px solid #bbf7d0;background:#f0fdf4;border-radius:6px;padding:6px 10px;font-size:13px}
+.audit{max-width:860px;margin:16px auto 0;border:1px solid var(--border);border-radius:12px;background:#fff;padding:12px 18px}
+
+/* phone */
+.w375 .content{padding:14px 12px}
+.w375 .paper{padding:14px 10px;border-radius:10px}
+.w375 table.sheet th,.w375 table.sheet td{display:block;width:auto;border:none;text-align:left;padding:2px 2px}
+.w375 table.sheet tr{display:block;border-bottom:1px solid #e4e4e7;padding:6px 0}
+.w375 table.sheet th{background:none;font-size:11px;color:var(--muted)}
+.w375 .ph-img,.w375 .ph-add{width:100px;height:80px}
+
+/* excel preview */
+.xl{background:#fff;border:1px solid #c7c7c7;width:640px;font:12px Calibri,Arial,sans-serif;margin:0 auto}
+.xl .bar{background:#217346;color:#fff;padding:6px 10px;font:12px var(--font)}
+.xl table{border-collapse:collapse;width:100%}
+.xl td{border:1px solid #9ca3af;padding:5px 8px;vertical-align:top}
+.xl td.l{width:150px;text-align:right;font-weight:700}
+.xl td.h{text-align:center;font-weight:700;font-size:16px}
+.dec{background:#fff;border:1px solid var(--border);border-radius:12px;padding:14px 18px;margin:14px 0}
+.dec table{border-collapse:collapse;width:100%;font-size:13px}
+.dec th,.dec td{border-bottom:1px solid var(--border);padding:7px 8px;text-align:left;vertical-align:top}
+.dec th{color:var(--muted);font-weight:500}
+.warn{border:1px solid #fde68a;background:#fffbeb;color:#78350f;border-radius:8px;padding:8px 12px;font-size:13px;margin:6px 0}
+.block{border:1px solid #fecaca;background:#fef2f2;color:#7f1d1d;border-radius:8px;padding:8px 12px;font-size:13px;margin:6px 0}
+.pill.red{background:#fee2e2;color:#991b1b}.pill.amber{background:#fef3c7;color:#92400e}
+table.grid{border-collapse:collapse;width:100%;font-size:13px;table-layout:fixed}
+table.grid th{text-align:left;color:var(--muted);font-weight:500;border-bottom:1px solid var(--border);padding:8px}
+table.grid td{border-bottom:1px solid var(--border);padding:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.btn[disabled]{opacity:.45}
+.portalbar{height:52px;border-bottom:1px solid var(--border);display:flex;align-items:center;padding:0 20px;font-weight:700}
+.ai{display:inline-flex;border-radius:4px;background:#ede9fe;color:#5b21b6;font-size:10px;font-weight:700;padding:0 5px;margin-left:6px}
+.sheet2{display:grid;grid-template-columns:1fr 1fr;gap:0}
+.sheet2 table.sheet th{width:150px}
+.cand{border-top:1px solid #fecaca;padding:6px 0}.cand:first-of-type{border-top:none}
+</style>
+</head>
+<body>
+<div class="doc">
+<h1>Project registration from the portal, mock v2 (legacy form)</h1>
+<p class="sub"><b>v2 = the legacy desktop Project Registration Form</b> (owner, 25 Oct 12:30): Project Title, Distributor Name, Sales Agent, Customer Name, Type of Building, State, Mukim, Status, PPF No., Date, Your Ref, Developer, Main Contractor, Architect; Approve / Reject. Sales Agent, PPF No. and Date are automatic; Developer, State, Mukim (and contractor / architect) are filled by AI from the title or a photo, editable. Card: <code>documentation/plans/projects/CARD-project-registration-portal-25oct.md</code> (v2). Open questions are tagged <span class="dtag">Q1</span> to <span class="dtag">Q4</span>; frames draw the recommended answer. Every name, lot and number is invented (public repo).</p>
+
+<!-- ============================================================ FRAME 1 -->
+<h2 class="ft">1. Portal, new registration after "Fill from title / photo" (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="portalbar">Sorento portal</div>
+ <div class="content">
+  <div class="phdr rel"><div><h1>New project registration</h1><div class="crumb">My submissions &rsaquo; Project registration &rsaquo; New</div></div><div style="display:flex;gap:8px"><span class="btn out">Cancel</span><span class="btn">Submit</span></div><span class="co pin">1</span></div>
+  <div class="paper" style="max-width:1100px">
+   <div class="ttl">PROJECT REGISTRATION FORM</div>
+   <table class="sheet">
+    <tr class="rel"><th>PROJECT TITLE: <span class="req">*</span></th><td class="edit"><div class="inp ta">CADANGAN PEMBANGUNAN 2 BLOK PANGSAPURI SERVIS 38 TINGKAT DI LOT 1234, MUKIM BATU, KUALA LUMPUR</div>
+     <div style="display:flex;gap:8px;align-items:center;margin-top:6px"><span class="btn out sm">Fill from title / photo</span><span class="xs muted">Reads the title and the photos below. Check every value.</span></div><span class="co pin">2</span></td></tr>
+    <tr class="rel"><th>PHOTOS:</th><td><div class="img"><div class="ph-img">signboard.jpg</div><div class="ph-add">+ Add photo<br>(site, signboard, tender notice)</div></div><span class="co pin">3</span></td></tr>
+   </table>
+   <div class="warn rel"><b>Possibly already registered:</b> PRJ-0162 Residensi Batu Heights (Kuala Lumpur, Mukim Batu, same lot 1234). You can still submit; Project Sales Admin decides. <span class="dtag">Q3</span><span class="co pin">4</span></div>
+   <div class="sheet2" style="margin-top:10px">
+    <table class="sheet">
+     <tr><th>PPF NO.:</th><td class="ro">Given on submit</td></tr>
+     <tr><th>DATE:</th><td class="ro">25/10/2026</td></tr>
+     <tr><th>STATUS:</th><td class="ro">-</td></tr>
+     <tr class="rel"><th>SALES AGENT:</th><td class="ro">SA-007 (you)<span class="co pin">5</span></td></tr>
+     <tr class="rel"><th>DISTRIBUTOR NAME:</th><td class="edit"><div class="inp">300-D021 Distributor D Sdn Bhd<span>&times;</span></div><span class="dtag">Q1</span><span class="co pin">6</span></td></tr>
+     <tr><th>CUSTOMER NAME:</th><td class="edit"><div class="inp">Contractor C Sdn Bhd</div><span class="dtag">Q1</span></td></tr>
+     <tr><th>YOUR REF:</th><td class="edit"><div class="inp ph">-</div></td></tr>
+    </table>
+    <table class="sheet">
+     <tr class="rel"><th>DEVELOPER: <span class="req">*</span></th><td class="edit"><div class="inp">Pemaju P Sdn Bhd <span class="ai">AI</span><span>&times;</span></div><div class="xs" style="margin-top:3px">Did you mean <b>Pemaju P Sdn. Bhd.</b> (on record)? <span class="btn out sm">Use it</span></div><span class="co pin">7</span></td></tr>
+     <tr><th>MAIN CONTRACTOR:</th><td class="edit"><div class="inp">Kontraktor K Sdn Bhd <span class="ai">AI</span><span>&times;</span></div></td></tr>
+     <tr><th>ARCHITECT:</th><td class="edit"><div class="inp">Arkitek A <span class="ai">AI</span><span>&times;</span></div></td></tr>
+     <tr class="rel"><th>STATE: <span class="req">*</span></th><td class="edit"><div class="inp">W.P. Kuala Lumpur <span class="ai">AI</span><span>&times;</span></div><span class="co pin">8</span></td></tr>
+     <tr><th>MUKIM:</th><td class="edit"><div class="inp">Batu <span class="ai">AI</span><span>&times;</span></div></td></tr>
+     <tr class="rel"><th>TYPE OF BUILDING:</th><td class="edit"><div class="inp">Service apartment<span>&times;</span></div><span class="co pin">9</span></td></tr>
+    </table>
+   </div>
+  </div>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">1</span><div><b>One step: Submit</b>No Draft. Submit gives the PPF No. and status Pending; the record is then locked until Approved or Rejected (Rejected = editable, resubmit).<span class="ref">pattern: FE app/(auth)/portal/components/NewProductApplicationForm.tsx:206-212 (locked states); header = components/common/NewProductApplicationHeader.tsx / ProductInquiryFormLayout (title prop)</span></div></li>
+ <li><span class="co">2</span><div><b>Title + Fill from title / photo</b>Long free text. The button sends the title (as text) and the photos to the existing AI extract with a new form key; results only fill EMPTY fields and are marked AI.<span class="ref">BE services/ai_extract/extract_service.py:284 extract(); form_schema_registry.py:400 FORM_SCHEMAS (+ "portal.project_registration"); api/v1/public/ai_extract.py:99-150; FE app/(auth)/portal/components/AIExtractDialog.tsx</span></div></li>
+ <li><span class="co">3</span><div><b>Photos</b>The portal dropzone with its onExtract hook; photos are copied to the project's files on approve.<span class="ref">FE app/(auth)/portal/components/AttachmentDropzone.tsx:82,97; BE api/v1/public/portal.py:1502</span></div></li>
+ <li><span class="co">4</span><div><b>Semantic duplicate hint</b>Meaning + lot/mukim + spelling; code and short title only, never who holds it.<span class="ref">BE services/embedding_service.py:228 search_current; services/project_clash_service.py:211 find_clashes</span></div></li>
+ <li><span class="co">5</span><div><b>Sales Agent (auto)</b>The contact's active sales agent; several agents = a select of own agents.<span class="ref">BE services/sales/portal_agent.py:24 agents_for_contact</span></div></li>
+ <li><span class="co">6</span><div><b>Distributor (pick) / Customer (typed)</b>Distributor from the agent's own debtors, clearable; Customer free text.<span class="ref">FE app/(auth)/portal/components/AsyncCombobox.tsx; BE services/sample_request_service.py:258-289 (agent debtors lookup)</span></div></li>
+ <li><span class="co">7</span><div><b>Developer / contractor / architect</b>Picked from parties or typed. AI text is matched to existing parties and OFFERED ("Did you mean"), never auto-picked.<span class="ref">FE AsyncCombobox.tsx; BE models/projects.py:92 ProjectParty</span></div></li>
+ <li><span class="co">8</span><div><b>State / Mukim</b>State from the 16 states and territories list; Mukim typed.<span class="ref">FE components/common/SearchableSelect.tsx (clearable); app/(protected)/order-management/customers/forms/client-form-constants.ts:1 MY_STATES</span></div></li>
+ <li><span class="co">9</span><div><b>Type of Building</b>The existing Project types.<span class="ref">BE models/projects.py:134 ProjectType; FE SearchableSelect.tsx</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 2 -->
+<h2 class="ft">2. Portal, AI fill review and the phone layout (375)</h2>
+<div class="layout">
+<div class="frame" style="width:440px;flex:none;padding:16px">
+ <div class="b" style="margin-bottom:8px">Fill from title / photo <span class="co">10</span></div>
+ <table class="grid" style="font-size:12px">
+  <tr><th style="width:120px">Field</th><th>Found</th><th style="width:60px">Use</th></tr>
+  <tr><td>Developer</td><td>Pemaju P Sdn Bhd (photo)</td><td>&#9745;</td></tr>
+  <tr><td>Main contractor</td><td>Kontraktor K Sdn Bhd (photo)</td><td>&#9745;</td></tr>
+  <tr><td>Architect</td><td>Arkitek A (photo)</td><td>&#9745;</td></tr>
+  <tr><td>State</td><td>W.P. Kuala Lumpur (title)</td><td>&#9745;</td></tr>
+  <tr><td>Mukim</td><td>Batu (title)</td><td>&#9745;</td></tr>
+  <tr><td>Lot</td><td>1234 (title)</td><td>&#9745;</td></tr>
+ </table>
+ <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px"><span class="btn out">Cancel</span><span class="btn">Fill empty fields</span></div>
+</div>
+<div class="frame w375">
+ <div class="portalbar">Sorento portal</div>
+ <div class="content">
+  <div class="phdr"><h1 style="font-size:17px">PPF2610014 <span class="pill amber">Pending</span></h1></div>
+  <div class="paper">
+   <table class="sheet">
+    <tr><th>PROJECT TITLE</th><td>CADANGAN PEMBANGUNAN 2 BLOK PANGSAPURI SERVIS 38 TINGKAT DI LOT 1234, MUKIM BATU, KUALA LUMPUR</td></tr>
+    <tr><th>DATE</th><td>25/10/2026</td></tr>
+    <tr><th>SALES AGENT</th><td>SA-007</td></tr>
+    <tr><th>DEVELOPER</th><td>Pemaju P Sdn. Bhd.</td></tr>
+    <tr><th>STATE / MUKIM</th><td>W.P. Kuala Lumpur / Batu</td></tr>
+    <tr><th class="muted">...</th><td class="muted xs">other rows stack the same way</td></tr>
+   </table>
+   <div style="margin-top:12px"><span class="btn out" style="width:100%;justify-content:center">Withdraw</span></div>
+  </div>
+ </div>
+</div>
+<div class="notes"><ol>
+ <li><span class="co">10</span><div><b>AI fill review</b>The portal's existing extract dialog: what was found, from where, a tick per field; only empty fields are filled. "Couldn't read it" when nothing is found; the form stays usable.<span class="ref">FE app/(auth)/portal/components/AIExtractDialog.tsx</span></div></li>
+ <li><span class="co">-</span><div><b>Phone</b>Pending = read-only; Withdraw only. Sheet stacks label over value as the NPA portal record does at 375.<span class="ref">FE NewProductApplicationForm.tsx (portal record at 375)</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 3 -->
+<h2 class="ft">3. CRM, Project Sales &gt; Registrations (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="shell">
+  <div class="side"><div class="brand">Sorento</div><div class="grp">Project sales</div><div class="it">Pipeline</div><div class="it">Leads</div><div class="it on">Registrations</div><div class="it">Sample requests</div></div>
+  <div class="main"><div class="topbar"></div><div class="content">
+   <div class="phdr rel"><div><h1>Registrations</h1><div class="crumb">Project Sales &rsaquo; Registrations</div></div><span class="co pin">11</span></div>
+   <div style="display:flex;gap:8px;margin-bottom:10px"><div class="inp" style="width:280px;color:var(--muted)">Search PPF no., title, developer</div><div class="inp" style="width:200px">Status: Pending &#9662;</div><div class="inp" style="width:180px;color:var(--muted)">State</div></div>
+   <table class="grid">
+    <tr><th style="width:110px">PPF No.</th><th style="width:90px">Date</th><th>Project title</th><th style="width:170px">Developer</th><th style="width:120px">State</th><th style="width:90px">Sales agent</th><th style="width:170px">Possible duplicate</th><th style="width:100px">Status</th></tr>
+    <tr><td>PPF2610014</td><td>25/10/2026</td><td title="CADANGAN PEMBANGUNAN 2 BLOK PANGSAPURI SERVIS 38 TINGKAT DI LOT 1234, MUKIM BATU, KUALA LUMPUR">CADANGAN PEMBANGUNAN 2 BLOK PANGSAPURI SERVIS 38 TINGKAT DI LOT 1234...</td><td>Pemaju P Sdn. Bhd.</td><td>W.P. Kuala Lumpur</td><td>SA-007</td><td><span class="pill red">Same lot: PRJ-0162</span></td><td><span class="pill amber">Pending</span></td></tr>
+    <tr><td>PPF2610013</td><td>24/10/2026</td><td>Setia Alam Ph 3B</td><td><i class="muted">"Developer Y" (typed)</i></td><td>Selangor</td><td>SA-012</td><td><span class="pill red">Spelling 0.76: PRJ-0143</span></td><td><span class="pill amber">Pending</span></td></tr>
+    <tr><td>PPF2610012</td><td>23/10/2026</td><td>Kami Residence</td><td>Developer X Sdn Bhd</td><td>W.P. Kuala Lumpur</td><td>SA-007</td><td class="muted">None</td><td><span class="pill amber">Pending</span></td></tr>
+   </table>
+  </div></div>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">11</span><div><b>Queue</b>Menu item gated on projects.registrations.approve (Project Sales Admin). DataGrid, fixed layout, resizable, long title truncate + title, rowHref to the record. "Possible duplicate" = the strongest candidate with its reason.<span class="ref">FE config/menu.config.tsx (project-sales group); components/ui/data-grid.tsx; precedent procurement-management/new-product-applications/components/NewProductApplicationsList.tsx</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 4 -->
+<h2 class="ft">4. CRM, checking PPF2610014 (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="shell">
+  <div class="side"><div class="brand">Sorento</div><div class="grp">Project sales</div><div class="it">Pipeline</div><div class="it on">Registrations</div></div>
+  <div class="main"><div class="topbar"></div><div class="content">
+   <div class="phdr rel"><div><h1>PPF2610014 <span class="pill amber">Pending</span></h1><div class="crumb">Project Sales &rsaquo; Registrations &rsaquo; PPF2610014</div></div>
+     <div style="display:flex;gap:8px"><span class="btn out">&lsaquo; &rsaquo;</span><span class="btn out">Reject</span><span class="btn">Approve</span></div><span class="co pin">12</span></div>
+   <div class="block rel"><b>Possible duplicates</b>
+     <div class="cand"><b>PRJ-0162 Residensi Batu Heights</b> &middot; Registered &middot; held by Salesperson D<br><span class="xs">Why: same lot 1234 in Mukim Batu &middot; meaning match 0.88 &middot; spelling 0.21</span></div>
+     <div class="cand"><b>PRJ-0098 Pangsapuri Servis Jalan Ipoh</b> &middot; Quoted &middot; held by Salesperson B<br><span class="xs">Why: meaning match 0.81, different mukim (Kuala Lumpur)</span></div>
+     <span class="co pin">13</span></div>
+   <div class="paper" style="max-width:1100px;margin-top:12px">
+    <div class="ttl">PROJECT REGISTRATION FORM</div>
+    <table class="sheet"><tr><th>PROJECT TITLE:</th><td class="edit"><div class="inp ta">CADANGAN PEMBANGUNAN 2 BLOK PANGSAPURI SERVIS 38 TINGKAT DI LOT 1234, MUKIM BATU, KUALA LUMPUR</div></td></tr></table>
+    <div class="sheet2" style="margin-top:10px">
+     <table class="sheet">
+      <tr><th>PPF NO.:</th><td>PPF2610014</td></tr><tr><th>DATE:</th><td>25/10/2026</td></tr><tr><th>STATUS:</th><td>Pending</td></tr>
+      <tr><th>SALES AGENT:</th><td>SA-007</td></tr>
+      <tr class="rel"><th>OWNER:</th><td class="edit"><div class="inp">Salesperson A (linked to SA-007)<span>&times;</span></div><span class="co pin">14</span></td></tr>
+      <tr><th>DISTRIBUTOR NAME:</th><td>300-D021 Distributor D Sdn Bhd</td></tr><tr><th>CUSTOMER NAME:</th><td>Contractor C Sdn Bhd</td></tr><tr><th>YOUR REF:</th><td class="ro">-</td></tr>
+     </table>
+     <table class="sheet">
+      <tr class="rel"><th>DEVELOPER:</th><td class="edit"><div class="inp">Pemaju P Sdn. Bhd.<span>&times;</span></div><span class="co pin">15</span></td></tr>
+      <tr><th>MAIN CONTRACTOR:</th><td class="edit"><div class="inp">Kontraktor K Sdn Bhd <span class="badge2">new</span></div></td></tr>
+      <tr><th>ARCHITECT:</th><td class="edit"><div class="inp">Arkitek A <span class="badge2">new</span></div></td></tr>
+      <tr><th>STATE:</th><td>W.P. Kuala Lumpur</td></tr><tr><th>MUKIM:</th><td>Batu</td></tr><tr><th>TYPE OF BUILDING:</th><td>Service apartment</td></tr>
+      <tr><th>PHOTOS:</th><td><div class="img"><div class="ph-img" style="width:110px;height:80px">signboard.jpg</div></div></td></tr>
+     </table>
+    </div>
+   </div>
+  </div></div>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">12</span><div><b>Approve / Reject</b>The legacy buttons. Approve = register_project(owner) : PRJ code, stage Registered, template tasks; the spelling lock still refuses a hard duplicate with its 409. Reject = reason dialog. Prev / next record.<span class="ref">BE services/project_service.py:70-195; FE components/common/RecordNavigation.tsx; components/common/RejectionReasonBanner.tsx</span></div></li>
+ <li><span class="co">13</span><div><b>Possible duplicates, with the reason</b>Every candidate says WHY: same lot + mukim, meaning match, spelling match. Warns only (Q3 = a). Join / Dispute buttons hidden (the checker is not the claimant).<span class="ref">FE app/(protected)/project-sales/pipeline/components/ClashWarningPanel.tsx (extended with a reason line); BE services/embedding_service.py:228; project_clash_service.py:211</span></div></li>
+ <li><span class="co">14</span><div><b>Owner</b>Pre-filled with the CRM user linked to the contact; required before Approve when the agent has no CRM user.<span class="ref">FE components/common/SearchableSelect.tsx + services/userSelectService</span></div></li>
+ <li><span class="co">15</span><div><b>Resolve parties</b>A typed developer must become a party before Approve (pick, or create under Parties). Contractor / architect typed names are created as parties on Approve, marked "new".<span class="ref">FE app/(protected)/project-sales/parties; AsyncCombobox / SearchableSelect</span></div></li>
+</ol></div>
+</div>
+
+<!-- ============================================================ FRAME 5 -->
+<h2 class="ft">5. Portal landing afterwards (1280)</h2>
+<div class="layout">
+<div class="scroll"><div class="frame w1280">
+ <div class="portalbar">Sorento portal</div>
+ <div class="content">
+  <div class="phdr"><div><h1>My submissions</h1></div><div style="display:flex;gap:8px"><div class="inp" style="width:240px">Project registration &#9662;</div><span class="btn">New project registration</span></div></div>
+  <table class="grid">
+   <tr><th style="width:120px">PPF No.</th><th style="width:100px">Date</th><th>Project title</th><th style="width:200px">Developer</th><th style="width:110px">Status</th><th style="width:300px">Result</th></tr>
+   <tr><td>PPF2610014</td><td>25/10/2026</td><td>CADANGAN PEMBANGUNAN 2 BLOK PANGSAPURI SERVIS 38 TINGKAT...</td><td>Pemaju P Sdn. Bhd.</td><td><span class="pill amber">Pending</span></td><td class="muted">Waiting for Project Sales Admin</td></tr>
+   <tr><td>PPF2610012</td><td>23/10/2026</td><td>Kami Residence</td><td>Developer X Sdn Bhd</td><td><span class="pill ok">Approved</span></td><td>Registered as PRJ-0151</td></tr>
+   <tr><td>PPF2610009</td><td>20/10/2026</td><td>Setia Alam Ph 3B</td><td>Developer Y Bhd</td><td><span class="pill red">Rejected</span></td><td title="Already registered as PRJ-0143">Already registered as PRJ-0143</td></tr>
+  </table>
+ </div>
+</div></div>
+<div class="notes"><ol>
+ <li><span class="co">-</span><div><b>Landing list</b>Kind "Project registration" in the existing selector, granted per contact. Approved shows the project code; that project now appears in the Sample request project picker.<span class="ref">FE app/(auth)/portal/components/PortalLanding.tsx; lib/portal-form-kinds.ts; BE services/sponsorship_link_service.py:45 projects_for_contact</span></div></li>
+</ol></div>
+</div>
+
+<div class="dec"><b>Open questions on card v2</b> <span class="muted">Q1 distributor = agent's debtor pick, customer = typed; Q2 State + Mukim onto the project, the rest stay on the registration; Q3 semantic match warns, never blocks; Q4 PPF + yymm + 3 digits, monthly reset. The frames draw these.</span></div>
+</div>
+</body>
+</html>

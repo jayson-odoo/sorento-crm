@@ -82,6 +82,8 @@ FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
     # CA-3 (Q4 a, owner 10 Oct 2026): gates the chat analytics dataset of the report ask, a
     # whole tool, not a field. Nobody holds it until the owner grants it here.
     ("chatbot.analytics", "Chat analytics"),
+    # SALES-TARGET-CHAT: gates the whole sales target tool, not a field. Default off.
+    ("sales.sales_target", "Sales target"),
 )
 
 #: The DO reveal keys, on for every contact until a `granted=False` row says otherwise

@@ -12,6 +12,7 @@ import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useSampleMutations, useSamples } from '../../_shared/hooks/useProjects';
 import type { Project, ProjectSample } from '../../_shared/types/project.types';
 import { SampleDialog } from './SampleDialog';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /**
  * Samples sent to the developer, each against the version it was priced from (AC-F1).
@@ -128,7 +129,7 @@ export function SamplesPanel({ project }: { project: Project }) {
         size: 220,
         meta: { headerTitle: 'Our notes' },
       },
-      ...(project.can_edit
+      ...(canWorkOnProject(project)
         ? [
             {
               id: 'actions',
@@ -162,7 +163,7 @@ export function SamplesPanel({ project }: { project: Project }) {
           ]
         : []),
     ],
-    [project.can_edit],
+    [project.can_edit, project.approval_state],
   );
 
   return (
@@ -177,7 +178,7 @@ export function SamplesPanel({ project }: { project: Project }) {
                 {`${supersededCount} against a superseded version`}
               </Badge>
             )}
-            {project.can_edit && (
+            {canWorkOnProject(project) && (
               <Button type="button" size="sm" onClick={() => setCreating(true)}>
                 <Plus className="size-4" aria-hidden />
                 Record a sample

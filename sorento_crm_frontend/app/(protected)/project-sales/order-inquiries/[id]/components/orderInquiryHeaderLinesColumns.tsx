@@ -19,6 +19,7 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import {
   Popover,
+  PopoverAnchor,
   PopoverContent,
   PopoverPortal,
   PopoverTrigger,
@@ -45,20 +46,25 @@ import {
 } from '../../../_shared/lib/orderInquiryLineFold';
 import {
   DeliveryDateCell,
-  documentsOf,
+  documentChipsOf,
+  type DocumentEntry,
   ItemCodeCell,
   LocationCell,
   orderInquiryReserveQtyColumns,
   orderInquirySuggestedColumn,
   RaisedCell,
   SupplierCell,
-  WorklistPill,
 } from '../../components/orderInquiryWorklistColumns';
+import { DocumentStatePills, WorklistPill } from '../../components/orderInquiryDocumentPills';
 import type {
   OrderInquiryLineSplit,
   OrderInquiryWorklistRow,
 } from '../../../_shared/types/orderInquiry.types';
-import { OrderInquiryDocumentLink, ViaSpoPoNumber } from '../../components/OrderInquiryDocumentDialog';
+import {
+  OrderInquiryDocumentDialog,
+  OrderInquiryDocumentLink,
+  ViaSpoPoNumber,
+} from '../../components/OrderInquiryDocumentDialog';
 import { SoLineAttachmentsButton } from '../../../_shared/components/SoLineAttachmentsButton';
 import {
   LineSplitInfo,
@@ -108,117 +114,130 @@ export interface StagedReserveEntry {
   reason?: string | null;
 }
 
-/** The first PO (or SPO) document this line carries, for a document trigger - reusing the
- * worklist's OWN derivation (`documentsOf`, issue #1215 point 5) rather than a bare
- * `kind === 'po'` link. An SPO-only link naming its source PO (`source_po_number`) used
- * to read a plain dash here even though the worklist already printed it "via SPO" - the
- * two screens now agree about what counts as a document on this row. `null` when the
- * line names none of that kind - the cell then reads a plain dash, same as the worklist. */
-function firstLinkOf(row: OrderInquiryWorklistRow, kind: 'po' | 'spo') {
-  return documentsOf(row, kind)[0] ?? null;
-}
-
-/** Every document of `kind` across the line's live rows, first-seen order, each with the
- * row that carries it (the link lookup below needs that row). */
-function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo') {
-  const seen = new Set<string>();
-  const entries: { row: OrderInquiryWorklistRow; document: string }[] = [];
-  for (const row of line.liveRows) {
-    for (const entry of documentsOf(row, kind)) {
-      if (seen.has(entry.document)) continue;
-      seen.add(entry.document);
-      entries.push({ row, document: entry.document });
-    }
-  }
-  return entries;
+/** Every chip of `kind` across the line's live rows (LINKAGE-UNIFY U3, owner round 2):
+ * one per document LINE, built by the worklist's OWN derivation (`documentChipsOf`) over
+ * every row of the sales order line at once, so one SPO line two rows sit on (one via its
+ * PO, one directly) is one chip whose receipts add up, and a withdrawn line is one more
+ * chip behind "+N" - never lost to a de-dup by document number. */
+function lineDocumentsOf(line: OrderInquiryLine, kind: 'po' | 'spo'): DocumentEntry[] {
+  return documentChipsOf(
+    line.liveRows.flatMap((row) => (row.links ?? []).map((link) => ({ row, link }))),
+    kind,
+  );
 }
 
 function LineDocumentsCell({ line, kind }: { line: OrderInquiryLine; kind: 'po' | 'spo' }) {
-  const entries = lineDocumentsOf(line, kind);
-  if (entries.length === 0) return <span className="text-muted-foreground">-</span>;
-  const [first, ...rest] = entries;
+  // Round 5: the popover opens from "+N" or from the narrow-cell receipt chip, so it is
+  // positioned against the whole cell rather than one trigger.
+  const [open, setOpen] = React.useState(false);
+  const chips = lineDocumentsOf(line, kind);
+  if (chips.length === 0) return <span className="text-muted-foreground">-</span>;
+  const [first, ...rest] = chips;
   return (
-    <span className="flex min-w-0 items-center gap-1">
-      <DocumentCell row={first.row} kind={kind} document={first.document} />
-      {rest.length > 0 ? (
-        <Popover>
-          <PopoverTrigger asChild>
-            <Button
-              type="button"
-              variant="outline"
-              size="sm"
-              className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
-              aria-label={`${rest.length} more ${kind.toUpperCase()}`}
-            >
-              +{rest.length}
-            </Button>
-          </PopoverTrigger>
-          {/* Portalled (owner, 29 Sep 2026): unportalled, the content painted inside the
-              table and the next row's own "+N" chip showed through it. At the document
-              root it sits above every row, and `collisionPadding` keeps it inside the
-              viewport the way the shared `PillOverflow` popover does. */}
-          <PopoverPortal>
-            <PopoverContent
-              align="start"
-              collisionPadding={8}
-              className="w-auto max-w-xs space-y-1 p-2"
-            >
-              {entries.map((entry) => (
-                <div key={entry.document}>
-                  <DocumentCell row={entry.row} kind={kind} document={entry.document} />
-                </div>
-              ))}
-            </PopoverContent>
-          </PopoverPortal>
-        </Popover>
-      ) : null}
-    </span>
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverAnchor asChild>
+        <span className="flex w-full min-w-0 items-center gap-1">
+          <DocumentCell
+            chip={first}
+            kind={kind}
+          />
+          {rest.length > 0 ? (
+            <PopoverTrigger asChild>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                className="h-5 shrink-0 rounded-full px-1.5 text-xs text-muted-foreground"
+                aria-label={`${rest.length} more ${kind.toUpperCase()}`}
+              >
+                +{rest.length}
+              </Button>
+            </PopoverTrigger>
+          ) : null}
+        </span>
+      </PopoverAnchor>
+      {/* Portalled (owner, 29 Sep 2026): unportalled, the content painted inside the
+          table and the next row's own "+N" chip showed through it. At the document
+          root it sits above every row, and `collisionPadding` keeps it inside the
+          viewport the way the shared `PillOverflow` popover does. */}
+      <PopoverPortal>
+        <PopoverContent align="start" collisionPadding={8} className="w-auto max-w-xs space-y-1 p-2">
+          {chips.map((chip) => (
+            <div key={chip.key}>
+              <DocumentCell chip={chip} kind={kind} showLine />
+            </div>
+          ))}
+        </PopoverContent>
+      </PopoverPortal>
+    </Popover>
   );
 }
 
 function DocumentCell({
-  row,
+  chip,
   kind,
-  document,
+  showLine = false,
 }: {
-  row: OrderInquiryWorklistRow;
+  chip: DocumentEntry;
   kind: 'po' | 'spo';
-  document?: string;
+  /** Name the line (`L7`) beside the number - the "+N" list, where lines of one
+   * document sit side by side. */
+  showLine?: boolean;
 }) {
-  const entry = document
-    ? (documentsOf(row, kind).find((candidate) => candidate.document === document) ?? null)
-    : firstLinkOf(row, kind);
-  if (!entry) return <span className="text-muted-foreground">-</span>;
-  // The REAL link behind this entry, for the PO/SPO popover's own id and (#1215 point 2,
-  // R15) the line it sits on - `documentsOf` states the document, not the link's
-  // identity.
-  const link = (row.links ?? []).find(
-    (candidate) => candidate.kind === kind && candidate.document === entry.document,
-  );
+  // LINKAGE-UNIFY U3 round 2: the receipt pill opens the same document the number does,
+  // as the worklist's own receipt pill opens its lightbox.
+  const [documentOpen, setDocumentOpen] = React.useState(false);
+  // The REAL link behind this chip, for the PO/SPO popover's own id and (#1215 point 2,
+  // R15) the line it sits on.
+  const link = chip.link;
   // R17 (owner rulings, 25 Sep 2026, "I also need here to be clickable"): a PO entry
-  // read off an SPO link's own `source_po_number` (`entry.via === 'spo'`) has no real
-  // po-kind link behind it, so `link` above is always undefined - `entry.poId` is the
-  // resolved identity instead (review round 1's should-fix 4 plain-text fix reversed
-  // by this ruling; the dead-lightbox bug is fixed by resolving the PO, not by
-  // removing the trigger).
-  const derived = kind === 'po' && entry.via === 'spo';
+  // read off an SPO link's own `source_po_number` (`chip.via === 'spo'`) has no real
+  // po-kind link behind it - `chip.poId` is the resolved identity instead.
+  const derived = kind === 'po' && chip.via === 'spo';
+  const row = chip.row;
   return (
     <span className="flex min-w-0 items-center gap-1">
       {derived ? (
-        <ViaSpoPoNumber poNumber={entry.document} purchaseOrderId={entry.poId} />
+        <ViaSpoPoNumber poNumber={chip.document} purchaseOrderId={chip.poId} whole />
       ) : (
         <OrderInquiryDocumentLink
           kind={kind}
-          document={entry.document}
+          document={chip.document}
           poId={link?.po_id}
           poLineId={link?.po_line_id}
           spoLineId={link?.spo_allocation_id}
+          whole
         />
       )}
-      {entry.via ? (
+      {showLine && chip.lineLabel ? (
+        <span className="shrink-0 text-2xs text-muted-foreground">{chip.lineLabel}</span>
+      ) : null}
+      {chip.via ? (
         <WorklistPill testId={`lines-${kind}-via-${row.id}`}>
-          via {entry.via === 'po' ? 'PO' : 'SPO'}
+          via {chip.via === 'po' ? 'PO' : 'SPO'}
         </WorklistPill>
+      ) : null}
+      {/* LINKAGE-UNIFY U3 (AC-D4): the worklist's own document pills, the same piece. */}
+      <DocumentStatePills
+        receipts={chip.receipts}
+        deadReason={chip.deadReason}
+        testIdPrefix="lines"
+        testIdSuffix={`${kind}-${row.id}`}
+        onOpen={(event) => {
+          event.stopPropagation();
+          setDocumentOpen(true);
+        }}
+      />
+      {documentOpen ? (
+        <OrderInquiryDocumentDialog
+          kind={kind}
+          document={chip.document}
+          poId={link?.po_id}
+          poLineId={link?.po_line_id}
+          spoLineId={link?.spo_allocation_id}
+          open
+          onOpenChange={setDocumentOpen}
+        />
       ) : null}
     </span>
   );
@@ -769,7 +788,12 @@ export function useOrderInquiryHeaderLinesColumns({
         id: 'spo_number',
         accessorFn: (row) => lineDocumentsOf(lineOf(row), 'spo')[0]?.document ?? '',
         header: ({ column }) => <DataGridColumnHeader title="SPO" column={column} />,
-        size: 200,
+        // LINKAGE-UNIFY U3 round 3/7: number, "via PO", the whole "Received <qty> at <bin>"
+        // and "+1" side by side at 1280 (this table's number is wider than the worklist's).
+        // Round 7b: measured in the browser.
+        size: 420,
+        // Round 9 (owner): no `minSize`, so the column shrinks like the PO column; the pill
+        // ellipsizes and the number stays whole.
         meta: { headerTitle: 'SPO' },
         cell: ({ row }) => <LineDocumentsCell line={lineOf(row.original)} kind="spo" />,
       },

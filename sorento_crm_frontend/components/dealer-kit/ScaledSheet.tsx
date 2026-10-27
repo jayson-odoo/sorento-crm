@@ -54,9 +54,10 @@ export default function ScaledSheet({
 }: ScaledSheetProps) {
   const { doc, assets, images, fonts, resolvedData } = payload;
 
-  // Brand faces before the tags draw. The DOM renderer re-lays text out by
-  // itself once a face arrives (unlike Konva, which measures once), so this
-  // needs no readiness flag - only that something asks for the fonts at all.
+  // Brand faces for the tags. Text layers break their lines by measuring
+  // (`textLayerLines`, the same lines the canvas draws) and re-break when a
+  // face finishes loading (`useFontsEpoch`), so this needs no readiness flag -
+  // only that something asks for the fonts at all.
   // The seeded templates' stand-ins come from a stylesheet rather than the
   // library, so they are loaded alongside rather than instead.
   useEffect(() => {

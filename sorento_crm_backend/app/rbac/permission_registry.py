@@ -379,6 +379,9 @@ PERMISSION_REGISTRY.extend([
     # to every role holding `scm.sales_orders.edit` by migration 472.
     {"slug": "integration.contract.read", "name": "Read ingest contract", "description": "Read the AutoCount ESB ingest contract version and supported entity list."},
     {"slug": "integration.chat_turn.submit", "name": "Submit chatbot turns", "description": "Post one inbound WhatsApp turn to the chatbot engine and receive the reply and the actions to execute."},
+    # SALES-TARGET-CHAT slice 2: the chatbot's opportunity lane. Granted to admin,
+    # integration_sorento_mcp and integration_n8n by migration stc_0003_opp_log_slug.
+    {"slug": "integration.sales_opportunity.log", "name": "Log sales opportunities from chat", "description": "Log a sales opportunity for a salesperson contact over the chat, and read that salesperson's own customers to pick from."},
 ])
 
 # System
@@ -662,6 +665,14 @@ PERMISSION_REGISTRY.extend([
             "confirmed and Delivered, cancel one in Processing, and fill Consignment No "
             "and PO No. Separate from `projects.projects.edit`, which every salesperson "
             "holds and which would let them mark their own request delivered."
+        ),
+    },
+    {
+        "slug": "projects.registrations.approve",
+        "name": "Approve Project Registrations",
+        "description": (
+            "Review, approve or reject project registrations raised from the portal. "
+            "Approving creates the project and draws its PPF code."
         ),
     },
     {

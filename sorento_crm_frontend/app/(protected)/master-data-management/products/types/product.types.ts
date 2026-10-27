@@ -191,6 +191,9 @@ export interface Brand {
   // PLAN-product-specs-non-technical-26sep.md D3). Search and the understanding
   // prompt skip a brand where this is false - nobody ever names OTHERS.
   is_searchable?: boolean;
+  // The company whose dealers get this brand from the access-sheet upload; null = a project brand.
+  dealer_company_id?: string | null;
+  dealer_company_name?: string | null;
   created_at: Date;
   updated_at: Date;
   created_by?: string | null;

@@ -43,6 +43,7 @@ import { formatMyr } from './QuotationsPanel';
 import { PurchaseOrderDialog } from './PurchaseOrderDialog';
 import { POIntakeUploadDialog } from './POIntakeUploadDialog';
 import { projectTabOriginHref } from '../../_shared/lib/reviewOrigin';
+import { canWorkOnProject } from '../../_shared/lib/projectApproval';
 
 /** Shared with the PO detail page, so a source reads the same in the list and on the record. */
 export const SOURCE_LABELS: Record<string, string> = {
@@ -337,7 +338,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
         size: 180,
         meta: { headerTitle: 'Drift from v1' },
       },
-      ...(project.can_edit
+      ...(canWorkOnProject(project)
         ? [
             {
               id: 'actions',
@@ -390,7 +391,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           ]
         : []),
     ],
-    [ordersByPo, project.can_edit, project.id, router, schedulesByPo],
+    [ordersByPo, project.can_edit, project.approval_state, project.id, router, schedulesByPo],
   );
 
   const openPo = (po: ProjectPurchaseOrder) => router.push(`/project-sales/${project.id}/pos/${po.id}`);
@@ -429,7 +430,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
                 </Button>
               }
             />
-            {project.can_edit && (
+            {canWorkOnProject(project) && (
               <>
                 <Button type="button" size="sm" onClick={() => setUploadingFor({ po: null })}>
                   <Upload className="size-4" aria-hidden />
@@ -475,7 +476,7 @@ export function PurchaseOrdersPanel({ project }: { project: Project }) {
           {menuPo && (
             <>
               <ContextMenuItem onSelect={() => openPo(menuPo)}>Open purchase order</ContextMenuItem>
-              {project.can_edit && (
+              {canWorkOnProject(project) && (
                 <>
                   <ContextMenuItem onSelect={() => setScheduleFor(menuPo)}>
                     Upload delivery schedule

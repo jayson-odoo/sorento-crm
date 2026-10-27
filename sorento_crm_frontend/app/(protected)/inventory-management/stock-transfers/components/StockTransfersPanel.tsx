@@ -172,16 +172,24 @@ export function StockTransfersPanel({
   // and a `const` read before its own line throws rather than reading undefined.
   // Declared first, this threw on every arrival from a record and never from the
   // sidebar, where the query string is empty and the callback never runs.
-  useListStateFromUrl((urlState) => {
-    setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
-    setSorting(urlState.sorting);
-    resetSearch(urlState.searchQuery);
-    setState(urlState.filters.state ?? '');
-    setKind(urlState.filters.kind ?? '');
-    setFromWarehouseId(urlState.filters.from_warehouse_id ?? '');
-    setToWarehouseId(urlState.filters.to_warehouse_id ?? '');
-    setProductId(urlState.filters.product_id ?? '');
-  });
+  //
+  // Only when the panel IS the page. Pinned to a record it sits inside that record's
+  // detail page, whose query string is the host list's state for the prev/next pager
+  // (the SO list's `sort=order_date`), and adopting it sent the transfers list a sort
+  // it does not have: a 422 toast on every SO opened from the list.
+  useListStateFromUrl(
+    (urlState) => {
+      setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
+      setSorting(urlState.sorting);
+      resetSearch(urlState.searchQuery);
+      setState(urlState.filters.state ?? '');
+      setKind(urlState.filters.kind ?? '');
+      setFromWarehouseId(urlState.filters.from_warehouse_id ?? '');
+      setToWarehouseId(urlState.filters.to_warehouse_id ?? '');
+      setProductId(urlState.filters.product_id ?? '');
+    },
+    { enabled: !salesOrderId && !salesAgentId },
+  );
   const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
   const [acting, setActing] = React.useState<{
     transfer: StockTransfer;

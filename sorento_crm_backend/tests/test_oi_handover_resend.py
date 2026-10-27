@@ -574,3 +574,25 @@ def test_tick_list_shows_the_open_remainder_of_a_partly_linked_line(rs, monkeypa
     )
     [line] = _ok(client.post(PREVIEW, json={"inquiry_ids": [inquiry.id]}))["emails"][0]["lines"]
     assert Decimal(line["qty"]) == Decimal("6")
+
+
+def test_resend_excel_rows_are_the_emails_own_lines(rs, stored):
+    """OI-EMAIL-PURCHASING-FOCUS (owner, 26 Oct 2026): the resent email's line table and its
+    OI Excel are the same rows, read the way the hand-test script reads them."""
+    from scripts.compare_oi_handover_email_excel import email_rows, excel_rows
+
+    client, world = rs
+    _automation(world)
+    inquiry = _oi(world)
+    _line(world, inquiry, item="ZZT-PAR-A", qty="10")
+    _line(world, inquiry, item="ZZT-PAR-B", qty="4", location="BRW-IC")
+    _line(world, inquiry, state=INQUIRY_CANCELLED, item="ZZT-PAR-GONE")
+
+    _ok(client.post(SEND, json={"inquiry_ids": [inquiry.id]}))
+
+    [note] = _notifications(world, inquiry.id)
+    head, emailed = email_rows(note.data["body_html"])
+    [upload] = stored
+    _sheet_head, sheet = excel_rows(upload["bytes"], head)
+    assert len(emailed) == 2, emailed
+    assert sorted(emailed) == sorted(sheet)

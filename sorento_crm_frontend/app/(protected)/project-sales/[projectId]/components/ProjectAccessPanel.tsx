@@ -22,6 +22,7 @@ import {
   useTakeoverRequests,
 } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
+import { isProjectApproved } from '../../_shared/lib/projectApproval';
 
 /**
  * Who may work this project, and the recorded history of how that was decided.
@@ -69,7 +70,8 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
             )}
           </div>
 
-          {!project.can_edit && (
+          {/* No join or dispute on a registration that is not a project yet (security N3). */}
+          {!project.can_edit && isProjectApproved(project) && (
             <div className="space-y-2 rounded-md border border-border bg-muted/40 p-2.5">
               {/* The fact is about this record and stays; the instruction that followed it
                   only named the two buttons sitting underneath. */}
