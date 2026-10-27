@@ -207,7 +207,7 @@ function renderPanel() {
 
 /** Radix opens its menus on pointerdown, which fireEvent.click does not send. */
 function openFilters() {
-  fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /^filters/i }), {
     button: 0,
     ctrlKey: false,
   });
@@ -263,6 +263,7 @@ describe('AllocationPanel - multi State filter', () => {
     openFilters();
     await user.selectOptions(await box('confirmed'), ['unallocated', 'confirmed']);
     await waitFor(() => expect(shown('SRTFV1001')).toBe(false));
+    await user.keyboard('{Escape}');
     openFilters();
     await user.deselectOptions(await box('confirmed'), ['unallocated', 'confirmed']);
     await waitFor(() => expect(shown('SRTFV1001')).toBe(true));

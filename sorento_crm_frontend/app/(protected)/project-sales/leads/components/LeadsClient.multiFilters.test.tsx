@@ -200,7 +200,7 @@ function renderClient() {
 
 /** Radix opens its popovers on pointerdown, which fireEvent.click does not send. */
 function openFilters() {
-  fireEvent.pointerDown(screen.getByRole('button', { name: /filters/i }), {
+  fireEvent.pointerDown(screen.getByRole('button', { name: /^filters/i }), {
     button: 0,
     ctrlKey: false,
   });
@@ -264,6 +264,7 @@ describe('leads/components/LeadsClient.multiFilters.test.tsx - multi filters', (
     openFilters();
     await user.selectOptions(await box(a), [a, b]);
     await waitFor(() => expect(setOf(last()[param])).toEqual([a, b].sort()));
+    await user.keyboard('{Escape}');
     openFilters();
     await user.deselectOptions(await box(a), [a, b]);
     await waitFor(() => expect(setOf(last()[param])).toEqual([]));

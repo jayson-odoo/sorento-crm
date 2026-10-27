@@ -148,7 +148,8 @@ function findMulti(match: RegExp) {
 }
 const valuesFor = (el: HTMLSelectElement, ...matches: RegExp[]) =>
   matches.map((m) => Array.from(el.querySelectorAll('option')).find((o) => m.test(o.textContent ?? ''))!.value);
-const shown = (name: string) => screen.queryByText(name) !== null;
+/** Whether a ROW shows this text: the open filter's pickers also list names as <option>s. */
+const shown = (name: string) => screen.queryAllByText(name).some((el) => !el.closest('select'));
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -199,6 +200,20 @@ describe('Portal customer asks - multi filters', () => {
     await waitFor(() => expect(shown('ZZT Gamma Trading')).toBe(false));
     await user.deselectOptions(await multiWith(a), values);
     await waitFor(() => expect(shown('ZZT Gamma Trading')).toBe(true));
+  });
+
+  it('a filter counts its own options before it applies: picking Customer A leaves Customer B and C on offer', async () => {
+    const user = userEvent.setup();
+    render(onePage());
+    await screen.findByText('ZZT Alpha Trading');
+    await openFilter();
+    const control = await multiWith(/ZZT Alpha Trading/);
+    await user.selectOptions(control, valuesFor(control, /ZZT Alpha Trading/));
+    await waitFor(() => expect(shown('ZZT Beta Trading')).toBe(false));
+    const own = await multiWith(/ZZT Alpha Trading/);
+    const labels = Array.from(own.querySelectorAll('option')).map((o) => o.textContent ?? '');
+    expect(labels.some((l) => /ZZT Beta Trading/.test(l))).toBe(true);
+    expect(labels.some((l) => /ZZT Gamma Trading/.test(l))).toBe(true);
   });
 
   it('State is a multi control: Open and Done together keep every row', async () => {
