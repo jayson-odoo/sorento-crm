@@ -12,7 +12,7 @@ Additive only:
    list is ``sales.reports.view``, which already exists.
 
 Revision ID: sales_unified_0001
-Revises: akc_0001_removed_unreferenced
+Revises: eem_0003_span_meaning
 """
 from __future__ import annotations
 
@@ -24,7 +24,7 @@ from alembic import op
 from sqlalchemy.dialects.postgresql import UUID
 
 revision = "sales_unified_0001"
-down_revision = "akc_0001_removed_unreferenced"
+down_revision = "eem_0003_span_meaning"
 branch_labels = None
 depends_on = None
 
