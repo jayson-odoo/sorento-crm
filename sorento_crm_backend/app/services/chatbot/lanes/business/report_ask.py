@@ -235,6 +235,24 @@ def metric_from(parse_output: dict[str, Any]) -> str | None:
     return METRIC_FROM_RANK_BY.get(parse_output.get("rank_by"))
 
 
+OUTSTANDING_GRANT = "sales_orders.outstanding"
+SALES_REPORT_GRANT = "sales_orders.sales_report"
+
+
+def grant_key(parse_output: dict[str, Any]) -> str:
+    """The reveal a report ask is read under (owner Q6): the Outstanding reveal for an outstanding kind
+    (or an outstanding ask whose kind is still to be asked), the Sales report reveal for every other basis."""
+    if not isinstance(parse_output, dict):
+        return SALES_REPORT_GRANT
+    if parse_output.get("order_status") != ASK_NAME:
+        return SALES_REPORT_GRANT
+    if parse_output.get("basis") in OUTSTANDING_KINDS or (
+        parse_output.get("capability_from") == "outstanding" and not parse_output.get("basis")
+    ):
+        return OUTSTANDING_GRANT
+    return SALES_REPORT_GRANT
+
+
 def basis_from(parse_output: dict[str, Any]) -> str | None:
     basis = parse_output.get("basis")
     return basis if basis in BASES else None

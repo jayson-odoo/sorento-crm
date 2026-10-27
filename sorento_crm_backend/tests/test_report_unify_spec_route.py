@@ -78,10 +78,19 @@ def _ok(client, contact, **params):
     return resp.json()
 
 
+def _grant(db, contact, *keys):
+    """Exactly `keys` as the contact's reveals."""
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    set_granted_keys(db, contact.id, list(keys), actor_id=None)
+    db.flush()
+
+
 def _staff(db):
     """A grant holder with an office access type (the audience a product ranking is for)."""
     contact = _contact(db)
     _access(db, contact, "Sorento Office")
+    _grant(db, contact, "sales_orders.sales_report", "sales_orders.outstanding")  # both reveals (owner Q6)
     db.commit()
     return contact
 

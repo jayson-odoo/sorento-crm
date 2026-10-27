@@ -206,7 +206,7 @@ def _console(session_factory, monkeypatch, *, grants: list[str]) -> Console:
 
 @pytest.fixture
 def console(session_factory, monkeypatch):
-    return _console(session_factory, monkeypatch, grants=[GRANT])
+    return _console(session_factory, monkeypatch, grants=[GRANT, "sales_orders.outstanding"])
 
 
 @pytest.fixture

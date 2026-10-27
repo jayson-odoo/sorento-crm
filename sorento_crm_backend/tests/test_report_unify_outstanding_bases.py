@@ -35,6 +35,7 @@ from tests._report_unify_seed import make_product, mark_delivered, seed_registry
 from tests._sales_report_do_seed import (  # noqa: F401  (client / db are fixtures)
     _as_contact,
     _contact,
+    _link,
     client,
     db,
     line,
@@ -70,9 +71,18 @@ def _ok(client, contact, **params):
     return resp.json()
 
 
+def _grant(db, contact, *keys):
+    """Exactly `keys` as the contact's reveals."""
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    set_granted_keys(db, contact.id, list(keys), actor_id=None)
+    db.flush()
+
+
 def _staff(db):
     contact = _contact(db)
     _access(db, contact, "Sorento Office")
+    _grant(db, contact, "sales_orders.sales_report", "sales_orders.outstanding")  # both reveals (owner Q6)
     db.commit()
     return contact
 
@@ -427,3 +437,57 @@ def test_ac_ru_8b_unpaid_cannot_group_by_a_per_line_dimension(client, db, dimens
     resp = _ask(client, _staff(db), basis="unpaid", group_by=dimension, top_n=5)
     assert resp.status_code == 422, resp.text
     assert resp.json().get("code") == "unknown_group_by", resp.text
+
+
+# ================================================================ AC-RU-9a: the reveal depends on the basis (owner Q6)
+
+
+def _holder(db, *keys, office=True):
+    contact = _contact(db, granted=False)
+    if office:
+        _access(db, contact, "Sorento Office")
+    _grant(db, contact, *keys)
+    db.commit()
+    return contact
+
+
+@pytest.mark.parametrize("basis", ["outstanding", "pending_delivery", "unpaid"])
+def test_ac_ru_9a_a_contact_with_the_outstanding_reveal_only_gets_every_outstanding_kind(client, db, basis):
+    """AC-RU-9a: the outstanding kinds need `sales_orders.outstanding` and no Sales report reveal."""
+    _unpaid_world(db)
+    contact = _holder(db, "sales_orders.outstanding")
+    body = _ok(client, contact, basis=basis, period=None)
+    assert body["status"] == "ok" and body["basis"] == basis, body
+
+
+@pytest.mark.parametrize("basis", ["delivered", "ordered"])
+def test_ac_ru_9a_a_contact_with_the_outstanding_reveal_only_is_refused_a_sales_basis(client, db, basis):
+    """AC-RU-9a: a sales basis keeps the Sales report reveal and its existing refusal."""
+    _unpaid_world(db)
+    contact = _holder(db, "sales_orders.outstanding")
+    resp = _ask(client, contact, basis=basis)
+    assert resp.status_code == 403, resp.text
+    assert resp.json().get("code") == "sales_report_not_enabled", resp.text
+
+
+@pytest.mark.parametrize("basis", ["outstanding", "pending_delivery", "unpaid"])
+def test_ac_ru_9a_a_contact_with_the_sales_report_reveal_only_is_refused_an_outstanding_kind(client, db, basis):
+    """AC-RU-9a: the refusal has the route's shape (403, a code) and names the Outstanding reveal."""
+    _unpaid_world(db)
+    contact = _holder(db, "sales_orders.sales_report")
+    resp = _ask(client, contact, basis=basis, period=None)
+    assert resp.status_code == 403, resp.text
+    assert resp.json().get("code") == "outstanding_not_enabled", resp.text
+    assert "outstanding" in resp.text.lower(), resp.text
+
+
+def test_ac_ru_9a_a_linked_dealer_with_the_outstanding_reveal_sees_only_its_own_unpaid_documents(client, db):
+    """AC-RU-9a: a customer-scoped contact stays forced to its links on unpaid (C1 only: 550 of the 800)."""
+    w = _unpaid_world(db)
+    contact = _holder(db, "sales_orders.outstanding", office=False)
+    _link(db, contact, w.c1)
+    db.commit()
+    body = _ok(client, contact, basis="unpaid", period=None)
+    assert _tot(body) == (0, D("550.00")), body["total"]
+    named = _ask(client, contact, basis="unpaid", period=None, customer_ids=[w.c2.id])
+    assert named.status_code == 403, named.text  # another customer's documents are not its own

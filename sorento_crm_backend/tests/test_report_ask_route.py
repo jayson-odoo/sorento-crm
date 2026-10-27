@@ -93,9 +93,18 @@ def _rows(body):
     return [(r["name"], r["qty"], money(r["amount"])) for r in body["rows"]]
 
 
+def _both_reveals(db, contact):
+    """The Sales report AND the Outstanding reveal (owner Q6: the outstanding kinds need the second)."""
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    set_granted_keys(db, contact.id, ["sales_orders.sales_report", "sales_orders.outstanding"], actor_id=None)
+    db.flush()
+
+
 def _full(db):
     """A grant holder with no customer link: the FULL audience."""
     contact = _contact(db)
+    _both_reveals(db, contact)
     db.commit()
     return contact
 
@@ -105,6 +114,7 @@ def _staff(db):
     (REPORT-SMART-L R1: an unlinked non-staff contact is refused those, `test_one_ranking_r1.py`)."""
     contact = _contact(db)
     _access(db, contact, "Sorento Office")
+    _both_reveals(db, contact)
     db.commit()
     return contact
 
@@ -486,6 +496,7 @@ def test_ac_re_12_an_unknown_contact_is_refused(client, db):
 
 def _dealer(db, w):
     contact = _contact(db)
+    _both_reveals(db, contact)
     _link(db, contact, w.cust)
     db.commit()
     return contact

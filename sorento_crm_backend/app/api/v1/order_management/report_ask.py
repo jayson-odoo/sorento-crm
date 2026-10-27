@@ -41,6 +41,8 @@ from app.services.uuid_list_param import parse_uuid_list
 router = APIRouter()
 
 GRANT = "sales_orders.sales_report"
+#: The reveal the outstanding kinds (`ask.OPEN_BASES`) need instead of `GRANT` (owner Q6, 27 Oct 2026).
+OUTSTANDING_GRANT = "sales_orders.outstanding"
 #: The cap's defaults, used only when the settings row is missing: the live numbers are
 #: `system_settings.report_ask_rate_limit` / `report_ask_rate_window_minutes`.
 _DEFAULT_RATE_LIMIT = 10
@@ -397,12 +399,17 @@ def report_ask(
 
     resolved = resolve_contact_with_null_workspace_fallback(db, contact_id=contact_id, space_id=space_id)
     keys = granted_keys(db, resolved) if resolved else []
-    granted = GRANT in keys
+    # The reveal follows the basis: the outstanding kinds need the Outstanding reveal (and no Sales report one), the
+    # sales bases the Sales report one. A linked contact is forced to its own customers on every basis below.
+    outstanding_kind = basis_norm in ask.OPEN_BASES
+    granted = (OUTSTANDING_GRANT if outstanding_kind else GRANT) in keys
     # A salesperson is narrowed to its own book: when granted only on `mine`, when not granted
     # always (it needs an agent link with customers; the agent axes are then refused).
     # The one rule the chatbot seams share (`contact_asker.may_ask_sales_ranking`).
     decision, book = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=granted)
     if decision == "not_granted":
+        if outstanding_kind:
+            raise AppException(403, "Outstanding is not enabled for your account.", code="outstanding_not_enabled")
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
     if not granted and (group_norm == "sales_agent" or agents or card_agents):
         raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")

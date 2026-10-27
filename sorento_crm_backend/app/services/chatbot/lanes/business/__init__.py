@@ -1898,6 +1898,10 @@ def run_fetch(
     need = answer_mod.STATUS_GRANT_REQUIRED.get(order_status_raw) or answer_mod.DOMAIN_GRANT_REQUIRED.get(
         jsc.js_string(domain) if domain else ""
     )
+    sales_need = need == _SALES_REPORT_GRANT
+    if sales_need:
+        # Owner Q6: an outstanding kind is read under the Outstanding reveal, not the Sales report one.
+        need = report_ask.grant_key(parse_output)
     if need:
         access_ctx = ctx.get("access") if isinstance(ctx.get("access"), dict) else {}
         granted_raw = access_ctx.get("attributes")
@@ -1908,7 +1912,7 @@ def run_fetch(
                 order_status=jsc.js_string(parse_output.get("order_status") or "").strip(),
                 parse_output=parse_output,
             )
-            if need == _SALES_REPORT_GRANT and need not in granted
+            if sales_need and need not in granted
             else "granted" if need in granted else "not_granted"
         )
         if decision == "salesperson_book":
@@ -1923,7 +1927,7 @@ def run_fetch(
                 return _fixed_reply(chat_report.NOT_ENABLED, refused=True)
             if need == _SALES_TARGET_GRANT:
                 return _fixed_reply(fetch_mod.SALES_TARGET_NOT_ENABLED_MESSAGE, refused=True)
-            if need == _SALES_REPORT_GRANT:
+            if sales_need:
                 # R7 (PLAN-prompt-dynamic-30sep D9): the `sales` domain is refused in the
                 # words every sales figure ask was refused in under `order`.
                 return _sales_report_not_enabled()
@@ -2099,7 +2103,8 @@ def run_fetch(
         granted_raw = access_ctx.get("attributes")
         granted = set(granted_raw) if isinstance(granted_raw, (list, tuple, set, frozenset)) else set()
         decision = sales_figure_decision(
-            db, contact_id, space_id, order_status=order_status_raw, granted=_SALES_REPORT_GRANT in granted,
+            db, contact_id, space_id, order_status=order_status_raw,
+            granted=report_ask.grant_key(parse_output) in granted,
             parse_output=parse_output,
         )
         if decision == "not_granted":

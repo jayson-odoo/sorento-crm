@@ -6290,6 +6290,7 @@ def _run_stages_body(  # noqa: PLR0915
         # run_fetch`'s own `_SALES_REPORT_GRANT` check stays as the second line of
         # defence, for a re-entry path that calls it directly.
         from app.services.chatbot.lanes.business import _SALES_REPORT_GRANT
+        from app.services.chatbot.lanes.business import report_ask as _report_ask_lane
 
         from app.services.chatbot.contracts import SALES_FIGURE_STATUSES
 
@@ -6297,7 +6298,7 @@ def _run_stages_body(  # noqa: PLR0915
         # the same money under the same key, refused at the same seam.
         sales_report_grant_refused = (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
-            and _SALES_REPORT_GRANT not in set(access.get("attributes") or [])
+            and _report_ask_lane.grant_key(parsed_output) not in set(access.get("attributes") or [])
         )
         if sales_report_grant_refused:
             # REPORT-SMART-L: the sales ranking has ONE 'may ask' rule, shared with the route
@@ -6343,7 +6344,7 @@ def _run_stages_body(  # noqa: PLR0915
             and _CHAT_REPORT_GRANT in _granted
         ) or (
             jsc.js_string(parsed_output.get("order_status") or "").strip() in SALES_FIGURE_STATUSES
-            and _SALES_REPORT_GRANT in _granted
+            and _report_ask_lane.grant_key(parsed_output) in _granted
         ) or (
             # SALES-TARGET-CHAT: the target ask is exempt under its own grant; whose customer
             # it may name is the route's call (403 customer_not_permitted).
