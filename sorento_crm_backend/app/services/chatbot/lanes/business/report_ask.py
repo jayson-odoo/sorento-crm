@@ -745,6 +745,15 @@ def as_held_refine(verdict: dict[str, Any], frame: Any) -> dict[str, Any]:
         # ("Project sales top 10 <code>"): a refine, which applies the channel, product and count (`_refine`). Only a
         # population on screen (agents, customers, ...): a month list or a channel ranking keeps today's report.
         verdict = {**verdict, "ranking_refine": True}
+    if (
+        status == ASK_NAME
+        and verdict.get("bare_top_selling") is True
+        and verdict.get("top_n") is None
+        and isinstance(frame, dict) and frame and not frame.get("group_by") and not frame.get("stale")
+    ):
+        # R9 (ruling A on v63), REPORT-UNIFY: the top selling label with no grain and no count, over a held TOTAL,
+        # answers that total with what it changed (the basis, the measure): a refine, never a fresh product ranking.
+        return {**{k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}, "group_by": None, "ranking_refine": True}
     if verdict.get("ranking_refine") is not True or not isinstance(frame, dict) or not frame or status == ASK_NAME:
         return verdict
     if restates_the_ask(verdict):
@@ -767,6 +776,11 @@ def _settled_by_its_axis(values: dict[str, Any], group_by: Any) -> dict[str, Any
 #: REPORT-SMART-L R8: the engine's stamp (`with_held`), frame-shaped (`date_from`, `date_to`, the route params), plus
 #: `product` when the held products are the gate's carried rows. Listed in `required_fields.ENGINE_KEYS`.
 HELD_KEY = "report_held"
+#: The route params of a held total that stay on the ranking its reply becomes: the period and the filters.
+_HELD_TOTAL_KEYS = (
+    "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids", "customer_ids",
+    "sales_agent_ids", "customer_agent_ids", "channel", "spec", "warehouse_codes",
+)
 #: REPORT-SMART-L R9: the open question a sales report reply arms with its drill offer (`fetch._sales_report_output`),
 #: so the engine-held sign that the last answer was a sales report (`contracts.DETAIL_OFFER_KINDS`).
 SALES_REPORT_OFFER = "sales_report_detail"
@@ -807,7 +821,7 @@ def with_held(
         or verdict.get("entity_op") != "reuse"
         or verdict.get("topic_reset") is True
         or _new_subject(verdict, parser_ops)
-        or getattr(focus, "sales_ranking_frame", None)
+        or _dict(getattr(focus, "sales_ranking_frame", None)).get("group_by")
         or contracts.SALES_DOMAIN not in (domains or [])
         or (open_ask is not None and replaced is None)
     ):
@@ -817,15 +831,10 @@ def with_held(
         # AC-OR9: a typed count keeps the ranking. With no axis there is no total to hold it (a total settles no
         # count), so neither the carry nor the reroute applies: the reply is today's.
         return verdict
-    if (
-        held_offer == SALES_REPORT_OFFER
-        and replaced is None
-        and verdict.get("top_n") is None
-        and (axisless or verdict.get("bare_top_selling") is True)
-    ):
+    if replaced is None and verdict.get("top_n") is None and verdict.get("bare_top_selling") is True:
+        # R9 (ruling A on v63), REPORT-UNIFY: the top selling label with no grain and no count, under a held total,
+        # answers THAT total (the held window and product, below), like the axis-less ranking it is.
         verdict = {**{k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}, "group_by": None}
-        if basis_from(verdict) in _SALES_REPORT_BASES:
-            return {**verdict, "order_status": "sales_report", "ranking_refine": None}
     if replaced is not None:
         if replaced.get("asking") == "scope":
             return verdict  # the drill's scope question holds no ask of its own to carry
@@ -833,6 +842,10 @@ def with_held(
         values = _settled_by_its_axis(_dict(replaced.get("values")), _dict(extras.get("args")).get("group_by"))
         args = route_args(rf.Outcome(values=values, extras=extras))
         held = {k: v for k, v in args.items() if k not in ("group_by", "sort") and v not in (None, "", [])}
+    elif _dict(getattr(focus, "sales_ranking_frame", None)):
+        # A held TOTAL (a report ask run with no axis): its period and filters stay (what that total showed).
+        total = _dict(getattr(focus, "sales_ranking_frame", None))
+        held = {k: v for k, v in total.items() if k in _HELD_TOTAL_KEYS and v not in (None, "", [])}
     else:
         window = _dict(getattr(focus, "date_window", None))
         held = {"date_from": window.get("start"), "date_to": window.get("end"), "product": bool(getattr(focus, "products", None))}
@@ -1338,9 +1351,14 @@ def settle(
     across_all = new_axis and drill != "scoped" and bool(_dict(frame.get("shown"))) and not frame.get("stale")
     source: dict[str, Any] = {}
     keep_product = False
+    total_frame = bool(frame) and not frame.get("group_by")
     if new_axis and (parse_output.get("ranking_refine") is True or across_all):
-        source = frame
-    elif not frame and _dict(parse_output.get(HELD_KEY)):
+        if total_frame and _new_subject(parse_output):
+            source = {}  # the parser's own `new_subject` over a held TOTAL is a fresh ask: nothing carries
+        else:
+            # A total has no rows to rank across, so the product it was for stays on a product axis too.
+            source, keep_product = frame, total_frame
+    elif not _dict(frame).get("group_by") and _dict(parse_output.get(HELD_KEY)):
         # R8: no ranking held, and the engine stamped what the held sales report total (or the open ask this
         # replaced) showed (`with_held`): the same hold, one more source. A total has no rows to rank across, so
         # the product it was for stays on a product axis too (crew target: its variants ranked).

@@ -115,10 +115,12 @@ def test_r8_3_a_ranking_right_after_the_total_never_asks_the_period(console, mon
 # ------------------------------------------------ guards: the carry is off for a genuinely new ask
 
 
-def test_r8_guard_a_reply_naming_its_own_value_asks_the_period_as_today(console, monkeypatch) -> None:
+def test_r8_a_refine_flagged_reply_keeps_the_held_total_whatever_its_entity_op(console, monkeypatch) -> None:
+    """REPORT-UNIFY: the total is a held report-ask frame, so the parser's refine flag keeps it (only a `new_subject` op
+    restarts: the next test); a total that ran on the retired sales report tool asked the period again."""
     _total(console, monkeypatch)
     text, log = _say_all(console, monkeypatch, _row2(entity_op="replace_combine"), "qty, delivered")
-    assert _ran(log) == [] and PERIOD_Q in text, (text, log)
+    assert _ran(log) == [] and text == HOW_MANY, (text, log)
 
 
 def test_r8_guard_a_new_subject_op_asks_the_period_as_today(console, monkeypatch) -> None:
@@ -165,16 +167,6 @@ def test_r8_guard_an_order_list_window_is_never_lent_to_a_ranking(console, monke
     )
     assert TOOL not in _names(log) and SALES_REPORT_TOOL not in _names(log), ("setup", text, log)
     text, log = _say_all(console, monkeypatch, _row2(), "qty, delivered")
-    assert _ran(log) == [] and PERIOD_Q in text, (text, log)
-
-
-def test_r8_guard_a_held_ranking_frame_keeps_today_s_rules(console, monkeypatch) -> None:
-    """A total that ran on the report engine is a held frame: its own rules decide, as today."""
-    total = _v63(order_status="sales_ranking", ranking_refine=False, entities=[_e(PRODUCT_CODE, "product")],
-                 entity_op="replace_combine", measure="qty", basis="delivered", domain_in_message=True, **YEAR_2026)
-    text, log = _say_all(console, monkeypatch, total, f"total qty of {PRODUCT_CODE} in 2026 delivered")
-    assert len(_ran(log)) == 1, ("setup", text, log)
-    text, log = _say_all(console, monkeypatch, _row3(group_by="customer"), "by customer")
     assert _ran(log) == [] and PERIOD_Q in text, (text, log)
 
 
