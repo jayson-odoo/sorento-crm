@@ -1,6 +1,6 @@
 # PLAN: BORROW-NO-HOLD - a Borrow decision is a plan, not a stock hold
 
-Status: Review (PR #1935; red-proof 6558131254 + 3c8369d7de, fix aedf4aed1a, kill-proof posted). Owner answers 28 Oct ~00:25: (a) on all (Q1 reach only via a plan; Q2 OI links keep holding; Q2b supply
+Status: Merge-ready pending CI + owner hand test (PR #1935; red-proof 6558131254 + 3c8369d7de, fix aedf4aed1a, kill-proof posted, reviewer READY, browser pass PASS on the crew copy). Owner answers 28 Oct ~00:25: (a) on all (Q1 reach only via a plan; Q2 OI links keep holding; Q2b supply
 Borrows unchanged, "incoming doesn't come into the picture anyway"; Q3 keep the board donor cell; Q4 reorder runs stop
 deducting Borrow; Q5 keep the confirm-time donor-line check). Track: full (size M, LEAD pattern: tester + coder +
 reviewer subagents). Keep the diff apart from CONFIRM-DOUBLE-ROWS #1934 (repeat-Confirm stacking in
