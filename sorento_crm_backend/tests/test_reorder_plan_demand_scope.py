@@ -224,7 +224,7 @@ def _add_form_row(db, project_so: dict, *, product_code: str, warehouse_code: st
 
 
 def _add_reserve_claim(db, project_so: dict, *, product_id, warehouse_id, qty,
-                        required_date=None) -> None:
+                        required_date=None, source_type="other_location") -> None:
     """A confirmed Project BORROW claim on `project_so`'s own PSO (`so_line_allocations`,
     `source_type='other_location'`; BOARD-NO-HOLD, 27 Oct 2026: a Reserve no longer takes
     stock off a retail run's supply, a Borrow still does) - the seed shape `tests/scm/test_plan_horizon_review_fixes.py`'s
@@ -249,7 +249,7 @@ def _add_reserve_claim(db, project_so: dict, *, product_id, warehouse_id, qty,
     db.add(pso_line)
     db.flush()
     alloc = SOLineAllocation(
-        id=_u(), so_line_id=pso_line.id, source_type="other_location",
+        id=_u(), so_line_id=pso_line.id, source_type=source_type,
         warehouse_id=warehouse_id, qty=qty, company_id=project_so["company_id"],
     )
     db.add(alloc)

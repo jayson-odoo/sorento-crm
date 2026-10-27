@@ -235,3 +235,70 @@ def test_8_a_route_lines_leftover_queues_as_a_shortfall_in_its_own_group():
     assert row.uncovered == pytest.approx(0)
     assert row.short_at_date == pytest.approx(26)
     assert _taken(row) == {POOL_KEY: pytest.approx(10), "spo:1": pytest.approx(26)}
+
+
+# --------------------------------------------------------------------------- review S7
+
+
+def _line_at(key, so, qty, due, warehouse):
+    return DemandLine(
+        key=key, so_number=so, line_no=1, warehouse=warehouse, agent_code="LEENA",
+        required_date=due, open_qty=qty,
+    )
+
+
+def _bin(qty, key, warehouse):
+    return SupplyEvent(key=key, kind=KIND_ON_HAND, warehouse=warehouse, at=AS_OF, qty=qty)
+
+
+def test_s7i_a_cross_group_route_on_an_in_span_bin_shares_it_by_date_and_stays_sealed():
+    """An IB bin with 36. An IB line (+10) needs 30, no plan. A BB line (+20) is routed to
+    the IB bin for 36. An undecided BB line (+5) needs 36. The IB line is covered 30, the
+    routed BB line takes the 6 left and is short 30, and the undecided BB line cannot draw
+    IB and stays short 36."""
+    ib_key = "on_hand:brw-ib"
+    ib = _line_at("ib", "SO-IB", 30, _d(10), "BRW-IB")
+    routed = _line_at("routed", "SO-BB-ROUTED", 36, _d(20), "BRW-BB")
+    undecided = _line_at("undecided", "SO-BB-OPEN", 36, _d(5), "BRW-BB")
+    rows = _by_key(
+        _walk(
+            [_bin(36, ib_key, "BRW-IB")], [ib, routed, undecided],
+            [_route("routed", 36, key=ib_key, warehouse="BRW-IB")],
+        )
+    )
+
+    assert rows["ib"].status == STATUS_COVERED
+    assert _taken(rows["ib"]) == {ib_key: pytest.approx(30)}
+    assert _taken(rows["routed"]) == {ib_key: pytest.approx(6)}
+    assert rows["routed"].status == STATUS_SHORT
+    assert rows["routed"].uncovered == pytest.approx(30)
+    assert rows["undecided"].assigned == ()
+    assert rows["undecided"].status == STATUS_SHORT
+    assert rows["undecided"].uncovered == pytest.approx(36)
+
+
+def test_s7ii_a_route_take_leaves_a_lendable_claim_alone():
+    """A 50 floor at the IR bin; a far IR line (+90) holds a LENDABLE claim of 36 on it; a
+    nearer routed line (+10, group BB) is routed to the bin for 36. The route takes only the
+    14 nobody claimed, is short 22, and the far line keeps its whole claim: it is charged no
+    `Lent` by the route and reads pinned with its 36."""
+    key = IR_KEY
+    far = _line_at("far", "SO-FAR", 36, _d(90), "BRW-IR")
+    near = _line_at("near", "SO-NEAR", 36, _d(10), "BRW-BB")
+    claim = Hold(
+        line_key="far", supply_key=key, qty=36, kind=KIND_ON_HAND, warehouse="BRW-IR",
+        landed=True, lendable=True,
+    )
+    rows = _by_key(
+        _walk(
+            [_bin(50, key, "BRW-IR")], [far, near],
+            [claim, _route("near", 36, key=key, warehouse="BRW-IR")],
+        )
+    )
+
+    assert _taken(rows["near"]) == {key: pytest.approx(14)}
+    assert rows["near"].uncovered == pytest.approx(22)
+    assert rows["far"].lent == ()
+    assert rows["far"].lent_qty == pytest.approx(0)
+    assert _taken(rows["far"]) == {key: pytest.approx(36)}
+    assert rows["far"].status == STATUS_PINNED

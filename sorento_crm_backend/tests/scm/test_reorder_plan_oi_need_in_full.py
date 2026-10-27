@@ -682,3 +682,45 @@ def test_retail_net_clamps_an_oversized_reserve_to_the_rows_own_need(scm_app):
     assert row["rec_type"] == "covered", (
         f"expected no buy - the reserve fully covers the confirmed need: {row}"
     )
+
+
+# =============================================================================
+# BOARD-NO-HOLD review S3 (owner pending, lead's recommendation): a confirmed RESERVE
+# no longer takes stock off RETAIL's figure, but still lowers the PROJECT half's own Buy
+# (captain's Lane F). A BORROW lowers both, as today.
+# =============================================================================
+
+def _reduction_world(db, source_type):
+    u = _seed_single_member(db, on_hand=100)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+    _add_reserve_claim(
+        db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=15, source_type=source_type,
+    )
+    run_id = _run_all(db, so_numbers=[so["so_number"]])
+    recs = _recs_for(db, run_id, u["pid"])
+    assert len(recs) == 1, recs
+    return run_id, u, recs[0]
+
+
+def test_a_confirmed_reserve_lowers_the_project_buy_but_not_retail_net(scm_app):
+    """ORDER row 20 + confirmed Reserve 15 on the same line: the project part is
+    20 - 15 = 5, while retail_net is `net` (80) with the project 20 stripped back out =
+    100 - it is NOT reduced by the 15."""
+    _, db, _, _ = scm_app
+    run_id, u, row = _reduction_world(db, "own")
+
+    assert _total_buy(db, run_id, u["pid"]) == 5.0, _recs_for(db, run_id, u["pid"])
+    assert float(row["inputs"]["retail_net"]) == 100.0, row["inputs"]
+
+
+def test_a_confirmed_borrow_lowers_both_the_project_buy_and_retail_net(scm_app):
+    """Control, as today: the same shape with a Borrow of 15 lowers the project part to 5
+    and retail_net to 80 + 20 - 15 = 85."""
+    _, db, _, _ = scm_app
+    run_id, u, row = _reduction_world(db, "other_location")
+
+    assert _total_buy(db, run_id, u["pid"]) == 5.0, _recs_for(db, run_id, u["pid"])
+    assert float(row["inputs"]["retail_net"]) == 85.0, row["inputs"]
