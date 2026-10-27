@@ -488,7 +488,12 @@ def kanban(
         q = q.filter(vf)
     for key in ("status", "assigned_to", "raised_by", "priority", "category"):
         v = filters.get(key)
-        if v:
+        if key in ("status", "priority", "category"):
+            # Several values of one filter are OR-ed.
+            values = multi_values(v)
+            if values:
+                q = q.filter(getattr(Ticket, key).in_(values))
+        elif v:
             q = q.filter(getattr(Ticket, key) == v)
     rows = q.order_by(Ticket.updated_at.desc()).limit(column_cap * len(TICKET_STATUSES)).all()
 

@@ -7,7 +7,8 @@ import { useSearchParams } from 'next/navigation';
 import type { ColumnDef, PaginationState, RowSelectionState } from '@tanstack/react-table';
 import { useReactTable, getCoreRowModel } from '@tanstack/react-table';
 import { Button } from '@/components/ui/button';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
@@ -69,10 +70,10 @@ export default function TicketsList() {
     debouncedValue: debouncedSearch,
     isSettling: debouncedSearchSettling,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState<TicketStatus | 'all'>('all');
-  const [priorityFilter, setPriorityFilter] = useState<TicketPriority | 'all'>('all');
-  const [categoryFilter, setCategoryFilter] = useState<TicketCategory | 'all'>('all');
-  const [sourceFilter, setSourceFilter] = useState<TicketSourceChannel | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [priorityFilter, setPriorityFilter] = useState('');
+  const [categoryFilter, setCategoryFilter] = useState('');
+  const [sourceFilter, setSourceFilter] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
   const [reloadTick, setReloadTick] = useState(0);
@@ -107,10 +108,10 @@ export default function TicketsList() {
       limit: pagination.pageSize,
     };
     if (debouncedSearch) filters.q = debouncedSearch;
-    if (statusFilter !== 'all') filters.status = statusFilter;
-    if (priorityFilter !== 'all') filters.priority = priorityFilter;
-    if (categoryFilter !== 'all') filters.category = categoryFilter;
-    if (sourceFilter !== 'all') filters.source_channel = sourceFilter;
+    if (statusFilter) filters.status = statusFilter;
+    if (priorityFilter) filters.priority = priorityFilter;
+    if (categoryFilter) filters.category = categoryFilter;
+    if (sourceFilter) filters.source_channel = sourceFilter;
     getTickets(filters)
       .then((res) => {
         if (cancelled) return;
@@ -277,11 +278,10 @@ export default function TicketsList() {
           className="max-w-sm"
         />
         {mode === 'list' && (
-          <SearchableSelect
-            value={statusFilter}
-            onChange={(v) => setStatusFilter(v as TicketStatus | 'all')}
+          <SearchableMultiSelect
+            value={splitMulti(statusFilter)}
+            onChange={(v) => setStatusFilter(joinMulti(v))}
             options={[
-              { value: 'all', label: 'All statuses' },
               ...TICKET_STATUSES.map((s) => ({
                 value: s,
                 label: s.charAt(0).toUpperCase() + s.slice(1),
@@ -289,13 +289,13 @@ export default function TicketsList() {
             ]}
             placeholder="Status"
             triggerClassName="w-[160px]"
+            clearable
           />
         )}
-        <SearchableSelect
-          value={priorityFilter}
-          onChange={(v) => setPriorityFilter(v as TicketPriority | 'all')}
+        <SearchableMultiSelect
+          value={splitMulti(priorityFilter)}
+          onChange={(v) => setPriorityFilter(joinMulti(v))}
           options={[
-            { value: 'all', label: 'All priorities' },
             ...TICKET_PRIORITIES.map((p) => ({
               value: p,
               label: p.charAt(0).toUpperCase() + p.slice(1),
@@ -303,12 +303,12 @@ export default function TicketsList() {
           ]}
           placeholder="Priority"
           triggerClassName="w-[160px]"
+          clearable
         />
-        <SearchableSelect
-          value={categoryFilter}
-          onChange={(v) => setCategoryFilter(v as TicketCategory | 'all')}
+        <SearchableMultiSelect
+          value={splitMulti(categoryFilter)}
+          onChange={(v) => setCategoryFilter(joinMulti(v))}
           options={[
-            { value: 'all', label: 'All categories' },
             ...TICKET_CATEGORIES.map((c) => ({
               value: c,
               label: c.charAt(0).toUpperCase() + c.slice(1),
@@ -316,13 +316,13 @@ export default function TicketsList() {
           ]}
           placeholder="Category"
           triggerClassName="w-[160px]"
+          clearable
         />
         {mode === 'list' && (
-          <SearchableSelect
-            value={sourceFilter}
-            onChange={(v) => setSourceFilter(v as TicketSourceChannel | 'all')}
+          <SearchableMultiSelect
+            value={splitMulti(sourceFilter)}
+            onChange={(v) => setSourceFilter(joinMulti(v))}
             options={[
-              { value: 'all', label: 'All sources' },
               ...TICKET_SOURCE_CHANNELS.map((s) => ({
                 value: s,
                 label:
@@ -331,6 +331,7 @@ export default function TicketsList() {
             ]}
             placeholder="Source"
             triggerClassName="w-[180px]"
+            clearable
           />
         )}
         <ListBoardViewToggle value={mode} onChange={setMode} />

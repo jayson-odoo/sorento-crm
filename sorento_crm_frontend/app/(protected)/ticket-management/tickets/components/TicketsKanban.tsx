@@ -44,8 +44,8 @@ function emptyColumns(): Record<TicketStatus, Ticket[]> {
 interface Props {
   filters: {
     q?: string;
-    priority?: TicketPriority | 'all';
-    category?: TicketCategory | 'all';
+    priority?: string;
+    category?: string;
   };
 }
 
@@ -63,8 +63,8 @@ export default function TicketsKanban({ filters }: Props) {
     try {
       const apiFilters: TicketListFilters = {};
       if (filters.q) apiFilters.q = filters.q;
-      if (filters.priority && filters.priority !== 'all') apiFilters.priority = filters.priority;
-      if (filters.category && filters.category !== 'all') apiFilters.category = filters.category;
+      if (filters.priority) apiFilters.priority = filters.priority;
+      if (filters.category) apiFilters.category = filters.category;
       const res = await getTicketsKanban(apiFilters);
       setColumns({
         draft: res.columns.draft ?? [],
