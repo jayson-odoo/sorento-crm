@@ -14,6 +14,7 @@ from app.schemas.autocount_branch import BranchResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.branch_service import BranchService
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -27,7 +28,7 @@ def list_branches(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query("last_synced_at"),
     dir: Optional[str] = Query("desc"),
-    book: Optional[str] = Query(None),
+    book: Optional[list[str]] = Query(None),
     in_crm: Optional[bool] = Query(None),
     customer_id: Optional[str] = Query(None),
     current_user: dict = Depends(require_permission(VIEW)),
@@ -42,7 +43,7 @@ def list_branches(
         query=query,
         sort_field=sort or "last_synced_at",
         sort_dir=dir or "desc",
-        book=book,
+        book=multi_values(book),
         in_crm=in_crm,
         customer_id=customer_id,
     )

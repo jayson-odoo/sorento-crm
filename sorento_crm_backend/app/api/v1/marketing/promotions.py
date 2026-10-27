@@ -28,7 +28,10 @@ from app.schemas.marketing import (
     PromotionProductResponse,
     PromotionServingListResponse,
 )
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import handle_internal_error, handle_unprocessable
+from app.utils.multi_value import multi_values
+
+_ATTACHMENT_STATES = ("unlinked", "linked_to_trashed", "unlinked_or_trashed")
 
 router = APIRouter()
 
@@ -95,7 +98,7 @@ async def get_promotions(
             "UUIDs. Never falls back to inactive rows. csv / JSON list / repeated."
         ),
     ),
-    user_type: Optional[str] = Query(None, description="Filter by a single access level code (FE listing)."),
+    user_type: Optional[list[str]] = Query(None, description="Filter by access level code(s) (FE listing); several = any of them."),
     access_levels: Optional[list[str]] = Query(
         None,
         description=(
@@ -134,9 +137,8 @@ async def get_promotions(
             "passed explicitly."
         ),
     ),
-    attachment_state: Optional[str] = Query(
+    attachment_state: Optional[list[str]] = Query(
         None,
-        pattern="^(unlinked|linked_to_trashed|unlinked_or_trashed)$",
         description=(
             "Cleanup filter. `unlinked`: promotion has no attachment linkages. "
             "`linked_to_trashed`: linked to at least one soft-deleted (trashed) "
@@ -179,6 +181,10 @@ async def get_promotions(
     free-text `query`, or `entities`). Without any, returns an empty page so
     callers cannot accidentally enumerate the whole catalog.
     """
+    user_types = multi_values(user_type)
+    attachment_states = multi_values(attachment_state)
+    if attachment_states and any(v not in _ATTACHMENT_STATES for v in attachment_states):
+        raise handle_unprocessable(f"Attachment state: expected one of {', '.join(_ATTACHMENT_STATES)}")
     try:
         from app.services.contact_access_type_service import ContactAccessTypeService
         from app.services.entity_filter_helpers import normalize_list_query_param
@@ -206,7 +212,7 @@ async def get_promotions(
             or parsed_product_ids
             or (query and query.strip())
             or norm_entities
-            or attachment_state
+            or attachment_states
             or (expiry_notify_batch_id and expiry_notify_batch_id.strip())
         )
         # API-key / MCP callers without a narrowing filter are answering open
@@ -223,7 +229,7 @@ async def get_promotions(
         result = service.list_promotions(
             page=page,
             limit=limit,
-            user_type=user_type,
+            user_type=user_types,
             contact_access_codes=contact_codes,
             query=query,
             status=status,
@@ -236,7 +242,7 @@ async def get_promotions(
             entities=norm_entities,
             promotion_ids=parsed_promotion_ids,
             product_ids=parsed_product_ids,
-            attachment_state=attachment_state,
+            attachment_state=attachment_states,
             expiry_notify_batch_id=(expiry_notify_batch_id or None),
             serving_policy=serving_policy,
             scope_terms=scope_terms,

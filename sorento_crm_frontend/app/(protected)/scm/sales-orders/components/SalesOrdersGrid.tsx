@@ -43,6 +43,8 @@ import { RowActionsMenu } from '@/components/common/RowActionsMenu';
 import { useSalesOrderActions } from '../actions';
 import { useRowPending } from '@/hooks/useDeferredRowAction';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatMyrExact } from '@/app/(protected)/project-sales/_shared/lib/money';
 import { buildPlanActions, PLAN_PERMISSION } from '../lib/planActions';
@@ -942,16 +944,15 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
   // never blank.
   const activeFilterLabel = useMemo(() => {
     const parts: string[] = [];
-    if (statusFilter) parts.push(salesOrderStatusLabel(statusFilter));
-    if (priorityFilter) parts.push(formatStatusLabel(priorityFilter));
-    if (sourceFilter) {
-      const label = SOURCE_LABELS[sourceFilter];
-      if (label) parts.push(label);
-    }
-    if (demandClassFilter) {
-      const label = optionLabel(DEMAND_CLASS_FILTER_OPTIONS, demandClassFilter);
-      if (label) parts.push(label);
-    }
+    // Several values of one filter read as one phrase: "Open, Closed +1".
+    const several = (raw: string, name: (v: string) => string | undefined) => {
+      const labels = splitMulti(raw).flatMap((v) => name(v) ?? []);
+      if (labels.length) parts.push(multiValueSummary(labels));
+    };
+    several(statusFilter, salesOrderStatusLabel);
+    several(priorityFilter, formatStatusLabel);
+    several(sourceFilter, (v) => SOURCE_LABELS[v]);
+    several(demandClassFilter, (v) => optionLabel(DEMAND_CLASS_FILTER_OPTIONS, v));
     if (transferableFilter) {
       const label = optionLabel(TRANSFERABLE_FILTER_OPTIONS, transferableFilter);
       if (label) parts.push(`Transferable: ${label}`);
@@ -964,12 +965,20 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
     // who has only a customer or agent filter remembered - not a rare edge. The axis word
     // stands in until the name arrives, so the chip is never blank.
     if (customerFilter) {
-      const name = optionLabel(customerOptions.data ?? [], customerFilter);
-      parts.push(name ?? 'Customer');
+      parts.push(
+        multiValueSummary(
+          splitMulti(customerFilter).map(
+            (c) => optionLabel(customerOptions.data ?? [], c) ?? 'Customer',
+          ),
+        ),
+      );
     }
     if (!pinnedToAgent && agentFilter) {
-      const name = optionLabel(agentOptions.options ?? [], agentFilter);
-      parts.push(name ?? 'Agent');
+      parts.push(
+        multiValueSummary(
+          splitMulti(agentFilter).map((a) => optionLabel(agentOptions.options ?? [], a) ?? 'Agent'),
+        ),
+      );
     }
     if (outstandingOnly) parts.push('Outstanding qty');
     return parts.join(', ');
@@ -1074,10 +1083,10 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <Label htmlFor="so-customer" className="mb-1 block">
                         Customer
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="so-customer"
-                        value={customerFilter}
-                        onChange={(v) => applyFilters({ customer_code: v || undefined })}
+                        value={splitMulti(customerFilter)}
+                        onChange={(v) => applyFilters({ customer_code: joinMulti(v) || undefined })}
                         options={customerOptions.data ?? []}
                         placeholder="All customers"
                         clearable
@@ -1090,10 +1099,10 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                         <Label htmlFor="so-agent" className="mb-1 block">
                           Agent
                         </Label>
-                        <SearchableSelect
+                        <SearchableMultiSelect
                           id="so-agent"
-                          value={agentFilter}
-                          onChange={(v) => applyFilters({ sales_agent_id: v || undefined })}
+                          value={splitMulti(agentFilter)}
+                          onChange={(v) => applyFilters({ sales_agent_id: joinMulti(v) || undefined })}
                           options={agentOptions.options}
                           placeholder="All agents"
                           clearable
@@ -1118,12 +1127,13 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <Label htmlFor="so-type" className="mb-1 block">
                         Type
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="so-type"
-                        value={demandClassFilter}
-                        onChange={(v) => applyFilters({ demand_class: v || undefined })}
-                        options={DEMAND_CLASS_FILTER_OPTIONS}
+                        value={splitMulti(demandClassFilter)}
+                        onChange={(v) => applyFilters({ demand_class: joinMulti(v) || undefined })}
+                        options={DEMAND_CLASS_FILTER_OPTIONS.filter((o) => o.value)}
                         placeholder="All types"
+                        clearable
                       />
                     </div>
                     <div>
@@ -1143,35 +1153,37 @@ export default function SalesOrdersGrid({ salesAgentId, listingKey }: SalesOrder
                       <Label htmlFor="so-status" className="mb-1 block">
                         Status
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="so-status"
-                        value={statusFilter}
-                        onChange={(v) => applyFilters({ status: v || undefined })}
-                        options={SALES_ORDER_STATUS_FILTER_OPTIONS}
+                        value={splitMulti(statusFilter)}
+                        onChange={(v) => applyFilters({ status: joinMulti(v) || undefined })}
+                        options={SALES_ORDER_STATUS_FILTER_OPTIONS.filter((o) => o.value)}
                         placeholder="All statuses"
+                        clearable
                       />
                     </div>
                     <div>
                       <Label htmlFor="so-priority" className="mb-1 block">
                         Priority
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="so-priority"
-                        value={priorityFilter}
-                        onChange={(v) => applyFilters({ priority: v || undefined })}
-                        options={PRIORITY_FILTER_OPTIONS}
+                        value={splitMulti(priorityFilter)}
+                        onChange={(v) => applyFilters({ priority: joinMulti(v) || undefined })}
+                        options={PRIORITY_FILTER_OPTIONS.filter((o) => o.value)}
                         placeholder="All priorities"
+                        clearable
                       />
                     </div>
                     <div>
                       <Label htmlFor="so-source" className="mb-1 block">
                         Source
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="so-source"
-                        value={sourceFilter}
-                        onChange={(v) => applyFilters({ source: v || undefined })}
-                        options={SOURCE_FILTER_OPTIONS}
+                        value={splitMulti(sourceFilter)}
+                        onChange={(v) => applyFilters({ source: joinMulti(v) || undefined })}
+                        options={SOURCE_FILTER_OPTIONS.filter((o) => o.value)}
                         placeholder="All sources"
                         clearable
                       />

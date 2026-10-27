@@ -30,6 +30,7 @@ from fastapi import HTTPException, status
 from sqlalchemy import and_, exists, func, or_
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_values
 from app.models.access import RespondContact
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.tickets import (
@@ -429,18 +430,20 @@ def list_tickets(
     vf = _visibility_filter(db, current_user)
     if vf is not None:
         q = q.filter(vf)
-    if filters.get("status"):
-        q = q.filter(Ticket.status == filters["status"])
+    # Status, priority, category and source channel take several values, OR-ed (FILTER-MULTISELECT).
+    for column, key in (
+        (Ticket.status, "status"),
+        (Ticket.priority, "priority"),
+        (Ticket.category, "category"),
+        (Ticket.source_channel, "source_channel"),
+    ):
+        values = multi_values(filters.get(key))
+        if values:
+            q = q.filter(column.in_(values))
     if filters.get("assigned_to"):
         q = q.filter(Ticket.assigned_to == filters["assigned_to"])
     if filters.get("raised_by"):
         q = q.filter(Ticket.raised_by == filters["raised_by"])
-    if filters.get("priority"):
-        q = q.filter(Ticket.priority == filters["priority"])
-    if filters.get("category"):
-        q = q.filter(Ticket.category == filters["category"])
-    if filters.get("source_channel"):
-        q = q.filter(Ticket.source_channel == filters["source_channel"])
     if filters.get("due_before"):
         try:
             cutoff = datetime.fromisoformat(filters["due_before"]).date()

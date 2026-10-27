@@ -27,6 +27,7 @@ from app.services.import_log_service import ImportLogService
 from app.services.contact_brand_scope import product_in_scope_clauses
 from app.services.calendar_service import CalendarService
 from app.services.identifier_resolver import resolve_identifier
+from app.utils.multi_value import multi_values
 from app.services.company_scope import (
     DEFAULT_COMPANY_ID,
     build_company_predicate,
@@ -842,7 +843,7 @@ class OrderService:
         product_query: Optional[str] = None,
         transporter_query: Optional[str] = None,
         customer_id: Optional[str] = None,
-        order_status_id: Optional[str] = None,
+        order_status_id: Optional[list[str] | str] = None,
         order_status: Optional[str] = None,
         has_order_lines: Optional[str] = None,
         has_actual_delivery_date: Optional[str] = None,
@@ -981,12 +982,17 @@ class OrderService:
             filters.append(Order.customer_id.in_(customer_ids))
             _customer_scoped = True
 
-        status_ids = resolve_identifier(
-            self.db,
-            order_status_id,
-            OrderStatus,
-            code_fields=("status_code", "status_name"),
-        )
+        # Several statuses are OR-ed; each may be an id or a code/name (FILTER-MULTISELECT).
+        status_ids = None
+        for _status_value in multi_values(order_status_id) or []:
+            _resolved = resolve_identifier(
+                self.db,
+                _status_value,
+                OrderStatus,
+                code_fields=("status_code", "status_name"),
+            )
+            if _resolved is not None:
+                status_ids = [*(status_ids or []), *_resolved]
         if status_ids is not None:
             if not status_ids:
                 if ids_only:
@@ -3598,7 +3604,8 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
-        customer_group_id: Optional[str] = None,
+        customer_group_id: Optional[list[str] | str] = None,
+        status: Optional[str] = None,
     ):
         """Build the filtered + sorted customers query shared by ``list_customers``
         and ``neighbours`` so the two can never drift.
@@ -3612,8 +3619,15 @@ class CustomerService:
         if sales_agent_id is not None:
             q = q.filter(Customer.sales_agent_id == sales_agent_id)
 
-        if customer_group_id is not None:
-            q = q.filter(Customer.customer_group_id == customer_group_id)
+        if customer_group_id:
+            groups = [customer_group_id] if isinstance(customer_group_id, str) else customer_group_id
+            q = q.filter(Customer.customer_group_id.in_(groups))
+
+        # `active` / `inactive`; anything else (or nothing) is every customer.
+        if status == "active":
+            q = q.filter(Customer.is_active.is_(True))
+        elif status == "inactive":
+            q = q.filter(Customer.is_active.is_(False))
 
         if query:
             q = q.filter(
@@ -3638,7 +3652,8 @@ class CustomerService:
         sort_field: str = "created_at",
         sort_dir: str = "desc",
         sales_agent_id: Optional[str] = None,
-        customer_group_id: Optional[str] = None,
+        customer_group_id: Optional[list[str] | str] = None,
+        status: Optional[str] = None,
     ):
         """List customers with pagination, search, and sorting.
 
@@ -3650,6 +3665,7 @@ class CustomerService:
             sort_dir=sort_dir,
             sales_agent_id=sales_agent_id,
             customer_group_id=customer_group_id,
+            status=status,
         )
 
         total = q.count()
