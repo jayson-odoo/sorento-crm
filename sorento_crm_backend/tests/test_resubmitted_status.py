@@ -130,3 +130,38 @@ def test_complaint_rejected_twice_is_resubmitted_again(db):
 
 def test_technical_team_can_respond_to_resubmitted_complaint():
     assert is_response_status_allowed(COMPLAINT, "resubmitted")
+
+
+# ---- complaint, chatbot / integration "edit a rejected complaint" path -------
+
+
+def test_integration_edit_of_rejected_complaint_is_resubmitted(db):
+    """`POST /complaints` with a system_id / complaint_number edits a rejected complaint
+    (complaints.py, edit-via-submit). Before this lane the row stayed `rejected`."""
+    from app.schemas.complaints import ComplaintUpdate
+    from app.services.complaints_service import ComplaintService
+
+    _token, complaint = _seed_complaint(db)
+    _reject(db, complaint)
+
+    ComplaintService(db).resubmit_rejected_complaint(
+        str(complaint.id), ComplaintUpdate(defect_description="Photos attached this time")
+    )
+
+    db.refresh(complaint)
+    assert complaint.status == "resubmitted"
+
+
+def test_integration_edit_cannot_override_the_resubmitted_status(db):
+    from app.schemas.complaints import ComplaintUpdate
+    from app.services.complaints_service import ComplaintService
+
+    _token, complaint = _seed_complaint(db)
+    _reject(db, complaint)
+
+    ComplaintService(db).resubmit_rejected_complaint(
+        str(complaint.id), ComplaintUpdate(status="approved")
+    )
+
+    db.refresh(complaint)
+    assert complaint.status == "resubmitted"
