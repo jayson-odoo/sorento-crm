@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Portal and System, One Build</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Tokens copied from sorento_crm_frontend/css/config.reui.css (light :root and .dark) */
+:root{
+  --background:#ffffff;--foreground:#09090b;--card:#ffffff;
+  --primary:#3b82f6;--primary-foreground:#ffffff;--primary-soft:#eff6ff;
+  --secondary:#f4f4f5;--muted:#f4f4f5;--muted-foreground:#71717a;
+  --border:#ececee;--destructive:#dc2626;--destructive-soft:#fef2f2;
+  --success:#15803d;--success-soft:#f0fdf4;--warning:#a16207;--warning-soft:#fefce8;
+  --info:#7c3aed;--info-soft:#f5f3ff;--radius:.5rem;
+  --page:#fafafa;
+}
+@media (prefers-color-scheme: dark){
+  :root:not([data-theme="light"]){
+    --background:#09090b;--foreground:#fafafa;--card:#18181b;
+    --primary:#2563eb;--primary-foreground:#ffffff;--primary-soft:#172554;
+    --secondary:#27272a;--muted:#18181b;--muted-foreground:#a1a1aa;
+    --border:#27272a;--destructive:#dc2626;--destructive-soft:#2a1215;
+    --success:#4ade80;--success-soft:#0f2417;--warning:#facc15;--warning-soft:#2a2410;
+    --info:#a78bfa;--info-soft:#1e1736;--page:#09090b;
+  }
+}
+:root[data-theme="dark"]{
+  --background:#09090b;--foreground:#fafafa;--card:#18181b;
+  --primary:#2563eb;--primary-foreground:#ffffff;--primary-soft:#172554;
+  --secondary:#27272a;--muted:#18181b;--muted-foreground:#a1a1aa;
+  --border:#27272a;--destructive:#dc2626;--destructive-soft:#2a1215;
+  --success:#4ade80;--success-soft:#0f2417;--warning:#facc15;--warning-soft:#2a2410;
+  --info:#a78bfa;--info-soft:#1e1736;--page:#09090b;
+}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--page);color:var(--foreground);font:15px/1.6 Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1040px;margin:0 auto;padding:32px 16px 72px}
+.eyebrow{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground);margin:0 0 6px}
+h1{font-size:28px;line-height:1.25;margin:0 0 10px;font-weight:700}
+.lede{color:var(--muted-foreground);margin:0;max-width:760px}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:14px}
+.chip{font-size:12px;padding:2px 10px;border-radius:999px;border:1px solid var(--border);background:var(--card);color:var(--muted-foreground)}
+nav.toc{background:var(--card);border:1px solid var(--border);border-radius:calc(var(--radius)*1.5);padding:12px 18px;margin:22px 0}
+nav.toc ol{margin:0;padding-left:20px;columns:2;column-gap:28px}
+nav.toc a{color:var(--primary);text-decoration:none}
+@media (max-width:640px){nav.toc ol{columns:1}}
+section.s{background:var(--card);border:1px solid var(--border);border-radius:calc(var(--radius)*1.5);padding:22px;margin-bottom:20px}
+h2{font-size:20px;margin:0 0 4px;font-weight:700}
+h2 .n{color:var(--primary);margin-right:6px}
+.sub{color:var(--muted-foreground);margin:0 0 14px}
+h3{font-size:16px;margin:20px 0 6px;font-weight:600}
+p{margin:8px 0}ul,ol{padding-left:20px;margin:8px 0}li{margin:3px 0}
+code{font:12.5px/1.4 ui-monospace,SFMono-Regular,Menlo,monospace;background:var(--muted);padding:1px 5px;border-radius:4px;word-break:break-word}
+blockquote{margin:12px 0;padding:12px 16px;background:var(--muted);border-left:3px solid var(--primary);border-radius:0 var(--radius) var(--radius) 0}
+blockquote cite{display:block;font-style:normal;font-size:12px;color:var(--muted-foreground);margin-top:6px}
+.tbl{overflow-x:auto;margin:10px 0;border:1px solid var(--border);border-radius:var(--radius)}
+table{border-collapse:collapse;width:100%;font-size:13.5px}
+th,td{text-align:left;vertical-align:top;padding:8px 10px;border-bottom:1px solid var(--border)}
+th{background:var(--muted);font-weight:600;font-size:12.5px;color:var(--muted-foreground)}
+tr:last-child td{border-bottom:0}
+.pill{display:inline-block;font-size:11.5px;font-weight:600;padding:1px 8px;border-radius:999px;white-space:nowrap}
+.ok{background:var(--success-soft);color:var(--success)}
+.bad{background:var(--destructive-soft);color:var(--destructive)}
+.mid{background:var(--warning-soft);color:var(--warning)}
+.inf{background:var(--info-soft);color:var(--info)}
+.pri{background:var(--primary-soft);color:var(--primary)}
+.callout{border:1px solid var(--border);border-left:3px solid var(--primary);border-radius:var(--radius);padding:12px 16px;margin:12px 0;background:var(--background)}
+.callout.warn{border-left-color:var(--warning)}
+.callout.risk{border-left-color:var(--destructive)}
+.callout b.h{display:block;margin-bottom:2px}
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+.grid2{display:grid;grid-template-columns:repeat(2,1fr);gap:12px}
+@media (max-width:760px){.grid3,.grid2{grid-template-columns:1fr}}
+.card{border:1px solid var(--border);border-radius:var(--radius);padding:14px 16px;background:var(--background)}
+.card h4{margin:0 0 6px;font-size:15px}
+.card.rec{border-color:var(--primary);box-shadow:0 0 0 1px var(--primary)}
+.kv{display:grid;grid-template-columns:max-content 1fr;gap:4px 10px;font-size:13.5px}
+.kv dt{color:var(--muted-foreground)}.kv dd{margin:0}
+.fig{margin:14px 0;border:1px solid var(--border);border-radius:var(--radius);background:var(--background);padding:10px;overflow-x:auto}
+.fig svg{display:block;width:100%;min-width:640px;height:auto}
+.fig figcaption{font-size:12.5px;color:var(--muted-foreground);margin-top:6px}
+svg text{font-family:Inter,sans-serif;fill:var(--foreground)}
+svg .muted{fill:var(--muted-foreground)}
+svg .box{fill:var(--card);stroke:var(--border);stroke-width:1.5}
+svg .boxp{fill:var(--primary-soft);stroke:var(--primary);stroke-width:1.5}
+svg .boxw{fill:var(--warning-soft);stroke:var(--warning);stroke-width:1.5}
+svg .boxs{fill:var(--success-soft);stroke:var(--success);stroke-width:1.5}
+svg .boxd{fill:var(--destructive-soft);stroke:var(--destructive);stroke-width:1.5}
+svg .ln{stroke:var(--muted-foreground);stroke-width:1.5;fill:none}
+svg .lnp{stroke:var(--primary);stroke-width:2;fill:none}
+svg .lnd{stroke:var(--destructive);stroke-width:1.5;fill:none;stroke-dasharray:5 4}
+.phase{display:grid;grid-template-columns:72px 1fr;gap:4px 14px;border-top:1px solid var(--border);padding:14px 0}
+.phase:first-of-type{border-top:0;padding-top:4px}
+.phase .tag{font-weight:700;color:var(--primary)}
+.phase .t{font-weight:600}
+.q{border-top:1px solid var(--border);padding:14px 0}
+.q:first-of-type{border-top:0;padding-top:4px}
+.q .ask{font-weight:600}
+.q .rec{margin-top:4px}
+.q .rec b{color:var(--primary)}
+footer{color:var(--muted-foreground);font-size:12.5px;margin-top:24px}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+<p class="eyebrow">Design scout · portal and system · 27 Oct 2026</p>
+<h1>One build for project sales, two front doors kept</h1>
+<p class="lede">Your question: should portal and system sign-in be unified so project registration, quotation and the rest of the project sales flow are built once, while portal users keep the simple screen that shows only their own work? This page lays out what exists today (with file references), three options, a recommendation, a phased plan, and five decisions for you.</p>
+<div class="chips">
+  <span class="chip">Lane PORTAL-UNIFY-SCOUT</span>
+  <span class="chip">No product code</span>
+  <span class="chip">Code read at main 54f1eb37</span>
+  <span class="chip">FE = sorento_crm_frontend/, BE = sorento_crm_backend/</span>
+</div>
+
+<blockquote>"our sign in has two places: portal and system. It works fine for forms like stock inquiry, purchase request, all these easy forms, but when it comes to project registration, quotation, and further flow down the road of project sales, the UI and function is gonna be complex and I don't want to replicate the function in portal and in system view, I want to maintain one. I wonder if it is the right move to unify the login and I don't want to impact the user experience... when they view portal it is very simple and they only see theirs."<cite>Owner, 27 Oct 2026</cite></blockquote>
+
+<div class="callout">
+<b class="h">The answer in one paragraph</b>
+Yes, unify the sign-in, and most of that work is already done. Phone sign-in and the shared session type are live (identity slices S0, S1 and S3). The one missing piece is S2: putting the portal on the same session. Unifying the sign-in alone does not stop the duplication, though. Duplication stops when a feature is built once and shown in two shells. So the recommendation is <b>Option B</b>. Keep the portal URL and its simple look as the salesperson's front door. Build project detail, quotation and the later pipeline steps <b>once</b>, on the staff API, and show the same screens inside a slim portal shell. Add one new server-side rule so a salesperson reads only their own projects. The simple forms (stock inquiry, purchase request and the rest) stay exactly as they are.
+</div>
+
+<nav class="toc"><ol>
+  <li><a href="#s1">Current state: two sign-ins</a></li>
+  <li><a href="#s2">Current state: same form, two screens</a></li>
+  <li><a href="#s3">Current state: who sees what</a></li>
+  <li><a href="#s4">Current state: project sales, stage by stage</a></li>
+  <li><a href="#s5">Options A, B, C</a></li>
+  <li><a href="#s6">Comparison</a></li>
+  <li><a href="#s7">Recommendation and target shape</a></li>
+  <li><a href="#s8">Phased migration plan</a></li>
+  <li><a href="#s9">Five questions for you</a></li>
+</ol></nav>
+
+<!-- ============================================================ -->
+<section class="s" id="s1">
+<h2><span class="n">1</span>Current state: two sign-ins</h2>
+<p class="sub">There are two kinds of session. Staff log in once; a portal user is a WhatsApp contact holding a separate token.</p>
+
+<div class="tbl"><table>
+<tr><th></th><th>System (staff CRM)</th><th>Portal</th></tr>
+<tr><td><b>Who</b></td><td>A <code>users</code> row (BE <code>app/models/user.py</code>)</td><td>A WhatsApp contact, <code>respond_contacts</code> (<code>app/models/access.py:230</code>), plus a Respond.io space</td></tr>
+<tr><td><b>Front door</b></td><td><code>/signin</code>, with an Email / Phone toggle (FE <code>app/(auth)/signin/components/phone-signin.tsx</code>)</td><td><code>/portal/c/{slug}</code> link from WhatsApp, then the verify card asks for a 6-digit WhatsApp code (FE <code>app/(auth)/portal/components/PortalVerifyCard.tsx</code>)</td></tr>
+<tr><td><b>Auth backend</b></td><td>NextAuth Credentials providers <code>credentials</code> and <code>phone-otp</code> (FE <code>app/api/auth/[...nextauth]/auth-options.ts:137,193-194</code>) post to FastAPI <code>/api/v1/auth/login</code> and <code>/auth/phone/verify</code> (BE <code>app/api/v1/auth.py:543,597</code>)</td><td>FastAPI <code>/api/v1/public/portal</code> request-otp / verify-otp, outside NextAuth</td></tr>
+<tr><td><b>Session</b></td><td>Opaque <code>user_sessions</code> row, 30-day sliding, records <code>auth_method</code> (BE <code>app/models/user_session.py:52</code>)</td><td>Opaque <code>portal_tokens</code> row, 30-day sliding once verified (BE <code>app/models/portal.py:26-44</code>, <code>app/services/portal_service.py:430-449</code>)</td></tr>
+<tr><td><b>How the browser sends it</b></td><td><code>Authorization: Bearer</code> (FE <code>lib/api.ts:507</code>)</td><td><code>X-Portal-Token</code>, kept in localStorage (sessionStorage for admin view-as) (FE <code>app/(auth)/portal/lib/portal-client.ts:287-306,380-389</code>)</td></tr>
+<tr><td><b>Route guard</b></td><td><code>require_permission(slug)</code> per route (BE <code>app/dependencies.py:414-450</code>) plus the module guard</td><td><code>Depends(get_portal_token)</code> (BE <code>app/api/v1/public/portal.py:150-171</code>), used <b>83 times</b> across 7 <code>public/portal*.py</code> files</td></tr>
+<tr><td><b>Page gate</b></td><td>Client-side <code>useSession</code> in <code>app/(protected)/layout.tsx:24-58</code>. There is no <code>middleware.ts</code>.</td><td>None. <code>app/(auth)/portal/layout.tsx</code> (14 lines) only mounts the view-as banner</td></tr>
+<tr><td><b>Shell</b></td><td><code>Demo1Layout</code> with the full sidebar, filtered by permission (FE <code>config/menu.config.tsx</code>, <code>lib/menu-access-filter.ts:11-37</code>)</td><td>Branded card layout; the portal landing draws its own header (FE <code>app/(auth)/portal/components/PortalLanding.tsx:570</code>)</td></tr>
+</table></div>
+
+<h3>The unified identity plan is three quarters shipped</h3>
+<p>The 26 Sep plan (<code>documentation/plans/identity/PLAN-unified-identity-26sep.md</code>) already answers "should the login be one". Its four slices on main:</p>
+<div class="tbl"><table>
+<tr><th>Slice</th><th>What</th><th>State</th><th>Evidence</th></tr>
+<tr><td>S0</td><td>A user links to at most one contact; audit names the person</td><td><span class="pill ok">Shipped</span></td><td><code>uq_users_respond_contact_id</code> at <code>app/models/user.py:142-148</code></td></tr>
+<tr><td>S1</td><td>Phone + WhatsApp code sign-in on <code>/signin</code></td><td><span class="pill ok">Shipped</span></td><td><code>app/services/phone_signin_service.py</code>; a <code>salesperson</code> user with a linked contact lands on the portal home (<code>:294-326</code>)</td></tr>
+<tr><td>S3</td><td>The owner creates a user and links it to a contact</td><td><span class="pill ok">Shipped</span></td><td><code>app/services/user_contact_link.py</code></td></tr>
+<tr><td>S2</td><td>The portal reads the same user session</td><td><span class="pill bad">Not built</span></td><td>No <code>get_portal_principal</code> or <code>has_user</code> in the code; <code>portal_link</code> is only listed as an allowed method (<code>app/services/user_session_service.py:36</code>)</td></tr>
+</table></div>
+<p>So today a salesperson who has a user account can sign in to <code>/signin</code> by phone and be sent to the portal, but the portal then asks for its own code and runs on its own token. That gap is S2.</p>
+
+<figure class="fig">
+<svg viewBox="0 0 960 300" role="img" aria-label="Today: two doors, two sessions, two API surfaces, shared services underneath">
+  <text x="20" y="24" font-size="13" font-weight="700">Today</text>
+  <rect class="box" x="20" y="44" width="190" height="56" rx="8"/><text x="115" y="68" font-size="13" text-anchor="middle" font-weight="600">/signin</text><text x="115" y="86" font-size="11" text-anchor="middle" class="muted">email+password or phone code</text>
+  <rect class="box" x="20" y="190" width="190" height="56" rx="8"/><text x="115" y="214" font-size="13" text-anchor="middle" font-weight="600">/portal/c/{slug}</text><text x="115" y="232" font-size="11" text-anchor="middle" class="muted">WhatsApp code</text>
+  <rect class="boxp" x="260" y="44" width="170" height="56" rx="8"/><text x="345" y="68" font-size="13" text-anchor="middle" font-weight="600">user_sessions</text><text x="345" y="86" font-size="11" text-anchor="middle" class="muted">Bearer</text>
+  <rect class="boxw" x="260" y="190" width="170" height="56" rx="8"/><text x="345" y="214" font-size="13" text-anchor="middle" font-weight="600">portal_tokens</text><text x="345" y="232" font-size="11" text-anchor="middle" class="muted">X-Portal-Token</text>
+  <rect class="box" x="480" y="30" width="200" height="84" rx="8"/><text x="580" y="56" font-size="13" text-anchor="middle" font-weight="600">Staff screens</text><text x="580" y="74" font-size="11" text-anchor="middle" class="muted">app/(protected), sidebar</text><text x="580" y="92" font-size="11" text-anchor="middle" class="muted">/api/v1/* + RBAC</text>
+  <rect class="box" x="480" y="176" width="200" height="84" rx="8"/><text x="580" y="202" font-size="13" text-anchor="middle" font-weight="600">Portal screens</text><text x="580" y="220" font-size="11" text-anchor="middle" class="muted">app/(auth)/portal, 22,746 lines</text><text x="580" y="238" font-size="11" text-anchor="middle" class="muted">/api/v1/public/portal* + owner check</text>
+  <rect class="boxs" x="740" y="100" width="200" height="90" rx="8"/><text x="840" y="128" font-size="13" text-anchor="middle" font-weight="600">Services + tables</text><text x="840" y="146" font-size="11" text-anchor="middle" class="muted">mostly ONE copy</text><text x="840" y="164" font-size="11" text-anchor="middle" class="muted">(sample, NPA, opportunity,</text><text x="840" y="178" font-size="11" text-anchor="middle" class="muted">project registration, price tag)</text>
+  <path class="ln" d="M210 72 H260"/><path class="ln" d="M210 218 H260"/>
+  <path class="ln" d="M430 72 H480"/><path class="ln" d="M430 218 H480"/>
+  <path class="ln" d="M680 72 C710 72 710 130 740 130"/><path class="ln" d="M680 218 C710 218 710 160 740 160"/>
+  <text x="580" y="140" font-size="11" text-anchor="middle" fill="var(--destructive)" style="fill:var(--destructive)">screens built twice</text>
+  <path class="lnd" d="M580 114 V176"/>
+</svg>
+<figcaption>The backend services are mostly shared already. The duplication is in the screens and in the two route surfaces in front of them.</figcaption>
+</figure>
+</section>
+
+<!-- ============================================================ -->
+<section class="s" id="s2">
+<h2><span class="n">2</span>Current state: same form, two screens</h2>
+<p class="sub">The pattern you sensed is real, and it gets worse as forms get richer. Line counts come from <code>wc -l</code>; "duplicated" is an estimate from reading the parallel sections.</p>
+
+<div class="tbl"><table>
+<tr><th>Form</th><th>Portal screen</th><th>System screen</th><th>Backend</th><th>Shared FE</th><th>Est. duplicated FE</th></tr>
+<tr><td>Stock inquiry</td><td>Hard-coded <code>FIELDS</code> in <code>SubmissionForm.tsx:205-233</code> + section <code>:2627-2767</code></td><td><code>stock-inquiries/components/StockInquiryForm.tsx</code> (577)</td><td><span class="pill mid">Partly</span> portal writes rows itself (<code>portal_service.py:1433</code>)</td><td>One layout (<code>ProductInquiryFormLayout</code>)</td><td>150 to 250</td></tr>
+<tr><td>Purchase request</td><td><code>SubmissionForm.tsx:343-405</code>, <code>:2970-3047</code></td><td><code>purchase-requests/components/PurchaseRequestForm.tsx</code> (1,185)</td><td><span class="pill mid">Partly</span> (<code>portal_service.py:1442</code>)</td><td>Little</td><td>250 to 400</td></tr>
+<tr><td>Sample request</td><td><code>SampleRequestForm.tsx</code> (456)</td><td><code>project-sales/sample-requests/.../SampleRequestForm.tsx</code> (411)</td><td><span class="pill ok">One service</span></td><td><span class="pill ok">Yes</span> <code>components/common/SampleRequestLines</code></td><td>100 to 200</td></tr>
+<tr><td>New product application</td><td><code>NewProductApplicationForm.tsx</code> (657)</td><td><code>new-product-applications/.../NewProductApplicationForm.tsx</code> (295)</td><td><span class="pill ok">One service</span></td><td><span class="pill ok">Yes</span> header and lines in <code>components/common</code></td><td>100 to 200</td></tr>
+<tr><td>Project registration</td><td><code>SubmissionForm.tsx:234-277</code></td><td><code>project-sales/_shared/components/ProjectForm.tsx</code> (785)</td><td><span class="pill ok">One service</span> <code>project_registration_service</code></td><td>One label helper</td><td>50 to 100 (portal form is deliberately short)</td></tr>
+<tr><td>Sales opportunity</td><td>Portal form, detail, list, line row: <b>1,136</b></td><td>Modal, detail, view, line row: <b>1,934</b></td><td><span class="pill ok">One service</span> <code>sales/opportunity_service</code></td><td><span class="pill bad">No</span> files say they are a "mirror" (<code>PortalOpportunityLineRow.tsx:6</code>)</td><td><b>500 to 700</b></td></tr>
+<tr><td>Quotation</td><td>None in the portal. A separate token page for the <i>customer</i> to sign (<code>app/(auth)/quotation-sign</code>)</td><td><code>project-sales/[projectId]/quotation-documents/**</code> (3,745) + editors (2,295)</td><td>Sign page uses the same service</td><td>n/a</td><td>0 today</td></tr>
+</table></div>
+
+<div class="callout warn">
+<b class="h">What this tells us</b>
+<ul>
+<li>Each simple form costs about 100 to 400 duplicated lines. That is tolerable, and they already work. Leave them alone.</li>
+<li>The one rich flow already on both sides, sales opportunity, has been rebuilt line by line as a "mirror". Every change has to be made twice. This is exactly the cost you want to avoid.</li>
+<li>The staff project sales screens total <b>85,439 lines</b> (non-test <code>.tsx</code> under <code>app/(protected)/project-sales</code>). The quotation area alone is about 6,000. Mirroring even a fifth of that into the portal would double the cost of every later change.</li>
+<li>The generic portal forms are not driven by a shared schema. Their fields are a constant in one 3,373-line file (<code>SubmissionForm.tsx:205</code>), with a third copy kept for AI extraction (BE <code>app/services/ai_extract/form_schema_registry.py:3-5</code>). This is not a blocker, just a fact.</li>
+</ul>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="s" id="s3">
+<h2><span class="n">3</span>Current state: who sees what</h2>
+<div class="grid2">
+<div class="card"><h4>Portal: "only theirs", enforced per route</h4>
+<ul>
+<li>Most forms require the row's <code>contact_id</code> and <code>space_id</code> to match the token's, otherwise 403 <code>OWNER_MISMATCH</code> or 404 (BE <code>portal_service.py:853-854, 961-984</code>).</li>
+<li>Price tag checks the contact only (<code>portal_price_tag.py:849</code>).</li>
+<li>Sales opportunity is scoped to every agent linked to the contact (BE <code>app/services/sales/portal_agent.py:24-33</code>).</li>
+<li>Company scope is the contact's companies (BE <code>app/services/company_scope_resolver.py:287-348</code>).</li>
+<li>Form visibility is per market segment plus per-contact overrides (BE <code>portal_form_visibility_service.py</code>).</li>
+<li>No team or manager view on the portal.</li>
+</ul></div>
+<div class="card"><h4>Staff: whole routes by permission, rows by company</h4>
+<ul>
+<li><code>require_permission</code> gates a whole route; admin and superadmin pass everything.</li>
+<li>Rows are filtered by company only. Per-person row limits exist in just two places: tickets (<code>tickets_service.py:68-76</code>) and customer asks (<code>app/api/v1/sales/customer_asks.py:41-71</code>, own agent plus teams you lead).</li>
+<li><b>Projects are readable by anyone with the view permission, on purpose:</b> "Reading is intentionally wide open ... a read filter would defeat it" (BE <code>app/services/project_service.py:407-408</code>). Edits are limited to the owner, collaborators or managers (<code>:410-419</code>).</li>
+<li>Opportunities have no per-person read limit either (BE <code>app/api/v1/sales/opportunities.py:82-110</code>).</li>
+</ul></div>
+</div>
+
+<h3>Permission-aware UI today</h3>
+<ul>
+<li>The standard is "hidden, not disabled" (<code>documentation/plans/PLAN-permission-gating.md:200</code>, still marked draft). The sidebar hides what the effective user cannot open (<code>documentation/plans/identity/PLAN-menu-perm-gate-06oct.md</code>).</li>
+<li>Helpers: <code>useHasPermission</code> / <code>useHasAnyPermission</code> (FE <code>hooks/usePermissions.ts:33,41</code>, used in about 376 files) and the page guard <code>RequireAccess</code> (FE <code>app/components/common/RequireAccess.tsx:29-56</code>).</li>
+<li><b>No field-level permission mechanism exists.</b> The only field-style slug, <code>projects.projects.view_all_financials</code>, is read in one notifier (<code>project_notify_service.py:33</code>).</li>
+<li>The roles <code>salesperson</code> and <code>portal_user</code> exist (BE <code>alembic/versions/identity_0001_s0_model.py:47-48</code>). <code>salesperson</code> holds only <code>sales.customer_asks.view</code> and <code>.edit</code> (<code>sat_0001_stock_ask_done.py:50-63</code>).</li>
+</ul>
+
+<div class="callout risk">
+<b class="h">The security fact every option has to handle</b>
+If a salesperson is given the staff <code>projects.projects.view</code> permission so they can use the shared screens, they can read <b>every</b> project in their company today, including other salespeople's pursuits and customers. Building project sales once on the staff API therefore needs a new server-side read rule for the salesperson audience: own projects plus projects where they are a collaborator. It must be enforced in the backend, never only by hiding things in the UI.
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="s" id="s4">
+<h2><span class="n">4</span>Current state: project sales, stage by stage</h2>
+<div class="tbl"><table>
+<tr><th>Stage</th><th>System</th><th>Portal</th></tr>
+<tr><td>Lead</td><td><code>projects.leads</code>; assign, accept, qualify (BE <code>app/api/v1/projects/leads.py</code>)</td><td><span class="pill bad">None</span></td></tr>
+<tr><td>Project registration</td><td>Staff create via <code>ProjectForm.tsx</code></td><td><span class="pill ok">Yes</span> since #1849: draft, submit, fix and resubmit after rejection, see status and PPF code. Same <code>projects.projects</code> row (<code>project_registration_service.py:593-675</code>)</td></tr>
+<tr><td>Check by Project Sales Admin</td><td>Approve / Reject (<code>app/api/v1/projects/projects.py:358,394</code>)</td><td>Shows the result only</td></tr>
+<tr><td>Funnel (Spec In, quoted, tendering, PO received, won/lost)</td><td>Status engine, pipeline board</td><td><span class="pill bad">None</span></td></tr>
+<tr><td>Quotation (draft, lines, below-floor approval, issue)</td><td><code>projects.quotation_documents</code> and versions, lines, approval graph</td><td><span class="pill bad">None</span></td></tr>
+<tr><td>Customer sign</td><td>Staff mint a sign link</td><td>A separate public page for the <i>customer</i>, not the salesperson (<code>app/api/v1/public/quotation_sign.py</code>)</td></tr>
+<tr><td>PO, sales order</td><td><code>projects.sales_orders</code> etc.</td><td><span class="pill bad">None</span></td></tr>
+</table></div>
+<p>Two facts matter for the design:</p>
+<ul>
+<li>When a portal registration is submitted, the project's owner becomes the contact's <b>linked user</b>, or nobody if there is none (<code>project_registration_service.py:638-642, 675</code>). The data model already assumes that a salesperson who works a project after approval is a user.</li>
+<li>The portal "Sales Opportunity" belongs to the general sales module (<code>app/models/sales.py:201</code>), not project sales. It is the existing example of one service with two frontends, and it shows the cost: 1,136 portal lines mirroring 1,934 staff lines.</li>
+</ul>
+</section>
+
+<!-- ============================================================ -->
+<section class="s" id="s5">
+<h2><span class="n">5</span>Options</h2>
+<div class="grid3">
+<div class="card"><h4>A. Two logins, shared feature modules</h4>
+<p>Keep the portal token. Each complex flow is a shared component tree in <code>components/</code> that takes an API adapter: portal-client for the portal, api-client for staff. The backend needs a matching <code>/public/portal-*</code> route for every staff route the portal uses, each with its own owner check.</p>
+<dl class="kv">
+<dt>Portal UX</dt><dd><span class="pill ok">Unchanged</span></dd>
+<dt>Staff UX</dt><dd><span class="pill ok">Unchanged</span></dd>
+<dt>Maintenance</dt><dd><span class="pill mid">Medium</span> One UI, but two route surfaces and two authorization models for every feature (83 portal dependencies today, more for each new step)</dd>
+<dt>Migration</dt><dd><span class="pill mid">M per feature</span>, with no end state</dd>
+<dt>Risk</dt><dd>Every new portal route is a new door to get wrong. The quotation approval flow is tied to a user (<code>PLAN-quote-approval-ux-15oct.md:22-28</code>), so a contact-token adapter fights the model.</dd>
+</dl></div>
+
+<div class="card rec"><h4>B. One login, one app, two shells <span class="pill pri">recommended</span></h4>
+<p>Finish S2 so a set-up salesperson's portal runs on the user session. Complex features are built once on the staff API. The portal shell (the portal URL and look: no sidebar, short nav, only their data) and the staff shell both mount the same feature screens. Differences come from roles, a server-side "own records" read rule, and permission-hidden actions.</p>
+<dl class="kv">
+<dt>Portal UX</dt><dd><span class="pill ok">Unchanged</span> same URL, same code card, same simple landing; new project pages added inside it</dd>
+<dt>Staff UX</dt><dd><span class="pill ok">Unchanged</span></dd>
+<dt>Maintenance</dt><dd><span class="pill ok">Low</span> one screen, one API, one authorization model per feature</dd>
+<dt>Migration</dt><dd><span class="pill mid">M</span> S2 (planned already) + read rule + portal shell; then each feature S to M</dd>
+<dt>Risk</dt><dd>The new read rule must hold on every project-sales read endpoint (list, detail, child records, exports). Without it, data leaks. The mitigation is section 8, phase 2.</dd>
+</dl></div>
+
+<div class="card"><h4>C. Full merge into the system UI</h4>
+<p>Retire the portal. Salespeople sign in to the CRM and see the sidebar with most items hidden by role.</p>
+<dl class="kv">
+<dt>Portal UX</dt><dd><span class="pill bad">Large change</span> sidebar app, new home, different look; dealers and contacts without a user lose their door</dd>
+<dt>Staff UX</dt><dd><span class="pill ok">Unchanged</span></dd>
+<dt>Maintenance</dt><dd><span class="pill ok">Lowest</span> in the end state</dd>
+<dt>Migration</dt><dd><span class="pill bad">L</span> rebuild every simple form, move every WhatsApp deep link (about 10 callers of <code>submission_link</code>), and create a user for every portal contact, which goes against your 27 Sep ruling that you set up each user yourself</dd>
+<dt>Risk</dt><dd>Highest. Every staff route becomes reachable by salespeople, and reads are wide open today. Hiding things in the UI is not a security boundary.</dd>
+</dl></div>
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="s" id="s6">
+<h2><span class="n">6</span>Comparison</h2>
+<div class="tbl"><table>
+<tr><th></th><th>A. Two logins, shared modules</th><th>B. One login, two shells</th><th>C. Full merge</th></tr>
+<tr><td>Portal look and "only theirs"</td><td><span class="pill ok">Kept</span></td><td><span class="pill ok">Kept</span></td><td><span class="pill bad">Lost</span></td></tr>
+<tr><td>Contacts with no user (dealers, others)</td><td>Unaffected</td><td>Unaffected: simple forms on today's token</td><td>Must each get a user</td></tr>
+<tr><td>Quotation and pipeline built once</td><td>UI once, routes twice</td><td><b>UI and routes once</b></td><td>Once</td></tr>
+<tr><td>Authorization models per feature</td><td>2 (token owner check + RBAC)</td><td>1 (RBAC + own-records read rule)</td><td>1 (RBAC; needs the same read rule)</td></tr>
+<tr><td>Salesperson reaching staff routes</td><td>Cannot (no session)</td><td>Can reach only routes their role grants; reads filtered server-side</td><td>Same as B, with a much wider grant</td></tr>
+<tr><td>Audit</td><td>Contact or linked user</td><td>Always the user (S0 already stamps this)</td><td>User</td></tr>
+<tr><td>Effort to first shared feature</td><td>M</td><td>M (S2 + read rule + shell)</td><td>L</td></tr>
+<tr><td>Cost of the 10th change to quotation</td><td>Medium (two route files)</td><td><b>Low</b></td><td>Low</td></tr>
+<tr><td>Reversible</td><td>Yes</td><td>Yes: the portal token path stays for contacts without a user</td><td>Hard</td></tr>
+</table></div>
+</section>
+
+<!-- ============================================================ -->
+<section class="s" id="s7">
+<h2><span class="n">7</span>Recommendation and target shape</h2>
+<p><b>Option B</b>, scoped to what it is for: features from project registration onward are built once. Nothing is migrated just to tidy up.</p>
+<ul>
+<li><b>Front door unchanged.</b> A salesperson still opens their WhatsApp link to <code>/portal/c/{slug}</code> and types the code. If you have set them up as a user, the code now gives a user session (S2, already designed in the 26 Sep plan, section 5.2). If not, nothing changes for them.</li>
+<li><b>Portal shell, not the sidebar.</b> A slim layout for the portal routes: the portal header, short nav (Home, My projects, forms they are granted). It reuses the portal's existing look. No sidebar, no company switcher.</li>
+<li><b>Feature screens built once.</b> Project detail, quotation and later steps are written once as components that both shells mount (for example under <code>components/project-sales/</code>), against the staff <code>/api/v1/project-sales</code> API. Actions a salesperson may not take are hidden with the existing <code>useHasPermission</code>, and the backend refuses them anyway.</li>
+<li><b>Only theirs, enforced in the backend.</b> A new permission, for example <code>projects.projects.view_own</code>, which the <code>salesperson</code> role holds instead of <code>view</code>. Holders read only projects they own or collaborate on. This follows the pattern already shipped for customer asks (<code>app/api/v1/sales/customer_asks.py:41-71</code>). Staff with <code>view</code> keep today's wide-open reads.</li>
+<li><b>Simple forms stay where they are.</b> Stock inquiry, purchase request, sample request, new product application and price tag keep their portal screens and the token path. Contacts without a user use them exactly as today.</li>
+</ul>
+
+<figure class="fig">
+<svg viewBox="0 0 960 330" role="img" aria-label="Target: one session for set-up salespeople, portal shell and staff shell mounting the same feature screens">
+  <text x="20" y="24" font-size="13" font-weight="700">Target (Option B)</text>
+  <rect class="box" x="20" y="44" width="180" height="56" rx="8"/><text x="110" y="68" font-size="13" text-anchor="middle" font-weight="600">/signin</text><text x="110" y="86" font-size="11" text-anchor="middle" class="muted">staff</text>
+  <rect class="box" x="20" y="140" width="180" height="70" rx="8"/><text x="110" y="164" font-size="13" text-anchor="middle" font-weight="600">/portal/c/{slug}</text><text x="110" y="182" font-size="11" text-anchor="middle" class="muted">same code card</text><text x="110" y="198" font-size="11" text-anchor="middle" class="muted">contact HAS a user</text>
+  <rect class="box" x="20" y="246" width="180" height="62" rx="8"/><text x="110" y="270" font-size="13" text-anchor="middle" font-weight="600">/portal/c/{slug}</text><text x="110" y="288" font-size="11" text-anchor="middle" class="muted">contact has NO user</text>
+  <rect class="boxp" x="250" y="90" width="160" height="70" rx="8"/><text x="330" y="118" font-size="13" text-anchor="middle" font-weight="600">user_sessions</text><text x="330" y="136" font-size="11" text-anchor="middle" class="muted">one session kind</text>
+  <rect class="boxw" x="250" y="246" width="160" height="62" rx="8"/><text x="330" y="270" font-size="13" text-anchor="middle" font-weight="600">portal_tokens</text><text x="330" y="288" font-size="11" text-anchor="middle" class="muted">as today</text>
+  <rect class="box" x="460" y="40" width="190" height="60" rx="8"/><text x="555" y="64" font-size="13" text-anchor="middle" font-weight="600">Staff shell</text><text x="555" y="82" font-size="11" text-anchor="middle" class="muted">sidebar, all modules</text>
+  <rect class="box" x="460" y="140" width="190" height="60" rx="8"/><text x="555" y="164" font-size="13" text-anchor="middle" font-weight="600">Portal shell</text><text x="555" y="182" font-size="11" text-anchor="middle" class="muted">portal look, short nav</text>
+  <rect class="box" x="460" y="246" width="190" height="62" rx="8"/><text x="555" y="270" font-size="13" text-anchor="middle" font-weight="600">Simple portal forms</text><text x="555" y="288" font-size="11" text-anchor="middle" class="muted">unchanged</text>
+  <rect class="boxs" x="700" y="70" width="240" height="110" rx="8"/><text x="820" y="96" font-size="13" text-anchor="middle" font-weight="600">Project sales screens, ONCE</text><text x="820" y="116" font-size="11" text-anchor="middle" class="muted">detail, quotation, later steps</text><text x="820" y="136" font-size="11" text-anchor="middle" class="muted">/api/v1/project-sales + RBAC</text><text x="820" y="156" font-size="11" text-anchor="middle" class="muted">+ view_own read rule (server)</text>
+  <rect class="box" x="700" y="246" width="240" height="62" rx="8"/><text x="820" y="270" font-size="13" text-anchor="middle" font-weight="600">/api/v1/public/portal*</text><text x="820" y="288" font-size="11" text-anchor="middle" class="muted">owner check, as today</text>
+  <path class="ln" d="M200 72 C225 72 225 115 250 115"/>
+  <path class="lnp" d="M200 175 C225 175 225 135 250 135"/>
+  <path class="ln" d="M200 277 H250"/>
+  <path class="ln" d="M410 110 C435 110 435 70 460 70"/>
+  <path class="lnp" d="M410 140 C435 140 435 170 460 170"/>
+  <path class="ln" d="M410 277 H460"/>
+  <path class="ln" d="M650 70 C675 70 675 110 700 110"/>
+  <path class="lnp" d="M650 170 C675 170 675 140 700 140"/>
+  <path class="ln" d="M650 277 H700"/>
+  <path class="lnp" d="M555 200 V246"/>
+  <text x="565" y="228" font-size="10.5" class="muted">simple forms stay reachable</text>
+</svg>
+<figcaption>The blue path is new. A salesperson set up as a user enters by the same link and code, lands in the same-looking portal, and the project screens they open are the ones staff use, filtered to their own projects by the backend.</figcaption>
+</figure>
+
+<h3>Why not A</h3>
+<p>Option A keeps the UI single but doubles everything behind it. The quotation flow alone has issue, approve, reject, revise, sign-link and export routes (<code>app/api/v1/projects/quotation_documents.py</code>), and its approval graph acts as a user. A contact-token copy of each, with its own owner check, is the duplication you want to avoid, moved one layer down. A is still the right pattern for the <i>simple</i> forms, which is roughly what sample request and new product application already do.</p>
+<h3>Why not C</h3>
+<p>C changes what portal users see, forces a user for every dealer contact, and makes every staff route a target. It costs the most migration and saves nothing B does not.</p>
+</section>
+
+<!-- ============================================================ -->
+<section class="s" id="s8">
+<h2><span class="n">8</span>Phased migration plan</h2>
+<p class="sub">Each phase is one lane and one PR. Portal users see no change until phase 3, and then only new pages appear.</p>
+
+<div class="phase"><div class="tag">P1 · M</div><div><div class="t">Identity S2: portal on the unified session</div>
+Already planned and ruled (<code>PLAN-unified-identity-26sep.md</code> sections 4.3, 5.2, slice S2, AC-30 to AC-39). The verify card checks <code>has_user</code>: set-up contacts get a <code>user_sessions</code> row (<code>auth_method = portal_link</code>), the rest keep the portal token. <code>get_portal_token</code> becomes <code>get_portal_principal</code> across the 83 dependencies (type change, same logic). Company scope for <code>/public/</code> stays the contact's (AC-32).<br>
+<b>Visible change:</b> none. Same link, same card, same home. <b>Track:</b> full (auth), security-reviewer required.</div></div>
+
+<div class="phase"><div class="tag">P2 · S to M</div><div><div class="t">"Only theirs" on the staff API: <code>projects.projects.view_own</code></div>
+A new permission held by <code>salesperson</code>. Every <code>/api/v1/project-sales</code> read (list, detail, child lists such as quotations, POs, tasks and samples, plus exports) filters to <code>owner_user_id = me</code> or collaborator when the caller holds <code>view_own</code> and not <code>view</code>. Writes keep using <code>can_edit_project</code>. Tests: a salesperson gets 404 on another salesperson's project and on every child route of it. This follows the customer-asks precedent.<br>
+<b>Visible change:</b> none (no one holds it yet). <b>Track:</b> full (RBAC), security-reviewer required.</div></div>
+
+<div class="phase"><div class="tag">P3 · M</div><div><div class="t">Portal shell + "My projects" (read and follow-up)</div>
+A slim layout for <code>/portal/c/{slug}/projects/**</code> using the portal header. "My projects" on the portal landing shows their registrations through approval and beyond, and the project detail is the <b>staff project detail components</b> mounted in the portal shell. Staff-only actions are hidden by permission. The <code>(protected)</code> layout sends a portal-only user to their portal home instead of an empty sidebar.<br>
+<b>Visible change for set-up salespeople:</b> after approval, their project no longer disappears; they can follow it. Everyone else sees nothing new.</div></div>
+
+<div class="phase"><div class="tag">P4 · M to L</div><div><div class="t">Quotation in the portal, from the same editor</div>
+Salesperson quotation actions per Q3 (below), using the staff quotation editor mounted in the portal shell, with the below-floor approval going to the same approvers. Mobile width (375px) gets the same review as staff screens.</div></div>
+
+<div class="phase"><div class="tag">P5 · named trigger</div><div><div class="t">Retire the sales opportunity mirror</div>
+When the portal opportunity screens next need a change, replace the 1,136-line mirror with the staff components in the portal shell (with an <code>view_own</code> equivalent for opportunities). Not before. Simple forms move only if a change makes their duplication hurt, never as a clean-up project.</div></div>
+
+<div class="callout">
+<b class="h">What does not change, at any phase</b>
+The portal URL, the WhatsApp links already sent, the code card, the portal landing's look, form visibility by market segment, and every flow for contacts you have not set up as users. Staff screens stay as they are; they only become shared components.
+</div>
+</section>
+
+<!-- ============================================================ -->
+<section class="s" id="s9">
+<h2><span class="n">9</span>Five questions for you</h2>
+
+<div class="q"><div class="ask">Q1. Should a salesperson see only their own projects (plus ones they collaborate on), while staff keep seeing every project as today?</div>
+<div class="rec"><b>Recommend: yes.</b> Staff reads are wide open by design (<code>project_service.py:407-408</code>), and that is right for staff. For salespeople, "only theirs" is what the portal promises today, so the backend must keep that promise. Alternative: also show their team's projects to a team leader, as customer asks already do.</div></div>
+
+<div class="q"><div class="ask">Q2. Is project sales after registration only for salespeople you have set up as users, with everyone else staying on the simple forms?</div>
+<div class="rec"><b>Recommend: yes.</b> It matches your 27 Sep ruling that you create each user yourself, and the backend already makes the linked user the project owner on submit (<code>project_registration_service.py:675</code>). A contact without a user can still register a project, and it is owned by nobody until approval, as today.</div></div>
+
+<div class="q"><div class="ask">Q3. In the portal, which quotation steps does a salesperson do: (a) view only; (b) draft and edit lines, then send for approval, while Project Sales Admin issues it; (c) everything up to sending the customer sign link?</div>
+<div class="rec"><b>Recommend: (b) to start.</b> It removes most of the back-and-forth while keeping pricing control with the admin. Moving to (c) later is one permission grant, not a rebuild.</div></div>
+
+<div class="q"><div class="ask">Q4. Should a salesperson ever see the full CRM (sidebar) through an "Open CRM" link, or always stay in the portal shell?</div>
+<div class="rec"><b>Recommend: always the portal shell for the <code>salesperson</code> role.</b> This keeps "very simple, only theirs". Someone who also holds staff roles gets "Open CRM", as the 26 Sep plan already rules (section 4.3).</div></div>
+
+<div class="q"><div class="ask">Q5. Start with P1 (S2) now, or bundle P1 to P3 as one lane?</div>
+<div class="rec"><b>Recommend: P1 and P2 as two lanes now, in parallel</b> (independent, both need security review), then P3. P1 is already fully planned and ruled. P2 is small and should land before any salesperson is given project-sales screens.</div></div>
+</section>
+
+<footer>Scout lane PORTAL-UNIFY-SCOUT, 27 Oct 2026. Line counts measured with <code>wc -l</code> on main 54f1eb37; duplicated-line figures are estimates from reading the parallel sections. Plan file: <code>documentation/plans/portal/PLAN-portal-unify-scout-27oct.md</code>.</footer>
+</div>
+</body>
+</html>
