@@ -59,10 +59,11 @@ import UserInviteDialog from './user-add-dialog';
 import { toast } from '@/lib/toast';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
-import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
-import { joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import type { Table as ReactTable } from '@tanstack/react-table';
 import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
+
+type UserFilterField = 'role' | 'status' | 'trashed';
+type UserFilterCondition = { id: string; field: UserFilterField; value: string };
 
 interface UsersToolbarProps {
   table: ReactTable<User>;
@@ -119,54 +120,53 @@ const UsersToolbar = ({
   refetchRoleList,
   addUserButton,
 }: UsersToolbarProps) => {
-  // FILTER-MULTISELECT: Role and Status take several values (comma-joined in the URL), Trashed is a
-  // single exclusive choice. Each control applies on change, like the other Filters popovers.
-  // A filter change starts again at page one.
-  const pageOne = () => setPagination((prev) => ({ ...prev, pageIndex: 0 }));
-  const changeRole = (value: string) => {
-    setSelectedRole(value);
-    pageOne();
+  const initialConditionsFromApplied = (): UserFilterCondition[] => {
+    const out: UserFilterCondition[] = [];
+    if ((selectedRole || 'all') !== 'all') {
+      out.push({ id: crypto.randomUUID(), field: 'role', value: selectedRole || 'all' });
+    }
+    if ((selectedStatus || 'all') !== 'all') {
+      out.push({ id: crypto.randomUUID(), field: 'status', value: selectedStatus || 'all' });
+    }
+    if (selectedTrashed !== 'exclude') {
+      out.push({ id: crypto.randomUUID(), field: 'trashed', value: selectedTrashed });
+    }
+    return out;
   };
-  const changeStatus = (value: string) => {
-    setSelectedStatus(value);
-    pageOne();
+
+  const [draftConditions, setDraftConditions] = useState<UserFilterCondition[]>(() => initialConditionsFromApplied());
+
+  const addCondition = () => {
+    setDraftConditions((prev) => [...prev, { id: crypto.randomUUID(), field: 'role', value: 'all' }]);
   };
-  const changeTrashed = (value: string) => {
-    setSelectedTrashed(value);
-    pageOne();
+
+  const updateCondition = (id: string, patch: Partial<UserFilterCondition>) => {
+    setDraftConditions((prev) => prev.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   };
-  const roleIds = splitMulti(selectedRole).filter((v) => v !== 'all');
-  const statusKeys = splitMulti(selectedStatus).filter((v) => v !== 'all');
-  const roleOptions = (roleList ?? []).map((role) => ({ value: role.id, label: role.name }));
-  const statusOptions = Object.entries(UserStatusProps).map(([status, { label }]) => ({
-    value: status,
-    label,
-  }));
-  const namesOf = (ids: string[], options: { value: string; label: string }[]) =>
-    ids.map((id) => options.find((o) => o.value === id)?.label ?? 'Selected');
-  const trashedLabel = selectedTrashed === 'only' ? 'Trashed only' : 'All';
-  const chips = [
-    ...(roleIds.length
-      ? [
-          {
-            label: multiChipLabel('Role', namesOf(roleIds, roleOptions)),
-            onClear: () => changeRole('all'),
-          },
-        ]
-      : []),
-    ...(statusKeys.length
-      ? [
-          {
-            label: multiChipLabel('Status', namesOf(statusKeys, statusOptions)),
-            onClear: () => changeStatus('all'),
-          },
-        ]
-      : []),
-    ...(selectedTrashed !== 'exclude'
-      ? [{ label: `Trashed: ${trashedLabel}`, onClear: () => changeTrashed('exclude') }]
-      : []),
-  ];
-  const filtersActiveCount = chips.length;
+
+  const removeCondition = (id: string) => {
+    setDraftConditions((prev) => prev.filter((c) => c.id !== id));
+  };
+
+  const applyConditions = () => {
+    let role = 'all';
+    let status = 'all';
+    let trashed = 'exclude';
+    for (const c of draftConditions) {
+      if (c.field === 'role' && c.value) role = c.value;
+      if (c.field === 'status' && c.value) status = c.value;
+      if (c.field === 'trashed' && c.value) trashed = c.value;
+    }
+    setSelectedRole(role);
+    setSelectedStatus(status);
+    setSelectedTrashed(trashed);
+    setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+  };
+
+  const filtersActiveCount =
+    ((selectedRole || 'all') !== 'all' ? 1 : 0) +
+    ((selectedStatus || 'all') !== 'all' ? 1 : 0) +
+    (selectedTrashed !== 'exclude' ? 1 : 0);
 
   const bulkActions: ToolbarAction[] = [
     {
@@ -230,72 +230,92 @@ const UsersToolbar = ({
           kind: 'custom',
           active: filtersActiveCount > 0,
           activeCount: filtersActiveCount,
-          activeSummary: chips,
           content: (
-            <div className="space-y-3" data-testid="users-filters-popover">
-              <SearchableMultiSelect
-                value={roleIds}
-                onChange={(ids) => changeRole(joinMulti(ids) || 'all')}
-                options={roleOptions}
-                placeholder="Role: any"
-                renderTriggerLabel={(chosen) =>
-                  chosen.length ? (
-                    <span className="block truncate">
-                      {multiChipLabel('Role', chosen.map((o) => o.label))}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">Role: any</span>
-                  )
-                }
-                loadError={roleListError}
-                onRetry={refetchRoleList}
-                triggerClassName="w-full"
-                clearable
-              />
-              <SearchableMultiSelect
-                value={statusKeys}
-                onChange={(keys) => changeStatus(joinMulti(keys) || 'all')}
-                options={statusOptions}
-                placeholder="Status: any"
-                renderTriggerLabel={(chosen) =>
-                  chosen.length ? (
-                    <span className="block truncate">
-                      {multiChipLabel('Status', chosen.map((o) => o.label))}
-                    </span>
-                  ) : (
-                    <span className="text-muted-foreground">Status: any</span>
-                  )
-                }
-                triggerClassName="w-full"
-                clearable
-              />
-              <SearchableSelect
-                value={selectedTrashed}
-                onChange={(v) => changeTrashed(v || 'exclude')}
-                options={[
-                  { value: 'exclude', label: 'Active only' },
-                  { value: 'only', label: 'Trashed only' },
-                  { value: 'all', label: 'All' },
-                ]}
-                placeholder="Trashed"
-                renderTriggerLabel={(opt) => `Trashed: ${opt.label}`}
-              />
-              {filtersActiveCount > 0 ? (
-                <div className="flex justify-end">
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => {
-                      setSelectedRole('all');
-                      setSelectedStatus('all');
-                      setSelectedTrashed('exclude');
-                      pageOne();
-                    }}
-                  >
-                    Clear filters
-                  </Button>
-                </div>
-              ) : null}
+            <div className="space-y-3">
+              <p className="text-sm font-medium">Advanced filters</p>
+              <div className="space-y-2">
+                {draftConditions.map((cond) => (
+                  <div key={cond.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+                    <SearchableSelect
+                      value={cond.field}
+                      onChange={(v) =>
+                        updateCondition(cond.id, {
+                          field: v as UserFilterField,
+                          value: v === 'trashed' ? 'exclude' : 'all',
+                        })
+                      }
+                      options={[
+                        { value: 'role', label: 'Role' },
+                        { value: 'status', label: 'Status' },
+                        { value: 'trashed', label: 'Trashed' },
+                      ]}
+                    />
+                    {cond.field === 'role' ? (
+                      <SearchableSelect
+                        value={cond.value}
+                        onChange={(v) => updateCondition(cond.id, { value: v })}
+                        options={[
+                          { value: 'all', label: 'All roles' },
+                          ...(roleList ?? []).map((role) => ({
+                            value: role.id,
+                            label: role.name,
+                          })),
+                        ]}
+                        loadError={roleListError}
+                        onRetry={refetchRoleList}
+                      />
+                    ) : cond.field === 'status' ? (
+                      <SearchableSelect
+                        value={cond.value}
+                        onChange={(v) => updateCondition(cond.id, { value: v })}
+                        options={[
+                          { value: 'all', label: 'All users' },
+                          ...Object.entries(UserStatusProps).map(([status, { label }]) => ({
+                            value: status,
+                            label,
+                          })),
+                        ]}
+                      />
+                    ) : (
+                      <SearchableSelect
+                        value={cond.value}
+                        onChange={(v) => updateCondition(cond.id, { value: v })}
+                        options={[
+                          { value: 'exclude', label: 'Active only' },
+                          { value: 'only', label: 'Trashed only' },
+                          { value: 'all', label: 'All' },
+                        ]}
+                      />
+                    )}
+                    <Button type="button" mode="icon" variant="ghost" onClick={() => removeCondition(cond.id)} aria-label="Remove filter condition">
+                      <Trash2 className="size-4" />
+                    </Button>
+                  </div>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <Button type="button" variant="outline" size="sm" className="flex-1" onClick={addCondition}>
+                  <Plus className="size-4" />
+                  Add condition
+                </Button>
+                <Button type="button" variant="outline" size="sm" className="flex-1" onClick={applyConditions}>
+                  Apply
+                </Button>
+              </div>
+              <Button
+                variant="outline"
+                size="sm"
+                className="w-full"
+                onClick={() => {
+                  setDraftConditions([]);
+                  setSelectedRole('all');
+                  setSelectedStatus('all');
+                  setSelectedTrashed('exclude');
+                  setPagination((prev) => ({ ...prev, pageIndex: 0 }));
+                }}
+              >
+                Clear filters
+              </Button>
             </div>
           ),
         }}

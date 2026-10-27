@@ -37,7 +37,6 @@ from app.schemas.onboarding import (
 )
 from app.services import onboarding_service
 from app.services.error_handler import AppException
-from app.utils.multi_value import multi_values
 from app.services.onboarding_serializers import (
     person_out,
     public_template_option,
@@ -139,8 +138,7 @@ def list_requests(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(default=None),
-    # FILTER-MULTISELECT: several statuses (repeat or comma-join).
-    status_key: Optional[list[str]] = Query(default=None),
+    status_key: Optional[str] = Query(default=None),
     sort: Optional[str] = Query(default="created_at"),
     dir: Optional[str] = Query(default="desc"),
     current_user: dict = Depends(require_permission("user_management.onboarding.view")),
@@ -154,7 +152,7 @@ def list_requests(
     """
     rows, total = onboarding_service.list_requests(
         db,
-        status_key=multi_values(status_key),
+        status_key=status_key,
         query=query,
         sort_field=sort or "created_at",
         sort_dir=dir or "desc",

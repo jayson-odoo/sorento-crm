@@ -116,7 +116,7 @@ class ContactService:
         """List contacts with pagination and filtering.
 
         ``access_filters`` (CONTACT-BULK-ACCESS, UAC A2.3): any of ``access_type``, ``tier``,
-        ``cost``, ``escalation``, ``packing_list``, ``stock``, ``customer_ids``,
+        ``cost``, ``escalation``, ``packing_list``, ``stock``, ``customer_id``,
         ``access_differs_from``; absent or None = no filter. See ``_apply_access_filters``.
 
         ``include_linked_users`` (S3 1.7): the caller holds `users.view`, so
@@ -375,23 +375,19 @@ class ContactService:
             return None if not value else value == "yes"
 
         if f.get("access_type"):
-            # FILTER-MULTISELECT: a list of codes, any-of.
             q = q.filter(
                 exists().where(
                     pivot.c.contact_id == RespondContact.id,
-                    pivot.c.access_type_code.in_(f["access_type"]),
+                    pivot.c.access_type_code == f["access_type"],
                 )
             )
-        tiers = f.get("tier")
-        if tiers:
+        tier = f.get("tier")
+        if tier:
             tier_value = RespondContact.chatbot_profile["tier"].astext
-            real = [t for t in tiers if t != "none"]
-            clauses = []
-            if real:
-                clauses.append(tier_value.in_(real))
-            if "none" in tiers:  # `none` = no tier set, null or blank
-                clauses.append(or_(tier_value.is_(None), tier_value == ""))
-            q = q.filter(or_(*clauses))
+            if tier == "none":
+                q = q.filter(or_(tier_value.is_(None), tier_value == ""))
+            else:
+                q = q.filter(tier_value == tier)
         cost = yes("cost")
         if cost is not None:
             holds = exists().where(
@@ -424,9 +420,9 @@ class ContactService:
             from app.models.access import respond_contact_tags as tag_pivot
 
             q = q.filter(~exists().where(tag_pivot.c.contact_id == RespondContact.id))
-        if f.get("customer_ids"):
+        if f.get("customer_id"):
             q = q.filter(
-                self._visible_link(viewer_id, RespondContactCustomer.customer_id.in_(f["customer_ids"]))
+                self._visible_link(viewer_id, RespondContactCustomer.customer_id == f["customer_id"])
             )
         if f.get("company_ids"):
             # FILTER-MULTISELECT: a contact matches when any linked customer belongs to a chosen

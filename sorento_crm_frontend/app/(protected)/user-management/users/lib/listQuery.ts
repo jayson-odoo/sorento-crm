@@ -12,7 +12,6 @@
  */
 
 import type { QueryKey } from '@tanstack/react-query';
-import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import { getUsers, type UserListResponse } from '../services/userService';
 
@@ -31,11 +30,8 @@ export function usersListFilters({
   trashed: string;
 }): Record<string, string> {
   const filters: Record<string, string> = {};
-  // FILTER-MULTISELECT: Role and Status hold several values, comma-joined; "all" is no filter.
-  const roles = joinMulti(splitMulti(role).filter((v) => v !== 'all'));
-  const statuses = joinMulti(splitMulti(status).filter((v) => v !== 'all'));
-  if (roles) filters.roleId = roles;
-  if (statuses) filters.status = statuses;
+  if (role && role !== 'all') filters.roleId = role;
+  if (status && status !== 'all') filters.status = status;
   if (trashed && trashed !== 'exclude') filters.trashed = trashed;
   return filters;
 }

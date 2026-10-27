@@ -24,14 +24,6 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   },
 }));
 
-// FILTER-MULTISELECT: the Customer filter is a multi control; its chosen names ride `selectedOptions`.
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: (props: Record<string, unknown> & { placeholder?: string; selectedOptions?: { label: string }[] }) => {
-    selects.props.push(props);
-    return <div data-testid={props.placeholder}>{(props.selectedOptions ?? []).map((o) => o.label).join(' | ')}</div>;
-  },
-}));
-
 import ContactAccessFilters from './ContactAccessFilters';
 
 const MOCHA = { value: 'cust-m', label: 'Mocha · 300-1001 - DEALER M', description: '' };
