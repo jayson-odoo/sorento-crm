@@ -40,11 +40,6 @@ from tests._mc_lookup_seed import MOCHA_ID, seed_mocha
 from tests._pg_fixture import blank_session, unique_code
 
 KEY = "sales_yearly"
-#: Every sales type, in block order (`invoiced_sales.SALES_TYPES`).
-ALL_TYPE_LABELS = [
-    "Dealer", "Project team", "Other", "Set apart", "Mixed sales order types",
-    "Sales order type not set", "No sales order",
-]
 NOTE = (
     "Basis: Invoiced (invoices, cash sales and debit notes less credit notes, excluding tax), "
     "by document date, grouped by the sales type of the sales orders each document traces to."
@@ -80,7 +75,8 @@ def _doc(
     """One billing document. `demand_class` is the class of the sales order it traces to
     (a line transferred from that SO by number); None traces to no sales order. The block is
     read from that SO at run time, never from the stored `demand_class` (SALES-UNIFIED Q1 (b),
-    PLAN-sales-unified-27oct section 0)."""
+    PLAN-sales-unified-27oct section 0), so the header stores a CONTRADICTING class: a run
+    that read the stored column would put every document in the wrong block."""
     row = BillingDocument(
         id=str(uuid.uuid4()),
         company_id=company_id,
@@ -92,7 +88,7 @@ def _doc(
         tax_total=Decimal("0"),
         total=Decimal(net),
         local_net_total=Decimal(net),
-        demand_class=demand_class,
+        demand_class=_CONTRADICTING.get(demand_class, "retail"),
         sales_agent_id=agent_id,
         source_ref=f"SRT_DB:{uuid.uuid4().hex}",
     )
@@ -123,6 +119,10 @@ def _doc(
         )
         db.flush()
     return row
+
+
+#: The stored header class `_doc` writes against each traced SO class (None: no SO).
+_CONTRADICTING = {"retail": "project", "project": "retail", "other": "project"}
 
 
 def _params(**over):
@@ -207,9 +207,9 @@ def test_s1_4_the_blocks_are_the_sales_order_type(db, definition):
          document_type="credit_note")
     result = _run(db, definition, rows="channel", cols="year")
     summary = result.layouts.summary
-    # The sales type is a fixed axis (SALES-UNIFIED, "we shouldn't hide anything"): every
-    # type prints in block order; only the ticked ones hold figures.
-    assert summary.row_values == ALL_TYPE_LABELS
+    # The rows holding figures are the ticked types, in block order (the channel axis is a
+    # fixed one since #1916, so an unticked type may still print as an empty row).
+    assert [v for v in summary.row_values if v in summary.cells] == ["Dealer", "Project team"]
     assert set(summary.cells) == {"Dealer", "Project team"}
     assert summary.cells["Dealer"]["2026"]["sales_value"] == "300.00"
     assert summary.cells["Project team"]["2026"]["sales_value"] == "650.00"
@@ -271,7 +271,9 @@ def test_s1_9_a_document_with_no_sales_order_is_its_own_row_and_in_the_cleared_t
     _doc(db, net="20.00", when=date(2026, 1, 5), demand_class="project")
     _doc(db, net="5.00", when=date(2026, 1, 5), demand_class=None)
     cleared = _run(db, definition, rows="channel", cols="year", channel=[]).layouts.summary
-    assert cleared.row_values == ALL_TYPE_LABELS
+    assert [v for v in cleared.row_values if v in cleared.cells] == [
+        "Dealer", "Project team", "No sales order",
+    ]
     assert cleared.cells["No sales order"]["2026"]["sales_value"] == "5.00"
     assert cleared.grand_total["sales_value"] == "35.00"
     ticked = _run(db, definition, rows="channel", cols="year").layouts.summary
@@ -400,6 +402,9 @@ def test_the_only_dimensions_the_order_bases_lack_are_invoiced_ones_and_refused_
     catalog_dims = {c.key for c in definition.catalog() if c.tag == "dimension"}
     assert catalog_dims - order_dims == {"sales_agent", "debtor_type"}
     assert catalog_dims - order_dims <= invoiced_dims
+    # The meta flags them for the order bases, so Configure summary never offers them there.
+    lacking = definition.unavailable_for(db)
+    assert lacking["sales_agent"] == lacking["debtor_type"] == ["delivered", "ordered"]
     for rows in ("sales_agent", "debtor_type"):
         with pytest.raises(AppException) as refused:
             _run(db, definition, rows=rows, cols="year", basis=["delivered"])
