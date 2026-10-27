@@ -502,7 +502,8 @@ class SalesOrderService:
             committed += outstanding
             if ln.line_status == "open" and outstanding > 0:
                 open_lines += 1
-            if ln.required_date:
+            if ln.required_date and not ln.removed_unreferenced:
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
                 required_dates.append(ln.required_date)
             lines.append({
                 "id": ln.id,
@@ -640,7 +641,8 @@ class SalesOrderService:
             # What the order SAYS versus what is still owed. Both, because a "Total qty"
             # reading 0 on a fully delivered order is the label lying - the same rule the
             # purchase-order detail already follows with `open_qty` / `total_qty`.
-            "line_count": len(lines),
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            "line_count": len([ln for ln in so.lines if not ln.removed_unreferenced]),
             "open_line_count": open_lines,
             "lines": lines,
             "line_splits": line_splits,
@@ -1514,6 +1516,8 @@ class SalesOrderService:
             "delivery_date_from": (
                 select(func.min(SalesOrderLine.required_date))
                 .where(SalesOrderLine.sales_order_id == SalesOrder.id)
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                .where(SalesOrderLine.removed_unreferenced.is_(False))
                 .correlate(SalesOrder)
                 .scalar_subquery()
             ),

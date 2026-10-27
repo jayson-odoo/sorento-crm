@@ -182,6 +182,10 @@ from app.services.scm.supply_assignment import (
 logger = logging.getLogger(__name__)
 
 _ZERO = Decimal("0")
+# STOCKDEBT-SHM-QUERY: refs per statement in the Stock Debt board's batched PO-received
+# read, so its IN lists and hash tables stay small (PROD 27 Oct 2026: 412 refs in one
+# statement ran the db container's /dev/shm out in a parallel hash join).
+_REF_CHUNK = 200
 
 #: The ladder that composed a proposal, stamped on every component frozen at confirm
 #: (`_proposed_component`). Read by the board so a suggestion made under an older rule can
@@ -3188,10 +3192,11 @@ class ProjectSupplyService:
         self, refs_by_product: Mapping[str, Iterable[str]]
     ) -> Dict[str, Dict[str, Tuple[Decimal, Optional[str]]]]:
         """`product_id -> _po_received_by_so_line_ref(refs, product_id=..., company_id=None)`
-        for many products in two reads, not two per product (STOCK-DEBT-PERF: the Stock
-        Debt board asked once per product, 1,258 of its 1,288 statements on the dev DB).
+        for many products in two reads per `_REF_CHUNK` refs, not two per product
+        (STOCK-DEBT-PERF: the Stock Debt board asked once per product, 1,258 of its 1,288
+        statements on the dev DB).
 
-        The same two joins over every product and ref at once. A row is kept only for the
+        The same two joins over every product and each chunk of refs. A row is kept only for the
         product it is for AND a ref asked about for that product, so each product's answer
         is the single-key read's own: the receipt JOIN pairs the SPO row with the PO line's
         product (the single-key read gets that by comparing both to one literal), and no
@@ -3211,39 +3216,48 @@ class ProjectSupplyService:
         all_refs = sorted(set().union(*wanted.values()))
         product_ids = sorted(wanted)
         received: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
-        rows = (
-            self.db.query(
-                PurchaseOrderLine.from_so_line_ref,
-                SPOAllocation.quantity_received,
-                SPOAllocation.spo_number,
-                PurchaseOrderLine.product_id,
-            )
-            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .join(
-                SPOAllocation,
-                and_(
-                    goods_chain.po_spo_key_clause(),
-                    SPOAllocation.product_id == PurchaseOrderLine.product_id,
-                ),
-            )
-            .filter(
-                PurchaseOrderLine.from_so_line_ref.in_(all_refs),
-                PurchaseOrderLine.product_id.in_(product_ids),
-            )
-            .all()
-        )
-        for ref, qty, spo_number, product_id in rows:
-            if str(ref) in wanted.get(str(product_id), ()):
-                _add_landed(received.setdefault(str(product_id), {}), str(ref), spo_number, qty)
         linked: Dict[str, Dict[str, Dict[str, Decimal]]] = {}
-        for ref, product_id, _company, spo_number, placed, got in self._oi_placements(
-            all_refs, product_ids
-        ):
-            if str(ref) in wanted.get(str(product_id), ()):
-                _add_landed(
-                    linked.setdefault(str(product_id), {}), str(ref).strip(), spo_number,
-                    min(_dec(placed), _dec(got)),
+        # STOCKDEBT-SHM-QUERY: the refs in chunks, and the SPO side filtered by product
+        # (as the walk's own batched read does): without it the hash join built over every
+        # SPO row in the company. Each row's answer depends on its own ref only, so the
+        # chunked answer is the one-statement answer.
+        for start in range(0, len(all_refs), _REF_CHUNK):
+            refs = all_refs[start:start + _REF_CHUNK]
+            rows = (
+                self.db.query(
+                    PurchaseOrderLine.from_so_line_ref,
+                    SPOAllocation.quantity_received,
+                    SPOAllocation.spo_number,
+                    PurchaseOrderLine.product_id,
                 )
+                .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
+                .join(
+                    SPOAllocation,
+                    and_(
+                        goods_chain.po_spo_key_clause(),
+                        SPOAllocation.product_id == PurchaseOrderLine.product_id,
+                    ),
+                )
+                .filter(
+                    PurchaseOrderLine.from_so_line_ref.in_(refs),
+                    PurchaseOrderLine.product_id.in_(product_ids),
+                    SPOAllocation.product_id.in_(product_ids),
+                )
+                .all()
+            )
+            for ref, qty, spo_number, product_id in rows:
+                if str(ref) in wanted.get(str(product_id), ()):
+                    _add_landed(
+                        received.setdefault(str(product_id), {}), str(ref), spo_number, qty
+                    )
+            for ref, product_id, _company, spo_number, placed, got in self._oi_placements(
+                refs, product_ids
+            ):
+                if str(ref) in wanted.get(str(product_id), ()):
+                    _add_landed(
+                        linked.setdefault(str(product_id), {}), str(ref).strip(), spo_number,
+                        min(_dec(placed), _dec(got)),
+                    )
         return {
             product_id: _landed_for_refs(
                 received.get(product_id, {}), linked.get(product_id, {})
@@ -3402,6 +3416,8 @@ class ProjectSupplyService:
             .filter(
                 SalesOrderLine.sales_order_id.in_(order_ids),
                 SalesOrderLine.product_id.in_(product_ids),
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                SalesOrderLine.removed_unreferenced.is_(False),
             )
             .all()
         )
@@ -3519,6 +3535,8 @@ class ProjectSupplyService:
             .filter(
                 SalesOrderLine.sales_order_id == core_line.sales_order_id,
                 SalesOrderLine.product_id == core_line.product_id,
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                SalesOrderLine.removed_unreferenced.is_(False),
             )
             .all()
         )

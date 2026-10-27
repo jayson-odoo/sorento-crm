@@ -1176,7 +1176,11 @@ def _single_product_po_lines(
             PurchaseOrderLine.product_id,
             func.count(PurchaseOrderLine.id),
         )
-        .filter(PurchaseOrderLine.purchase_order_id.in_(sorted(order_ids)))
+        .filter(
+            PurchaseOrderLine.purchase_order_id.in_(sorted(order_ids)),
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            PurchaseOrderLine.removed_unreferenced.is_(False),
+        )
         .group_by(PurchaseOrderLine.purchase_order_id, PurchaseOrderLine.product_id)
         .all()
         if lines == 1

@@ -132,6 +132,8 @@ def buy_origin_by_product(db: Session, product_ids: Iterable[str]) -> dict[str, 
                 JOIN suppliers s ON s.id = po.supplier_id
                 LEFT JOIN countries c ON c.id = s.country_id
                 WHERE pol.product_id::text = ANY(:pids)
+                  -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                  AND NOT pol.removed_unreferenced
                   {("AND " + co_po) if co_po else ""}
                 ORDER BY pol.product_id, po.issue_date DESC NULLS LAST, po.created_at DESC
             )

@@ -485,6 +485,60 @@ class TestJourneyCaptionInOneTurn:
         )
 
 
+class TestCaptionFallbackReadsAsTyped:
+    """MEDIA-JSON-TOLERANT option B (owner ruling 27 Oct): a failed photo read on a
+    captioned photo answers the caption as if it had been typed. On this arm that means
+    the typed wording ("I have X. ... What would you like me to know?"): no intake prefix
+    was applied, so neither the arm's own lead nor "that photo" may be dropped in."""
+
+    def test_failed_read_with_bare_codes_in_the_caption_gets_the_typed_wording(
+        self, session_factory, seeded, media_pipeline, monkeypatch
+    ):
+        from app.services.media_extract.service import MediaExtractionError
+
+        _seed_media_limit(session_factory, modality="image")
+        _seed_settings(session_factory, media_sync_wait_seconds=5)
+        media_pipeline.set_result(
+            error=MediaExtractionError("The vision model returned a non-object JSON value.")
+        )
+        _enable_business_lane(session_factory)
+        monkeypatch.setattr(
+            engine_mod,
+            "check_access",
+            lambda db, *, agent_code, contact_id, space_id: {
+                "allowed": True,
+                "decision": "allow",
+                "agent_name": "General",
+                "attributes": [],
+                "all_attributes_allowed": None,
+            },
+        )
+        monkeypatch.setattr(engine_mod, "default_space_id", lambda db: "364817")
+        call, _captured = _capturing_mcp(None)
+        _wire_business_services(monkeypatch, resolve_services=_resolve_services(MATCHES), mcp_call=call)
+
+        import app.services.chatbot.head.parser as parser_mod
+        from unittest.mock import patch as _patch
+
+        bare_qf = _bare_entities_qf(placed=[PRODUCT_A_CODE], unplaced=[UNPLACED_CODE])
+        with _patch.object(parser_mod, "parse", lambda config, user_block: bare_qf), _patch.object(
+            parser_mod,
+            "resolve_config",
+            lambda db, *, current_date, override_version_id=None: parser_mod.ParserConfig(
+                system_prompt="stub", prompt_version=1, provider="openai", model="gpt-test", api_key="sk-test",
+            ),
+        ):
+            result = engine_mod.run_turn(
+                _image_envelope(caption=f"{PRODUCT_A_CODE} {UNPLACED_CODE}"), session_factory=session_factory
+            )
+
+        text = (result.reply or {}).get("text") or ""
+        assert text.startswith(f"I have {PRODUCT_A_CODE}."), text
+        assert f"Couldn't find {UNPLACED_CODE}." in text, text
+        assert text.rstrip().endswith("What would you like me to know?"), text
+        assert "photo" not in text, text
+
+
 class TestJourneyVoice:
     """AC-1830 (J4): voice "stock for SRTWB1455" -> stock answered, prefix "I heard: ..."."""
 
