@@ -40,15 +40,15 @@ export function formatQty(value: number | null | undefined): string {
 
 /** The figure columns after the warehouse ones, in the sheet's order. Ids are the server's sort keys. */
 export const FIGURE_COLUMNS: { id: keyof StockPositionRow; title: string; size: number }[] = [
-  { id: 'incoming_pool', title: 'Incoming BRW', size: 110 },
+  { id: 'incoming_pool', title: 'Incoming BRW', size: 130 },
   { id: 'total_stock', title: 'Total stock', size: 100 },
-  { id: 'incoming_project', title: 'Incoming (Project)', size: 130 },
-  { id: 'total_incoming', title: 'Total incoming', size: 120 },
-  { id: 'packing_list_open', title: 'Packing list, no SPO', size: 140 },
-  { id: 'outstanding_dealer', title: 'Outstanding dealer', size: 135 },
-  { id: 'outstanding_po', title: 'Outstanding PO', size: 120 },
-  { id: 'monthly_sales', title: 'Monthly sales', size: 115 },
-  { id: 'highest_month', title: 'Highest / month', size: 120 },
+  { id: 'incoming_project', title: 'Incoming (Project)', size: 155 },
+  { id: 'total_incoming', title: 'Total incoming', size: 135 },
+  { id: 'packing_list_open', title: 'Packing list, no SPO', size: 170 },
+  { id: 'outstanding_dealer', title: 'Outstanding dealer', size: 160 },
+  { id: 'outstanding_po', title: 'Outstanding PO', size: 140 },
+  { id: 'monthly_sales', title: 'Monthly sales', size: 135 },
+  { id: 'highest_month', title: 'Highest / month', size: 140 },
 ];
 
 const SALES_BASIS_OPTIONS: { value: SalesBasis; label: string }[] = [
@@ -146,7 +146,7 @@ export default function StockPositionGrid() {
         accessorFn: (row) => row.stock[code] ?? 0,
         header: ({ column }) => <DataGridColumnHeader title={code} column={column} />,
         cell: ({ row }) => numberCell(row.original.stock[code] ?? 0),
-        size: 80,
+        size: 90,
         meta: { headerTitle: code },
       })),
       ...FIGURE_COLUMNS.map<ColumnDef<StockPositionRow>>((c) => ({
@@ -166,6 +166,8 @@ export default function StockPositionGrid() {
     data: rows,
     pageCount: Math.ceil(total / pagination.pageSize),
     getRowId: (row) => row.product_id,
+    // The item code stays in view while the figures scroll, as on the supplier sheet.
+    initialState: { columnPinning: { left: ['item_code'] } },
     state: { pagination, sorting },
     onPaginationChange: setPagination,
     onSortingChange: (updater) => {
@@ -206,7 +208,7 @@ export default function StockPositionGrid() {
       standardToolbar={false}
       // The warehouse columns are data: a saved column order would name columns that come and go.
       listingKey={null}
-      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true, columnsPinnable: true }}
       emptyMessage={
         <div className="flex w-full flex-col items-center gap-1 py-6">
           <span className="text-sm font-medium">No items to show</span>
