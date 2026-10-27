@@ -259,3 +259,25 @@ Questions (crew-ask):
    `app/services/project_forecast_service.py:126`.
 9. Dead: `sales_report()` at `app/services/sales_report_service.py:281` (tests only).
 10. No live dashboard sales widget (`store-admin/dashboard/components/sales-activity.tsx:25` is static).
+
+## 6. Tally (27 Oct 2026)
+
+**The definition tallies on live production, to the cent.** The owner ran a read-only query on prod
+that mirrors `invoiced_sales.posted()`, `_sign`, `signed_amount()` and `agent_label()` for Sorento,
+January 2026 (crew file `crew/state/files/sales-tally/jan2026_srt_prod_result.md`):
+
+| Document type | Documents | RM |
+| --- | ---: | ---: |
+| Invoice | 5,641 | 15,032,788.05 |
+| Debit note | 5 | 5,273.45 |
+| Credit note | 138 | -295,782.21 |
+| Cash sale | 0 | 0.00 |
+| **All sales** | | **14,742,279.29** |
+
+AutoCount's January all-sales figure: 14,742,279.29, gap 0.00. The per-agent sum equals the
+total; `(no agent)` is 1 document, RM 120.32; cancelled documents excluded (18 invoices, 3 credit
+notes).
+
+**Not yet checkable:** the block split (Dealer + Project team + Set apart = 12,719,752.23 in the
+AutoCount report) needs the deployed reports on prod, after the Q10 class data fix and the set-apart
+list. No local copy holds billing documents, so it is a post-deploy check.
