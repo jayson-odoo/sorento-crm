@@ -227,7 +227,7 @@ class ProjectAllocationService:
         if not product_id:
             return []
         # Local import: project_supply_service imports the engine this module also feeds.
-        from app.services.project_supply_service import ProjectSupplyService
+        from app.services.project_supply_service import ProjectSupplyService, held_qty_expr
 
         # The shared rule for "holding stock right now" (`_hold_query`), so a Reserve, which
         # is a plan and holds nothing (BOARD-NO-HOLD), is not restated or re-decided here.
@@ -240,7 +240,9 @@ class ProjectAllocationService:
                 Project.project_code,
                 Project.title,
                 Project.owner_user_id,
-                SOLineAllocation.qty,
+                # The same capped figure free stock nets (`held_qty_expr`, what the line
+                # still owes), so the panel and the board quote one number.
+                held_qty_expr(),
             ),
         ).join(Project, Project.id == ProjectSalesOrder.project_id)
 

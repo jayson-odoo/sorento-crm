@@ -2261,7 +2261,8 @@ def _emit_pool(db: Session, run_id: str, pool_id: str,
                 # comes from this bin.
                 for k in ("net", "rop", "demand_rate", "doc",
                           "project_need", "retail_need",
-                          "project_supply_reduction", "retail_net",
+                          "project_supply_reduction", "retail_supply_reduction",
+                          "retail_net",
                           "ss", "ss_used", "ss_fallback",
                           "demand_window_days",
                           "on_hand", "on_order", "po_ordered", "segment",
@@ -3490,6 +3491,9 @@ def _build_rec(run_id: str, rec_type: str, row: dict, c: dict, *,
         "project_need": _r(c.get("project_need")),
         "retail_need": _r(c.get("retail_need")),
         "project_supply_reduction": _r(c.get("project_supply_reduction")),
+        # BOARD-NO-HOLD: the Borrow-only half `retail_net` subtracts, so the retail
+        # derivation stays reproducible from the snapshot when a Reserve is present.
+        "retail_supply_reduction": _r(c.get("retail_supply_reduction")),
         "retail_net": _r(c.get("retail_net")),
         # front-planning follow-up (19-20 Aug): the raw `committed_v` split - this row's
         # OPEN demand by channel. The product view's channel columns sum these across
