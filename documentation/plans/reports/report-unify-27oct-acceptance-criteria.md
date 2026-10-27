@@ -30,6 +30,12 @@ Status: Agreed (owner answers 27 Oct ~19:15). Plan: `PLAN-report-unify-27oct.md`
   document date.
 - **AC-RU-9.** The echo carries the spec labels from the registry ("Trap type: P-trap").
 
+- **AC-RU-9a** (owner Q6, 27 Oct 22:52). The reveal a contact needs depends on the basis:
+  - the outstanding kinds need the Outstanding reveal and no Sales report reveal;
+  - the sales bases still need Sales report;
+  - a contact with Outstanding only that asks a sales basis gets the existing refusal;
+  - a linked contact's outstanding / unpaid figures are forced to its own customers.
+
 ## Chatbot (slice 2)
 
 - **AC-RU-10.** A sales total naming a customer, product, agent, brand or category calls `crm_report_ask` with no

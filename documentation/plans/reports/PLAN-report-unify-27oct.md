@@ -17,6 +17,7 @@ pick up `invoiced` on rebase.
 | Q2 outstanding | **"we need to ask and clarify"** | "Outstanding" is never defaulted. Like the sales basis question, the bot asks which one is meant: **undelivered order qty** (basis `outstanding`, the open SO remainder), **pending delivery** (new basis `pending_delivery`, lines of DOs not yet delivered) or **unpaid invoices** (new basis `unpaid`, AutoCount's per-document `billing_documents.outstanding`). Folded into the one question for everything missing. |
 | Q3 spec | (a) | spec filter AND `group_by=spec:<key>` |
 | Q4 not applied | (a) | A "Not applied: \<filter\> (\<reason\>)" line. The bot asks instead only when that filter was the only subject. |
+| Q6 access (22:52) | (a) | The route checks the **Outstanding** reveal (`sales_orders.outstanding`) for bases `outstanding` / `pending_delivery` / `unpaid` and the **Sales report** reveal (`sales_orders.sales_report`) for the sales bases. A linked contact stays limited to its own customers. No new permission. |
 | Q5 screen | (a) | One "Sales & outstanding" report screen over the same ask definitions |
 
 ### The two new outstanding bases (Q2)
