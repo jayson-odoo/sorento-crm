@@ -1,0 +1,6 @@
+# Append to the primary's pg_hba.conf. Replication only from the standby's TUNNEL address.
+# TYPE    DATABASE     USER        ADDRESS               METHOD
+hostssl   replication  replicator  <STANDBY_WG_IP>/32    scram-sha-256
+# Optional, phase B only (read offload never writes; the standby reads its LOCAL replica, so
+# this line is NOT needed for phase B either; listed so nobody adds a broader one):
+# hostssl  <APP_DB>    <APP_USER>  <STANDBY_WG_IP>/32    scram-sha-256

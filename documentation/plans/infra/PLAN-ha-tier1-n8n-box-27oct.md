@@ -1,6 +1,6 @@
 # PLAN: HA plan v2, Tier 1 warm standby on the n8n box (HA-TIER1-N8N-BOX)
 
-Status: plan in review, PR #1915. Track: docs + infra templates + two small backend guards
+Status: plan + code guards + templates in review, PR #1915 (owner decisions D1-D5 pending). Track: docs + infra templates + two small backend guards
 (health role endpoint, scheduler leader guard). No migration, no auth/RBAC change, no new ingest
 surface: small fix track for the code slice.
 
@@ -374,14 +374,27 @@ With D unknown, the CRM box stays under about 60 GB + D after the cap, versus 12
    503 `{"status":"standby","role":"standby","replay_lag_seconds":N}` on a hot standby; 503
    `{"status":"unhealthy"}` when the DB is unreachable. The LB monitor of section 5, and the lag
    number Phase B would use. No host, no error text.
-2. **Scheduler leader guard**: `start_scheduler()` first checks the database it is connected to is
-   writable (`pg_is_in_recovery()` false) AND takes a session-level Postgres advisory lock on a
-   dedicated connection held for the process lifetime. Not writable or lock held by another
-   process: the scheduler does not start (the worker logs it and exits non-zero, as it already does
-   on a scheduler failure, `sorento_crm_backend/worker.py:81-96`). Uses `DIRECT_URL` when set,
-   because a session advisory lock does not survive a transaction-mode pgbouncer.
-   Result: two nodes can never both run jobs against one primary, and a scheduler started by mistake
-   on the standby refuses to run against the replica.
+2. **Scheduler leader guard** (`sorento_crm_backend/app/scheduler/leader.py`, called first in
+   `start_scheduler`, `sorento_crm_backend/app/scheduler/task_scheduler.py`):
+   - Always: the database must be writable (`pg_is_in_recovery()` false), else
+     `SchedulerNotLeader` and no job is registered. The worker already exits non-zero when the
+     scheduler fails to start (`sorento_crm_backend/worker.py:81-96`), so a scheduler started by
+     mistake on the standby fails visibly instead of running against the replica.
+   - When `SCHEDULER_LEADER_DATABASE_URL` is set: also a session-level Postgres advisory lock on
+     its own connection for the life of the process, so a second scheduler against the same
+     primary refuses. That URL must reach Postgres DIRECTLY: through a transaction-mode pgbouncer
+     the lock would sit on a pooled server connection that outlives the worker, and the next
+     worker (every deploy recreates it) could never start. Unset = no lock, today's behaviour, so
+     merging this changes nothing on prod until crew sets the env on the `worker` container.
+   - Tests: `sorento_crm_backend/tests/test_scheduler_leader.py`,
+     `sorento_crm_backend/tests/test_api_v1_health_role.py`.
+3. **Infra templates** under `infra/` (README there): Postgres primary/standby configs, pg_hba,
+   WAL-G env names, the standby compose override (workers + scheduler behind profile `promoted`),
+   a WireGuard template and `infra/scripts/promote-standby.sh`. Placeholders only; they move to the
+   private infra repo when it exists.
+
+Follow-ups named, not built: `SNAPSHOT_KEEP_COUNT` in `scripts/blue_green_deploy.sh` (section 7);
+the release deploying both nodes (section 11); phase B read offload on its trigger (section 4).
 
 ## 9. Owner-side steps (crew/owner apply; nothing here touches prod from the lane)
 

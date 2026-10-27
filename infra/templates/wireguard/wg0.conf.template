@@ -1,0 +1,13 @@
+# Two-node WireGuard tunnel, only if the HA-N8N-PRIVATE-PATH tailnet is not used
+# (documentation/runbooks/n8n-private-path.md). Keys generated on each box, never committed.
+[Interface]
+Address = <THIS_NODE_WG_IP>/32
+ListenPort = 51820
+PrivateKey = <THIS_NODE_PRIVATE_KEY>
+
+[Peer]
+PublicKey = <OTHER_NODE_PUBLIC_KEY>
+Endpoint = <OTHER_NODE_PUBLIC_ADDRESS>:51820
+AllowedIPs = <OTHER_NODE_WG_IP>/32
+PersistentKeepalive = 25
+# Host firewall: allow 51820/udp from the other node only; over wg0 allow 5432 and 22 only.

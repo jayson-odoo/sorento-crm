@@ -1,0 +1,21 @@
+# Standby override (n8n box): docker compose -f docker-compose.yml -f compose.standby.yml up -d
+# Plan: documentation/plans/infra/PLAN-ha-tier1-n8n-box-27oct.md section 2.
+#
+# Before promotion the standby serves only reads (its db is a hot-standby replica), the LB sends
+# it nothing (/api/v1/health/role answers 503), and nothing that writes or schedules runs.
+# scripts/promote-standby.sh starts the `promoted` profile once the db is writable.
+services:
+  worker:
+    profiles: ["promoted"]
+    environment:
+      ENABLE_SCHEDULER: "true"
+      # Direct to Postgres, not pgbouncer (app/scheduler/leader.py docstring).
+      SCHEDULER_LEADER_DATABASE_URL: ${SCHEDULER_LEADER_DATABASE_URL}
+  worker_fast:
+    profiles: ["promoted"]
+  db:
+    # Replica data dir seeded by pg_basebackup -R; standby settings from postgres/standby.conf.
+    command: ["postgres", "-c", "config_file=/etc/postgresql/postgresql.conf"]
+    env_file: [walg.env]
+    ports:
+      - "127.0.0.1:5432:5432"
