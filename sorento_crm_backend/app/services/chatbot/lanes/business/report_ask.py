@@ -468,6 +468,8 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool 
     # Engine keys only this seam writes: never taken from the parser's own emission.
     verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
+    if verdict.get("intent_hint") == "low_stock_report":
+        return verdict  # the reorder report is its own ask (`low_stock_ask`), whatever order status the parser also read
     if status == "top_selling":
         return from_top_selling(verdict)
     answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
