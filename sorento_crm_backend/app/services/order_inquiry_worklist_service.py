@@ -2736,6 +2736,8 @@ class OrderInquiryWorklistService:
                 PurchaseOrderLine.qty_received,
                 Warehouse.warehouse_code,
                 PurchaseOrderLine.from_so_line_ref,
+                PurchaseOrderLine.line_status,
+                PurchaseOrderLine.cancelled_by_cancel_doc,
             )
             .select_from(PurchaseOrderLine)
             .outerjoin(Product, Product.id == PurchaseOrderLine.product_id)
@@ -2744,6 +2746,20 @@ class OrderInquiryWorklistService:
             .order_by(Product.product_code.asc().nulls_last())
             .all()
         )
+        # HIDE-REMOVED-LINE-SO: a line AutoCount removed shows no S/O, the same rule the SCM
+        # purchase-order detail applies (`order_link_service.book_so_ref_of`).
+        lines = [
+            (
+                *line[:6],
+                order_link_service.book_so_ref_of(
+                    line[6],
+                    line_status=line[7],
+                    cancelled_by_cancel_doc=line[8],
+                    header_status=po.status,
+                ),
+            )
+            for line in lines
+        ]
         line_ids = [str(line[0]) for line in lines]
         spo_numbers_by_line = self._spo_numbers_by_po_line(po)
         # LINKAGE-UNIFY U4: each line's SPO lines with where their goods landed (GR bins)

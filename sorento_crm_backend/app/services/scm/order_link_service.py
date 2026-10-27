@@ -792,6 +792,32 @@ def book_sales_orders_by_ref(
 BOOK_SO_NOT_RESOLVED = None
 
 
+def book_so_ref_of(
+    ref: Optional[str],
+    *,
+    line_status: Optional[str],
+    cancelled_by_cancel_doc: Optional[bool],
+    header_status: Optional[str],
+) -> Optional[str]:
+    """The `from_so_line_ref` a screen may show for ONE purchase-order line: the stored ref,
+    or `None` when AutoCount REMOVED the line (HIDE-REMOVED-LINE-SO, owner 27 Oct 2026: "we
+    shouldn't show, cause autocount already don't have this linkage").
+
+    A PO line reads `cancelled` from three writers only: its header was cancelled, AutoCount
+    Cancel PO documents took all of it (`cancelled_by_cancel_doc`), or a push stopped carrying
+    it on a header that push did not cancel (`document_ingest_service`'s leftover sweep, the
+    removed-line path). The first two keep their S/O (LINKAGE-UNIFY Q5); only the third is
+    hidden. The stored column is left as it is, for audit.
+    """
+    if (
+        line_status == "cancelled"
+        and header_status != "cancelled"
+        and not cancelled_by_cancel_doc
+    ):
+        return None
+    return ref
+
+
 def book_so_fields(ref: Optional[str], by_ref: Optional[dict[str, str]]) -> dict:
     """The three-state `book_so_number` / `book_so_unresolved` pair for ONE line's
     `from_so_line_ref`, against a `book_so_numbers_by_ref(...)` result (or
