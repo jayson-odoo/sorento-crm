@@ -9,7 +9,8 @@
  *   GET /finance/billing-documents                 -> BillingDocumentListResponse   .view
  *       DataGrid params via buildDataGridParams (page, limit, sort, dir, query) plus
  *       document_type (comma separated or repeated, multi), status, customer_id, agent_code,
- *       date_from, date_to, open_only (true), sales_order_id
+ *       date_from, date_to, open_only (true), sales_order_id, delivery_order_id (DOC-RELATIONS:
+ *       an order's documents through its lines, its number or its DOs, plus notes against them)
  *   GET /finance/billing-documents/{id}            -> BillingDocumentDetail         .view
  *       header, lines and related in one response. Prev and next walk the list page the
  *       user came from (ListPager), so the record carries no prev_id or next_id.
@@ -51,6 +52,7 @@ export async function getBillingDocuments(
     date_to: params.dateTo,
     open_only: params.openOnly ? true : undefined,
     sales_order_id: params.salesOrderId,
+    delivery_order_id: params.deliveryOrderId,
   });
   return read(await apiFetch(`${BASE}?${usp.toString()}`), 'Failed to load billing documents');
 }

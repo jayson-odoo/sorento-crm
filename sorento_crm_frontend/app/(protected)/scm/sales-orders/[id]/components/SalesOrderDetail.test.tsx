@@ -155,6 +155,9 @@ vi.mock('../../hooks/useSalesAgentOptions', () => ({
 // UoM select's own options. Everything else the component uses from it (`updateSalesOrder`)
 // is reached through the fully-mocked `useUpdateSalesOrder` above, never this module.
 vi.mock('../../../services/salesOrderService', () => ({
+  // The Delivery tab's DO list (DO-SO-LINK-SURFACE R3): none here, so the tab's sentence reads
+  // the order's own figures (DOC-RELATIONS: the sentence shows only when there is no DO row).
+  getSalesOrderDeliveries: () => Promise.resolve({ lines: [], groups: [], others: [] }),
   getSalesOrderUoms: () =>
     Promise.resolve([
       { id: 'uom-pcs', uom_code: 'PCS', uom_name: 'Pieces' },
@@ -557,6 +560,7 @@ describe('SalesOrderDetail - states', () => {
       'Lines',
       'Delivery',
       'Transfers',
+      'Related',
     ]);
     expect(screen.getByRole('tab', { name: 'General' })).toHaveAttribute(
       'data-state',
@@ -627,7 +631,7 @@ describe('SalesOrderDetail - states', () => {
     expect(within(closedRow as HTMLElement).getAllByText('-').length).toBeGreaterThan(0);
   });
 
-  it('renders every section even when the record is bare', () => {
+  it('renders every section even when the record is bare', async () => {
     // The CRUD standard, asserted on the emptiest record the API can return: a section that
     // disappears on missing data reads as a page that failed to load. Tabbed now, so each one
     // is opened rather than expected to be on screen at once.
@@ -646,7 +650,8 @@ describe('SalesOrderDetail - states', () => {
     expect(screen.getByText('This sales order has no lines.')).toBeInTheDocument();
 
     openTab('Delivery');
-    expect(screen.getByText(/Nothing delivered yet/)).toBeInTheDocument();
+    // The sentence waits for the DO list (DOC-RELATIONS: none here, so it shows).
+    expect(await screen.findByText(/Nothing delivered yet/)).toBeInTheDocument();
   });
 });
 
@@ -764,7 +769,7 @@ describe('SalesOrderDetail - the header says what the order IS, once', () => {
 });
 
 describe('SalesOrderDetail - delivery panel', () => {
-  it('reports a part delivery with what is left and across how many lines', () => {
+  it('reports a part delivery with what is left and across how many lines', async () => {
     useSalesOrder.mockReturnValue({
       data: so({ total_qty: 320, committed_qty: 120, open_line_count: 2 }),
       isLoading: false,
@@ -772,11 +777,11 @@ describe('SalesOrderDetail - delivery panel', () => {
     });
     renderDetail();
     openTab('Delivery');
-    expect(screen.getByText(/200 of 320 delivered/)).toBeInTheDocument();
+    expect(await screen.findByText(/200 of 320 delivered/)).toBeInTheDocument();
     expect(screen.getByText(/120 outstanding across 2 lines/)).toBeInTheDocument();
   });
 
-  it('reports a full delivery once nothing is owed', () => {
+  it('reports a full delivery once nothing is owed', async () => {
     useSalesOrder.mockReturnValue({
       data: so({ committed_qty: 0, open_line_count: 0 }),
       isLoading: false,
@@ -784,7 +789,7 @@ describe('SalesOrderDetail - delivery panel', () => {
     });
     renderDetail();
     openTab('Delivery');
-    expect(screen.getByText('delivered in full')).toBeInTheDocument();
+    expect(await screen.findByText('delivered in full')).toBeInTheDocument();
   });
 });
 
