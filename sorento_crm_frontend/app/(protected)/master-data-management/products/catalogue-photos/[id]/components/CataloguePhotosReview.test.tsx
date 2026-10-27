@@ -217,8 +217,9 @@ describe('CataloguePhotosReview', () => {
       }),
     );
     renderReview();
-    const current = await screen.findByRole('listitem', { current: 'step' });
-    expect(current.textContent).toContain('Attach');
+    await screen.findByRole('list', { name: 'Steps' });
+    const steps = within(screen.getByRole('list', { name: 'Steps' })).getAllByRole('listitem');
+    expect(steps.every((item) => (item.textContent ?? '').includes('(done)'))).toBe(true);
   });
 
   // ---- Fix round 1 (red) ----
