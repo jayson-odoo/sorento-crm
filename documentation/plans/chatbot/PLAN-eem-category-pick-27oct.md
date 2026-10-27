@@ -1,9 +1,11 @@
 # PLAN: EEM-CATEGORY-PICK - the matched category reaches the report; the reply language follows the parser
 
-Status: 27 Oct 16:2x, building (lane ENTITY-EXTRACT-MATCH, size M, no migration). Stacked on #1898
-(branch crew/eem-category-pick on crew/eem-semantic-bridge); draft PR, base #1898's branch, retarget to main after
-#1898 merges. Red-first per slice; gate spend approved by the owner 16:1x (one 200-msg arm + the real category
-messages, cap USD 1.50, Gemini org key).
+Status: 27 Oct 18:1x, built and gated (lane ENTITY-EXTRACT-MATCH, size M, no migration). PR #1917 head 122989b773,
+base main (#1898 merged as 076cbbcbaa). Red-first A-E + two review rounds + a resolver-cache fix found by the browser
+pass; reviewer items closed, kill tests per fix commit. Gate (owner waiver, ledger 16:20-18:05): category set 18/20
+picks + 19/19 reply language (today 0/20); 200-msg right-row 74.9 vs S3 74.2 / R 75.3, no regression. Browser re-pass
+grouped block 5/5; hand test filed (laneboard/scripts/1917.md). Waiting: owner hand test, crew ci + merge. Prod needs
+a parser version carrying the CATEGORY PICK + MESSAGE LANGUAGE paragraphs (owner pastes, then moves the label).
 
 UAC: `eem-category-pick-acceptance-criteria.md` (AC-CP-1..14).
 
