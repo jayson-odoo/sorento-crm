@@ -414,33 +414,6 @@ def scope_warehouse_ids(db: Session, policy: Policy) -> Optional[list[str]]:
     return [str(wid) for (wid,) in rows]
 
 
-def contact_location_scope(
-    db: Session, resolved_contact_id: Optional[str]
-) -> tuple[Optional[Policy], Optional[list[str]]]:
-    """`(policy, scope)` for an already-resolved internal contact id: the one contact-to-scope
-    step the incoming routes, last-in and the parser LOCATION list share. `(None, [])` when no
-    id or no policy resolves (fail closed); otherwise `scope_warehouse_ids`' answer (None =
-    every location)."""
-    policy = resolve_policy(db, resolved_contact_id) if resolved_contact_id else None
-    if policy is None:
-        return None, []
-    return policy, scope_warehouse_ids(db, policy)
-
-
-def narrow_warehouse_ids(
-    requested: Optional[list[str]], scope: Optional[list[str]]
-) -> Optional[list[str]]:
-    """The warehouse filter a read applies under `scope`: `requested` unchanged when the scope
-    names no list (None); else the requested ids inside the scope, or the scope itself when
-    none were named. `[]` means nothing is visible - the caller returns no rows."""
-    if scope is None:
-        return requested
-    if requested:
-        allowed = set(scope)
-        return [w for w in requested if w in allowed]
-    return scope
-
-
 def upsert_policy(
     db: Session,
     *,
