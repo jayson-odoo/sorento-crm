@@ -71,6 +71,9 @@ postgresql:
   # $PGDATA). A wrong path looks empty: Patroni would initdb a NEW cluster and take the leader
   # key with an empty database. Check before the first start (plan section 9 step 6).
   data_dir: <PROD_DATA_DIRECTORY>
+  # Patroni's own superuser connection goes over the local socket (`local all all peer`); over
+  # TCP it would hit the `postgres ... reject` rule below and the node would never come up.
+  use_unix_socket: true
   pgpass: /tmp/pgpass
   authentication:
     superuser:

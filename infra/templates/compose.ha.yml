@@ -18,7 +18,10 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./patroni.yml:/etc/patroni/patroni.yml:ro
-      - /etc/etcd/pki:/etc/etcd/pki:ro
+      # Patroni's client cert ONLY: the peer/server keys would let this container join raft.
+      - /etc/etcd/pki/ca.crt:/etc/etcd/pki/ca.crt:ro
+      - /etc/etcd/pki/patroni.crt:/etc/etcd/pki/patroni.crt:ro
+      - /etc/etcd/pki/patroni.key:/etc/etcd/pki/patroni.key:ro
     devices:
       # Host prep first (templates/host/): without softdog loaded this device does not exist
       # and the container will not start at all.
@@ -66,7 +69,10 @@ services:
     network_mode: host                               # binds the tunnel address + 127.0.0.1 only
     volumes:
       - etcd_data:/etcd-data
-      - /etc/etcd/pki:/etc/etcd/pki:ro                # private CA + certs, never in git
+      # etcd's own files only (ca.crt, peer.*, server.*, healthcheck.*), never in git. The CA's
+      # private key (ca.key) lives on NO box: certs are minted offline and copied in, because
+      # with client-cert auth a cert's CN is its etcd user and ca.key could mint CN=root.
+      - /etc/etcd/pki:/etc/etcd/pki:ro
     restart: unless-stopped
 
   # The Docker socket is root on the host (security review S4): autoheal never gets it directly.
@@ -75,7 +81,9 @@ services:
     image: <SOCKET_PROXY_IMAGE>@sha256:<DIGEST>
     environment:
       CONTAINERS: "1"
-      POST: "1"
+      # POST stays 0: with POST=1 a caller could create a privileged container (root on the
+      # host). ALLOW_RESTARTS permits restart alone.
+      POST: "0"
       ALLOW_RESTARTS: "1"
       IMAGES: "0"
       NETWORKS: "0"

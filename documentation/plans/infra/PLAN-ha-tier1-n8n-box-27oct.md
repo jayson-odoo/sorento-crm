@@ -534,7 +534,7 @@ offload on its trigger (section 4).
 3. WireGuard mesh between the three (or confirm the tailnet reaches all three).
 4. R2 bucket + scoped token for WAL-G.
 5. etcd on all three members; check `etcdctl endpoint health --cluster` shows 3 healthy.
-5b. Before Patroni first starts: private CA + certs on the three boxes (`/etc/etcd/pki`), etcd
+5b. Before Patroni first starts: certs from a private CA minted OFFLINE (only `ca.crt` and each box's own certs go on the boxes, `ca.key` never; the db container mounts only Patroni's client cert), etcd
    auth on (commands and order in `templates/etcd/etcd.env.template`), the Patroni REST and etcd
    passwords in each node's `patroni.env`, and the container firewall
    (`templates/host/docker-user.nft`) loaded on the India box and the witness.

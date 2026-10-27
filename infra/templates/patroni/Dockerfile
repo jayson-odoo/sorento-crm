@@ -19,4 +19,4 @@ RUN apt-get update \
 USER postgres
 # patroni.yml is mounted read-only; values come from the env file on the node. Refuse to start
 # with an empty REST or etcd password: unsafe REST endpoints must never run unauthenticated.
-ENTRYPOINT ["/bin/sh", "-c", ": \"${PATRONI_RESTAPI_PASSWORD:?PATRONI_RESTAPI_PASSWORD unset}\" \"${PATRONI_ETCD3_PASSWORD:?PATRONI_ETCD3_PASSWORD unset}\"; exec /opt/patroni/bin/patroni /etc/patroni/patroni.yml"]
+ENTRYPOINT ["/bin/sh", "-c", ": \"${PATRONI_RESTAPI_PASSWORD:?PATRONI_RESTAPI_PASSWORD unset}\" \"${PATRONI_ETCD3_PASSWORD:?PATRONI_ETCD3_PASSWORD unset}\" \"${PATRONI_SUPERUSER_PASSWORD:?PATRONI_SUPERUSER_PASSWORD unset}\" \"${PATRONI_REPLICATION_PASSWORD:?PATRONI_REPLICATION_PASSWORD unset}\" \"${PATRONI_REWIND_PASSWORD:?PATRONI_REWIND_PASSWORD unset}\"; exec /opt/patroni/bin/patroni /etc/patroni/patroni.yml"]

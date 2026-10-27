@@ -8,8 +8,14 @@
 # rebuilds its own chains on restart; this table is separate and survives that). Then run the
 # check in plan section 12, drill 9, from INSIDE an n8n container.
 #
-# <N8N_SUBNETS>: every docker network n8n containers join (pin them with compose `ipam`).
+# <N8N_SUBNETS>: every docker network n8n containers join (pin them with compose `ipam`). n8n must
+# NEVER join a CRM compose network: traffic inside one bridge skips these hooks. IPv4 only: keep
+# Docker IPv6 off on the n8n networks (or add the same rules for ip6).
 # <HAPROXY_BIND_IP>: the one address n8n may use (443 API, 8765 MCP, 6432 DB).
+
+# Re-runnable: drop the old table first so a reload never duplicates rules.
+table inet sorento_ha_guard
+delete table inet sorento_ha_guard
 
 table inet sorento_ha_guard {
   set n8n_nets { type ipv4_addr; flags interval; elements = { <N8N_SUBNETS> } }
