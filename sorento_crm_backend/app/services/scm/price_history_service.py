@@ -247,6 +247,8 @@ purchases AS (
     -- They are counted separately instead of being folded into the price.
     WHERE pol.unit_cost > 0
       AND po.status NOT IN :not_a_purchase
+      -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+      AND NOT pol.removed_unreferenced
 )
 SELECT product_id::text, supplier_id::text, po_number, issue_date, unit_cost, currency, qty, rn
 FROM purchases
@@ -276,6 +278,8 @@ JOIN (
     WHERE r.run_id = CAST(:run_id AS uuid) AND r.supplier_id IS NOT NULL
 ) pr ON pr.product_id = pol.product_id AND pr.supplier_id = po.supplier_id
 WHERE pol.unit_cost = 0 AND po.status NOT IN :not_a_purchase
+  -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+  AND NOT pol.removed_unreferenced
 GROUP BY pol.product_id, po.supplier_id
 """
 
@@ -305,6 +309,8 @@ WITH ranked AS (
     WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
       AND pol.unit_cost > 0
       AND po.status NOT IN :not_a_purchase
+      -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+      AND NOT pol.removed_unreferenced
 )
 SELECT product_id::text AS product_id, po_number, issue_date, unit_cost, currency, qty,
        supplier_code, supplier_name
@@ -322,6 +328,8 @@ FROM purchase_order_lines pol
 JOIN purchase_orders po ON po.id = pol.purchase_order_id
 WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
   AND po.status NOT IN :not_a_purchase
+  -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+  AND NOT pol.removed_unreferenced
 GROUP BY pol.product_id
 """
 
@@ -336,6 +344,8 @@ WITH ranked AS (
     JOIN purchase_orders po ON po.id = pol.purchase_order_id
     WHERE pol.product_id = ANY(CAST(:pids AS uuid[]))
       AND po.status NOT IN :not_a_purchase
+      -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+      AND NOT pol.removed_unreferenced
 )
 SELECT product_id::text AS product_id, po_number, issue_date
 FROM ranked WHERE rn = 1

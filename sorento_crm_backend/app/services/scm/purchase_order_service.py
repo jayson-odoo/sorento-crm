@@ -207,7 +207,9 @@ class PurchaseOrderService:
             # count open lines only, exactly as ``scm.on_order_v`` does. Every line is listed
             # either way, each carrying its ``line_status``, so the screen can show a closed
             # line as closed instead of rendering it as one still coming.
-            total_qty += float(ln.qty_ordered or 0)
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            if not ln.removed_unreferenced:
+                total_qty += float(ln.qty_ordered or 0)
             if _is_open_line(ln):
                 open_qty += float(ln.qty_ordered or 0)
                 open_lines += 1
@@ -223,7 +225,7 @@ class PurchaseOrderService:
                 else max(float(ln.qty_ordered or 0) - float(ln.qty_received or 0), 0.0)
             )
             outstanding_qty += line_outstanding
-            if wh_code is None and ln.warehouse is not None:
+            if wh_code is None and ln.warehouse is not None and not ln.removed_unreferenced:
                 wh_code = ln.warehouse.warehouse_code
                 wh_name = ln.warehouse.warehouse_name or ln.warehouse.warehouse_code
             lines.append({
@@ -298,7 +300,8 @@ class PurchaseOrderService:
             ),
             "expected_date": po.expected_date.isoformat() if po.expected_date else None,
             "total_qty": total_qty,
-            "line_count": len(po.lines),
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            "line_count": len([ln for ln in po.lines if not ln.removed_unreferenced]),
             "open_qty": open_qty,
             "open_line_count": open_lines,
             # What is still to ARRIVE across the order, summed off the same per-line rule the
@@ -307,11 +310,13 @@ class PurchaseOrderService:
             "outstanding_qty": outstanding_qty,
             # What the order is worth, summed from the SAME line figures the Lines tab
             # prints, so the header total and the column under it cannot disagree.
-            "total_amount": _order_amount(list(po.lines)),
+            # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+            "total_amount": _order_amount([ln for ln in po.lines if not ln.removed_unreferenced]),
             # The currency the order is written IN. The header's own, or the first line
             # that names one - the import states it per row and older orders carry none.
             "currency": po.currency or next(
-                (ln.currency for ln in po.lines if ln.currency), None
+                (ln.currency for ln in po.lines if ln.currency and not ln.removed_unreferenced),
+                None,
             ),
             "lines": lines,
             # What order inquiries have OCCUPIED on this order (section 3.G). The SUM is on
@@ -877,6 +882,8 @@ class PurchaseOrderService:
             .filter(
                 func.lower(func.btrim(Product.product_code)) == product_code.strip().lower(),
                 PurchaseOrderLine.unit_cost.isnot(None),
+                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+                PurchaseOrderLine.removed_unreferenced.is_(False),
             )
             .order_by(
                 PurchaseOrder.issue_date.desc().nullslast(),

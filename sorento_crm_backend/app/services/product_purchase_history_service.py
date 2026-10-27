@@ -71,6 +71,8 @@ def purchase_history(db: Session, product_id: str, limit: int = DEFAULT_LIMIT) -
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         LEFT JOIN suppliers su ON su.id = po.supplier_id
         WHERE pol.product_id = :pid
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT pol.removed_unreferenced
           {co_clause}
         ORDER BY po.issue_date DESC NULLS LAST, pol.created_at DESC
         LIMIT :limit
@@ -80,6 +82,8 @@ def purchase_history(db: Session, product_id: str, limit: int = DEFAULT_LIMIT) -
         SELECT count(*) FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         WHERE pol.product_id = :pid
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT pol.removed_unreferenced
           {co_clause}
     """), params).scalar() or 0
 
@@ -123,6 +127,8 @@ def _cost_summary(db: Session, product_id: str, co_clause: str, params: dict) ->
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         LEFT JOIN suppliers su ON su.id = po.supplier_id
         WHERE pol.product_id = :pid AND pol.unit_cost IS NOT NULL
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT pol.removed_unreferenced
           {co_clause}
         ORDER BY po.issue_date DESC NULLS LAST, pol.created_at DESC
         LIMIT 1
@@ -144,6 +150,8 @@ def _cost_summary(db: Session, product_id: str, co_clause: str, params: dict) ->
         SELECT 1 FROM purchase_order_lines pol
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         WHERE pol.product_id = :pid
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT pol.removed_unreferenced
           {co_clause}
         LIMIT 1
     """), params).first()

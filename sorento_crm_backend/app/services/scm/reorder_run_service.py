@@ -1438,6 +1438,8 @@ def _last_purchase_map(db: Session, product_ids: list[str]) -> dict[str, date]:
         JOIN purchase_orders po ON po.id = pol.purchase_order_id
         WHERE pol.product_id::text = ANY(:pids)
           AND po.issue_date IS NOT NULL
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT pol.removed_unreferenced
           {("AND " + co) if co else ""}
         GROUP BY pol.product_id
     """), {"pids": pids, **co_params}).fetchall()
@@ -1487,6 +1489,8 @@ def _last_purchase_cost_map(db: Session, product_ids: list[str]) -> dict[str, di
           LEFT JOIN suppliers su ON su.id = po.supplier_id
          WHERE pol.product_id::text = ANY(:pids)
            AND pol.unit_cost IS NOT NULL
+           -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+           AND NOT pol.removed_unreferenced
            {("AND " + co) if co else ""}
          ORDER BY pol.product_id, COALESCE(pol.warehouse_id::text, 'none'),
                   po.issue_date DESC NULLS LAST, pol.created_at DESC
@@ -3952,6 +3956,8 @@ def net_breakdown(db: Session, product_id: str,
         WHERE sol.product_id = :pid
           AND so.status = 'open'
           AND sol.qty_ordered > sol.qty_delivered
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT sol.removed_unreferenced
           {co_sol_clause}
           {wh_sol}
         ORDER BY so.order_date DESC NULLS LAST, so.so_number
