@@ -125,6 +125,7 @@ SPAN_EVENT = {
     "final_block": {"brand": [{"label": "Brand: ZZT", "source": "near_exact"}]},
     "rows_rendered": 3, "near_exact_rows": 1, "fallback": False, "fallback_reason": None,
     "provider": "openai", "model": "gpt-x", "model_source": "label", "ms": 120,
+    "tokens": {"prompt_tokens": 11, "completion_tokens": 7, "total_tokens": 18, "cached_tokens": 0},
 }
 LOOKUP_EVENT = {
     "kind": "lookup_lists", "at": NOW.isoformat(), "spans": ["frg"],
@@ -143,6 +144,7 @@ def test_trace_detail_exposes_the_span_pass_with_the_rows_shown():
     assert se["rows_rendered"] == 3 and se["near_exact_rows"] == 1 and se["fallback"] is False
     assert (se["provider"], se["model"], se["model_source"], se["ms"]) == ("openai", "gpt-x", "label", 120)
     assert se["matched_rows"] == ["Finish: French Gold", "Brand: ZZT"]
+    assert se["tokens"] == SPAN_EVENT["tokens"]
     assert se["near_exact"] == SPAN_EVENT["near_exact"] and se["final_block"] == SPAN_EVENT["final_block"]
 
 
@@ -152,4 +154,5 @@ def test_trace_detail_span_fallback_shape_and_absent_event():
     se = compose_trace_detail(_row([fb, lookup]))["span_extract"]
     assert se["fallback"] is True and se["fallback_reason"] == "unreadable" and se["matched_rows"] == []
     assert se["near_exact"] == [] and se["final_block"] == {}
+    assert compose_trace_detail(_row([{k: v for k, v in SPAN_EVENT.items() if k != "tokens"}]))["span_extract"]["tokens"] == {}
     assert compose_trace_detail(_row([LOOKUP_EVENT]))["span_extract"] is None

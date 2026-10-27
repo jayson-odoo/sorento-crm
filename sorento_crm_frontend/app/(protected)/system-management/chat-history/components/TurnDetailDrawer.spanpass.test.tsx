@@ -77,6 +77,7 @@ describe('TurnDetailDrawer Span pass section', () => {
   it('renders the phrases, the rows shown and no fallback line', () => {
     turnState = {
       data: detail({
+        prompt_text: 'ZZT parser block',
         span_extract: {
           spans: [
             {
@@ -97,6 +98,7 @@ describe('TurnDetailDrawer Span pass section', () => {
           model: 'gpt-x',
           model_source: 'label',
           ms: 120,
+          tokens: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, cached_tokens: 0 },
           matched_rows: ['Finish: French Gold'],
           near_exact: [{ list: 'brand', label: 'ZZALFA', spelling: 1, source: 'near_exact' }],
           final_block: {
@@ -122,6 +124,14 @@ describe('TurnDetailDrawer Span pass section', () => {
     expect(screen.getByTestId('final-source-span')).toHaveTextContent('Finish: French Gold');
     expect(screen.getByTestId('final-source-near_exact')).toHaveTextContent('ZZALFA');
     expect(body).not.toHaveTextContent('fell back');
+    expect(screen.getByTestId('span-pass-call')).toHaveTextContent('openai');
+    expect(screen.getByTestId('span-pass-call')).toHaveTextContent('gpt-x');
+    expect(screen.getByTestId('span-pass-call')).toHaveTextContent('label');
+    expect(screen.getByTestId('span-pass-call')).toHaveTextContent('120 ms');
+    expect(screen.getByTestId('span-pass-call')).toHaveTextContent('11 in');
+    expect(screen.getByTestId('span-pass-call')).toHaveTextContent('7 out');
+    fireEvent.click(screen.getByText('Prompt text sent to the parser'));
+    expect(screen.getByText(/ZZT parser block/)).toBeInTheDocument();
   });
 
   it('shows the fallback line with its reason', () => {
@@ -155,5 +165,55 @@ describe('TurnDetailDrawer Span pass section', () => {
     turnState = { data: detail({ span_extract: null }), isLoading: false, isError: false };
     render(<TurnDetailDrawer turnId="ZZT-turn-span-1" onOpenChange={vi.fn()} />);
     expect(screen.queryByTestId('section-span-pass-trigger')).toBeNull();
+  });
+});
+
+describe('TurnDetailDrawer Span pass call line', () => {
+  it('shows the call line and the prompt text when every span was skipped', () => {
+    turnState = {
+      data: detail({
+        prompt_text: 'ZZT skipped block',
+        span_extract: {
+          spans: [{ text: 'srtwc286', type: 'product_code', status: 'skipped', close: 0 }],
+          rows_rendered: 0,
+          near_exact_rows: 0,
+          fallback: false,
+          fallback_reason: null,
+          provider: 'gemini',
+          model: 'gem-y',
+          model_source: 'global',
+          ms: 800,
+          tokens: { prompt_tokens: 40, completion_tokens: 3, total_tokens: 43, cached_tokens: 0 },
+          matched_rows: [],
+          near_exact: [],
+          final_block: {},
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    };
+    render(<TurnDetailDrawer turnId="ZZT-turn-span-1" onOpenChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('section-span-pass-trigger'));
+    expect(screen.getByTestId('span-pass-call')).toHaveTextContent('gem-y');
+    expect(screen.getByTestId('span-pass-call')).toHaveTextContent('40 in');
+    fireEvent.click(screen.getByText('Prompt text sent to the parser'));
+    expect(screen.getByText(/ZZT skipped block/)).toBeInTheDocument();
+  });
+
+  it('shows the call line on a fallback with no model', () => {
+    turnState = {
+      data: detail({
+        span_extract: {
+          spans: [], rows_rendered: 0, near_exact_rows: 0, fallback: true, fallback_reason: 'no_config',
+          provider: null, model: null, model_source: null, ms: 0, tokens: {}, matched_rows: [], near_exact: [], final_block: {},
+        },
+      }),
+      isLoading: false,
+      isError: false,
+    };
+    render(<TurnDetailDrawer turnId="ZZT-turn-span-1" onOpenChange={vi.fn()} />);
+    fireEvent.click(screen.getByTestId('section-span-pass-trigger'));
+    expect(screen.getByTestId('span-pass-call')).toBeInTheDocument();
+    expect(screen.queryByText('Prompt text sent to the parser')).toBeNull();
   });
 });
