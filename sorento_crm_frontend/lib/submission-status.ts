@@ -18,3 +18,12 @@ export function isAwaitingReview(
   const s = (status ?? '').trim().toLowerCase();
   return s === stage || s === RESUBMITTED;
 }
+
+/**
+ * The verb on a form's send button. A form that was rejected goes back as a
+ * resubmission (owner, 27 Oct 2026): every form surfaces a rejected record as
+ * `status: 'rejected'` while it is being amended, so this one rule covers them all.
+ */
+export function submitVerb(status: string | null | undefined): 'Submit' | 'Resubmit' {
+  return (status ?? '').trim().toLowerCase() === 'rejected' ? 'Resubmit' : 'Submit';
+}

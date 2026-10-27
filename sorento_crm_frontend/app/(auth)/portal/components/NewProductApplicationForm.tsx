@@ -48,6 +48,7 @@ import {
 import { formatDateInMalaysia } from '@/lib/helpers';
 import type { NewProductApplicationDetail } from '@/types/newProductApplication';
 import { portalBase } from '../lib/portal-paths';
+import { isAwaitingReview } from '@/lib/submission-status';
 import { submitVerb, uploadAttachment, type PortalAttachment } from '../lib/portal-client';
 import {
   cancelNewProductApplication,
@@ -205,7 +206,7 @@ export default function NewProductApplicationForm({
   const status = application?.status ?? 'draft';
   const editable = !application || status === 'draft' || status === 'rejected';
   const readOnly = !editable;
-  const locked = status === 'submitted' || status === 'approved';
+  const locked = isAwaitingReview(status) || status === 'approved';
   const anyResolved = Boolean(
     application?.lines.some((l) => l.opened_product_id || l.closed_reason),
   );
