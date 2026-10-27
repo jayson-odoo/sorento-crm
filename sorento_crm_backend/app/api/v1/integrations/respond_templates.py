@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission
 from app.schemas.respond_template import TemplateDefaultUpsertRequest
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -22,7 +23,7 @@ def list_templates(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     query: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    status: Optional[list[str]] = Query(None),
     sort: str = Query("name"),
     dir: str = Query("asc"),
     db: Session = Depends(get_db),
@@ -35,7 +36,7 @@ def list_templates(
         page=page,
         limit=limit,
         query=query,
-        status=status,
+        status=multi_values(status),
         sort=sort,
         direction=dir,
     )

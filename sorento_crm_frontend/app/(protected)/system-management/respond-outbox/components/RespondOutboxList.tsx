@@ -28,7 +28,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye } from 'lucide-react';
 import { useRespondOutbox } from '../hooks/useRespondOutbox';
@@ -43,7 +44,7 @@ const BUSINESS_LABELS: Record<string, string> = {
 
 export default function RespondOutboxList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [status, setStatus] = useState<string>('__all__');
+  const [status, setStatus] = useState<string>('');
   const {
     value: queryInput,
     setValue: setQueryInput,
@@ -66,7 +67,7 @@ export default function RespondOutboxList() {
   const { data, isLoading, isPlaceholderData, isFetching, refetch, error } = useRespondOutbox({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
-    status: status === '__all__' ? undefined : status,
+    status: status || undefined,
     query: query || undefined,
   });
 
@@ -224,19 +225,18 @@ export default function RespondOutboxList() {
               }
               filters={{
                 kind: 'custom',
-                active: status !== '__all__',
-                activeCount: status !== '__all__' ? 1 : 0,
+                active: status !== '',
+                activeCount: status ? 1 : 0,
                 content: (
                   <div className="space-y-1.5">
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={status}
+                    <SearchableMultiSelect
+                      value={splitMulti(status)}
                       onChange={(v) => {
-                        setStatus(v);
+                        setStatus(joinMulti(v));
                         setPagination((p) => ({ ...p, pageIndex: 0 }));
                       }}
                       options={[
-                        { value: '__all__', label: 'All statuses' },
                         { value: 'success', label: 'Success' },
                         { value: 'failed', label: 'Failed' },
                         { value: 'pending', label: 'Pending' },
@@ -244,6 +244,7 @@ export default function RespondOutboxList() {
                       ]}
                       placeholder="Status"
                       triggerClassName="w-full"
+                      clearable
                     />
                   </div>
                 ),
