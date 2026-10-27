@@ -6,7 +6,7 @@ gets them in P3, so on its own this revision changes nothing for anybody. Insert
 guarded, so it is safe to re-run on the dev copy of production.
 
 Revision ID: pp2_0001_view_own_perms
-Revises: akc_0001_removed_unreferenced
+Revises: gc_idx_0001_spo_from_po_key
 Create Date: 2026-10-27
 """
 from __future__ import annotations
@@ -16,7 +16,7 @@ from alembic import op
 
 # Kept <= 32 chars: alembic_version.version_num is varchar(32).
 revision = "pp2_0001_view_own_perms"
-down_revision = "akc_0001_removed_unreferenced"
+down_revision = "gc_idx_0001_spo_from_po_key"
 branch_labels = None
 depends_on = None
 
