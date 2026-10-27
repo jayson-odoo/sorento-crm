@@ -365,3 +365,48 @@ if __name__=="__main__": run(sys.argv[1], sys.argv[2])
 - Test copies upload to the staging R2 bucket (`sorento-crm-staging`, lane `.env`), and the look-alike
   check reads existing photos from that same storage, so on a test copy a photo whose bytes are not in
   staging is simply not compared (no failure). The look-alike count at the hand test is therefore a lower bound.
+
+## Fix round 1 (27 Oct): security review, reviewer (NOT READY), browser pass
+
+Each item gets a red test first (tester), then the fix (coder). Existing assertions are not weakened.
+
+Security
+- FR-1 (blocker) Every Attachment and AttachmentDirectory the lane creates carries the reading's company:
+  the request stamps `resolve_write_company_id(get_company_scope(db))` (as `resources_service.py:121-124`,
+  `asset_service.py:200-210`), the worker stamps `reading.company_id`. Another company cannot see the
+  folders or files (drive list, search, bulk download).
+- FR-2 Worker caps: skip a placement or soft mask over 40M pixels (`npa_xlsx.py:27` precedent, checked
+  from `get_image_info` / the smask Width x Height before decoding); refuse a PDF over 300 pages; stop at
+  2,000 photos per reading (status failed, fixed message). One photo per placement stays.
+- FR-3 `reading.error` holds a fixed plain message, never exception text (log the exception). Codes are
+  truncated to 120 characters before they are stored. The queue failure message names no host.
+- FR-4 A PATCH that changes `product_id` recomputes the look-alike for the new product (clears it when
+  none, or when the check fails) and resets the decision to the default. `replaced` counts deleted rows only.
+- FR-5 `catalogue_photo_readings.company_id` NOT NULL; the worker fails closed on a reading without one.
+- FR-6 `also_attach_product_ids` capped at 50 (422 above).
+- FR-7 Signed URLs only (drop the unsigned `or path` fallback); `stored_filename` cut to 255; the folder
+  name strips `-->` as well as `/`.
+
+Reviewer
+- FR-8 (blocker) "Download all as ZIP" sends the reading's folder (`folderIds: [directory_id]`). The source
+  PDF is stored in the root "Catalogue photos" folder, not in the per-catalogue folder, so the ZIP holds
+  photos only.
+- FR-9 (blocker) The upload creates a JobService job (as `products.py:389`) so the reading appears in the
+  upload-activity drawer and links to the review page; the worker's photos never appear in that feed as
+  their own "Processing" rows (`upload_activity.py:76,288-300`).
+- FR-10 The Product column sorts (`accessorFn`).
+- FR-11 Replace of the product's chosen (primary) photo makes the new link primary, so the product never
+  loses its picture.
+- FR-12 Look-alike speed: dhash per existing attachment cached for the run; each photo hashed once.
+- FR-13 A failed read deletes the files it uploaded (best effort) and the task has a status guard: a
+  re-delivered job for a reading that is not queued does nothing.
+- FR-14 Attached rows read "Attached" on every tab, the look-alike tab included.
+- FR-15 `already_on_file` ignores deleted attachments.
+- FR-16 Placeholders shown on every tab where the photo appears; indexes on `catalogue_photos.attachment_id`,
+  `product_id`, `duplicate_of_attachment_id`; `datetime.now(timezone.utc)`; replace unlinks through the
+  product attachment service if it has no side effects beyond the delete.
+
+Browser pass
+- FR-17 Upload dialog hint shows once ("PDF only, up to 50 MB"); the dialog has a description for
+  assistive tech (no aria warning).
+- FR-18 The real 16.6 MB catalogue uploads on the test copy without the 500 (cause under diagnosis).
