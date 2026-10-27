@@ -1,6 +1,6 @@
 # CARD: REPORT-UNIFY (finish the report engine for every sales and outstanding ask)
 
-Status: Plan. Behaviour card posted as one crew-ask on PR #1922. No code until the owner answers. Track: full (size L).
+Status: Answered (owner 27 Oct ~19:15: Q1 a, Q2 ask which outstanding (never default), Q3 a, Q4 a, Q5 a). Build per PLAN-report-unify-27oct.md. Track: full (size L).
 
 ## The owner's question in one line
 

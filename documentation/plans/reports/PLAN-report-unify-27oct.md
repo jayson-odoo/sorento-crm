@@ -1,6 +1,6 @@
 # PLAN: REPORT-UNIFY (finish `crm_report_ask` for every sales and outstanding ask)
 
-Status: Draft. Waiting on the owner's answers to the card (`CARD-report-unify-27oct.md`, crew-ask on PR #1922).
+Status: Build (slice 1 engine, red-first). The owner answered the card on 27 Oct ~19:15 (section 0).
 Track: full (size L). Three stacked slices on one lane branch, one PR (#1922).
 UAC: `report-unify-27oct-acceptance-criteria.md`.
 
@@ -9,17 +9,37 @@ Depends on SALES-UNIFIED (#1916). Its `invoiced` basis in `services/reports/ask.
 adds no second calculation. Slice 1 touches only `ask.py` / the route / one new helper, so it can start on main and
 pick up `invoiced` on rebase.
 
-## 0. Rulings
-
-These are filled from the owner's answers.
+## 0. Rulings (owner, 27 Oct ~19:15)
 
 | Q | Answer | Effect |
 |---|---|---|
-| Q1 retire tools | pending (rec a) | slice 2 removes the `crm_sales_report` / `crm_outstanding_report` / `crm_sales_analysis` chat branches and the MCP `crm_top_selling_report` |
-| Q2 outstanding | pending (rec a) | the open SO remainder, qty + RM (engine `outstanding` basis); the DO half is dropped from chat |
-| Q3 spec | pending (rec a) | filter + group by spec key |
-| Q4 not applied | pending (rec a) | a "Not applied:" line; ask only when it was the sole subject |
-| Q5 screen | pending (rec a) | one report screen over the ask definitions |
+| Q1 retire tools | (a) | Slice 2 routes every `crm_sales_report`, `crm_outstanding_report` and `crm_sales_analysis` ask to `crm_report_ask`. The MCP `crm_top_selling_report` is removed. The Yearly comparison stays a screen. |
+| Q2 outstanding | **"we need to ask and clarify"** | "Outstanding" is never defaulted. Like the sales basis question, the bot asks which one is meant: **undelivered order qty** (basis `outstanding`, the open SO remainder), **pending delivery** (new basis `pending_delivery`, lines of DOs not yet delivered) or **unpaid invoices** (new basis `unpaid`, AutoCount's per-document `billing_documents.outstanding`). Folded into the one question for everything missing. |
+| Q3 spec | (a) | spec filter AND `group_by=spec:<key>` |
+| Q4 not applied | (a) | A "Not applied: \<filter\> (\<reason\>)" line. The bot asks instead only when that filter was the only subject. |
+| Q5 screen | (a) | One "Sales & outstanding" report screen over the same ask definitions |
+
+### The two new outstanding bases (Q2)
+
+**`pending_delivery`.**
+- **Rows:** the existing `services/reports/datasets/delivery_order_lines.py` (DO lines, DO date), plus the
+  outstanding-DO predicate `outstanding_report_service._outstanding_clause(_delivered_status_ids(db))`, the one
+  population the old report's DO block used (`outstanding_report_service.py:448-480`, owner R11).
+- **Measures:** qty = line quantity; RM = the dataset's own line amount.
+- **Filters and groupings:** every filter and grouping the dataset already declares (customer, product, brand,
+  category, sales agent, location, channel), plus spec.
+- **No new SQL population.** It is a predicate on an existing dataset.
+
+**`unpaid`.**
+- **Rows:** `billing_documents` (`models/finance.py:62`) with `outstanding > 0`, `status` posted, not cancelled.
+- **Measure:** RM = `outstanding` (as pushed, `outstanding_as_of`). Qty does not apply.
+- **Filters:** customer, sales agent (document agent), customers-assigned-to, month (doc date).
+- **Not applicable:** product, brand, category, spec, location and channel. Those filters print "Not applied:
+  \<filter\> (unpaid invoices are per document)". A grouping by them is answered with the same line and the total.
+
+**Period on every outstanding basis.** Outstanding is "as of now", so a missing period is not asked. It means all
+dates, as the old outstanding report did ("Order date: all"). A named period filters the SO / DO / document date. So
+the one question asks only the outstanding kind (and the measure for a ranking).
 
 ## 1. Slice 1: engine (route + `run_ask`), red-first
 
@@ -44,18 +64,31 @@ Changes:
    - The resolved ids go to `run_ask` `filters["product"]`, ANDed with any named product / code.
    - **No match:** an empty set returns zero rows, never "no filter" (`ask.py` module docstring rule), with
      `status=no_products`.
-2. **`group_by=spec:<key>`.** `run_ask` runs `group_by=product` with no top-N cut, then folds the rows by each
+2. **The two new bases** (section 0) go in `ask.CATALOGUE["sales"]` (`pending_delivery`, `unpaid`) with their own
+   dimensions / filters tuples. The route's `basis` doc and allow-list follow the catalogue.
+3. **`group_by=spec:<key>`.** `run_ask` runs `group_by=product` with no top-N cut, then folds the rows by each
    product's value for `<key>` (one read of `product_specifications` for the ids). Products with no value go to
    "Not stated". Ranking and the top-N cut happen after the fold. The engine kernel is unchanged.
-3. **Echo.** The body echoes `filters.spec` with labels from the registry ("Trap type: P-trap") and `not_applied: [{filter,
+4. **Echo.** The body echoes `filters.spec` with labels from the registry ("Trap type: P-trap") and `not_applied: [{filter,
    reason}]`.
-4. **Tally tests:**
+5. **Tally tests:**
    - On every basis, for a seeded chain, the total with no grouping = the sum of rows grouped by product = the sum
      grouped by `spec:<key>` (including "Not stated").
    - Invoiced (after rebase): the `crm_report_ask` total = `invoiced_sales` = the Top selling items report total for
      the same filters.
 
+Confirmed by SALES-UNIFIED (crew-note 6440275524 on #1922):
+- The `billing_document_lines.ASK_DEFINITION` param keys are stable. `product` = `product_id IN (...)`.
+- Billing lines with no CRM product drop out of a spec filter. That is the right reading.
+- `location` on invoiced is 422 `location_needs_order_basis`. The lane maps it to a "Not applied: Location (invoices
+  carry no warehouse)" line, never an error reply.
+- The spec fold runs over product rows in Python, so it needs no new column on that dataset.
+
 ## 2. Slice 2: chatbot routing
+
+0. **Access is kept.** An invoiced total moved onto `crm_report_ask` still needs `sales.reports.view` on the act-as
+   principal (#1916 security M1, 403 `invoiced_needs_sales_reports`). The lane's existing handling of that refusal
+   applies to totals and outstanding the same way.
 
 1. `report_ask.take_words` / `hold_words` (`lanes/business/report_ask.py:445,466`) apply to every sales or
    outstanding status, not only `sales_ranking`. The gate on `ASK_NAME` becomes "any sales / outstanding status".

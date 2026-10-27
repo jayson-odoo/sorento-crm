@@ -1,6 +1,6 @@
 # UAC: REPORT-UNIFY
 
-Status: Draft (pending the owner's card answers). Plan: `PLAN-report-unify-27oct.md`.
+Status: Agreed (owner answers 27 Oct ~19:15). Plan: `PLAN-report-unify-27oct.md`.
 
 ## Engine (slice 1)
 
@@ -17,15 +17,28 @@ Status: Draft (pending the owner's card answers). Plan: `PLAN-report-unify-27oct
   total. Top N cuts after the fold.
 - **AC-RU-7.** On every basis (invoiced after the #1916 rebase, delivered, ordered, outstanding), the total equals the
   sum by product, which equals the sum by spec key, for a seeded chain.
-- **AC-RU-8.** Outstanding answers carry qty and RM, where RM = `line_total` x open / ordered.
+- **AC-RU-8.** Basis `outstanding` (undelivered order qty) carries qty and RM, where RM = `line_total` x open /
+  ordered.
+- **AC-RU-8a.** Basis `pending_delivery` counts only lines of DOs that are not delivered. A fully delivered DO
+  appears in no row and no total. The total equals the sum by customer, which equals the sum by product.
+- **AC-RU-8b.** Basis `unpaid` sums `billing_documents.outstanding` > 0 of posted, uncancelled documents by
+  customer / agent / month.
+  - A product, brand, category, spec, location or channel filter is echoed under `not_applied` with reason
+    `per_document`, and the total is still returned.
+- **AC-RU-8c.** On every outstanding basis, an absent period means all dates. A named period filters the SO / DO /
+  document date.
 - **AC-RU-9.** The echo carries the spec labels from the registry ("Trap type: P-trap").
 
 ## Chatbot (slice 2)
 
 - **AC-RU-10.** A sales total naming a customer, product, agent, brand or category calls `crm_report_ask` with no
   grouping. `crm_sales_report` is not called (Q1).
-- **AC-RU-11.** Any outstanding ask calls `crm_report_ask` with `basis=outstanding`. `crm_outstanding_report` is not
-  called (Q1, Q2).
+- **AC-RU-11.** An outstanding ask that does not say which kind is asked "Undelivered orders, pending delivery or
+  unpaid invoices?". It is never defaulted, and it is folded into the one question with anything else missing
+  (Q2).
+  - The answer calls `crm_report_ask` with `basis=outstanding` / `pending_delivery` / `unpaid`.
+  - `crm_outstanding_report` is never called (Q1).
+  - A message that names the kind ("unpaid invoices", "not delivered yet", "outstanding SO") is not asked.
 - **AC-RU-12.** "by month" / "by channel" / "by sales agent" / "by customer" asks call `crm_report_ask` with that
   grouping. No "I can't break sales down by X" reply remains (P5, P9).
 - **AC-RU-13.** A parsed spec entity becomes a `spec` param and the header names it. The generic "need a filter" gate
