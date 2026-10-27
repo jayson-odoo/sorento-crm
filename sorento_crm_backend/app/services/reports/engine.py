@@ -506,12 +506,19 @@ def _select_columns(ctx: QueryContext, keys: List[str]) -> List[reg.Column]:
     return columns
 
 
-def _detail_statement(ctx: QueryContext, columns: List[reg.Column], *extra):
+def _detail_statement(ctx: QueryContext, columns: List[reg.Column], *extra, sort=None):
     stmt = ctx.dataset.base(ctx).add_columns(
         *[_column_expr(ctx, c).label(c.key) for c in columns], *extra
     )
     stmt = stmt.where(and_(*_predicates(ctx)))
     order_by = list(ctx.definition.detail.order_by(ctx))
+    if sort is not None:
+        # A chosen sort leads; the definition's own order breaks its ties (SALES-UNIFIED).
+        column = ctx.dataset.column(sort.key)
+        if column is None:
+            raise _invalid(f"Unknown sort column '{sort.key}'")
+        expr = _column_expr(ctx, column)
+        order_by.insert(0, (expr.desc() if sort.dir == "desc" else expr.asc()).nulls_last())
     if order_by:
         stmt = stmt.order_by(*order_by)
     return stmt
@@ -612,7 +619,7 @@ def _detail(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportDetai
     columns = _select_columns(
         ctx, list(view.detail.columns) or [c.key for c in ctx.dataset.columns]
     )
-    stmt = _detail_statement(ctx, columns)
+    stmt = _detail_statement(ctx, columns, sort=view.detail.sort)
     if cap:
         stmt = stmt.limit(DETAIL_ROW_CAP + 1)
 
@@ -708,6 +715,42 @@ def _distinct_by(ctx: QueryContext, measure: reg.Column, index: int, group_expr:
     return [(_bucket(r[0]), Decimal(str(r[1]))) for r in ctx.db.execute(stmt).all()]
 
 
+ROW_SORT = "__row__"
+TOTAL_SORT = "__total__"
+
+
+def _sorted_rows(sort, row_values, col_values, cells, row_sums, measures, row_column) -> List[str]:
+    """The summary's rows in the chosen order (SALES-UNIFIED: every column sorts server-side):
+    by the row label, by the row total of the first measure, or by one column's cell of it.
+    A row with no figure sorts after every row with one, and the blank row stays last."""
+    if sort.key not in (ROW_SORT, TOTAL_SORT) and sort.key not in col_values:
+        raise _invalid(f"Unknown sort column '{sort.key}'")
+    if sort.key != ROW_SORT and (not measures or measures[0].ratio_of is not None):
+        raise _invalid("This summary cannot sort by a figure")
+    reverse = sort.dir == "desc"
+    blank = [v for v in row_values if v == BLANK_VALUE]
+    real = [v for v in row_values if v != BLANK_VALUE]
+    if sort.key == ROW_SORT:
+        labels = (_value_labels(row_column, real) if row_column.fixed_values else None) or {}
+        return sorted(real, key=lambda v: _natural_key(labels.get(v, v)), reverse=reverse) + blank
+
+    first = measures[0].key
+
+    def figure(value: str) -> Optional[Decimal]:
+        if sort.key == TOTAL_SORT:
+            raw = (row_sums.get(value) or {}).get(first)
+        else:
+            raw = ((cells.get(value) or {}).get(sort.key) or {}).get(first)
+        if raw is None or isinstance(raw, tuple):
+            return None
+        return Decimal(str(raw))
+
+    with_figure = [v for v in real if figure(v) is not None]
+    without = [v for v in real if figure(v) is None]
+    with_figure.sort(key=lambda v: (figure(v), _natural_key(v)), reverse=reverse)
+    return with_figure + without + blank
+
+
 def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotLayout:
     definition = ctx.definition
     dataset = ctx.dataset
@@ -797,6 +840,8 @@ def _pivot(ctx: QueryContext, view: ReportViewConfig, cap: bool) -> ReportPivotL
 
     row_values = _axis_values(ctx, row_column, row_values, rows=True)
     col_values = _axis_values(ctx, col_column, present_cols, rows=False)
+    if config.sort is not None:
+        row_values = _sorted_rows(config.sort, row_values, col_values, cells, row_sums, measures, row_column)
     value_labels = _value_labels(col_column, col_values)
 
     if cap and len(row_values) * len(col_values) > PIVOT_CELL_CAP:

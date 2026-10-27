@@ -224,6 +224,10 @@ class SelectParam:
     # Given the query context and the chosen values (never empty), the WHERE fragment.
     condition: Callable[[Any, List[str]], Optional[ColumnElement]]
     clearable: bool = True
+    #: Not on the filter bar and not in the report's meta: a filter only an API caller (the
+    #: chatbot's routes) sets, by id, where a screen dropdown of every value would not serve
+    #: (every customer). The run still applies it like any other param (SALES-UNIFIED 2.8).
+    hidden: bool = False
 
 
 Param = Any  # DateBasisParam | PeriodParam | SelectParam

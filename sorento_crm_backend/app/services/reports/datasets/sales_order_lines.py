@@ -161,7 +161,8 @@ def note(ctx) -> str:
     """The basis line on every header (G1; finance S1 UAC S1-5 for Invoiced)."""
     basis = _basis(ctx)
     if basis == "invoiced":
-        return f"Basis: {BASIS_WORDS[basis]}, by document date, grouped by the sales order type."
+        return (f"Basis: {BASIS_WORDS[basis]}, by document date, grouped by the sales type of the "
+                "sales orders each document traces to.")
     return f"Basis: {BASIS_WORDS[basis]}, by sales order date. Sales orders, not invoices."
 
 
