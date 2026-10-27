@@ -25,8 +25,6 @@ export and a snapshot show stays identical.
   lane sha, full board under the filter matrix: zero differences; warm median and p95 reported
   in the PR (counts only, no names: public repo).
 
-## Later PRs
-
 ## PR2: walk each product once (B), branch crew/stockdebt-perf-b stacked on #1901
 
 - AC-SDP-B1: In one board build, `assign()` runs for a product once per DISTINCT set of pinned
@@ -39,5 +37,7 @@ export and a snapshot show stays identical.
 - AC-SDP-B3: Holds are bucketed by product once per pass, not filtered from the full list once
   per product (perf, measured by the harness, not a CI assertion).
 - AC-SDP-B4: Same equality bar as PR1: side-by-side harness, zero differences vs PR1's head.
-- PR3 (C): transferred allocations read once per request; last-supplier and remaining reads
-  tuned. Same equality bar; no statement count increase.
+
+## Later PRs
+
+- PR3: see branch crew/stockdebt-perf-c. Same equality bar; no statement count increase.

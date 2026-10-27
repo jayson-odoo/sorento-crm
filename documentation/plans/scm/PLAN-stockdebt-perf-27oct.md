@@ -1,6 +1,6 @@
 # PLAN: STOCKDEBT-PERF - make the Stock Debt board fast without changing a number
 
-Status: Build, PR1 (A + timing line). Owner approved A -> B -> C on 27 Oct; statement_timeout dropped. Track: small fix track per PR (each PR
+Status: Build. PR1 #1901 reviewer READY (waits ci); PR2 #1902 reviewer READY (stacked on #1901); PR3 (ids as text) in build on crew/stockdebt-perf-c. Owner approved A -> B -> C on 27 Oct; statement_timeout dropped.
 under ~300 lines, no migration, no auth change); lane is LEAD pattern (tester + coder + reviewer
 subagents). Page for the owner: `stockdebt-perf-27oct.html` beside this file.
 
