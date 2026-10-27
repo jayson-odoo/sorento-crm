@@ -519,18 +519,49 @@ def test_trap_texts_with_lines_moved_between_blocks_are_still_a_conflict(db, tmp
 
 
 def test_a_contradicting_line_is_still_a_conflict_and_lists_both_sheet_rows(db, tmp_path):
-    p = _prod(db, "SRTKT1933SS-DIY", text="old")
+    p = _prod(db, "SRTKT9933SS-DIY", text="old")
     pillar = "Kitchen Tap\nPillar Mounted\nStainless Steel"
     wall = "Kitchen Tap\nStainless Steel\nWall Mounted"
-    run = _run(db, tmp_path, [("SRTX1", "other"), ("SRTKT1933SS-DIY", pillar),
-                              ("SRTKT1933SS-DIY", wall)], apply=True)
+    run = _run(db, tmp_path, [("SRTX1", "other"), ("SRTKT9933SS-DIY", pillar),
+                              ("SRTKT9933SS-DIY", wall)], apply=True)
     assert _desc(db, p) == "old"
-    rows = [r for r in run.skipped if r["sheet_code"].upper() == "SRTKT1933SS-DIY"]
+    rows = [r for r in run.skipped if r["sheet_code"].upper() == "SRTKT9933SS-DIY"]
     assert len(rows) == 1
     assert rows[0]["reason"] == "same code on several rows with different text"
     assert rows[0]["sheet_rows"] == "3, 4"
     assert f"row 3: {pillar}" in rows[0]["sheet_texts"]
     assert f"row 4: {wall}" in rows[0]["sheet_texts"]
+
+
+@pytest.mark.parametrize("order", ["pillar first", "wall first"])
+def test_owner_ruling_srtkt1933ss_diy_is_pillar_so_the_pillar_row_is_written(db, tmp_path, order):
+    # Owner ruling 27 Oct: the Sorento Lite DIY sheet's SRTKT1933SS-DIY is Pillar, not Wall.
+    p = _prod(db, "SRTKT1933SS-DIY", text="old")
+    pillar = "Kitchen Tap\nPillar Mounted\nStainless Steel"
+    wall = "Kitchen Tap\nStainless Steel\nWall Mounted"
+    rows = [("SRTKT1933SS-DIY", pillar), ("srtkt1933ss - diy", wall)]
+    run = _run(db, tmp_path, rows if order == "pillar first" else rows[::-1], apply=True)
+    assert _desc(db, p) == pillar
+    assert run.skipped == []
+    assert run.change("SRTKT1933SS-DIY")["rule"] == "exact+ruling"
+
+
+def test_owner_ruling_applies_only_to_its_code(db, tmp_path):
+    p = _prod(db, "SRTKT1933SS-GM-DIY", text="old")
+    run = _run(db, tmp_path, [("SRTKT1933SS-GM-DIY", "Kitchen Tap\nPillar Mounted"),
+                              ("SRTKT1933SS-GM-DIY", "Kitchen Tap\nWall Mounted")], apply=True)
+    assert _desc(db, p) == "old"
+    assert run.skip_reasons(sheet_code="SRTKT1933SS-GM-DIY") == {
+        "same code on several rows with different text"}
+
+
+def test_owner_ruling_with_no_row_that_matches_it_stays_a_conflict(db, tmp_path):
+    p = _prod(db, "SRTKT1933SS-DIY", text="old")
+    run = _run(db, tmp_path, [("SRTKT1933SS-DIY", "Kitchen Tap\nWall Mounted"),
+                              ("SRTKT1933SS-DIY", "Kitchen Tap\nDeck Mounted")], apply=True)
+    assert _desc(db, p) == "old"
+    assert run.skip_reasons(sheet_code="SRTKT1933SS-DIY") == {
+        "same code on several rows with different text"}
 
 
 def test_a_combo_row_and_a_plain_row_of_the_same_bf_count_as_the_same_code(db, tmp_path):
