@@ -20,7 +20,8 @@ and, for the chosen company (--company, default SRT) only:
   material match. Same rule as the flyer spec reader (product_spec_flyer_ingest._siblings).
 * Same code on several rows: format-equal rows are one (first row's text; spacing, case, `D: `,
   `150 x 150` vs `150x150`, and the order of the lines do not count); otherwise the
-  longest text wins when it contains every shorter one; otherwise the code is skipped.
+  longest text wins when it contains every shorter one; otherwise an owner ruling (RULINGS)
+  keeps only the rows with its word; otherwise the code is skipped.
 * A text printing both an S-Trap and a P-Trap block is cut per product by its stored trap
   type; one that cannot be cut is skipped.
 
@@ -85,6 +86,12 @@ R_SEAT = "variant has a different seat material"
 R_BOTH = "variant has a different finish and seat material"
 R_BOTH_TRAPS = "both traps printed, product has no trap type"
 R_TRAP_NOT_PRINTED = "product's trap type is not printed"
+
+# Owner rulings on a code whose sheet rows contradict: only the rows containing the word
+# (format_key, no case) count. Rule `<rule>+ruling` in the changes report.
+RULINGS = {
+    "SRTKT1933SS-DIY": "pillar",  # Sorento Lite DIY sheet: Pillar, not Wall (owner, 27 Oct)
+}
 
 CHANGES_COLUMNS = [
     "product_code", "sheet_code", "sheet_rows", "rule", "status",
@@ -288,6 +295,12 @@ def make_plan(db, rows, company_id):
                           "reason": R_NOT_FOUND, "texts": g["texts"]})
             continue
         pick = dedupe(g["entries"])
+        word = RULINGS.get(key)
+        if pick is None and word:
+            ruled = [e for e in g["entries"] if word in format_key(e[1])]
+            pick = dedupe(ruled) if ruled else None
+            if pick:
+                pick = (pick[0], pick[1] + "+ruling")
         if pick is None:
             state[key] = "conflict"
             skips.append({"sheet_code": key, "rows": g["rows"], "product_code": "",

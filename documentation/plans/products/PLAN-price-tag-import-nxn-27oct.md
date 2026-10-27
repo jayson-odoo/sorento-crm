@@ -1,6 +1,6 @@
 # PLAN: price tag import, dimension spacing and line order count as the same text
 
-Status: Review complete (reviewer READY round 2 on 876c19a7); awaiting CI, merge and owner re-run of the import. Track: small fix (script only, no migration, no auth). Lane: PRICE-TAG-IMPORT-NXN.
+Status: Owner ruling round (SRTKT1933SS-DIY is Pillar) built; reviewer delta check, then CI, merge and owner re-run of the import. Track: small fix (script only, no migration, no auth). Lane: PRICE-TAG-IMPORT-NXN.
 
 ## Problem
 
@@ -20,7 +20,11 @@ the same lines in a different order; SRTKT1933SS-DIY is a real contradiction (Pi
 2. `dedupe`: two texts with the same lines (each compared by `format_key`, same counts) in any
    order are format-equal; the first row's text is written. Not for a text with an S-/P-Trap line:
    there order says which trap block a line belongs to (`cut_trap`), so a reorder is a conflict.
-3. The skipped CSV already names the sheet rows (`sheet_rows`, and `row N:` per text); a test pins it.
+3. Owner ruling 27 Oct: SRTKT1933SS-DIY is Pillar, not Wall. `RULINGS` maps the code to the
+   word `pillar`; for a code that would otherwise conflict, only the rows containing the word
+   count (rule `exact+ruling` in the changes report). No row with the word, or still a
+   conflict among them: skipped as before.
+4. The skipped CSV already names the sheet rows (`sheet_rows`, and `row N:` per text); a test pins it.
 
 ## Tests (red first)
 
