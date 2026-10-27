@@ -189,11 +189,11 @@ def test_the_planner_uses_it_for_the_relations_lookup(monkeypatch):
     index, an index scan after."""
     with _scratch(monkeypatch) as (schema, conn):
         table = f'"{schema}".billing_document_lines'
-        conn.exec_driver_sql(
+        conn.execute(sa.text(
             f"INSERT INTO {table} (id, document_id, from_doc_type, from_doc_no) "
             "SELECT gen_random_uuid(), gen_random_uuid(), CASE WHEN n % 2 = 0 THEN 'DO' ELSE 'SO' END, "
             "'DO-' || n FROM generate_series(1, 200000) n"
-        )
+        ))
         conn.exec_driver_sql(f"ANALYZE {table}")
         query = (
             f"EXPLAIN SELECT document_id FROM {table} "
