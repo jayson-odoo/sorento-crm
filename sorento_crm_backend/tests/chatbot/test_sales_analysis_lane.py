@@ -194,10 +194,10 @@ class TestUnsupportedAxis:
         )
         assert captured == []
         text = ((result.reply or {}).get("text") or "").strip()
-        assert text == (
-            f"I can't break sales down by {group_by} yet. "
-            "I can show them by month, by year or by channel."
-        )
+        # REPORT-UNIFY (R2): the report ask draws month and channel now; the line names the axes it can.
+        from app.services.chatbot.lanes.business import report_ask
+
+        assert text == report_ask.UNSUPPORTED_AXIS_LINE.format(axis=group_by)
         kinds = [a.get("kind") for a in (result.actions or [])]
         assert "send_attachments" not in kinds
 

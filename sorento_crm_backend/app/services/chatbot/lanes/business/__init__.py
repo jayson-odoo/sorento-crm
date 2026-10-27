@@ -815,10 +815,7 @@ def _sales_analysis_axis_unsupported(group_by: str) -> dict[str, Any]:
     """A sales analysis asked by an axis it cannot draw (customer, product, ...): ONE line
     naming the axes it can, no figure and no fetch (`_sales_report_not_enabled`'s shape)."""
     structured: dict[str, Any] = {
-        "response": (
-            f"I can't break sales down by {group_by} yet. "
-            "I can show them by month, by year or by channel."
-        ),
+        "response": report_ask.UNSUPPORTED_AXIS_LINE.format(axis=group_by),
         "answers": [],
         "attachments": [],
         "action_links": [],
@@ -2154,7 +2151,8 @@ def run_fetch(
         answering_company = isinstance(slot_asked, dict) and slot_asked.get("ask") == sales_company_ask.ASK_NAME
         if not answering_company:
             group_by = jsc.js_string(parse_output.get("group_by") or "")
-            if group_by and group_by not in fetch_mod.SALES_ANALYSIS_GROUP_BY:
+            if group_by and group_by != "year":
+                # (REPORT-UNIFY: the report ask draws every other axis; only the Yearly comparison is left here.)
                 # Review round 2 S1: "sales by customer" is not answered with a by-channel
                 # table and no word that the ask was changed; it is said, and nothing fetched.
                 return _sales_analysis_axis_unsupported(group_by)
@@ -2296,6 +2294,12 @@ def run_fetch(
             if trace is not None:
                 trace.add("field_reveal", {"refused": "transporter_filter", "tool": tool_name})
             return _fixed_reply(do_ask.TRANSPORTER_REFUSED, refused=True)
+
+    if tool_name == report_ask.TOOL and not isinstance(semantic_input.get("report_ask_args"), dict):
+        # REPORT-UNIFY (phase 3, R2): the default pick of the sales row is this tool, and only an override settles its
+        # args. An ask that reached it unsettled (an axis it cannot draw) would send a bare call: say the axis instead.
+        axis = jsc.js_string(parse_output.get("group_by") or "").strip()
+        return _sales_analysis_axis_unsupported(axis) if axis else _fixed_reply(report_ask.CATALOGUE_LINE)
 
     trigger = {
         "tool": tool_name,

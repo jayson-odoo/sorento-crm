@@ -43,6 +43,11 @@ GIVE_UP = (
 )
 #: The route's own refusal for a dealer's staff breakdown (`report_ask._DEALER_MESSAGE`).
 DEALER_REFUSAL = "That breakdown is not available for your account."
+#: An axis the report ask cannot draw (the Yearly comparison, axis year, is the one other tool): said, nothing fetched.
+UNSUPPORTED_AXIS_LINE = (
+    "I can't break sales down by {axis}. I can break sales down by customer, product, brand, category, sales agent, "
+    "location, channel or month."
+)
 CATALOGUE_LINE = (
     "I can rank sales by customer, product, brand, category, sales agent, location, channel or month."
 )

@@ -320,13 +320,14 @@ DEFAULT_DOMAIN_ROWS: list[dict[str, Any]] = [
     # PLAN-prompt-dynamic-30sep D9 (owner, 30 Sep 2026: "better own sales domain otherwise
     # jumble up with order"). Paired with migration `pdyn_0001_status_words_sales`, which
     # appends the same row last (so here too) with the `order` row's narrowing copied.
-    # `tools[0]` is never the pick for a sales status: `run_fetch`'s three overrides are.
+    # `crm_report_ask` is `tools[0]` here (the one sales tool); every sales status settles its args in a `run_fetch`
+    # override, and `run_fetch` refuses to send the tool unsettled (REPORT-UNIFY R2).
     # R4b: `crm_top_selling_report` is on no row any more; this row gains `crm_report_ask`.
     dict(
         name="sales",
         label="sales",
         intents=["check_sales"],
-        # `crm_report_ask` is an allow-list member only, never `tools[0]` (R4b; migration `or_r4b_top_selling_off`).
+        # `crm_report_ask` is the row's only tool (R4b; migration `or_r4b_top_selling_off`); `run_fetch` settles its args.
         tools=["crm_report_ask"],
         escalation_team_code="customer_service",
         switch_words=["sales", "sales report", "top selling", "sales analysis", "best selling"],
