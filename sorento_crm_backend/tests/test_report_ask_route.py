@@ -72,7 +72,9 @@ DEALER_MESSAGE = "That breakdown is not available for your account."
 
 
 def _ask(client, contact, headers=KEY, **params):
-    q = {**PERIOD, **_as_contact(contact), **params}
+    # The order bases are what these tests rank; the route's own default is invoiced since
+    # SALES-UNIFIED (tests/test_sales_unified_tally.py covers it), so it is named here.
+    q = {**PERIOD, "basis": "delivered", **_as_contact(contact), **params}
     q = {k: v for k, v in q.items() if v is not None}
     return client.get(ROUTE, params=q, headers=headers)
 
@@ -433,7 +435,7 @@ def test_ac_re_11_no_group_by_and_no_top_n_is_the_number_shape(client, db):
     "params, code",
     [
         ({"group_by": "colour", "top_n": 3}, "unknown_group_by"),
-        ({"group_by": "product", "top_n": 3, "basis": "invoiced"}, "unknown_basis"),
+        ({"group_by": "product", "top_n": 3, "basis": "billed"}, "unknown_basis"),
         ({"group_by": "product", "top_n": 3, "measure": "profit"}, "unknown_measure"),
         ({"group_by": "product", "top_n": 3, "sort": "sideways"}, "unknown_sort"),
         ({"group_by": "product", "top_n": 0}, "top_n_out_of_range"),
@@ -905,7 +907,7 @@ def test_outstanding_works_with_a_total_and_a_filter(client, db):
 
 
 def test_outstanding_is_an_allowed_basis_in_the_unknown_basis_detail(client, db):
-    resp = _ask(client, _full(db), group_by="product", top_n=3, basis="invoiced")
+    resp = _ask(client, _full(db), group_by="product", top_n=3, basis="billed")
     assert resp.status_code == 422 and _code(resp) == "unknown_basis", resp.text
     assert "outstanding" in str(resp.json().get("detail")), resp.text
 
@@ -939,11 +941,12 @@ def test_the_default_basis_is_delivered_when_basis_is_omitted(client, db):
     assert body["basis"] == "delivered" and body["basis_label"] == "delivered sales", body
 
 
-def test_the_routes_declared_default_basis_is_delivered(client, db):
+def test_the_routes_declared_default_basis_is_invoiced(client, db):
+    # SALES-UNIFIED: sales has one definition; a caller naming no basis gets invoiced sales.
     spec = client.get("/openapi.json").json()
     params = spec["paths"][ROUTE]["get"]["parameters"]
     (basis,) = [p for p in params if p["name"] == "basis"]
-    assert basis["schema"].get("default") == "delivered", basis
+    assert basis["schema"].get("default") == "invoiced", basis
 
 
 # ================================================================ fix round 1 (REPORT-ENGINE)
@@ -1024,7 +1027,7 @@ def test_an_unknown_query_key_is_422_unknown_param(client, db):
     "params, code",
     [
         ({"group_by": "colour", "top_n": 3}, "unknown_group_by"),
-        ({"group_by": "product", "top_n": 3, "basis": "invoiced"}, "unknown_basis"),
+        ({"group_by": "product", "top_n": 3, "basis": "billed"}, "unknown_basis"),
         ({"group_by": "product", "top_n": 3, "measure": "profit"}, "unknown_measure"),
         ({"group_by": "product", "top_n": 3, "sort": "sideways"}, "unknown_sort"),
         ({"group_by": "product", "top_n": 3, "channel": "retail"}, "invalid_channel"),
