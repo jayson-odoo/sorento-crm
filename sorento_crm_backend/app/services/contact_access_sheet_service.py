@@ -56,6 +56,9 @@ TEMPLATE: dict[str, Any] = {
     "switches_off": ["escalation_allowed", "packing_list_allowed"],
 }
 COMPANY_ORDER = ("SRT", "MCH")
+#: A contact holding one of these companies keeps every brand: the import never narrows its
+#: brands, and a narrowed list goes back to every brand (owner 27 Oct, ACCESS-SHEET-FIXES).
+EVERY_BRAND_COMPANIES = ("MCH",)
 OWNER_WORDS = {"business owner": "owner", "employee": "employee"}
 CONTACT_COLUMNS = engine.CONTACT_COLUMNS + (
     RespondContact.brand_ids, RespondContact.chatbot_allowed, RespondContact.regions,
@@ -216,6 +219,11 @@ def _world(db: Session, used: set) -> dict:
         names[str(brand.id)] = brand.brand_name
     world["brands"] = {c: sorted(ids) for c, ids in by_company.items()}
     world["brand_names"] = names
+    # By code from the companies table, not the sheet's world: a contact may hold MCH already
+    # while the sheet tags SRT alone.
+    world["every_brand_company_ids"] = {
+        str(r[0]) for r in db.query(Company.id).filter(Company.code.in_(EVERY_BRAND_COMPANIES))
+    }
     return world
 
 
@@ -373,8 +381,13 @@ def _build_blocks(db: Session, rows: list[dict], rank: bool) -> list[dict]:
                 survives, held = flags.get(c["id"], ("Y", "N"))
                 if survives == "Y" and held == "N":
                     exact[c["id"]] = c
+        # Every exact account is listed, but only one of a company the rows tag is ticked: the
+        # rest would link to nobody (ACCESS-SHEET-FIXES, owner 27 Oct).
         accounts = [
-            _account(c, "exact", 1.0, c["is_active"], block["agents"].get(c["company_code"]))
+            _account(
+                c, "exact", 1.0, c["is_active"] and c["company_code"] in union,
+                block["agents"].get(c["company_code"]),
+            )
             for c in sorted(exact.values(), key=lambda c: (c["company_code"] or "", c["code"]))
         ]
         covered = {c["company_code"] for c in exact.values()}
@@ -461,7 +474,7 @@ def _shown_changes(changed: list[dict], snap, todo: dict, names: Names, world: d
     return out
 
 
-def _holds_more_items(snap, tpl: dict, names: Names, world: dict) -> list[dict]:
+def _holds_more_items(snap, tpl: dict, names: Names, world: dict, keeps_every_brand: bool = False) -> list[dict]:
     """Per facet, what the contact holds outside its template, by the labels the changes use."""
     company_code = {str(c.id): code for code, c in world["companies"].items()}
     warehouse_code = {str(w.id): w.warehouse_code for per in world["warehouses"].values() for w in per.values()}
@@ -472,7 +485,8 @@ def _holds_more_items(snap, tpl: dict, names: Names, world: dict) -> list[dict]:
          lambda i: company_code.get(i) or names.companies.get(i, (None, None))[0] or "other company"),
         ("stock_locations", held_locations - tpl["locations"],
          lambda i: warehouse_code.get(i) or names.warehouses.get(i) or "other location"),
-        ("brands", set(snap.brands) - tpl["brands"],
+        # A contact the engine leaves on (or returns to) every brand holds nothing extra there.
+        ("brands", set() if keeps_every_brand else set(snap.brands) - tpl["brands"],
          lambda i: world["brand_names"].get(i) or names.brands.get(i) or "other brand"),
     )
     return [{"facet": f, "items": sorted(label(i) for i in extra)} for f, extra, label in facets if extra]
@@ -564,7 +578,7 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
                         "after": sorted(customer_label.get(i, "other account") for i in after),
                     })
                 tpl = _template_sets(world, comps, row["tags"]["role"])
-                holds_more = _holds_more_items(snap, tpl, names, world)
+                holds_more = _holds_more_items(snap, tpl, names, world, bool(todo.get("keeps_every_brand")))
                 warnings = ["holds_more"] if holds_more else []
                 changed = [c for c in changes if c["changed"]]
                 entry.update(

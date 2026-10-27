@@ -550,6 +550,10 @@ export interface SpanExtractSpan {
   close?: number;
   residual?: boolean;
   candidates?: SpanExtractCandidate[];
+  /** The phrase in plain English, when the model gave one. */
+  meaning?: string | null;
+  /** Which form placed the phrase. */
+  matched_by?: 'meaning' | 'text';
 }
 
 /** The span pass of a turn; null/absent when the turn ran no span pass. */
@@ -562,6 +566,8 @@ export interface SpanExtract {
   provider: string | null;
   model: string | null;
   model_source: string | null;
+  /** The embedding model whose vectors placed the phrases; null on a spelling-only turn. */
+  embedding_model?: string | null;
   ms: number;
   tokens?: { prompt_tokens?: number; completion_tokens?: number; total_tokens?: number; cached_tokens?: number };
   /** Labels of the lookup rows the parser was shown. */

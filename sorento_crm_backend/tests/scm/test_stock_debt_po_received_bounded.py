@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 
-from sqlalchemy import event
+from sqlalchemy import event, text
 
 from tests.scm.conftest import requires_pg
 from tests.scm.test_goods_chain import _World
@@ -74,9 +74,15 @@ def _seed(db):
     )
 
 
-def test_batched_po_received_matches_the_single_key_read_past_one_chunk(scm_app):
+def test_batched_po_received_matches_the_single_key_read_past_one_chunk(
+    scm_app, monkeypatch
+):
+    from app.services import project_supply_service
     from app.services.project_supply_service import ProjectSupplyService
 
+    # The real chunk is now far larger than the seed; shrink it so the loop still spans
+    # several chunks and the chunked answer is proved equal to the single-key read.
+    monkeypatch.setattr(project_supply_service, "_REF_CHUNK", 2)
     db = scm_app[1]
     refs_by_product, pid, (first_ref, last_ref, oi_ref) = _seed(db)
     service = ProjectSupplyService(db)
@@ -94,12 +100,9 @@ def test_batched_po_received_matches_the_single_key_read_past_one_chunk(scm_app)
     assert landed.get(oi_ref) == Decimal("5")
 
 
-def test_batched_po_received_filters_the_spo_side_by_product_and_chunks_refs(scm_app):
+def _capture_reads(db, refs_by_product):
     from app.services.project_supply_service import ProjectSupplyService
 
-    db = scm_app[1]
-    refs_by_product, _pid, _refs = _seed(db)
-    all_refs = set().union(*map(set, refs_by_product.values()))
     seen = []
 
     def _capture(_conn, _cursor, statement, parameters, _context, _many):
@@ -111,6 +114,17 @@ def test_batched_po_received_filters_the_spo_side_by_product_and_chunks_refs(scm
         ProjectSupplyService(db)._po_received_by_product(refs_by_product)
     finally:
         event.remove(engine, "before_cursor_execute", _capture)
+    return seen
+
+
+def test_batched_po_received_filters_the_spo_side_by_product_and_reads_once(scm_app):
+    from app.services import project_supply_service
+
+    db = scm_app[1]
+    refs_by_product, _pid, _refs = _seed(db)
+    all_refs = set().union(*map(set, refs_by_product.values()))
+    assert len(all_refs) > 200, "the seed must be past the old chunk of 200"
+    seen = _capture_reads(db, refs_by_product)
 
     def ref_params(parameters):
         values = parameters.values() if isinstance(parameters, dict) else parameters
@@ -118,8 +132,77 @@ def test_batched_po_received_filters_the_spo_side_by_product_and_chunks_refs(scm
 
     po_reads = [(s, p) for s, p in seen if "FROM purchase_order_lines" in s]
     oi_reads = [(s, p) for s, p in seen if "order_inquiry_links ON" in s]
-    assert len(po_reads) >= 2 and len(oi_reads) >= 2, "refs past one chunk ask in chunks"
+    assert len(po_reads) == 1, f"{len(po_reads)} PO-received reads, want one"
+    assert len(oi_reads) == 1, f"{len(oi_reads)} placement reads, want one"
+    assert project_supply_service._REF_CHUNK >= 10000
     for statement, parameters in po_reads + oi_reads:
-        assert ref_params(parameters) <= 200, statement
+        assert ref_params(parameters) <= project_supply_service._REF_CHUNK, statement
     for statement, _parameters in po_reads:
         assert "spo_allocations.product_id IN" in statement, statement
+
+
+def test_po_received_reads_run_without_parallel_workers(scm_app):
+    """The /dev/shm guard: parallel hash joins use /dev/shm, so the two reads run with
+    `max_parallel_workers_per_gather = 0`, and the session's own value is back afterwards."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    db = scm_app[1]
+    refs_by_product, _pid, _refs = _seed(db)
+    db.execute(text("SET LOCAL max_parallel_workers_per_gather = 2"))
+    query = "select current_setting('max_parallel_workers_per_gather')"
+    assert db.execute(text(query)).scalar() == "2"
+    captured = []
+    busy = {"on": False}
+
+    def _probe(_conn, cursor, statement, _parameters, _context, _many):
+        if busy["on"] or not (
+            "FROM purchase_order_lines" in statement or "order_inquiry_links ON" in statement
+        ):
+            return
+        busy["on"] = True
+        try:
+            side = cursor.connection.cursor()
+            side.execute(query)
+            captured.append(side.fetchone()[0])
+            side.close()
+        finally:
+            busy["on"] = False
+
+    engine = db.get_bind()
+    event.listen(engine, "before_cursor_execute", _probe)
+    try:
+        ProjectSupplyService(db)._po_received_by_product(refs_by_product)
+    finally:
+        event.remove(engine, "before_cursor_execute", _probe)
+
+    assert captured, "neither read ran"
+    assert set(captured) == {"0"}, captured
+    assert db.execute(text(query)).scalar() == "2", "the previous value was not restored"
+
+
+def test_a_failed_read_surfaces_its_own_error(scm_app, monkeypatch):
+    """A statement that fails inside the no-parallel window must reach the caller as its own
+    database error, not as InFailedSqlTransaction from the restore running on the aborted
+    transaction."""
+    import pytest
+    from sqlalchemy.exc import DBAPIError
+
+    from app.services.project_supply_service import ProjectSupplyService
+
+    db = scm_app[1]
+    refs_by_product, _pid, _refs = _seed(db)
+
+    def _boom(self, *_a, **_k):
+        db.execute(text("select 1/0"))
+
+    monkeypatch.setattr(ProjectSupplyService, "_oi_placements", _boom)
+    nested = db.begin_nested()
+    try:
+        with pytest.raises(DBAPIError) as caught:
+            ProjectSupplyService(db)._po_received_by_product(refs_by_product)
+        assert type(caught.value.orig).__name__ == "DivisionByZero", repr(caught.value.orig)
+    finally:
+        if nested.is_active:
+            nested.rollback()
+        else:
+            db.rollback()

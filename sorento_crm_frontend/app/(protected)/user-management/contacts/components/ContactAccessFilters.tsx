@@ -8,11 +8,9 @@ import {
 } from '@/components/common/SearchableSelect';
 import { Button } from '@/components/ui/button';
 import { useContactAccessTypes } from '../../contact-access-types/hooks/useContactAccessTypes';
-import {
-  getCustomer,
-  searchCustomersSelect,
-} from '@/app/(protected)/order-management/customers/services/customerService';
+import { searchCustomersSelect } from '@/app/(protected)/order-management/customers/services/customerService';
 import { getContact, getContacts } from '../[id]/services/contactService';
+import { customerFilterLabel, customerFilterLabelKey } from '../lib/customerFilterLabel';
 import { PACKING_LIST_REGION_OPTIONS } from '@/lib/packing-list-regions';
 import type { ContactAccessFilters as Filters } from '../lib/listQuery';
 
@@ -55,11 +53,8 @@ export default function ContactAccessFilters({ value, onChange, hideClear = fals
 
   // Label read-back for an id restored from the URL.
   const customerLabel = useQuery({
-    queryKey: ['contact-filter-customer-label', value.customerId],
-    queryFn: async () => {
-      const c = await getCustomer(value.customerId as string);
-      return `${c.customer_code} - ${c.customer_name}`;
-    },
+    queryKey: customerFilterLabelKey(value.customerId),
+    queryFn: () => customerFilterLabel(value.customerId as string),
     enabled: !!value.customerId && customerOption?.value !== value.customerId,
     staleTime: Infinity,
     retry: 0,
@@ -74,7 +69,11 @@ export default function ContactAccessFilters({ value, onChange, hideClear = fals
 
   const fetchCustomers = useCallback(
     async (query: string) =>
-      (await searchCustomersSelect(query, 0)).map((o) => ({ value: o.value, label: o.label })),
+      // Every granted company, each option tagged with its company (codes repeat across them).
+      (await searchCustomersSelect(query, 0, { companyScope: 'grants' })).map((o) => ({
+        value: o.value,
+        label: o.label,
+      })),
     [],
   );
   const fetchContacts = useCallback(async (query: string) => {
