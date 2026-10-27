@@ -21,7 +21,7 @@ index missing. The retry is `scripts/ensure_goods_chain_indexes.py`, run in the 
 `start.sh` on every backend start. All of it lives in `app/utils/online_index.py`.
 
 Revision ID: gc_idx_0001_spo_from_po_key
-Revises: eem_0002_span_version_on_diet
+Revises: akc_0001_removed_unreferenced
 """
 from __future__ import annotations
 
@@ -31,7 +31,7 @@ from alembic import op
 from app.utils.online_index import GOODS_CHAIN_KEY_INDEXES, ensure_indexes_online
 
 revision = "gc_idx_0001_spo_from_po_key"
-down_revision = "eem_0002_span_version_on_diet"
+down_revision = "akc_0001_removed_unreferenced"
 branch_labels = None
 depends_on = None
 
