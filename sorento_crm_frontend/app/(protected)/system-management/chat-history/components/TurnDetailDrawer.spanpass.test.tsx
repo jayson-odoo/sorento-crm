@@ -86,7 +86,7 @@ describe('TurnDetailDrawer Span pass section', () => {
               status: 'ambiguous',
               close: 2,
               residual: true,
-              candidates: [{ list: 'spec', label: 'Finish: French Gold', score: 0.9, signal: 'spell' }],
+              candidates: [{ list: 'spec', label: 'Finish: French Gold', score: 0.857, signal: 'spell' }],
             },
             { text: 'ZZT brand', type: 'brand', status: 'exact', close: 1, residual: false },
           ],
@@ -100,7 +100,7 @@ describe('TurnDetailDrawer Span pass section', () => {
           ms: 120,
           tokens: { prompt_tokens: 11, completion_tokens: 7, total_tokens: 18, cached_tokens: 0 },
           matched_rows: ['Finish: French Gold'],
-          near_exact: [{ list: 'brand', label: 'ZZALFA', spelling: 1, source: 'near_exact' }],
+          near_exact: [{ list: 'brand', label: 'ZZALFA', spelling: 0.9, source: 'near_exact' }],
           final_block: {
             spec: [{ label: 'Finish: French Gold', source: 'span' }],
             brand: [{ label: 'ZZALFA', source: 'near_exact' }],
@@ -118,6 +118,8 @@ describe('TurnDetailDrawer Span pass section', () => {
     expect(body).toHaveTextContent('residual');
     expect(body).toHaveTextContent('Finish: French Gold');
     expect(body).toHaveTextContent('spell');
+    expect(screen.getByTestId('span-candidates')).toHaveTextContent('0.86');
+    expect(screen.getByTestId('near-exact-label')).toHaveTextContent('0.90');
     expect(body).toHaveTextContent('Added from the message spelling');
     expect(body).toHaveTextContent('ZZALFA');
     expect(screen.getByTestId('near-exact-label').className).not.toMatch(/\bh-5\b/);
