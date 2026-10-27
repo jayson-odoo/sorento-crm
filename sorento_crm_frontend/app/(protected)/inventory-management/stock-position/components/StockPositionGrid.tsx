@@ -18,6 +18,7 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
+import { Skeleton } from '@/components/ui/skeleton';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
@@ -26,7 +27,7 @@ import { getSuppliersSelect } from '@/services/supplierSelectService';
 import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import { useStockPosition } from '../hooks/useStockPosition';
 import { exportStockPosition } from '../services/stockPositionService';
-import type { SalesBasis, StockPositionRow } from '../services/stockPosition.types';
+import type { StockPositionRow } from '../services/stockPosition.types';
 
 const QTY = new Intl.NumberFormat('en-MY', { maximumFractionDigits: 0 });
 
@@ -49,11 +50,6 @@ export const FIGURE_COLUMNS: { id: keyof StockPositionRow; title: string; size: 
   { id: 'highest_month', title: 'Highest / month', size: 140 },
 ];
 
-const SALES_BASIS_OPTIONS: { value: SalesBasis; label: string }[] = [
-  { value: 'so_ordered', label: 'Sales orders (ordered)' },
-  { value: 'invoiced', label: 'Invoiced' },
-];
-
 /** A row opens Stock status for its item, with its documents behind every figure. */
 const stockStatusHref = (row: StockPositionRow) => `/inventory-management/stock-status?product_id=${row.product_id}`;
 
@@ -73,7 +69,6 @@ export default function StockPositionGrid() {
   const [supplier, setSupplier] = useState<{ value: string; label: string } | null>(null);
   const [brandId, setBrandId] = useState('');
   const [warehouseId, setWarehouseId] = useState('');
-  const [salesBasis, setSalesBasis] = useState<SalesBasis>('so_ordered');
   const [exporting, setExporting] = useState(false);
 
   const { data: brands } = useBrandSelectQuery();
@@ -82,7 +77,6 @@ export default function StockPositionGrid() {
     supplierId: supplier?.value,
     brandId: brandId || undefined,
     warehouseId: warehouseId || undefined,
-    salesBasis,
   };
   const params = { pageIndex: pagination.pageIndex, pageSize: pagination.pageSize, sorting, searchQuery };
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useStockPosition(params, filters);
@@ -177,18 +171,45 @@ export default function StockPositionGrid() {
   });
 
   const resetPage = () => setPagination((p) => ({ ...p, pageIndex: 0 }));
-  const activeCount = (supplier ? 1 : 0) + (brandId ? 1 : 0) + (warehouseId ? 1 : 0) + (salesBasis !== 'so_ordered' ? 1 : 0);
+  const activeCount = (supplier ? 1 : 0) + (brandId ? 1 : 0) + (warehouseId ? 1 : 0);
 
   const onExport = async () => {
     setExporting(true);
     try {
-      await exportStockPosition(params, filters);
+      // The warehouse columns the user shows (Columns chooser, owner ruling Q5), in the export too.
+      const shownWarehouses = table
+        .getAllLeafColumns()
+        .filter((c) => c.id.startsWith('wh:') && c.getIsVisible())
+        .map((c) => c.id.slice(3));
+      await exportStockPosition(params, filters, shownWarehouses);
     } catch (e) {
       toast.error(e instanceof Error ? e.message : 'Failed to export the stock position');
     } finally {
       setExporting(false);
     }
   };
+
+  // The grid mounts once the warehouse columns are known: the saved column choices (which
+  // warehouses show, owner ruling Q5) are applied once, at mount, to the columns that exist then.
+  if (!data) {
+    return error ? (
+      <Card>
+        <CardHeader className="flex flex-col items-start gap-2">
+          <span className="text-sm font-medium">The stock position could not be loaded</span>
+          <Button variant="outline" size="sm" onClick={() => void refetch()}>
+            Retry
+          </Button>
+        </CardHeader>
+      </Card>
+    ) : (
+      <Card>
+        <CardHeader className="space-y-3">
+          <Skeleton className="h-8 w-64" />
+          <Skeleton className="h-64 w-full" />
+        </CardHeader>
+      </Card>
+    );
+  }
 
   return (
     <DataGrid
@@ -200,8 +221,8 @@ export default function StockPositionGrid() {
       isPlaceholderData={isPlaceholderData}
       rowHref={stockStatusHref}
       standardToolbar={false}
-      // The warehouse columns are data: a saved column order would name columns that come and go.
-      listingKey={null}
+      // Column choices are saved per user (owner ruling Q5: the user picks which warehouses show);
+      // the page path is the listing key.
       tableLayout={{ width: 'fixed', columnsResizable: true, columnsVisibility: true, columnsPinnable: true }}
       emptyMessage={
         <div className="flex w-full flex-col items-center gap-1 py-6">
@@ -277,18 +298,6 @@ export default function StockPositionGrid() {
                       triggerClassName="mt-1"
                     />
                   </div>
-                  <div>
-                    <Label>Monthly sales from</Label>
-                    <SearchableSelect
-                      value={salesBasis}
-                      onChange={(v) => {
-                        setSalesBasis((v as SalesBasis) || 'so_ordered');
-                        resetPage();
-                      }}
-                      options={SALES_BASIS_OPTIONS}
-                      triggerClassName="mt-1"
-                    />
-                  </div>
                   {activeCount > 0 && (
                     <div className="flex justify-end">
                       <Button
@@ -298,7 +307,6 @@ export default function StockPositionGrid() {
                           setSupplier(null);
                           setBrandId('');
                           setWarehouseId('');
-                          setSalesBasis('so_ordered');
                           resetPage();
                         }}
                       >

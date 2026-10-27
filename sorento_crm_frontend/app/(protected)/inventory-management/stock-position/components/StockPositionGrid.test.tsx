@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 class ResizeObserverStub {
@@ -20,9 +20,10 @@ vi.mock('next/navigation', () => ({
   useRouter: () => ({ push: vi.fn() }),
   useSearchParams: () => new URLSearchParams(),
 }));
-vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
-  useListingColumnPreferences: () => ({ resetToDefaults: async () => {}, isLoading: false }),
-}));
+const prefs = vi.hoisted(() => ({ useListingColumnPreferences: vi.fn() }));
+vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => prefs);
+const exporter = vi.hoisted(() => ({ exportStockPosition: vi.fn(async () => {}) }));
+vi.mock('../services/stockPositionService', () => exporter);
 vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query', () => ({
   useBrandSelectQuery: () => ({ data: [] }),
 }));
@@ -63,7 +64,6 @@ function withRows(rows: StockPositionRow[], codes = ['BRW', 'DC1']) {
     data: {
       data: rows,
       warehouses: codes.map((code) => ({ id: `w-${code}`, code })),
-      sales_basis: 'so_ordered',
       pagination: { page: 1, limit: 50, total: rows.length, total_pages: 1 },
     },
     isLoading: false,
@@ -82,7 +82,12 @@ function renderGrid() {
   );
 }
 
-beforeEach(() => hook.useStockPosition.mockReset());
+beforeEach(() => {
+  hook.useStockPosition.mockReset();
+  exporter.exportStockPosition.mockClear();
+  prefs.useListingColumnPreferences.mockReset();
+  prefs.useListingColumnPreferences.mockReturnValue({ resetToDefaults: async () => {}, isLoading: false });
+});
 
 describe('StockPositionGrid', () => {
   it('heads each warehouse column with its code alone, in the order the server lists them', () => {
@@ -124,6 +129,48 @@ describe('StockPositionGrid', () => {
     withRows([]);
     renderGrid();
     expect(screen.getByText('No items to show')).toBeTruthy();
+  });
+});
+
+describe('StockPositionGrid: the user picks which warehouses show (owner ruling Q5)', () => {
+  it('saves column choices per user under the page, and mounts only once the warehouse columns are known', () => {
+    hook.useStockPosition.mockReturnValue({
+      data: undefined, isLoading: true, isFetching: true, isPlaceholderData: false, error: null, refetch: vi.fn(),
+    });
+    const { rerender } = renderGrid();
+    expect(prefs.useListingColumnPreferences).not.toHaveBeenCalled();
+    expect(screen.queryAllByRole('columnheader')).toHaveLength(0);
+
+    withRows([row()], ['BRW', 'DC1']);
+    rerender(
+      <QueryClientProvider client={new QueryClient()}>
+        <StockPositionGrid />
+      </QueryClientProvider>,
+    );
+    const call = prefs.useListingColumnPreferences.mock.calls[0][0] as {
+      listingKey: string | null;
+      table: { getAllLeafColumns: () => { id: string }[] };
+    };
+    expect(call.listingKey).toBe('/inventory-management/stock-position');
+    expect(call.table.getAllLeafColumns().map((c) => c.id)).toEqual(
+      expect.arrayContaining(['wh:BRW', 'wh:DC1']),
+    );
+  });
+
+  it('a hidden warehouse column leaves the grid and the export', async () => {
+    withRows([row()], ['BRW', 'DC1']);
+    renderGrid();
+    const call = prefs.useListingColumnPreferences.mock.calls.at(-1)![0] as {
+      table: { getColumn: (id: string) => { toggleVisibility: (v: boolean) => void } };
+    };
+    await act(async () => call.table.getColumn('wh:DC1').toggleVisibility(false));
+    const headers = screen.getAllByRole('columnheader').map((h) => h.textContent?.trim());
+    expect(headers).toContain('BRW');
+    expect(headers).not.toContain('DC1');
+
+    fireEvent.click(screen.getByText('Export to Excel'));
+    await waitFor(() => expect(exporter.exportStockPosition).toHaveBeenCalled());
+    expect(exporter.exportStockPosition.mock.calls[0][2]).toEqual(['BRW']);
   });
 });
 

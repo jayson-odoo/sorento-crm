@@ -60,13 +60,14 @@ def export_stock_position(
     brand_id: Optional[List[str]] = Query(None),
     warehouse_id: Optional[List[str]] = Query(None),
     sales_basis: str = Query("so_ordered"),
+    wh: Optional[List[str]] = Query(None, description="The warehouse columns shown, by code; all when absent."),
     _user: dict = Depends(require_any_permission_with_api_key(READ_PERMISSIONS)),
     db: Session = Depends(get_db),
 ):
     """Every row of the same filtered, sorted set, as an Excel workbook."""
     result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir, sales_basis)
     return Response(
-        content=svc.workbook(result),
+        content=svc.workbook(result, wh),
         media_type=_XLSX,
         headers={"Content-Disposition": 'attachment; filename="stock-position.xlsx"'},
     )

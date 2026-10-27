@@ -14,6 +14,7 @@ once rather than one, so the panel and this report cannot disagree:
 * **Packing list not on an SPO**: the panel's `counted` figure (rule R3), kept out of both totals.
 * **Outstanding dealer**: the panel's SO rule (`so_outstanding_clauses`) on non-project orders,
   printed negative as the sheet does (owed, Q2). **Outstanding PO**: `po_outstanding_clauses`.
+* **Supplier**: the last PO's supplier (`scm/last_po_supplier.py`, Q4).
 * **Monthly sales / Highest per month**: the loading plan's 12-full-month series (`_series`)
   over the chosen basis (`SALES_BASES`, Q3).
 
@@ -34,10 +35,11 @@ from sqlalchemy.orm import Session
 from app.models.finance import CREDIT_NOTE, DOCUMENT_TYPES, POSTED, BillingDocument, BillingDocumentLine
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
-from app.models.procurement import ProductSupplier, PurchaseOrder, PurchaseOrderLine, Supplier
+from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Brand, Product
 from app.services.error_handler import AppException
 from app.services.scm.container_request_service import _series, history_window, ordered_qty_by_month
+from app.services.scm import last_po_supplier
 from app.services.scm.pool_predicate import PROJECT_SEGMENT, is_site_pool
 from app.services.scm.supplier_scope import is_uuid
 from app.services.stock_status_service import (
@@ -105,24 +107,6 @@ def _monthly_sales(db: Session, basis: str, as_of: Optional[date]) -> dict[str, 
             sign = -1.0 if r.document_type == CREDIT_NOTE else 1.0
             by_product[str(r.product_id)][r.month] += sign * _num(r.qty)
     return {pid: _series(buckets, months) for pid, months in by_product.items()}
-
-
-def _supplier_by_product(db: Session) -> dict[str, str]:
-    """Q4: the primary supplier; else the only one linked; else none (two or more, none primary)."""
-    links: dict[str, list[tuple[str, bool]]] = defaultdict(list)
-    for pid, sid, primary in db.query(
-        ProductSupplier.product_id, ProductSupplier.supplier_id, ProductSupplier.is_primary_supplier
-    ).all():
-        links[str(pid)].append((str(sid), bool(primary)))
-    out: dict[str, str] = {}
-    for pid, items in links.items():
-        primary = [sid for sid, is_primary in items if is_primary]
-        distinct = {sid for sid, _ in items}
-        if primary:
-            out[pid] = sorted(primary)[0]
-        elif len(distinct) == 1:
-            out[pid] = next(iter(distinct))
-    return out
 
 
 def _grouped(query) -> dict[tuple[str, str], float]:
@@ -208,7 +192,8 @@ def build_rows(db: Session, *, sales_basis: str = "so_ordered", as_of: Optional[
         .all()
     } if figures else {}
     brands = dict(db.query(Brand.id, Brand.brand_name).all()) if products else {}
-    supplier_of = _supplier_by_product(db) if products else {}
+    # Q4 (owner ruling 27 Oct): the LAST PO's supplier, the one rule the low stock report reads.
+    supplier_of = last_po_supplier.last_po_supplier_ids(db, None) if products else {}
     suppliers = {
         str(s.id): s for s in db.query(Supplier.id, Supplier.supplier_code, Supplier.supplier_name).all()
     } if supplier_of else {}
@@ -324,11 +309,18 @@ def page(result: dict, page_no: int, limit: int) -> dict:
     }
 
 
-def workbook(result: dict) -> bytes:
-    """Every row of a `stock_position` result as one sheet, headed as the screen is."""
+def workbook(result: dict, warehouse_codes: Optional[list[str]] = None) -> bytes:
+    """Every row of a `stock_position` result as one sheet, headed as the screen is.
+
+    `warehouse_codes`: the warehouse columns the user shows (Q5, the grid's Columns chooser),
+    written in the report's own order; None writes them all. The totals are not recomputed:
+    hiding a column hides it, it does not take that warehouse out of Total stock."""
     from openpyxl import Workbook
 
     codes = [c["code"] for c in result["warehouses"]]
+    if warehouse_codes is not None:
+        shown = set(warehouse_codes)
+        codes = [code for code in codes if code in shown]
     wb = Workbook()
     ws = wb.active
     ws.title = "Stock position"

@@ -17,11 +17,11 @@ beforeEach(() => {
 describe('stockPositionService', () => {
   it('sends the DataGrid params and only the filters that are set', async () => {
     api.apiFetch.mockResolvedValue(new Response(JSON.stringify({ data: [] }), { status: 200 }));
-    await getStockPosition(params, { supplierId: 's1', salesBasis: 'invoiced' });
+    await getStockPosition(params, { supplierId: 's1' });
     const url = new URL(api.apiFetch.mock.calls[0][0], 'http://x');
     expect(url.pathname).toBe('/api/v1/inventory/stock-position');
     expect(Object.fromEntries(url.searchParams)).toEqual({
-      page: '2', limit: '25', sort: 'wh:BRW', dir: 'desc', query: 'cwc', supplier_id: 's1', sales_basis: 'invoiced',
+      page: '2', limit: '25', sort: 'wh:BRW', dir: 'desc', query: 'cwc', supplier_id: 's1',
     });
   });
 
@@ -34,6 +34,15 @@ describe('stockPositionService', () => {
     expect(url.searchParams.get('limit')).toBeNull();
     expect(url.searchParams.get('brand_id')).toBe('b1');
     expect(blob.saveBlobAs).toHaveBeenCalledWith(expect.anything(), 'stock-position.xlsx');
+  });
+
+  it('exports only the warehouse columns the user shows; none shown is an empty code, not all', async () => {
+    api.apiFetch.mockResolvedValue(new Response('xlsx', { status: 200 }));
+    await exportStockPosition(params, {}, ['BRW', 'DC1']);
+    expect(new URL(api.apiFetch.mock.calls[0][0], 'http://x').searchParams.getAll('wh')).toEqual(['BRW', 'DC1']);
+    api.apiFetch.mockResolvedValue(new Response('xlsx', { status: 200 }));
+    await exportStockPosition(params, {}, []);
+    expect(new URL(api.apiFetch.mock.calls[1][0], 'http://x').searchParams.getAll('wh')).toEqual(['']);
   });
 
   it('throws the server message on a failed read', async () => {

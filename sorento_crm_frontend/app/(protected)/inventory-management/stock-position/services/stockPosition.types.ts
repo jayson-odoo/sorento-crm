@@ -1,6 +1,4 @@
 /** `GET /api/v1/inventory/stock-position` (PLAN-stock-position-report-27oct). */
-export type SalesBasis = 'so_ordered' | 'invoiced';
-
 export interface StockPositionRow {
   product_id: string;
   item_code: string;
@@ -28,7 +26,6 @@ export interface StockPositionResponse {
   data: StockPositionRow[];
   /** The warehouse columns: active site-pool warehouses holding stock, by code. */
   warehouses: { id: string; code: string }[];
-  sales_basis: SalesBasis;
   pagination: { page: number; limit: number; total: number; total_pages: number };
 }
 
@@ -36,5 +33,4 @@ export interface StockPositionFilters {
   supplierId?: string;
   brandId?: string;
   warehouseId?: string;
-  salesBasis?: SalesBasis;
 }

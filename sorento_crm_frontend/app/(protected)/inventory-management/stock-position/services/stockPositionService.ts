@@ -10,7 +10,6 @@ function filterParams(filters: StockPositionFilters) {
     supplier_id: filters.supplierId,
     brand_id: filters.brandId,
     warehouse_id: filters.warehouseId,
-    sales_basis: filters.salesBasis,
   };
 }
 
@@ -25,14 +24,22 @@ export async function getStockPosition(
   return response.json();
 }
 
-/** Every row of the same filtered, sorted set, as the server's Excel workbook. */
+/**
+ * Every row of the same filtered, sorted set, as the server's Excel workbook, with the warehouse
+ * columns the user shows (`warehouseCodes`; every one when omitted).
+ */
 export async function exportStockPosition(
   params: DataGridParamsInput,
   filters: StockPositionFilters,
+  warehouseCodes?: string[],
 ): Promise<void> {
   const search = buildDataGridParams(params, filterParams(filters));
   search.delete('page');
   search.delete('limit');
+  if (warehouseCodes) {
+    // Every warehouse hidden is "none", not "all": an empty code matches no column.
+    for (const code of warehouseCodes.length ? warehouseCodes : ['']) search.append('wh', code);
+  }
   const response = await apiFetch(`${BASE}/export?${search.toString()}`);
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to export the stock position'));
   saveBlobAs(await response.blob(), 'stock-position.xlsx');
