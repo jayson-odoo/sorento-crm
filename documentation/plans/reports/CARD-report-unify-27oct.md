@@ -79,22 +79,52 @@ Where the engine itself falls short, the gaps all sit at the chatbot's edge:
 
 ## 3. Messages and what they answer after the change
 
-The owner's hand-test messages from #1917 are paraphrased from the crew trace. Verbatim text was requested from crew
-(crew-note on #1922) and replaces these on arrival.
+The owner's hand-test messages from #1917 (27 Oct ~18:35-18:45) are verbatim, from the crew trace. Customer names are
+left out.
 
-| # | Ask | Today | After |
+| # | Ask (verbatim) | Today (v132) | Loss point | After |
+|---|---|---|---|---|
+| H1 | "p trap only" (after a SORENTO WC top-100), then "top 100 hot selling sorento p trap wc in 2026, by delivered qty" | The first gets the same WC list, with "p trap" not applied. The second gets "That would search every sales order we have - I need at least one filter...", although brand + category + year were all given. | The parser emitted `trap_type=p_trap`. The engine has no spec filter, so the spec fell to the generic gate (`chatbot/lanes/business/gate.py:540-545`). That reply replaced the fetched ranking (`answer.py:3364-3473`). | The spec resolves to the P-trap WC set (`resolve_product_set`) and the ranking runs over it: "Top 100 of N products by delivered sales / Brand: SORENTO / Category: WC, Water Closet / Spec: P-trap / Period: 2026". |
+| H2 | "top 100 hot selling mch watr tap in 2026, by delivered qty" | "I don't know 'mch' as a brand." | The span pass matched MOCHA (0.80). The parser sent `{raw:"mch", hint:"brand", canonical_code:"MOCHA"}`. `take_words` keeps the canonical only for category (`report_ask.py:475-477`), and `resolve_brand_token` fails on "mch". | Brand bound to the MOCHA row by id, category Tap. Header "Brand: MOCHA / Category: Tap ...". |
+| H3 | "sales agent yu sales for SRTSP231 in 2026" | "Which one do you mean?" with two **customers** | The span pass typed "yu" as a salesperson. The parser sent `hint:"sales_agent"`, order_status `sales_report`. Only `sales_ranking` moves agent words off the entity list (`report_ask.py:466`), so the generic resolver matched a customer. | Agent candidates come from the span pass, bound by id. If several agents match, the bot asks "Which sales agent?" (agents only, never customers). Then one total, headed "Sales agent: ... / Product: SRTSP231 / Period: 2026". |
+| H4 | "sales agent yu total sale for SRTSP231 in 2026" | "Customer: all / Product: SRTSP231 / Delivery date: 2026 / Total: Qty 97, RM 14,797.53": the agent is **silently dropped**, so the figure covers all agents | "yu" landed in `person_mention`. `crm_sales_report` has no agent filter (`lanes/business/fetch.py:1086-1155`). | The same engine call as H3, so H3 and H4 give the same number. |
+
+Side finds from the trace, folded into slice 3:
+- The salesperson candidate list is capped at 5 (`chatbot/head/lookup_lists.py:55`). "YU - III" was matched but never handed over.
+- "YMH I/III/IV" scored "exact 1.00" for "yu".
+### Real prod turns, 27 Sep-27 Oct
+
+These come from the crew chat connector. Askers are staff. Customer and agent names are placeholders, and turn ids
+are kept so the eval can replay them. Some turns ran on older parser versions (v42-v63), so each one is replayed
+on this lane's head; the "After" column is the required answer, not a claim about today.
+
+| # | Ask | Bot then | After (one `run_ask` call) |
 |---|---|---|---|
-| H1 | sales of "mch" (MOCHA) items, period given | "mch" unknown: brand words are re-matched raw, only category keeps its canonical (`report_ask.py:475-477`) | span pass binds brand MOCHA by row id; `run_ask` brand = MOCHA; header "Brand: MOCHA" |
-| H2 | "sales agent \<name\> sales this year" | name resolves as a **customer pick** (type-locked re-resolution) | agent bound by row id; `run_ask(filters={sales_agent})`, no grouping = one total; header "Sales agent: \<name\>" |
-| H3 | total for an agent + another filter | agent **silently dropped** (`crm_sales_report` has no agent param) | same engine call with both filters; a filter it truly cannot apply prints a "Not applied:" line |
-| H4 | top selling "p trap" WC | spec ignored / "need a filter" | spec -> product set via `resolve_product_set`; ranking over that set; header "Spec: P-trap" |
-| R1 | "outstanding for customer X" | `crm_outstanding_report`, qty only, SO/DO blocks | `run_ask(basis=outstanding, customer)`, qty + RM, by product (Q2 decides the DO half) |
-| R2 | "outstanding for agent X by customer" | not answerable (no agent filter on the outstanding tool) | `run_ask(basis=outstanding, sales_agent, group_by=customer)` |
-| R3 | "who bought the most of code Y" | ranking OK today | unchanged path; the same number as "sales of Y by customer" because both are one call |
-| R4 | "sales by month for brand Z" | `crm_sales_analysis` cannot filter brand | `run_ask(group_by=month, brand)` |
-| R5 | "sales by trap type for WC" | not answerable | `run_ask(group_by=spec:trap, category=WC)` |
+| P1 OK | "Sales agent \<agent S\> Sorento top 10 hot sale water closet" (73b2380f) | Correct ranking, agent + brand + category | unchanged |
+| P2 | "Sale agent wt sorento top 10 ceramic product sale on September" (37dc441a) | Agent and category silently "all" | agent WT (bound by id) + brand SORENTO + category Ceramic, Sept; or a "Not applied: Category ceramic (no such category)" line if none binds |
+| P3 | "我们哪一位业务员卖得最多srtwc286-SH" (2f6fafdc) | The product was lost, Dealer channel added, top items listed | `group_by=sales_agent, product=SRTWC286-SH`, after the one question (period + measure + basis) |
+| P4 | "让我知道每个业务员卖了多少个Srtwc286-sh-New 在9 月按业务员" (fa1cf2c8) | The earlier turn's products were used and no agent grouping offered | `group_by=sales_agent, product=SRTWC286-SH-NEW`, Sept. A named product replaces the carried one. |
+| P5 | "Dealer \<Customer B\> oct total sales" (a818d893) | After the account pick: "I can't break sales down by customer yet" | customer filter (the picked account), Oct, total |
+| P6 | "Total quantity sale for Sorento brand kitchen sink on September 2026" (fd59e30c; same shape 96e4cded "water closet") | 32-customer pick: the category word was matched against customer names | brand SORENTO + category Kitchen Sink (bound from the span pass as a category, never as a customer), qty total |
+| P7 | "\<Customer C\> any outstanding mocha item in sales order" (6c72d194) | The brand was dropped and every DO product dumped ("I could not find mocha") | `basis=outstanding, customer, brand=MOCHA`, by product |
+| P8 | "SRTWC 8518-SH-250mm got outstanding?" (45622f08) | Ran for a customer the message never named; spec unresolved | product family SRTWC8518-SH + spec length 250 mm, resolved to a product set; `basis=outstanding`; no customer. With no 250 mm member, it says so and lists the family's lengths. |
+| P9 | "Total sale for all sale agents on September 2026" (4a8adfc7) | "I can't break sales down by sales_agent yet" | `group_by=sales_agent`, Sept, all agents |
+| P10 | "Who is the top sale dealer selling Srtwc286-SH-new" (67aa1cc5) | Top items instead of top dealers; product dropped | `group_by=customer, channel=Dealer, product=SRTWC286-SH-NEW` |
+| P11 | "Sale Agent \<agent W\> top 5 dealer a/c 3 1/1/26-30/9/26" (21b1f1b2) | The account-number qualifier "a/c 3" was dropped with no note | Answered with a "Not applied: a/c 3 (no account filter)" line, unless Q4 says ask |
+| P12 OK | "Can let me know dealers outstanding for srtub206" (91ab328a) | Correct, by customer | `basis=outstanding, product, group_by=customer`, now with RM |
 
-R1-R5 stand in for real prod turns until crew returns them (requested on #1922).
+The pattern across the owner's and the prod turns has four parts:
+- filters (agent, category, account no., brand, spec) are dropped or re-typed with no note;
+- customer and agent group-bys are refused, because they hit `crm_sales_analysis` / `crm_sales_report`;
+- category words leak into customer matching;
+- an earlier subject's products carry over a newly named one.
+
+All four come from the same two causes. Each sales tool takes only some filter kinds, and the span pass's typed,
+row-bound matches are only advice.
+
+**Eval set for the lane:** the 4 owner messages, P1-P12, and the parser gold set. On the lane's head, each is
+replayed against a seeded fixture (no prod data). It passes when the header carries every named filter, or a
+"Not applied" line for it, and the grouping is the one asked.
 
 ## 4. Edge cases
 
