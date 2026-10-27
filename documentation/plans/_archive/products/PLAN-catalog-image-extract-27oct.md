@@ -1,6 +1,6 @@
 # PLAN: Catalogue image extraction (CATALOG-IMAGES)
 
-Status: Build (mock v2 approved 27 Oct 19:19). Track: full.
+Status: Merged 28 Oct 2026 (#1923, 71a43b3ba1; owner hand test PASS 27 Oct). Track: full.
 Lane moved local 27 Oct (CATALOG-IMAGES-L, same PR #1923, branch claude/catalog-images-9kwphh).
 Track: full (new upload/ingest surface, migration for the extraction rows, master-data writes).
 
