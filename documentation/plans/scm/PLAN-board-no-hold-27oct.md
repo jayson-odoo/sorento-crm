@@ -1,6 +1,6 @@
 # PLAN: BOARD-NO-HOLD - a Fulfilment Planning decision is a plan, not a stock hold
 
-Status: Build, review round 1 fixes in progress. Owner answers 27 Oct: Q1 (a) the plan is a route; Q2 as today; Q3 Borrow unchanged in every way (only Reserve stops holding); Q4 (a) retail stops seeing a Reserve; the project-side Buy reduction kept as today (owner 27 Oct ~22:25 "can keep as today"); Q5 no wording change beyond losing `pinned` for a Reserve. Track: full
+Status: Merge-ready pending owner hand-test (reviewer READY after round 1; browser pass done). Owner answers 27 Oct: Q1 (a) the plan is a route; Q2 as today; Q3 Borrow unchanged in every way (only Reserve stops holding); Q4 (a) retail stops seeing a Reserve; the project-side Buy reduction kept as today (owner 27 Oct ~22:25 "can keep as today"); Q5 no wording change beyond losing `pinned` for a Reserve. Track: full
 (size L, touches every free-stock reader). Lane is LEAD pattern (tester + coder + reviewer subagents).
 
 ## Journey
@@ -87,4 +87,13 @@ red; drop the route join and 6-7 must go red; widen the change to `_holds`' plac
 - Reorder runs: retail's figure deducts Borrow only; the project Buy reduction keeps Reserve + Borrow.
 - Planning-change reallocation: `_reserve_rival` also fires on an all-Buy re-run, capped by the Reserve bin's live free stock.
 - One confirm still cannot give the same pile twice (kept); separate confirms may plan the same stock, Stock Debt decides by date.
-- `scripts/board_no_hold_dry_run.py`: one-shot, models the rule on the pre-wiring engine (6dc173c2); retired before merge.
+- Dry run: `scripts/board_no_hold_dry_run.py` was a one-shot that modelled the rule on the pre-wiring engine; run it from
+  commit fcfc98f4 against engine 6dc173c2. Removed from the branch before merge.
+
+## Out of scope, found on the way (same on main)
+
+- Confirm carry-forward trusts the snapshot's ASKED Reserve qty, not what was held: a Reserve recorded short on one
+  press is written in full on the next identical press, and each press stacks another allocation row
+  (`project_supply_service.py` `_carried_component_qty` ~:6002, exemption ~:6381). Reproduced identically on main.
+- A Borrow's held qty is capped per allocation ROW (`held_qty_expr`), not per line, so several Borrow rows on one line
+  can net more than the line owes out of free stock (crew dry-run SRTSH1040 SO402757, 42+42+16). Borrow is out of scope.
