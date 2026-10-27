@@ -1,6 +1,6 @@
 # PLAN: BORROW-NO-HOLD - a Borrow decision is a plan, not a stock hold
 
-Status: Build. Owner answers 28 Oct ~00:25: (a) on all (Q1 reach only via a plan; Q2 OI links keep holding; Q2b supply
+Status: Review (PR #1935; red-proof 6558131254 + 3c8369d7de, fix aedf4aed1a, kill-proof posted). Owner answers 28 Oct ~00:25: (a) on all (Q1 reach only via a plan; Q2 OI links keep holding; Q2b supply
 Borrows unchanged, "incoming doesn't come into the picture anyway"; Q3 keep the board donor cell; Q4 reorder runs stop
 deducting Borrow; Q5 keep the confirm-time donor-line check). Track: full (size M, LEAD pattern: tester + coder +
 reviewer subagents). Keep the diff apart from CONFIRM-DOUBLE-ROWS #1934 (repeat-Confirm stacking in
@@ -76,6 +76,17 @@ the tester narrows by running them red against the change), rewritten keeping th
 
 Kill tests (reviewer): put Borrow back into `_hold_query` -> 1, 5, 6 red; restore the pin branch in `_holds`
 -> 1, 2 red; restore the retail Borrow deduction -> 8 red.
+
+## Built
+
+- `_hold_query` drops `ALLOC_BORROW_SOURCES` too (`project_supply_service.py` ~9799-9832): no decision row holds stock.
+- Stock Debt `_holds`: every decision allocation is `Hold(route=True)` (`scm/stock_debt_service.py` ~1786-1882).
+- Reorder runs: `_project_supply_reduction_map` has no `with_reserve` flag; it returns every non-Buy claim, which lowers
+  the project Buy only; `retail_net = net + project_need`; `retail_supply_reduction` is gone from rows and snapshot.
+- Tests: new `tests/scm/test_borrow_no_hold.py`; `test_board_no_hold.py` Borrow halves restated; 29 old-rule tests in
+  11 files restated keeping their intent (none deleted). Related list (85 files): 1382 passed.
+- Visible on the board: stock another project used to hold by a Borrow now reads free, so the ladder offers it as a
+  Reserve rather than "Borrow from project X" (same as Reserve-held stock after #1919).
 
 ## Coordination
 
