@@ -1291,14 +1291,14 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
                                   horizon: Optional[date] = None,
                                   horizon_start: Optional[date] = None,
                                   so_numbers: Optional[list[str]] = None,
-                                  borrow_only: bool = False) -> dict[tuple, float]:
+                                  with_reserve: bool = False) -> dict[tuple, float]:
     """``{(product_id, warehouse_id): qty}`` of stock an ACTIVE Project decision has
     already claimed, at the location it was claimed FROM.
 
     BOARD-NO-HOLD (owner 27 Oct 2026, Q4): only RETAIL stops seeing a Reserve. The default
-    answer is every non-Buy claim, which is what lowers the PROJECT Buy as before;
-    ``borrow_only=True`` answers the Borrow claims alone, which is what comes off RETAIL's
-    net (a Reserve is a plan, not a hold).
+    answer is the Borrow claims alone, which is what comes off RETAIL's net (a Reserve is a
+    plan, not a hold); ``with_reserve=True`` adds the Reserve claims, which is what lowers
+    the PROJECT Buy as before.
 
     > "every confirmed non-Buy component of an active Project decision (Reserve, Borrow,
     >  and timely SPO cover) is removed from Retail planning supply at its recorded source
@@ -1332,7 +1332,7 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     so_join = ""
     params: dict[str, Any] = {
         "pids": pids, "horizon": horizon, "horizon_start": horizon_start,
-        "borrow_sources": list(ALLOC_BORROW_SOURCES), "borrow_only": borrow_only,
+        "borrow_sources": list(ALLOC_BORROW_SOURCES), "with_reserve": with_reserve,
     }
     if so_numbers:
         # `sso.id = sol.sales_order_id` (security N1, 21 Sep 2026) - the "equivalent
@@ -1359,8 +1359,8 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
           ON d.project_sales_order_id = psl.project_sales_order_id
          AND d.state = 'active'
         {so_join}
-        WHERE (CASE WHEN :borrow_only THEN a.source_type = ANY(:borrow_sources)
-                    ELSE a.source_type <> 'order' END)
+        WHERE (CASE WHEN :with_reserve THEN a.source_type <> 'order'
+                    ELSE a.source_type = ANY(:borrow_sources) END)
           AND sol.product_id::text = ANY(:pids)
           AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                OR sol.required_date <= CAST(:horizon AS date))
@@ -1392,13 +1392,13 @@ def _apply_project_supply_reduction(db: Session, rows: list[dict],
     scoped_so_numbers = so_numbers if (so_numbers and demand_class != "retail") else None
     claims = _project_supply_reduction_map(db, rows, horizon=horizon,
                                            horizon_start=horizon_start,
-                                           so_numbers=scoped_so_numbers)
+                                           so_numbers=scoped_so_numbers,
+                                           with_reserve=True)
     if not claims:
         return
     borrows = _project_supply_reduction_map(db, rows, horizon=horizon,
                                             horizon_start=horizon_start,
-                                            so_numbers=scoped_so_numbers,
-                                            borrow_only=True)
+                                            so_numbers=scoped_so_numbers)
     for r in rows:
         key = (str(r["product_id"]), str(r["warehouse_id"]))
         if claims.get(key):
