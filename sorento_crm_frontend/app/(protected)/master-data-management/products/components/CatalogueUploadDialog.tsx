@@ -8,6 +8,7 @@ import {
   Dialog,
   DialogBody,
   DialogContent,
+  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -57,6 +58,7 @@ export function CatalogueUploadDialog({
       <DialogContent className="max-h-[90dvh] overflow-y-auto sm:max-w-md">
         <DialogHeader>
           <DialogTitle>Extract photos from catalogue</DialogTitle>
+          <DialogDescription className="sr-only">Choose the catalogue PDF to read.</DialogDescription>
         </DialogHeader>
         <DialogBody>
           <FileDropzone
@@ -65,7 +67,7 @@ export function CatalogueUploadDialog({
             files={files}
             onFilesChange={setFiles}
             disabled={upload.isPending}
-            hint={`PDF only, up to ${MAX_SIZE_MB} MB`}
+            hint="PDF only"
             aria-label="Catalogue PDF"
             onReject={(file, reason) =>
               toast.error(

@@ -114,7 +114,11 @@ def already_on_file(db: Session, product_id: str, sha256: str) -> bool:
     return (
         db.query(ProductAttachment.id)
         .join(Attachment, Attachment.id == ProductAttachment.attachment_id)
-        .filter(ProductAttachment.product_id == product_id, Attachment.file_hash == sha256)
+        .filter(
+            ProductAttachment.product_id == product_id,
+            Attachment.file_hash == sha256,
+            Attachment.is_deleted.is_(False),
+        )
         .first()
         is not None
     )

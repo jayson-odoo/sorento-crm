@@ -9,7 +9,7 @@ from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, File, Query, UploadFile, status
 from fastapi.concurrency import run_in_threadpool
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
@@ -28,7 +28,7 @@ _CHUNK_BYTES = 1024 * 1024
 class PhotoPatch(BaseModel):
     product_id: Optional[str] = None
     decision: Optional[Literal["attach", "skip", "keep_both", "replace"]] = None
-    also_attach_product_ids: Optional[list[str]] = None
+    also_attach_product_ids: Optional[list[str]] = Field(default=None, max_length=svc.MAX_ALSO_ATTACH)
 
 
 async def _read_within_limit(file: UploadFile) -> bytes:

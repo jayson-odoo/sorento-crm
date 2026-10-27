@@ -28,6 +28,11 @@ class CataloguePhotoReading(Base, CompanyScopedMixin):
         Index("ix_catalogue_photo_readings_company_created", "company_id", "created_at"),
     )
 
+    # Mixin column, redeclared NOT NULL: a reading with no company could never be scoped (FR-5).
+    company_id = Column(
+        UUID(as_uuid=False), ForeignKey("companies.id"), nullable=False, index=True
+    )
+
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
     file_name = Column(String(255), nullable=False)
     file_size = Column(Integer, nullable=False)
@@ -59,6 +64,9 @@ class CataloguePhoto(Base):
     __audit_skip__ = "child rows of a catalogue reading"
     __table_args__ = (
         Index("ix_catalogue_photos_reading_page", "reading_id", "page", "position"),
+        Index("ix_catalogue_photos_attachment_id", "attachment_id"),
+        Index("ix_catalogue_photos_product_id", "product_id"),
+        Index("ix_catalogue_photos_duplicate_of", "duplicate_of_attachment_id"),
     )
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)

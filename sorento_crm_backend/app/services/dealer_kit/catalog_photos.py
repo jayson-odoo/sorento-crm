@@ -43,6 +43,11 @@ _CODE_PATTERNS = (
 )
 _PLACEHOLDER_PATTERN = re.compile(r"^[A-Z][A-Z0-9]*_{3,}$")
 
+# Same ceiling as the Excel importer's image check (npa_xlsx.py): a placement or soft mask
+# above this is skipped before it is decoded, so one hostile PDF cannot exhaust the worker.
+CATALOGUE_MAX_PIXELS = 40_000_000
+CATALOGUE_MAX_PAGES = 300
+
 MIN_SIDE_PT = 40.0
 WIDE_BAND_FRACTION = 0.8
 CAPTION_X_SLACK_PT = 20.0
@@ -183,6 +188,15 @@ def _caption_for(rect: tuple[float, float, float, float], captions: list[_Captio
     return best[1] if best else None
 
 
+def _smask_pixels(document: "fitz.Document", smask: int) -> int:
+    try:
+        width = int(document.xref_get_key(smask, "Width")[1])
+        height = int(document.xref_get_key(smask, "Height")[1])
+    except Exception:  # noqa: BLE001 - no readable size: let the decode decide
+        return 0
+    return width * height
+
+
 def _encode(
     document: "fitz.Document", xref: int, crop: tuple[float, float, float, float]
 ) -> Optional[tuple[bytes, str, int, int]]:
@@ -198,6 +212,8 @@ def _encode(
     if not content:
         return None
     smask = int(raw.get("smask") or 0)
+    if smask and _smask_pixels(document, smask) > CATALOGUE_MAX_PIXELS:
+        return None
     extension = (raw.get("ext") or "").lower()
     content, _name, _mime = ensure_rgb_image(content, f"photo.{extension}", None)
 
@@ -230,13 +246,16 @@ def extract_catalog_photos(data: bytes) -> list[CatalogPhoto]:
     try:
         document = fitz.open(stream=data, filetype="pdf")
     except Exception as exc:  # pragma: no cover
-        raise ValueError(f"Not a readable PDF: {exc}") from exc
+        raise ValueError("That file could not be read as a PDF.") from exc
     if document.needs_pass:
         document.close()
         raise EncryptedFlyerError("The PDF is password protected")
     if document.page_count == 0:
         document.close()
         raise ValueError("The PDF has no pages")
+    if document.page_count > CATALOGUE_MAX_PAGES:
+        document.close()
+        raise ValueError(f"The PDF has more than {CATALOGUE_MAX_PAGES} pages.")
 
     photos: list[CatalogPhoto] = []
     try:
@@ -266,6 +285,8 @@ def _read_page(document: "fitz.Document", page: "fitz.Page", number: int) -> lis
         if _covers_the_page(visible, width, height):
             continue
         if (visible[2] - visible[0]) >= WIDE_BAND_FRACTION * width:
+            continue
+        if int(placed.get("width", 0)) * int(placed.get("height", 0)) > CATALOGUE_MAX_PIXELS:
             continue
 
         encoded = _encode(document, xref, _crop_of(bbox, visible))

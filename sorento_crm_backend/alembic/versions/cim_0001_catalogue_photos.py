@@ -21,7 +21,7 @@ def upgrade() -> None:
     op.create_table(
         "catalogue_photo_readings",
         sa.Column("id", postgresql.UUID(as_uuid=False), primary_key=True),
-        sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=True),
+        sa.Column("company_id", postgresql.UUID(as_uuid=False), sa.ForeignKey("companies.id"), nullable=False),
         sa.Column("file_name", sa.String(255), nullable=False),
         sa.Column("file_size", sa.Integer(), nullable=False),
         sa.Column("status", sa.String(16), nullable=False),
@@ -98,9 +98,15 @@ def upgrade() -> None:
     op.create_index(
         "ix_catalogue_photos_reading_page", "catalogue_photos", ["reading_id", "page", "position"]
     )
+    op.create_index("ix_catalogue_photos_attachment_id", "catalogue_photos", ["attachment_id"])
+    op.create_index("ix_catalogue_photos_product_id", "catalogue_photos", ["product_id"])
+    op.create_index("ix_catalogue_photos_duplicate_of", "catalogue_photos", ["duplicate_of_attachment_id"])
 
 
 def downgrade() -> None:
+    op.drop_index("ix_catalogue_photos_duplicate_of", table_name="catalogue_photos")
+    op.drop_index("ix_catalogue_photos_product_id", table_name="catalogue_photos")
+    op.drop_index("ix_catalogue_photos_attachment_id", table_name="catalogue_photos")
     op.drop_index("ix_catalogue_photos_reading_page", table_name="catalogue_photos")
     op.drop_table("catalogue_photos")
     op.drop_index("ix_catalogue_photo_readings_company_created", table_name="catalogue_photo_readings")

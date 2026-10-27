@@ -17,6 +17,7 @@ import { DataGrid } from '@/components/ui/data-grid';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
+import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { getProductsForLineSelect } from '../../../services/productService';
@@ -81,12 +82,24 @@ function Thumb({ src, alt }: { src: string; alt: string }) {
 function CodeCell({ row }: { row: CatalogPhoto }) {
   const text = row.printed_code ?? 'No code found';
   return (
-    <span
-      className={`block truncate ${row.printed_code ? 'font-medium' : 'text-muted-foreground'}`}
-      title={text}
-    >
-      {text}
-    </span>
+    <div className="min-w-0">
+      <span
+        className={`block truncate ${row.printed_code ? 'font-medium' : 'text-muted-foreground'}`}
+        title={text}
+      >
+        {text}
+      </span>
+      {row.placeholders.map((placeholder) => (
+        <span key={placeholder} className="flex items-center gap-2 text-xs">
+          <span className="truncate text-muted-foreground line-through" title={placeholder}>
+            {placeholder}
+          </span>
+          <Badge variant="outline" size="sm">
+            Placeholder
+          </Badge>
+        </span>
+      ))}
+    </div>
   );
 }
 
@@ -143,6 +156,7 @@ export function CataloguePhotosGrid({
     };
     const picker: ColumnDef<CatalogPhoto> = {
       id: 'product_code',
+      accessorFn: (row) => row.product?.product_code ?? '',
       header: header('Product'),
       size: 240,
       meta: { headerTitle: 'Product' },
@@ -170,6 +184,7 @@ export function CataloguePhotosGrid({
     };
     const productText: ColumnDef<CatalogPhoto> = {
       id: 'product_code',
+      accessorFn: (row) => row.product?.product_code ?? '',
       header: header('Product'),
       size: 200,
       meta: { headerTitle: 'Product' },
@@ -205,7 +220,7 @@ export function CataloguePhotosGrid({
       meta: { headerTitle: 'Also attach' },
       cell: ({ row }) => {
         const item = row.original;
-        if (item.other_block_products.length === 0 && item.placeholders.length === 0) {
+        if (item.other_block_products.length === 0) {
           return <span className="text-muted-foreground">-</span>;
         }
         return (
@@ -233,16 +248,6 @@ export function CataloguePhotosGrid({
                 </label>
               );
             })}
-            {item.placeholders.map((placeholder) => (
-              <span key={placeholder} className="flex items-center gap-2 text-xs">
-                <span className="truncate text-muted-foreground line-through" title={placeholder}>
-                  {placeholder}
-                </span>
-                <Badge variant="outline" size="sm">
-                  Placeholder
-                </Badge>
-              </span>
-            ))}
           </div>
         );
       },
@@ -285,6 +290,13 @@ export function CataloguePhotosGrid({
       meta: { headerTitle: 'Choice' },
       cell: ({ row }) => {
         const item = row.original;
+        if (item.attached_at) {
+          return (
+            <Badge variant="success" appearance="light" size="sm">
+              Attached
+            </Badge>
+          );
+        }
         return (
           <ToggleGroup
             type="single"
@@ -359,6 +371,9 @@ export function CataloguePhotosGrid({
 
   const empty = EMPTY[tab];
 
+  // Headers sort only once there are rows, so the first load shows a placeholder, not dead headers.
+  if (list.isLoading) return <Skeleton className="h-64 w-full" />;
+
   return (
     <DataGrid
       table={table}
@@ -366,7 +381,7 @@ export function CataloguePhotosGrid({
       isLoading={list.isLoading}
       isPlaceholderData={list.isPlaceholderData}
       listingKey={null}
-      tableLayout={{ width: 'fixed', columnsResizable: true }}
+      tableLayout={{ width: 'fixed', columnsResizable: true, columnsDraggable: false }}
       emptyMessage={
         <div className="px-6 py-10 text-center">
           <h3 className="text-sm font-semibold">{empty.title}</h3>
