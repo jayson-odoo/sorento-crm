@@ -982,6 +982,9 @@ def test_the_engines_own_step_two_proposal_passes_the_confirm_gate_unchanged():
 
     This test builds the strongest case the rule allows - same agent, same ownership group,
     ranked ahead, decided - and confirms the proposal verbatim, reason and all.
+
+    BOARD-NO-HOLD (27 Oct 2026): the decided Reserve donor no longer holds, its stock reads
+    free, so the engine proposes `group_take` and THAT proposal must pass the gate unchanged.
     """
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
@@ -1005,7 +1008,7 @@ def test_the_engines_own_step_two_proposal_passes_the_confirm_gate_unchanged():
             so_number=f"ZZTSO-ASK{_uid()[:5]}", sales_agent_id=mine.id,
         )
         component = _components(ProjectSupplyService(db).proposal_for(asker))[0]
-        assert component["rung"] == "order_borrow", component
+        assert component["rung"] == "group_take", component
 
         # Confirmed EXACTLY as proposed, with the server's own sentence as the reason -
         # which is the thing the gate would have refused.
@@ -1015,17 +1018,8 @@ def test_the_engines_own_step_two_proposal_passes_the_confirm_gate_unchanged():
                 lines=[
                     ConfirmLine(
                         project_line_id=asker_line.id,
-                        borrow=[
-                            {
-                                "source": "other_location",
-                                "warehouse_id": str(sibling.id),
-                                "qty": component["qty"],
-                                "reason": component["reason"],
-                                "donor_core_line_id": component["donor_core_line_id"],
-                                "donor_so_number": component["donor_so_number"],
-                                "donor_line_no": component["donor_line_no"],
-                                "donor_required_date": component["donor_required_date"],
-                            }
+                        reserve=[
+                            {"warehouse_id": str(sibling.id), "qty": component["qty"]}
                         ],
                     )
                 ]
@@ -1040,7 +1034,7 @@ def test_the_engines_own_step_two_proposal_passes_the_confirm_gate_unchanged():
         )
         sources = sorted({row.source_type for row in written})
 
-    assert sources == ["other_location"], sources
+    assert sources == ["group_take"], sources
 
 
 @pytest.mark.usefixtures("ladder_steps_on")

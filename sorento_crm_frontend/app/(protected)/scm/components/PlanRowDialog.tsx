@@ -1620,7 +1620,7 @@ export interface SoCoverageRow {
   /** `sales_orders.demand_class` as stored - what the SO ITSELF is classified as, distinct
    *  from `kind` (which family the row came from). A project row is always `'project'`; a
    *  book line carries whatever its own sales order was stamped, including `null` (R3). */
-  demand_class: 'project' | 'retail' | null;
+  demand_class: 'project' | 'retail' | 'other' | null;
   /** LINKAGE-UNIFY U4 (the SPO document's read-only "SO covered" list): the PO number a
    *  placement reached this SPO through, printed "via PO <number>" beside its order. */
   via_po?: string | null;

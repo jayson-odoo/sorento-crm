@@ -624,7 +624,9 @@ def test_every_company_id_table_is_registered():
     #   company's dated point-to-RM ratio); each is one company's own scheme data = 169.
     # + 1 (NEW-PRODUCT-APP): `new_product_applications`, one company's applications; the lines
     #   are scoped through the parent = 170.
-    expected_owned = 170
+    # + 1 (SALES-UNIFIED): `sales.set_apart_customers`, one company's set-apart customers by
+    #   month (`sales.agent_classes` has no company: its agent master is shared) = 171.
+    expected_owned = 171
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )

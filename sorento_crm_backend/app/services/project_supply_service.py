@@ -108,6 +108,7 @@ from app.models.project_so import (
     ALLOC_SOURCE_BRW,
     ALLOC_SOURCE_GROUP_TAKE,
     ALLOC_BORROW_SOURCES,
+    ALLOC_RESERVE_SOURCES,
     ALLOC_SOURCE_ORDER,
     ALLOC_SOURCE_OTHER_LOCATION,
     ALLOC_SOURCE_OTHER_PROJECT,
@@ -6828,7 +6829,9 @@ class ProjectSupplyService:
         named: set,
     ) -> None:
         """No Reserve may exceed what is ON HAND at that location, less what OTHER lines
-        have already confirmed there (R14, captain 27 August 2026).
+        have already confirmed there (R14, captain 27 August 2026). Since BOARD-NO-HOLD only
+        other lines' Borrow holds count (a Reserve holds nothing); the same confirm's earlier
+        lines still count once, as below.
 
         The ladder already caps what it PROPOSES, but the board lets a planner compose an
         amendment by hand, so a hand-typed 15 against 10 on hand has to be bounded here.
@@ -9792,7 +9795,8 @@ class ProjectSupplyService:
     def held_stock_by_location(
         self, product_ids: Iterable[str]
     ) -> Dict[Tuple[str, str], Decimal]:
-        """What CONFIRMED decisions are holding, per `(product_id, warehouse_id)`.
+        """What CONFIRMED Borrows are holding, per `(product_id, warehouse_id)`. A Reserve
+        holds nothing (BOARD-NO-HOLD, owner 27 Oct 2026: a plan, not a hold).
 
         The third term of the free-stock arithmetic, exposed so a screen can print it: on hand,
         less reserved, less THIS, is what `free_stock_by_location` answers. Without it a strip
@@ -9994,6 +9998,9 @@ class ProjectSupplyService:
     ):
         """The one predicate for "this allocation row is holding stock right now".
 
+        A Reserve is a plan, not a hold (BOARD-NO-HOLD, owner 27 Oct 2026): only a Borrow
+        holds stock. The Reserve rows come from the same base, `_decision_allocation_query`.
+
         A hold counts when its allocation belongs to no decision (every row written before
         Stage 1C) or to an ACTIVE one; the LINES being replaced (`exclude_line_ids`, project
         line ids) are excluded so their own previous revision does not compete with the one
@@ -10012,6 +10019,21 @@ class ProjectSupplyService:
         ask the same question and get the holder's name back with it (R14) without a second
         opinion about which rows are holding.
         """
+        return self._decision_allocation_query(
+            product_ids,
+            exclude_line_ids=exclude_line_ids,
+            entities=entities,
+        ).filter(SOLineAllocation.source_type.notin_(ALLOC_RESERVE_SOURCES))
+
+    def _decision_allocation_query(
+        self,
+        product_ids: Sequence[str],
+        *,
+        exclude_line_ids: Optional[Sequence[str]],
+        entities: Optional[Sequence[Any]] = None,
+    ):
+        """The base both of the above narrow by source: confirmed, located, not Buy, and
+        belonging to no decision or to an ACTIVE one."""
         query = (
             self.db.query(
                 *(

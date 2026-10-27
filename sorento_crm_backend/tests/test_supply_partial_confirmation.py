@@ -497,7 +497,9 @@ def test_a_carried_line_keeps_its_borrow_reason_and_its_hold(api):
 
     supply = ProjectSupplyService(db)
     held_before = supply.held_stock_by_location([world.product.id])
-    assert held_before[(world.product.id, world.pool_wh.id)] == Decimal("40")
+    # BOARD-NO-HOLD (owner, 27 Oct 2026): the Reserve of 40 at the pool is a plan and holds
+    # nothing (was 40); the Borrow still does.
+    assert held_before.get((world.product.id, world.pool_wh.id), Decimal("0")) == 0
     assert held_before[(world.product.id, donor_wh.id)] == Decimal("10")
 
     second = client.post(

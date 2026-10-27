@@ -2241,6 +2241,10 @@ def test_a_confirmed_decision_shows_up_as_both_a_hold_and_covered_demand():
     `qty_owed_confirmed` is the DEMAND side - how much of what is owed here sits on lines a
     confirmed decision already covers, so a planner can tell committed pressure from
     uncommitted pressure.
+
+    BOARD-NO-HOLD (owner, 27 Oct 2026): the seeded decision is a BORROW (`other_location`),
+    the kind that still holds; a confirmed Reserve holds nothing, so its strip reads held 0
+    (`tests/scm/test_board_no_hold.py`).
     """
     from datetime import datetime
 
@@ -2288,7 +2292,7 @@ def test_a_confirmed_decision_shows_up_as_both_a_hold_and_covered_demand():
         db.add(
             SOLineAllocation(
                 id=_uid(), company_id=company_id, so_line_id=mirror.id,
-                source_type="own", warehouse_id=warehouse.id, qty=Decimal("15"),
+                source_type="other_location", warehouse_id=warehouse.id, qty=Decimal("15"),
                 decision_id=decision.id, confirmed_at=datetime.utcnow(),
             )
         )
@@ -3323,6 +3327,9 @@ def test_a_hold_taken_from_outside_the_group_is_listed_and_one_from_inside_is_no
     Such a hold is in no sales-order row of the group whose pile it draws from, so a walk
     without it counts a pile nobody can draw on. A hold whose own line IS in the set is
     already one of those rows, and listing it again would subtract it twice.
+
+    BOARD-NO-HOLD (27 Oct 2026): the seeded holds are BORROWS (`other_location`); a Reserve
+    holds nothing, so it would be listed nowhere.
     """
     from datetime import datetime
 
@@ -3358,7 +3365,7 @@ def test_a_hold_taken_from_outside_the_group_is_listed_and_one_from_inside_is_no
         db.flush()
         db.add(
             SOLineAllocation(
-                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="own",
+                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="other_location",
                 warehouse_id=warehouse.id, qty=Decimal(qty), decision_id=decision.id,
                 confirmed_at=datetime.utcnow(),
             )
@@ -3792,6 +3799,9 @@ def test_demand_a_confirmed_decision_already_holds_is_not_subtracted_twice():
 
     So `so_qty_ahead` counts only demand that is NOT yet covered by an active decision - the
     same per-line test `scm.committed_v` applies.
+
+    BOARD-NO-HOLD (27 Oct 2026): the seeded decision is a BORROW (`other_location`), the kind
+    that still holds stock; the covered-line test does not depend on the allocation's kind.
     """
     from datetime import datetime
 
@@ -3836,7 +3846,7 @@ def test_demand_a_confirmed_decision_already_holds_is_not_subtracted_twice():
         db.flush()
         db.add(
             SOLineAllocation(
-                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="own",
+                id=_uid(), company_id=company_id, so_line_id=mirror.id, source_type="other_location",
                 warehouse_id=warehouse.id, qty=Decimal("40"), decision_id=decision.id,
                 confirmed_at=datetime.utcnow(),
             )
@@ -6207,6 +6217,14 @@ def _order_already_holding_at_the_pool(db):
             }
         ],
     )
+    # BOARD-NO-HOLD (27 Oct 2026): a Reserve holds nothing, so the carried hold is made a
+    # BORROW (`other_location`) in place, the kind that still nets 3 off the pool.
+    from app.models.project_so import SOLineAllocation
+
+    db.query(SOLineAllocation).filter(
+        SOLineAllocation.so_line_id == mirror.id
+    ).update({"source_type": "other_location"}, synchronize_session=False)
+    db.flush()
     return {"actor": actor, "product": product, "own": own, "pool": pool, "pso_id": pso_id}
 
 
@@ -7623,9 +7641,9 @@ def test_partial_delivered_undecided_line_asks_full_qty_and_the_delivered_unit_u
     back - and the hold a confirmation writes never passes the 2 still owed.
 
     Owner rule 14 Oct 2026 (restated AC-S2-4): the delivered unit consumes the Reserve
-    first, then the Buy. So Reserve 1 + Buy 2 holds nothing (the delivered 1 used the
-    Reserve up) and the Buy 2 covers the 2 still owed: free stock for everybody else is
-    untouched.
+    first, then the Buy, so Reserve 1 + Buy 2 leaves nothing of the Reserve and the Buy 2
+    covers the 2 still owed. Since BOARD-NO-HOLD (27 Oct 2026) a Reserve takes nothing out
+    of free stock in any case: free stock for everybody else is untouched.
     """
     with blank_session() as db:
         actor = _user(db, f"{MARKER} Eling")
@@ -7660,8 +7678,12 @@ def test_partial_delivered_undecided_line_asks_full_qty_and_the_delivered_unit_u
         )
         db.commit()
 
+        # BOARD-NO-HOLD (owner, 27 Oct 2026): a Reserve is a plan and takes nothing out of
+        # free stock, whatever it is capped at (was 9: min(reserve 1, owed 2) = 1 held). The
+        # owed cap on a HOLD is pinned on a Borrow in `test_project_supply_holds.py`; the
+        # delivered-first credit on a held Borrow in `tests/scm/test_own_delivered_first.py`.
         assert _free_at(db, product, pool) == Decimal("10"), (
-            "the delivered 1 consumed the Reserve 1, so nothing comes out of free stock"
+            "a Reserve holds nothing, so all 10 stay free"
         )
 
 

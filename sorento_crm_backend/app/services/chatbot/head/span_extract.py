@@ -32,22 +32,44 @@ SPAN_TIMEOUT_SECONDS = 4.0
 MAX_TOKENS = 512
 #: A message names a handful of things; more than this is a runaway answer.
 MAX_SPANS = 24
-SCHEMA: dict[str, Any] = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": ["spans"],
-    "properties": {
-        "spans": {
-            "type": "array",
-            "items": {
-                "type": "object",
-                "additionalProperties": False,
-                "required": ["text", "type"],
-                "properties": {"text": {"type": "string"}, "type": {"type": "string", "enum": list(SPAN_TYPES)}},
-            },
-        }
-    },
-}
+#: The sentence a span prompt carries when it asks for a per-span plain English "meaning"; the migration appends the
+#: whole paragraph, and a prompt holding this sentence gets the schema with `meaning`.
+MEANING_ASK = 'For each span also give "meaning".'
+MEANING_PARAGRAPH = (
+    "\n\n" + MEANING_ASK + " When the span is written in a language other than English, or gives a measurement in "
+    "a unit other than millimetres, \"meaning\" is the plain English form of the span, with any size in millimetres "
+    "written as a number followed by mm. When the span is already English and needs no conversion, or you are not "
+    "sure what it means, \"meaning\" is null. Never invent a meaning."
+)
+
+
+def _schema(with_meaning: bool) -> dict[str, Any]:
+    props: dict[str, Any] = {"text": {"type": "string"}, "type": {"type": "string", "enum": list(SPAN_TYPES)}}
+    required = ["text", "type"]
+    if with_meaning:
+        props["meaning"] = {"type": ["string", "null"]}
+        required.append("meaning")
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["spans"],
+        "properties": {
+            "spans": {
+                "type": "array",
+                "items": {"type": "object", "additionalProperties": False, "required": required, "properties": props},
+            }
+        },
+    }
+
+
+#: The schema with `meaning`; a v1 prompt (which never asks for it) is sent `SCHEMA_V1`, see `span_schema`.
+SCHEMA: dict[str, Any] = _schema(True)
+SCHEMA_V1: dict[str, Any] = _schema(False)
+
+
+def span_schema(system_prompt: str) -> dict[str, Any]:
+    """The meaning schema only when the prompt asks for meanings."""
+    return SCHEMA if MEANING_ASK in (system_prompt or "") else SCHEMA_V1
 
 
 @dataclass(frozen=True)
@@ -104,7 +126,9 @@ def _read(content: str | None) -> list[Span]:
         if not isinstance(item, dict) or not isinstance(item.get("text"), str) or not item["text"].strip():
             continue
         kind = item.get("type")
-        spans.append(Span(item["text"].strip(), kind if kind in SPAN_TYPES else None))
+        meaning = item.get("meaning")
+        meaning = meaning.strip() if isinstance(meaning, str) and meaning.strip() else None
+        spans.append(Span(item["text"].strip(), kind if kind in SPAN_TYPES else None, meaning))
     return spans[:MAX_SPANS]
 
 
@@ -120,7 +144,7 @@ def extract(config: SpanConfig, message: str) -> SpanAnswer | None:
             deadline_seconds=SPAN_TIMEOUT_SECONDS,
             temperature=0.0,
             max_tokens=MAX_TOKENS,
-            json_schema=SCHEMA,
+            json_schema=span_schema(config.system_prompt),
             json_schema_name=SCHEMA_NAME,
             timeout=SPAN_TIMEOUT_SECONDS,
         )

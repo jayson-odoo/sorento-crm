@@ -25,6 +25,8 @@ confirms anything.
 """
 from __future__ import annotations
 
+import logging
+import time
 from dataclasses import replace as dataclass_replace
 from datetime import date
 from decimal import Decimal
@@ -46,6 +48,7 @@ from app.models.procurement import (
 )
 from app.models.product import Product, ProductCategory
 from app.models.project_so import (
+    ALLOC_RESERVE_SOURCES,
     INQUIRY_CANCELLED,
     OrderInquiry,
     OrderInquiryLink,
@@ -323,6 +326,9 @@ def _source_order(label: str) -> tuple:
     return (label, 3)
 
 
+logger = logging.getLogger(__name__)
+
+
 class StockDebtService:
     def __init__(self, db: Session):
         self.db = db
@@ -402,10 +408,23 @@ class StockDebtService:
         stores it, so the two cannot read the book differently. Returns the rows, the axis
         (`months`), `totals`, `suppliers`, `sheet_counts`, the `span` and the per-product
         assignment results (`assignments`, keyed by product id) the rows were built from."""
+        board_started = time.perf_counter()
         span = self._warehouses(group, book)
         warehouses = self._narrow_locations(span, location, exclude_location)
-        products = self._products(warehouses, query)
+        started = time.perf_counter()
+        products, demand_ids = self._products(warehouses, query)
+        candidates = len(products)
+        if only_debt and not projected:
+            # STOCKDEBT-PERF: debt is only ever debited from a sales-order line, so a
+            # product with no open demand line in the span cannot reach a row; skip its
+            # walk. Filtered, not re-sorted. The projection reads pool stock, so it keeps all.
+            # `_holds`' `found_empty` reads the DOCUMENT product's stock, which on a remap
+            # differs from the line's product: keep that one too.
+            keep = demand_ids | self._remap_document_products(demand_ids)
+            products = [row for row in products if row[0] in keep]
+        products_ms = int((time.perf_counter() - started) * 1000)
         product_ids = [product_id for product_id, _code, _name, _cat in products]
+        assignments_started = time.perf_counter()
         assignments = self._assignments(
             [(pid, code, name) for pid, code, name, _cat in products],
             warehouses,
@@ -417,6 +436,7 @@ class StockDebtService:
             date_to=date_to,
             view=True,
         )
+        assignments_ms = int((time.perf_counter() - assignments_started) * 1000)
         supplier_map = self._last_supplier_map(product_ids)
         # STOCK-DEBT-PROJECTION (owner, 12 Oct 2026): the switch's own reading. Computed
         # off the SAME assignment, so the month figures it starts from are the page's.
@@ -515,12 +535,24 @@ class StockDebtService:
                 }
             )
 
+        totals = self._totals(data_rows, axis)
+        sheet_counts = self._sheet_counts(data_rows)
+        logger.info(
+            "stock_debt.board candidates=%d walked=%d rows=%d products_ms=%d "
+            "assignments_ms=%d total_ms=%d",
+            candidates,
+            len(products),
+            len(data_rows),
+            products_ms,
+            assignments_ms,
+            int((time.perf_counter() - board_started) * 1000),
+        )
         return {
             "rows": data_rows,
             "months": axis,
-            "totals": self._totals(data_rows, axis),
+            "totals": totals,
             "suppliers": suppliers,
-            "sheet_counts": self._sheet_counts(data_rows),
+            "sheet_counts": sheet_counts,
             "span": span,
             "assignments": assignments,
         }
@@ -992,7 +1024,7 @@ class StockDebtService:
 
     def _products(
         self, warehouses: Dict[str, Warehouse], query: Optional[str]
-    ) -> List[Tuple[str, str, Optional[str], Optional[str]]]:
+    ) -> Tuple[List[Tuple[str, str, Optional[str], Optional[str]]], Set[str]]:
         """Every product with stock, demand or incoming at those bins: id, code, name and
         `category_code` (R4/AC-5) - one JOIN, not a second query, for the same reason the
         rest of this file reads once for the whole set.
@@ -1002,10 +1034,13 @@ class StockDebtService:
         than the other three: an UNLOCATED sales-order line names no bin at all, and a screen
         that lists what is owed while silently dropping 2,312 open lines (30 Aug dev copy)
         is answering a narrower question than the one it is asked.
+
+        Also returns the ids with an open demand line in that span (the demand read's own
+        result), which `_board` narrows to when only debt is asked for.
         """
         ids = set(warehouses)
         if not ids:
-            return []
+            return [], set()
         candidates: set = set()
         candidates |= {
             str(row[0])
@@ -1014,7 +1049,7 @@ class StockDebtService:
             .distinct()
             .all()
         }
-        candidates |= {
+        demand_ids = {
             str(row[0])
             for row in self.db.query(SalesOrderLine.product_id)
             .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
@@ -1027,6 +1062,7 @@ class StockDebtService:
             .distinct()
             .all()
         }
+        candidates |= demand_ids
         candidates |= {
             str(row[0])
             for row in self.db.query(SPOAllocation.product_id)
@@ -1050,7 +1086,7 @@ class StockDebtService:
             .all()
         }
         if not candidates:
-            return []
+            return [], demand_ids
 
         rows = (
             self.db.query(
@@ -1070,10 +1106,44 @@ class StockDebtService:
                     Product.product_name.ilike(needle),
                 )
             )
-        return [
-            (str(row.id), row.product_code or "", row.product_name, row.category_code)
-            for row in rows.all()
-        ]
+        return (
+            [
+                (str(row.id), row.product_code or "", row.product_name, row.category_code)
+                for row in rows.all()
+            ],
+            demand_ids,
+        )
+
+    def _remap_document_products(self, demand_ids: Set[str]) -> Set[str]:
+        """Document products of order inquiry links whose sales-order line (open demand
+        product in `demand_ids`) is of a DIFFERENT product: what `_holds` reads stock under.
+        Looser than `_holds`' own links filter on purpose; it may over-keep, never under-keep."""
+        if not demand_ids:
+            return set()
+        document = func.coalesce(SPOAllocation.product_id, PurchaseOrderLine.product_id)
+        rows = (
+            self.db.query(document)
+            .select_from(OrderInquiryLink)
+            .join(OrderInquiryRow, OrderInquiryRow.id == OrderInquiryLink.row_id)
+            .join(
+                ProjectSalesOrderLine,
+                ProjectSalesOrderLine.id == OrderInquiryRow.so_line_id,
+            )
+            .join(
+                SalesOrderLine,
+                SalesOrderLine.id == ProjectSalesOrderLine.core_sales_order_line_id,
+            )
+            .outerjoin(
+                SPOAllocation, SPOAllocation.id == OrderInquiryLink.spo_allocation_id
+            )
+            .outerjoin(
+                PurchaseOrderLine, PurchaseOrderLine.id == OrderInquiryLink.po_line_id
+            )
+            .filter(SalesOrderLine.product_id.in_(demand_ids), document != SalesOrderLine.product_id)
+            .distinct()
+            .all()
+        )
+        return {str(row[0]) for row in rows if row[0] is not None}
 
     @staticmethod
     def _demand_span(warehouse_ids):
@@ -1235,7 +1305,30 @@ class StockDebtService:
         }
         floors = self._stand_in_floors(product_ids, outside_bins, span=span)
 
-        def walk(product_id: str, all_holds: Sequence[Hold]) -> Assignment:
+        # STOCKDEBT-PERF: each demand line key -> its products, once; a holds list is then
+        # bucketed per product in ONE pass (hold order kept: pins share a stand-in in hold
+        # order), not scanned once per product.
+        line_products: Dict[str, List[str]] = {}
+        for demand_product, demand_lines in demand_rows.items():
+            for line in demand_lines:
+                line_products.setdefault(line.key, []).append(demand_product)
+
+        def bucket(all_holds: Sequence[Hold]) -> Dict[str, List[Hold]]:
+            by_product: Dict[str, List[Hold]] = {}
+            for hold in all_holds:
+                for owner in line_products.get(hold.line_key, ()):
+                    by_product.setdefault(owner, []).append(hold)
+            return by_product
+
+        # One walk per (product, pin set): everything else `walk` reads is fixed for this
+        # call, and `Hold`/`Assignment` are frozen. Local to the call, never across requests.
+        walked: Dict[Tuple[str, Tuple[Hold, ...]], Assignment] = {}
+
+        def walk(product_id: str, by_product: Dict[str, List[Hold]]) -> Assignment:
+            pinned = by_product.get(product_id, [])
+            memo_key = (product_id, tuple(pinned))
+            if memo_key in walked:
+                return walked[memo_key]
             # The product's own lead, or the ladder's default - the SAME source the reserve
             # window uses (plan risk 5), so the red horizon here and the window there agree.
             # `is None`, never `or` - the same test `_po_rows` and `reserve_window_end`
@@ -1247,9 +1340,7 @@ class StockDebtService:
                 DEFAULT_LEAD_TIME_DAYS if lead is None else lead
             )
             lines = demand_rows.get(product_id, [])
-            line_keys = {line.key for line in lines}
-            pinned = [hold for hold in all_holds if hold.line_key in line_keys]
-            return assign(
+            result = assign(
                 product_id,
                 as_of=as_of,
                 tba_from=tba_from,
@@ -1273,6 +1364,8 @@ class StockDebtService:
                     and hold.supply_key.partition(":")[2] in outside_bins
                 },
             )
+            walked[memo_key] = result
+            return result
 
         def held_by_line(all_holds: Sequence[Hold]) -> Dict[str, float]:
             """STOCK-DEBT-STALE-PIN: what each line's holds REALLY cover - their takes in a
@@ -1280,12 +1373,12 @@ class StockDebtService:
             is still the line's own, so the book's S/O must not refill it) - rather than
             the holds' own quantities, which a pin on a bin holding less than it states
             overstates. Walked only for the products that have a hold at all."""
-            keyed = {hold.line_key for hold in all_holds}
+            by_product = bucket(all_holds)
             held: Dict[str, float] = {}
-            for product_id, lines in demand_rows.items():
-                if not any(line.key in keyed for line in lines):
+            for product_id in demand_rows:
+                if product_id not in by_product:
                     continue
-                for row in walk(product_id, all_holds).lines:
+                for row in walk(product_id, by_product).lines:
                     taken = sum(
                         float(item.qty) for item in row.assigned if item.pinned
                     ) + float(row.lent_qty)
@@ -1313,8 +1406,9 @@ class StockDebtService:
             )
 
         out: Dict[str, Assignment] = {}
+        by_product = bucket(holds)
         for product_id in product_ids:
-            out[product_id] = walk(product_id, holds)
+            out[product_id] = walk(product_id, by_product)
             if keep_events:
                 self._event_cache[product_id] = supply_rows.get(product_id, [])
         return out
@@ -1602,8 +1696,9 @@ class StockDebtService:
         anybody queues (AC-S2-2), and both are keyed to the CORE sales-order line, which is
         what the demand read above is keyed on.
 
-        **The allocation half is `ProjectSupplyService._hold_query`, not a second spelling of
-        it.** That is the one predicate for "this row is holding stock right now" - confirmed,
+        **The allocation half is `ProjectSupplyService._hold_query` (Borrows, pinned) and
+        `_decision_allocation_query` split by source (Reserves are `Hold.route`: a plan, not a hold, BOARD-NO-HOLD),
+        not a second spelling of it.** That is the one predicate for "this row is holding stock right now" - confirmed,
         located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
         it is shared with the free-stock arithmetic precisely so the two cannot come to
         disagree. Restated by hand here, it had already lost `confirmed_at IS NOT NULL`, so a
@@ -1681,16 +1776,19 @@ class StockDebtService:
         IS the line's landed goods (SO381065's 88 at BRW-BB reach the assignment this way,
         through the auto placement on SPO-2026/05-0001, and `_landed_holds` then nets its
         own read to nothing), so without the mark here the feature lent nothing on the real
-        book. A decision hold (`so_line_allocations`) is never lendable: it is a Reserve
-        somebody confirmed, not goods that landed for the line. `None` marks nothing.
+        book. A decision allocation (`so_line_allocations`) is never lendable: a Borrow
+        pins and a Reserve is a route, neither is goods that landed for the line. `None` marks nothing.
         """
         if not line_keys:
             return []
         keys = list(line_keys)
         out: List[Hold] = []
 
-        rows = (
-            self.supply._hold_query(
+        # BOARD-NO-HOLD: ONE read of the live decision allocations (the base `_hold_query`
+        # narrows), split here: a Borrow is a pin, a Reserve is a plan the walk takes as a
+        # ROUTE (the line may draw the bin at its own date, `Hold.route`).
+        tagged = (
+            self.supply._decision_allocation_query(
                 [str(pid) for pid in product_ids],
                 exclude_line_ids=None,
                 entities=(
@@ -1699,6 +1797,7 @@ class StockDebtService:
                     held_qty_expr(),
                     Warehouse.warehouse_code,
                     _hold_product,
+                    SOLineAllocation.source_type,
                 ),
             )
             .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
@@ -1712,6 +1811,8 @@ class StockDebtService:
             )
             .all()
         )
+        rows = [r[:5] for r in tagged if r[5] not in ALLOC_RESERVE_SOURCES]
+        route_rows = [r[:5] for r in tagged if r[5] in ALLOC_RESERVE_SOURCES]
 
         links = (
             self.db.query(
@@ -1769,7 +1870,8 @@ class StockDebtService:
                 if event.kind == KIND_ON_HAND
             }
 
-        for core_line_id, warehouse_id, qty, warehouse_code, product_id in rows:
+        walked = [(False, row) for row in rows] + [(True, row) for row in route_rows]
+        for is_route, (core_line_id, warehouse_id, qty, warehouse_code, product_id) in walked:
             # STOCK-DEBT-STALE-PIN (see the docstring): a pin on stock the bin no longer
             # holds (or never held: the own location may be chosen at 0) covers nobody.
             if _float(qty) <= 0 or found_empty(str(product_id), str(warehouse_id)):
@@ -1781,6 +1883,7 @@ class StockDebtService:
                     qty=_float(qty),
                     kind=KIND_ON_HAND,
                     warehouse=warehouse_code,
+                    route=is_route,
                 )
             )
 
@@ -2625,8 +2728,10 @@ class StockDebtService:
         LINE, falling back to the manually-flagged primary product supplier, else neither.
 
         The window (newest `PurchaseOrder.issue_date`, `PurchaseOrderLine.created_at`
-        breaking a tie) is `po_last_cost_service.last_cost_rows`'s own pick key, reused
-        rather than re-derived - the same "which PO line answers for this product" question,
+        breaking a tie, then po_number, then line id, so an exact tie never falls to the
+        query plan) is `po_last_cost_service.last_cost_rows`'s pick key, reused
+        rather than re-derived (bar the tie: that one breaks it on line id ASCENDING) - the
+        same "which PO line answers for this product" question,
         one PARTITION BY `product_id` instead of `(product_id, warehouse_id)` because the
         board asks per PRODUCT, not per bin. Cancelled POs are skipped (A1); a cancelled
         LINE is not, because A1 names only the PO's own status - an SPO's supplier is never
@@ -2645,6 +2750,8 @@ class StockDebtService:
                 order_by=(
                     PurchaseOrder.issue_date.desc().nulls_last(),
                     PurchaseOrderLine.created_at.desc(),
+                    PurchaseOrder.po_number.desc(),
+                    PurchaseOrderLine.id.desc(),
                 ),
             )
             .label("rn")

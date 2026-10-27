@@ -167,17 +167,29 @@ class ReportSelectParamMeta(BaseModel):
 ReportParamMeta = Union[ReportDateBasisParam, ReportPeriodParam, ReportSelectParamMeta]
 
 
+class ReportSortConfig(BaseModel):
+    """A server-side sort (SALES-UNIFIED: every report column sorts on the server). On the
+    detail, `key` is a catalogue column. On the summary, `__row__` is the row label,
+    `__total__` the row total of the first measure, anything else a column value's cell of the
+    first measure; each block sorts on its own and the blank row stays last."""
+
+    key: str
+    dir: Literal["asc", "desc"] = "asc"
+
+
 class ReportViewDetailConfig(BaseModel):
     # Empty means THE WHOLE CATALOG: the screen asks for everything and hides client-side,
     # so ticking a column is instant. The export asks for exactly the visible columns.
     columns: List[str] = Field(default_factory=list)
     order: List[str] = Field(default_factory=list)
+    sort: Optional[ReportSortConfig] = None
 
 
 class ReportViewPivotConfig(BaseModel):
     rows: str
     cols: str
     measures: List[str] = Field(default_factory=list)
+    sort: Optional[ReportSortConfig] = None
 
 
 class ReportViewConfig(BaseModel):

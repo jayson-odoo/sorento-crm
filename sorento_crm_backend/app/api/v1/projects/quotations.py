@@ -22,7 +22,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import require_any_permission, require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     PriceFloorEffectiveResponse,
@@ -62,6 +62,10 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 CONFIG_VIEW = "projects.types.view"
@@ -129,7 +133,7 @@ def _notify_breaches(db: Session, line, actor_user_id: str) -> None:
 async def list_quotations(
     project_id: str,
     # API-key readable (AC-K1): `crm_project_quotations_list` answers "what did we quote".
-    _user: dict = Depends(require_permission_with_api_key(VIEW)),
+    _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -281,7 +285,7 @@ async def judge_draft_line(
     product_id: Optional[str] = Query(None),
     product_set_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
     unit_price: Optional[str] = Query(None),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Judge one DRAFT line, before anything is saved.
@@ -386,7 +390,7 @@ async def judge_draft_line(
 @router.get("/quotation-line-images", response_model=QuotationLineImagesResponse)
 async def quotation_line_images(
     product_id: str = Query(..., pattern=UUID_PATTERN),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The photo and drawing cells a line with this product would show, before it is saved.
@@ -417,7 +421,7 @@ async def quotation_line_images(
 )
 async def list_versions(
     quotation_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Newest first. ``is_current`` is derived from MAX(version_no), not stored."""
@@ -461,7 +465,7 @@ async def revise_quotation(
 )
 async def list_lines(
     version_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -722,7 +726,7 @@ def _line_or_404(db: Session, version_id: str, line_id: str):
 
 @router.get("/config/loss-reasons", response_model=List[dict])
 async def list_loss_reasons(
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The configured loss reasons (AC-E9). Empty means an admin has not set any up, and
@@ -880,7 +884,7 @@ async def list_series_product_rows(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, max_length=200),
     priced: bool = Query(False),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """One page of the series' products with their price, percentage and derived floor (T2).
@@ -964,7 +968,7 @@ async def remove_series_product(
 )
 async def list_series_set_rows(
     series_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """The series' product sets with their price, percentage and derived floor."""

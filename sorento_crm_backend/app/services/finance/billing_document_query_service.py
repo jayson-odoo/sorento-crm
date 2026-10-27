@@ -14,13 +14,14 @@ from datetime import date
 from decimal import Decimal
 from typing import Any, Iterable, Optional
 
-from sqlalchemy import case, exists, func, or_
+from sqlalchemy import case, false, func, or_
 from sqlalchemy.orm import Query, Session
 
-from app.models.finance import CANCELLED, BillingDocument, BillingDocumentLine
-from app.models.order import Customer, SalesOrder, SalesOrderLine
+from app.models.finance import CANCELLED, BillingDocument
+from app.models.order import Customer, Order, SalesOrder, SalesOrderLine
 from app.models.product import Product
 from app.models.sales_agent import SalesAgent
+from app.services import document_relations as relations
 from app.services.error_handler import AppException
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -87,6 +88,7 @@ def _filtered(
     date_to: Optional[date] = None,
     open_only: bool = False,
     sales_order_id: Optional[str] = None,
+    delivery_order_id: Optional[str] = None,
 ) -> Query:
     q = db.query(BillingDocument)
     if query and query.strip():
@@ -120,13 +122,22 @@ def _filtered(
             BillingDocument.outstanding != 0,
         )
     if sales_order_id:
-        # A correlated EXISTS, never a join: a document with two lines on the order is one row.
-        q = q.filter(
-            exists().where(
-                BillingDocumentLine.document_id == BillingDocument.id,
-                BillingDocumentLine.sales_order_line_id == SalesOrderLine.id,
-                SalesOrderLine.sales_order_id == sales_order_id,
-            )
+        # DOC-RELATIONS: the order's documents however they reach it (its own lines, its number,
+        # or one of its DOs) plus the notes against them. An IN over ids, never a join, so a
+        # document with two lines on the order is one row. The order is read through the
+        # session's scope, so another company's id finds nothing.
+        so = db.query(SalesOrder).filter(SalesOrder.id == sales_order_id).first()
+        q = (
+            q.filter(BillingDocument.id.in_(relations.billing_ids_for_sales_order(so)))
+            if so
+            else q.filter(false())
+        )
+    if delivery_order_id:
+        order = db.query(Order).filter(Order.id == delivery_order_id).first()
+        q = (
+            q.filter(BillingDocument.id.in_(relations.billing_ids_for_delivery_order(order)))
+            if order
+            else q.filter(false())
         )
     return q
 
@@ -217,7 +228,7 @@ def get_document_or_404(db: Session, document_id: str) -> BillingDocument:
     return doc
 
 
-def document_detail(db: Session, doc: BillingDocument) -> dict[str, Any]:
+def document_detail(db: Session, doc: BillingDocument, user_id: str) -> dict[str, Any]:
     lines = list(doc.lines)  # ordered by line_no
     line_ids = [line.sales_order_line_id for line in lines if line.sales_order_line_id]
     orders_by_line: dict[str, dict[str, str]] = {}
@@ -244,8 +255,23 @@ def document_detail(db: Session, doc: BillingDocument) -> dict[str, Any]:
         .order_by(BillingDocument.doc_date, BillingDocument.doc_no)
         .all()
     )
-    sales_orders = sorted(
-        {o["id"]: o for o in orders_by_line.values()}.values(), key=lambda o: o["doc_no"]
+    # DOC-RELATIONS: the same rule the `/related` table reads, so the two cannot disagree.
+    # Each kind masked by its own view slug, the `/related` rule (security review, DOC-RELATIONS):
+    # a finance-only viewer gets no order ids it could not open.
+    linked = relations.relations_for_billing_document(db, doc)
+    sales_orders = (
+        [{"id": o["id"], "doc_no": o["doc_no"]} for o in linked["sales_orders"]]
+        if relations.can_view(db, user_id, relations.SALES_ORDER)
+        else []
+    )
+    sales_orders.sort(key=lambda o: o["doc_no"])
+    delivery_orders = (
+        [
+            {"id": o["id"], "doc_no": o["doc_no"], "doc_date": o["doc_date"]}
+            for o in linked["delivery_orders"]
+        ]
+        if relations.can_view(db, user_id, relations.DELIVERY_ORDER)
+        else []
     )
     delivery_order_nos = sorted(
         {
@@ -320,6 +346,7 @@ def document_detail(db: Session, doc: BillingDocument) -> dict[str, Any]:
                 ],
                 "sales_orders": sales_orders,
                 "delivery_order_nos": delivery_order_nos,
+                "delivery_orders": delivery_orders,
             },
         }
     )

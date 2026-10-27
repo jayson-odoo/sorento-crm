@@ -111,6 +111,7 @@ class ContactService:
         no_customers_only: bool = False,
         access_filters: Optional[dict] = None,
         redact_sections: frozenset = frozenset(),
+        viewer_id: Optional[str] = None,
     ):
         """List contacts with pagination and filtering.
 
@@ -121,6 +122,9 @@ class ContactService:
         ``include_linked_users`` (S3 1.7): the caller holds `users.view`, so
         each row's `linked_user_id`/`linked_user_name` are filled from ONE
         batched query for the whole page - never one query per row.
+
+        ``viewer_id`` (ACCESS-SHEET-FIXES): the list belongs to no one company, so the
+        Customers column and the ``customer_id`` filter read every company that user is granted.
         """
         q = self.db.query(RespondContact)
         if own_memory_level_only:
@@ -150,26 +154,12 @@ class ContactService:
                 )
             )
         if access_filters:
-            q = self._apply_access_filters(q, access_filters)
+            q = self._apply_access_filters(q, access_filters, viewer_id)
         
         total = q.count()
         
-        # Handle sorting
-        sort_map = {
-            "phone_number": RespondContact.phone_number,
-            "name": RespondContact.name,
-            "first_name": RespondContact.first_name,
-            "last_name": RespondContact.last_name,
-            "created_at": RespondContact.created_at,
-            "updated_at": RespondContact.updated_at,
-        }
-        sort_attr = sort_map.get(sort_field, RespondContact.created_at)
-        if sort_dir == "desc":
-            sort_attr = sort_attr.desc()
-        else:
-            sort_attr = sort_attr.asc()
-        
-        contacts = q.order_by(sort_attr).offset((page - 1) * limit).limit(limit).all()
+        order = self._order_by(q, sort_field, sort_dir == "desc", viewer_id, include_linked_users)
+        contacts = q.order_by(*order).offset((page - 1) * limit).limit(limit).all()
 
         linked_map: dict[str, dict] = {}
         if include_linked_users and contacts:
@@ -179,7 +169,7 @@ class ContactService:
 
         from app.services.contact_customer_service import customer_codes_by_contact
 
-        codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts])
+        codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts], viewer_id)
         cost_ids = self._cost_visible_ids([str(c.id) for c in contacts])
 
         from app.services.contact_brand_scope import brand_refs_by_contact
@@ -224,6 +214,129 @@ class ContactService:
     
     COST_REVEAL_KEY = "purchase_orders.cost"
 
+    def _order_by(self, q, sort_field: str, desc: bool, viewer_id: Optional[str], include_linked_users: bool) -> list:
+        """ORDER BY for the list: every grid column sorts on the server (ACCESS-SHEET-FIXES, owner
+        27 Oct). A multi-value cell sorts by the first value it shows; an empty cell sorts last both
+        ways; name then id break ties so pages never repeat or skip a row."""
+        from sqlalchemy import case, literal, select, any_
+
+        from app.models.access import (
+            ContactAccessType,
+            ContactFieldReveal,
+            ContactTag,
+            RespondContactCustomer,
+            respond_contact_access_types as type_pivot,
+            respond_contact_tags as tag_pivot,
+        )
+        from app.models.base import get_company_scope
+        from app.models.order import Customer
+        from app.models.product import Brand
+        def first(stmt):
+            return stmt.correlate(RespondContact).scalar_subquery()
+
+        columns = {
+            "phone_number": RespondContact.phone_number,
+            "name": RespondContact.name,
+            "first_name": RespondContact.first_name,
+            "last_name": RespondContact.last_name,
+            "created_at": RespondContact.created_at,
+            "updated_at": RespondContact.updated_at,
+            "chatbot_tier": RespondContact.chatbot_profile["tier"].astext,
+            "chatbot_allowed": RespondContact.chatbot_allowed,
+            "escalation_allowed": RespondContact.escalation_allowed,
+            "packing_list_allowed": RespondContact.packing_list_allowed,
+            "chatbot_stock_allowed": RespondContact.chatbot_stock_allowed,
+            "outbound_enabled": RespondContact.outbound_enabled,
+            "regions": RespondContact.regions,
+        }
+        key = columns.get(sort_field)
+        if sort_field == "customers":
+            # The codes the Customers column shows: every granted company when the viewer is known.
+            from app.services.company_scope_resolver import grants_scope_value
+
+            # Core tables, not the entities: the session's auto-filter would narrow them back to the
+            # active company; the link's own company is scoped to the grants explicitly instead.
+            scope = grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
+            customers, links = Customer.__table__, RespondContactCustomer.__table__
+            stmt = (
+                select(func.min(customers.c.customer_code))
+                .select_from(links)
+                .join(customers, customers.c.id == links.c.customer_id)
+                .where(links.c.contact_id == RespondContact.id)
+            )
+            if scope is not None:  # None = every company; UNSET or empty fails closed
+                ids = sorted(scope) if isinstance(scope, frozenset) else []
+                # Both sides: a link's company is stamped from its customer, but nothing enforces it.
+                stmt = stmt.where(
+                    links.c.company_id.in_(ids) & customers.c.company_id.in_(ids) if ids else literal(False)
+                )
+            key = first(stmt)
+        elif sort_field == "access_types":
+            key = first(
+                select(func.min(ContactAccessType.name))
+                .select_from(type_pivot)
+                .join(ContactAccessType, ContactAccessType.code == type_pivot.c.access_type_code)
+                .where(type_pivot.c.contact_id == RespondContact.id)
+            )
+        elif sort_field == "tags":
+            key = first(
+                select(func.min(ContactTag.name))
+                .select_from(tag_pivot)
+                .join(ContactTag, ContactTag.id == tag_pivot.c.tag_id)
+                .where(tag_pivot.c.contact_id == RespondContact.id)
+            )
+        elif sort_field == "brands":
+            # "All" (no brand list) is its own group, ahead of every brand name.
+            key = case(
+                (func.coalesce(func.cardinality(RespondContact.brand_ids), 0) == 0, literal("")),
+                else_=first(select(func.min(Brand.brand_name)).where(Brand.id == any_(RespondContact.brand_ids))),
+            )
+        elif sort_field == "cost_visible":
+            key = exists().where(
+                ContactFieldReveal.respond_contact_id == RespondContact.id,
+                ContactFieldReveal.field_key == self.COST_REVEAL_KEY,
+                ContactFieldReveal.granted.is_(True),
+            )
+        elif sort_field == "tag_settings":
+            key = self._tag_settings_rank(q)
+        elif sort_field == "linked_user" and include_linked_users:
+            from app.models.user import User
+
+            key = first(select(func.min(User.name)).where(User.respond_contact_id == RespondContact.id))
+        if key is None:
+            key = RespondContact.created_at
+        key = (key.desc() if desc else key.asc()).nulls_last()
+        return [key, RespondContact.name.asc().nulls_last(), RespondContact.id.asc()]
+
+    #: Contacts a tag-settings sort evaluates per request. Above it the sort groups holders of a
+    #: settings tag first without telling Differs from Matches; a filter or search narrows it back.
+    TAG_SETTINGS_SORT_CAP = 1000
+
+    def _tag_settings_rank(self, q):
+        """Differs, then Matches, then no settings: the status is computed, so it is evaluated here
+        over the filtered contacts holding a tag that sets something."""
+        from sqlalchemy import case
+
+        from app.models.access import ContactTag, respond_contact_tags as pivot
+        from app.services import contact_tag_settings
+        setting_tags = [
+            tid for tid, st in self.db.query(ContactTag.id, ContactTag.settings) if contact_tag_settings.leaves_of(st)
+        ]
+        if not setting_tags:
+            return None
+        holds = exists().where(pivot.c.contact_id == RespondContact.id, pivot.c.tag_id.in_(setting_tags))
+        holders = q.filter(holds)
+        if holders.count() > self.TAG_SETTINGS_SORT_CAP:
+            # Too many to evaluate per request: holders of a settings tag still group together.
+            return case((holds, 0), else_=None)
+        rank = {"differs": 0, "matches": 1}
+        ranked = {
+            cid: rank[r["status"]]
+            for cid, r in contact_tag_settings.evaluate(self.db, holders.all()).items()
+            if r["status"] in rank
+        }
+        return case(ranked, value=RespondContact.id, else_=None) if ranked else None
+
     def _cost_visible_ids(self, contact_ids: list[str]) -> set[str]:
         """The contacts among ``contact_ids`` holding the cost reveal, in one query."""
         if not contact_ids:
@@ -239,7 +352,7 @@ class ContactService:
             )
         }
 
-    def _apply_access_filters(self, q, f: dict):
+    def _apply_access_filters(self, q, f: dict, viewer_id: Optional[str] = None):
         """UAC A2.3-A2.6: each filter narrows; together they AND. `yes|no` for the switches."""
         from app.models.access import (
             ContactFieldReveal,
@@ -305,8 +418,12 @@ class ContactService:
                 RespondContactCustomer.contact_id == RespondContact.id,
                 RespondContactCustomer.customer_id == f["customer_id"],
             )
-            # Same rule as `customers=none`: only links the caller can see count.
-            predicate = build_company_predicate(RespondContactCustomer, get_company_scope(self.db))
+            # Only links the caller can see count: every company they are granted when the
+            # viewer is known (Internal Users is company-less), else the active scope.
+            from app.services.company_scope_resolver import grants_scope_value
+
+            scope = grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
+            predicate = build_company_predicate(RespondContactCustomer, scope)
             if predicate is not None:
                 link = link.where(predicate)
             q = q.filter(link)

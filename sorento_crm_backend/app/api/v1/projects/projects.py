@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission, require_permission_with_api_key
+from app.dependencies import require_any_permission, require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     ClashPreviewRequest,
@@ -46,6 +46,10 @@ router = APIRouter()
 # keeps plain `require_permission`, so AC-K2's "no write-capable project tools" is a property
 # of the API surface and not just of the tool catalog.
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+#: Reads take `view_own` too; the router guard narrows a holder of only that to their own
+#: projects (PORTAL-P2-ONLY-THEIRS, `_own_scope.py`).
+READ = [VIEW, VIEW_OWN]
 EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 MANAGE = "projects.projects.manage"
@@ -119,6 +123,16 @@ def _merge(*groups: Optional[List[str]]) -> Optional[List[str]]:
     return out or None
 
 
+def _visible_to(db: Session, current_user: dict):
+    """``own_scope.Me`` for a user who may see only their own projects, else ``None``."""
+    from app.services import own_scope
+
+    uid = str(current_user["id"])
+    if own_scope.is_limited(permission_slugs(db, uid), VIEW, VIEW_OWN):
+        return own_scope.me(db, uid)
+    return None
+
+
 @router.get("/", response_model=ListResponse[ProjectResponse])
 async def list_projects(
     query: Optional[str] = Query(None, description="Matches title or project code"),
@@ -168,7 +182,7 @@ async def list_projects(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
     dir: str = Query("desc"),
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -212,6 +226,7 @@ async def list_projects(
             approval_states=states or None,
             approved_only=approved_only
             or current_user.get("auth_method") in _MACHINE_AUTH_METHODS,
+            visible_to=_visible_to(db, current_user),
             page=page,
             limit=limit,
             sort=sort,
@@ -296,7 +311,7 @@ async def register_project(
 @router.get("/{project_id}", response_model=ProjectResponse)
 async def get_project(
     project_id: str,
-    current_user: dict = Depends(require_permission_with_api_key(VIEW)),
+    current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -321,7 +336,22 @@ async def get_project(
         # never pays that embedding call.
         from app.services import project_registration_service as registrations
 
-        body["possible_duplicates"] = registrations.duplicates_for_project(db, project)
+        duplicates = registrations.duplicates_for_project(db, project)
+        me = _visible_to(db, current_user)
+        if me is not None and duplicates:
+            # Only theirs: a project they may not open is not named to them either.
+            from app.models.projects import Project
+            from app.services import own_scope
+
+            ids = [d["project_id"] for d in duplicates]
+            mine = {
+                str(row[0])
+                for row in db.query(Project.id)
+                .filter(Project.id.in_(ids), own_scope.project_clause(me))
+                .all()
+            }
+            duplicates = [d for d in duplicates if str(d["project_id"]) in mine]
+        body["possible_duplicates"] = duplicates
         return body
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -486,7 +516,7 @@ async def delete_project(
 )
 async def list_stakeholders(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -597,7 +627,7 @@ async def remove_stakeholder(
 )
 async def list_collaborators(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -672,7 +702,7 @@ def _takeover_payload(db: Session, requests) -> List[dict]:
 )
 async def list_takeover_requests(
     project_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     try:
@@ -704,7 +734,7 @@ async def list_takeover_requests(
 async def create_takeover_request(
     project_id: str,
     payload: TakeoverRequestCreate,
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Guarded by VIEW, not EDIT, deliberately.
@@ -738,7 +768,7 @@ async def decide_takeover_request(
     project_id: str,
     request_id: str,
     payload: TakeoverRequestDecision,
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
     """Also VIEW-guarded: the service decides who may rule on this specific request

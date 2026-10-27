@@ -1,4 +1,9 @@
-"""S1 - a confirmed own-location allocation holds only what is STILL OWED.
+"""S1 - a confirmed allocation that HOLDS stock holds only what is STILL OWED.
+
+BOARD-NO-HOLD (owner, 27 Oct 2026): a confirmed Reserve (own / brw / group_take) no longer
+holds stock at all, so the cap is exercised on a BORROW (`other_location`), the kind that
+still does; `tests/scm/test_board_no_hold.py` pins that a Reserve holds nothing. The
+seeding below says `source_type` once, in `_decided_line`.
 
 `PLAN-fulfilment-board-plans-delivered-lines.md` S1, UAC AC-S1-1 to AC-S1-5.
 
@@ -27,6 +32,7 @@ from decimal import Decimal
 from sqlalchemy import text
 
 from app.models.project_so import (
+    ALLOC_SOURCE_OTHER_LOCATION,
     DECISION_ACTIVE,
     SO_STATUS_ADOPTED,
     ProjectSalesOrder,
@@ -115,8 +121,10 @@ def _decided_line(
     alloc_qty: str,
     line_status: str = "open",
     on_hand: str = "10",
+    source_type: str = ALLOC_SOURCE_OTHER_LOCATION,
 ):
-    """One confirmed own-location allocation, on a core line with the stated delivery.
+    """One confirmed allocation (a Borrow unless `source_type` says otherwise: a Reserve
+    holds nothing since BOARD-NO-HOLD), on a core line with the stated delivery.
 
     Returns `(product, warehouse, core_line)` - everything an assertion below needs to name a
     pile and a line. The allocation belongs to an ACTIVE revision, which is the only shape
@@ -195,7 +203,7 @@ def _decided_line(
             id=_uid(),
             company_id=company_id,
             so_line_id=mirror.id,
-            source_type="own",
+            source_type=source_type,
             warehouse_id=warehouse.id,
             qty=Decimal(alloc_qty),
             decision_id=decision.id,

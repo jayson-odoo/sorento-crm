@@ -306,7 +306,10 @@ def test_project_status_graphs_refuse_without_project_view(api, entity_type):
     client, *_ = api
     response = client.get(f"{BASE}/project-sales/status-graph/{entity_type}")
     assert response.status_code == 403, response.text
-    assert response.json()["detail"] == f"Permission required: {PROJECTS_VIEW}"
+    # The route accepts `view` or `view_own` (PORTAL-P2), so the 403 names both.
+    assert response.json()["detail"] == (
+        f"One of these permissions required: {PROJECTS_VIEW}, {PROJECTS_VIEW}_own"
+    )
 
 
 @pytest.mark.parametrize("scope_id", ["unknown-uuid", "not-a-uuid"])
