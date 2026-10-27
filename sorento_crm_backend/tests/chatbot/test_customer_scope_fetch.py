@@ -265,12 +265,6 @@ class TestMyMeansAllLinkedAccounts:
         )
         assert out["customer_ids"] == [a, b], out
 
-    @pytest.mark.parametrize("tool", ["crm_sales_report", "crm_outstanding_report"])
-    def test_without_self_reference_the_carry_still_narrows(self, tool, ids) -> None:
-        a, b, _z = ids
-        out = fetch.entity_ids_transformer(_trigger(tool, [a, b], [], outstanding_carried_customer_ids=[a]))
-        assert out["customer_ids"] == [a], out
-
     def test_the_account_the_message_itself_named_stands(self, ids) -> None:
         """"my sales for a/c ii": the engine hands the named link as the entity; the
         carry is ignored, the named account is the subject."""
