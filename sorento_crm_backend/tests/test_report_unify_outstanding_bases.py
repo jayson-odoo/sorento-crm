@@ -408,3 +408,22 @@ def test_ac_ru_8c_delivered_and_ordered_still_need_a_period(client, db, basis):
     resp = _ask(client, _staff(db), basis=basis, period=None)
     assert resp.status_code == 422, resp.text
     assert resp.json().get("code") == "period_required", resp.text
+
+
+@pytest.mark.parametrize("basis", ["outstanding", "pending_delivery", "unpaid"])
+@pytest.mark.parametrize("given", ["date_from", "date_to"])
+def test_ac_ru_8c_one_date_alone_on_an_outstanding_basis_is_422_period_required(client, db, basis, given):
+    """AC-RU-8c (plan section 1): both dates or neither; one alone is 422 period_required.
+    (Passes today: the period check runs before the basis check; a regression pin.)"""
+    resp = _ask(client, _staff(db), basis=basis, period={given: SEP_WINDOW[given]})
+    assert resp.status_code == 422, resp.text
+    assert resp.json().get("code") == "period_required", resp.text
+
+
+@pytest.mark.parametrize("dimension", ["brand", "category", "location", "channel"])
+def test_ac_ru_8b_unpaid_cannot_group_by_a_per_line_dimension(client, db, dimension):
+    """AC-RU-8b (plan section 1): brand / category / location / channel are 422 unknown_group_by like product."""
+    _unpaid_world(db)
+    resp = _ask(client, _staff(db), basis="unpaid", group_by=dimension, top_n=5)
+    assert resp.status_code == 422, resp.text
+    assert resp.json().get("code") == "unknown_group_by", resp.text

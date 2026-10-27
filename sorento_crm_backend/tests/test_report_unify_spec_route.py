@@ -221,6 +221,30 @@ def test_ac_ru_1_spec_is_anded_with_product_code_and_product_ids(client, db):
     assert _tot(by_ids) == (2, D("200.00")), by_ids["total"]  # p4 is s_trap
 
 
+def test_ac_ru_1_a_spec_with_no_colon_is_422_invalid_spec(client, db):
+    """AC-RU-1 (plan section 1, malformed input): spec=trap_type has no key:value shape."""
+    _trap_world(db)
+    resp = _ask(client, _staff(db), spec="trap_type")
+    assert resp.status_code == 422, resp.text
+    assert resp.json().get("code") == "invalid_spec", resp.text
+
+
+def test_ac_ru_1_a_spec_set_with_an_empty_intersection_with_product_ids_is_ok_with_zero_rows(client, db):
+    """AC-RU-4 (plan section 1): the spec matches products, but none of the named product_ids: status ok
+    (the existing AND), zero rows, zero total. Only a spec matching NO product at all is no_products."""
+    w = _trap_world(db)
+    body = _ok(client, _staff(db), spec="trap_type:p_trap", product_ids=[w.p4.id], group_by="product", top_n=10)
+    assert body["status"] == "ok", body
+    assert body["rows"] == [] and body["total"]["qty"] == 0 and money(body["total"]["amount"]) == D("0.00"), body
+
+
+def test_ac_ru_1_spec_on_the_chat_dataset_is_422_unknown_param(client, db):
+    """AC-RU-1 (plan section 1): `spec` is not a chat key. (Passes today: a regression pin.)"""
+    resp = _ask(client, _staff(db), dataset="chat", spec="trap_type:p_trap")
+    assert resp.status_code == 422, resp.text
+    assert resp.json().get("code") == "unknown_param", resp.text
+
+
 # ================================================================ AC-RU-2: no 50 cap on a spec
 
 
