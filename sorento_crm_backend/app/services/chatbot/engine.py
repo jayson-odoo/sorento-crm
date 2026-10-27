@@ -1283,7 +1283,7 @@ def _lookup_lines(
                 for h in hits[name]
             ],
         }
-        return lookup_lists.render(hits), event
+        return lookup_lists.render(hits, group_categories=bool(getattr(config, "category_pick", False))), event
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
         return [], {"pieces": [], "hits": [], "failed": True}
@@ -1301,11 +1301,14 @@ class _SpanPrep:
     held: dict[str, tuple[str, ...]]
     embed: Any
     config: span_extract.SpanConfig | None
+    # EEM-CATEGORY-PICK: the parser prompt asks for a category pick, so the Category block is grouped by class.
+    group_categories: bool = False
 
 
 def _span_prep(
     db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
+    group_categories: bool = False,
 ) -> _SpanPrep | None:
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
@@ -1329,7 +1332,7 @@ def _span_prep(
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories)
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
@@ -1498,7 +1501,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 ]
                 for name, hs in hits.items()
             }
-        lines = lookup_lists.render(hits)
+        lines = lookup_lists.render(hits, group_categories=prep.group_categories)
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
@@ -4455,6 +4458,7 @@ def _close_the_episode(
 def _reset_turn(
     envelope: Envelope,
     *,
+    parsed_language: Any = language_mod.NOT_PARSED,
     verdict: dict[str, Any],
     parser_raw: Any,
     state_in: Any,
@@ -4505,7 +4509,7 @@ def _reset_turn(
         )
         from app.services.chatbot import copy as copy_mod
 
-        reply_language = _turn_language(user_turn, remembered_before, profile)
+        reply_language = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
         ack = copy_mod.resolve(db).render_in("reset_ack", reply_language)
         # Round 8: a reset closes the topic it ended, exactly as the routed reset did. A cancel or
         # a new subject naming nothing is a topic reset too (the chat_state mirror rule).
@@ -5153,6 +5157,7 @@ def _run_stages_body(  # noqa: PLR0915
             span_prep = _span_prep(
                 db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
+                group_categories=parser_config.category_pick,
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:
@@ -5441,10 +5446,15 @@ def _run_stages_body(  # noqa: PLR0915
     # stage (AC-105/R5/H44's own "no routing" shape).
     turn_trace.add("context", context_report)
 
+    # EEM-CATEGORY-PICK: the parser's own reading of the message language, only for a prompt that asks for it.
+    parsed_language = (
+        verdict.get("message_language") if parser_config.message_language and not parser_bypassed else language_mod.NOT_PARSED
+    )
     # Release gate #1829, round 7: the ONE reset seam, before the state applier, apply, routing
     # and every lane (`_reset_turn`).
     reset_result = _reset_turn(
         envelope,
+        parsed_language=parsed_language,
         verdict=verdict,
         parser_raw=parser_raw,
         state_in=state_in,
@@ -5849,6 +5859,7 @@ def _run_stages_body(  # noqa: PLR0915
         ):
             return _run_opportunity_arm(
                 db,
+                parsed_language=parsed_language,
                 turn_id=turn_id,
                 envelope=envelope,
                 verdict=verdict,
@@ -6930,7 +6941,7 @@ def _run_stages_body(  # noqa: PLR0915
         # CHAT-LANGUAGE: this turn's reply language, from the message's own words first. Pure,
         # so every arm has it (`run_tail` carries `item["reply_language"]` to the next turn);
         # the business lane below recomputes it once its codes and names are known.
-        item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
+        item["reply_language"] = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
         # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
@@ -7158,6 +7169,7 @@ def _run_stages_body(  # noqa: PLR0915
                     user_turn,
                     remembered_before,
                     state_out.profile,
+                    parsed=parsed_language,
                     strip=[
                         str(e[k])
                         for e in verdict.get("entities") or []
@@ -7216,6 +7228,7 @@ def _run_stages_body(  # noqa: PLR0915
                 user_turn,
                 remembered_before,
                 state_out.profile,
+                parsed=parsed_language,
                 strip=[
                     str(e[k])
                     for e in verdict.get("entities") or []
@@ -7560,6 +7573,7 @@ def _run_stages_body(  # noqa: PLR0915
                 user_turn,
                 remembered_before,
                 state_out.profile,
+                parsed=parsed_language,
                 strip=[
                     str(e[k])
                     for e in compatible_entities
@@ -9238,6 +9252,7 @@ def _dropped_reason(db: Session, key: str, value: Any) -> str:
 def _run_opportunity_arm(
     db: Session,
     *,
+    parsed_language: Any = language_mod.NOT_PARSED,
     turn_id: str,
     envelope: Envelope,
     verdict: dict[str, Any],
@@ -9267,7 +9282,7 @@ def _run_opportunity_arm(
     space_id = default_space_id(db)
     salesperson = opportunity_lane.is_salesperson(db, contact_respond_id, space_id)
     item = _stamp_item(access, branch_kind, {})
-    item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
+    item["reply_language"] = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
     turn_trace.record(
         "routed",
         summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
@@ -11103,12 +11118,13 @@ def _turn_language(
     profile: Any,
     *,
     strip: Any = (),
+    parsed: Any = language_mod.NOT_PARSED,
 ) -> str:
     """`language.for_turn` on the customer's own line (`UserTurn.own_text`: the quoted
     `reply to:` line is not their words), against a copy so `remembered_before` stays the
     state the turn started with."""
     carried = {"reply_language": remembered_before.get("reply_language")}
-    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip)
+    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip, parsed=parsed)
 
 
 def _ctx_message_text(ctx: Any) -> str:
