@@ -1290,13 +1290,15 @@ def awaiting_acknowledgement_rows(db: Session) -> int:
 def _project_supply_reduction_map(db: Session, rows: list[dict],
                                   horizon: Optional[date] = None,
                                   horizon_start: Optional[date] = None,
-                                  so_numbers: Optional[list[str]] = None) -> dict[tuple, float]:
+                                  so_numbers: Optional[list[str]] = None,
+                                  borrow_only: bool = False) -> dict[tuple, float]:
     """``{(product_id, warehouse_id): qty}`` of stock an ACTIVE Project decision has
     already claimed, at the location it was claimed FROM.
 
-    BOARD-NO-HOLD (owner 27 Oct 2026): only a BORROW claims stock. A Reserve is a plan,
-    not a hold, so it no longer comes off Retail supply (the lines below that say
-    "Reserve" describe the older rule).
+    BOARD-NO-HOLD (owner 27 Oct 2026, Q4): only RETAIL stops seeing a Reserve. The default
+    answer is every non-Buy claim, which is what lowers the PROJECT Buy as before;
+    ``borrow_only=True`` answers the Borrow claims alone, which is what comes off RETAIL's
+    net (a Reserve is a plan, not a hold).
 
     > "every confirmed non-Buy component of an active Project decision (Reserve, Borrow,
     >  and timely SPO cover) is removed from Retail planning supply at its recorded source
@@ -1330,7 +1332,7 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
     so_join = ""
     params: dict[str, Any] = {
         "pids": pids, "horizon": horizon, "horizon_start": horizon_start,
-        "borrow_sources": list(ALLOC_BORROW_SOURCES),
+        "borrow_sources": list(ALLOC_BORROW_SOURCES), "borrow_only": borrow_only,
     }
     if so_numbers:
         # `sso.id = sol.sales_order_id` (security N1, 21 Sep 2026) - the "equivalent
@@ -1357,7 +1359,8 @@ def _project_supply_reduction_map(db: Session, rows: list[dict],
           ON d.project_sales_order_id = psl.project_sales_order_id
          AND d.state = 'active'
         {so_join}
-        WHERE a.source_type = ANY(:borrow_sources)
+        WHERE (CASE WHEN :borrow_only THEN a.source_type = ANY(:borrow_sources)
+                    ELSE a.source_type <> 'order' END)
           AND sol.product_id::text = ANY(:pids)
           AND (CAST(:horizon AS date) IS NULL OR sol.required_date IS NULL
                OR sol.required_date <= CAST(:horizon AS date))
@@ -1392,10 +1395,17 @@ def _apply_project_supply_reduction(db: Session, rows: list[dict],
                                            so_numbers=scoped_so_numbers)
     if not claims:
         return
+    borrows = _project_supply_reduction_map(db, rows, horizon=horizon,
+                                            horizon_start=horizon_start,
+                                            so_numbers=scoped_so_numbers,
+                                            borrow_only=True)
     for r in rows:
-        qty = claims.get((str(r["product_id"]), str(r["warehouse_id"])))
-        if qty:
-            r["project_supply_reduction"] = qty
+        key = (str(r["product_id"]), str(r["warehouse_id"]))
+        if claims.get(key):
+            r["project_supply_reduction"] = claims[key]
+        if borrows.get(key):
+            # The share RETAIL's net loses (Borrow only); a Reserve lowers the project Buy.
+            r["retail_supply_reduction"] = borrows[key]
 
 
 def _last_movement_map(db: Session, product_ids: list[str],
@@ -2753,6 +2763,8 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     project_committed = float(row.get("project_committed") or 0.0)
     project_need = float(row.get("project_confirmed_committed") or 0.0)
     project_supply_reduction = float(row.get("project_supply_reduction") or 0.0)
+    # BOARD-NO-HOLD (Q4): retail's net loses only the Borrow share; a Reserve is a plan.
+    retail_supply_reduction = float(row.get("retail_supply_reduction") or 0.0)
     # RETAIL's own net, for the channel drill (AC-F07) AND - since Lane F, below - what
     # Retail is actually SIZED against: the firm project channel taken back out (`net`
     # already subtracted it as part of `committed`) and the stock a project has already
@@ -2763,7 +2775,7 @@ def _compute_cell(db: Session, row: dict, policies: list[dict], cands: list[dict
     # Retail lost anything. Unclamped, a reserve of 100 against a confirmed need of 20 read
     # `retail_net` 80 units WORSE than the no-project baseline (`net - 80`) - only 20 of
     # that reduction was ever this row's own stock.
-    retail_net = net + project_need - min(project_supply_reduction, project_need)
+    retail_net = net + project_need - min(retail_supply_reduction, project_need)
 
     # LANE F (`PLAN-order-sheet-oi-reports-22sep.md`, owner ruling 23 Sep 2026 - supersedes
     # the ONE-FORMULA ruling below for the project channel): Retail is triggered and sized

@@ -39,9 +39,9 @@ reads the same answer so the board and the view can never disagree about what is
    from its own group's pile, oldest first, at its own date. **UNDECIDED DEMAND NEVER
    CROSSES A GROUP.** The captain, on a BB line of 507 with no inquiry and no planning
    sitting on IB's pile: "who is us to decide those BB group takes our IB pile". Nobody -
-   so the walk does not decide it. Cross-group movement exists only as a PINNED hold, born
-   from a board decision somebody confirmed (step 1 above), and until that Confirm the other
-   group's pile is untouched. The ladder still OFFERS it (`free_piles_at`, read by
+   so the walk does not decide it. Cross-group movement exists only as a PINNED hold or a
+   Reserve plan's ROUTE (rule 7), both born from a board decision somebody confirmed (step
+   1 above), and until that Confirm the other group's pile is untouched. The ladder still OFFERS it (`free_piles_at`, read by
    `use_candidates_for`), which is a PROPOSAL a planner accepts or does not.
    What a line cannot draw is an OPEN SHORTFALL, and the next supply to arrive in ITS OWN
    group clears the group's open shortfalls, earliest required date first, BEFORE it becomes
@@ -95,7 +95,10 @@ reads the same answer so the board and the view can never disagree about what is
    and binds nothing first. Its one job is that its line may draw the bin the plan names,
    AT ITS OWN DATE, in date order with everyone else who may draw there: the line takes it
    at its own step, after its lendable claims and before its own group's pile. A bin outside
-   the span is stood up for route lines alone (never a pile, never free stock).
+   the span is stood up for route lines alone (never a pile, never free stock). Under a
+   narrowed span (`group=`) a route to a bin outside the span is honoured off that bin's
+   free stock and cannot see the bin's own earlier demand, so the narrowed view may read a
+   routed line covered that the full view reads short: the limit a stand-in pin had too.
 
 **Status.** `short` when anything is left uncovered beyond what the line lent,
 `order_back` when the line lent something and is still owed it, `pinned` when a decision
@@ -827,6 +830,8 @@ def assign(
                 continue
             route_events[key] = events[key]
         else:
+            # A key with both a Borrow stand-in (step 1) and a route stand-in yields two
+            # events with one key; harmless, because the route's free stock is zeroed.
             if key not in standins:
                 total = sum(
                     float(h.qty)
@@ -870,7 +875,6 @@ def assign(
             for event in counted
             if left.get(event.key, 0.0) > EPSILON
         and not event.pin_only
-        and event.key not in standins
         ],
         left=left,
         states=[states[line.key] for line in dated],
@@ -1086,7 +1090,7 @@ def _walk(
             if event is None or state.remaining <= EPSILON:
                 continue
             if effective_date(event.at, as_of) > at:
-                continue  # not here yet; the ordinary shortfall queue covers it on arrival
+                continue  # not here yet: a future arrival is drawn by the pile, not by a route
             take = min(
                 route_qty,
                 state.remaining,
@@ -1296,6 +1300,8 @@ def group_book_positions(assignment: Assignment) -> Dict[str, float]:
         group = _group_of(line.warehouse, line.is_pool, line.is_reserve)
         out[group] = out.get(group, 0.0) - float(line.open_qty)
         for item in row.assigned:
+            # A route take (pinned=False) does not lower the lending group's position: two
+            # plans may name the same stock.
             if not item.pinned or item.event.key not in counted:
                 continue
             lender = _group_of(

@@ -2060,7 +2060,8 @@ def _reserve_rival(
         and proposed["borrow"]["qty"] <= _ZERO
         and proposed["spo"]["qty"] <= _ZERO
     )
-    if proposed["reserve"]["qty"] <= _ZERO and not only_buy:
+    reserve_dropped = proposed["reserve"]["qty"] <= _ZERO
+    if reserve_dropped and not only_buy:
         return None
     waiting = _waiting_rows(
         db, project_line_id, product_id, due_before=new_date,
@@ -2070,6 +2071,21 @@ def _reserve_rival(
         return None
     best, unlinked = waiting[0]
     qty = min(unlinked, held_reserve)
+    if reserve_dropped:
+        # The all-Buy reading carries no stock check of its own (a kept Reserve already
+        # passed the ladder's), so cap by what the held bin(s) really have free right now.
+        bins = {
+            str(entry.get("warehouse_id"))
+            for entry in (held or {}).get("reserve") or []
+            if entry.get("warehouse_id")
+        }
+        from app.services.project_supply_service import ProjectSupplyService
+
+        free = ProjectSupplyService(db).free_stock_by_location([str(product_id)])
+        qty = min(
+            qty,
+            sum((max(free.get((str(product_id), wid), _ZERO), _ZERO) for wid in bins), _ZERO),
+        )
     if qty <= _ZERO:
         return None
     return {

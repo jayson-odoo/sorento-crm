@@ -1752,8 +1752,8 @@ class StockDebtService:
         IS the line's landed goods (SO381065's 88 at BRW-BB reach the assignment this way,
         through the auto placement on SPO-2026/05-0001, and `_landed_holds` then nets its
         own read to nothing), so without the mark here the feature lent nothing on the real
-        book. A decision hold (`so_line_allocations`) is never lendable: it is a Reserve
-        somebody confirmed, not goods that landed for the line. `None` marks nothing.
+        book. A decision allocation (`so_line_allocations`) is never lendable: a Borrow
+        pins and a Reserve is a route, neither is goods that landed for the line. `None` marks nothing.
         """
         if not line_keys:
             return []

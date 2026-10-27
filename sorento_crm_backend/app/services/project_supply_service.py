@@ -6628,7 +6628,9 @@ class ProjectSupplyService:
         named: set,
     ) -> None:
         """No Reserve may exceed what is ON HAND at that location, less what OTHER lines
-        have already confirmed there (R14, captain 27 August 2026).
+        have already confirmed there (R14, captain 27 August 2026). Since BOARD-NO-HOLD only
+        other lines' Borrow holds count (a Reserve holds nothing); the same confirm's earlier
+        lines still count once, as below.
 
         The ladder already caps what it PROPOSES, but the board lets a planner compose an
         amendment by hand, so a hand-typed 15 against 10 on hand has to be bounded here.
