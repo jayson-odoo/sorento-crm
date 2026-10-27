@@ -1221,8 +1221,7 @@ def entity_ids_transformer(
         if channel in ("dealer", "project"):
             out["channel"] = channel
         basis = jsc.get(semantic_input, "sales_basis")
-        out["basis"] = "invoiced"  # SALES-UNIFIED: sales is invoiced unless the person names a basis
-        if basis in SALES_ANALYSIS_BASES:
+        if basis in SALES_ANALYSIS_BASES:  # never defaulted: `run_fetch` asks the basis first (owner, 27 Oct)
             out["basis"] = basis
         company = jsc.get(semantic_input, "sales_company")
         if jsc.truthy(company):

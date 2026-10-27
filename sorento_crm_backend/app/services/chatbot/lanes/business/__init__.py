@@ -2151,6 +2151,10 @@ def run_fetch(
                 # Review round 2 S1: "sales by customer" is not answered with a by-channel
                 # table and no word that the ask was changed; it is said, and nothing fetched.
                 return _sales_analysis_axis_unsupported(group_by)
+            if jsc.js_string(parse_output.get("sales_basis") or "") not in fetch_mod.SALES_ANALYSIS_BASES:
+                # Owner ruling 27 Oct: a sales total never defaults to invoiced; the basis is asked, Invoiced first,
+                # the way a ranking asks it.
+                return _fixed_reply(report_ask.ranking_ask.RANKING_BASIS_LINE)
         # SALES-COMPANY (CHAT-PICK-QTY-STATE item 1): a contact in two companies who names
         # neither is asked which HERE, before any fetch, as a `required_fields` slot, so the
         # reply is read against this question (the route's own "Sorento or Mocha?" came back

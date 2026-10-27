@@ -50,7 +50,13 @@ def _rendered(payload=ROUTE_HIT) -> str:
     return _present_response()(TOOL, json.dumps(payload))
 
 
+#: REPORT-UNIFY (Q1): only the Yearly comparison is left on this tool (every other axis is the report ask's), and
+#: a sales total never defaults its basis (owner, 27 Oct): the asks here name both.
+YEARLY = dict(group_by="year", sales_basis="delivered")
+
+
 def _payload(*, attributes=(GRANT,), **qf):
+    qf = {**YEARLY, **qf}
     return {
         "gate": {"compatible_entities": []},
         "tier_gate": None,
@@ -72,18 +78,13 @@ def _args(session_factory, **qf) -> tuple[str, dict[str, Any]]:
 
 
 class TestToolPickAndArgs:
-    def test_ac_s1_20_compare_by_month_asks_month_by_year_for_the_years_named(self, session_factory):
-        name, args = _args(
-            session_factory, group_by="month", sales_channel="dealer",
-            date_filter_start="2025-01-01", date_filter_end="2026-12-31",
-        )
-        assert name == TOOL
-        assert args["rows"] == "month" and args["cols"] == "year"
-        assert args["channel"] == "dealer"
-        assert args["date_from"] == "2025-01-01" and args["date_to"] == "2026-12-31"
-        assert args["basis"] == "invoiced"  # SALES-UNIFIED: the default is invoiced (was G1 delivered)
-        assert "contact_id" in args and "space_id" in args
-        assert "reply_format" not in args and "deliver" not in args
+    def test_a_yearly_comparison_with_no_basis_asks_the_basis_never_defaults_to_invoiced(self, session_factory):
+        from app.services.chatbot.lanes.business import run_fetch
+
+        call, captured = _capturing_mcp(_rendered())
+        out = run_fetch(_payload(sales_basis=None), services=FetchServices(mcp_call=call))
+        assert captured == [], captured
+        assert "Invoiced, delivered, ordered or outstanding?" in str(out), out
 
     def test_a_total_asks_channel_by_year(self, session_factory):
         _name, args = _args(session_factory, sales_channel="project")
@@ -145,7 +146,7 @@ class TestTextAndFile:
         _seed_contact(session_factory, variables={})
         result, captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[], sales_channel="project"),
+            qf=_qf(order_status="sales_analysis", entities=[], sales_channel="project", **YEARLY),
             text_body="total project sales this year", msg_id="ZZT-sa-hit-1",
             attributes=[GRANT], mcp_response=_rendered(),
         )
@@ -164,7 +165,7 @@ class TestTextAndFile:
         _seed_contact(session_factory, variables={})
         result, _captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[]),
+            qf=_qf(order_status="sales_analysis", entities=[], **YEARLY),
             text_body="sales this year", msg_id="ZZT-sa-clarify-1",
             attributes=[GRANT],
             mcp_response=_rendered({"status": "clarify", "message": "Sorento or Mocha?"}),
@@ -246,9 +247,10 @@ def test_ac_s1_19_the_seed_rows_carry_the_same_tool():
     from app.services.mcp_tool_domains import CHATBOT_TOOL_DOMAINS as TOOL_DOMAINS
 
     order = next(r for r in policy_rows.DEFAULT_DOMAIN_ROWS if r["name"] == "order")
-    assert TOOL in order["tools"] and order["tools"][0] != TOOL
+    # REPORT-UNIFY: the Yearly file is an override, not a row tool: the order row no longer lists it.
+    assert TOOL not in order["tools"]
     assert TOOL in CHATBOT_READ_ONLY_TOOLS
-    assert TOOL in policy_rows.DATE_PARAM_TOOLS
+    # (its date params ride `fetch.DATE_PARAMS`, not a row's tools)
     assert TOOL_DOMAINS[TOOL] == "sales"  # R7 (PLAN-prompt-dynamic-30sep D9)
 
 
