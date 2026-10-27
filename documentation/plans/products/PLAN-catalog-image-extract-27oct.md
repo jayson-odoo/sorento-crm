@@ -436,3 +436,20 @@ red when broken and green when restored.
   (rare, and Attach shows the product's photos as they are).
 - Test copy DB: crew held the migration SQL (`SET NOT NULL` counts as destructive), so the shared dev DB
   lacks the NOT NULL and the three indexes. Owner approval (`crew migrate --approved`) before the hand test.
+
+### Browser pass 2 (27 Oct, head 1c1bc575bb, real catalogue on the test copy): PASS
+- 32 pages, 428 photos (read took about 6 min): Ready 340, Looks like an existing photo 0, Needs a product
+  88, Skipped 0; 5 of 5 spot checks right (p2 SRTWT1906-BL-DIY / -DIY / -GM-DIY, p8 S-FH10PVC-DIY,
+  S-FH18PVC-DIY). Pagination, sorting (page, printed code, product), picker, skip/restore, ZIP (photos
+  only, 428), folder named by code, one drawer entry: all pass.
+- One photo attached on the shared dev DB: S-FH10PVC-DIY (it had no photo before).
+- Look-alike 0, although SRTWCFT004-OP (Ready) already has a photo. Either its file is not readable from
+  the staging bucket or the two images differ by more than the threshold; nothing on screen says which.
+
+- FR-24 The read records, on its import job's result, how many existing photos were compared, how many
+  could not be read, and how many were flagged, so a 0 is explainable (shown where import job results
+  already show; no new UI words on the review page).
+- FR-25 When nothing is left to attach and at least one photo is attached, all three steps show as done
+  (no step left "current").
+- Accepted: at 375px the review grid scrolls sideways to reach the picker and Skip (DataGrid fixed layout,
+  the same as every other grid).
