@@ -825,15 +825,20 @@ def class_member_ids(db: Session, labels: list[str]) -> list[str]:
 
     wanted = set(labels)
     rows = (
-        db.query(ProductCategory.id, ProductCategory.category_code, ProductCategory.category_name, ProductCategory.class_label)
-        .filter(ProductCategory.is_searchable.is_(True))
+        db.query(ProductCategory.id, ProductCategory.category_code, ProductCategory.category_name, ProductCategory.class_label,
+            ProductCategory.is_searchable,
+        )
         .order_by(ProductCategory.category_code)
         .all()
     )
-    vocab = ClassVocabulary(db) if any(not r[3] for r in rows) else None
+    # A classed row is in its class searchable or not (as `resolve_category_class` always took it); a class-less
+    # one only when it is searchable and the vocabulary maps it to the class.
+    classless = [r for r in rows if not (r[3] or "").strip() and r[4] is not False]
+    vocab = ClassVocabulary(db) if classless else None
     return [
         str(r[0]) for r in rows
-        if category_class(db, code=r[1], name=r[2], class_label=r[3], vocab=vocab) in wanted
+        if ((r[3] or "").strip() and r[3] in wanted)
+        or (r in classless and category_class(db, code=r[1], name=r[2], class_label=r[3], vocab=vocab) in wanted)
     ]
 
 
@@ -843,7 +848,19 @@ def unclassed_ids(db: Session, ids: list[str]) -> bool:
 
     if not ids:
         return False
-    return not db.query(ProductCategory.id).filter(ProductCategory.id.in_(ids), ProductCategory.class_label.isnot(None)).first()
+    labels = db.query(ProductCategory.class_label).filter(ProductCategory.id.in_(ids)).all()
+    return not any((r[0] or "").strip() for r in labels)
+
+
+def classless_hit_class(db: Session, matched: list[tuple[str, str, str]]) -> list[str]:
+    """EEM-CATEGORY-PICK: the class a class-less token hit widens to, as its member ids: only when
+    `product_class_signal.category_class` gives the hit's row(s) exactly one class; none or several -> [] (the
+    hit stays exact, never widened to a guess)."""
+    from app.services.product_class_signal import ClassVocabulary, category_class
+
+    vocab = ClassVocabulary(db)
+    classes = {category_class(db, code=code, name=name, class_label=None, vocab=vocab) for _id, code, name in matched}
+    return class_member_ids(db, [next(iter(classes))]) if len(classes) == 1 and None not in classes else []
 
 
 def resolve_category_class(db: Session, token: str) -> tuple[list[str], list[str]]:
