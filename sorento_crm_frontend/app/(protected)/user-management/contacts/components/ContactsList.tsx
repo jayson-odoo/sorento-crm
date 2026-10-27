@@ -270,6 +270,13 @@ export default function ContactsList() {
   const matchingPendingSeq = useRef<number | null>(null);
   // Mirror of the ref above, for the toolbar link to read "Selecting..." while it runs.
   const [matchingPending, setMatchingPending] = useState(false);
+  // The selection moved on: a fetch still out is dropped, and "Selecting..." ends now rather
+  // than when the dropped request settles.
+  const leaveSelectAllFetch = () => {
+    matchingSeq.current += 1;
+    matchingPendingSeq.current = null;
+    setMatchingPending(false);
+  };
   const selectedContacts = useMemo(
     () => matching ?? pageContacts.filter((c) => rowSelection[c.id]),
     [matching, pageContacts, rowSelection],
@@ -777,7 +784,7 @@ export default function ContactsList() {
       // pointerdown, which still holds every id of the mode.
       const pageIds = new Set(pageContacts.map((c) => c.id));
       const base = typeof updater === 'function' ? updater(rowSelection) : updater;
-      matchingSeq.current += 1;
+      leaveSelectAllFetch();
       setMatching(null);
       setRowSelection(Object.fromEntries(Object.entries(base).filter(([id]) => pageIds.has(id))));
     },
@@ -789,7 +796,7 @@ export default function ContactsList() {
   });
 
   const clearSelection = () => {
-    matchingSeq.current += 1;
+    leaveSelectAllFetch();
     setMatching(null);
     setRowSelection({});
   };
@@ -853,7 +860,7 @@ export default function ContactsList() {
   useEffect(() => {
     setRowSelection({});
     setMatching(null);
-    matchingSeq.current += 1;
+    leaveSelectAllFetch();
   }, [
     searchQuery,
     chatbotMemoryLevel,
