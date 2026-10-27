@@ -1,7 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { Fragment, useState } from 'react';
 import { ChevronDown, ChevronUp, Download, LoaderCircle } from 'lucide-react';
+import { Alert, AlertContent, AlertDescription, AlertTitle } from '@/components/ui/alert';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -21,13 +22,13 @@ import { useCustomerMultiPicker } from '@/app/(protected)/order-management/custo
 import type {
   AccessSheetAccount,
   AccessSheetBlock,
-  AccessSheetChange,
   AccessSheetContact,
   AccessSheetResult,
 } from '@/services/contactAccessSheetService';
 import { useApplyAccessSheet, usePreviewAccessSheet } from '../hooks/useAccessSheetImport';
 import {
   allExactConfirmed,
+  changeLines,
   confirmAllExact,
   initialSelection,
   resultCsv,
@@ -35,7 +36,9 @@ import {
   setTicked,
   toConfirmedPayload,
   toggleTicked,
+  unchangedFacets,
   type AccessSheetSelection,
+  type ChangeItem,
 } from '../lib/accessSheet';
 
 type Step = 'upload' | 'preview' | 'result';
@@ -78,26 +81,9 @@ const FACET_TEXT: Record<string, string> = {
 
 const ROLE_TEXT = { owner: 'Business Owner', employee: 'Employee' } as const;
 
-function describeChange(change: AccessSheetChange): string {
-  const label = FACET_TEXT[change.facet] ?? change.facet;
-  const { before, after } = change;
-  if (Array.isArray(before) && Array.isArray(after)) {
-    const added = after.filter((v) => !before.includes(v));
-    return `${label}: + ${added.join(', ')}`;
-  }
-  if (Array.isArray(after) && typeof before === 'string') return `${label}: ${before} -> ${after.join(', ')}`;
-  if (typeof after === 'boolean') return `${label}: ${after ? 'on' : 'off'}`;
-  return `${label}: ${String(after ?? '')}`;
-}
-
-function Cell({ children, title, className = '' }: { children: React.ReactNode; title?: string; className?: string }) {
-  return (
-    <td className={`px-2 py-1.5 ${className}`}>
-      <div className="truncate" title={title}>
-        {children}
-      </div>
-    </td>
-  );
+// BULK-ACCESS-PREVIEW (owner 27 Oct): the preview shows everything, so cells wrap, never truncate.
+function Cell({ children }: { children: React.ReactNode }) {
+  return <td className="px-2 py-1.5 align-top break-words">{children}</td>;
 }
 
 /**
@@ -305,7 +291,7 @@ function PreviewStep({
       {preview.errors.length ? (
         <ul className="space-y-0.5 text-xs text-muted-foreground">
           {preview.errors.map((e) => (
-            <li key={`${e.line}:${e.reason}`} className="truncate" title={e.reason}>
+            <li key={`${e.line}:${e.reason}`} className="break-words">
               {`Line ${e.line}: ${e.reason}`}
             </li>
           ))}
@@ -313,6 +299,7 @@ function PreviewStep({
       ) : null}
       <BlockList
         blocks={preview.blocks}
+        dryRun
         selection={selection}
         onChange={onChange}
         extraLabels={extraLabels}
@@ -340,12 +327,14 @@ function ResultStep({ result }: { result: AccessSheetResult }) {
 
 function BlockList({
   blocks,
+  dryRun = false,
   selection,
   onChange,
   extraLabels = {},
   onExtraLabels,
 }: {
   blocks: AccessSheetBlock[];
+  dryRun?: boolean;
   selection?: AccessSheetSelection;
   onChange?: (next: AccessSheetSelection) => void;
   extraLabels?: Record<string, string>;
@@ -355,7 +344,7 @@ function BlockList({
     blocks[0] ? { [blocks[0].key]: true } : {},
   );
   return (
-    <div className="max-h-[50dvh] space-y-2 overflow-auto">
+    <div className="max-h-[60dvh] space-y-2 overflow-auto">
       {blocks.map((block) => {
         const isOpen = !!openKeys[block.key];
         const badge = BLOCK_BADGE[block.status];
@@ -375,7 +364,7 @@ function BlockList({
                 aria-expanded={isOpen}
                 onClick={() => setOpenKeys((prev) => ({ ...prev, [block.key]: !isOpen }))}
               >
-                <span className="min-w-0 truncate font-medium" title={block.dealer}>
+                <span className="min-w-0 break-words font-medium">
                   {block.dealer}
                 </span>
                 {block.companies.map((c) => (
@@ -409,7 +398,11 @@ function BlockList({
                     onLabels={onExtraLabels}
                   />
                 ) : null}
-                <ContactsTable contacts={block.contacts} />
+                <div className="space-y-2">
+                  {block.contacts.map((c) => (
+                    <ContactPanel key={`${c.line}:${c.phone}`} contact={c} dryRun={dryRun} />
+                  ))}
+                </div>
               </div>
             ) : null}
           </div>
@@ -438,7 +431,7 @@ function AccountsTable({
   const ticked = selection.ticked[block.key] ?? [];
   return (
     <div className="overflow-x-auto">
-      <table className="w-full min-w-[40rem] table-fixed text-sm">
+      <table className="w-full min-w-[46rem] table-fixed text-sm">
         <thead className="text-xs text-muted-foreground">
           <tr>
             <th className="w-10 px-2 py-1 text-start font-medium" />
@@ -448,6 +441,7 @@ function AccountsTable({
             <th className="w-20 px-2 py-1 text-start font-medium">Active</th>
             <th className="w-32 px-2 py-1 text-start font-medium">Account agent</th>
             <th className="w-32 px-2 py-1 text-start font-medium">Sheet agent</th>
+            <th className="w-32 px-2 py-1 text-start font-medium">Links to</th>
           </tr>
         </thead>
         <tbody className="divide-y">
@@ -468,15 +462,26 @@ function AccountsTable({
                   }}
                 />
               </td>
-              <Cell title={a.customer_code}>{a.customer_code}</Cell>
-              <Cell title={a.customer_name}>
+              <Cell>{a.customer_code}</Cell>
+              <Cell>
                 {a.customer_name}
                 {a.match === 'candidate' && a.score !== null ? ` (${a.score.toFixed(2)})` : ''}
               </Cell>
               <Cell>{a.company_code ?? '-'}</Cell>
               <Cell>{a.is_active ? 'Yes' : 'No'}</Cell>
-              <Cell title={a.sales_agent ?? undefined}>{a.sales_agent ?? '-'}</Cell>
-              <Cell title={a.sheet_agent ?? undefined}>{a.sheet_agent ?? '-'}</Cell>
+              <Cell>{a.sales_agent ?? '-'}</Cell>
+              <Cell>{a.sheet_agent ?? '-'}</Cell>
+              <Cell>
+                {a.links_to.length ? (
+                  <ul>
+                    {a.links_to.map((name, i) => (
+                      <li key={`${name}:${i}`}>{name}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <span className="text-muted-foreground">Nobody</span>
+                )}
+              </Cell>
             </tr>
           ))}
         </tbody>
@@ -525,47 +530,128 @@ function ExtraCustomers({
   );
 }
 
-function ContactsTable({ contacts }: { contacts: AccessSheetContact[] }) {
+const HOLDS_MORE_FACET: Record<string, string> = {
+  access_types: 'Access types',
+  companies: 'Companies',
+  stock_locations: 'Locations',
+  brands: 'Brands',
+};
+
+function ItemList({ label, items }: { label: string; items: ChangeItem[] }) {
   return (
-    <div className="overflow-x-auto">
-      <table className="w-full min-w-[56rem] table-fixed text-sm">
-        <thead className="text-xs text-muted-foreground">
-          <tr>
-            <th className="w-28 px-2 py-1 text-start font-medium">Name</th>
-            <th className="w-32 px-2 py-1 text-start font-medium">Phone</th>
-            <th className="w-20 px-2 py-1 text-start font-medium">In CRM</th>
-            <th className="w-32 px-2 py-1 text-start font-medium">Role</th>
-            <th className="w-36 px-2 py-1 text-start font-medium">Template</th>
-            <th className="w-72 px-2 py-1 text-start font-medium">Changes</th>
-            <th className="w-48 px-2 py-1 text-start font-medium">Warnings</th>
-          </tr>
-        </thead>
-        <tbody className="divide-y">
-          {contacts.map((c) => {
-            const changes = c.changes.map(describeChange).join('; ');
-            const warnings = [
-              ...c.warnings.map((w) => WARNING_TEXT[w] ?? w),
-              ...c.not_applied.map((f) => `Not applied: ${FACET_TEXT[f] ?? f}`),
-            ].join('; ');
-            const outcome = c.skip_reason
-              ? SKIP_TEXT[c.skip_reason] ?? c.skip_reason
-              : c.status === 'no_change'
-                ? 'No changes'
-                : changes;
+    <div className="border-t px-3 py-1.5 sm:border-t">
+      <div className="text-xs text-muted-foreground sm:hidden">{label}</div>
+      <ul className="break-words">
+        {items.length ? (
+          items.map((item, i) => (
+            <li key={`${item.text}:${i}`} className={item.added ? 'font-medium text-success' : undefined}>
+              {item.added ? (
+                <>
+                  <span aria-hidden>+ </span>
+                  <span className="sr-only">added: </span>
+                  <span data-testid="added-item">{item.text}</span>
+                </>
+              ) : (
+                item.text
+              )}
+            </li>
+          ))
+        ) : (
+          <li className="text-muted-foreground">None</li>
+        )}
+      </ul>
+    </div>
+  );
+}
+
+/** One contact: header, every changed setting as before -> after, then the info lines. */
+function ContactPanel({ contact: c, dryRun }: { contact: AccessSheetContact; dryRun: boolean }) {
+  const status = c.skip_reason
+    ? { label: SKIP_TEXT[c.skip_reason] ?? c.skip_reason, variant: 'secondary' as const }
+    : c.status === 'no_change'
+      ? { label: 'No changes', variant: 'secondary' as const }
+      : { label: dryRun ? 'Will change' : 'Applied', variant: 'success' as const };
+  const planned = c.in_crm && !c.skip_reason;
+  const unchanged = planned ? unchangedFacets(c).map((f) => FACET_TEXT[f] ?? f) : [];
+  return (
+    <div className="rounded-lg border text-sm" data-testid={`contact-${c.name}`}>
+      <div className="flex flex-wrap items-center gap-2 bg-muted/40 px-3 py-2">
+        <span className="font-medium break-words">{c.name || '-'}</span>
+        <span className="text-muted-foreground">{c.phone}</span>
+        <Badge variant="secondary" appearance="light" size="sm">
+          {ROLE_TEXT[c.role] ?? c.role}
+        </Badge>
+        <Badge variant="secondary" appearance="light" size="sm">
+          {`Template ${c.template}`}
+        </Badge>
+        <span className="flex-1" />
+        <Badge variant={status.variant} appearance="light" size="sm">
+          {status.label}
+        </Badge>
+      </div>
+      {c.changes.length ? (
+        <div className="grid grid-cols-1 sm:grid-cols-[9rem_minmax(0,1fr)_1.5rem_minmax(0,1fr)]">
+          <div className="hidden border-t px-3 py-1 text-xs text-muted-foreground sm:block">Setting</div>
+          <div className="hidden border-t px-3 py-1 text-xs text-muted-foreground sm:block">Before</div>
+          <div className="hidden border-t sm:block" />
+          <div className="hidden border-t px-3 py-1 text-xs text-muted-foreground sm:block">After</div>
+          {c.changes.map((change) => {
+            const lines = changeLines(change);
             return (
-              <tr key={`${c.line}:${c.phone}`}>
-                <Cell title={c.name}>{c.name || '-'}</Cell>
-                <Cell title={c.phone}>{c.phone}</Cell>
-                <Cell>{c.in_crm ? 'Yes' : 'No'}</Cell>
-                <Cell>{ROLE_TEXT[c.role] ?? c.role}</Cell>
-                <Cell title={c.template}>{c.template}</Cell>
-                <Cell title={outcome}>{outcome}</Cell>
-                <Cell title={warnings}>{warnings || '-'}</Cell>
-              </tr>
+              <Fragment key={change.facet}>
+                <div className="border-t bg-muted/20 px-3 py-1.5 font-medium sm:bg-transparent">
+                  {FACET_TEXT[change.facet] ?? change.facet}
+                </div>
+                <ItemList label="Before" items={lines.before} />
+                <div className="hidden border-t py-1.5 text-center text-muted-foreground sm:block" aria-hidden>
+                  &rarr;
+                </div>
+                <ItemList label="After" items={lines.after} />
+              </Fragment>
             );
           })}
-        </tbody>
-      </table>
+        </div>
+      ) : null}
+      {unchanged.length ? (
+        <div className="border-t px-3 py-1.5 text-xs text-muted-foreground">{`No change: ${unchanged.join(', ')}`}</div>
+      ) : null}
+      {c.not_applied.length ? (
+        <div className="border-t px-3 py-1.5 text-xs text-muted-foreground">
+          {`Not applied (no permission): ${c.not_applied.map((f) => FACET_TEXT[f] ?? f).join(', ')}`}
+        </div>
+      ) : null}
+      {c.holds_more_items.length ? (
+        <div className="border-t p-2">
+          <Alert variant="warning" appearance="light" size="sm">
+            <AlertContent>
+              <AlertTitle>Holds more than the template (kept)</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc ps-4">
+                  {c.holds_more_items.map((h) => (
+                    <li key={h.facet}>{`${HOLDS_MORE_FACET[h.facet] ?? h.facet}: ${h.items.join(', ')}`}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </AlertContent>
+          </Alert>
+        </div>
+      ) : null}
+      {c.outside_links.length ? (
+        <div className="border-t p-2">
+          <Alert variant="info" appearance="light" size="sm">
+            <AlertContent>
+              <AlertTitle>Linked outside this row&apos;s companies (kept, not removed)</AlertTitle>
+              <AlertDescription>
+                <ul className="list-disc ps-4">
+                  {c.outside_links.map((label) => (
+                    <li key={label}>{label}</li>
+                  ))}
+                </ul>
+              </AlertDescription>
+            </AlertContent>
+          </Alert>
+        </div>
+      ) : null}
     </div>
   );
 }

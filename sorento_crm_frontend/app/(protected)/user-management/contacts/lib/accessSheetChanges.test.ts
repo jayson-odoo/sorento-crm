@@ -7,7 +7,11 @@ import { changeLines, unchangedFacets } from './accessSheet';
 
 describe('changeLines', () => {
   it('lists every item of a list facet and marks only the added ones', () => {
-    const lines = changeLines({ facet: 'access_types', before: ['end_user'], after: ['cabana_dealer', 'dealer', 'end_user'] });
+    const lines = changeLines({
+      facet: 'access_types',
+      before: ['end_user'],
+      after: ['cabana_dealer', 'dealer', 'end_user'],
+    });
     expect(lines.before).toEqual([{ text: 'end_user', added: false }]);
     expect(lines.after).toEqual([
       { text: 'cabana_dealer', added: true },
@@ -17,14 +21,25 @@ describe('changeLines', () => {
   });
 
   it('a text before (every brand) is one line and every after item is added', () => {
-    const lines = changeLines({ facet: 'brands', before: 'every brand', after: ['CABANA', 'SORENTO'] });
+    const lines = changeLines({
+      facet: 'brands',
+      before: 'every brand',
+      after: ['CABANA', 'SORENTO'],
+    });
     expect(lines.before).toEqual([{ text: 'every brand', added: false }]);
     expect(lines.after.map((i) => i.added)).toEqual([true, true]);
   });
 
   it('null before is no line; a switch shows on / off', () => {
-    expect(changeLines({ facet: 'stock_locations', before: null, after: ['BRW'] }).before).toEqual([]);
-    const sw = changeLines({ facet: 'packing_list_allowed', before: true, after: false });
+    expect(
+      changeLines({ facet: 'stock_locations', before: null, after: ['BRW'] })
+        .before,
+    ).toEqual([]);
+    const sw = changeLines({
+      facet: 'packing_list_allowed',
+      before: true,
+      after: false,
+    });
     expect(sw.before).toEqual([{ text: 'on', added: false }]);
     expect(sw.after).toEqual([{ text: 'off', added: true }]);
   });

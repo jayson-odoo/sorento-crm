@@ -364,8 +364,8 @@ describe('AccessSheetImportDialog', () => {
     svc.previewAccessSheet.mockResolvedValueOnce(FULL);
     renderDialog();
     await toPreview();
-    if (!screen.queryByText('Shi')) fireEvent.click(screen.getAllByText('ALPHA BATH SDN BHD')[0]);
-    await screen.findByText('Shi');
+    if (!screen.queryByTestId('contact-Shi')) fireEvent.click(screen.getAllByText('ALPHA BATH SDN BHD')[0]);
+    await screen.findByTestId('contact-Shi');
   }
 
   it('P5: each changed facet lists before and after one item per line, added items marked', async () => {

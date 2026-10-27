@@ -1,6 +1,8 @@
 import type {
   AccessSheetBlock,
+  AccessSheetChange,
   AccessSheetConfirmed,
+  AccessSheetContact,
   AccessSheetResult,
 } from '@/services/contactAccessSheetService';
 
@@ -49,6 +51,48 @@ export function toConfirmedPayload(sel: AccessSheetSelection): AccessSheetConfir
 export function allExactConfirmed(preview: AccessSheetResult, sel: AccessSheetSelection): boolean {
   const exact = preview.blocks.filter((b) => b.status === 'exact');
   return exact.length > 0 && exact.every((b) => sel.confirmed[b.key]);
+}
+
+/** Every facet the sheet template sets, in the order the preview lists them. */
+export const TEMPLATE_FACETS = [
+  'companies',
+  'access_types',
+  'brands',
+  'stock_check_mode',
+  'stock_locations',
+  'customers',
+  'market_segments',
+  'media',
+  'agent_access',
+  'chatbot_stock_allowed',
+  'chatbot_eta_offset_applied',
+  'chatbot_allowed',
+  'escalation_allowed',
+  'packing_list_allowed',
+] as const;
+
+export type ChangeItem = { text: string; added: boolean };
+
+function items(value: unknown): string[] {
+  if (Array.isArray(value)) return value.map(String);
+  if (value === null || value === undefined) return [];
+  if (typeof value === 'boolean') return [value ? 'on' : 'off'];
+  return [String(value)];
+}
+
+/** One change as before -> after lines, one item each; an after item not held before is `added`. */
+export function changeLines(change: AccessSheetChange): { before: ChangeItem[]; after: ChangeItem[] } {
+  const before = items(change.before);
+  return {
+    before: before.map((text) => ({ text, added: false })),
+    after: items(change.after).map((text) => ({ text, added: !before.includes(text) })),
+  };
+}
+
+/** Template facets this contact neither changes nor was refused (`not_applied`). */
+export function unchangedFacets(contact: Pick<AccessSheetContact, 'changes' | 'not_applied'>): string[] {
+  const touched = new Set([...contact.changes.map((c) => c.facet), ...contact.not_applied]);
+  return TEMPLATE_FACETS.filter((f) => !touched.has(f));
 }
 
 function cell(value: unknown): string {
