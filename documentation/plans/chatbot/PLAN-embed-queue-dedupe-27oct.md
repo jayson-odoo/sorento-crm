@@ -1,40 +1,77 @@
 # PLAN: embedding_queue dedupe + cheap poll (EMBED-QUEUE-DEDUPE)
 
-Status: in progress (Build). Track: standard (carries a migration), backend only, no UI.
+Status: in review. Track: standard (carries a migration). Backend only, no UI.
 
 ## Problem (prod, 27 Oct 2026)
 
-`embedding_queue` holds ~1,175,503 pending rows, ~94% duplicates (20 Oct clone: 852,900 pending
-over 54,296 distinct sources). The DB fallback processor takes 10 rows per run every 15-30 s and
-each poll seq-scans the 2.5 GB table (`count(*)` plus `ORDER BY CASE source_type='mcp_tool' ...,
-created_at LIMIT 10`, `app/scheduler/task_scheduler.py`), giving constant DB IO.
+`embedding_queue` holds about 1,175,503 pending rows, about 94% of them duplicates (the 20 Oct
+clone had 852,900 pending rows over 54,296 distinct sources). The DB fallback processor takes
+10 rows per run every 15-30 s. Each poll seq-scans the 2.5 GB table (a `count(*)` plus
+`ORDER BY CASE source_type='mcp_tool' ..., created_at LIMIT 10`), so prod DB IO never stops.
 
 Causes:
-- `app/services/embedding_change_listener.py` queues one row per insert/update/delete of every
-  tracked model, with no dedupe and also on no-op updates (SQLAlchemy `after_update` fires for a
-  flushed object even when no column value changed).
-- `OrderService` Order Tracking import bulk-queues every order the import touched, changed or not.
+- `embedding_change_listener` queues one row per insert, update or delete of every tracked
+  model. It does not dedupe, and it also queues on no-op updates: SQLAlchemy fires
+  `after_update` for any flushed object, even one where no column value changed.
+- The Order Tracking import bulk-queues every order it touched, changed or not.
+
+## Decisions
+
+- **Dedupe without a unique index** (crew agreed, 27 Oct). Deploy is blue/green, and the old
+  colour keeps inserting duplicates while `CREATE UNIQUE INDEX CONCURRENTLY` runs, so that
+  build would fail. Instead, every enqueue takes
+  `pg_advisory_xact_lock(hashtext('embedding_queue'), hashtext('<type>:<id>'))` and inserts
+  nothing if the source already has a pending row. The worker takes the same lock before it
+  claims a row, so an enqueue that skipped its insert cannot lose its change.
+- **No data change in the migration** (owner, 27 Oct). Collapsing the backlog in a migration
+  would write about 8 GB of WAL and take about 8 minutes. The scheduled task
+  `embedding_queue_dedupe` does it instead.
+- **Index builds never stall a release** (owner, 27 Oct). Each build is `CONCURRENTLY`, with a
+  5s lock wait and a 90s cap per index. A failed build logs a WARNING and the release goes on.
+  The hourly prune task retries.
 
 ## Changes
 
-1. Dedupe at enqueue. Partial unique index `uq_embedding_queue_pending_source` on
-   `(source_type, source_id) WHERE status = 'pending'`; every enqueue path inserts with
-   `ON CONFLICT DO NOTHING`. A pending row is processed by re-reading the source, so one pending
-   row per source is enough. The migration first collapses existing duplicate pending rows
-   (keeps the oldest per source, marks the rest `skipped`) so the unique index can be built.
-2. Update events queue only when an embedded column changed (per-model field lists, the Project
-   listener's `_changed` pattern).
-3. Order Tracking import queues only orders whose embedded fields changed.
-4. Line-level types (`inbound_shipment_line`, `order_line`, `picking_line`): evidence + proposal
-   only, not removed without crew OK.
-5. Poll index `ix_embedding_queue_pending_poll` on
-   `((CASE WHEN source_type = 'mcp_tool' THEN 0 ELSE 1 END), created_at) WHERE status = 'pending'`;
-   the poll's ORDER BY is the same expression. The `count(*)` is dropped from the poll.
-6. `EMBEDDING_QUEUE_BATCH_SIZE` setting (default 10) and a scheduled prune of `completed` /
-   `skipped` rows older than 14 days, deleted in small batches.
+1. Enqueue dedupe in `embedding_change_listener.enqueue_pending`, used by the listeners,
+   `bulk_enqueue_embedding_events`, `EmbeddingEventService.queue_event` (which reuses the pending
+   row and replaces its payload) and the product bulk import.
+2. An update queues only when a column in `EMBEDDED_FIELDS` changed. Each model's list is taken
+   from `embedding_worker._canonical_for_source`, plus `company_id`.
+3. The Order Tracking import queues only orders that are new or had an embedded field change.
+4. Worker claim: under the lock, it marks the source's other pending rows `skipped`
+   ("dedup: superseded"). A failed run whose source already has a newer pending row goes to
+   `skipped`, not back to `pending`.
+5. `ix_embedding_queue_pending_poll_cov` (crew's definition, verbatim) and
+   `ix_embedding_queue_pending_source`, both on the model and built by migration
+   `eqd_0001_pending_idx_prune` through `app/services/embedding_queue_indexes.py`. The poll no
+   longer runs `count(*)`.
+6. Settings: `EMBEDDING_QUEUE_BATCH_SIZE` (default 10), `EMBEDDING_QUEUE_RETENTION_DAYS`
+   (default 14), and the prune and dedupe batch knobs.
+7. Scheduled tasks, both seeded by the migration:
+   - `embedding_queue_prune` (hourly): retries any missing index, then deletes completed and
+     skipped rows older than 14 days, 1000 per batch, at most 100 batches per run.
+   - `embedding_queue_dedupe` (every 5 min): skips superseded pending rows, keeping the newest
+     per source, 10k per batch, at most 10 batches per run with a 1s pause between them. A
+     no-op once the backlog is clean.
+
+## Proposed, not done (needs crew OK)
+
+Drop the line-level types `inbound_shipment_line`, `order_line` and `picking_line`. No in-app
+reader uses them: `entity_resolver` excludes them, and `fuzzy_resolver`, project search and
+tool search all read other types. The only path that returns them is
+`/external/rag/search` with no `source_type`. Their text is UUIDs and quantities.
 
 ## Tests
 
-`tests/test_embedding_queue_dedupe.py` (Postgres): dedupe on repeated enqueue, no-op update queues
-nothing, embedded change queues one row, import queues only changed orders, poll uses the batch
-size and ordering, prune removes only old terminal rows.
+`tests/test_embedding_queue_dedupe.py` covers:
+- field lists match the model columns
+- no-op and same-value updates queue nothing
+- one pending row per source
+- `queue_event` reuses the pending row and takes the new payload
+- the shared lock
+- worker supersede and retry
+- the import queues only changed orders
+- poll order, batch size and index use
+- prune
+- backlog dedupe: keeps the newest, a second run is a no-op, a capped run resumes
+- the index build fallback: lock timeout, failed build, INVALID rebuild, settings restored
