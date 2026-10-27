@@ -1531,6 +1531,16 @@ def test_p6_holds_more_lists_what_is_extra_per_facet(client, db, w):
     }
 
 
+def test_p6_a_contact_keeping_every_brand_holds_no_extra_brands(client, db, w):
+    """ACCESS-SHEET-FIXES: a contact holding MCH ends on every brand, so a brand outside the
+    template is not "held more" (the engine's own every-brand decision, not a second rule)."""
+    _dealer(db, w, companies=("SRT",))
+    _contact(db, w, 1, companies=[w.mch], brand_ids=[w.brands["P1"]], types=_types(db, "end_user"))
+    body = _post(client, _sheet([("ZZT Ann", "+60100000001", _tags(DEALER, ["SRT"], OWNER))])).json()
+    items = {h["facet"] for h in _by_name(body)["ZZT Ann"]["holds_more_items"]}
+    assert "brands" not in items
+
+
 def test_p6_a_contact_within_its_template_has_no_holds_more_items(client, db, w):
     _dealer(db, w, companies=("SRT",))
     _contact(db, w, 1, types=_types(db, "end_user"))

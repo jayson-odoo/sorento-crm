@@ -181,6 +181,7 @@ def _plan_contact(
         add_brands = sorted(set(want_brands) - set(held_brands)) if want_brands else []
         held_after = set(snap.companies) | (set() if "companies" in skip else want_ids)
         if set(world.get("every_brand_company_ids", ())) & held_after:
+            todo["keeps_every_brand"] = True
             if held_brands:
                 out.append(_change(contact, d, "brands", sorted(label.get(b, "other brand") for b in held_brands),
                                    "every brand", "set", True))

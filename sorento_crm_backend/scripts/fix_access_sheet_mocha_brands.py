@@ -30,11 +30,11 @@ from app.models.audit import AuditLog
 from app.models.base import company_scope
 from app.models.company import Company, RespondContactCompany
 from app.services import audit_service
+from app.services.contact_access_sheet_service import EVERY_BRAND_COMPANIES
 
 SHEET_EVENT = "contact.access_sheet"
 EVENT = "contact.access_sheet_brand_fix"
 EVERY_BRAND = "every brand"
-EVERY_BRAND_COMPANIES = ("MCH",)
 
 
 def repair(db: Session, *, apply: bool) -> list[dict]:

@@ -47,6 +47,10 @@ describe('contacts filter chip: customer', () => {
     await waitFor(() =>
       expect(JSON.stringify(result.current.activeSummary)).toContain('Customer: Mocha · 300-1001 - DEALER M'),
     );
+    expect(customerSvc.searchCustomersSelect).toHaveBeenCalledWith('', 0, {
+      companyScope: 'grants',
+      customerId: 'cust-m',
+    });
     expect(customerSvc.getCustomer).not.toHaveBeenCalled();
   });
 });

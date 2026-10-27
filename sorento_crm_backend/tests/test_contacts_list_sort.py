@@ -12,7 +12,13 @@ import uuid
 
 import pytest
 
-from app.models.access import ContactAccessType, ContactFieldReveal, ContactTag, respond_contact_tags
+from app.models.access import (
+    ContactAccessType,
+    ContactFieldReveal,
+    ContactTag,
+    RespondContactCustomer,
+    respond_contact_tags,
+)
 from app.models.order import Customer
 from app.models.product import Brand
 from app.models.user import User
@@ -202,3 +208,36 @@ def test_customers_sort_ignores_codes_of_companies_the_viewer_is_not_granted(cli
     state["scope"] = frozenset({DEFAULT_COMPANY_ID})
     _grant(db, state["actor_id"], DEFAULT_COMPANY_ID)
     assert _ordered(client, tag, "customers", "asc") == [shown.id, hidden.id]
+
+
+def test_tag_settings_sort_over_the_cap_groups_settings_holders_first(client, db, monkeypatch):
+    """Over TAG_SETTINGS_SORT_CAP the sort no longer evaluates each contact: holders of a settings
+    tag come first, the rest after, both ways."""
+    from app.services.contact_service import ContactService
+
+    monkeypatch.setattr(ContactService, "TAG_SETTINGS_SORT_CAP", 1)
+    tag = unique_code("O", alpha=True)
+    bare = _contact(db, tag, "a")
+    one = _contact(db, tag, "b")
+    two = _contact(db, tag, "c")
+    settings = {"chatbot": {"chatbot_stock_allowed": False}}
+    _tag(db, one, "ZZT cap 1", settings)
+    _tag(db, two, "ZZT cap 2", settings)
+    assert _ordered(client, tag, "tag_settings", "asc") == [one.id, two.id, bare.id]
+    assert _ordered(client, tag, "tag_settings", "desc") == [one.id, two.id, bare.id]
+
+
+def test_customers_sort_needs_the_customers_company_granted_too(client, db, state):
+    """A link stamped with a granted company whose customer sits in an ungranted one does not
+    order the row: both tables are scoped."""
+    tag = unique_code("O", alpha=True)
+    odd = _contact(db, tag, "a")
+    shown = _contact(db, tag, "b")
+    mocha_customer = _customer(db, unique_code("ZZT-A"), company_id=MOCHA_ID)
+    db.add(RespondContactCustomer(contact_id=odd.id, customer_id=mocha_customer.id,
+                                  company_id=DEFAULT_COMPANY_ID, source="manual"))
+    db.flush()
+    _link(db, shown, _customer(db, unique_code("ZZT-B")))
+    state["scope"] = frozenset({DEFAULT_COMPANY_ID})
+    _grant(db, state["actor_id"], DEFAULT_COMPANY_ID)
+    assert _ordered(client, tag, "customers", "asc") == [shown.id, odd.id]

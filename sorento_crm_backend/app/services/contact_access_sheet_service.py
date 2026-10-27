@@ -474,7 +474,7 @@ def _shown_changes(changed: list[dict], snap, todo: dict, names: Names, world: d
     return out
 
 
-def _holds_more_items(snap, tpl: dict, names: Names, world: dict) -> list[dict]:
+def _holds_more_items(snap, tpl: dict, names: Names, world: dict, keeps_every_brand: bool = False) -> list[dict]:
     """Per facet, what the contact holds outside its template, by the labels the changes use."""
     company_code = {str(c.id): code for code, c in world["companies"].items()}
     warehouse_code = {str(w.id): w.warehouse_code for per in world["warehouses"].values() for w in per.values()}
@@ -485,9 +485,8 @@ def _holds_more_items(snap, tpl: dict, names: Names, world: dict) -> list[dict]:
          lambda i: company_code.get(i) or names.companies.get(i, (None, None))[0] or "other company"),
         ("stock_locations", held_locations - tpl["locations"],
          lambda i: warehouse_code.get(i) or names.warehouses.get(i) or "other location"),
-        # A contact that keeps every brand holds nothing extra there.
-        ("brands", set() if world["every_brand_company_ids"] & (set(snap.companies) | tpl["companies"])
-         else set(snap.brands) - tpl["brands"],
+        # A contact the engine leaves on (or returns to) every brand holds nothing extra there.
+        ("brands", set() if keeps_every_brand else set(snap.brands) - tpl["brands"],
          lambda i: world["brand_names"].get(i) or names.brands.get(i) or "other brand"),
     )
     return [{"facet": f, "items": sorted(label(i) for i in extra)} for f, extra, label in facets if extra]
@@ -579,7 +578,7 @@ def _plan(db: Session, rows: list[dict], confirmed: Optional[dict], skip: frozen
                         "after": sorted(customer_label.get(i, "other account") for i in after),
                     })
                 tpl = _template_sets(world, comps, row["tags"]["role"])
-                holds_more = _holds_more_items(snap, tpl, names, world)
+                holds_more = _holds_more_items(snap, tpl, names, world, bool(todo.get("keeps_every_brand")))
                 warnings = ["holds_more"] if holds_more else []
                 changed = [c for c in changes if c["changed"]]
                 entry.update(

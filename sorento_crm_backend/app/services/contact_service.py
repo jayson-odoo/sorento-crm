@@ -308,15 +308,17 @@ class ContactService:
         key = (key.desc() if desc else key.asc()).nulls_last()
         return [key, RespondContact.name.asc().nulls_last(), RespondContact.id.asc()]
 
+    #: Contacts a tag-settings sort evaluates per request. Above it the sort groups holders of a
+    #: settings tag first without telling Differs from Matches; a filter or search narrows it back.
+    TAG_SETTINGS_SORT_CAP = 1000
+
     def _tag_settings_rank(self, q):
         """Differs, then Matches, then no settings: the status is computed, so it is evaluated here
-        over the filtered contacts holding a tag that sets something (the filter's own cap)."""
+        over the filtered contacts holding a tag that sets something."""
         from sqlalchemy import case
 
         from app.models.access import ContactTag, respond_contact_tags as pivot
         from app.services import contact_tag_settings
-        from app.services.contact_access_copy_service import MAX_DIFF_CANDIDATES
-
         setting_tags = [
             tid for tid, st in self.db.query(ContactTag.id, ContactTag.settings) if contact_tag_settings.leaves_of(st)
         ]
@@ -324,7 +326,7 @@ class ContactService:
             return None
         holds = exists().where(pivot.c.contact_id == RespondContact.id, pivot.c.tag_id.in_(setting_tags))
         holders = q.filter(holds)
-        if holders.count() > MAX_DIFF_CANDIDATES:
+        if holders.count() > self.TAG_SETTINGS_SORT_CAP:
             # Too many to evaluate per request: holders of a settings tag still group together.
             return case((holds, 0), else_=None)
         rank = {"differs": 0, "matches": 1}
