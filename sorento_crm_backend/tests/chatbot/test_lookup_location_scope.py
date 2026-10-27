@@ -141,3 +141,33 @@ def test_engine_empty_contact_id_gets_every_active_location(db, monkeypatch):
     brw, bb, mwh = _world(db)
     codes = _engine_locations(db, monkeypatch, "")
     assert {brw.warehouse_code, bb.warehouse_code, mwh.warehouse_code} <= codes
+
+
+# ENTITY-EXTRACT-MATCH's span pass (`engine._span_prep`) loads the lookup rows itself, separately from
+# `_lookup_lines`; it must offer the contact the same LOCATION rows, through the same `_lookup_visibility`.
+
+
+def _span_locations(db, monkeypatch, contact_id):
+    from app.services.chatbot import engine as engine_mod
+
+    monkeypatch.setattr(ll, "embedder", lambda d: None)
+    prep = engine_mod._span_prep(db, "brw", frozenset(), contact_id, None, None, None, None)
+    assert prep is not None
+    return _codes([r for r in prep.rows if r.list_name == "location"])
+
+
+def test_span_prep_scoped_contact_gets_only_its_location_rows(db, monkeypatch):
+    brw, bb, mwh = _world(db)
+    contact = _contact_with_policy(db, [brw.id])
+    assert _span_locations(db, monkeypatch, contact.id) == {brw.warehouse_code}
+
+
+def test_span_prep_contact_that_resolves_to_nobody_gets_no_location_rows(db, monkeypatch):
+    _world(db)
+    assert _span_locations(db, monkeypatch, "no-such-contact") == set()
+
+
+def test_span_prep_empty_contact_id_gets_every_active_location(db, monkeypatch):
+    brw, bb, mwh = _world(db)
+    codes = _span_locations(db, monkeypatch, "")
+    assert {brw.warehouse_code, bb.warehouse_code, mwh.warehouse_code} <= codes

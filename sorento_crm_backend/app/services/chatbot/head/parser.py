@@ -19,7 +19,7 @@ import copy
 import json
 import logging
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 from sqlalchemy.orm import Session
@@ -85,13 +85,16 @@ class ParserConfig:
     prompt_version: int | None
     provider: str
     model: str
-    api_key: str
+    api_key: str = field(repr=False)
     # CHAT-CLOSED-LISTS: the version carries the CLOSED LISTS section, so the user turn
     # carries the candidate block and grounding validates picks against the lists.
     closed_lists: bool = False
     # CHAT-SLIM-INDEX: the version carries the LOOKUP LISTS line, so the user turn carries the
     # lookup blocks and none of the per-turn list lines they replace.
     lookup_lists: bool = False
+    # ENTITY-EXTRACT-MATCH S2: the version carries the LOOKUP SPANS line, so a span model names the mentions and the
+    # lookup blocks hold only the rows they matched. Implies `lookup_lists`; the span line wins over the lists line.
+    lookup_spans: bool = False
     # CHAT-CODE-LOOKUP: the version also carries the CODE LOOKUP section (near codes are
     # listed and a product pick is checked against the block). Only with closed_lists.
     code_lookup: bool = False
@@ -1025,7 +1028,8 @@ def resolve_config(
         model=model,
         api_key=api_key,
         closed_lists=closed_lists,
-        lookup_lists=lookup_lists_mod.gate_on(raw_template),
+        lookup_lists=lookup_lists_mod.gate_on(raw_template) or lookup_lists_mod.spans_gate_on(raw_template),
+        lookup_spans=lookup_lists_mod.spans_gate_on(raw_template),
         code_lookup=closed_lists and code_lookup_prompt.gate_on(raw_template),
         json_schema=json_schema,
         state_block=state_block,

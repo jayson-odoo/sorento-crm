@@ -1,7 +1,7 @@
 # PLAN: ENTITY-EXTRACT-MATCH - parser extracts mentions, resolver matches them
 
-Status: S1 re-review fixes in (9e915a9aab), final reviewer check pending; PR #1876 (draft). Phase 1 done; owner design OK
-26 Oct ~16:15. S2 starts after S1 is READY.
+Status: S2 #1885 built dark (head 3e5740d367, reviewer READY on b261d856bf, security CLEAN, crew-audit fixes in);
+S2 gate NOT PASSED on either model (see "S2 gate results"); owner decision pending. S1 #1876 merged (078b1ab482).
 Track: L overall (chatbot architecture), lead pattern; S1 itself is M (library + eval, no migration, no behaviour change).
 UAC: `documentation/plans/chatbot/entity-extract-match-acceptance-criteria.md`.
 
@@ -325,6 +325,68 @@ Ambiguous results carry 4.5 candidates on average (max 16 oracle, 58 on B1 spans
 - A plural or typo of a text made only of common words ("water pumps", "watr pump" vs a "Water Pump" row whose words
   are both common in the list) no longer resolves since the OOV weight fix; 5 texts in the phase-1 lists are made only
   of common words (1 category, 4 location). Measure and fix in S2.
+
+## S2 design: span pass before the parser, dark behind a new parser version (UAC AC-S2-1..11)
+
+Owner (26 Oct ~23:58): S2 dark behind a new prompt version, hand test in the Chatbot Console by picking it, spend cap
+lifted for the full gate. Seams checked at 149c4b3dae (scout); line numbers to re-check on the S2 head.
+
+Names: module `app/services/chatbot/head/span_extract.py`; marker `SPAN_MARKER = "== LOOKUP SPANS =="` next to
+`MARKER` in `app/services/chatbot_lookup_edits.py:17`; `ParserConfig.lookup_spans: bool` (`head/parser.py:81-133`,
+set in `resolve_config` next to `lookup_lists=LL.gate_on(raw_template)` at `:1028`); prompt key
+`chatbot_span_extractor`; trace event `span_extract`; usage feature `chatbot_span_extract`.
+
+- Flag = the marker line, same mechanism as #1865's `== LOOKUP LISTS ==`: it switches with the prompt version, so
+  "dark" is an unlabelled version and the hand test is a version pick in the Console. Rejected: a system setting (two
+  switches to keep in step).
+- Span prompt: `PROMPT_KEYS` entry + `_fallback()` (pattern `chat_report_extractor`, `ai_prompt_registry.py:1098` /
+  `:121`), text = phase-1 B2 (`crew/state/eval/eem/prompts/B2.txt`), json schema = phase-1 B arms.
+- Model per contact: `span_extract.resolve_config(db, *, llm_choice)` mirrors `parser.resolve_config`
+  (`parser.py:956-998`): the span prompt's label provider/model, then `contact_llm_choice.apply_choice(llm_choice,
+  cfg, provider, model, model_from_label=...)` (`contact_llm_choice.py:48`), with the same `llm_choice` the turn reads
+  once (`turn_runtime._llm_choice`, `turn_runtime.py:185-205`). Not the `chat_report_extractor` lookup, which ignores
+  the contact. Staff turns therefore run it on Gemini: `GeminiProvider.chat` takes `json_schema` natively
+  (`llm_provider.py` ~:1543-1549), so no provider branch.
+- Call: `llm_call.chat(temperature=0, json_schema=..., timeout=SPAN_TIMEOUT_SECONDS)` with a short own timeout (p90
+  measured 1.2 s), never raises; usage through `record_turn_llm_usage(feature="chatbot_span_extract")`.
+- Turn order (`engine._lookup_lines` `engine.py:1214-1273`, caller `:4639-4645`, session `:4608`): inside the session
+  load rows (+ `list_resolver.spec_key_rows(active_registry)`), visibility, number hits, held values; close it; span
+  call; `list_resolver.resolve(spans, rows, embed)`; adapter `Candidate` -> `lookup_lists.Hit`; `lookup_lists.render`.
+  Span and parser calls both run with no DB session open (rule at `engine.py:4663`, `parser.py:960`).
+- Render: matched rows only, at most `TOP_K[list]` per list, best first; held hits and number hits keep today's
+  precedence.
+- Fallback: span call error / timeout / invalid JSON -> today's n-gram `shortlist` lines; trace `fallback: true`.
+- Trace: `span_extract` event next to `lookup_lists` (`engine.py:4888`): spans, statuses, close-row counts, rows
+  rendered, tokens, ms, provider, model, model source, fallback.
+- Migration `eem_0001_span_pass` (down_revision = the head at build time): seed `chatbot_span_extractor` v1 labelled
+  production (pattern `ca3_0001_chat_report_prompt.py`); publish one unlabelled `chatbot_semantic_parser` version
+  built like `diet_0001_parser_prompt_diet.py` (production text, list-free via `chatbot_lookup_edits.apply`, the diet
+  edits) with the `== LOOKUP LISTS ==` line swapped for `== LOOKUP SPANS ==`; idempotent by template text; downgrade
+  deletes only its own unlabelled rows.
+- Open, measured in the gate: span texts are embedded with a new request after the span call
+  (`list_resolver._meaning_scores`); the #1872 prefetch covers message pieces only.
+- Carried from S1: render cap for very wide ties (handled by TOP_K above); floors re-calibration on a larger set;
+  plural/typo of all-common texts.
+- Gate (AC-S2-10), estimate before running: 3 parser arms (A today, B S2, reference diet lookup) x (200 + TRAIN 118 +
+  R5 62 = 380) = 1,140 parser calls at ~USD 0.005 = ~USD 5.7, plus 380 span calls (~USD 0.23) and the Gemini span run
+  (~USD 0.1, org key). ~USD 6.0 total; owner lifted the cap 26 Oct ~23:58; actual spend goes in a crew-note.
+- Hand test: crew applies the migration to the test copy; the owner picks the new version in the Chatbot Console;
+  script at `laneboard/scripts/<PR>.md` with real dev-data cases (masked in the repo).
+
+Size: L, ~700 lines + migration. Security review: yes (AC-S2-2 visibility path is company/contact scoping adjacent).
+
+## S2 gate results (27 Oct)
+
+| Gate | Head | Right row (today -> span pass) | Unnamed rows offered / msg | Spend |
+| --- | --- | --- | --- | --- |
+| OpenAI gpt-5.4-mini, embeddings on, V1 (spans only) | b261d856bf | A 80.4 / R 81.5 -> B 77.5 (B-A -3.0 [-7.8, +1.6]) | 6.48 -> 0.83 | ~USD 6.6 (dev key ran out of credits) |
+| Gemini flash-lite, embeddings off, V2 (spans + near-exact spellings) | 3e5740d367 | R 75.3 -> B 73.8 (-1.5 [-4.3, +1.5]) | 2.11 -> 1.00 | USD 2.92 (owner waiver 4.00) |
+
+Span call p50 ~1.1 s. R5: R 21 / B 19 (Gemini); TRAIN: R 94 / B 97 (Gemini). Reading: in both models the span pass
+gives the parser cleaner candidate blocks but not more right answers; remaining losses are mentions the span model never
+copies out (category words inside codes, spec names) and partial customer names. Offline (no LLM) on the recorded span
+answers: V1 offered the gold row for 79.0% of mentions, V2 85.0%, today's lookup 79.8% (spelling only). Owner option:
+gemini-3.5-flash-lite as span model finds more spans than gpt-5.4-mini (94.0 vs 90.3 span recall on 186 messages).
 
 ### Where aliases live today (scout 26 Oct, explore1020 counts; paths under sorento_crm_backend/)
 
