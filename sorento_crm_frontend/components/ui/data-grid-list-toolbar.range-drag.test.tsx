@@ -29,8 +29,8 @@ const COLUMNS: ColumnDef<Rec>[] = [
   { id: 'name', accessorKey: 'name', cell: ({ row }) => <span>{row.original.name}</span> },
 ];
 
-function Harness() {
-  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>({});
+function Harness({ initial = {} }: { initial?: RowSelectionState }) {
+  const [rowSelection, setRowSelection] = React.useState<RowSelectionState>(initial);
   const table = useReactTable({
     data: DATA,
     columns: COLUMNS,
@@ -45,6 +45,7 @@ function Harness() {
       <DataGridListToolbar
         table={table}
         exportConfig={false}
+        searchSlot={<input placeholder="Search rows" />}
         selectAllMatching={{ total: 10, loadedCount: 3, active: false, onSelectAll: () => {}, onClear: () => {} }}
       />
       <table>
@@ -103,6 +104,20 @@ describe('DataGridListToolbar during a checkbox drag', () => {
     fireEvent.click(box(1));
     expect(screen.getByText('1 selected')).toBeInTheDocument();
     expect(toolbar().style.minHeight).toBe('');
+  });
+
+  it('an untick drag that clears every row keeps the strip up until release', () => {
+    render(<Harness initial={{ r1: true, r2: true }} />);
+    fireEvent.pointerDown(box(1), mouse);
+    fireEvent.pointerMove(screen.getByTestId('name-r2'), mouse);
+
+    // Nothing is ticked, but the taller idle toolbar (search box) must not come back mid-drag.
+    expect(screen.getByText('0 selected')).toBeInTheDocument();
+    expect(screen.queryByPlaceholderText('Search rows')).toBeNull();
+
+    fireEvent.pointerUp(window, mouse);
+    expect(screen.queryByText(/\d+ selected/)).toBeNull();
+    expect(screen.getByPlaceholderText('Search rows')).toBeInTheDocument();
   });
 
   it('holds the "select all N records" banner back until the drag is released', () => {

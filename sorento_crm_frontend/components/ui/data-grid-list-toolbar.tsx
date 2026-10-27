@@ -394,16 +394,23 @@ export function DataGridListToolbar<TData extends object>({
   // off in the normal cluster, enabled inside the bulk strip.
   const bulkStripActive = hasSelection || allRecordsActive;
 
-  // GRID-DRAG-SELECT: while a checkbox drag moves, hold the height the toolbar had before it.
-  // The bulk strip is shorter than most idle toolbars (130px shorter on Internal Users), and
-  // that jump slid the rows under a still pointer, so the drag ticked rows past the pointer.
-  // The banner below would push the rows the other way, so it also waits for the release.
-  const rangeDragMoving = useRangeDragMoving();
+  // GRID-DRAG-SELECT: while a checkbox drag moves in this table, nothing above the rows may
+  // change height, or the rows slide under a still pointer and the drag ticks rows past it
+  // (the bulk strip is 130px shorter than Internal Users' idle toolbar). So:
+  // - the toolbar holds the height it had before the drag (the strip can only shrink it);
+  // - a strip that was showing stays up even if the drag unticks every row (the idle toolbar
+  //   would grow back), and reads "0 selected" until the release;
+  // - the select-all banner waits for the release.
+  const rangeDragMoving = useRangeDragMoving(table);
   const toolbarRef = useRef<HTMLDivElement>(null);
   const heightBeforeDrag = useRef<number>(0);
+  const stripBeforeDrag = useRef(false);
   useLayoutEffect(() => {
-    if (!rangeDragMoving) heightBeforeDrag.current = toolbarRef.current?.offsetHeight ?? 0;
+    if (rangeDragMoving) return;
+    heightBeforeDrag.current = toolbarRef.current?.offsetHeight ?? 0;
+    stripBeforeDrag.current = bulkStripActive;
   });
+  const showBulkStrip = bulkStripActive || (rangeDragMoving && stripBeforeDrag.current);
 
   const clearSelection = () => {
     table.resetRowSelection();
@@ -462,7 +469,7 @@ export function DataGridListToolbar<TData extends object>({
             Group by went out of reach. */}
         <div className="flex w-full flex-col flex-wrap gap-3 sm:flex-row sm:items-center sm:justify-between">
           {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
-          {bulkStripActive ? (
+          {showBulkStrip ? (
             <div className="flex flex-wrap items-center gap-2">
               {/* Where the box already sits when nothing is selected, so it does not move
                   under the cursor the moment a row is ticked. */}

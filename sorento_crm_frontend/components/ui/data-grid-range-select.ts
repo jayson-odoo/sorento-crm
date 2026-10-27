@@ -42,26 +42,31 @@ type Drag = {
 let drag: Drag | null = null;
 
 /**
- * Whether a checkbox drag is MOVING right now (a press that has not moved yet is still a
- * plain click). The list toolbar reads it to hold its height: its "N selected" strip is
- * shorter than the idle toolbar, and the jump slid the rows under a still pointer.
+ * The table whose checkbox drag is MOVING right now (a press that has not moved yet is still
+ * a plain click). That table's list toolbar reads it to keep its layout still: its
+ * "N selected" strip and its idle controls differ in height, and a jump mid-drag slid the
+ * rows under a still pointer.
  */
-let dragMoving = false;
-const dragMovingListeners = new Set<() => void>();
+let movingTable: Table<unknown> | null = null;
+const movingListeners = new Set<() => void>();
 
-function setDragMoving(value: boolean) {
-  if (dragMoving === value) return;
-  dragMoving = value;
-  dragMovingListeners.forEach((listener) => listener());
+function setMovingTable(table: Table<unknown> | null) {
+  if (movingTable === table) return;
+  movingTable = table;
+  movingListeners.forEach((listener) => listener());
 }
 
-export function useRangeDragMoving(): boolean {
+function subscribeMoving(listener: () => void) {
+  movingListeners.add(listener);
+  return () => {
+    movingListeners.delete(listener);
+  };
+}
+
+export function useRangeDragMoving<TData>(table: Table<TData>): boolean {
   return useSyncExternalStore(
-    (listener) => {
-      dragMovingListeners.add(listener);
-      return () => dragMovingListeners.delete(listener);
-    },
-    () => dragMoving,
+    subscribeMoving,
+    () => movingTable === (table as Table<unknown>),
     () => false,
   );
 }
@@ -141,7 +146,7 @@ function onDragMove(event: PointerEvent) {
   if (id === null || id === drag.lastId) return;
   if (!drag.moved) {
     drag.moved = true;
-    setDragMoving(true);
+    setMovingTable(drag.table);
     setTextSelectable(false);
     window.getSelection?.()?.removeAllRanges();
   }
@@ -158,7 +163,7 @@ function endDrag() {
     swallowNextClick();
   }
   drag = null;
-  setDragMoving(false);
+  setMovingTable(null);
   window.removeEventListener('pointermove', onDragMove);
   window.removeEventListener('pointerup', endDrag, { capture: true });
   window.removeEventListener('pointercancel', endDrag, { capture: true });
