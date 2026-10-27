@@ -15,6 +15,7 @@ from app.database import SessionLocal
 from app.models.base import set_company_scope
 from app.models.certificate import Certificate, CertificateProduct
 from app.models.embeddings import EmbeddingQueue, EmbeddingDocument, EmbeddingChunk
+from app.services.embedding_change_listener import SUPERSEDED_ERROR, lock_embedding_sources
 from app.models.product import Product, ProductCategory, Brand
 from app.models.marketing import Promotion
 from app.models.marketing import PromotionProduct, PromotionAttachment
@@ -744,6 +745,50 @@ def _spo_allocation_hidden(db: Session, source_id: str) -> bool:
     return visible is None
 
 
+# Source types whose queue payload carries the content to embed (mcp_tool: the capability
+# text). Two pending rows of these are not interchangeable, so none supersedes another.
+_PAYLOAD_SOURCE_TYPES = frozenset({"mcp_tool"})
+
+
+def _supersede_pending_duplicates(db: Session, queue_item: EmbeddingQueue) -> int:
+    """Mark every other pending row of the claimed source `skipped`.
+
+    They all predate the claim, and the source is read after it, so the claimed row embeds
+    whatever they would have. This is what drains the duplicate backlog enqueued before
+    EMBED-QUEUE-DEDUPE: each claim retires all of its source's copies in one statement.
+    """
+    if queue_item.source_type in _PAYLOAD_SOURCE_TYPES:
+        return 0
+    now = datetime.utcnow()
+    return (
+        db.query(EmbeddingQueue)
+        .filter(
+            EmbeddingQueue.source_type == queue_item.source_type,
+            EmbeddingQueue.source_id == queue_item.source_id,
+            EmbeddingQueue.status == "pending",
+            EmbeddingQueue.id != queue_item.id,
+        )
+        .update(
+            {"status": "skipped", "processed_at": now, "last_error": SUPERSEDED_ERROR},
+            synchronize_session=False,
+        )
+    )
+
+
+def _has_other_pending(db: Session, queue_item: EmbeddingQueue) -> bool:
+    return (
+        db.query(EmbeddingQueue.id)
+        .filter(
+            EmbeddingQueue.source_type == queue_item.source_type,
+            EmbeddingQueue.source_id == queue_item.source_id,
+            EmbeddingQueue.status == "pending",
+            EmbeddingQueue.id != queue_item.id,
+        )
+        .first()
+        is not None
+    )
+
+
 def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
     db = SessionLocal()
     # The embedding pipeline is a system process that materializes embeddings for
@@ -759,7 +804,14 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
         if queue_item.status in {"completed", "skipped"}:
             return {"status": queue_item.status, "queue_id": queue_id}
 
+        # Claim under the source's enqueue lock (EMBED-QUEUE-DEDUPE): a transaction that found
+        # this row pending and queued nothing must commit before the source is read below.
+        lock_embedding_sources(db, [(queue_item.source_type, queue_item.source_id)])
+        db.refresh(queue_item)
+        if queue_item.status in {"completed", "skipped"}:
+            return {"status": queue_item.status, "queue_id": queue_id}
         queue_item.status = "processing"
+        _supersede_pending_duplicates(db, queue_item)
         db.commit()
 
         # R9: a retired-and-hidden SPO line deactivates its document instead of
@@ -925,6 +977,10 @@ def process_embedding_queue_item(queue_id: str) -> dict[str, Any]:
             queue_item.last_error = str(exc)
             if queue_item.retry_count >= settings.embedding_max_retries:
                 queue_item.status = "dead_letter"
+            elif _has_other_pending(db, queue_item):
+                # A change queued while this ran is waiting already and will re-read the source.
+                queue_item.status = "skipped"
+                queue_item.processed_at = datetime.utcnow()
             else:
                 queue_item.status = "pending"
                 queue_item.available_at = datetime.utcnow() + timedelta(

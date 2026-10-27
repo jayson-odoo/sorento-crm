@@ -1,7 +1,7 @@
 """Core services for embedding event queue and retrieval."""
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 import hashlib
 import uuid
 import json
@@ -120,18 +120,37 @@ class EmbeddingEventService:
             "triggered_by": triggered_by,
             "payload": payload or {},
         }
-        queue_item = EmbeddingQueue(
-            source_type=source_type,
-            source_id=source_id,
-            event_type=event_type,
-            event_version=1,
-            source_updated_at=source_updated_at,
-            payload=event_payload,
-            status="pending",
-            correlation_id=correlation_id,
-        )
-        self.db.add(queue_item)
-        self.db.flush()
+        from app.services.embedding_change_listener import lock_embedding_sources, pending_queue_ids
+
+        # One pending row per source (EMBED-QUEUE-DEDUPE): a row already waiting will read the
+        # source when it runs. Its payload is replaced, since mcp_tool rows carry the text to
+        # embed in the payload itself.
+        lock_embedding_sources(self.db, [(source_type, source_id)])
+        pending_id = pending_queue_ids(self.db, source_type, [source_id]).get(str(source_id))
+        if pending_id is not None:
+            queue_item = self.db.query(EmbeddingQueue).filter(EmbeddingQueue.id == pending_id).one()
+            queue_item.event_type = event_type
+            queue_item.source_updated_at = source_updated_at
+            queue_item.payload = event_payload
+            queue_item.correlation_id = correlation_id
+            self.db.flush()
+            if queue_item.rq_job_id is not None:
+                self.db.commit()
+                self.db.refresh(queue_item)
+                return queue_item
+        else:
+            queue_item = EmbeddingQueue(
+                source_type=source_type,
+                source_id=source_id,
+                event_type=event_type,
+                event_version=1,
+                source_updated_at=source_updated_at,
+                payload=event_payload,
+                status="pending",
+                correlation_id=correlation_id,
+            )
+            self.db.add(queue_item)
+            self.db.flush()
 
         is_priority_source = source_type == "mcp_tool"
         job = enqueue_job(
@@ -825,6 +844,99 @@ class EmbeddingReadService:
             item.rq_job_id = job.id
         self.db.commit()
         return len(items)
+
+
+def prune_embedding_queue(
+    db: Session, *, retention_days: int, batch_size: int = 1000, max_batches: int = 100
+) -> dict:
+    """Delete `completed` / `skipped` queue rows older than `retention_days`.
+
+    Age is `available_at` (the insert time, later only for a retried row), so the batch pick
+    rides ix_embedding_queue_status_available_at instead of scanning the table. Each batch
+    commits on its own and a run stops after `max_batches`, so a first run over a large
+    backlog never holds one long DELETE; the next run carries on. `pending`, `processing`
+    and `dead_letter` rows are never touched.
+    """
+    cutoff = datetime.utcnow() - timedelta(days=int(retention_days))
+    deleted_total = 0
+    batches = 0
+    while batches < max_batches:
+        ids = [
+            row_id
+            for (row_id,) in db.query(EmbeddingQueue.id)
+            .filter(
+                EmbeddingQueue.status.in_(("completed", "skipped")),
+                EmbeddingQueue.available_at < cutoff,
+            )
+            .limit(batch_size)
+            .all()
+        ]
+        if not ids:
+            break
+        deleted = (
+            db.query(EmbeddingQueue)
+            .filter(EmbeddingQueue.id.in_(ids))
+            .delete(synchronize_session=False)
+        )
+        db.commit()
+        batches += 1
+        deleted_total += deleted
+        if deleted == 0:  # never spin
+            break
+    return {"rows_deleted": deleted_total, "batches": batches, "retention_days": int(retention_days)}
+
+
+def dedupe_pending_embedding_queue(
+    db: Session, *, batch_size: int = 10000, max_batches: int = 20, pause_seconds: float = 1.0
+) -> dict:
+    """Mark every pending row `skipped` that a NEWER pending row of the same source covers.
+
+    The backlog queued before EMBED-QUEUE-DEDUPE holds many pending rows per source; the
+    worker re-reads the source whatever row it runs, so only the newest is needed (newest,
+    so an mcp_tool row keeps its latest payload). Batches of `batch_size`, each committed on
+    its own with `pause_seconds` between them, at most `max_batches` per run. Idempotent and
+    resumable: a run that stops part-way leaves a smaller backlog for the next, and a clean
+    queue is a no-op.
+    """
+    import time
+
+    from sqlalchemy import text
+
+    from app.services.embedding_change_listener import SUPERSEDED_ERROR
+
+    batch_sql = text(
+        """
+        UPDATE embedding_queue q
+           SET status = 'skipped', processed_at = now() AT TIME ZONE 'UTC', last_error = :reason
+          FROM (
+                SELECT id FROM (
+                    SELECT id, row_number() OVER (
+                               PARTITION BY source_type, source_id
+                               ORDER BY created_at DESC, id DESC
+                           ) AS rn
+                      FROM embedding_queue
+                     WHERE status = 'pending'
+                ) ranked
+                 WHERE rn > 1
+                 LIMIT :batch
+               ) dupes
+         WHERE q.id = dupes.id AND q.status = 'pending'
+        """
+    )
+    skipped_total = 0
+    batches = 0
+    while batches < max_batches:
+        skipped = db.execute(batch_sql, {"reason": SUPERSEDED_ERROR, "batch": int(batch_size)}).rowcount
+        db.commit()
+        if not skipped:
+            break
+        batches += 1
+        skipped_total += skipped
+        if skipped < batch_size:
+            break
+        if pause_seconds > 0 and batches < max_batches:
+            time.sleep(pause_seconds)
+    return {"rows_skipped": skipped_total, "batches": batches}
 
 
 def _get_embedding_worker():
