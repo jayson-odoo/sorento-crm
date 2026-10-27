@@ -295,9 +295,16 @@ BASIS = rf.FieldSpec(name="basis", noun="basis", question=ranking_ask.RANKING_BA
 #: extras; the spec only lets the parser be shown it as the Open question (REPORT-SMART-L S3-1).
 SCOPE = rf.FieldSpec(name="scope", noun="scope", question="", resolve=lambda _db, _word, _extras: rf.Resolved("unknown"), allow_all=False)
 
+#: REPORT-UNIFY slice 3 (H3): a sales agent word that several agent rows answer to is asked as a numbered pick of
+#: agents only. Never required: it is a field only when `_word_filters` found the word ambiguous.
+SALES_AGENT = rf.FieldSpec(
+    name="sales_agent", noun="sales agent", question="Which sales agent?", resolve=lambda _db, _word, _extras: rf.Resolved("unknown"),
+    allow_all=False, required=False, pick_head="Which sales agent? Reply with a number:",
+)
+
 SALES_RANKING_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
-    fields=(PERIOD, TOP_N, METRIC, BASIS),
+    fields=(PERIOD, TOP_N, METRIC, BASIS, SALES_AGENT),
     slot_fields=(SCOPE,),
     # REPORT-SMART-L S3-1: the parser is shown the question (owed fields + held values) and
     # its declared answer (mode fill) runs the ask, as the low stock report's.
@@ -1009,6 +1016,10 @@ def _word_filters(
             if not found:
                 return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
             distinct = {" ".join(n.split()).casefold(): " ".join(n.split()) for n in reversed(names)}
+            if len(distinct) > 1 and hint == "sales_agent":
+                # H3: several agents answer to the word: the person picks one, agents only, and nothing runs yet.
+                out["sales_agent_pick"] = list(dict(zip(found, names)).items())
+                continue
             if len(distinct) > 1 and hint in SEVERAL_NOUNS:
                 # 1b code review S3: never a silent widening (the PR #1273 rule). Hits sharing
                 # one name (a brand per company) are ONE brand, their ids a union; several
@@ -1448,6 +1459,9 @@ def settle(
     if args.get("compare_to") and args.get("group_by") == "month":
         return None, COMPARE_BY_MONTH_LINE
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
+    agent_pick = args.pop("sales_agent_pick", None)
+    if agent_pick:
+        given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
     if parse_output.get("capability_from") == "outstanding" and args.get("basis") in OUTSTANDING_KINDS:
         # An outstanding ask that named its kind shows both measures (no "by quantity or by amount?").
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
@@ -1717,6 +1731,9 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     top_n = (outcome.values.get("top_n") or {}).get("value")
     if args.get("group_by") and isinstance(top_n, int):
         args["top_n"] = top_n
+    agent = _dict(outcome.values.get("sales_agent")).get("value")
+    if agent:
+        args["sales_agent_ids"] = [str(agent)]  # the agent the person picked
     return args
 
 
