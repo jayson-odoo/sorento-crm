@@ -299,7 +299,7 @@ class Settings(BaseSettings):
     # embedding_queue_dedupe retires duplicate pending rows (the pre-dedupe backlog): rows per
     # batch, batches per run, and the pause between batches that spreads the write load.
     embedding_queue_dedupe_batch_size: int = 10000
-    embedding_queue_dedupe_max_batches: int = 20
+    embedding_queue_dedupe_max_batches: int = 10
     embedding_queue_dedupe_pause_seconds: float = 1.0
     embedding_max_retries: int = 5
     embedding_retry_backoff_seconds: int = 60

@@ -887,7 +887,7 @@ def prune_embedding_queue(
 
 
 def dedupe_pending_embedding_queue(
-    db: Session, *, batch_size: int = 10000, max_batches: int = 20, pause_seconds: float = 1.0
+    db: Session, *, batch_size: int = 10000, max_batches: int = 10, pause_seconds: float = 1.0
 ) -> dict:
     """Mark every pending row `skipped` that a NEWER pending row of the same source covers.
 
