@@ -386,7 +386,8 @@ class TestOutstandingReport:
         reply, captured = _outstanding_turn(session_factory, monkeypatch, attributes=["sales_orders.sales_report"])
 
         assert _calls(captured, REPORT) == [], captured
-        assert reply.strip() == "Sales report is not enabled for your account.", reply
+        # Review S9: an outstanding ask is refused under its own name, not the Sales report's.
+        assert reply.strip() == "Outstanding is not enabled for your account.", reply
 
     def test_staff_unchanged_gets_the_report(self, session_factory, monkeypatch) -> None:
         _seed_contact(session_factory, variables={})
