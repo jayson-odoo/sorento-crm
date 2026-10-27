@@ -444,7 +444,24 @@ class WorkflowFormsService:
             .order_by(WorkflowFormDefinition.name)
             .all()
         )
-        return [{"id": d.id, "code": d.code, "name": d.name} for d in items]
+        versions = {}
+        version_ids = [d.published_version_id for d in items if d.published_version_id]
+        if version_ids:
+            versions = {
+                v.id: v
+                for v in self.db.query(WorkflowFormVersion).filter(WorkflowFormVersion.id.in_(version_ids)).all()
+            }
+        out = []
+        for d in items:
+            schema = _as_schema_dict(getattr(versions.get(d.published_version_id), "schema", None))
+            # Only the states, for the submissions list's State filter; the whole schema stays behind its own route.
+            states = [
+                {"code": st.get("code"), "label": st.get("name") or st.get("label") or st.get("code")}
+                for st in schema.get("states") or []
+                if isinstance(st, dict) and st.get("code")
+            ]
+            out.append({"id": d.id, "code": d.code, "name": d.name, "published_schema": {"states": states}})
+        return out
 
     def _def_out(self, d: WorkflowFormDefinition) -> Dict[str, Any]:
         pub_ver = None

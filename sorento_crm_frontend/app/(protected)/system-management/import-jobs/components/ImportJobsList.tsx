@@ -18,7 +18,8 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Input } from '@/components/ui/input';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { RefreshCw } from 'lucide-react';
@@ -45,6 +46,17 @@ const JOB_TYPE_LABELS: Record<string, string> = {
   sales_history_import: 'Sales History Import',
   order_inquiry_import: 'Order Inquiry Import',
 };
+
+const JOB_TYPE_OPTIONS = Object.entries(JOB_TYPE_LABELS).map(([value, label]) => ({ value, label }));
+
+const JOB_STATUS_OPTIONS = [
+  { value: 'pending', label: 'Pending' },
+  { value: 'queued', label: 'Queued' },
+  { value: 'started', label: 'Started' },
+  { value: 'finished', label: 'Finished' },
+  { value: 'failed', label: 'Failed' },
+  { value: 'cancelled', label: 'Cancelled' },
+];
 
 function getJobTypeLabel(jobType: string): string {
   return JOB_TYPE_LABELS[jobType] ?? jobType;
@@ -322,15 +334,19 @@ export default function ImportJobsList() {
               activeCount: (jobType ? 1 : 0) + (statusFilter ? 1 : 0),
               content: (
                 <div className="space-y-3">
-                  <Input
-                    placeholder="Filter by type..."
-                    value={jobType}
-                    onChange={(e) => setJobType(e.target.value)}
+                  <SearchableMultiSelect
+                    value={splitMulti(jobType)}
+                    onChange={(v) => setJobType(joinMulti(v))}
+                    options={JOB_TYPE_OPTIONS}
+                    placeholder="All types"
+                    clearable
                   />
-                  <Input
-                    placeholder="Filter by status..."
-                    value={statusFilter}
-                    onChange={(e) => setStatusFilter(e.target.value)}
+                  <SearchableMultiSelect
+                    value={splitMulti(statusFilter)}
+                    onChange={(v) => setStatusFilter(joinMulti(v))}
+                    options={JOB_STATUS_OPTIONS}
+                    placeholder="All statuses"
+                    clearable
                   />
                   {(jobType || statusFilter) && (
                     <Button
