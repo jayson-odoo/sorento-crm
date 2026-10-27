@@ -20,7 +20,7 @@ duplicate backlog is too heavy for a deploy, about 8 GB of WAL):
 - ``embedding_queue_prune`` (hourly) deletes completed/skipped rows past the retention window.
 
 Revision ID: eqd_0001_pending_idx_prune
-Revises: eem_0001_span_pass
+Revises: eem_0002_span_version_on_diet
 """
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "eqd_0001_pending_idx_prune"
-down_revision = "eem_0001_span_pass"
+down_revision = "eem_0002_span_version_on_diet"
 branch_labels = None
 depends_on = None
 
