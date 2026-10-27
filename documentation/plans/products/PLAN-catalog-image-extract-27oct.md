@@ -409,4 +409,10 @@ Reviewer
 Browser pass
 - FR-17 Upload dialog hint shows once ("PDF only, up to 50 MB"); the dialog has a description for
   assistive tech (no aria warning).
-- FR-18 The real 16.6 MB catalogue uploads on the test copy without the 500 (cause under diagnosis).
+- FR-18 The real 16.6 MB catalogue uploads on the test copy without the 500. Cause (measured): the Next dev
+  rewrite proxy forwards a request body only up to 10 MB (`next/dist/server/body-streams.js:30`,
+  `experimental.middlewareClientMaxBodySize`); a larger body is never forwarded and the proxy 500s at
+  `proxyTimeout` (`next.config.mjs:32`). The backend takes the full POST in 4.8 s. Fix: `experimental.
+  middlewareClientMaxBodySize: "60mb"` (50 MB ceiling plus multipart overhead). Production sits behind its
+  own reverse proxy without these rewrites (`next.config.mjs:54-57`); its body limit is not in this repo
+  (UNVERIFIED, the 50 MB flyer upload already relies on it).
