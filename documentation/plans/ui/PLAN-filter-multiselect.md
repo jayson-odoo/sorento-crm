@@ -1,7 +1,10 @@
 # PLAN: every dropdown filter is multi-select (FILTER-MULTISELECT)
 
 Status: Build. Scan done (27 Oct); owner answered the card (28 Oct, section 0); PR1 (Contacts
-Company filter + Companies column) built as #1930. Track: full lane, split into stacked PRs (diff well
+Company filter + Companies column) built as #1930, merge-ready. PR2 (this branch, #1928): slice A
+(Contacts Access type / Tier / Customer, Users Role / Status, Onboarding Status) re-landed red-first
+28 Oct (red 6a42a14c, code f999fc7b, kill-proof posted); Region, Permissions Role and slice B (SLA)
+red tests in progress; slice C (system) next. Track: full lane, split into stacked PRs (diff well
 over 300 lines across ~120 screens; no migration expected, no auth change).
 
 Owner standing rule (27 Oct 2026): "do a scan through the filter in our system, all dropdown
