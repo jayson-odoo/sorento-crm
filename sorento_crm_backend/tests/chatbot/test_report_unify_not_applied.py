@@ -43,3 +43,13 @@ def test_p11_an_ask_whose_every_filter_applies_prints_no_not_applied_line(bot) -
     )
     _only_report_ask(calls)
     assert not _lines(text), text
+
+
+def test_p11_a_parsed_filter_with_no_route_param_that_is_the_only_subject_asks_instead_of_answering(bot) -> None:
+    """AC-RU-14 second half: nothing the ask names can be applied, so the figure is not what was asked."""
+    text, calls = bot.say(
+        _status("sales_report", _e("TRP-9", "transporter"), basis="delivered", **NO_DATES),
+        "sales for TRP-9",
+    )
+    assert calls == [], calls
+    assert "TRP-9" in text and "?" in text, text
