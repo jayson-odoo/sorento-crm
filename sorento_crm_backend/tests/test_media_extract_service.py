@@ -673,6 +673,31 @@ def test_image_lane_parse_failure_names_model_finish_reason_and_raw_output_and_l
         assert rows[0].was_answered is False
 
 
+@pytest.mark.parametrize(
+    "raw, expected",
+    [
+        (None, None),
+        ({"candidates": [{"finishReason": "STOP"}]}, "STOP"),  # Gemini: a dict body
+        ({"candidates": []}, None),
+    ],
+)
+def test_finish_reason_reads_the_gemini_body(raw, expected):
+    from app.services.media_extract.service import _finish_reason
+
+    assert _finish_reason(raw) == expected
+
+
+def test_finish_reason_reads_the_openai_and_anthropic_responses():
+    from types import SimpleNamespace
+
+    from app.services.media_extract.service import _finish_reason
+
+    openai_raw = SimpleNamespace(choices=[SimpleNamespace(finish_reason="length")])
+    anthropic_raw = SimpleNamespace(stop_reason="max_tokens")
+    assert _finish_reason(openai_raw) == "length"
+    assert _finish_reason(anthropic_raw) == "max_tokens"
+
+
 def test_voice_lane_transcribes_and_defaults_to_the_pinned_english_strategy(
     monkeypatch,
 ):
