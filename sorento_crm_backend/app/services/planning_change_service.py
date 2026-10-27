@@ -2047,9 +2047,20 @@ def _reserve_rival(
     if held_reserve <= _ZERO:
         return None
     # Only when the re-run would KEEP the hold: a line whose stock the ladder has already
-    # taken away has nothing left to give anybody.
+    # taken away has nothing left to give anybody. BOARD-NO-HOLD: a Reserve no longer holds
+    # stock, so an earlier waiting row wins the pile in the walk by date and the re-run
+    # reads a plain Buy ("nothing free by the delivery date"). That is the rival at work,
+    # not stock taken away for another rung, so an all-Buy re-run still asks the question;
+    # a Borrow or a timely SPO in the re-run is a different answer and does not.
     proposed = _proposed_classes(proposal)
-    if proposed is None or proposed["reserve"]["qty"] <= _ZERO:
+    if proposed is None:
+        return None
+    only_buy = (
+        proposed["buy"]["qty"] > _ZERO
+        and proposed["borrow"]["qty"] <= _ZERO
+        and proposed["spo"]["qty"] <= _ZERO
+    )
+    if proposed["reserve"]["qty"] <= _ZERO and not only_buy:
         return None
     waiting = _waiting_rows(
         db, project_line_id, product_id, due_before=new_date,
