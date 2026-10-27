@@ -14,8 +14,9 @@ import type { Row, RowSelectionState, Table } from '@tanstack/react-table';
  *   anchor's state, like Gmail.
  * - Drag: press a box and move over other rows; the run takes the opposite of the pressed box's
  *   state, and rows the pointer leaves again get their earlier state back. Only a press ON A BOX
- *   starts it, so a press on any other cell is still a text selection for copy. Mouse and pen
- *   only: a finger on a list scrolls it.
+ *   starts it, so a press on any other cell is still a text selection for copy. A finger on a
+ *   list scrolls it, so touch starts the same drag only after a 500 ms press-and-hold; a move of
+ *   more than 8px before that is a scroll.
  * - ArrowUp / ArrowDown move focus between row boxes; with Shift the next row takes the
  *   anchor's state.
  *
@@ -37,7 +38,16 @@ type Drag = {
   before: RowSelectionState;
   lastId: string;
   moved: boolean;
+  /** Touch press: the drag only goes live once the hold timer fires. */
+  touch: boolean;
+  live: boolean;
+  timer: ReturnType<typeof setTimeout> | null;
+  x: number;
+  y: number;
 };
+
+const TOUCH_HOLD_MS = 500;
+const TOUCH_SLOP_PX = 8;
 
 let drag: Drag | null = null;
 
@@ -81,9 +91,15 @@ function swallowNextClick() {
     event.preventDefault();
     event.stopPropagation();
   };
+  const stop = () => {
+    window.removeEventListener('click', swallow, { capture: true });
+    window.removeEventListener('pointerdown', stop, { capture: true });
+  };
   window.addEventListener('click', swallow, { capture: true, once: true });
   // The click (if any) follows pointerup in the same task; never let the listener outlive it.
-  setTimeout(() => window.removeEventListener('click', swallow, { capture: true }), 0);
+  // A new press means no click is coming, so it ends the listener too.
+  window.addEventListener('pointerdown', stop, { capture: true, once: true });
+  setTimeout(stop, 0);
 }
 
 function rowsOf(table: Table<unknown>) {
@@ -134,16 +150,53 @@ function rowIdAt(target: EventTarget | null, tableEl: Element | null): string | 
   return tr.querySelector(`[${ROW_ID_ATTR}]`)?.getAttribute(ROW_ID_ATTR) ?? null;
 }
 
+/**
+ * Native, non-passive listeners attached once, before any touch starts: Chrome and iOS ignore
+ * preventDefault from a touchmove listener added after touchstart, and React's onTouchMove is
+ * passive. They act only while a held touch drag is live (scroll lock) or a touch press is
+ * down (Android long-press menu).
+ */
+let touchGuardsOn = false;
+
+function ensureTouchGuards() {
+  if (touchGuardsOn || typeof document === 'undefined') return;
+  touchGuardsOn = true;
+  document.addEventListener(
+    'touchmove',
+    (event) => {
+      if (drag?.touch && drag.live && event.cancelable) event.preventDefault();
+    },
+    { passive: false },
+  );
+  document.addEventListener('contextmenu', (event) => {
+    if (drag?.touch) event.preventDefault();
+  });
+}
+
 function onDragMove(event: PointerEvent) {
   if (!drag) return;
+  if (drag.touch) {
+    if (!drag.live) {
+      // Moved off the press point before the hold fired: that is a scroll.
+      if (Math.hypot(event.clientX - drag.x, event.clientY - drag.y) > TOUCH_SLOP_PX) endDrag();
+      return;
+    }
+    // The finger's pointer is captured by the pressed box, so the row comes from the point.
+    const under = document.elementFromPoint?.(event.clientX, event.clientY) ?? event.target;
+    moveDragTo(rowIdAt(under, drag.tableEl));
+    return;
+  }
   // The release happened somewhere this drag never heard about (another window, a context
   // menu): a move with the button up ends it, never ticks rows on hover.
   if (!(event.buttons & 1)) {
     endDrag();
     return;
   }
-  const id = rowIdAt(event.target, drag.tableEl);
-  if (id === null || id === drag.lastId) return;
+  moveDragTo(rowIdAt(event.target, drag.tableEl));
+}
+
+function moveDragTo(id: string | null) {
+  if (!drag || id === null || id === drag.lastId) return;
   if (!drag.moved) {
     drag.moved = true;
     setMovingTable(drag.table);
@@ -157,6 +210,7 @@ function onDragMove(event: PointerEvent) {
 
 function endDrag() {
   if (!drag) return;
+  if (drag.timer) clearTimeout(drag.timer);
   if (drag.moved) {
     anchors.set(drag.table, drag.lastId);
     setTextSelectable(true);
@@ -183,6 +237,7 @@ function focusRowBox(tableEl: Element | null, id: string) {
 export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TData>) {
   const table = tableArg as Table<unknown>;
   const row = rowArg as Row<unknown>;
+  ensureTouchGuards();
 
   return {
     [ROW_ID_ATTR]: row.id,
@@ -199,7 +254,8 @@ export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TDat
     },
 
     onPointerDown: (event: React.PointerEvent) => {
-      if (event.button !== 0 || event.pointerType === 'touch' || event.shiftKey) return;
+      const touch = event.pointerType === 'touch';
+      if (event.button !== 0 || event.shiftKey) return;
       if (!row.getCanSelect()) return;
       endDrag();
       drag = {
@@ -210,7 +266,19 @@ export function rangeSelectProps<TData>(tableArg: Table<TData>, rowArg: Row<TDat
         before: { ...table.getState().rowSelection },
         lastId: row.id,
         moved: false,
+        touch,
+        live: !touch,
+        timer: null,
+        x: event.clientX,
+        y: event.clientY,
       };
+      if (touch) {
+        const started = drag;
+        started.timer = setTimeout(() => {
+          started.timer = null;
+          if (drag === started) started.live = true;
+        }, TOUCH_HOLD_MS);
+      }
       window.addEventListener('pointermove', onDragMove);
       // Capture: a handler that stops pointerup from bubbling must not strand the drag.
       window.addEventListener('pointerup', endDrag, { capture: true });
