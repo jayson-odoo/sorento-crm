@@ -1,6 +1,6 @@
 # PLAN - Resubmitted status (submit after a rejection)
 
-Status: IN PROGRESS - all 7 forms built red-first; review, browser pass and hand-test next (PR #1925). Track: L (owner, 27 Oct: crosses 7 workflows; migration resub_0001).
+Status: IN REVIEW - all 7 forms built red-first; reviewer round 1 fixed, security review clean, browser pass 8/8 + 375px; awaiting owner hand-test (PR #1925). Track: L (owner, 27 Oct: crosses 7 workflows; migration resub_0001).
 Lane: RESUBMITTED-STATUS
 Slug: `resubmitted-status-27oct`
 
@@ -146,3 +146,19 @@ Frontend:
 - `quotationDecision.ts:66-90`, `QuotationApprovalPanel.tsx:28`, `QuotationDocumentClient.tsx` send label, `useQuotationDocuments.ts` toast
 - `EditionDetail.tsx:134` + Resubmit for approval label
 - Portal `SubmissionForm.tsx` and NPA forms: Submit -> Resubmit on a rejected form
+
+## Browser pass (agent-browser, sandbox stack, 27 Oct)
+
+All PASS at 1280px, plus 375px spot-checks on the complaint detail and the quotation document. Evidence:
+`documentation/plans/forms/evidence/resubmitted-status/`.
+
+| # | Form | Checked |
+|---|---|---|
+| 1 | Complaint | cyan Resubmitted pill (list + detail), list filter option, Edit technical team response is the primary button |
+| 2 | Portal complaint (rejected) | button reads "Resubmit complaint", dialog "Resubmit this complaint?" (cancelled) |
+| 3 | Purchase request | list pill + filter option, Change to pending approval + Reject on detail |
+| 4 | Stock inquiry | pill, Approve (send to purchasing) + Reject |
+| 5 | New product application | label, filter option, Approve + Reject |
+| 6 | Project registration | Awaiting approval lane, "Resubmitted" in the code slot, Approval filter option, Approve + Reject |
+| 7 | Quotation | Resubmitted standing, "with a manager for approval" banner, Approve + Reject |
+| 8 | Dealer-kit edition | Resubmitted pill, Approve + Reject |
