@@ -220,3 +220,23 @@ def test_review_5_an_opportunity_turn_after_zh_replies_in_the_parsed_language(se
                     dry_run=True, state=zh)
     assert turn.result.error is None, turn.result.error
     assert turn.result.session_patch["reply_language"] == "ms", turn.result.session_patch
+
+
+# ---- resolver index cache must not hide the row's group
+def test_review_resolver_index_cache_keeps_the_row_group():
+    from app.services.chatbot.head import list_resolver
+
+    list_resolver._prepared.clear()
+    spec = [("BRT-WC", "wc"), ("SRT-WC", "wc"), ("WC", "wc")]
+
+    def rows(group):
+        return [ll.LookupRow("category", f"k-{c}", c, (c, t), group) for c, t in spec]
+
+    spans = [list_resolver.Span("wc", "category")]
+    list_resolver.resolve(spans, rows(None), embed=None)  # an ungrouped turn first (v132 / no category_pick)
+    res = list_resolver.resolve(spans, rows(CLASS), embed=None)[0]
+    assert res.candidates, res
+    assert {c.row.group for c in res.candidates} == {CLASS}, [c.row.group for c in res.candidates]
+    hits = {"category": [ll.Hit(c.row, "wc", c.score, 0.0) for c in res.candidates]}
+    assert ll.render(hits, group_categories=True) == [
+        ll.header("category"), "- Water Closet: BRT-WC, SRT-WC, WC"], ll.render(hits, group_categories=True)
