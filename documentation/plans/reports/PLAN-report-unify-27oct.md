@@ -146,6 +146,29 @@ Confirmed by SALES-UNIFIED (crew-note 6440275524 on #1922):
 5. **The salesperson candidate cap.** `head/lookup_lists.py:55` (5) is raised to the list's other caps, or the cap
    is applied after exact matches. This is decided in the slice with a test on the "yu" set.
 
+## 3b. Slice 4: the "Sales & outstanding" screen (owner Q5 (a))
+
+The same ask definitions, shown on screen, so staff can check the bot's number. The page is
+`/sales/sales-and-outstanding`, with a sidebar entry under Sales next to Top selling items
+(`sorento_crm_frontend/config/menu.config.tsx:147`).
+
+- **No new page machinery.** The page is the existing `components/reports/ReportPage` (as `top-selling-items/page.tsx`
+  and `yearly-comparison/page.tsx` use it), with line tabs, one per basis: Invoiced, Delivered, Ordered,
+  Undelivered orders, Pending delivery, Unpaid invoices. A tab switches `reportKey`.
+- **Backend:** the six ask definitions (`sales_order_lines_ask.DEFINITIONS`, `billing_document_lines.ASK_DEFINITION`,
+  `delivery_order_lines.PENDING_DEFINITION`, `unpaid_documents.DEFINITION`) are registered with `reg.register`.
+  - Their `_no_options` selects get real option lists (customers, agents, brands, categories), reusing the
+    option helpers `top_selling_items.py` / `sales_by_debtor_type.py` already have.
+  - Permission per definition follows Q6:
+    - the order bases use `order_management.orders.view` with the Outstanding / Sales report split;
+    - invoiced uses `sales.reports.view`.
+- **Spec on screen:** a `spec` select param on each definition. Its condition is
+  `product_id IN (spec_set ids)`, through the same `spec_set` resolution the route uses, so the figure is the same
+  as the chat answer.
+- **Tally test:** for one seeded world, the screen run (`POST /reports/<key>/run`) total equals the
+  `crm_report_ask` total for the same basis, filters and period, on every basis.
+- **Phase order:** FE mock first (the page with tabs on mocked meta), then wiring. Browser pass at 375 and 1280.
+
 ## 4. Gates
 
 - Red-first for each slice; the touched suites stay green.
