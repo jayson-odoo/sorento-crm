@@ -241,7 +241,7 @@ def two_sessions():
     admin.exec_driver_sql(f'CREATE SCHEMA "{name}"')
     admin.exec_driver_sql(f'CREATE TABLE "{name}".embedding_queue (LIKE public.embedding_queue INCLUDING ALL)')
     # The search_path below is this schema alone, so the tables app.main's global flush
-    # listeners query (lookup_bindings on every tracked UPDATE) must exist here too. Without
+    # listeners query (lookup_bindings on every ORM insert/update) must exist here too. Without
     # them the claim's flush raised UndefinedTable whenever an earlier file on the same
     # xdist worker had primed lookup_validator's per-engine "table exists" cache on public.
     for table in _globally_required_tables():
