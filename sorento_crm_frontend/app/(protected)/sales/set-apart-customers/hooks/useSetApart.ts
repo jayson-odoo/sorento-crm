@@ -1,4 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { toast } from '@/lib/toast';
 import { createSetApart, getSetApartCustomers, updateSetApart } from '../services/setApartService';
 import type { SetApartListParams, SetApartSavePayload } from '../types/setApart.types';
@@ -7,9 +8,9 @@ export const SET_APART_KEY = ['sales-set-apart'] as const;
 
 export function useSetApartCustomers(params: SetApartListParams) {
   return useQuery({
+    ...LIST_QUERY_OPTIONS,
     queryKey: [...SET_APART_KEY, params],
     queryFn: () => getSetApartCustomers(params),
-    placeholderData: (previous) => previous,
   });
 }
 
