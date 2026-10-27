@@ -409,9 +409,28 @@ def test_consonant_skeleton_matches_a_dropped_vowel_in_a_multiword_label():
     assert res.status == "resolved" and res.candidates[0].row.key == "s2", res
 
 
-def test_a_two_consonant_skeleton_does_not_match():
-    res = _one("zz", "brand", [R("brand", "t1", "zoo")])
+def test_a_two_consonant_span_word_does_not_match_on_the_length_rule_alone():
+    res = _one("lm", "brand", [R("brand", "t1", "ZZLIM")])
     assert res.status != "resolved", res
+
+
+def test_changed_vowels_do_not_tie_surnames():
+    rows = [R("customer", "n1", "ZZLIANG"), R("customer", "n2", "ZZLING"), R("customer", "n3", "ZZLUNG")]
+    res = _one("zzleong", "customer", rows)
+    assert not (res.status == "ambiguous" and len(res.candidates) == 3), res
+    res = _one("zzchuan", "customer", [R("customer", "c1", "ZZCHAN"), R("customer", "c2", "ZZCHEN"), R("customer", "c3", "ZZCHIN")])
+    assert [c.row.key for c in res.candidates][:1] in (["c1"], []) and not {"c2", "c3"} & {c.row.key for c in res.candidates}, res
+
+
+def test_a_skeleton_match_never_beats_a_closer_one_edit_row():
+    rows = [R("category", "k1", "ZZ Carton Box"), R("category", "k2", "ZZ Shower Curtain")]
+    res = _one("zzcartn", "category", rows)
+    assert res.candidates and res.candidates[0].row.key == "k1" and "k2" not in {c.row.key for c in res.candidates}, res
+
+
+def test_dropped_vowels_still_match_siphonic_and_chrome():
+    assert _one("sphnc", "category", [R("category", "p1", "ZZ Siphonic")]).candidates[0].row.key == "p1"
+    assert _one("chrm", "category", [R("category", "p2", "ZZ Chrome")]).candidates[0].row.key == "p2"
 
 
 def test_a_different_first_letter_does_not_match():
