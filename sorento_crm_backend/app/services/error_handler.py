@@ -1,4 +1,6 @@
 """Error handling utilities."""
+import logging
+
 from fastapi import HTTPException, status
 from typing import Optional
 
@@ -82,8 +84,22 @@ def handle_conflict(message: str) -> AppException:
     )
 
 
-def handle_internal_error(message: str = "Oops! Something went wrong. Please try again in a moment.") -> AppException:
-    """Create a 500 Internal Server Error exception."""
+_GENERIC_INTERNAL_MESSAGE = "Oops! Something went wrong. Please try again in a moment."
+
+# Text only a database driver or SQLAlchemy writes. Most routes call
+# `handle_internal_error(str(e))`, so a DB error's own text (the SQL, constraint
+# and table names, row ids) used to reach the toast verbatim (CONTACT-DELETE-FK).
+_DB_ERROR_MARKERS = ("[SQL:", "psycopg", "sqlalche.me", "(sqlalchemy.")
+
+
+def handle_internal_error(message: str = _GENERIC_INTERNAL_MESSAGE) -> AppException:
+    """Create a 500 Internal Server Error exception.
+
+    A message carrying database error text is logged here and replaced with the
+    generic one, so the client never sees it."""
+    if any(marker in message for marker in _DB_ERROR_MARKERS):
+        logging.getLogger(__name__).error("Internal error (hidden from client): %s", message)
+        message = _GENERIC_INTERNAL_MESSAGE
     return AppException(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         message=message,

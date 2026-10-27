@@ -22,6 +22,12 @@ interface ContactBulkDeleteDialogProps {
   onSuccess?: () => void;
 }
 
+interface BulkDeleteResult {
+  deleted_count: number;
+  blocked?: { id: string; name: string | null; reason: string }[];
+  message: string;
+}
+
 export default function ContactBulkDeleteDialog({
   open,
   onOpenChange,
@@ -42,9 +48,20 @@ export default function ContactBulkDeleteDialog({
       }
       return response.json();
     },
-    onSuccess: (result) => {
+    onSuccess: (result: BulkDeleteResult) => {
       queryClient.invalidateQueries({ queryKey: ['respond-contacts'] });
-      toast.success(result?.message ?? `${contactIds.length} contact(s) deleted`);
+      const blocked = result?.blocked ?? [];
+      if (blocked.length > 0) {
+        // Contacts with linked history are kept; name each one and why.
+        toast.error(result.message, {
+          description: blocked
+            .map((b) => `${b.name || 'Unnamed contact'}: ${b.reason}`)
+            .join('\n'),
+          classNames: { description: 'whitespace-pre-line' },
+        });
+      } else {
+        toast.success(result?.message ?? `${contactIds.length} contact(s) deleted`);
+      }
       onOpenChange(false);
       onSuccess?.();
     },
