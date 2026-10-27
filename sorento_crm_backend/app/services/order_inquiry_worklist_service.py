@@ -1620,7 +1620,7 @@ class OrderInquiryWorklistService:
                 base = base.filter(OrderInquiryRow.ack_state == ack)
         # S1, R-K: Location, Agent, SO month, PO number, SPO number - the five filters
         # the Excel parity batch adds to the Filters popover.
-        locations = multi_values(location)
+        locations = multi_text(location)
         if locations:
             base = base.filter(_LOCATION.in_(locations))
         agents = multi_values(agent)

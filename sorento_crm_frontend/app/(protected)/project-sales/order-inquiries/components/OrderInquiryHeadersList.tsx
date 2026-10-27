@@ -124,13 +124,13 @@ export function OrderInquiryHeadersList() {
     debouncedValue: searchQuery,
     isSettling: searchSettling,
   } = useDebouncedSearch(searchParams.get('query') ?? '');
-  // Raised by (ids) and Agent (codes) ride comma-joined; Project is a free-text title, so one entry
-  // per project and a repeated param, never joined.
+  // Raised by (ids) rides comma-joined. Agent (a name) and Project (a title) are free text, so one entry
+  // per value and a repeated param, never joined.
   const [raisedByFilter, setRaisedByFilter] = useState(() =>
     joinMulti(splitMulti(searchParams.get('raised_by'))),
   );
-  const [agentFilter, setAgentFilter] = useState(() =>
-    joinMulti(splitMulti(searchParams.get('agent'))),
+  const [agentFilter, setAgentFilter] = useState<string[]>(() =>
+    splitText(searchParams.getAll('agent')),
   );
   const [projectFilter, setProjectFilter] = useState<string[]>(() =>
     splitText(searchParams.getAll('project')),
@@ -154,7 +154,7 @@ export function OrderInquiryHeadersList() {
     if (pagination.pageIndex > 0) next.set('page', String(pagination.pageIndex + 1));
     if (pagination.pageSize !== 25) next.set('limit', String(pagination.pageSize));
     if (raisedByFilter) next.set('raised_by', raisedByFilter);
-    if (agentFilter) next.set('agent', agentFilter);
+    for (const name of agentFilter) next.append('agent', name);
     for (const title of projectFilter) next.append('project', title);
     if (reserveFilter) next.set('reserve', reserveFilter);
     const nextQuery = next.toString();
@@ -196,7 +196,7 @@ export function OrderInquiryHeadersList() {
       state: stateFilter,
       query: searchQuery || undefined,
       raised_by: raisedByFilter || undefined,
-      agent: agentFilter || undefined,
+      agent: agentFilter.length ? agentFilter : undefined,
       project: projectFilter.length ? projectFilter : undefined,
       reserve: reserveFilter || undefined,
       sort: sorting[0]?.id ?? 'raised_at',
@@ -277,12 +277,12 @@ export function OrderInquiryHeadersList() {
         {
           state: stateFilter !== 'outstanding' ? stateFilter : undefined,
           raised_by: raisedByFilter || undefined,
-          agent: agentFilter || undefined,
           reserve: reserveFilter || undefined,
         },
       );
-    if (!projectFilter.length) return base;
+    if (!projectFilter.length && !agentFilter.length) return base;
     const withProjects = new URLSearchParams(base);
+    for (const name of agentFilter) withProjects.append('agent', name);
     for (const title of projectFilter) withProjects.append('project', title);
     return withProjects.toString();
   }, [
@@ -550,7 +550,7 @@ export function OrderInquiryHeadersList() {
 
   const filtersActive =
     (raisedByFilter ? 1 : 0) +
-    (agentFilter ? 1 : 0) +
+    (agentFilter.length ? 1 : 0) +
     (projectFilter.length ? 1 : 0) +
     (reserveFilter ? 1 : 0);
   const isFiltered = Boolean(searchQuery) || filtersActive > 0;
@@ -692,8 +692,8 @@ export function OrderInquiryHeadersList() {
                     </Label>
                     <SearchableMultiSelect
                       id="oi-header-agent"
-                      value={splitMulti(agentFilter)}
-                      onChange={(value) => setAgentFilter(joinMulti(value))}
+                      value={agentFilter}
+                      onChange={setAgentFilter}
                       options={filterOptions.agents}
                       placeholder="Any agent"
                       clearable
@@ -719,7 +719,7 @@ export function OrderInquiryHeadersList() {
                         size="sm"
                         onClick={() => {
                           setRaisedByFilter('');
-                          setAgentFilter('');
+                          setAgentFilter([]);
                           setProjectFilter([]);
                           setReserveFilter('');
                         }}

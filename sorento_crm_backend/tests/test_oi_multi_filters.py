@@ -157,10 +157,21 @@ def test_lines_single_value_still_reads(client, world, param, val):
     assert _line_ids(client, world, [(param, val(o, "b"))]) == _rid(o, "b")
 
 
+# Params whose values are free text from data: sent repeated, read whole (FILTER-MULTISELECT plan section 1).
+# Lines: location (agent there is an id). Headers: agent names and project titles.
+_LINE_TEXT_PARAMS = {"location"}
+_HEADER_TEXT_PARAMS = {"agent", "project"}
+
+
 @pytest.mark.parametrize("param,val", LINE_FILTERS)
 def test_lines_comma_joined_is_a_union(client, world, param, val):
     o = world[2]
-    assert _line_ids(client, world, [(param, f"{val(o, 'a')},{val(o, 'c')}")]) == _rid(o, "a", "c")
+    if param in _LINE_TEXT_PARAMS:
+        # Free text (a location) rides repeated params and is read whole (plan section 1).
+        pairs = [(param, val(o, "a")), (param, val(o, "c"))]
+    else:
+        pairs = [(param, f"{val(o, 'a')},{val(o, 'c')}")]
+    assert _line_ids(client, world, pairs) == _rid(o, "a", "c")
 
 
 @pytest.mark.parametrize("param,val", LINE_FILTERS)
@@ -217,7 +228,12 @@ def test_headers_single_value_still_reads(client, world, param, val):
 @pytest.mark.parametrize("param,val", HEADER_FILTERS)
 def test_headers_comma_joined_is_a_union(client, world, param, val):
     o = world[2]
-    got = _header_ids(client, world, [(param, f"{val(o, 'a')},{val(o, 'c')}")])
+    if param in _HEADER_TEXT_PARAMS:
+        # Free text (titles, agent names) rides repeated params, never comma-joined.
+        pairs = [(param, val(o, "a")), (param, val(o, "c"))]
+    else:
+        pairs = [(param, f"{val(o, 'a')},{val(o, 'c')}")]
+    got = _header_ids(client, world, pairs)
     assert got == {o["a"]["inquiry"].id, o["c"]["inquiry"].id}
 
 
@@ -238,7 +254,7 @@ def test_headers_filters_and_across(client, world):
     o = world[2]
     got = _header_ids(
         client, world,
-        [("agent", f"{o['a']['agent'].sales_agent},{o['b']['agent'].sales_agent}"), ("raised_by", f"{o['b']['user']},{o['c']['user']}")],
+        [("agent", o['a']['agent'].sales_agent), ("agent", o['b']['agent'].sales_agent), ("raised_by", f"{o['b']['user']},{o['c']['user']}")],
     )
     assert got == {o["b"]["inquiry"].id}
 

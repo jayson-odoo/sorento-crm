@@ -47,6 +47,16 @@ _UUID_CORE = UUID_PATTERN[1:-1]
 MULTI_UUID_PATTERN = rf"^{_UUID_CORE}(,{_UUID_CORE})*$"
 
 
+
+def _cap_each(value, label: str):
+    """Each value of a free-text list filter is held to the single-value cap, not the whole string. A plain
+    string from an older body is checked piece by piece, so two 150-character values joined still pass."""
+    for item in ([value] if isinstance(value, str) else list(value or [])):
+        for piece in (str(item).split(",") if isinstance(value, str) else [str(item)]):
+            if len(piece) > WORKLIST_FILTER_MAX_LENGTH:
+                raise ValueError(f"{label}: a value is longer than {WORKLIST_FILTER_MAX_LENGTH} characters")
+    return value
+
 def _check_worklist_states(value: Optional[str]) -> Optional[str]:
     """`state` takes one or several comma-joined states; each is checked like the GET route's Literal."""
     from app.utils.multi_value import multi_choices
@@ -799,7 +809,8 @@ class AcknowledgeFilter(BaseModel):
     linked: Optional[str] = None
     kind: Optional[str] = None
     ack: Optional[str] = None
-    location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    #: Free text: one location, or a list of them (each read whole). An older body may hold one string.
+    location: Optional[str | List[str]] = None
     agent: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     so_month: Optional[str] = None
     po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
@@ -819,6 +830,11 @@ class AcknowledgeFilter(BaseModel):
     @classmethod
     def _states_are_known(cls, value: Optional[str]) -> Optional[str]:
         return _check_worklist_states(value)
+
+    @field_validator("location")
+    @classmethod
+    def _each_location_is_capped(cls, value):
+        return _cap_each(value, "location")
 
 
 class AcknowledgeRowsRequest(BaseModel):
@@ -1260,7 +1276,8 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     ack: Optional[
         Literal["awaiting", "acknowledged", "changed", "rejected", "to_confirm"]
     ] = None
-    location: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
+    #: Free text: one location, or a list of them (each read whole). An older body may hold one string.
+    location: Optional[str | List[str]] = None
     agent: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     so_month: Optional[str] = None
     po_number: Optional[str] = Field(None, max_length=WORKLIST_FILTER_MAX_LENGTH)
@@ -1276,6 +1293,11 @@ class OrderInquiryWorklistExportRequest(BaseModel):
     @classmethod
     def _states_are_known(cls, value: Optional[str]) -> Optional[str]:
         return _check_worklist_states(value)
+
+    @field_validator("location")
+    @classmethod
+    def _each_location_is_capped(cls, value):
+        return _cap_each(value, "location")
 
 
 class UnplaceAllResult(BaseModel):

@@ -181,8 +181,8 @@ def _validate_worklist_filter_uuids(filters: dict) -> None:
 
 
 def _location_values(raw) -> Optional[list[str]]:
-    """The Location filter's values, each held to the same length cap the single value had."""
-    values = multi_values(raw)
+    """The Location filter's values (free text, read whole), each held to the cap the single value had."""
+    values = multi_text(raw)
     for value in values or []:
         if len(value) > WORKLIST_FILTER_MAX_LENGTH:
             raise handle_unprocessable("location: value is too long")
