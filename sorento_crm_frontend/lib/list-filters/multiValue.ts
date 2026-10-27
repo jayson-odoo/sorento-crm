@@ -47,19 +47,14 @@ export function idFilterLabels(
 }
 
 /**
- * The values of a FREE-TEXT filter read from a link: an item is split on commas only when it is a
- * legacy comma-joined list of plain values ("Tap,Basin"); an item with a comma followed by a space
- * ("Sink, Undermount") is one value. Same rule as the backend's `multi_text`. Free-text filters
- * write one repeated param per value, so this only matters for an older link.
+ * The values of a FREE-TEXT filter read from a link: one repeated param per value, each read whole
+ * (a value can contain a comma). Stripped and deduped, never split.
  */
 export function splitText(raws: readonly string[]): string[] {
   const out: string[] = [];
   for (const raw of raws) {
-    const parts = raw.includes(', ') ? [raw] : raw.split(',');
-    for (const part of parts) {
-      const value = part.trim();
-      if (value && !out.includes(value)) out.push(value);
-    }
+    const value = raw.trim();
+    if (value && !out.includes(value)) out.push(value);
   }
   return out;
 }

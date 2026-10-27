@@ -29,23 +29,19 @@ def multi_values(raw: Iterable[str] | str | None) -> Optional[list[str]]:
 
 
 def multi_text(raw: Iterable[str] | str | None) -> Optional[list[str]]:
-    """``multi_values`` for FREE-TEXT values (a class label, a spec value), which can contain commas.
+    """The values of a FREE-TEXT filter (a class label, a spec value), which can contain commas.
 
-    The frontend sends these as repeated params, one value each, read whole. An item is split on
-    commas only when it is a legacy comma-joined list of plain values ("Tap,Basin"); an item with a
-    comma followed by a space ("Sink, Undermount", `["Gold", "Matt Black"]`) is one value.
+    The frontend sends one repeated param per value, so every item is ONE value, read whole:
+    stripped, deduped, never split. Use ``multi_values`` for ids and codes.
     """
     if raw is None:
         return None
     items = [raw] if isinstance(raw, str) else raw
     out: list[str] = []
     for item in items:
-        text = str(item or "")
-        parts = [text] if ", " in text else text.split(",")
-        for part in parts:
-            value = part.strip()
-            if value and value not in out:
-                out.append(value)
+        value = str(item or "").strip()
+        if value and value not in out:
+            out.append(value)
     return out or None
 
 

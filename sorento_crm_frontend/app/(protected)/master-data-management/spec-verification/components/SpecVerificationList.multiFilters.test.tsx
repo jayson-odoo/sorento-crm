@@ -172,7 +172,7 @@ describe('Spec verification - multi State and Class filters', () => {
   });
 
   it('a link with several states and classes restores both controls and the request', async () => {
-    nav.params = new URLSearchParams('state=verified%2Cneeds_reverify&class_label=ZZT+Sink%2CZZT+Tap');
+    nav.params = new URLSearchParams('state=verified%2Cneeds_reverify&class_label=ZZT+Sink&class_label=ZZT+Tap');
     const user = userEvent.setup();
     await openFilters(user);
     await waitFor(() => {
