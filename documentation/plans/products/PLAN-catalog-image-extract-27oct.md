@@ -1,6 +1,6 @@
 # PLAN: Catalogue image extraction (CATALOG-IMAGES)
 
-Status: Plan. The behaviour card is posted as one crew-ask; the screen and the writes wait for the owner's
+Status: Build (mock v2 approved 27 Oct 19:19). Track: full.
 answers. Red tests for the answer-independent part (contract below) are written now (crew, 27 Oct).
 Lane moved local 27 Oct (CATALOG-IMAGES-L, same PR #1923, branch claude/catalog-images-9kwphh).
 Track: full (new upload/ingest surface, migration for the extraction rows, master-data writes).
@@ -183,12 +183,66 @@ and n8n's linking comes back through `/external/product-attachments` (`external/
 Here the review does that linking. The bot picks photos by the "Product Photos" attachment type
 (`chatbot/lanes/business/answer.py:3878`), so catalogue photos are stored with that type.
 
-## Build (after answers)
+## Build (mock v2 approved 27 Oct 19:19: reuse components, pagination, simple guided UI)
 
-Phase 1 FE mock against fixtures. Phase 2 test-first: fixture PDFs generated in the tests with PyMuPDF
-(no real catalogue in git), then extraction + match + confirm + dedupe. Phase 3 reviewer +
-security-reviewer (upload size/type, no path traversal: storage keys are server-built from uuids,
-images re-encoded) + browser pass + hand test.
+UAC: `catalog-image-extract-acceptance-criteria.md`. Q6-Q9 on the lead's recommendations; Q10 (b).
+
+### Slices (one coder kept alive; tester writes each slice's red tests first)
+- S0 Phase 1 FE against mocks (no BE): Actions item, upload dialog, review page.
+- S1 pure modules green (red tests at a60ca09181, e8082d2d5b) + `dhash`.
+- S2 migration, models, service, worker task, API (red tests from the tester first).
+- S3 FE wired to the API; vitest for the touched hooks/components.
+- S4 reviewer + security-reviewer (upload) + browser pass + hand test.
+
+### Data (migration `cim_0001_catalogue_photos`, down_revision = main's head at build time)
+- `catalogue_photo_readings`: id, company_id (scoped like `flyer_readings`), file_name, file_size,
+  status (`queued | reading | ready | failed`), page_count, photo_count, error, pdf_attachment_id (FK
+  attachments; the PDF is stored in the folder and the task reads it back), directory_id (FK the
+  folder), created_by, created_at, updated_at.
+- `catalogue_photos`: id, reading_id (FK cascade), page, position, attachment_id (FK attachments, the
+  stored photo), sha256, dhash (16 hex), printed_code, block_codes (JSON list), placeholders (JSON list),
+  product_id (FK products, nullable: proposed or picked), rung, confidence, suggestion,
+  also_attach_product_ids (JSON list), duplicate_of_attachment_id (FK attachments, nullable),
+  duplicate_distance, decision (`attach | skip | keep_both | replace`), attached_at.
+- Default decision: `skip` when a look-alike exists (Q7 a), else `attach`.
+- Tabs: duplicate = `duplicate_of_attachment_id IS NOT NULL`; ready = product set, no look-alike,
+  decision `attach`; needs_product = no product, decision != `skip`; skipped = decision `skip` and no
+  look-alike. To attach = product set, decision in (`attach`, `keep_both`, `replace`), not attached.
+
+### API `/api/v1/master-data/catalogue-photo-readings`
+- `POST` (multipart `file`): `dealer_kit.page.edit`. Size and mime through `assert_within_limit` /
+  `assert_pdf_mime` (`flyer_reading_service.py:166,232`); refusals of `extract_flyer` for bad PDFs.
+  Creates the folder + stores the PDF + a JobService job (as `products.py:389`) + enqueues on the
+  `flyer_read` queue. 201 with the reading.
+- `GET /{id}`: reading + `counts {ready, duplicate, needs_product, skipped, to_attach}` + directory id.
+- `GET /{id}/photos?tab=&page=&limit=&sort=&dir=`: DataGrid list shape; sort keys `page` (default, then
+  position), `printed_code`, `product_code`, `confidence`. Item: id, page, position, thumbnail_url,
+  image_url, printed_code, block_codes, placeholders, product `{id, product_code}` | null, rung,
+  confidence, suggestion, other_block_products `[{id, product_code}]`, also_attach_product_ids,
+  duplicate `{attachment_id, thumbnail_url, distance}` | null, decision, attached_at.
+- `PATCH /{id}/photos/{photo_id}` `{product_id?, decision?, also_attach_product_ids?}`: product must be
+  in scope (404); `keep_both`/`replace` only with a look-alike (422); an attached row is 409.
+- `POST /{id}/attach`: `dealer_kit.page.edit` AND `master_data.products.edit`. Per row: pin a lone
+  auto-shown photo first (AC-14), skip when `already_on_file` (AC-16), `replace` unlinks the look-alike
+  link only, then `ProductAttachmentService.create_product_attachment` (`product_service.py:3250`) for
+  the product and each also-attach product; sets `attached_at`. Returns `{attached, replaced, skipped,
+  products}`. Re-running adds nothing.
+- ZIP: the existing `POST /resource-management/attachments/bulk-download` on the folder
+  (`attachments.py:1366`); no new endpoint.
+
+### Worker task (`flyer_read` queue)
+`extract_catalog_photos` -> store each photo (re-encoded bytes, `store_thumbnail`, type "Product
+Photos" when it exists, NO `create_and_send_webhook`) -> `match_codes` on all block codes (product =
+first block code's match; other matched codes = also-attach choices) -> look-alike check: `dhash` of the
+photo vs the dhash of each existing image linked to the proposed product (its thumbnail bytes through
+`storage_router`), flagged at Hamming distance <= 10 -> rows. A failure sets status `failed` + error.
+
+### FE (reuse only)
+Actions item in `ProductsList.tsx:990-1039`; the existing upload dialog; review page
+`/master-data-management/products/catalogue-photos/[id]` with `PageHeader`, `WizardSteps`
+(`components/common/WizardSteps.tsx`), line `Tabs`, one `DataGrid` per tab (server-side, fixed layout,
+resizable columns), `SearchableSelect` product picker, `Badge` confidence; "Download all as ZIP" opens
+the existing `AttachmentBulkDownloadDialog`; "Open folder" links to the drive view.
 
 ## Phase 2 contract, answer-independent part (red tests written now, crew 27 Oct)
 
