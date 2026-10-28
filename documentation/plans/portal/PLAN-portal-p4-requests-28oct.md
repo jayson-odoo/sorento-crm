@@ -190,8 +190,10 @@ Owner ruling 29 Oct (answer to a26432800 = (a), Sponsorship AND Sample Request):
 (`ProjectDetailClient.tsx:117-121`, `?project_id=`) seeds project_id + project title into the PORTAL form on the CRM
 page; portal unchanged, same payload shape, server gate unchanged. A 422 from the gate
 (`sponsorship_contact_no_company` / `sponsorship_project_not_permitted`, `sponsorship_link_service.py:110-132`;
-Sample Request `SAMPLE_REQUEST_PROJECT_NOT_ALLOWED`, `sample_request_service.py:273-276`) shows as a clear message on
-the form, never a raw error. Red-first: Sponsorship in R2, Sample Request in R3; both in the R4 side-by-side pass.
+Sample Request `SAMPLE_REQUEST_PROJECT_NOT_ALLOWED`, `sample_request_service.py:273-276`) keeps today's toast with
+the server's own message, on both portal and CRM (crew answer a27154084 = (c): CRM = portal behaviour; no inline
+alert); one test pins that the toast carries the message text, never the code. Red-first: Sponsorship in R2, Sample
+Request in R3; both in the R4 side-by-side pass.
 Count (read-only, `sorento_cagent_stack` 15 Oct copy, `p4-salesperson-no-company-count.sql`): 31 salesperson
 contacts, 0 with no linked company, 0 flagged (crew-note 6482381218).
 
