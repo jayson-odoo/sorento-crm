@@ -52,9 +52,9 @@ BE = `sorento_crm_backend/app`.
 - C7 The dialog's existing review table lists only proposals with status match or new; its one new extension is a
   status cell per field (pill "Match" or "New", no button). The existing per-field x removes a row. Not-found values
   are not listed and stay blank on the form.
-- C8 Apply: first creates every listed New developer / architect / main contractor through the B2 create (B4 dedupe
+- C8 "Confirm and prefill" (the dialog's existing confirm button): first creates every listed New developer / architect / main contractor through the B2 create (B4 dedupe
   applies), then fills the form with all listed values; a non-empty title is never overwritten. A user without
-  `projects.parties.edit` sees New party rows but Apply skips them (field left blank). A customer is only filled on
+  `projects.parties.edit` sees New party rows but confirming skips them (field left blank). A customer is only filled on
   match and is never created. Nothing else is saved until Register.
 - C9 Tests never call a real provider (patch `AIExtractService._resolve_provider` / stub `extract`).
 
