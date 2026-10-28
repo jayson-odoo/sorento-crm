@@ -104,4 +104,12 @@ describe('Brochure images - the Promotion trigger keeps its width', () => {
     expect(String(multi.props!.triggerClassName ?? '')).toContain('sm:w-72');
     expect(String(multi.props!.className ?? '')).not.toContain('sm:w-72');
   });
+
+  it('lets the filter row wrap, so the fixed-width trigger never overlaps the Product box', async () => {
+    const { container } = renderIt();
+    await waitFor(() => expect(multi.props).not.toBeNull());
+    const row = container.querySelector('#dk-bi-search')?.closest('.sm\\:flex-row');
+    expect(row).not.toBeNull();
+    expect(row!.className).toContain('sm:flex-wrap');
+  });
 });
