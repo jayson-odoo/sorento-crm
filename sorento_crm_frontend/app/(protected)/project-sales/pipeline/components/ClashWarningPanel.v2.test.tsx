@@ -69,3 +69,41 @@ describe('D2 / D3 one line per candidate', () => {
     expect(screen.queryByRole('button')).toBeNull();
   });
 });
+
+describe('the line shrinks at 375px: label and code keep their size, the title ends in an ellipsis', () => {
+  const TITLE = 'Setia Alam Phase 3B CONTOH';
+  it.each([
+    ['blocking', 'Project already registered:', true],
+    ['similar', 'Similar project:', false],
+  ])('%s line structure', (_n, label, blocks) => {
+    render(<ClashWarningPanel candidates={[candidate({ blocks })]} />);
+    const labelEl = screen.getByText(label);
+    const row = labelEl.parentElement as HTMLElement;
+    const code = within(row).getByRole('link', { name: 'PRJ-000001' });
+    const title = within(row).getByTitle(TITLE);
+
+    expect(row.className).toMatch(/\bflex\b/);
+    expect(row.className).not.toMatch(/flex-wrap|flex-col/);
+    expect(row.className).toMatch(/\bmin-w-0\b/);
+    expect(labelEl.className).toMatch(/\bshrink-0\b/);
+    expect(code.className).toMatch(/\bshrink-0\b/);
+    expect(title).not.toBe(code);
+    expect(title.className).toMatch(/\btruncate\b/);
+    expect(title.className).toMatch(/\bmin-w-0\b/);
+    expect(title).toHaveAttribute('title', TITLE);
+  });
+});
+
+describe('a masked candidate (salesperson Check)', () => {
+  it('has no outcome field and renders no badge or pill on its line', () => {
+    const masked = {
+      project_id: 'p9',
+      project_code: 'PRJ-000009',
+      title: 'Setia Alam Phase 3B CONTOH',
+      blocks: true,
+    } as unknown as ClashCandidate;
+    const { container } = render(<ClashWarningPanel candidates={[masked]} />);
+    expect(screen.getByText('PRJ-000009')).toBeInTheDocument();
+    expect(container.querySelector('[data-slot="badge"]')).toBeNull();
+  });
+});

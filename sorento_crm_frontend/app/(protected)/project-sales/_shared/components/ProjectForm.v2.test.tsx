@@ -872,3 +872,25 @@ describe('J3c a submit-only user has no Lead field', () => {
     expect(screen.queryByLabelText(/^Lead/)).toBeNull();
   });
 });
+
+describe('edit mode Customer prefilled from a linked lead (round 3)', () => {
+  const linked = () =>
+    editProject({ customer_id: 'cust-1', customer_name: 'Aman Hartanah CONTOH' } as Partial<Project>);
+  const putBody = () => calls.find((c) => c.method === 'PUT')?.body as Record<string, unknown> | undefined;
+
+  it('saves without touching Customer: the PUT body has no customer_id key', async () => {
+    renderForm({ mode: 'edit', project: linked() });
+    expect(screen.getByLabelText('Customer')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(putBody()).toBeTruthy());
+    expect(putBody()).not.toHaveProperty('customer_id');
+  });
+
+  it('picking another customer sends the new customer_id', async () => {
+    renderForm({ mode: 'edit', project: linked() });
+    await pickAsync(/^Customer/, 'Bestari', /Bestari Dealer CONTOH/);
+    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(putBody()).toBeTruthy());
+    expect(putBody()).toMatchObject({ customer_id: 'cust-2' });
+  });
+});

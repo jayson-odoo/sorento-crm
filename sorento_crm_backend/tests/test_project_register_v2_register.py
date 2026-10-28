@@ -210,3 +210,61 @@ def test_g4_an_update_leaves_existing_brand_rows_alone_even_when_brand_ids_is_se
     )
     assert res.status_code == 200, res.text
     assert _brand_rows(v2, row.id) == 1
+
+
+# ------------------------------------------------------------------ customer display fallback (#1618)
+
+
+def _lead_project(w, *, own_customer=None):
+    """A project linked to a lead whose buyer is `w.customer`; the sales profile carries
+    `own_customer` (or NULL)."""
+    from app.models.projects import ProjectLead, ProjectSalesProfile
+
+    lead = ProjectLead(
+        id=uid(), lead_code=f"ZZT-L-{uid()[:8]}", title=title("Lead"),
+        normalised_title=title("lead").lower(), company_id=w.company_id,
+        customer_id=w.customer.id,
+    )
+    w.db.add(lead)
+    w.db.flush()
+    row = project(w.db, w.company_id, title("Linked"), owner=w.owner)
+    row.lead_id = lead.id
+    w.db.add(
+        ProjectSalesProfile(
+            project_id=row.id, customer_id=own_customer.id if own_customer else None
+        )
+    )
+    w.db.flush()
+    return row
+
+
+def _list_row(w, project_id: str) -> dict:
+    res = as_user(w, w.owner).get(LIST, params={"limit": 100})
+    assert res.status_code == 200, res.text
+    return next(r for r in res.json()["data"] if r["id"] == project_id)
+
+
+def test_customer_falls_back_to_the_lead_buyer_on_detail_and_list(v2):
+    row = _lead_project(v2)
+    detail = as_user(v2, v2.owner).get(f"{STAFF}/{row.id}").json()
+    for body in (detail, _list_row(v2, row.id)):
+        assert body["customer_id"] == v2.customer.id
+        assert body["customer_name"] == v2.customer.customer_name
+        assert body["customer_code"] == v2.customer.customer_code
+
+
+def test_the_sales_profile_customer_wins_over_the_lead_buyer(v2):
+    from ._sample_request_seed import make_customer
+
+    own = make_customer(v2.db, v2.company_id)
+    row = _lead_project(v2, own_customer=own)
+    detail = as_user(v2, v2.owner).get(f"{STAFF}/{row.id}").json()
+    assert detail["customer_id"] == own.id
+    assert _list_row(v2, row.id)["customer_id"] == own.id
+
+
+def test_a_put_without_customer_id_pins_nothing_on_the_sales_profile(v2):
+    row = _lead_project(v2)
+    res = as_user(v2, v2.owner).put(f"{STAFF}/{row.id}", json={"title": title("Renamed")})
+    assert res.status_code == 200, res.text
+    assert _profile(v2, row.id).customer_id is None
