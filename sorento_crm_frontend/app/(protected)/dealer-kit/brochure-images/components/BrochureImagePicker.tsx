@@ -329,7 +329,7 @@ export function BrochureImagePicker() {
                 )}
                 placeholder="Every product"
                 clearable
-                className="w-full sm:w-72"
+                triggerClassName="w-full sm:w-72"
               />
             </div>
             <div className="flex min-w-0 flex-col gap-1.5">
