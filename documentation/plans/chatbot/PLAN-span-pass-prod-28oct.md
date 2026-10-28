@@ -42,10 +42,11 @@ regex or word lists. Eval gate before any prod prompt publish.
 - n-gram path: `_meaning` drops any non-3-small embedder (`lookup_lists.py:307`). With spans on it runs only as the span
   FALLBACK (`engine.py:1428,1484-1491`: span call failed / unreadable / resolver error). Dev traces: 2 of 21 span turns
   (`sorento_prod_1020`), 2 of 91 (`sorento_explore1020`, call_error).
-- Warm-up: per process, no shared store (`lookup_lists.py:856`); 4 gunicorn workers per colour (`gunicorn.conf.py:44`),
-  startup event per worker (`main.py:329,415`), lazy warm per turn too (`engine.py:1270,1335`). ~4,652 texts / 100 per
-  Gemini request = 47 requests per process. Measured 27 Oct on ONE process: 429 part-way at ~1.5k texts/min
-  (AC-S3-13). Four warms at once (start-up OR the label flip itself) = ~18.6k texts. After 3 retries the fill gives up
+- Warm-up: per process, no shared store (`lookup_lists.py:856`); `WORKERS` default 4 per colour (`gunicorn.conf.py:44`),
+  but prod runs 8 (BACKEND-MEMORY #1950, prod measurement 28 Oct; 8 -> 4 is an open owner decision); startup event per
+  worker (`main.py:329,415`), lazy warm per turn too (`engine.py:1270,1335`). ~4,652 texts on dev, ~7,035 on prod (#1950)
+  / 100 per Gemini request = 47-71 requests per process. Measured 27 Oct on ONE process: 429 part-way at ~1.5k texts/min
+  (AC-S3-13). Eight warms at once (start-up OR the label flip itself) = ~56k texts on prod. After 3 retries the fill gives up
   (`lookup_lists.py:916-928`); turns stay spelling-only until every text is cached (`:1086-1091`).
 
 ## Steps
