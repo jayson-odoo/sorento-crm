@@ -331,6 +331,18 @@ def test_a_typed_agent_digit_with_no_parser_answer_is_never_the_pick(bot) -> Non
     assert not [a for name, a in calls if a.get("sales_agent_ids")], (calls, text)
 
 
+@pytest.mark.parametrize("typed", ["3", "ZZT-YU-3"])
+@pytest.mark.parametrize("mode", ["pick", "fill"])
+def test_a_declared_agent_answer_that_picks_nothing_never_sends_an_agent(bot, mode, typed) -> None:
+    text, _calls = _ask_h3(bot)
+    declared = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
+        open_question_answer={"mode": mode, "picked": [], "items": [], "qty_for_all": None},
+    )
+    text, calls = bot.say(declared, typed)
+    assert not [a for n, a in calls if a.get("sales_agent_ids")], (calls, text)
+
+
 def test_h4_total_sale_gives_the_same_pick_and_the_same_args_as_h3(bot) -> None:
     """AC-RU-20 / H4 "sales agent yu total sale for SRTSP231 in 2026": the same question, and the same args after
     the same pick, as H3."""

@@ -81,6 +81,19 @@ def test_a_typed_company_label_or_digit_with_no_parser_answer_is_never_the_pick(
     assert not [a for n, a in calls if a.get("company")], (calls, text)
 
 
+@pytest.mark.parametrize("typed", ["2", "Mocha"])
+@pytest.mark.parametrize("mode", ["pick", "fill"])
+def test_a_declared_company_answer_that_picks_nothing_never_sends_a_company(bot, mode, typed) -> None:
+    """The parser declared an answer but picked no offered option: the typed digit or label is never the fallback."""
+    _company_question(bot)
+    declared = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
+        open_question_answer={"mode": mode, "picked": [], "items": [], "qty_for_all": None},
+    )
+    text, calls = bot.say(declared, typed)
+    assert not [a for n, a in calls if a.get("company")], (calls, text)
+
+
 # ---------------------------------------------------------------- the engine: a parse is not overridden by a reply's shape
 
 

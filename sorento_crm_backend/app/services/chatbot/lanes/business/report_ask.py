@@ -1354,7 +1354,8 @@ def settle(
     companies: Any = (),
 ) -> tuple[rf.Outcome | None, str | None]:
     """`_settle`, with the company question asked as the one line `sales_company_ask` asks on the Yearly path (one
-    question, one wording); the slot keeps its numbered options, so a number or a name still answers it."""
+    question, one wording); the slot keeps its options, and the parser's declared pick of one of them is the only answer
+    (`required_fields.picked_option`: the company and sales agent fields are `parser_only`)."""
     outcome, line = _settle(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies)
     if outcome is not None and outcome.slot and outcome.slot.get("asking") == "company" and outcome.reply:
         outcome.reply = _company_question(_dict(outcome.slot.get("extras")))
