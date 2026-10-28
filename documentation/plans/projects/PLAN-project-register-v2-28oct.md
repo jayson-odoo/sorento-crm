@@ -1,40 +1,68 @@
 # PLAN: Register a project v2 (PROJECT-REGISTER-V2)
 
-Status: Plan. Card being written (behaviour card before any code). Track: full, size L (new flow
-"register interest" + management reassign, likely a migration, AI extract incl. images).
+Status: Plan done; card v1.2 answered 28 Oct (Q1-Q5); mock v1.2 + card Q6 awaiting owner OK. No code before that.
+Track: full, size L (new flow + permission-gated reassign; no migration expected). Security review required
+(reassign / interest rules, new AI upload route, party and customer pickers).
 Branch `crew/project-register-v2`, base origin/main `30a40cf04f`.
-UAC: `project-register-v2-acceptance-criteria.md` (after the card is answered).
-Mock: `documentation/mockups/project-register-v2/index.html` (after the card is answered).
+Card: `CARD-project-register-v2-28oct.md` v1.2. UAC: `project-register-v2-acceptance-criteria.md`.
+Mock: `documentation/mockups/project-register-v2/index.html` v1.2.
 
-## Owner's request (28 Oct ~14:1x, intent)
+## Owner's request (28 Oct ~14:1x, intent) and answers
 
-"After we unify the portal, the project registration is here":
+1. Title is a textarea and the first field. 2. AI extract next to the title (text and photo), reusing the existing
+extract; proposes only. 3. A duplicate does not block: offer "Register interest"; management may reassign to an
+interested person; interested people shown on the project. 4. Architect / Main contractor created on the spot.
+5. Brands: removed everywhere (Q5 b). 6. Customer replaces Lead as the required field, search-only, salespeople never
+create customers (Q4 a). Plus: long titles never fill the screen (owner addition 14:3x).
+Answers: Q1 (a), Q2 (a), Q3 (a) incl. the management slug fix, Q4 (a) search-only, Q5 (b). Q6 (Lead wizard buyer
+step search-only) pending.
 
-1. Project title becomes a TEXTAREA and the FIRST field.
-2. AI extract button next to the title fills the other fields from the title text, reusing the existing
-   AI extract (portal project registration, PR #1849). It also accepts an IMAGE (photo). Extract only
-   proposes; the user confirms before Register. Unmatched names follow item 4.
-3. Duplicate project: "Check" must NOT block. If the project exists, offer "Register interest" instead of
-   "Register project". Record who is interested and when. Management may later REASSIGN the project to an
-   interested person. Interested people show on the project; reassign is permission-gated and audited.
-4. Architect and Main contractor: like Lead, create on the spot when not found.
-5. "Why is the brand field here": explain, recommend keep / move / remove.
-6. "Needs to be customer instead of lead?": explain Lead vs Customer, recommend.
+## Architecture (what is reused, nothing new where something exists)
 
-## Known context (verified)
+- Interest = the existing takeover request, kind `dispute`, relabelled "Register interest" in the UI only
+  (`BE/models/projects.py:508`, `BE/services/project_service.py:484` create, `:549` decide, routes
+  `BE/api/v1/projects/projects.py:699/729/763`). Reassign to an interested person = approving that request
+  (moves the owner, keeps the old owner as collaborator, `project_service.py:605-614`). No new table.
+- Notifications: two new functions in `BE/services/project_notify_service.py` on the existing `_send` (:116);
+  `MANAGEMENT_PERMISSION` (:33) becomes `projects.projects.manage`.
+- Activity line: one new template in `BE/services/project_activity_service.py` (`record_project_event` :107).
+- AI extract: new staff route in `BE/api/v1/projects/projects.py` calling `AIExtractService.extract`
+  (`BE/services/ai_extract/extract_service.py:284`) with `portal.project_registration`
+  (`form_schema_registry.py:403`); the validation copies `BE/api/v1/public/ai_extract.py:122-150`; the per-user
+  limit reuses `portal_rate_limit` (`BE/services/portal_rate_limit.py:51`) keyed by user. Name -> id matching in one
+  small service function (parties by type, project types, `my_state` lookup, customers).
+- FE AI dialog: lift `app/(auth)/portal/components/AIExtractDialog.tsx` to a shared place with the extract call and
+  the result renderer passed in; the portal keeps its behaviour.
+- Pickers: `components/common/SearchableSelect.tsx` async mode (`fetchOptions`) + `createOption` for parties; Customer
+  uses `GET /api/v1/order-management/customers/select` (`BE/api/v1/order_management/customers_select.py:27`).
+- Party create dedupe (UAC B4) inside the existing create (`BE/services/project_reference_service.py`).
+- Long titles: `components/common/TruncatedTextCell.tsx` gains `lines`; every unclamped site uses it.
+- Brands: code removal only; `projects.brands` table and rows untouched (no migration).
+- Customer required on register: enforced in the register route / `register_project`, not only the FE.
 
-- ADR-0004 (`documentation/adr/0004-project-registration-exclusivity.md`) makes staff registration
-  exclusive: a fuzzy title clash BLOCKS, with recourse "request to join" / "dispute". Item 3 reverses the
-  block for staff registration; the ADR needs an amendment.
-- Existing recourse tables: `projects.takeover_requests` (kind join | dispute, requester, reason, status,
-  decided_by/at; `app/models/projects.py:503-541`) and `projects.collaborators`
-  (`app/models/projects.py:482-500`). Dev copy: 0 rows in both.
-- "Brand" dropdown = `projects.brands` M2M onto core `brands` ("brands being pushed into a project",
-  `app/models/projects.py:413-438`). Dev copy: 3 rows, all on one project.
-- Portal registration (PR #1849, merged `1b6f73f56e`) already has AI Extract and "a possible duplicate never
-  blocks" for the portal path (`PLAN-project-registration-portal-25oct.md`, D7/D8).
+## Slices (one lane, one PR; commits on this branch)
 
-## Open (card)
+- S1 BE: brands removal (G), customer required (A5), management slug + notifications (F), activity line (E6),
+  view_own clause for pending interest (E7, `BE/services/own_scope.py:75-92`), party dedupe (B4), AI extract route +
+  matching (C2-C6). Lead wizard `new_customer` refusal (I1) only if Q6 = a.
+- S2 FE: form order + textarea + Customer + Lead in Details (A1-A4), party async + create rows (B1-B3), AI extract
+  dialog (C1, C7), Register interest flow (D2-D4, D7), Access card Interested + manager actions + Reassign dialog
+  (E1-E5), brands UI removal (G3), long titles (H1-H3), MCP sanitizer (G5).
 
-Answers to items 5 and 6, extract field mapping, interest + reassign rules, duplicate basis, examples,
-questions. Filled after exploration.
+## Test list (tester writes these red FIRST, from the UAC; coder makes them green)
+
+pytest (BE, Postgres fixture `tests/_pg_fixture.py`, seed own chain): A5, A6, B4, C2 (403 / 422 types / count),
+C3 (each status), C4 (row counts unchanged), C5 (429), C6 (502), D5, D6, E2 (403), E3, E4, E6 (activity row), E7,
+F1, F2, F3, G1, G2, I1 (if Q6 a). Plus the global guards `tests/test_schema_uuid_id_principle.py` and
+`tests/test_list_pagination_limit.py` (list endpoint touched).
+vitest (touched files only, `--maxWorkers=2`): ProjectForm (A1-A4, B1-B3, D2-D4, D7, G3), AI extract dialog (C7),
+ProjectAccessPanel (E1, E2, E4), Reassign dialog (E5), TruncatedTextCell (H1), ProjectDetailClient header (H2),
+ProjectsGrid / PipelineBoard / ClashWarningPanel (G3).
+MCP pytest: G5.
+BROWSER (agent-browser, crew test copy, 1280 + 375): A, C (one real extract call at most, Gemini org key ledger),
+D, E, H4.
+
+## Done when
+
+Red-proof commit + kill-proof posted, reviewer READY, security-reviewer clean, browser pass 1280/375, hand test
+script filed, crew-done with the DoD gate. No migration SQL (none needed); confirm at build time.

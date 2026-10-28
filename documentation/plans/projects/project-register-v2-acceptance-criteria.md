@@ -1,0 +1,115 @@
+# UAC: Register a project v2 (PROJECT-REGISTER-V2)
+
+Plan: `PLAN-project-register-v2-28oct.md`. Card: `CARD-project-register-v2-28oct.md` v1.2 (owner answers 28 Oct).
+Mock: `documentation/mockups/project-register-v2/index.html` v1.2. Every case below is a test (pytest for BE, vitest
+for FE) unless marked BROWSER. Fixtures are invented (Sales A / Sales B / Manager M, CONTOH names); never seed off
+existing rows (CI DB is empty). Paths: FE = `sorento_crm_frontend/app/(protected)/project-sales`,
+BE = `sorento_crm_backend/app`.
+
+## A. Register form: order, Customer, Lead
+
+- A1 The first field of "Who and what" is "Project title *", a textarea (not an input). Developer, Project type and
+  Template follow it.
+- A2 Section "Salesperson and customer" holds Salesperson and "Customer *". Lead is in Details, labelled
+  "Lead (optional)", and keeps its "Create lead '<text>'" row.
+- A3 Customer is an async search over `GET /api/v1/order-management/customers/select?query=&limit=`; options read
+  "CODE  NAME". There is NO create row: a query with no match shows "No customers found" only.
+- A4 Create mode: Register is disabled until the title and Customer are set (Lead no longer required). Edit mode:
+  Customer is optional (older projects save without one).
+- A5 API: `POST /api/v1/project-sales/projects/` without `customer_id` -> 422 code `project_customer_required`;
+  an unknown or other-company customer id -> 422; a valid one is stored in `projects.sales_profile.customer_id` and
+  returned on the project (id + code + name). `PUT` without `customer_id` keeps saving.
+- A6 Registering with a lead still links it (`set_project_lead`), unchanged.
+
+## B. Developer, Architect, Main contractor: search and create on the spot
+
+- B1 All three are async searches on `GET /api/v1/project-sales/parties/?party_type=<type>&query=<text>` (no more
+  "first 200" list): a party that sorts after the 200th is found by typing its name.
+- B2 A user holding `projects.parties.edit` sees "Create developer|architect|main contractor '<text>'" when no option
+  matches; one click calls `POST /api/v1/project-sales/parties/` with `{name, party_type}` and selects the new party.
+- B3 Without `projects.parties.edit` there is no create row (and the POST stays 403).
+- B4 Creating a name that already exists for that type (case and spacing ignored) returns the existing party; no
+  second row is written.
+
+## C. AI extract (text and photo)
+
+- C1 An "AI extract" button sits next to the title; an "Add photo" button beside it. Extract runs on the title text,
+  the added photo(s), or both.
+- C2 `POST /api/v1/project-sales/projects/ai-extract` (multipart: `text`, `files[]`) needs `projects.projects.edit`
+  (403 otherwise). It calls `AIExtractService.extract` with form key `portal.project_registration`; the text is
+  passed as a `.txt` file. Max 12 files; png, jpg, jpeg, webp, pdf, txt only (others 422).
+- C3 Response = one proposal per field: `developer`, `architect`, `main_contractor` (exact name match, case and
+  spacing ignored, among parties of that type -> `{status: "match", id, name}`; else `{status: "new", name}`),
+  `project_type` (name match -> match; else `not_found`), `state` (resolved through the `my_state` lookup; else
+  `not_found`), `mukim` (text), `customer` (exactly one customer with that name -> match; else `not_found`, never
+  `new`), `title` (text).
+- C4 The endpoint writes nothing except the AI usage-log row: no project, party or customer row is created.
+- C5 Per-user rate limit: the 11th call in 10 minutes -> 429.
+- C6 Provider failure -> 502 with a plain message; the form keeps what the user typed.
+- C7 FE review dialog lists each proposal with a Match / New / Not found pill and a checkbox (Not found unticked).
+  "Apply ticked" fills only ticked fields; a non-empty title is never overwritten; a New party row offers
+  "Create <type>" (B2 rules) and is only set after that click. Nothing is saved until Register.
+- C8 Tests never call a real provider (patch `AIExtractService._resolve_provider` / stub `extract`).
+
+## D. Duplicate found: Register interest instead of Register
+
+- D1 The duplicate basis is unchanged (`BE/services/project_clash_service.py`).
+- D2 When the Check returns a blocking candidate, the footer button reads "Register interest in <code>" (top blocking
+  candidate) and is enabled; the text "Blocked by an existing project" no longer appears.
+- D3 Each candidate row offers "Ask to join" and "Register interest" (the "Dispute" label is gone everywhere).
+- D4 "Register interest" opens a dialog titled "Register interest in <code>" with a required textarea "How and when
+  did you find this project?"; submit creates the existing takeover request with `kind = "dispute"`; success
+  navigates to the project.
+- D5 The server lock is unchanged: a direct `POST /projects/` on a blocking clash still returns 409
+  `project_already_registered`.
+- D6 Existing request rules hold: no interest in your own project, no second open interest by the same user, none on
+  an unapproved project.
+- D7 Naming a different developer clears the match and the button returns to "Register project".
+
+## E. Interested people and reassign
+
+- E1 The project's Access card shows "Interested": every pending interest (requester name, date, note), to every user
+  who can view the project.
+- E2 Holders of `projects.projects.manage` see "Reassign to <name>" and "Dismiss" per row; nobody else does (the owner
+  included). A non-manager calling the decide endpoint on an interest -> 403.
+- E3 Reassign to X (approve that interest): owner becomes X, the previous owner becomes a collaborator, the request is
+  `approved` with decided_by / decided_at; other pending interests stay listed.
+- E4 Dismiss (reject): the request is `rejected` and leaves the Interested list.
+- E5 The Reassign dialog lists interested people first (with their date), then everyone else; picking an interested
+  person runs E3, picking anyone else keeps today's reassign.
+- E6 E3 writes an activity-feed line "Reassigned from <A> to <B>" and the owner change is in the audit log.
+- E7 A user who holds only `projects.projects.view_own` and has a pending interest can open that project.
+
+## F. Notifications
+
+- F1 A new interest notifies the project owner and every active holder of `projects.projects.manage`, never the
+  requester.
+- F2 E3 notifies the new owner and the previous owner.
+- F3 `MANAGEMENT_PERMISSION` is `projects.projects.manage`; `management_user_ids` returns an active user whose role
+  grants it (the existing floor-breach, staleness and PO-mismatch alerts now reach managers).
+
+## G. Brands removed everywhere (no migration)
+
+- G1 The project response has no `brands` / `brand_ids`; `brand_ids` sent on register, update, approve or lead
+  qualify is ignored and writes no `projects.brands` row.
+- G2 The project list ignores `brand_id`; clash candidates carry no `brands`.
+- G3 FE: no Brands field (create and edit), no Overview line, no list column, no board badges, no clash badges, no
+  brand filter param.
+- G4 Existing `projects.brands` rows are left untouched (no migration).
+- G5 MCP project tools still pass their tests with brands gone.
+
+## H. Long titles
+
+- H1 `components/common/TruncatedTextCell.tsx` gains `lines` (1 default, 2): the text clamps to that many lines with
+  the full text as hover title; an eye button "Show full title" appears only when the text is clamped and opens a
+  dialog with the full text.
+- H2 The project detail header renders the title through it with `lines={2}` in every status.
+- H3 Also clamped: the "Already registered as" link and possible-duplicate links on the detail page, the project
+  crumbs on the schedule review and PO intake confirm pages, the 7 child-page project lines, the quotation document
+  heading and the lead heading (2 lines), and every project picker trigger (`truncateTriggerLabel`).
+- H4 BROWSER at 1280 and 375: a 60-word title takes at most 2 lines in the header; no horizontal scroll.
+
+## I. Lead wizard buyer step (only if the owner answers card Q6 = a)
+
+- I1 The Create lead wizard's Buyer select is search-only over existing customers; there is no "new customer" path,
+  and the lead create API refuses `new_customer` with 422.
