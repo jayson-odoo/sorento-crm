@@ -1,6 +1,6 @@
 # PLAN: REPORT-UNIFY (finish `crm_report_ask` for every sales and outstanding ask)
 
-Status: Build, handed off to a LOCAL worker on 28 Oct (owner decision). All four slices are built; round 6 is a WIP checkpoint. Exact next steps: section 6.
+Status: Build, round 6 picked up by the LOCAL worker (lane REPORT-UNIFY-LOCAL) on 29 Oct. All four slices are built; round 6 is being finished red-first, then the hand-test script is re-run on the crew copy. Exact next steps: section 6.
 Track: full (size L). Three stacked slices on one lane branch, one PR (#1922).
 UAC: `report-unify-27oct-acceptance-criteria.md`.
 
