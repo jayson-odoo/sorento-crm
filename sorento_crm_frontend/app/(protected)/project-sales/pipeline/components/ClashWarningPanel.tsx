@@ -87,7 +87,7 @@ function ClashLine({
         }
         aria-hidden
       />
-      <p className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-1 text-sm">
+      <p className="flex min-w-0 flex-1 flex-wrap sm:flex-nowrap items-baseline gap-x-1 text-sm">
         <span className="shrink-0">{label}</span>{' '}
         <Link
           href={`/project-sales/${candidate.project_id}`}
