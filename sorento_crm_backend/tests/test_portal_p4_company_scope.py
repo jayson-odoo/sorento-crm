@@ -11,6 +11,7 @@ Postgres only (`blank_session`), every row seeded here.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -22,6 +23,11 @@ from tests import _ptag_r9_seed
 from tests._portal_grant import grant_portal_forms, link_contact_company
 from tests._portal_p4_support import scene  # noqa: F401  (fixture)
 from tests._pg_fixture import unique_code
+from tests.test_portal_p4_my_requests_attachments import (  # noqa: F401  (autouse storage stub + helpers)
+    _rows as _att_rows,
+    _storage,
+    _upload,
+)
 from tests._sample_request_seed import full_payload, make_product
 
 SI = "/api/v1/procurement/stock-inquiries"
@@ -224,3 +230,51 @@ def test_p4_cs_control_view_holder_keeps_the_one_active_company_rule(w, form):
             s.ok(who.portal.call("POST", f"/submissions/{kind}/{rid}/submit"))
     got = _ids(w.get(w.staff, path))
     assert in_a in got and in_b not in got, f"A row seen={in_a in got}; B row leaked={in_b in got}"
+
+
+# ---- D7 deferred deletes run in the contact's company (park and commit), not the active one --------
+
+PENDING = "/api/v1/pending-actions"
+
+
+def _park(w, who, key, entity_type, entity_id):
+    return w.sc.client.post(PENDING, headers=who.actor.headers, json={
+        "action_key": key, "entity_type": entity_type, "entity_id": entity_id, "payload": {}})
+
+
+def _lapse_and_settle(w, who, park, entity_type, entity_id):
+    from app.models.sla import SlaFormAction
+
+    w.sc.db.query(SlaFormAction).filter(SlaFormAction.id == park.json()["id"]).update(
+        {"commit_at": datetime.utcnow() - timedelta(seconds=1)}, synchronize_session=False)
+    w.sc.db.commit()
+    r = w.sc.client.get(f"{PENDING}/current", headers=who.actor.headers,
+                        params={"entity_type": entity_type, "entity_id": entity_id})
+    assert r.status_code == 200, r.text
+    return r.json()
+
+
+def test_p4_cs_deferred_delete_of_own_price_tag_draft_in_the_contacts_company(w):
+    from sqlalchemy import text
+    from app.models.price_tag import PriceTagRequest
+
+    rid = _pt(w.rep, w)
+    r = _park(w, w.rep, "my_request.delete", "price_tag_request", rid)
+    assert r.status_code == 202, f"park refused under the active company: {r.status_code} {r.text}"
+    _exists = lambda: (w.sc.db.expire_all(), w.sc.db.execute(text(f"SELECT 1 FROM {PriceTagRequest.__tablename__} WHERE id = :i"), {"i": rid}).first() is not None)[1]  # noqa: E731
+    assert _exists()
+    out = _lapse_and_settle(w, w.rep, r, "price_tag_request", rid)
+    assert out["last_outcome"]["status"] == "committed", out
+    assert not _exists()
+
+
+def test_p4_cs_deferred_unlink_of_own_upload_on_a_request_in_the_contacts_company(w):
+    rid = _pt(w.rep, w)
+    link = s.ok(_upload(w.rep.portal, "price_tag_request", rid)).json()["link_id"]
+    has = lambda: any(str(l.id) == link for l, _ in _att_rows(w.sc, "price_tag_request", rid))  # noqa: E731
+    assert has()
+    r = _park(w, w.rep, "my_request_attachment.unlink", "my_request_attachment", link)
+    assert r.status_code == 202, f"park refused under the active company: {r.status_code} {r.text}"
+    out = _lapse_and_settle(w, w.rep, r, "my_request_attachment", link)
+    assert out["last_outcome"]["status"] == "committed", out
+    assert not has()
