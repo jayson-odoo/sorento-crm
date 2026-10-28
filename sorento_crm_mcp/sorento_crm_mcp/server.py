@@ -1386,7 +1386,7 @@ def _strip_row_company_ids(tool_name: str, data: Any) -> Any:
 # renderer), plus browser-only fields it cannot act on. `id` deliberately SURVIVES: both
 # crm_project_detail and crm_project_quotations_list take it, and the two-call pattern is how
 # a project answer gets any depth. Every dropped key has a human-readable twin that stays
-# (developer_name, type_name, owner_name, status_label, brands), so nothing becomes
+# (developer_name, type_name, owner_name, status_label), so nothing becomes
 # unanswerable -- it becomes answerable in words.
 _PROJECT_SLIM_TOOLS = ("crm_projects_list", "crm_project_detail")
 _PROJECT_DROP_KEYS = frozenset(

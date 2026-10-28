@@ -518,8 +518,10 @@ export default function SampleRequestDetail({ requestId }: { requestId: string }
               </p>
             </div>
             <Field label="Project" wide>
-              {project}
-              {!r.project_id && r.project_name ? ' (not registered)' : ''}
+              <span className="line-clamp-2 break-words" title={project ?? undefined}>
+                {project}
+                {!r.project_id && r.project_name ? ' (not registered)' : ''}
+              </span>
             </Field>
             <Field label="For (scope)">{r.scope_note}</Field>
             <Field label="Request Delivery Date">

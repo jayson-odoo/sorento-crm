@@ -342,12 +342,20 @@ export function SalesOrderDetailClient({
           </div>
           {/* S7-1: where the order came from, and Activity as a plain link rather than a tab. */}
           <p className="mt-1 text-sm text-muted-foreground break-words">
+            {project.data?.title && (
+              <>
+                <span
+                  className="inline-block max-w-full truncate align-bottom"
+                  title={project.data.title}
+                >
+                  {project.data.project_code
+                    ? `${project.data.title} (${project.data.project_code})`
+                    : project.data.title}
+                </span>
+                {' · '}
+              </>
+            )}
             {[
-              project.data?.title
-                ? project.data.project_code
-                  ? `${project.data.title} (${project.data.project_code})`
-                  : project.data.title
-                : null,
               `Area group ${shown.area_group || '-'}`,
               `Customer PO ${so.po_number || '-'}${poVersionNo ? ` v${poVersionNo}` : ''}`,
               so.stock_location ? `Stock location ${so.stock_location}` : null,

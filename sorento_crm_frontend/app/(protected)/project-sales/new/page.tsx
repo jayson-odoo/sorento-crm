@@ -13,7 +13,7 @@ export const metadata: Metadata = {
 
 export default function RegisterProjectPage() {
   return (
-    <RequireAccess permission="projects.projects.edit">
+    <RequireAccess anyPermission={['projects.projects.edit', 'projects.registrations.submit']}>
       <Container className="space-y-6">
         {/* Crumbs left, one Back right (D6, S3-01); no subtitle under the title
             (D2, one primary CTA lives at the foot of the form instead). */}

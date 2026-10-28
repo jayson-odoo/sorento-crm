@@ -402,13 +402,17 @@ def test_a_clash_does_not_name_a_foreign_project_to_a_limited_user(scene):
     db, w, p = scene
     project_seed_service.run(db, company_id=w.company_id)
     foreign = db.get(Project, p["p4"])
+    from ._sample_request_seed import make_customer
+
+    body = {"title": foreign.title, "customer_id": make_customer(db, w.company_id).id}
+    db.commit()
     with acting(db, w.a, LIMITED) as client:
-        response = client.post(f"{BASE}/projects/", json={"title": foreign.title})
+        response = client.post(f"{BASE}/projects/", json=body)
         assert response.status_code == 409, (response.status_code, response.text)
         assert foreign.project_code not in response.text
         assert foreign.title not in response.text
     with acting(db, w.a, {VIEW, EDIT}) as client:
-        response = client.post(f"{BASE}/projects/", json={"title": foreign.title})
+        response = client.post(f"{BASE}/projects/", json=body)
         assert response.status_code == 409, response.text
         assert foreign.project_code in response.text
 
