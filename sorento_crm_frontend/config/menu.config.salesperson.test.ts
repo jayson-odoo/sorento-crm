@@ -53,7 +53,11 @@ const SALES_PERMS = [
 ];
 
 const ALL_KINDS = [...LANDING_KINDS] as string[];
-const REQUEST_KINDS = ALL_KINDS.filter((k) => k !== 'customer_asks' && k !== 'conversation');
+// Portal landing order (landingKindsFor): Stock Inquiry first, then LANDING_KINDS order.
+const REQUEST_KINDS = [
+  'stock_inquiry',
+  ...ALL_KINDS.filter((k) => k !== 'stock_inquiry' && k !== 'customer_asks' && k !== 'conversation'),
+];
 
 describe('MENU_SIDEBAR for a salesperson', () => {
   it('is exactly MY WORK then MY REQUESTS, in portal order', () => {
