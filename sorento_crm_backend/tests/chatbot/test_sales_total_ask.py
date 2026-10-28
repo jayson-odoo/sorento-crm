@@ -130,6 +130,10 @@ def _answer(**fields: Any) -> dict[str, Any]:
     return _parser_output(**base)
 
 
+#: The parser's declared answer to the open question, filling the owed basis (`sales_basis` or `basis`).
+FILL = {"mode": "fill", "picked": [], "items": [], "qty_for_all": None}
+
+
 def _ask(chat: Chat) -> None:
     result, captured = chat.say(_total(), "total sales Jan 2026")
     assert _reply(result).strip() == BASIS_QUESTION, f"the basis is asked: {_reply(result)!r}"
@@ -158,10 +162,9 @@ def test_t3_total_sales_asks_then_1_runs_invoiced(one):
 @pytest.mark.parametrize(
     ("fields", "body", "basis"),
     [
-        pytest.param({"basis": "invoiced"}, "invoiced", "invoiced", id="invoiced-word"),
+        pytest.param({"basis": "invoiced", "open_question_answer": FILL}, "invoiced", "invoiced", id="invoiced-basis"),
         pytest.param(
-            {"order_status": "sales_analysis", "sales_basis": "delivered",
-             "open_question_answer": {"mode": "fill", "picked": [], "items": [], "qty_for_all": None}},
+            {"order_status": "sales_analysis", "sales_basis": "delivered", "open_question_answer": FILL},
             "delivered", "delivered", id="delivered-sales_basis",
         ),
     ],
@@ -174,7 +177,7 @@ def test_t4_a_basis_word_answers_it(one, fields, body, basis):
 
 def test_t5_outstanding_runs_the_report_ask_never_the_analysis(one):
     _ask(one)
-    _result, captured = one.say(_answer(basis="outstanding"), "outstanding")
+    _result, captured = one.say(_answer(basis="outstanding", open_question_answer=FILL), "outstanding")
     assert _calls(captured, ANALYSIS) == [], f"the analysis has no outstanding basis: {captured}"
     asks = _calls(captured, "crm_report_ask")
     assert asks, f"the report ask's outstanding total runs: {captured}"
@@ -184,7 +187,7 @@ def test_t5_outstanding_runs_the_report_ask_never_the_analysis(one):
 
 def test_t6_two_companies_basis_then_company_then_both_ride(two):
     _ask(two)
-    result, captured = two.say(_answer(basis="ordered"), "ordered")
+    result, captured = two.say(_answer(basis="ordered", open_question_answer=FILL), "ordered")
     assert COMPANY_QUESTION in _reply(result), f"then the company: {_reply(result)!r}"
     assert not [a for a in _calls(captured, ANALYSIS) if a.get("company")], captured
     _result, captured = two.say(_answer(open_question_answer=_pick(2), order_status=None), "2")
@@ -244,35 +247,55 @@ def test_t10_a_ranking_while_the_question_is_open_is_never_read_as_the_basis(one
     assert question.get("about") != "sales_basis", question
 
 
-def test_t11_a_bare_basis_word_with_a_stray_axis_is_still_the_answer(one):
-    """Review round 2: "invoiced" parsed with no declared answer, an axis and the window echoed (parser noise on
-    an answering turn) answers the basis question; it is never a new ranking that asks its own questions."""
+def test_t11_a_declared_basis_with_a_stray_axis_is_still_the_answer(one):
+    """Review round 2: "invoiced" the parser declared as the answer, with an axis and the window echoed (parser
+    noise on an answering turn), answers the basis question; it is never a new ranking that asks its own."""
     _ask(one)
     _result, captured = one.say(
-        _answer(basis="invoiced", group_by="customer", **JAN_2026),
+        _answer(basis="invoiced", open_question_answer=FILL, group_by="customer", **JAN_2026),
         "invoiced",
     )
     _ran(captured, "invoiced")
 
 
 # --------------------------------------------------------------------------- #
-# Prod parser (v68 text, no PARSER TEMPLATE block): the replies it may give
+# Owner rule (28 Oct): the parser alone reads the reply; code never reads the typed text
 # --------------------------------------------------------------------------- #
 
 
-def test_t12_a_bare_number_read_as_a_count_is_still_the_option(one):
-    """A prompt with no line for this question may read "1" as `top_n` 1 and declare nothing: the option's
-    number, never a new ranking ask."""
+def test_t12_a_declared_pick_with_count_noise_is_the_option_it_picked(one):
+    """The parser picked option 1 of the four it was shown (`turn/question.of_required_ask`) and also set
+    `top_n` 1: the pick is the answer."""
     _ask(one)
-    _result, captured = one.say(_answer(top_n=1), "1")
+    _result, captured = one.say(_answer(open_question_answer=_pick(1), top_n=1), "1")
     _ran(captured, "invoiced")
 
 
-def test_t13_a_bare_basis_word_marked_as_a_domain_word_is_still_the_answer(one):
-    """"invoiced" read with `domain_in_message` true and nothing else of its own answers the question."""
+def test_t13_a_declared_basis_marked_as_a_domain_word_is_still_the_answer(one):
     _ask(one)
-    _result, captured = one.say(_answer(basis="invoiced", domain_in_message=True), "invoiced")
+    _result, captured = one.say(
+        _answer(basis="invoiced", open_question_answer=FILL, domain_in_message=True), "invoiced"
+    )
     _ran(captured, "invoiced")
+
+
+@pytest.mark.parametrize(
+    ("fields", "body"),
+    [
+        pytest.param({"top_n": 1}, "1", id="number-undeclared"),
+        pytest.param({}, "1", id="number-nothing-read"),
+        pytest.param({"basis": None, "order_status": None, "message_type": "casual", "intent_hint": None}, "invoiced",
+                     id="word-undeclared"),
+    ],
+)
+def test_t16_a_reply_the_parser_declared_no_answer_for_is_never_read_from_its_text(one, fields, body):
+    """Owner rule: what the person typed is never matched to an option or read by its shape ("1" by its digits,
+    "invoiced" by the option's name). With no answer declared the question is dropped, never answered; a parser
+    miss is fixed in the prompt."""
+    _ask(one)
+    _result, captured = one.say(_answer(**fields), body)
+    assert _calls(captured, ANALYSIS) == [], f"no figure from the typed text: {captured}"
+    assert (one.next_open_question() or {}).get("about") != "sales_basis"
 
 
 def test_t14_another_domains_ask_while_the_question_is_open_is_its_own(one):
