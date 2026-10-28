@@ -63,9 +63,9 @@ describe('D2 / D3 one line per candidate', () => {
     expect(within(found[0]).queryByRole('button')).toBeNull();
   });
 
-  it('never prints the word Dispute, even when a handler is passed', () => {
-    render(<ClashWarningPanel candidates={[candidate()]} onDispute={() => {}} onRequestJoin={() => {}} />);
+  it('never prints the word Dispute or any row button', () => {
+    render(<ClashWarningPanel candidates={[candidate()]} />);
     expect(screen.queryByText(/Dispute/)).toBeNull();
-    expect(screen.queryByRole('button', { name: /Ask to join|Register interest/ })).toBeNull();
+    expect(screen.queryByRole('button')).toBeNull();
   });
 });

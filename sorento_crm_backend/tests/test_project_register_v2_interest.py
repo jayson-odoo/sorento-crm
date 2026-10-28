@@ -189,7 +189,7 @@ def test_e6_the_owner_change_is_in_the_audit_log(v2):
 # ------------------------------------------------------------------ E7
 
 
-def test_e7_a_view_own_user_with_a_pending_interest_can_open_the_project(v2):
+def test_e7_a_pending_interest_grants_no_read_access(v2):
     from app.models.projects import ProjectTakeoverRequest
 
     row = approved_project(v2)
@@ -201,12 +201,10 @@ def test_e7_a_view_own_user_with_a_pending_interest_can_open_the_project(v2):
         )
     )
     v2.db.flush()
-    res = as_user(v2, v2.viewer_own).get(f"{STAFF}/{row.id}")
-    assert res.status_code == 200, res.text
-    assert res.json()["id"] == row.id
+    assert as_user(v2, v2.viewer_own).get(f"{STAFF}/{row.id}").status_code == 404
 
 
-def test_e7_a_dismissed_interest_no_longer_opens_the_project(v2):
+def test_e7_a_dismissed_interest_does_not_open_the_project(v2):
     from app.models.projects import ProjectTakeoverRequest
 
     row = approved_project(v2)
@@ -245,6 +243,38 @@ def test_f3_management_is_the_manage_permission_and_reaches_its_active_holders(v
     from app.services import project_notify_service as notify
 
     assert notify.MANAGEMENT_PERMISSION == MANAGE == "projects.projects.manage"
-    ids = set(notify.management_user_ids(v2.db))
+    ids = set(notify.management_user_ids(v2.db, v2.company_id))
     assert {v2.manager, v2.manager2} <= ids
     assert v2.ex_manager not in ids and v2.approver not in ids
+
+
+def test_f3_management_is_scoped_to_the_company_and_skips_integration_users(v2):
+    from app.models.user import User
+    from app.services import project_notify_service as notify
+
+    from ._project_registration_support import active_user, grant
+
+    in_b = active_user(v2.db, "zzt manager of company B")
+    grant(v2.db, in_b, MANAGE, v2.other_company)
+    bot = active_user(v2.db, "zzt integration manager")
+    v2.db.get(User, bot).is_integration = True
+    grant(v2.db, bot, MANAGE, v2.company_id)
+    v2.db.flush()
+
+    ids = set(notify.management_user_ids(v2.db, v2.company_id))
+    assert v2.manager in ids
+    assert in_b not in ids and bot not in ids
+    assert in_b in set(notify.management_user_ids(v2.db, v2.other_company))
+
+
+def test_f3_a_manager_of_another_company_gets_no_interest_notification(v2):
+    from ._project_registration_support import active_user, grant
+
+    in_b = active_user(v2.db, "zzt manager of company B")
+    grant(v2.db, in_b, MANAGE, v2.other_company)
+    v2.db.flush()
+    row = approved_project(v2)
+    assert _interest(v2, v2.sales_b, row.id).status_code == 201
+    recipients = {n.user_id for n in notes(v2, row.id)}
+    assert in_b not in recipients
+    assert recipients == {v2.owner, v2.manager, v2.manager2}

@@ -64,7 +64,7 @@ def test_b4_the_same_name_in_other_case_and_spacing_returns_the_existing_party(v
     again = as_user(v2, v2.owner).post(
         PARTIES, json={"name": "  contoh   DEV sdn  bhd ", "party_type": "developer"}
     )
-    assert again.status_code in (200, 201), again.text
+    assert again.status_code == 200, again.text
     assert again.json()["id"] == first.json()["id"]
     assert _count(v2, "developer", "CONTOH Dev Sdn Bhd") == 1
 
@@ -74,3 +74,17 @@ def test_b4_the_same_name_for_another_type_is_a_new_party(v2):
     other = as_user(v2, v2.owner).post(PARTIES, json={"name": "CONTOH Shared Name", "party_type": "architect"})
     assert other.status_code == 201, other.text
     assert other.json()["id"] != first.json()["id"]
+
+
+def test_b4_an_inactive_party_of_the_same_name_is_not_reused(v2):
+    from app.models.projects import ProjectParty
+
+    old = ProjectParty(
+        id=uid(), company_id=v2.company_id, party_type="developer",
+        name="CONTOH Retired Dev", is_active=False,
+    )
+    v2.db.add(old)
+    v2.db.flush()
+    res = as_user(v2, v2.owner).post(PARTIES, json={"name": "contoh retired dev", "party_type": "developer"})
+    assert res.status_code == 201, res.text
+    assert res.json()["id"] != old.id

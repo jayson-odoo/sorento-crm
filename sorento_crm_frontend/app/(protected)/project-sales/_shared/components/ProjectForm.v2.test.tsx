@@ -13,13 +13,15 @@
  *   implements that mode.
  * - `POST /api/v1/project-sales/projects/ai-extract` answers a top-level object with one
  *   proposal per field (UAC C3): `{ developer: {status, id, name}, architect: {...}, ... }`;
- *   a text proposal carries its text in `name` and `value` alike.
+ *   `state` is {status, name, value}; `title` and `mukim` arrive as PLAIN STRINGS, as the real
+ *   backend sends them (UAC C6).
  * - The register body carries `customer_id` (UAC A5).
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { toast } from '@/lib/toast';
 import type { Project } from '../types/project.types';
 
 const push = vi.fn();
@@ -666,9 +668,9 @@ describe('AI extract from the form', () => {
     main_contractor: { status: 'new', name: 'Kontraktor Baru CONTOH' },
     project_type: { status: 'not_found' },
     state: { status: 'match', name: 'Selangor', value: 'Selangor' },
-    mukim: { status: 'match', name: 'Petaling', value: 'Petaling' },
+    mukim: 'Petaling',
     customer: { status: 'match', id: 'cust-1', name: 'Aman Hartanah CONTOH' },
-    title: { status: 'new', name: 'Tajuk Lain CONTOH', value: 'Tajuk Lain CONTOH' },
+    title: 'Tajuk Lain CONTOH',
   };
 
   async function openDialog(withTitle = true) {
@@ -787,5 +789,86 @@ describe('AI extract from the form', () => {
       name: 'Kontraktor Baru CONTOH',
       party_type: 'main_contractor',
     });
+  });
+});
+
+describe('AI extract with the real backend shape (C6)', () => {
+  const PLAIN = {
+    developer: { status: 'match', id: 'd1', name: 'SP Setia CONTOH' },
+    state: { status: 'match', name: 'Selangor', value: 'Selangor' },
+    mukim: 'Batu',
+    title: 'Tajuk Dari Gambar CONTOH',
+  };
+
+  it('lists the plain-string mukim and fills it', async () => {
+    aiAnswer = PLAIN;
+    renderForm();
+    typeTitle('Menara Ada Tajuk CONTOH');
+    fireEvent.click(screen.getByRole('button', { name: 'AI extract' }));
+    const dialog = await screen.findByRole('dialog');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'AI Extract' }));
+    const review = await screen.findByTestId('ai-extract-review');
+    const row = within(review).getByText('Mukim').closest('tr') as HTMLElement;
+    expect(within(row).getByText('Batu')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and prefill' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    await pickAsync('Customer *', 'Aman', /Aman Hartanah CONTOH/);
+    fireEvent.click(screen.getByRole('button', { name: 'Register project' }));
+    await waitFor(() => expect(registerBody()).toBeTruthy());
+    expect(registerBody()).toMatchObject({ mukim: 'Batu', title: 'Menara Ada Tajuk CONTOH' });
+  });
+
+  it('a photo-only extract fills an EMPTY title from the plain-string title', async () => {
+    aiAnswer = PLAIN;
+    renderForm();
+    fireEvent.click(screen.getByRole('button', { name: 'AI extract' }));
+    const dialog = await screen.findByRole('dialog');
+    const file = new File(['x'], 'papan.png', { type: 'image/png' });
+    fireEvent.change(within(dialog).getByTestId('ai-extract-file-input'), { target: { files: [file] } });
+    fireEvent.click(await within(dialog).findByRole('button', { name: 'AI Extract' }));
+    await screen.findByTestId('ai-extract-review');
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm and prefill' }));
+    await waitFor(() => expect(titleBox().value).toBe('Tajuk Dari Gambar CONTOH'));
+  });
+});
+
+describe('D8 a submit-only salesperson registers interest', () => {
+  beforeEach(() => {
+    granted = new Set(['projects.projects.view_own', 'projects.registrations.submit']);
+    clashAnswer = () => ({
+      candidates: [{ project_id: 'p9', project_code: 'PRJ-000009', title: 'Setia Alam Phase 3B CONTOH', blocks: true }],
+      would_block: true,
+    });
+  });
+
+  it('Check still runs and the blocking line shows code and title', async () => {
+    renderForm();
+    await checkTitle();
+    await waitFor(() =>
+      expect(linesWithText('Project already registered: PRJ-000009 Setia Alam Phase 3B CONTOH')).toHaveLength(1),
+    );
+  });
+
+  it('after Register interest the user lands on the Projects list with a toast, not on the project', async () => {
+    renderForm();
+    await checkTitle();
+    fireEvent.click(await screen.findByRole('button', { name: 'Register interest in PRJ-000009' }));
+    const dialog = await screen.findByRole('dialog');
+    const note = within(dialog).getByLabelText(/How and when did you find this project\?/);
+    fireEvent.change(note, { target: { value: 'Met the developer in March.' } });
+    fireEvent.submit(note.closest('form') as HTMLFormElement);
+    await waitFor(() => expect(callsTo('POST', '/projects/p9/takeover-requests')).toHaveLength(1));
+    await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/pipeline'));
+    expect(push).not.toHaveBeenCalledWith('/project-sales/p9');
+    expect(toast.success).toHaveBeenCalledWith('Interest registered in PRJ-000009');
+  });
+});
+
+describe('J3c a submit-only user has no Lead field', () => {
+  it('shows no Lead control, while a staff user still does', () => {
+    granted = new Set(['projects.projects.view_own', 'projects.registrations.submit']);
+    renderForm();
+    openDetails();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
   });
 });

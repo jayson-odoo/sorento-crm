@@ -275,3 +275,29 @@ def test_j7_the_crm_path_notices_equal_the_portal_paths(v2):
     assert reject_as_manager(v2, crm_id).status_code == 200
     assert _shape(v2, crm_id, "rejected") == _shape(v2, portal_id, "rejected")
     assert _shape(v2, crm_id, "rejected")
+
+
+# ------------------------------------------------------------------ J3b, J3c
+
+
+def test_j3b_edit_is_offered_only_on_a_draft_or_a_rejected_registration(v2):
+    draft = save_draft(v2, v2.sub_a).json()["id"]
+    assert as_user(v2, v2.sub_a).get(f"{STAFF}/{draft}").json()["can_edit"] is True
+
+    waiting = submit_new(v2, v2.sub_a).json()["id"]
+    assert as_user(v2, v2.sub_a).get(f"{STAFF}/{waiting}").json()["can_edit"] is False
+    assert (
+        as_user(v2, v2.sub_a).put(f"{STAFF}/{waiting}", json={"title": title("Late")}).status_code
+        == 403
+    )
+
+    assert reject_as_manager(v2, waiting).status_code == 200
+    assert as_user(v2, v2.sub_a).get(f"{STAFF}/{waiting}").json()["can_edit"] is True
+
+
+def test_j3c_a_lead_id_from_a_submit_only_user_is_not_linked(v2):
+    lead = as_user(v2, v2.owner).post("/api/v1/project-sales/leads", json={"title": title("Lead")})
+    assert lead.status_code in (200, 201), lead.text
+    res = save_draft(v2, v2.sub_a, lead_id=lead.json()["id"])
+    assert res.status_code == 201, res.text
+    assert res.json()["lead_id"] is None

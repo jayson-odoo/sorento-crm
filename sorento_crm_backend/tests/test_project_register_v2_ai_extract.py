@@ -262,3 +262,30 @@ def test_c6_a_provider_failure_is_502_with_a_plain_message(v2, monkeypatch, clea
     res = _post(v2, v2.owner)
     assert res.status_code == 502, res.text
     assert "zzt-provider-secret-trace" not in res.text
+
+
+def test_c5b_files_over_the_total_size_cap_are_422(v2, extracted, monkeypatch):
+    """The cap constant is lowered to 1 KB (the portal route's `_MAX_TOTAL_BYTES` and, should the
+    staff route own one, the same name in the projects route module); 2 KB is sent."""
+    from app.api.v1.projects import projects as staff_route
+    from app.api.v1.public import ai_extract as portal_route
+
+    monkeypatch.setattr(portal_route, "_MAX_TOTAL_BYTES", 1024)
+    monkeypatch.setattr(staff_route, "_MAX_TOTAL_BYTES", 1024, raising=False)
+    res = _post(v2, v2.owner, text=None, files=[("files", ("big.txt", b"x" * 2048, "text/plain"))])
+    assert res.status_code == 422, res.text
+    assert extracted["calls"] == []
+
+
+def test_c6b_an_unexpected_error_gives_a_generic_message_without_the_exception_text(
+    v2, monkeypatch, clean_keys
+):
+    from app.services.ai_extract.extract_service import AIExtractService
+
+    def boom(self, form_key, files, **kwargs):
+        raise ValueError("zzt-internal-trace-do-not-leak")
+
+    monkeypatch.setattr(AIExtractService, "extract", boom)
+    res = _post(v2, v2.owner)
+    assert 500 <= res.status_code < 600, res.text
+    assert "zzt-internal-trace-do-not-leak" not in res.text
