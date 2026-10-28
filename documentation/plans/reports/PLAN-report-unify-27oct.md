@@ -1,6 +1,6 @@
 # PLAN: REPORT-UNIFY (finish `crm_report_ask` for every sales and outstanding ask)
 
-Status: Build, round 6 picked up by the LOCAL worker (lane REPORT-UNIFY-LOCAL) on 29 Oct. All four slices are built; round 6 is being finished red-first, then the hand-test script is re-run on the crew copy. Exact next steps: section 6.
+Status: Review, round 6 done by the LOCAL worker (lane REPORT-UNIFY-LOCAL) on 29 Oct: reviewer READY and security CLEAN on 1724cd3cfd, the hand-test script re-run on the crew copy (section 7). Waiting on CI and the owner's hand test.
 Track: full (size L). Three stacked slices on one lane branch, one PR (#1922).
 UAC: `report-unify-27oct-acceptance-criteria.md`.
 
@@ -299,3 +299,40 @@ none has been re-run on a copy yet:
    - the reveal holder list for the owner (query in crew-note 6471441550; results go to the owner, not the PR).
 7. Before ready: add to the PR body the extra reads the grant opens for the n8n / sorento-mcp keys (security note
    above), and that the chatbot path is parser-only.
+
+## 7. Round 6 outcome (local worker, 29 Oct)
+
+Every fix below went red-first (a `test(red):` commit touching only tests, then the fix) and was kill-tested in a
+scratch worktree (each mutant red, restored green).
+
+| Item | Red | Fix |
+|---|---|---|
+| Reviewer B1 (K3 (i) guard), security S1 (live integration user), N7 (subject on a kind answer), N1 | 9ba1e65a54 (cloud) | 9ba1e65a54 |
+| Regression found by the full selection: a refine over a frame already on an outstanding kind re-asked the kind | existing samantha r3 test | c2c7ba490c |
+| B2: a sales basis under the kind question swallowed a whole new sales ask; B4: a position pick dropped a subject | 10f6656e32 | ba5297c6df |
+| B5: the declared pick / cancel must win over positions; P3: the parser's offered-kind basis beats a position | a9b7f7e9de | a057c424db |
+| Declared fill naming a kind keeps a subject (P7) | a8948bf915 | 172749ce04 |
+| Copy step 20: a declared fill with its own sales ask; copy step 14: an agent word beside a document; copy step 13 seam | 8cc3ccf21f | 1e054c169b |
+| Copy step 13: the document/status projection replaced the seam's sales_ranking | 10f6ba507b | 14b2f8bc3d |
+| B6: the step-14 exception dropped a brand from a plain SO list | 64312877cd | 8075f21128 |
+| B7: the live parse sends by_words null beside group_by | 5587f5fc50 | 1724cd3cfd |
+
+Copy run (crew copy :3104 on sorento_prod_1020, parser v189 on Gemini flash-lite, console route with the session
+carried turn to turn): steps 1-8, 10-20 PASS; 11 and 17 partly ENV (the billing tables are empty, so unpaid and
+invoiced read RM 0.00). Step 9 in sequence (bare "outstanding" right after a delivered total) runs Undelivered orders
+for the held company and year: the parser itself emits `basis: outstanding`, `ranking_refine: true` and the year's
+dates for that message, and no parser field says whether the basis or the dates were read off this message, so the
+engine cannot tell it from a named kind without reading text (Q10). In a new conversation it asks the kind. This is
+parser-side (a prompt line, with a Gemini eval), not lane code.
+
+The 14 `test_replay.py` full-corpus failures are pre-existing: the same 14 fail on origin/main when
+`CHATBOT_FIXTURES_DIR` points at the n8n corpus (gate text drift, `gate.py:1051`); CI has no corpus and skips them.
+
+Open after this round:
+- reviewer should-fix (not blocking): the step-14 exception reads the parser's raw `group_by`; a guessed
+  `group_by: brand` on a plain "my sales orders for <brand>" would drop the brand again. No live parse shows it.
+- the parser prompt line for step 9 (bare "outstanding" after a sales total) and for a named agent sent as `group_by`;
+- the stray `projects.projects.view` on the dedicated role on the shared dev DB (not from this lane; DELETE held for
+  the owner, PR comment 6476434849);
+- the unpaid chat total still prints "0 pcs" and the screen's unpaid empty state reads "01/01/1900 to 31/12/2200":
+  cosmetic, not changed in this round.
