@@ -58,22 +58,23 @@ vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },
 }));
 
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: ({
+// The filter is a multi-select now (FILTER-MULTISELECT PR6); a one-value pick stands in for it here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
     value,
     onChange,
     options,
     placeholder,
   }: {
-    value: string;
-    onChange: (next: string) => void;
+    value: string[];
+    onChange: (next: string[]) => void;
     options?: { value: string; label: string }[];
     placeholder?: string;
   }) => (
     <select
       aria-label={placeholder ?? 'select'}
-      value={value}
-      onChange={(event) => onChange(event.target.value)}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
     >
       <option value="">{placeholder ?? ''}</option>
       {(options ?? []).map((option) => (

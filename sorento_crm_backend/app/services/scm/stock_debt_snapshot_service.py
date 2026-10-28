@@ -44,6 +44,7 @@ from app.services.scm.low_stock_report_service import MAX_LOW_STOCK_ROWS
 from app.services.scm.stock_debt_service import StockDebtService
 from app.services.scm.supply_assignment import month_key
 from app.services.user_service import UserPermissionService
+from app.utils.multi_value import multi_values
 
 #: The order inquiry rows on a line are project data: serving them needs this on top of Stock Debt.
 OI_PERMISSION = "projects.projects.view"
@@ -350,7 +351,7 @@ class StockDebtSnapshotService:
         snapshot_id: str,
         *,
         query: Optional[str],
-        decision: Optional[str],
+        decision: Optional[str | Sequence[str]],
         page: int,
         limit: int,
     ) -> Dict[str, Any]:
@@ -366,12 +367,17 @@ class StockDebtSnapshotService:
                     StockDebtSnapshotRow.product_name.ilike(pattern, escape="\\"),
                 )
             )
-        if decision == "decided":
-            q = q.filter(StockDebtSnapshotRow.decision.isnot(None))
-        elif decision == "undecided":
-            q = q.filter(StockDebtSnapshotRow.decision.is_(None))
-        elif decision:
-            q = q.filter(StockDebtSnapshotRow.decision == decision)
+        picked = multi_values(decision)
+        if picked:
+            clauses = []
+            if "decided" in picked:
+                clauses.append(StockDebtSnapshotRow.decision.isnot(None))
+            if "undecided" in picked:
+                clauses.append(StockDebtSnapshotRow.decision.is_(None))
+            real = [d for d in picked if d not in ("decided", "undecided")]
+            if real:
+                clauses.append(StockDebtSnapshotRow.decision.in_(real))
+            q = q.filter(or_(*clauses))
         total = q.count()
         found = (
             q.options(defer(StockDebtSnapshotRow.lines))

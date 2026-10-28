@@ -223,7 +223,8 @@ export interface FulfilmentPlanningListParams {
   page?: number;
   limit?: number;
   query?: string;
-  review_state?: ReviewState;
+  /** One state, or several comma-joined (OR-ed). */
+  review_state?: string;
   project_id?: string;
   sales_order_id?: string;
   /** One of `FULFILMENT_PLANNING_SORT_FIELDS`. Omitted leaves the server's own order. */
@@ -2602,7 +2603,8 @@ export interface PlanListParams {
   limit?: number;
   query?: string;
   /** Defaults to `active` server-side - what is stored NOW. */
-  state?: PlanState;
+  /** One state, or several comma-joined (OR-ed). */
+  state?: string;
   agent_code?: string;
   sort?: PlanSortField;
   dir?: 'asc' | 'desc';

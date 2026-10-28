@@ -22,7 +22,9 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import {
   useAssignableUsers,
   useAwaitingAcceptance,
@@ -76,7 +78,7 @@ export function AwaitingAcceptanceClient() {
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
     searchQuery: search || undefined,
-    owner_user_id: ownerFilter || undefined,
+    owner_user_id: ownerFilter ? splitMulti(ownerFilter) : undefined,
     min_hours: minHours ? Number(minHours) : undefined,
   });
   const users = useAssignableUsers();
@@ -321,9 +323,9 @@ export function AwaitingAcceptanceClient() {
                         <Label className="text-xs text-muted-foreground">
                           Assigned to
                         </Label>
-                        <SearchableSelect
-                          value={ownerFilter}
-                          onChange={setOwnerFilter}
+                        <SearchableMultiSelect
+                          value={splitMulti(ownerFilter)}
+                          onChange={(value) => setOwnerFilter(joinMulti(value))}
                           clearable
                           loadError={users.error}
                           onRetry={() => void users.refetch()}
@@ -332,6 +334,15 @@ export function AwaitingAcceptanceClient() {
                             label: user.name || 'Unnamed user',
                           }))}
                           placeholder="Anyone"
+                          renderTriggerLabel={(chosen) =>
+                            chosen.length ? (
+                              <span className="block truncate">
+                                {multiChipLabel('Assigned to', idFilterLabels(chosen))}
+                              </span>
+                            ) : (
+                              <span className="text-muted-foreground">Anyone</span>
+                            )
+                          }
                         />
                       </div>
                       <div className="space-y-1.5">

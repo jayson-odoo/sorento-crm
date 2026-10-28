@@ -99,7 +99,8 @@ export interface DriveListParams {
   access_levels?: string[];
   access_levels_match?: 'any' | 'all' | 'exact';
   link_status?: 'linked' | 'unlinked';
-  storage_status?: 'accessible' | 'missing' | 'unchecked';
+  /** One status, or several comma-joined (OR-ed). */
+  storage_status?: string;
   direct_access_only?: boolean;
   /** A company id, `shared`, or omitted for today's `IS NULL OR IN (scope)` result. */
   company?: string;

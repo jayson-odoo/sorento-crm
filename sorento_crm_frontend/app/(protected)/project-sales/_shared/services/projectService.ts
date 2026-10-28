@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type {
   ClashPreview,
@@ -103,7 +104,7 @@ function buildProjectParams(params: ProjectListParams): string {
   const sp = new URLSearchParams();
   if (params.query) sp.set('query', params.query);
   if (params.only_critical) sp.set('only_critical', 'true');
-  if (params.approval_state) sp.set('approval_state', params.approval_state);
+  splitMulti(params.approval_state).forEach((value) => sp.append('approval_state', value));
   if (params.approved_only) sp.set('approved_only', 'true');
   if (params.page) sp.set('page', String(params.page));
   if (params.limit) sp.set('limit', String(params.limit));
