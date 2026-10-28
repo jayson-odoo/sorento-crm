@@ -36,6 +36,7 @@ from app.api.v1 import (
     scm,
     connector,
     form_comments,
+    my_requests,
 )
 from app.api.v1.system import (
     modules_runtime,
@@ -289,6 +290,14 @@ api_router.include_router(
     prefix="/form-comments",
     tags=["form-comments"],
     dependencies=[Depends(require_any_module_enabled("procurement", "complaints", "projects"))],
+)
+# My Requests (PORTAL-P4-REQUESTS): a salesperson's own request forms through the portal's own
+# routes, signed in with the CRM session (my_requests.py). The kind's view_own is the real gate.
+api_router.include_router(
+    my_requests.router,
+    prefix="/my-requests",
+    tags=["my-requests"],
+    dependencies=[Depends(require_any_module_enabled("procurement", "complaints"))],
 )
 
 # Activities & Notes - generic per-entity panel (consumed by tickets et al.).

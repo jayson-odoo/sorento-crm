@@ -13,7 +13,7 @@ import logging
 import os
 import uuid
 from decimal import Decimal
-from typing import Annotated, Optional
+from typing import Annotated, Any, Callable, Optional
 
 from fastapi import (
     APIRouter,
@@ -784,19 +784,6 @@ class RequestorOptionsResponse(BaseModel):
     has_more: bool
 
 
-@router.get("/requestor-options", response_model=RequestorOptionsResponse)
-def portal_requestor_options(
-    q: Optional[str] = Query(None, description="Case-insensitive substring match on name"),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Names-only eligible set for the "Requested by" / "Salesperson" picker
-    (PLAN-requested-by-contact-routing.md D3/D5/D6). Always includes the
-    token's own contact even when unsegmented, so nobody is ever blocked from
-    submitting on their own behalf."""
-    return PortalService(db).list_requestor_options(token, q=q)
-
-
 # ---------- Submissions ----------
 
 
@@ -1055,85 +1042,6 @@ def _revision_policy_block(db: Session, kind: str, submission_id: str) -> dict:
     return PortalRevisionService(db).policy_for(kind, submission_id).as_dict()
 
 
-@router.get("/submissions/{kind}/{submission_id}")
-def portal_get_submission(
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    k = _check_kind(kind, db, token)
-    detail = PortalService(db).get_submission(token, k, submission_id, full=True)
-    detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
-    # One call, no extra round trip (UAC B1).
-    detail["revision"] = _revision_policy_block(db, k, submission_id)
-    from app.services.portal_revision_service import PortalRevisionService
-
-    detail["revision_draft"] = PortalRevisionService(db).get_draft(k, submission_id)
-    return detail
-
-
-@router.get(
-    "/submissions/{kind}/{submission_id}/revisions",
-    response_model=RevisionListResponse,
-)
-def portal_list_revisions(
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """The original plus every version since, each with what changed (UAC G).
-
-    Read-only, ownership-checked through the same ``get_submission`` call the rest of
-    the portal uses, so another contact's token gets the usual 404 / OWNER_MISMATCH.
-    """
-    from app.services.portal_revision_service import PortalRevisionService
-
-    k = _check_revisable_kind(kind, db, token)
-    _require_revisable_ownership(db, token, k, submission_id)
-    return {"items": PortalRevisionService(db).list_revisions(k, submission_id)}
-
-
-@router.post(
-    "/submissions/{kind}/{submission_id}/revise",
-    response_model=ReviseResponse,
-)
-def portal_revise_submission(
-    payload: RevisePayload,
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Send a revision: current work stops and the flow restarts (UAC F).
-
-    409 when ``expected_revision_no`` is stale, 422 carrying one human sentence when
-    the policy refuses it.
-    """
-    from app.services.portal_revision_service import PortalRevisionService
-
-    k = _check_revisable_kind(kind, db, token)
-    body = dict(payload.fields or {})
-    if payload.products is not None:
-        body["products"] = payload.products
-    result = PortalRevisionService(db).revise(
-        token,
-        k,
-        submission_id,
-        body,
-        payload.reason,
-        payload.expected_revision_no,
-    )
-    submission = _revision_submission_detail(db, token, k, submission_id)
-    submission["revision"] = result["policy"]
-    return {
-        "submission": submission,
-        "revision": result["policy"],
-        "revision_no": result["revision_no"],
-    }
-
-
 class ReviseDraftPayload(BaseModel):
     """A revision saved before Send revision - the reason is optional (a draft
     may be mid-thought) and there is no ``expected_revision_no`` gate here: Send
@@ -1145,129 +1053,11 @@ class ReviseDraftPayload(BaseModel):
     products: Optional[list[dict]] = None
 
 
-@router.put("/submissions/{kind}/{submission_id}/revision-draft")
-def portal_save_revision_draft(
-    payload: ReviseDraftPayload,
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Save (or update) an in-progress revision, without sending it."""
-    from app.services.portal_revision_service import PortalRevisionService
-
-    k = _check_revisable_kind(kind, db, token)
-    body = dict(payload.fields or {})
-    if payload.products is not None:
-        body["products"] = payload.products
-    return PortalRevisionService(db).save_draft(
-        token,
-        k,
-        submission_id,
-        body,
-        payload.reason,
-        payload.base_revision_no,
-    )
-
-
-@router.delete("/submissions/{kind}/{submission_id}/revision-draft")
-def portal_discard_revision_draft(
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Discard the in-progress revision, if any. Idempotent."""
-    from app.services.portal_revision_service import PortalRevisionService
-
-    k = _check_revisable_kind(kind, db, token)
-    service = PortalRevisionService(db)
-    service.fetch_owned(token, k, submission_id)  # ownership: 403/404 as elsewhere
-    service.discard_draft(k, submission_id)
-    return {"ok": True}
-
-
 class SubmissionNeighboursResponse(BaseModel):
     prev_id: Optional[str] = None
     next_id: Optional[str] = None
     position: int
     total: int
-
-
-@router.get(
-    "/submissions/{kind}/{submission_id}/neighbours",
-    response_model=SubmissionNeighboursResponse,
-)
-def portal_submission_neighbours(
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Prev/next over the contact's OWN submissions of the same kind (UAC G1/G2).
-
-    ``_check_revisable_kind`` (not ``_check_kind``): review round 3 - the
-    price tag header wants the same counter the legacy kinds' view page
-    shows, so this route widens the same way the revision routes already do
-    for that kind, dispatching to its own dedicated router's neighbours
-    query rather than ``PortalService``, which does not know about it.
-    """
-    k = _check_revisable_kind(kind, db, token)
-    if k == "price_tag_request":
-        from app.api.v1.public.portal_price_tag import price_tag_neighbours
-
-        return price_tag_neighbours(db, token, submission_id)
-    return PortalService(db).get_neighbours(token, k, submission_id)
-
-
-@router.post("/submissions/{kind}")
-def portal_create_draft(
-    payload: SubmissionPayload,
-    kind: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    return PortalService(db).create_or_update_draft(
-        token, _check_kind(kind, db, token), _flatten_payload(payload)
-    )
-
-
-@router.put("/submissions/{kind}/{submission_id}")
-def portal_update_draft(
-    payload: SubmissionPayload,
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    return PortalService(db).create_or_update_draft(
-        token, _check_kind(kind, db, token), _flatten_payload(payload), submission_id
-    )
-
-
-@router.delete("/submissions/{kind}/{submission_id}", status_code=204)
-def portal_delete_draft(
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    PortalService(db).delete_draft(token, _check_kind(kind, db, token), submission_id)
-    return None
-
-
-@router.post("/submissions/{kind}/{submission_id}/submit")
-def portal_submit(
-    kind: str = Path(...),
-    submission_id: str = Path(...),
-    payload: Optional[SubmissionPayload] = Body(default=None),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    body = _flatten_payload(payload) if payload else None
-    return PortalService(db).submit_draft(
-        token, _check_kind(kind, db, token), submission_id, body
-    )
 
 
 # ---------- Attachments ----------
@@ -1364,24 +1154,6 @@ def _safe_presigned_url(
     except Exception as e:  # noqa: BLE001
         logger.warning("Portal presigned URL failed for %s: %s", file_path, e)
         return None
-
-
-@router.get("/attachments")
-def portal_list_attachments(
-    kind: str = Query(...),
-    submission_id: str = Query(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    k = _check_attachment_kind(kind, db, token)
-    # Ensures the contact owns this submission.
-    if k == "price_tag_request":
-        _require_own_price_tag_request(db, token, submission_id)
-    elif k == "new_product_application":
-        _require_own_npa(db, token, submission_id)
-    else:
-        PortalService(db).get_submission(token, k, submission_id)
-    return {"items": _list_attachments_for(db, _entity_type_for(k), submission_id)}
 
 
 def _attachment_is_on_own_submission(
@@ -1494,327 +1266,570 @@ def _portal_can_read_attachment(
     ) or _attachment_is_in_own_revision_history(db, token, attachment_id)
 
 
-@router.get("/attachments/{attachment_id}/download")
-def portal_download_attachment(
-    attachment_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Attachment bytes for the contact portal, authenticated by the portal token.
-
-    Keyed on ``attachment_id``, NOT ``link_id``: an attachment removed during a
-    revision is unlinked but stays visible in that revision's history, and a
-    link-keyed route would 404 on exactly those historical files.
-
-    The portal has no NextAuth JWT session, so the office
-    ``/resource-management/attachments/{id}/download`` route 401s there. This
-    route backs both the in-place preview (Excel bytes) and the Download button.
-    """
-    attachment_id = validate_uuid_path(attachment_id, resource="Attachment")
-    # Ownership first: a 404 for "exists but not yours" and for "does not exist"
-    # alike, so the route never confirms an id the contact has no claim on.
-    if not _portal_can_read_attachment(db, token, attachment_id):
-        raise handle_not_found("Attachment", attachment_id)
-
-    attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
-    if attachment is None:
-        raise handle_not_found("Attachment", attachment_id)
-
-    from app.services.resources_service import AttachmentService
-
-    try:
-        content = AttachmentService(db).get_file_content(attachment_id)
-    except HTTPException:
-        # An AppException from the service (e.g. 404) is already the right
-        # answer - don't relabel it as a storage failure.
-        raise
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Portal attachment download failed for %s: %s", attachment_id, e)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="File download failed. Please try again.",
-        ) from e
-
-    filename = attachment.original_filename or attachment.stored_filename or "attachment"
-    return Response(
-        content=content,
-        media_type=str(getattr(attachment, "mime_type", None) or "application/octet-stream"),
-        headers={
-            "Content-Disposition": content_disposition(filename),
-            "Content-Length": str(len(content)),
-        },
-    )
-
-
-@router.post("/attachments")
-async def portal_upload_attachment(
-    kind: Annotated[str, Form()],
-    submission_id: Annotated[str, Form()],
-    file: Annotated[UploadFile, File(...)],
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    portal = PortalService(db)
-    k = _check_attachment_kind(kind, db, token)
-    if k == "price_tag_request":
-        _require_own_price_tag_request(db, token, submission_id, require_editable=True)
-    elif k == "new_product_application":
-        _require_own_npa(db, token, submission_id, require_editable=True)
-    else:
-        portal.get_submission(token, k, submission_id)  # ownership check
-    attachment_type = portal.get_portal_attachment_type()
-
-    contents = await file.read()
-    incoming_size = len(contents)
-    extension = _ext(file.filename, file.content_type)
-    _check_quota(
-        db,
-        attachment_type,
-        _entity_type_for(k),
-        submission_id,
-        incoming_size,
-        extension,
-    )
-
-    safe_ext = f".{extension}" if extension else ""
-    s3_key = f"portal/{token.contact_id}/{uuid.uuid4()}{safe_ext}"
-    from app.services.storage_router import default_provider, get_backend
-
-    portal_provider = default_provider()
-    portal_backend = get_backend(portal_provider)
-    try:
-        portal_backend.upload_file(
-            contents, s3_key, content_type=file.content_type
-        )
-    except Exception as e:  # noqa: BLE001
-        logger.warning("Portal attachment upload failed (provider=%s): %s", portal_provider, e)
-        raise HTTPException(
-            status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="File upload failed. Please try again.",
-        ) from e
-
-    # Grid thumbnail (images only) - portal uploads are device bytes in our own
-    # bucket, so the same small-variant path applies. Best-effort; never blocks.
-    from app.services.image_thumbnailer import store_thumbnail
-
-    portal_thumbnail = store_thumbnail(
-        portal_backend, portal_provider, s3_key, contents, file.content_type
-    )
-
-    service = EntityAttachmentService(db)
-    link = service.create_attachment_and_link(
-        entity_type=_entity_type_for(k),
-        entity_id=submission_id,
-        file_url=s3_key,
-        file_name=file.filename or os.path.basename(s3_key),
-        file_size_bytes=incoming_size,
-        attachment_type_code=PORTAL_ATTACHMENT_TYPE_CODE,
-        created_by=None,
-        thumbnail_path=portal_thumbnail,
-        storage_provider=portal_provider,
-        # Pre-existing gap, not price-tag-specific: this call never passed the
-        # browser's content type through, so every portal upload's attachment
-        # row (every kind, not just price_tag_request) carried mime_type=None
-        # and every reader of it - the PO cross-check PDF/image branch
-        # included - always fell to the generic file row. AC-S1-5 needs a real
-        # content_type, so it is fixed here rather than worked around per kind.
-        # Normalized (type/subtype, capped) - the raw header is caller-
-        # controlled and the column is VARCHAR(100).
-        mime_type=_normalize_mime_type(file.content_type),
-    )
-    # Uploader attribution (UAC B1): create_attachment_and_link has no fields
-    # for this, so stamp the freshly created row directly, in the same
-    # transaction as the link, before commit.
-    attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
-    if attachment is not None:
-        attachment.uploader_kind = "contact"
-        attachment.uploaded_by_contact_id = token.contact_id
-    db.commit()
-    db.refresh(link)
-    if attachment is not None:
-        db.refresh(attachment)
-    file_path = attachment.file_path if attachment else s3_key
-    return {
-        "link_id": str(link.id),
-        "attachment_id": str(link.attachment_id),
-        "filename": attachment.original_filename if attachment else file.filename,
-        "size": incoming_size,
-        "url": _safe_presigned_url(file_path) or file_path,
-        "content_type": (attachment.mime_type if attachment else file.content_type) or None,
-    }
-
-
 _COMMENT_RATE_WINDOW_SECONDS = 900
 _COMMENT_TOKEN_LIMIT = 10
 _COMMENT_GLOBAL_LIMIT = 300
-
-
-@router.get("/submissions/{kind}/{submission_id}/comments")
-def portal_list_comments(
-    kind: str,
-    submission_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    from app.services.form_comment_service import FormCommentService
-
-    k = _check_comment_kind(kind, db, token)
-    sid = validate_uuid_path(submission_id, resource="Submission")
-    svc = FormCommentService(db)
-    # 404 unless the contact owns the row (list_comments below has no contact filter)
-    row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
-    return {"items": svc.list_comments(k, sid, {"contact_id": token.contact_id}, row=row)}
-
-
-@router.post("/submissions/{kind}/{submission_id}/comments", status_code=status.HTTP_201_CREATED)
-async def portal_add_comment(
-    kind: str,
-    submission_id: str,
-    body: Annotated[str, Form()] = "",
-    files: Annotated[Optional[list[UploadFile]], File()] = None,
-    parent_id: Annotated[Optional[str], Form()] = None,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    import hashlib
-
-    from app.api.v1.form_comments import read_uploads
-    from app.services import rate_limit
-    from app.services.form_comment_service import FormCommentService, resolve_impersonating_admin
-
-    acting_user_id = (
-        resolve_impersonating_admin(db, token) if getattr(token, "is_impersonation", False) else None
-    )
-    k = _check_comment_kind(kind, db, token)
-    sid = validate_uuid_path(submission_id, resource="Submission")
-    # Per token plus one ceiling across tokens: checked first, charged only on a saved comment.
-    buckets = (
-        ("form_comment_token", hashlib.sha256(str(token.id).encode()).hexdigest(), _COMMENT_TOKEN_LIMIT),
-        ("form_comment_global", "all", _COMMENT_GLOBAL_LIMIT),
-    )
-    for bucket, ident, limit in buckets:
-        result = rate_limit.peek(bucket, ident, limit=limit, window_seconds=_COMMENT_RATE_WINDOW_SECONDS)
-        if not result.allowed:
-            raise HTTPException(
-                status_code=status.HTTP_429_TOO_MANY_REQUESTS,
-                detail="Too many comments. Try again later.",
-                headers={"Retry-After": str(result.retry_after_seconds or _COMMENT_RATE_WINDOW_SECONDS)},
-            )
-    uploads = await read_uploads(files)
-    out = FormCommentService(db).add_contact_comment(
-        k, sid, token.contact_id, token.space_id, body, uploads, acting_user_id, parent_id or None
-    )
-    for bucket, ident, _limit in buckets:
-        rate_limit.record(bucket, ident, window_seconds=_COMMENT_RATE_WINDOW_SECONDS)
-    return out
 
 
 class _EditCommentBody(BaseModel):
     body: str = ""
 
 
-@router.patch("/submissions/{kind}/{submission_id}/comments/{comment_id}")
-def portal_edit_comment(
-    kind: str,
-    submission_id: str,
-    comment_id: str,
-    payload: _EditCommentBody,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    from app.services.form_comment_service import FormCommentService, resolve_impersonating_admin
-
-    if getattr(token, "is_impersonation", False):
-        resolve_impersonating_admin(db, token)
-    k = _check_comment_kind(kind, db, token)
-    sid = validate_uuid_path(submission_id, resource="Submission")
-    svc = FormCommentService(db)
-    row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
-    return {"comment": svc.edit_comment(k, sid, comment_id, {"contact_id": token.contact_id}, payload.body, row=row)}
+# ---------- The contact's form routes, shared with the CRM ----------
 
 
-@router.delete("/submissions/{kind}/{submission_id}/comments/{comment_id}")
-def portal_delete_comment(
-    kind: str,
-    submission_id: str,
-    comment_id: str,
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    from app.services.form_comment_service import FormCommentService, resolve_impersonating_admin
+def register_submission_routes(router: APIRouter, token_dependency: Callable[..., Any]) -> None:
+    """Register the contact's form routes on ``router``, the caller resolved by ``token_dependency``.
 
-    if getattr(token, "is_impersonation", False):
-        resolve_impersonating_admin(db, token)
-    k = _check_comment_kind(kind, db, token)
-    sid = validate_uuid_path(submission_id, resource="Submission")
-    svc = FormCommentService(db)
-    row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
-    svc.delete_comment(k, sid, comment_id, {"contact_id": token.contact_id}, row=row)
-    return {"deleted": True}
+    ONE body per route for two surfaces (PORTAL-P4-REQUESTS): the portal mounts them below with
+    ``get_portal_token``; ``app/api/v1/my_requests.py`` mounts them on ``/api/v1/my-requests``
+    with a transient portal token built from a CRM session, so a salesperson writes their own
+    forms through exactly the code a portal contact does.
+    """
+
+    @router.get("/requestor-options", response_model=RequestorOptionsResponse)
+    def portal_requestor_options(
+        q: Optional[str] = Query(None, description="Case-insensitive substring match on name"),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Names-only eligible set for the "Requested by" / "Salesperson" picker
+        (PLAN-requested-by-contact-routing.md D3/D5/D6). Always includes the
+        token's own contact even when unsegmented, so nobody is ever blocked from
+        submitting on their own behalf."""
+        return PortalService(db).list_requestor_options(token, q=q)
 
 
-@router.delete("/attachments/{link_id}")
-def portal_delete_attachment(
-    link_id: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    link = (
-        db.query(EntityAttachmentLink)
-        .filter(EntityAttachmentLink.id == link_id)
-        .first()
+    @router.get("/submissions/{kind}/{submission_id}")
+    def portal_get_submission(
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        k = _check_kind(kind, db, token)
+        detail = PortalService(db).get_submission(token, k, submission_id, full=True)
+        detail["attachments"] = _list_attachments_for(db, _entity_type_for(kind), submission_id)
+        # One call, no extra round trip (UAC B1).
+        detail["revision"] = _revision_policy_block(db, k, submission_id)
+        from app.services.portal_revision_service import PortalRevisionService
+
+        detail["revision_draft"] = PortalRevisionService(db).get_draft(k, submission_id)
+        return detail
+
+
+    @router.get(
+        "/submissions/{kind}/{submission_id}/revisions",
+        response_model=RevisionListResponse,
     )
-    if not link:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
+    def portal_list_revisions(
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """The original plus every version since, each with what changed (UAC G).
 
-    portal = PortalService(db)
-    raw_kind = link.entity_type
-    if raw_kind == "form_comment":
-        # Comment files belong to the thread; a contact cannot remove them.
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
-    # sponsorship_form attachments live under entity_type=purchase_request; verify ownership against either type.
-    if raw_kind == "purchase_request":
-        owns = False
-        owned_kind = None
-        for k in ("purchase_request", "sponsorship_form"):
-            try:
-                portal.get_submission(token, k, link.entity_id)
-                owns = True
-                owned_kind = k
-                break
-            except HTTPException:
-                continue
-        if not owns:
+        Read-only, ownership-checked through the same ``get_submission`` call the rest of
+        the portal uses, so another contact's token gets the usual 404 / OWNER_MISMATCH.
+        """
+        from app.services.portal_revision_service import PortalRevisionService
+
+        k = _check_revisable_kind(kind, db, token)
+        _require_revisable_ownership(db, token, k, submission_id)
+        return {"items": PortalRevisionService(db).list_revisions(k, submission_id)}
+
+
+    @router.post(
+        "/submissions/{kind}/{submission_id}/revise",
+        response_model=ReviseResponse,
+    )
+    def portal_revise_submission(
+        payload: RevisePayload,
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Send a revision: current work stops and the flow restarts (UAC F).
+
+        409 when ``expected_revision_no`` is stale, 422 carrying one human sentence when
+        the policy refuses it.
+        """
+        from app.services.portal_revision_service import PortalRevisionService
+
+        k = _check_revisable_kind(kind, db, token)
+        body = dict(payload.fields or {})
+        if payload.products is not None:
+            body["products"] = payload.products
+        result = PortalRevisionService(db).revise(
+            token,
+            k,
+            submission_id,
+            body,
+            payload.reason,
+            payload.expected_revision_no,
+        )
+        submission = _revision_submission_detail(db, token, k, submission_id)
+        submission["revision"] = result["policy"]
+        return {
+            "submission": submission,
+            "revision": result["policy"],
+            "revision_no": result["revision_no"],
+        }
+
+
+    @router.put("/submissions/{kind}/{submission_id}/revision-draft")
+    def portal_save_revision_draft(
+        payload: ReviseDraftPayload,
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Save (or update) an in-progress revision, without sending it."""
+        from app.services.portal_revision_service import PortalRevisionService
+
+        k = _check_revisable_kind(kind, db, token)
+        body = dict(payload.fields or {})
+        if payload.products is not None:
+            body["products"] = payload.products
+        return PortalRevisionService(db).save_draft(
+            token,
+            k,
+            submission_id,
+            body,
+            payload.reason,
+            payload.base_revision_no,
+        )
+
+
+    @router.delete("/submissions/{kind}/{submission_id}/revision-draft")
+    def portal_discard_revision_draft(
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Discard the in-progress revision, if any. Idempotent."""
+        from app.services.portal_revision_service import PortalRevisionService
+
+        k = _check_revisable_kind(kind, db, token)
+        service = PortalRevisionService(db)
+        service.fetch_owned(token, k, submission_id)  # ownership: 403/404 as elsewhere
+        service.discard_draft(k, submission_id)
+        return {"ok": True}
+
+
+    @router.get(
+        "/submissions/{kind}/{submission_id}/neighbours",
+        response_model=SubmissionNeighboursResponse,
+    )
+    def portal_submission_neighbours(
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Prev/next over the contact's OWN submissions of the same kind (UAC G1/G2).
+
+        ``_check_revisable_kind`` (not ``_check_kind``): review round 3 - the
+        price tag header wants the same counter the legacy kinds' view page
+        shows, so this route widens the same way the revision routes already do
+        for that kind, dispatching to its own dedicated router's neighbours
+        query rather than ``PortalService``, which does not know about it.
+        """
+        k = _check_revisable_kind(kind, db, token)
+        if k == "price_tag_request":
+            from app.api.v1.public.portal_price_tag import price_tag_neighbours
+
+            return price_tag_neighbours(db, token, submission_id)
+        return PortalService(db).get_neighbours(token, k, submission_id)
+
+
+    @router.post("/submissions/{kind}")
+    def portal_create_draft(
+        payload: SubmissionPayload,
+        kind: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        return PortalService(db).create_or_update_draft(
+            token, _check_kind(kind, db, token), _flatten_payload(payload)
+        )
+
+
+    @router.put("/submissions/{kind}/{submission_id}")
+    def portal_update_draft(
+        payload: SubmissionPayload,
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        return PortalService(db).create_or_update_draft(
+            token, _check_kind(kind, db, token), _flatten_payload(payload), submission_id
+        )
+
+
+    @router.delete("/submissions/{kind}/{submission_id}", status_code=204)
+    def portal_delete_draft(
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        PortalService(db).delete_draft(token, _check_kind(kind, db, token), submission_id)
+        return None
+
+
+    @router.post("/submissions/{kind}/{submission_id}/submit")
+    def portal_submit(
+        kind: str = Path(...),
+        submission_id: str = Path(...),
+        payload: Optional[SubmissionPayload] = Body(default=None),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        body = _flatten_payload(payload) if payload else None
+        return PortalService(db).submit_draft(
+            token, _check_kind(kind, db, token), submission_id, body
+        )
+
+
+    @router.get("/attachments")
+    def portal_list_attachments(
+        kind: str = Query(...),
+        submission_id: str = Query(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        k = _check_attachment_kind(kind, db, token)
+        # Ensures the contact owns this submission.
+        if k == "price_tag_request":
+            _require_own_price_tag_request(db, token, submission_id)
+        elif k == "new_product_application":
+            _require_own_npa(db, token, submission_id)
+        else:
+            PortalService(db).get_submission(token, k, submission_id)
+        return {"items": _list_attachments_for(db, _entity_type_for(k), submission_id)}
+
+
+    @router.get("/attachments/{attachment_id}/download")
+    def portal_download_attachment(
+        attachment_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Attachment bytes for the contact portal, authenticated by the portal token.
+
+        Keyed on ``attachment_id``, NOT ``link_id``: an attachment removed during a
+        revision is unlinked but stays visible in that revision's history, and a
+        link-keyed route would 404 on exactly those historical files.
+
+        The portal has no NextAuth JWT session, so the office
+        ``/resource-management/attachments/{id}/download`` route 401s there. This
+        route backs both the in-place preview (Excel bytes) and the Download button.
+        """
+        attachment_id = validate_uuid_path(attachment_id, resource="Attachment")
+        # Ownership first: a 404 for "exists but not yours" and for "does not exist"
+        # alike, so the route never confirms an id the contact has no claim on.
+        if not _portal_can_read_attachment(db, token, attachment_id):
+            raise handle_not_found("Attachment", attachment_id)
+
+        attachment = db.query(Attachment).filter(Attachment.id == attachment_id).first()
+        if attachment is None:
+            raise handle_not_found("Attachment", attachment_id)
+
+        from app.services.resources_service import AttachmentService
+
+        try:
+            content = AttachmentService(db).get_file_content(attachment_id)
+        except HTTPException:
+            # An AppException from the service (e.g. 404) is already the right
+            # answer - don't relabel it as a storage failure.
+            raise
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Portal attachment download failed for %s: %s", attachment_id, e)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="File download failed. Please try again.",
+            ) from e
+
+        filename = attachment.original_filename or attachment.stored_filename or "attachment"
+        return Response(
+            content=content,
+            media_type=str(getattr(attachment, "mime_type", None) or "application/octet-stream"),
+            headers={
+                "Content-Disposition": content_disposition(filename),
+                "Content-Length": str(len(content)),
+            },
+        )
+
+
+    @router.post("/attachments")
+    async def portal_upload_attachment(
+        kind: Annotated[str, Form()],
+        submission_id: Annotated[str, Form()],
+        file: Annotated[UploadFile, File(...)],
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        portal = PortalService(db)
+        k = _check_attachment_kind(kind, db, token)
+        if k == "price_tag_request":
+            _require_own_price_tag_request(db, token, submission_id, require_editable=True)
+        elif k == "new_product_application":
+            _require_own_npa(db, token, submission_id, require_editable=True)
+        else:
+            portal.get_submission(token, k, submission_id)  # ownership check
+        attachment_type = portal.get_portal_attachment_type()
+
+        contents = await file.read()
+        incoming_size = len(contents)
+        extension = _ext(file.filename, file.content_type)
+        _check_quota(
+            db,
+            attachment_type,
+            _entity_type_for(k),
+            submission_id,
+            incoming_size,
+            extension,
+        )
+
+        safe_ext = f".{extension}" if extension else ""
+        s3_key = f"portal/{token.contact_id}/{uuid.uuid4()}{safe_ext}"
+        from app.services.storage_router import default_provider, get_backend
+
+        portal_provider = default_provider()
+        portal_backend = get_backend(portal_provider)
+        try:
+            portal_backend.upload_file(
+                contents, s3_key, content_type=file.content_type
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.warning("Portal attachment upload failed (provider=%s): %s", portal_provider, e)
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="File upload failed. Please try again.",
+            ) from e
+
+        # Grid thumbnail (images only) - portal uploads are device bytes in our own
+        # bucket, so the same small-variant path applies. Best-effort; never blocks.
+        from app.services.image_thumbnailer import store_thumbnail
+
+        portal_thumbnail = store_thumbnail(
+            portal_backend, portal_provider, s3_key, contents, file.content_type
+        )
+
+        service = EntityAttachmentService(db)
+        link = service.create_attachment_and_link(
+            entity_type=_entity_type_for(k),
+            entity_id=submission_id,
+            file_url=s3_key,
+            file_name=file.filename or os.path.basename(s3_key),
+            file_size_bytes=incoming_size,
+            attachment_type_code=PORTAL_ATTACHMENT_TYPE_CODE,
+            created_by=None,
+            thumbnail_path=portal_thumbnail,
+            storage_provider=portal_provider,
+            # Pre-existing gap, not price-tag-specific: this call never passed the
+            # browser's content type through, so every portal upload's attachment
+            # row (every kind, not just price_tag_request) carried mime_type=None
+            # and every reader of it - the PO cross-check PDF/image branch
+            # included - always fell to the generic file row. AC-S1-5 needs a real
+            # content_type, so it is fixed here rather than worked around per kind.
+            # Normalized (type/subtype, capped) - the raw header is caller-
+            # controlled and the column is VARCHAR(100).
+            mime_type=_normalize_mime_type(file.content_type),
+        )
+        # Uploader attribution (UAC B1): create_attachment_and_link has no fields
+        # for this, so stamp the freshly created row directly, in the same
+        # transaction as the link, before commit.
+        attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+        if attachment is not None:
+            attachment.uploader_kind = "contact"
+            attachment.uploaded_by_contact_id = token.contact_id
+        db.commit()
+        db.refresh(link)
+        if attachment is not None:
+            db.refresh(attachment)
+        file_path = attachment.file_path if attachment else s3_key
+        return {
+            "link_id": str(link.id),
+            "attachment_id": str(link.attachment_id),
+            "filename": attachment.original_filename if attachment else file.filename,
+            "size": incoming_size,
+            "url": _safe_presigned_url(file_path) or file_path,
+            "content_type": (attachment.mime_type if attachment else file.content_type) or None,
+        }
+
+
+    @router.get("/submissions/{kind}/{submission_id}/comments")
+    def portal_list_comments(
+        kind: str,
+        submission_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        from app.services.form_comment_service import FormCommentService
+
+        k = _check_comment_kind(kind, db, token)
+        sid = validate_uuid_path(submission_id, resource="Submission")
+        svc = FormCommentService(db)
+        # 404 unless the contact owns the row (list_comments below has no contact filter)
+        row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
+        return {"items": svc.list_comments(k, sid, {"contact_id": token.contact_id}, row=row)}
+
+
+    @router.post("/submissions/{kind}/{submission_id}/comments", status_code=status.HTTP_201_CREATED)
+    async def portal_add_comment(
+        kind: str,
+        submission_id: str,
+        body: Annotated[str, Form()] = "",
+        files: Annotated[Optional[list[UploadFile]], File()] = None,
+        parent_id: Annotated[Optional[str], Form()] = None,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        import hashlib
+
+        from app.api.v1.form_comments import read_uploads
+        from app.services import rate_limit
+        from app.services.form_comment_service import FormCommentService, resolve_impersonating_admin
+
+        acting_user_id = (
+            resolve_impersonating_admin(db, token) if getattr(token, "is_impersonation", False) else None
+        )
+        k = _check_comment_kind(kind, db, token)
+        sid = validate_uuid_path(submission_id, resource="Submission")
+        # Per token plus one ceiling across tokens: checked first, charged only on a saved comment.
+        buckets = (
+            ("form_comment_token", hashlib.sha256(str(token.id).encode()).hexdigest(), _COMMENT_TOKEN_LIMIT),
+            ("form_comment_global", "all", _COMMENT_GLOBAL_LIMIT),
+        )
+        for bucket, ident, limit in buckets:
+            result = rate_limit.peek(bucket, ident, limit=limit, window_seconds=_COMMENT_RATE_WINDOW_SECONDS)
+            if not result.allowed:
+                raise HTTPException(
+                    status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+                    detail="Too many comments. Try again later.",
+                    headers={"Retry-After": str(result.retry_after_seconds or _COMMENT_RATE_WINDOW_SECONDS)},
+                )
+        uploads = await read_uploads(files)
+        out = FormCommentService(db).add_contact_comment(
+            k, sid, token.contact_id, token.space_id, body, uploads, acting_user_id, parent_id or None
+        )
+        for bucket, ident, _limit in buckets:
+            rate_limit.record(bucket, ident, window_seconds=_COMMENT_RATE_WINDOW_SECONDS)
+        return out
+
+
+    @router.patch("/submissions/{kind}/{submission_id}/comments/{comment_id}")
+    def portal_edit_comment(
+        kind: str,
+        submission_id: str,
+        comment_id: str,
+        payload: _EditCommentBody,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        from app.services.form_comment_service import FormCommentService, resolve_impersonating_admin
+
+        if getattr(token, "is_impersonation", False):
+            resolve_impersonating_admin(db, token)
+        k = _check_comment_kind(kind, db, token)
+        sid = validate_uuid_path(submission_id, resource="Submission")
+        svc = FormCommentService(db)
+        row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
+        return {"comment": svc.edit_comment(k, sid, comment_id, {"contact_id": token.contact_id}, payload.body, row=row)}
+
+
+    @router.delete("/submissions/{kind}/{submission_id}/comments/{comment_id}")
+    def portal_delete_comment(
+        kind: str,
+        submission_id: str,
+        comment_id: str,
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        from app.services.form_comment_service import FormCommentService, resolve_impersonating_admin
+
+        if getattr(token, "is_impersonation", False):
+            resolve_impersonating_admin(db, token)
+        k = _check_comment_kind(kind, db, token)
+        sid = validate_uuid_path(submission_id, resource="Submission")
+        svc = FormCommentService(db)
+        row = svc._load_row(k, sid, contact_id=token.contact_id, space_id=token.space_id)
+        svc.delete_comment(k, sid, comment_id, {"contact_id": token.contact_id}, row=row)
+        return {"deleted": True}
+
+
+    @router.delete("/attachments/{link_id}")
+    def portal_delete_attachment(
+        link_id: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        link = (
+            db.query(EntityAttachmentLink)
+            .filter(EntityAttachmentLink.id == link_id)
+            .first()
+        )
+        if not link:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
-        # AC-G2: ownership resolved which kind this is - the gate raises its
-        # own 403 here rather than folding into the "not owned" 404 above.
-        require_form_visible(db, token.contact_id, owned_kind)
-    elif raw_kind == "price_tag_request":
-        # SEC5: ownership first (same ordering the other two arms use), the
-        # visibility gate after - so a link that is not this contact's own
-        # 404s before it ever reveals whether the kind itself is hidden.
-        _require_own_price_tag_request(
-            db, token, link.entity_id, require_editable=True, check_visibility=False
-        )
-        require_form_visible(db, token.contact_id, "price_tag_request")
-    elif raw_kind == "new_product_application":
-        _require_own_npa(db, token, link.entity_id, require_editable=True, check_visibility=False)
-        require_form_visible(db, token.contact_id, "new_product_application")
-    else:
-        portal.get_submission(token, raw_kind, link.entity_id)
-        require_form_visible(db, token.contact_id, raw_kind)
 
-    # UAC F2 (hard blocker): a staff-uploaded attachment cannot be unlinked from
-    # the portal, even by a contact who owns the submission. FE gating alone is
-    # not a control on a token surface - enforce it server-side here too.
-    attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
-    if attachment is not None and attachment.uploader_kind == "user":
-        raise AppException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            message="This file was added by our team and cannot be removed here.",
-            code="STAFF_UPLOAD_LOCKED",
-        )
+        portal = PortalService(db)
+        raw_kind = link.entity_type
+        if raw_kind == "form_comment":
+            # Comment files belong to the thread; a contact cannot remove them.
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
+        # sponsorship_form attachments live under entity_type=purchase_request; verify ownership against either type.
+        if raw_kind == "purchase_request":
+            owns = False
+            owned_kind = None
+            for k in ("purchase_request", "sponsorship_form"):
+                try:
+                    portal.get_submission(token, k, link.entity_id)
+                    owns = True
+                    owned_kind = k
+                    break
+                except HTTPException:
+                    continue
+            if not owns:
+                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
+            # AC-G2: ownership resolved which kind this is - the gate raises its
+            # own 403 here rather than folding into the "not owned" 404 above.
+            require_form_visible(db, token.contact_id, owned_kind)
+        elif raw_kind == "price_tag_request":
+            # SEC5: ownership first (same ordering the other two arms use), the
+            # visibility gate after - so a link that is not this contact's own
+            # 404s before it ever reveals whether the kind itself is hidden.
+            _require_own_price_tag_request(
+                db, token, link.entity_id, require_editable=True, check_visibility=False
+            )
+            require_form_visible(db, token.contact_id, "price_tag_request")
+        elif raw_kind == "new_product_application":
+            _require_own_npa(db, token, link.entity_id, require_editable=True, check_visibility=False)
+            require_form_visible(db, token.contact_id, "new_product_application")
+        else:
+            portal.get_submission(token, raw_kind, link.entity_id)
+            require_form_visible(db, token.contact_id, raw_kind)
 
-    EntityAttachmentService(db).delete_link(link_id)
-    db.commit()
-    return {"deleted": True}
+        # UAC F2 (hard blocker): a staff-uploaded attachment cannot be unlinked from
+        # the portal, even by a contact who owns the submission. FE gating alone is
+        # not a control on a token surface - enforce it server-side here too.
+        attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+        if attachment is not None and attachment.uploader_kind == "user":
+            raise AppException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                message="This file was added by our team and cannot be removed here.",
+                code="STAFF_UPLOAD_LOCKED",
+            )
+
+        EntityAttachmentService(db).delete_link(link_id)
+        db.commit()
+        return {"deleted": True}
+
+
+register_submission_routes(router, get_portal_token)

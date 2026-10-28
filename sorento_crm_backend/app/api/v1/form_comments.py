@@ -2,7 +2,7 @@
 
 GET|POST /form-comments/{kind}/{entity_id}. The kind's own view permission gates both verbs
 (there is no single slug that covers four kinds), and POST needs a staff session (no API key).
-A request form's `view_own` alone opens only the rows their own contact submitted (PORTAL-P4).
+A request form's `view_own` alone reads (never writes) the rows their own contact submitted (PORTAL-P4).
 Plan: documentation/plans/forms/PLAN-form-comments-09oct.md
 """
 from __future__ import annotations
@@ -58,7 +58,7 @@ async def read_uploads(files: Optional[list[UploadFile]]) -> list:
     return [(f.filename, await f.read(), f.content_type) for f in named]
 
 
-def _authorize(kind: str, entity_id: str, current_user: dict, db: Session) -> str:
+def _authorize(kind: str, entity_id: str, current_user: dict, db: Session, *, write: bool = False) -> str:
     if kind not in FORM_COMMENT_KINDS:
         raise handle_unprocessable(f"Unsupported form type: {kind!r}.")
     slug = _VIEW_PERMISSION[kind]
@@ -66,9 +66,10 @@ def _authorize(kind: str, entity_id: str, current_user: dict, db: Session) -> st
     if perms.check_user_has_permission(current_user["id"], slug):
         _check_module(kind, current_user["id"], db)
         return validate_uuid_path(entity_id, resource="Form")
-    # A request form's `view_own` alone opens the thread on their own row only (PORTAL-P4-REQUESTS).
+    # A request form's `view_own` alone READS the thread on their own row only (PORTAL-P4-REQUESTS).
+    # A staff comment WhatsApps the submitter, who is them: they write through /my-requests.
     view_own = own_scope.REQUEST_KINDS.get(kind, (None, None))[1]
-    if not view_own or not perms.check_user_has_permission(current_user["id"], view_own):
+    if write or not view_own or not perms.check_user_has_permission(current_user["id"], view_own):
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"Permission required: {slug}")
     _check_module(kind, current_user["id"], db)
     eid = validate_uuid_path(entity_id, resource="Form")
@@ -99,7 +100,7 @@ async def add_form_comment(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    eid = _authorize(kind, entity_id, current_user, db)
+    eid = _authorize(kind, entity_id, current_user, db, write=True)
     user = db.query(User).filter(User.id == current_user["id"]).first()
     if user is None:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
@@ -120,6 +121,6 @@ def edit_form_comment(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    eid = _authorize(kind, entity_id, current_user, db)
+    eid = _authorize(kind, entity_id, current_user, db, write=True)
     svc = FormCommentService(db)
     return {"comment": svc.edit_comment(kind, eid, comment_id, svc.staff_viewer(current_user), payload.body)}
