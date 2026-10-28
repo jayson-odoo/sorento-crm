@@ -372,7 +372,7 @@ def test_h4_with_a_document_the_parser_read_still_asks_which_sales_agent_never_w
     no canonical codes. "yu" stays the sales agent: the agent question (or an agent-scoped run), never a customer pick."""
     parse = _status(
         "sales_report", _ent("yu", "sales_agent"), _ent(PRODUCT, "product"), basis=None, group_by="sales_agent",
-        document=["SO"], entity_op="replace_combine", **YEAR,
+        by_words=None, document=["SO"], entity_op="replace_combine", **YEAR,
     )
     text, calls = bot.say(parse, "sales agent yu total sale for SRTSP231 in 2026", spans=_agent_spans())
     assert "Which one do you mean?" not in text and CUSTOMER_WITH_YU not in text, (calls, text)
@@ -521,7 +521,7 @@ def test_ac_ru_22_each_candidate_line_carries_the_row_id_the_parser_binds_by(bot
 
 
 _DOC_PARSE = {
-    "order_status": "sales_report", "status": "sales_report", "group_by": "sales_agent", "document": ["SO"],
+    "order_status": "sales_report", "status": "sales_report", "group_by": "sales_agent", "by_words": None, "document": ["SO"],
     "entity_op": "replace_combine", "date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31",
     "entities": [
         {"raw": PRODUCT, "hint": "product", "current_message": True},
