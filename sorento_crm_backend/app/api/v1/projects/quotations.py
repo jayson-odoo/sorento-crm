@@ -24,6 +24,7 @@ from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
 from app.dependencies import require_any_permission, require_any_permission_with_api_key, require_permission
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.schemas.project_board import StockDetail
 from app.schemas.projects import (
     PriceFloorEffectiveResponse,
     PriceFloorRuleResponse,
@@ -408,6 +409,28 @@ async def quotation_line_images(
                 status_code=404, message="Product not found.", code="product_not_found"
             )
         return line_images.product_cells(db, product_id)
+    except Exception as exc:
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.get("/quotation-line-stock", response_model=Optional[StockDetail])
+def quotation_line_stock(
+    product_id: str = Query(..., pattern=UUID_PATTERN),
+    _user: dict = Depends(require_any_permission(READ)),
+    db: Session = Depends(get_db),
+):
+    """A line's stock over the locations the user's contact may see; null when none.
+
+    Stock visibility of `users.respond_contact_id`, inside the active fulfilment-planning
+    warehouses. No contact, or a contact that may see no location, answers null.
+    """
+    try:
+        from app.services import quotation_line_stock as line_stock
+        from app.services.field_access import staff_may_see_clearance
+
+        return line_stock.quotation_line_stock(
+            db, _user, product_id, reveal_eta_delay=staff_may_see_clearance(db, _user)
+        )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 

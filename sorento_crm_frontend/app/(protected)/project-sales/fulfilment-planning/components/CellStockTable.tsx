@@ -258,6 +258,8 @@ export interface CellStockTableProps {
    * sits under the Total. Absent (not read, or the read failed), the table is today's.
    */
   autoCount?: StockStatus | null;
+  /** False: AutoCount restates the listed rows only, no other location joins (default true). */
+  autoCountAppendsLocations?: boolean;
 }
 
 /** The columns `stockOnly` keeps; PO qty too, since the quotation's table reads AutoCount's. */
@@ -290,12 +292,16 @@ export const CellStockTable = React.forwardRef<
     showGroupSubtotal = true,
     stockOnly = false,
     autoCount = null,
+    autoCountAppendsLocations = true,
   },
   ref,
 ) {
   const locations = React.useMemo(
-    () => (autoCount ? withAutoCount(serverLocations, autoCount, poolSharePct) : serverLocations),
-    [serverLocations, autoCount, poolSharePct],
+    () =>
+      autoCount
+        ? withAutoCount(serverLocations, autoCount, poolSharePct, autoCountAppendsLocations)
+        : serverLocations,
+    [serverLocations, autoCount, poolSharePct, autoCountAppendsLocations],
   );
   const [plOpen, setPlOpen] = React.useState(false);
   /**

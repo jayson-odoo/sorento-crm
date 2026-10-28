@@ -35,7 +35,6 @@ import type {
 } from '../../_shared/types/project.types';
 import { ReviseQuotationDialog } from './ReviseQuotationDialog';
 import { QuotationLinesGrid } from './QuotationLinesGrid';
-import { StockAtSelect, useQuotationStockGroup } from './QuotationStockChip';
 import {
   completeSetText,
   lineErrors,
@@ -179,7 +178,6 @@ export function QuotationVersionEditor({
     () => (brands.data ?? []).map((row) => ({ value: row.brand_name, label: row.brand_name })),
     [brands.data],
   );
-  const stock = useQuotationStockGroup();
 
   /**
    * The products the picker has shown, by id.
@@ -578,20 +576,13 @@ export function QuotationVersionEditor({
           productCodeOf={productCodeOf}
           toolbar={
             gridLines.length > 0 ? (
-              <>
-                <ListSearchInput
-                  value={lineSearchInput}
-                  onChange={setLineSearchInput}
-                  placeholder="Search lines"
-                  aria-label="Search lines by product or description"
-                  className="w-full sm:max-w-xs"
-                />
-                <StockAtSelect
-                  groups={stock.groups}
-                  value={stock.group}
-                  onChange={stock.choose}
-                />
-              </>
+              <ListSearchInput
+                value={lineSearchInput}
+                onChange={setLineSearchInput}
+                placeholder="Search lines"
+                aria-label="Search lines by product or description"
+                className="w-full sm:max-w-xs"
+              />
             ) : null
           }
           fillFromProduct={fillFromProduct}
@@ -600,7 +591,6 @@ export function QuotationVersionEditor({
           uomError={uoms.error}
           onUomRetry={() => void uoms.refetch()}
           brandOptions={brandOptions}
-          stockGroup={stock.group}
           onStage={gridEditing ? stageLines : undefined}
           onToggleRemoved={gridEditing ? toggleRemoved : undefined}
         />

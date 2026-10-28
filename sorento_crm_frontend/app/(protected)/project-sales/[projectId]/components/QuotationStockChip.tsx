@@ -9,95 +9,14 @@ import {
   PopoverTrigger,
 } from '@/components/ui/popover';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { CellStockTable } from '../../fulfilment-planning/components/CellStockTable';
-import {
-  useStockDetail,
-  useStockGroups,
-} from '../../_shared/hooks/useFulfilmentPlanning';
-import type { StockDetailIncoming } from '../../_shared/types/fulfilmentPlanning.types';
+import { useQuotationLineStock } from '../../_shared/hooks/useFulfilmentPlanning';
+import type {
+  StockDetail,
+  StockDetailIncoming,
+} from '../../_shared/types/fulfilmentPlanning.types';
 import { useStockStatus } from '@/components/stock-status/useStockStatus';
-
-/** Where the "Stock at" choice is remembered, per browser (owner, Q5). */
-export const STOCK_GROUP_STORAGE_KEY = 'quotation-lines.stock-group';
-
-function readStoredGroup(): string | null {
-  try {
-    return window.localStorage.getItem(STOCK_GROUP_STORAGE_KEY);
-  } catch {
-    return null;
-  }
-}
-
-function writeStoredGroup(group: string) {
-  try {
-    window.localStorage.setItem(STOCK_GROUP_STORAGE_KEY, group);
-  } catch {
-    // Storage disabled: the choice still holds for this visit.
-  }
-}
-
-/**
- * The group every stock chip on the Lines tab reads, and the list it is picked from.
- *
- * A remembered group is trusted while the list is still loading, so a reload draws the chips
- * for the group the reader chose rather than flashing the first one; once the list is in, a
- * remembered group that is no longer on it falls back to the first.
- */
-export function useQuotationStockGroup() {
-  const groups = useStockGroups();
-  const [stored, setStored] = React.useState<string | null>(readStoredGroup);
-  const list = React.useMemo(() => groups.data ?? [], [groups.data]);
-  const group =
-    stored && (list.length === 0 || list.includes(stored))
-      ? stored
-      : (list[0] ?? null);
-  const choose = React.useCallback((next: string) => {
-    setStored(next);
-    writeStoredGroup(next);
-  }, []);
-  return { groups: list, group, choose };
-}
-
-export function StockAtSelect({
-  groups,
-  value,
-  onChange,
-}: {
-  groups: string[];
-  value: string | null;
-  onChange: (group: string) => void;
-}) {
-  const id = React.useId();
-  const options = React.useMemo(
-    () =>
-      groups.map((group) => ({
-        value: group,
-        label: `${group} group + site pools`,
-      })),
-    [groups],
-  );
-  return (
-    <div className="flex min-w-0 items-center gap-2">
-      <label htmlFor={id} className="shrink-0 text-xs text-muted-foreground">
-        Stock at
-      </label>
-      <SearchableSelect
-        id={id}
-        size="sm"
-        value={value ?? ''}
-        onChange={(next) => {
-          if (next) onChange(next);
-        }}
-        options={options}
-        placeholder="Group"
-        truncateTriggerLabel
-        className="w-48 min-w-0"
-      />
-    </div>
-  );
-}
 
 type StockTone = 'ok' | 'part' | 'none';
 
@@ -122,26 +41,24 @@ function trimQty(value: string | null | undefined): string {
 }
 
 /**
- * Available stock for the line's product in the chosen group, toned against the quoted qty,
- * opening the same stock table Order Inquiry shows (AC-QLG15, AC-QLG16). Read-only, and only on
- * a line with a product.
+ * Available stock for the line's product over the locations the user's contact may see, toned
+ * against the quoted qty, opening the same stock table Order Inquiry shows (AC-QLG15, AC-QLG16).
+ * Read-only, and only on a line with a product. A read that answers null draws nothing.
  */
 export function QuotationStockChip({
   productId,
-  group,
   quantity,
   uom,
   label,
 }: {
   productId: string;
-  group: string | null;
   quantity: string;
   uom: string;
   label: string;
 }) {
-  const detail = useStockDetail(productId, null, null, group);
+  const detail = useQuotationLineStock(productId);
 
-  if (!group) return null;
+  if (detail.data === null) return null;
   if (detail.isLoading || (!detail.data && !detail.isError)) {
     return <Skeleton className="h-5 w-16 rounded-full" />;
   }
@@ -193,12 +110,23 @@ export function QuotationStockChip({
             label={label}
             quantity={quantity}
             uom={uom}
-            groupLocations={detail.data.locations ?? []}
-            groupIncoming={detail.data.incoming ?? []}
+            locations={detail.data.locations ?? []}
+            incoming={detail.data.incoming ?? []}
           />
         </PopoverContent>
       </PopoverPortal>
     </Popover>
+  );
+}
+
+type StockLocations = NonNullable<StockDetail['locations']>;
+
+/** A location with no stock, no sales order and no SPO is noise in the popover. */
+function hasFigures(row: StockLocations[number]): boolean {
+  return (
+    Number(row.qty_on_hand) !== 0 ||
+    Number(row.so_qty) !== 0 ||
+    Number(row.spo_qty) !== 0
   );
 }
 
@@ -207,26 +135,20 @@ function StockPopoverBody({
   label,
   quantity,
   uom,
-  groupLocations,
-  groupIncoming,
+  locations,
+  incoming,
 }: {
   productId: string;
   label: string;
   quantity: string;
   uom: string;
-  groupLocations: NonNullable<
-    ReturnType<typeof useStockDetail>['data']
-  >['locations'];
-  groupIncoming: StockDetailIncoming[];
+  locations: StockLocations;
+  incoming: StockDetailIncoming[];
 }) {
-  // The site pools, read only once somebody opens the popover: a quotation of fifty lines
-  // would otherwise ask for fifty pool readings nobody looks at.
-  const pools = useStockDetail(productId, null, null, 'pools');
-  // STOCK-STATUS round 6 (owner 06:00 and the v6 OK, UAC AC-35): ONE table, the chosen group
-  // then the site pools, read against AutoCount, so every other location AutoCount holds joins
-  // it and PO qty reads too. A failed read leaves today's figures.
+  // STOCK-STATUS round 6 (owner 06:00 and the v6 OK, UAC AC-35): the table is read against
+  // AutoCount, so its figures and PO qty show. It restates the read's rows only; a location the
+  // user may not see never joins from AutoCount. A failed read leaves today's figures.
   const autoCount = useStockStatus(productId);
-  const incoming = [...groupIncoming, ...(pools.data?.incoming ?? [])];
 
   return (
     <>
@@ -236,14 +158,15 @@ function StockPopoverBody({
           {`Quoted ${trimQty(quantity)}${uom ? ` ${uom}` : ''}`}
         </p>
       </div>
-      {pools.isLoading || autoCount.isLoading ? (
+      {autoCount.isLoading ? (
         <Skeleton className="h-10 w-full" />
       ) : (
         <CellStockTable
-          locations={[...(groupLocations ?? []), ...(pools.data?.locations ?? [])]}
+          locations={locations.filter(hasFigures)}
           showGroupSubtotal
           stockOnly
           autoCount={autoCount.data ?? null}
+          autoCountAppendsLocations={false}
         />
       )}
       <div className="text-xs text-muted-foreground">
@@ -276,27 +199,26 @@ export interface SetStockPart {
   quantity: string | number;
 }
 
-/** Reads one part's stock for the group and reports it up; draws nothing. */
+/** Reads one part's stock and reports it up; draws nothing. */
 function PartProbe({
   part,
-  group,
   onRead,
 }: {
   part: SetStockPart;
-  group: string;
-  onRead: (productId: string, available: number | null, failed: boolean) => void;
+  onRead: (productId: string, available: number | null, failed: boolean, blank: boolean) => void;
 }) {
-  const detail = useStockDetail(part.product_id, null, null, group);
+  const detail = useQuotationLineStock(part.product_id);
   const data = detail.data;
   const failed = detail.isError;
   React.useEffect(() => {
-    onRead(part.product_id, data ? Number(data.available_qty) : null, failed);
+    // A null answer (the user may see no stock for the part) blanks the whole set chip.
+    onRead(part.product_id, data ? Number(data.available_qty) : null, failed, data === null);
   }, [part.product_id, data, failed, onRead]);
   return null;
 }
 
-function PartStockSection({ part, group }: { part: SetStockPart; group: string }) {
-  const detail = useStockDetail(part.product_id, null, null, group);
+function PartStockSection({ part }: { part: SetStockPart }) {
+  const detail = useQuotationLineStock(part.product_id);
   return (
     <div className="space-y-1">
       <p className="text-sm font-semibold">
@@ -306,7 +228,7 @@ function PartStockSection({ part, group }: { part: SetStockPart; group: string }
         <Skeleton className="h-10 w-full" />
       ) : detail.data ? (
         <CellStockTable locations={detail.data.locations ?? []} showGroupSubtotal stockOnly />
-      ) : (
+      ) : detail.data === null ? null : (
         <p className="text-xs text-muted-foreground">Stock could not be loaded</p>
       )}
     </div>
@@ -314,37 +236,41 @@ function PartStockSection({ part, group }: { part: SetStockPart; group: string }
 }
 
 /**
- * The stock pill of a SET line: how many complete sets the group can make, that is the smallest
- * of floor(part available / part quantity). Every part is read through `useStockDetail`, one
+ * The stock pill of a SET line: how many complete sets the user's allowed locations can make, that
+ * is the smallest of floor(part available / part quantity). Every part is read through
+ * `useQuotationLineStock`, one
  * child per part (never a hook in a loop), and the popover lists each part with its stock table.
  */
 export function SetStockChip({
   parts,
-  group,
   quantity,
   label,
 }: {
   parts: SetStockPart[];
-  group: string | null;
   quantity: string;
   label: string;
 }) {
-  const [reads, setReads] = React.useState<Record<string, { available: number | null; failed: boolean }>>({});
+  const [reads, setReads] = React.useState<
+    Record<string, { available: number | null; failed: boolean; blank: boolean }>
+  >({});
   const onRead = React.useCallback(
-    (productId: string, available: number | null, failed: boolean) =>
+    (productId: string, available: number | null, failed: boolean, blank: boolean) =>
       setReads((previous) =>
-        previous[productId]?.available === available && previous[productId]?.failed === failed
+        previous[productId]?.available === available &&
+        previous[productId]?.failed === failed &&
+        previous[productId]?.blank === blank
           ? previous
-          : { ...previous, [productId]: { available, failed } },
+          : { ...previous, [productId]: { available, failed, blank } },
       ),
     [],
   );
 
-  if (!group || parts.length === 0) return null;
+  if (parts.length === 0) return null;
   const probes = parts.map((part) => (
-    <PartProbe key={part.product_id} part={part} group={group} onRead={onRead} />
+    <PartProbe key={part.product_id} part={part} onRead={onRead} />
   ));
   const read = parts.map((part) => reads[part.product_id]);
+  if (read.some((entry) => entry?.blank)) return <>{probes}</>;
   if (read.some((entry) => entry?.failed)) {
     return (
       <>
@@ -398,7 +324,7 @@ export function SetStockChip({
               <p className="text-xs text-muted-foreground">{`Quoted ${trimQty(quantity)} sets`}</p>
             </div>
             {parts.map((part) => (
-              <PartStockSection key={part.product_id} part={part} group={group} />
+              <PartStockSection key={part.product_id} part={part} />
             ))}
           </PopoverContent>
         </PopoverPortal>

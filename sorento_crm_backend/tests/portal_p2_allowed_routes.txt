@@ -102,6 +102,7 @@ GET /purchase-orders/{po_id}/schedule-findings
 GET /purchase-orders/{po_id}/versions
 GET /quotation-approval-graph
 GET /quotation-line-images
+GET /quotation-line-stock
 GET /quotation-versions/{version_id}/lines
 GET /quotations/{quotation_id}/line-verdict
 GET /quotations/{quotation_id}/versions

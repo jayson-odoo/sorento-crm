@@ -34,10 +34,14 @@ export function withAutoCount(
   rows: readonly BoardCellLocation[],
   status: StockStatus,
   poolSharePct?: number | null,
+  /** False restates the given rows only: no AutoCount location the rows did not list joins. */
+  appendUnlisted = true,
 ): BoardCellLocation[] {
   const byCode = new Map(status.locations.map((loc) => [loc.warehouse_code, loc]));
   const listed = new Set(rows.map((row) => row.location).filter(Boolean));
-  const unlisted = status.locations.filter((loc) => !listed.has(loc.warehouse_code));
+  const unlisted = appendUnlisted
+    ? status.locations.filter((loc) => !listed.has(loc.warehouse_code))
+    : [];
 
   // A location of a group the table already nets (an IB warehouse the rows left out) belongs
   // to that set: it joins once, after the set's LAST row (a set can arrive as two runs), and
