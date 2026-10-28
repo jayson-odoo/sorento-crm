@@ -14,7 +14,7 @@ _SCOPE = Query("all", pattern="^(all|conversation|form)$")
 
 
 @router.get("/summary")
-async def kpi_summary(
+def kpi_summary(
     scope: str = _SCOPE,
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
@@ -30,7 +30,7 @@ async def kpi_summary(
 
 
 @router.get("/leaderboard")
-async def kpi_leaderboard(
+def kpi_leaderboard(
     scope: str = _SCOPE,
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
@@ -46,7 +46,7 @@ async def kpi_leaderboard(
 
 
 @router.get("/trend")
-async def kpi_trend(
+def kpi_trend(
     scope: str = _SCOPE,
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
@@ -62,7 +62,7 @@ async def kpi_trend(
 
 
 @router.get("/tasks")
-async def kpi_tasks(
+def kpi_tasks(
     scope: str = _SCOPE,
     date_from: Optional[str] = Query(None),
     date_to: Optional[str] = Query(None),
