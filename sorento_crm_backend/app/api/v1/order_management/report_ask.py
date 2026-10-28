@@ -491,15 +491,6 @@ def report_ask(
         if outside:
             raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
 
-    if scoped is None and resolved and not narrowed and (group_norm in ("product", "category") or spec_group):
-        # REPORT-SMART-L R1: an item / category ranking is refused to a contact that is neither staff, linked
-        # to a customer nor narrowed to a salesperson's own book (a granted salesperson without `mine` is not), as the top selling route refuses it (`orders.py`).
-        from app.services import contact_customer_scope as scope_mod
-
-        _scope = scope_mod.contact_customer_scope(db, str(resolved))
-        if not _scope.staff and not _scope.linked:
-            raise AppException(403, "You can only see sales for your own account.", code="customer_not_permitted")
-
     # The contact's OWN companies (the sales analysis route's read), never the session scope.
     grants = {
         str(c)

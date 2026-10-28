@@ -791,15 +791,6 @@ def sales_figure_decision(
         db, contact_id=str(contact_respond_id).strip(), space_id=(str(space_id).strip() or None) if space_id else None
     )
     decision = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=False)[0]
-    verdict = parse_output if isinstance(parse_output, dict) else {}
-    if (
-        decision == "salesperson_book"
-        and jsc.js_string(verdict.get("group_by") or "").strip().lower() in ("product", "category")
-        and verdict.get("self_reference") is not True
-    ):
-        # REPORT-SMART-L R1 (ruling 2): an ungranted salesperson's item / category ranking is the own-book
-        # "my ..." ask only; without `self_reference` it is refused, as top selling refused it.
-        return "not_granted"
     return decision
 
 

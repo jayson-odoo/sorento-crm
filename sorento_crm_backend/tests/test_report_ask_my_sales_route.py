@@ -115,11 +115,11 @@ def test_a_salesperson_without_the_grant_and_no_linked_customer_sees_all_figures
 
 
 @pytest.mark.parametrize("group_by", ["product", "category"])
-def test_an_item_or_category_ranking_without_mine_is_refused_like_a_granted_salesperson(client, db, group_by):
-    """REPORT-SMART-L R1 stands (the item / category ranking is the own-book "my ..." ask for a salesperson)."""
+def test_an_ungranted_salesperson_with_no_link_gets_the_item_and_category_ranking_over_all(client, db, group_by):
+    """Owner 28 Oct 10:15: REPORT-SMART R1 retires for a contact with no linked customer."""
     w = _world(db)
-    resp = _ask(client, _salesperson(db, w, granted=False), group_by=group_by, top_n=10)
-    assert resp.status_code == 403 and resp.json()["code"] == "customer_not_permitted", resp.text
+    body = _ok(client, _salesperson(db, w, granted=False), group_by=group_by, top_n=10)
+    assert _total(body) == ALL_TOTAL and len(body["rows"]) == 3, body
 
 
 @pytest.mark.parametrize("group_by", [None, "customer", "product", "brand", "category", "month"])

@@ -149,12 +149,13 @@ def test_r1_5b_guard_a_contact_without_the_switch_is_refused_an_item_ranking(con
     assert text.strip(), text
 
 
-def test_r1_5c_guard_an_ungranted_salesperson_without_my_is_refused_items(console_no_grant, monkeypatch) -> None:
+def test_r1_5c_an_ungranted_salesperson_without_my_gets_the_item_ranking_over_all(console_no_grant, monkeypatch) -> None:
+    """Owner 28 Oct 10:15 (R1 retired for a contact with no linked customer): it runs, never narrowed (no `mine`)."""
     _make_salesperson(console_no_grant)
     text, log = _say_all(
         console_no_grant, monkeypatch, _top_selling(self_reference=None, **FULL_ITEMS), "top selling items this year")
-    assert not [n for n in _names(log) if n in (TOOL, OLD_TOOL)], _names(log)
-    assert text.strip(), text
+    assert OLD_TOOL not in _names(log) and len(_ran(log)) == 1, (text, log)
+    assert not _ran(log)[0].get("mine"), log
 
 
 def test_r1_5d_an_ungranted_salesperson_my_items_gets_the_own_book_ranking(console_no_grant, monkeypatch) -> None:
@@ -171,20 +172,21 @@ def test_r1_5d_an_ungranted_salesperson_my_items_gets_the_own_book_ranking(conso
 # ---------------------------------------------------------------- 5. access (the route)
 
 
-def test_r1_5e_a_granted_unlinked_non_staff_contact_is_refused_an_item_ranking(client, db) -> None:
-    from tests.test_report_ask_route import _ask, _code, _full, _ranking_world
+def test_r1_5e_a_granted_unlinked_non_staff_contact_gets_an_item_ranking(client, db) -> None:
+    """Owner 28 Oct 10:15: no linked customer sees everything, staff or not."""
+    from tests.test_report_ask_route import _ask, _full, _ranking_world
 
     _ranking_world(db)
     resp = _ask(client, _full(db), group_by="product", top_n=3)
-    assert resp.status_code == 403 and _code(resp) == "customer_not_permitted", resp.text
+    assert resp.status_code == 200, resp.text
 
 
-def test_r1_5e_the_same_contact_is_refused_a_category_ranking(client, db) -> None:
-    from tests.test_report_ask_route import _ask, _code, _full, _ranking_world
+def test_r1_5e_the_same_contact_gets_a_category_ranking(client, db) -> None:
+    from tests.test_report_ask_route import _ask, _full, _ranking_world
 
     _ranking_world(db)
     resp = _ask(client, _full(db), group_by="category", top_n=3)
-    assert resp.status_code == 403 and _code(resp) == "customer_not_permitted", resp.text
+    assert resp.status_code == 200, resp.text
 
 
 def test_r1_5f_guard_a_dealer_gets_only_its_own_customers_items(client, db) -> None:

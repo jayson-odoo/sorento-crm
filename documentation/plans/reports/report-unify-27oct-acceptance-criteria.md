@@ -69,6 +69,8 @@ Status: Agreed (owner answers 27 Oct ~19:15). Plan: `PLAN-report-unify-27oct.md`
   alike. A contact with a linked customer sees only that customer's figures. "My ..." from a live salesperson stays
   its own book.
   Outstanding kinds keep Q6: a salesperson without the Outstanding reveal stays on its own book there.
+  (Owner 28 Oct 10:15) That includes product and category rankings: REPORT-SMART R1 retires for a contact with no
+  linked customer, staff or not; a linked contact stays on its customers.
 
 ## Span binding (slice 3)
 
