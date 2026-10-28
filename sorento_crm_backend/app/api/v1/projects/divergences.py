@@ -33,7 +33,9 @@ from app.schemas.project_so_divergence import (
     ResolveRowRequest,
 )
 from app.services import project_service as projects
-from app.services.error_handler import AppException, handle_internal_error
+from app.models.project_so import DIVERGENCE_OPEN, DIVERGENCE_RESOLVED
+from app.services.error_handler import AppException, handle_internal_error, handle_unprocessable
+from app.utils.multi_value import multi_values
 from app.services.project_so_divergence_service import ProjectSODivergenceService
 from app.services.project_so_ingest_service import (
     IngestDocument,
@@ -150,7 +152,8 @@ async def ingest_sales_order_file(
 
 @router.get("/divergences", response_model=ListResponse[DivergenceRowSummary])
 async def list_divergences(
-    status: Optional[str] = Query(default="open"),
+    # No state is every state (the screen's "Any"); several are OR-ed (FILTER-MULTISELECT PR6).
+    status: Optional[list[str]] = Query(default=None),
     project_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
     limit: int = Query(default=50, ge=1, le=MAX_PAGE_LIMIT),
@@ -158,11 +161,15 @@ async def list_divergences(
     db: Session = Depends(get_db),
 ):
     """AC-N6: with the age of each, so a stack is visible rather than discovered."""
+    states = multi_values(status)
+    for value in states or []:
+        if value not in (DIVERGENCE_OPEN, DIVERGENCE_RESOLVED):
+            raise handle_unprocessable(f"status: unknown value {value}")
     try:
         if project_id:
             validate_uuid_path(project_id, resource="Project")
         return ProjectSODivergenceService(db).list_divergences(
-            status=status or None, project_id=project_id, page=page, limit=limit
+            status=states, project_id=project_id, page=page, limit=limit
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

@@ -804,6 +804,30 @@ class TestAttach:
         assert linked == {str(other.id), str(photo_a.attachment_id)}
         assert api.db.query(Attachment).filter_by(id=str(lookalike.id)).count() == 1
 
+    def test_replace_puts_the_unlink_and_the_link_on_the_products_trail(self, api) -> None:
+        """PRODUCT-ATTACH-AUDIT: a replace removes a person's earlier photo, so it is recorded."""
+        from app.models.audit import AuditLog
+
+        _photo_type(api.db)
+        products = _seed_catalogue_products(api.db)
+        lookalike, _ = _existing_photo(api.db, api.storage, products[CODE_A], SEED_A)
+        with TestClient(app) as client:
+            reading_id = _read(api, client)
+            row = _by_code(_tab(client, reading_id, "duplicate")["data"], CODE_A)
+            client.patch(f"{PREFIX}/{reading_id}/photos/{row['id']}", json={"decision": "replace"})
+            assert client.post(f"{PREFIX}/{reading_id}/attach").status_code == 200
+
+        photo_a = self._photo(api, reading_id, CODE_A)
+        trail = sorted(
+            (r.action, (r.old_values or r.new_values)["attachment_id"])
+            for r in api.db.query(AuditLog).filter(
+                AuditLog.root_entity_type == "product",
+                AuditLog.root_entity_id == str(products[CODE_A].id),
+                AuditLog.action.in_(["LINK", "UNLINK"]),
+            )
+        )
+        assert trail == [("LINK", str(photo_a.attachment_id)), ("UNLINK", str(lookalike.id))]
+
     def test_keep_both_keeps_the_old_link_and_adds_the_new(self, api) -> None:
         _photo_type(api.db)
         products = _seed_catalogue_products(api.db)

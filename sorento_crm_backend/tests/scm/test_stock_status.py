@@ -309,6 +309,15 @@ def test_incoming_pl_nets_only_the_spo_rows_the_spo_column_counts(scm_app):
     assert all("inbound_shipment_id" not in s for s in body["spos"])
 
 
+def test_an_upper_case_product_id_still_reads_its_packing_lists(scm_app):
+    app, db, w, p = _setup(scm_app)
+    ship = _shipment(db, w)
+    _pl_line(db, ship, p, 9)
+    r = TestClient(app).get(URL, params={"product_id": str(p.id).upper()})
+    assert r.status_code == 200, r.text
+    assert r.json()["totals"]["incoming_pl"] == 9
+
+
 def test_incoming_pl_matches_by_container_number_alone_iso_6346(scm_app):
     """Owner ruling 17 Oct: compare the container NUMBER only (4 letters + 7 digits, exact).
     The real pair: PL-2609-040 stores 'SEKU1741573 (KUCHING)', the unlinked SPO-2026/10-0024

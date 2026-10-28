@@ -57,7 +57,16 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import {
+  idFilterLabels,
+  joinMulti,
+  multiChipLabel,
+  splitMulti,
+  splitText,
+} from '@/lib/list-filters/multiValue';
+
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { AutoLinkOrderInquiryDialog } from '../../_shared/components/AutoLinkOrderInquiryDialog';
@@ -142,6 +151,20 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { SupplyKindCard } from '../../_shared/components/SupplyKindCard';
+
+/** A multi-select trigger label for an id-valued filter: names, never the ids. */
+function renderIdTrigger(
+  title: string,
+  empty: string,
+  chosen: { value: string; label: string }[],
+) {
+  return chosen.length ? (
+    <span className="block truncate">{multiChipLabel(title, idFilterLabels(chosen))}</span>
+  ) : (
+    <span className="text-muted-foreground">{empty}</span>
+  );
+}
+
 
 function reserveFilterFrom(value: string | null): OrderInquiryReserveStatus | '' {
   return (ORDER_INQUIRY_RESERVE_STATUSES as string[]).includes(value ?? '')
@@ -299,7 +322,7 @@ type OrderInquiryViewFilters = {
   view?: OrderInquiryView;
   granularity?: OrderInquiryMatrixGranularity;
   delivery_month?: string;
-  location?: string;
+  location?: string | string[];
   agent?: string;
   so_month?: string;
   po_number?: string;
@@ -309,7 +332,8 @@ type OrderInquiryViewFilters = {
   // column - the filter follows the column now, not a registered project's id. A blob
   // stored before this shipped may still carry the old `project_id` key; nothing here
   // reads it any more; a fresh save never writes it back.
-  project?: string;
+  // One title or several (free text, so an array, never joined). An older blob holds a string.
+  project?: string | string[];
   raised_date?: string;
   raised_by?: string;
   linked?: 'po' | 'spo' | 'none';
@@ -417,8 +441,10 @@ export function OrderInquiriesClient({
   const [month, setMonth] = React.useState(
     () => searchParams.get('delivery_month') ?? '',
   );
+  // Supplier, Raised by, Location, Agent and State hold one value or several, comma-joined (OR-ed). Project
+  // is a free-text title, so one entry per project and a repeated param, never joined.
   const [supplierFilter, setSupplierFilter] = React.useState('');
-  const [projectFilter, setProjectFilter] = React.useState('');
+  const [projectFilter, setProjectFilter] = React.useState<string[]>([]);
   const [raisedDate, setRaisedDate] = React.useState('');
   const [raisedByFilter, setRaisedByFilter] = React.useState('');
   const [linkedFilter, setLinkedFilter] = React.useState('');
@@ -430,11 +456,12 @@ export function OrderInquiriesClient({
   // `delivery_month` beside them are (AC-F1): a filter that reaches the request and the
   // Filters badge but not the address bar is one a reload silently drops, and one the
   // buyer cannot send to anybody.
-  const [locationFilter, setLocationFilter] = React.useState(
-    () => searchParams.get('location') ?? '',
+  // Location is free text (a code can hold a comma): one entry per value, a repeated param, never joined.
+  const [locationFilter, setLocationFilter] = React.useState<string[]>(() =>
+    splitText(searchParams.getAll('location')),
   );
   const [agentFilter, setAgentFilter] = React.useState(
-    () => searchParams.get('agent') ?? '',
+    () => joinMulti(splitMulti(searchParams.get('agent'))),
   );
   const [soMonthFilter, setSoMonthFilter] = React.useState(
     () => searchParams.get('so_month') ?? '',
@@ -444,7 +471,7 @@ export function OrderInquiriesClient({
   // that can actually reach `state=cancelled`, since the list hides cancelled by
   // default otherwise (S5). URL-seeded and synced the same way as its siblings.
   const [stateFilter, setStateFilter] = React.useState(
-    () => searchParams.get('state') ?? '',
+    () => joinMulti(splitMulti(searchParams.get('state'))),
   );
   // OI-BULK-RESERVE v4 (F1): a line's own reserve status, the Documents view's four
   // statuses. URL-seeded and synced like `state`.
@@ -582,6 +609,8 @@ export function OrderInquiriesClient({
     else next.set('rows', matrixAxis);
     if (matrixGranularity === 'week') next.delete('granularity');
     else next.set('granularity', matrixGranularity);
+    next.delete('location');
+    for (const place of locationFilter) next.append('location', place);
     if (debounced) next.set('query', debounced);
     else next.delete('query');
     // S2, AC-M2: "All" (the default) carries no param; any other tab does, so a reload
@@ -592,7 +621,6 @@ export function OrderInquiriesClient({
     // a shared link opens on the same narrowed list. Cleared means the parameter goes,
     // which is what "Clear filters" then says in the address bar.
     for (const [key, value] of [
-      ['location', locationFilter],
       ['agent', agentFilter],
       ['so_month', soMonthFilter],
       ['po_number', poNumberFilter],
@@ -702,7 +730,8 @@ export function OrderInquiriesClient({
     if (!urlHad.view) setView(stored.view ?? 'list');
     if (!urlHad.granularity) setMatrixGranularity(stored.granularity ?? 'week');
     if (!urlHad.delivery_month) setMonth(stored.delivery_month ?? '');
-    if (!urlHad.location) setLocationFilter(stored.location ?? '');
+    if (!urlHad.location)
+      setLocationFilter(splitText(Array.isArray(stored.location) ? stored.location : stored.location ? [stored.location] : []));
     if (!urlHad.agent) setAgentFilter(stored.agent ?? '');
     if (!urlHad.so_month) setSoMonthFilter(stored.so_month ?? '');
     if (!urlHad.po_number) resetPoNumberInput(stored.po_number ?? '');
@@ -713,7 +742,7 @@ export function OrderInquiriesClient({
     // A blob saved before S5 shipped may still carry the old `project_id` key - never
     // read here, so a stored one restores to no project filter rather than a stale id
     // the Project select no longer has an option for.
-    setProjectFilter(stored.project ?? '');
+    setProjectFilter(splitText(Array.isArray(stored.project) ? stored.project : stored.project ? [stored.project] : []));
     setRaisedDate(stored.raised_date ?? '');
     setRaisedByFilter(stored.raised_by ?? '');
     setLinkedFilter(stored.linked ?? '');
@@ -746,13 +775,13 @@ export function OrderInquiriesClient({
     if (view !== 'list') blob.view = view;
     if (matrixGranularity !== 'week') blob.granularity = matrixGranularity;
     if (month) blob.delivery_month = month;
-    if (locationFilter) blob.location = locationFilter;
+    if (locationFilter.length) blob.location = locationFilter;
     if (agentFilter) blob.agent = agentFilter;
     if (soMonthFilter) blob.so_month = soMonthFilter;
     if (poNumberFilter) blob.po_number = poNumberFilter;
     if (spoNumberFilter) blob.spo_number = spoNumberFilter;
     if (supplierFilter) blob.supplier_id = supplierFilter;
-    if (projectFilter) blob.project = projectFilter;
+    if (projectFilter.length) blob.project = projectFilter;
     if (raisedDate) blob.raised_date = raisedDate;
     if (raisedByFilter) blob.raised_by = raisedByFilter;
     if (linkedFilter) blob.linked = linkedFilter as 'po' | 'spo' | 'none';
@@ -784,7 +813,7 @@ export function OrderInquiriesClient({
       delivery_month: month || undefined,
       raised_date: raisedDate || undefined,
       supplier_id: supplierFilter || undefined,
-      project: projectFilter || undefined,
+      project: projectFilter.length ? projectFilter : undefined,
       raised_by: raisedByFilter || undefined,
       linked: (linkedFilter || undefined) as 'po' | 'spo' | 'none' | undefined,
       // AC-CF-11: `ack=all` (the explicit "show everything") sends no filter at all;
@@ -798,7 +827,7 @@ export function OrderInquiriesClient({
       // S1, R-K. The backend does not read these yet (Phase 1 mock contract) - forwarded
       // all the same so the page keeps working once it does, and unknown params are
       // ignored server-side in the meantime.
-      location: locationFilter || undefined,
+      location: locationFilter.length ? locationFilter : undefined,
       agent: agentFilter || undefined,
       so_month: soMonthFilter || undefined,
       po_number: poNumberFilter || undefined,
@@ -848,7 +877,7 @@ export function OrderInquiriesClient({
       delivery_month: month || undefined,
       raised_date: raisedDate || undefined,
       supplier_id: supplierFilter || undefined,
-      project: projectFilter || undefined,
+      project: projectFilter.length ? projectFilter : undefined,
       raised_by: raisedByFilter || undefined,
     }),
     [
@@ -933,13 +962,13 @@ export function OrderInquiriesClient({
     debounced ||
     month ||
     supplierFilter ||
-    projectFilter ||
+    projectFilter.length > 0 ||
     raisedDate ||
     raisedByFilter ||
     linkedFilter ||
     (ackFilter && ackFilter !== ACK_ANY) ||
     kindFilter ||
-    locationFilter ||
+    locationFilter.length > 0 ||
     agentFilter ||
     soMonthFilter ||
     poNumberFilter ||
@@ -960,24 +989,18 @@ export function OrderInquiriesClient({
     if (debounced) parts.push(`matching "${debounced}"`);
     if (month) parts.push(`for delivery ${deliveryMonthLabel(month) ?? month}`);
     if (raisedDate) parts.push(`raised on ${formatDateInMalaysia(raisedDate)}`);
-    if (supplierFilter) {
-      const supplier = (summary.data?.suppliers ?? []).find(
-        (s) => s.id === supplierFilter,
-      );
-      if (supplier) parts.push(`from ${supplier.label}`);
-    }
-    if (projectFilter) {
-      const project = (summary.data?.projects ?? []).find(
-        (p) => p.id === projectFilter,
-      );
-      if (project) parts.push(`for ${project.label}`);
-    }
-    if (raisedByFilter) {
-      const person = (summary.data?.raised_by ?? []).find(
-        (p) => p.id === raisedByFilter,
-      );
-      if (person) parts.push(`raised by ${person.label}`);
-    }
+    const supplierNames = splitMulti(supplierFilter)
+      .map((id) => (summary.data?.suppliers ?? []).find((s) => s.id === id)?.label)
+      .filter((label): label is string => Boolean(label));
+    if (supplierNames.length) parts.push(`from ${supplierNames.join(', ')}`);
+    const projectNames = projectFilter
+      .map((id) => (summary.data?.projects ?? []).find((p) => p.id === id)?.label)
+      .filter((label): label is string => Boolean(label));
+    if (projectNames.length) parts.push(`for ${projectNames.join(', ')}`);
+    const personNames = splitMulti(raisedByFilter)
+      .map((id) => (summary.data?.raised_by ?? []).find((p) => p.id === id)?.label)
+      .filter((label): label is string => Boolean(label));
+    if (personNames.length) parts.push(`raised by ${personNames.join(', ')}`);
     return parts;
   }, [
     debounced,
@@ -1433,13 +1456,13 @@ export function OrderInquiriesClient({
   const filtersActiveCount =
     (month ? 1 : 0) +
     (supplierFilter ? 1 : 0) +
-    (projectFilter ? 1 : 0) +
+    (projectFilter.length ? 1 : 0) +
     (raisedDate ? 1 : 0) +
     (raisedByFilter ? 1 : 0) +
     (linkedFilter ? 1 : 0) +
     (ackFilter && ackFilter !== ACK_ANY ? 1 : 0) +
     (kindFilter ? 1 : 0) +
-    (locationFilter ? 1 : 0) +
+    (locationFilter.length ? 1 : 0) +
     (agentFilter ? 1 : 0) +
     (soMonthFilter ? 1 : 0) +
     (poNumberFilter ? 1 : 0) +
@@ -1502,7 +1525,7 @@ export function OrderInquiriesClient({
     <div className="max-h-[60dvh] space-y-3 overflow-y-auto">
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Location</Label>
-        <SearchableSelect
+        <SearchableMultiSelect
           value={locationFilter}
           onChange={setLocationFilter}
           clearable
@@ -1515,15 +1538,16 @@ export function OrderInquiriesClient({
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Agent</Label>
-        <SearchableSelect
-          value={agentFilter}
-          onChange={setAgentFilter}
+        <SearchableMultiSelect
+          value={splitMulti(agentFilter)}
+          onChange={(value) => setAgentFilter(joinMulti(value))}
           clearable
           options={(summary.data?.agents ?? []).map((entry) => ({
             value: entry.id,
             label: `${entry.label} (${entry.rows})`,
           }))}
           placeholder="Every agent"
+          renderTriggerLabel={(chosen) => renderIdTrigger('Agent', 'Every agent', chosen)}
         />
       </div>
       <div className="space-y-1.5">
@@ -1592,9 +1616,9 @@ export function OrderInquiriesClient({
             option). The one field that can ask for `state=cancelled`, since the list
             hides cancelled by default otherwise (S5). */}
         <Label className="text-xs text-muted-foreground">State</Label>
-        <SearchableSelect
-          value={stateFilter}
-          onChange={setStateFilter}
+        <SearchableMultiSelect
+          value={splitMulti(stateFilter)}
+          onChange={(value) => setStateFilter(joinMulti(value))}
           clearable
           options={Object.entries(summary.data?.by_state ?? {})
             .filter(([key]) => key !== 'total')
@@ -1637,20 +1661,21 @@ export function OrderInquiriesClient({
         </div>
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Supplier</Label>
-        <SearchableSelect
-          value={supplierFilter}
-          onChange={setSupplierFilter}
+        <SearchableMultiSelect
+          value={splitMulti(supplierFilter)}
+          onChange={(value) => setSupplierFilter(joinMulti(value))}
           clearable
           options={(summary.data?.suppliers ?? []).map((entry) => ({
             value: entry.id,
             label: entry.label,
           }))}
           placeholder="Every supplier"
+          renderTriggerLabel={(chosen) => renderIdTrigger('Supplier', 'Every supplier', chosen)}
         />
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Project</Label>
-        <SearchableSelect
+        <SearchableMultiSelect
           value={projectFilter}
           onChange={setProjectFilter}
           clearable
@@ -1659,25 +1684,20 @@ export function OrderInquiriesClient({
             label: entry.label,
           }))}
           placeholder="Every project"
-          // S5 (`PLAN-oi-project-label-from-so.md`): the option's own text is now the
-          // SO's project label, not a short registered-project title - long enough
-          // (e.g. "KITACON / PHASE 6A & 6B@BDR TSK PUTERI") that the trigger needs to
-          // truncate to one line with the full text in `title`, same as a picker
-          // inside a fixed-width table cell.
-          truncateTriggerLabel
         />
       </div>
       <div className="space-y-1.5">
         <Label className="text-xs text-muted-foreground">Raised by</Label>
-        <SearchableSelect
-          value={raisedByFilter}
-          onChange={setRaisedByFilter}
+        <SearchableMultiSelect
+          value={splitMulti(raisedByFilter)}
+          onChange={(value) => setRaisedByFilter(joinMulti(value))}
           clearable
           options={(summary.data?.raised_by ?? []).map((entry) => ({
             value: entry.id,
             label: entry.label,
           }))}
           placeholder="Everyone"
+          renderTriggerLabel={(chosen) => renderIdTrigger('Raised by', 'Everyone', chosen)}
         />
       </div>
       <div className="space-y-1.5">
@@ -1699,7 +1719,7 @@ export function OrderInquiriesClient({
           onClick={() => {
             setMonth('');
             setSupplierFilter('');
-            setProjectFilter('');
+            setProjectFilter([]);
             setRaisedDate('');
             setRaisedByFilter('');
             setLinkedFilter('');
@@ -1707,7 +1727,7 @@ export function OrderInquiriesClient({
             // `to_confirm` - the default is what an UNTOUCHED filter reads as,
             // and this press is the buyer actively asking to see it all.
             setAckFilter(ACK_ANY);
-            setLocationFilter('');
+            setLocationFilter([]);
             setAgentFilter('');
             setSoMonthFilter('');
             setPoNumberInput('');

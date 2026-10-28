@@ -36,7 +36,17 @@ this is a REBUILD-time toggle only: with preload_app on, a `kill -HUP` on the
 master respawns workers from the app already imported in the master's
 memory, so a code change needs the colour recreated (new container), not a
 SIGHUP.
+
+Why pre_fork freezes the heap (BACKEND-MEMORY, 28 Oct 2026): copy-on-write sharing only
+lasts while no worker writes to the inherited pages, and a full garbage collection writes
+into the header of every object it tracks. After `import app.main` the master holds about
+3.5 million of them; one full collection in a forked worker touched about 1.4 GB of shared
+pages (87,217 faults, 1.67 s), so each worker gradually copied the preload into its own
+memory. `gc.freeze()` moves everything the master holds into the permanent generation,
+which the collector never walks: the same collection then took 32 faults. See
+documentation/plans/deploy/PLAN-backend-memory-28oct.md.
 """
+import gc
 import os
 
 preload_app = os.environ.get("GUNICORN_PRELOAD", "1") != "0"
@@ -68,6 +78,16 @@ keepalive = int(os.environ.get("GUNICORN_KEEP_ALIVE", "75"))
 accesslog = "-"
 errorlog = "-"
 loglevel = "info"
+
+
+def pre_fork(server, worker):
+    """Runs in the master right before each fork (start-up, a recycle, a TTIN).
+
+    It also freezes the master's Worker object for this fork, which refers to itself
+    (`config.callback_notify`), so the master never frees it after the worker exits:
+    about 3 KB per recycle, accepted.
+    """
+    gc.freeze()
 
 
 def post_fork(server, worker):

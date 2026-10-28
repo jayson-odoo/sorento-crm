@@ -22,6 +22,7 @@ from app.schemas.sample_request import (
 )
 from app.services import sample_request_service as svc
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_uuids, multi_values
 from app.services.uuid_path_param import validate_uuid_path
 from app.utils.http import content_disposition
 
@@ -89,10 +90,11 @@ def _load(db: Session, request_id: str):
     return svc.get_for(db, validate_uuid_path(request_id, resource="Sample request"))
 
 
-def _statuses(raw: Optional[str]):
+def _statuses(raw: Optional[list[str]]):
+    # No param = the open set; an empty param = every status; several (comma-joined or repeated) are OR-ed.
     if raw is None:
         return list(svc.DEFAULT_OPEN)
-    return [s.strip() for s in raw.split(",") if s.strip()]
+    return multi_values(raw) or []
 
 
 @router.get("/sample-requests/products")
@@ -106,9 +108,9 @@ def search_products(
 
 @router.get("/sample-requests")
 def list_requests(
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     project_id: Optional[str] = Query(None),
-    salesperson_id: Optional[str] = Query(None),
+    salesperson_id: Optional[list[str]] = Query(None),
     q: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=200),
@@ -123,7 +125,7 @@ def list_requests(
         actor=actor,
         statuses=_statuses(status_filter),
         project_id=validate_uuid_path(project_id, resource="Project") if project_id else None,
-        salesperson_id=salesperson_id or None,
+        salesperson_id=multi_uuids(salesperson_id, "salesperson_id"),
         q=q,
         page=page,
         limit=limit,
