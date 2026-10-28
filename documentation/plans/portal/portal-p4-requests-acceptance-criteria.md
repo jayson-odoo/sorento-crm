@@ -77,7 +77,8 @@ Supersedes P4-24 and P4-25 for the salesperson's form and view. Parity table: #1
   their form.
 - PAR-2 The portal itself is unchanged (no portal landing, token or routing in the CRM).
 - PAR-3 Staff list, detail and every staff action button are unchanged. A portal field the staff detail lacks is
-  added to the staff detail READ-ONLY (Purchase Request / Sponsorship "External reference"; each kind checked).
+  added to the staff detail READ-ONLY (Purchase Request "External reference"; the portal Sponsorship form has no
+  such field, `SubmissionForm.tsx:364`, so the Sponsorship staff detail is unchanged; each kind checked).
 - PAR-4 Complaint: staff edit of root cause, resolution and technical response stays as it is and never creates a
   salesperson-side revision diff.
 - PAR-5 The CRM keeps D7 deferred deletes for the salesperson (`my_request.delete` 10s,
