@@ -159,6 +159,8 @@ def test_sec_dealer_kit_off_refuses_price_tag_routes(scene, monkeypatch):
 #: Every write route under /api/v1/my-requests -> the extra write slug it needs, or None for
 #: "view_own only" (what the portal allows: draft save, submit, comments, attachments ...).
 WRITE_ROUTES = {
+    # portal parity: POST /ai-extract on public/ai_extract.py, view_own only, no extra write slug
+    ("POST", "/ai-extract"): None,
     ("POST", "/attachments"): None,
     ("DELETE", "/attachments/{link_id}"): None,
     ("POST", "/lookups/line-pricing"): None,

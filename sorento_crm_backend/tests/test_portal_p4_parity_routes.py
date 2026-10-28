@@ -49,6 +49,23 @@ def _seed_product(db):
     return p
 
 
+def _seed_lookup_sets(db):
+    """Own chain: the portal 404s a whitelisted set that has no row, so seed any that are missing."""
+    from app.models.lookup import LookupOption, LookupSet
+
+    for key in SET_KEYS:
+        if db.query(LookupSet).filter(LookupSet.set_key == key).first():
+            continue
+        ls = LookupSet(id=s.uid(), set_key=key, name=f"ZZT {key}", is_active=True)
+        db.add(ls)
+        db.flush()
+        db.add_all([
+            LookupOption(set_id=ls.id, value="zzt_a", label="ZZT A", sort_order=1, is_active=True),
+            LookupOption(set_id=ls.id, value="zzt_b", label="ZZT B", sort_order=2, is_active=True),
+        ])
+    db.commit()
+
+
 def _mounted(sc):
     """The salesperson is allowed and the my-requests router is up: guards every refusal below against a bare 404."""
     s.ok(sc.me.requestor_options())
@@ -67,7 +84,8 @@ def test_me_equals_the_portal_me(scene):
 
 @pytest.mark.parametrize("path,params", LOOKUPS, ids=[p for p, _ in LOOKUPS][:0] or None)
 def test_lookup_answers_the_same_as_the_portal(scene, path, params):
-    prod = _seed_product(scene.db)
+    _seed_product(scene.db)
+    _seed_lookup_sets(scene.db)
     mine = scene.me.call("GET", path, params=params)
     s.not_a_missing_route(mine)
     theirs = s.ok(scene.portal.call("GET", path, params=params))
