@@ -100,7 +100,8 @@ const MY_REQUEST_ITEMS: MenuConfig = orderLandingKinds(
 });
 
 
-export const MENU_SIDEBAR: MenuConfig = [
+/** The staff menu: everything above MY WORK. */
+const STAFF_SIDEBAR: MenuConfig = [
   { heading: 'OVERVIEW' },
   {
     // The home page is the My pending widget (/conversation-sla-tracking/my-pending) over
@@ -1464,7 +1465,15 @@ export const MENU_SIDEBAR: MenuConfig = [
   // { title: 'Store - Services', icon: Codepen, disabled: true },
   // { title: 'AI Promt', icon: Theater, disabled: true },
   // { title: 'Invoice Generator', icon: ScrollText, disabled: true },
+];
 
+/**
+ * The sidebar. The staff menu is tagged `staff` here, once, so no staff item reaches a salesperson
+ * whatever staff grant they also hold (pp4_0001 grants them `.create` on new product applications),
+ * the next item added to it included. A salesperson sees MY WORK and MY REQUESTS only.
+ */
+export const MENU_SIDEBAR: MenuConfig = [
+  ...STAFF_SIDEBAR.map((item) => (item.audience ? item : { ...item, audience: 'staff' as const })),
   { heading: 'MY WORK', audience: 'salesperson' },
   {
     title: 'Projects',

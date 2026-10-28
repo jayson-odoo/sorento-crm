@@ -64,6 +64,8 @@ async function ComplaintDetailWrapper({
           label: 'Fulfilment DOs',
           icon: <Truck />,
           content: <ComplaintFulfilmentOrdersSection complaintId={id} />,
+          // The fulfilment DOs route needs the complaint's `view`.
+          staffOnly: true,
         },
       ]}
     >

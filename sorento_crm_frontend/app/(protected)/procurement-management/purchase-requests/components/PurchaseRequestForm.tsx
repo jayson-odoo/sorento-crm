@@ -68,6 +68,7 @@ import { submitVerb } from '@/lib/submission-status';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import {
   useMyRequestSubmission,
+  useOwnContactId,
   useReviseMyRequest,
   useSaveMyRequestDraft,
   useSubmitMyRequest,
@@ -107,12 +108,14 @@ export default function PurchaseRequestForm(props: PurchaseRequestFormProps) {
 
 function LimitedPurchaseRequestForm(props: PurchaseRequestFormProps) {
   const searchParams = useSearchParams();
+  const ownContactId = useOwnContactId();
   return (
     <PurchaseRequestFormBody
       {...props}
       limited
       fromId={!props.requestId ? searchParams?.get("from") || null : null}
       revise={Boolean(props.requestId) && searchParams?.get("revise") === "1"}
+      ownContactId={ownContactId}
     />
   );
 }
@@ -125,7 +128,14 @@ function PurchaseRequestFormBody({
   limited,
   fromId = null,
   revise: revising = false,
-}: PurchaseRequestFormProps & { limited: boolean; fromId?: string | null; revise?: boolean }) {
+  ownContactId = null,
+}: PurchaseRequestFormProps & {
+  limited: boolean;
+  fromId?: string | null;
+  revise?: boolean;
+  /** A limited user's own contact: a new request names them as requestor, as the portal does. */
+  ownContactId?: string | null;
+}) {
   const router = useRouter();
   const isEditMode = !!requestId;
   const kind = expectedRequestType ?? defaultRequestType;
@@ -214,6 +224,15 @@ function PurchaseRequestFormBody({
     },
     mode: 'onTouched',
   });
+
+  // A new request starts with their own contact as requestor (the portal's `defaultFromContact`);
+  // a copy keeps the requestor of the row it came from.
+  useEffect(() => {
+    if (requestId || fromId || !ownContactId) return;
+    if (!form.getValues("requested_by_contact_id")) {
+      form.setValue("requested_by_contact_id", ownContactId);
+    }
+  }, [requestId, fromId, ownContactId, form]);
 
   const requestType =
     form.watch("request_type") ?? defaultRequestType ?? "purchase_request";

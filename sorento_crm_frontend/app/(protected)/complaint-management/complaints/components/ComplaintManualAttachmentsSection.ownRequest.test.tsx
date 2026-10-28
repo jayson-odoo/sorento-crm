@@ -95,10 +95,11 @@ describe('ComplaintManualAttachmentsSection, salesperson (requestKind="complaint
   });
 
   it('download uses myRequestsAttachmentDownloadUrl, not the staff resource route', () => {
-    mount({ requestKind: 'complaint' });
-    const hrefs = screen.getAllByRole('link', { name: /download/i }).map((a) => a.getAttribute('href'));
-    expect(hrefs).toContain('/api/v1/my-requests/attachments/att-own/download');
-    expect(hrefs).toContain('/api/v1/my-requests/attachments/att-staff/download');
+    const { container } = mount({ requestKind: 'complaint' });
+    // A fetch through apiFetch (RequestAttachments.impersonatedDownload.test.tsx), not a plain link.
+    expect(screen.getAllByRole('button', { name: /download/i })).toHaveLength(2);
+    const hrefs = Array.from(container.querySelectorAll('a[href]')).map((a) => a.getAttribute('href'));
+    expect(hrefs.filter((h) => h?.includes('/my-requests/attachments/'))).toEqual([]);
     expect(hrefs.filter((h) => h?.includes('resource-management'))).toEqual([]);
   });
 });

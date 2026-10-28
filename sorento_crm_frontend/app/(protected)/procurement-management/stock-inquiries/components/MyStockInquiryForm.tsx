@@ -12,6 +12,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import {
   useMyRequestSubmission,
+  useOwnContactId,
   useReviseMyRequest,
   useSaveMyRequestDraft,
   useSubmitMyRequest,
@@ -88,6 +89,16 @@ export default function MyStockInquiryForm({ inquiryId }: { inquiryId?: string }
       setInitialized(true);
     }
   }, [row, initialized, form]);
+
+  // A new inquiry starts with their own contact as requestor (the portal's `defaultFromContact`);
+  // a copy keeps the requestor of the row it came from.
+  const ownContactId = useOwnContactId();
+  useEffect(() => {
+    if (inquiryId || fromId || !ownContactId) return;
+    if (!form.getValues('salesperson_contact_id')) {
+      form.setValue('salesperson_contact_id', ownContactId);
+    }
+  }, [inquiryId, fromId, ownContactId, form]);
 
   const status = inquiryId ? String(row?.status ?? '') : 'draft';
   const canRevise = revising && row?.revision?.allowed === true;

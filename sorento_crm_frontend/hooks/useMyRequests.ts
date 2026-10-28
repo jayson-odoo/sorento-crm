@@ -18,6 +18,8 @@ import {
   submitMySampleRequest,
   updateMyNewProductApplication,
   uploadAttachment,
+  downloadMyRequestAttachment,
+  fetchOwnContactId,
   updateMySampleRequest,
   approveMyPriceTagRequest,
   collectMyPriceTagRequest,
@@ -38,6 +40,7 @@ import {
 import type { SampleRequestWrite } from '@/types/sampleRequest';
 import type { NewProductApplicationWrite } from '@/types/newProductApplication';
 import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
+import { useImpersonationSession } from '@/lib/impersonation-store';
 
 /**
  * A salesperson's own request, read and written through My Requests (PORTAL-P4-REQUESTS): the
@@ -212,6 +215,26 @@ export function useMyNewProductApplicationPrefill(stockInquiryId: string | null)
     enabled: Boolean(stockInquiryId),
     staleTime: Infinity,
     retry: 1,
+  });
+}
+
+/** Their own contact, the requestor a new request starts with (the portal's `defaultFromContact`). */
+export function useOwnContactId(): string | null {
+  const targetId = useImpersonationSession()?.targetUser.id ?? null;
+  const { data } = useQuery({
+    queryKey: [MY_REQUEST_KEY, 'own-contact', targetId],
+    queryFn: fetchOwnContactId,
+    staleTime: Infinity,
+  });
+  return data ?? null;
+}
+
+/** Save a file of their own request (`downloadMyRequestAttachment`). */
+export function useDownloadMyRequestAttachment() {
+  return useMutation({
+    mutationFn: ({ attachmentId, filename }: { attachmentId: string; filename: string }) =>
+      downloadMyRequestAttachment(attachmentId, filename),
+    onError: (error: Error) => toast.error(error.message || 'Download failed.'),
   });
 }
 

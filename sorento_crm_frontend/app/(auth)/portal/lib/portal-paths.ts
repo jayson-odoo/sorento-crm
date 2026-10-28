@@ -141,6 +141,7 @@ export function crmPathForPortalPath(path: string): string | null {
   if (!list) return null;
   if (parts.length === 0) return list;
   if (parts.length === 1) return list;
-  if (parts[1] === 'new') return `${list}/new`;
+  // An opportunity is created in a modal on its list; there is no `/new` page.
+  if (parts[1] === 'new') return kind === 'sales_opportunity' ? list : `${list}/new`;
   return `${list}/${parts[1]}`;
 }

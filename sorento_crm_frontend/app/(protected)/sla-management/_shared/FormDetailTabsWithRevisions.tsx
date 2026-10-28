@@ -8,6 +8,7 @@ import { useRevisionEnabledMap } from './useRevisionEnabledMap';
 import { useStockInquiry } from '@/app/(protected)/procurement-management/stock-inquiries/hooks/useStockInquiries';
 import { usePurchaseRequest } from '@/app/(protected)/procurement-management/purchase-requests/hooks/usePurchaseRequests';
 import { useComplaint } from '@/app/(protected)/complaint-management/complaints/hooks/useComplaints';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import type { FormSLASourceType } from './formSLAService';
 import type { FormCommentKind } from '@/types/formComments';
 
@@ -61,6 +62,8 @@ export default function FormDetailTabsWithRevisions({
   revisionsKind,
   commentsKind,
 }: FormDetailTabsWithRevisionsProps) {
+  // A user limited to their own rows reads neither the SLA trackers nor a staff-only tab.
+  const { limited } = useRequestScope(sourceEntityType);
   const { data: enabledMap } = useRevisionEnabledMap();
   const revisionsEnabled = enabledMap?.[revisionsKind] === true;
   // Only a DISABLED type has to ask whether this record has history; an enabled
@@ -95,6 +98,7 @@ export default function FormDetailTabsWithRevisions({
       sourceEntityId={sourceEntityId}
       extraTabs={tabs}
       commentsKind={commentsKind}
+      limited={limited}
     >
       {children}
     </FormDetailWithSLATabs>

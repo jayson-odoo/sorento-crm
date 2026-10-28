@@ -7,7 +7,11 @@ import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDate } from '@/lib/helpers';
-import { OwnAttachmentDelete, OwnAttachmentUpload } from '@/components/common/OwnRequestAttachmentActions';
+import {
+  OwnAttachmentDelete,
+  OwnAttachmentDownload,
+  OwnAttachmentUpload,
+} from '@/components/common/OwnRequestAttachmentActions';
 import { myRequestsAttachmentDownloadUrl, type MyRequestKind } from '@/services/myRequestsService';
 import { useDeletePurchaseRequestAttachment } from '../hooks/usePurchaseRequests';
 import { linkPurchaseRequestAttachment } from '../services/purchaseRequestService';
@@ -175,19 +179,23 @@ export default function PurchaseRequestAttachmentsSection({
                 <ExternalLink className="size-4" />
                 View
               </Button>
-              <Button variant="outline" size="sm" asChild onClick={(e) => e.stopPropagation()}>
-                <a
-                  href={
-                    link.attachment_id
-                      ? downloadUrl(link.attachment_id)
-                      : (link.file_url ?? '#')
-                  }
-                  download={displayName}
-                >
-                  <Download className="size-4" />
-                  Download
-                </a>
-              </Button>
+              {own && link.attachment_id ? (
+                <OwnAttachmentDownload attachmentId={link.attachment_id} filename={displayName} />
+              ) : (
+                <Button variant="outline" size="sm" asChild onClick={(e) => e.stopPropagation()}>
+                  <a
+                    href={
+                      link.attachment_id
+                        ? downloadUrl(link.attachment_id)
+                        : (link.file_url ?? '#')
+                    }
+                    download={displayName}
+                  >
+                    <Download className="size-4" />
+                    Download
+                  </a>
+                </Button>
+              )}
               {requestKind && link.uploaded_by_role === 'contact' && (
                 <OwnAttachmentDelete linkId={link.id} refreshKeys={refreshKeys} />
               )}

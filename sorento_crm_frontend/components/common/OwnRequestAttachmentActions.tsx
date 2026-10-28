@@ -1,17 +1,17 @@
 'use client';
 
 /**
- * A salesperson's own files on a CRM request page (PORTAL-P4-REQUESTS P4-16): upload goes through
- * My Requests, as the portal does; remove parks `my_request_attachment.unlink` (D7), which runs
- * the portal's own unlink when its window lapses. Separate components so the hooks (and the
- * QueryClient they need) mount only in own-request mode.
+ * A salesperson's own files on a CRM request page (PORTAL-P4-REQUESTS P4-16): upload and download
+ * go through My Requests, as the portal does; remove parks `my_request_attachment.unlink` (D7),
+ * which runs the portal's own unlink when its window lapses. Separate components so the hooks (and
+ * the QueryClient they need) mount only in own-request mode.
  */
 
-import { Trash2, Upload } from 'lucide-react';
+import { Download, Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
-import { useUploadMyRequestAttachment } from '@/hooks/useMyRequests';
+import { useDownloadMyRequestAttachment, useUploadMyRequestAttachment } from '@/hooks/useMyRequests';
 import type { MyRequestAttachmentKind } from '@/services/myRequestsService';
 
 export function OwnAttachmentUpload({
@@ -41,6 +41,32 @@ export function OwnAttachmentUpload({
           }}
         />
       </label>
+    </Button>
+  );
+}
+
+/** Download as a fetch, not a link: an admin viewing as them must send the impersonation header. */
+export function OwnAttachmentDownload({
+  attachmentId,
+  filename,
+}: {
+  attachmentId: string;
+  filename: string;
+}) {
+  const download = useDownloadMyRequestAttachment();
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={download.isPending}
+      onClick={(e) => {
+        e.stopPropagation();
+        download.mutate({ attachmentId, filename });
+      }}
+    >
+      <Download className="size-4" />
+      Download
     </Button>
   );
 }
