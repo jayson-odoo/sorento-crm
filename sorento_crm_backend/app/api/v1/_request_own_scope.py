@@ -26,7 +26,10 @@ The second section guards the Sample Request, New Product Application, Sales Opp
 Tag Request staff routers (S4, S5, S6, S7), whose
 reads keep their own module rule: for a limited user every write there answers 403 (or 404 on a
 row that is not theirs); they write through ``/api/v1/my-requests``. The price tag list narrows
-itself with ``module_limited_me`` (its reads had no "only theirs" rule before S7).
+itself with ``module_limited_me`` (its reads had no "only theirs" rule before S7). These four are
+company-scoped, so a limited user reads them in their contact's own companies, as the portal does
+(``portal_contact_scope``, crew answer a94723506 (a)), not in their one active company: the rows
+are already narrowed to their own. Staff keep the active company.
 """
 from __future__ import annotations
 
@@ -38,7 +41,9 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.dependencies import get_current_user_or_api_key
+from app.models.base import set_company_scope
 from app.services import own_scope
+from app.services.company_scope_resolver import portal_contact_scope
 from app.services.error_handler import AppException, handle_not_found
 from app.utils.multi_value import multi_values
 
@@ -265,10 +270,15 @@ def module_limited_me(db: Session, user_id: str, kind: str) -> Optional[own_scop
 def check_module(
     db: Session, user_id: str, kind: str, method: str, path_format: str, path_params: dict
 ) -> None:
-    """Raise unless a user limited in ``kind`` may reach this staff route; no-op for anyone else."""
+    """Raise unless a user limited in ``kind`` may reach this staff route; no-op for anyone else.
+
+    A limited user with a contact reads in that contact's companies (module docstring), set on
+    the request session before the row check below and the route's own query."""
     m = module_limited_me(db, user_id, kind)
     if m is None:
         return
+    if m.contact_id:
+        set_company_scope(db, portal_contact_scope(db, m.contact_id))
     prefix = _MODULE_PREFIX[kind]
     path = path_format[len(prefix):] if path_format.startswith(prefix) else path_format
     role = _MODULE_READS[kind].get((method, path.rstrip("/")))

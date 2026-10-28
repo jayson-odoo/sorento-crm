@@ -8,7 +8,9 @@ surfaces). Only the caller differs: a CRM session instead of a portal token. ``m
 turns the session into a transient, never-persisted ``PortalToken`` of the user's linked contact
 and that contact's workspace space, so every ownership rule, draft / submit / revise rule,
 notification and SLA tracker is the portal's. The audit actor is the session user, stamped by
-``get_current_user`` (the target user and the admin under impersonation).
+``get_current_user`` (the target user and the admin under impersonation). The company scope is
+the portal's too: the contact's own companies (``portal_contact_scope``), not the user's one
+active company (crew answer a94723506 (a)), for the routes and the deferred deletes alike.
 
 Who may call it (fails closed, before the portal code runs):
 
@@ -70,9 +72,11 @@ from app.api.v1.public.portal_sample_request import register_sample_request_rout
 from app.api.v1.user_management.contact_impersonation import _resolve_contact_and_space
 from app.database import get_db
 from app.dependencies import get_actor_user_id, get_current_user
+from app.models.base import company_scope, set_company_scope
 from app.models.portal import PortalToken
 from app.modules.runtime.guards import module_blocked
 from app.services import own_scope
+from app.services.company_scope_resolver import portal_contact_scope
 from app.services.error_handler import AppException
 from app.services.user_service import UserPermissionService
 from app.services.uuid_path_param import validate_uuid_path
@@ -237,6 +241,8 @@ def _token_for(
         write_slug,
         "You cannot create this form." if request.method == "POST" else "You cannot change this form.",
     )
+    # The scope the portal's own request would carry (`_portal_token_scope`), for the rest of it.
+    set_company_scope(db, portal_contact_scope(db, str(token.contact_id)))
     _act_through(request, db, str(token.contact_id))
     if getattr(request.state, "impersonation_session_id", None):
         # An admin viewing as the salesperson: a comment records them, as a portal
@@ -323,6 +329,12 @@ def _acting_as(
         yield
 
 
+def _contact_scope(db: Session, token: PortalToken):
+    """The contact's companies for one deferred delete, as ``_token_for`` sets them for a route.
+    Scoped to the call, since a commit runs inside a sweep or someone else's poll."""
+    return company_scope(db, portal_contact_scope(db, str(token.contact_id)))
+
+
 def delete_request(
     db: Session,
     user_id: str,
@@ -339,17 +351,18 @@ def delete_request(
     if kind not in DELETE_KINDS:
         raise _not_here()
     request_id = validate_uuid_path(request_id, resource="Request")
-    if check_only:
-        if kind == "price_tag_request":
-            deletable_price_tag_draft(db, token, request_id)
-        else:
-            deletable_submission_draft(db, token, kind, request_id)
-        return
-    with _acting_as(db, user_id, token, real_user_id):
-        if kind == "price_tag_request":
-            delete_price_tag_draft(db, token, request_id)
-        else:
-            delete_submission_draft(db, token, kind, request_id)
+    with _contact_scope(db, token):
+        if check_only:
+            if kind == "price_tag_request":
+                deletable_price_tag_draft(db, token, request_id)
+            else:
+                deletable_submission_draft(db, token, kind, request_id)
+            return
+        with _acting_as(db, user_id, token, real_user_id):
+            if kind == "price_tag_request":
+                delete_price_tag_draft(db, token, request_id)
+            else:
+                delete_submission_draft(db, token, kind, request_id)
 
 
 def unlink_attachment(
@@ -364,11 +377,12 @@ def unlink_attachment(
     ``user_id``, behind that my-requests route's gates. A staff upload stays locked."""
     token = portal_token_for(db, user_id, UNLINK_KINDS)
     link_id = validate_uuid_path(link_id, resource="Attachment")
-    if check_only:
-        removable_attachment_link(db, token, link_id)
-        return
-    with _acting_as(db, user_id, token, real_user_id):
-        remove_attachment_link(db, token, link_id)
+    with _contact_scope(db, token):
+        if check_only:
+            removable_attachment_link(db, token, link_id)
+            return
+        with _acting_as(db, user_id, token, real_user_id):
+            remove_attachment_link(db, token, link_id)
 
 
 register_sample_request_routes(sample_request_router, _kind_token("sample_request"))
