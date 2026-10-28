@@ -105,7 +105,15 @@ def test_revision_fits_alembic_version_and_sits_on_main_head():
     module = _load()
     assert module.revision == NAME
     assert len(module.revision) <= 32
-    assert module.down_revision == "cim_0001_catalogue_photos"
+    from alembic.config import Config
+    from alembic.script import ScriptDirectory
+
+    cfg = Config(str(VERSIONS.parent.parent / "alembic.ini"))
+    cfg.set_main_option("script_location", str(VERSIONS.parent))
+    script = ScriptDirectory.from_config(cfg)
+    assert script.get_heads() == [NAME]
+    parent = script.get_revision(module.down_revision)
+    assert parent is not None and parent.revision != NAME
 
 
 def test_p3_01_p3_02_grants_exactly_two_slugs_to_salesperson_only_and_is_rerunnable():
