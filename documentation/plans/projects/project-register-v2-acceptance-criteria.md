@@ -29,8 +29,9 @@ BE = `sorento_crm_backend/app`.
 - B2 A user holding `projects.parties.edit` sees "Create developer|architect|main contractor '<text>'" when no option
   matches; one click calls `POST /api/v1/project-sales/parties/` with `{name, party_type}` and selects the new party.
 - B3 Without `projects.parties.edit` there is no create row (and the POST stays 403).
-- B4 Creating a name that already exists for that type (case and spacing ignored) returns the existing party; no
-  second row is written.
+- B4 Creating a name that already exists for that type (case and spacing ignored) among ACTIVE parties of the
+  company returns the existing party with 200 (a new one is 201); no second row is written. The Parties page's
+  create dialog then says "<name> already exists" instead of "added" (it never silently drops typed fields).
 
 ## C. AI extract (text and photo)
 
@@ -48,8 +49,11 @@ BE = `sorento_crm_backend/app`.
   `not_found`), `mukim` (text), `customer` (exactly one customer with that name -> match; else `not_found`, never
   `new`), `title` (text).
 - C4 The endpoint writes nothing except the AI usage-log row: no project, party or customer row is created.
+- C5b The files' total size is capped (150 MB, as the portal route): over the cap -> 422 before reading on.
 - C5 Per-user rate limit: the 11th call in 10 minutes -> 429.
-- C6 Provider failure -> 502 with a plain message; the form keeps what the user typed.
+- C6 Provider failure -> 502 with a plain message; any other error -> a generic message (no raw exception text);
+  the form keeps what the user typed. `title`, `mukim` (and `state` value) may arrive as plain strings: the dialog
+  lists and fills them either way.
 - C7 The dialog's existing review table lists only proposals with status match or new; its one new extension is a
   status cell per field (pill "Match" or "New", no button). The existing per-field x removes a row. Not-found values
   are not listed and stay blank on the form.
@@ -76,6 +80,13 @@ BE = `sorento_crm_backend/app`.
 - D6 Existing request rules hold: no interest in your own project, no second open interest by the same user, none on
   an unapproved project.
 - D7 Naming a different developer clears the match and the button returns to "Register project".
+- D8 Salesperson (view_own + `projects.registrations.submit`, no `projects.projects.view`): the Check works
+  (`POST /projects/clash-preview` allowed for the submit slug) but each candidate carries ONLY project_id, code,
+  title and blocks (no owner, stage, developer, value, activity or similarity); "Register interest" works on an
+  approved project of their company (`POST /projects/{id}/takeover-requests` kind dispute allowed for the submit
+  slug; the response carries the request only); afterwards they land on the Projects list with a toast
+  "Interest registered in <code>", not on the project page. Developer / Architect / Main contractor search
+  (`GET /parties/`) works for them (reference data); the create row needs `projects.parties.edit` as before.
 
 ## E. Interested people and reassign
 
@@ -89,15 +100,19 @@ BE = `sorento_crm_backend/app`.
 - E5 The Reassign dialog lists interested people first (with their date), then everyone else; picking an interested
   person runs E3, picking anyone else keeps today's reassign.
 - E6 E3 writes an activity-feed line "Reassigned from <A> to <B>" and the owner change is in the audit log.
-- E7 A user who holds only `projects.projects.view_own` and has a pending interest can open that project.
+- E7 (revised after security review 28 Oct) Registering interest grants NO read access: a user who holds only
+  `projects.projects.view_own` and has a pending interest still cannot open that project (404), until a manager
+  reassigns it to them (then they own it). This keeps the "only theirs" rule (PORTAL-P2).
 
 ## F. Notifications
 
 - F1 A new interest notifies the project owner and every active holder of `projects.projects.manage`, never the
   requester.
 - F2 E3 notifies the new owner and the previous owner.
-- F3 `MANAGEMENT_PERMISSION` is `projects.projects.manage`; `management_user_ids` returns an active user whose role
-  grants it (the existing floor-breach, staleness and PO-mismatch alerts now reach managers).
+- F3 `MANAGEMENT_PERMISSION` is `projects.projects.manage`; `management_user_ids(db, company_id)` returns active,
+  non-integration users whose role grants it AND who have access to that company (`user_companies`), like
+  `approver_user_ids`; every caller passes the project's (or lead's) company. A manage holder of another company
+  receives none of these alerts.
 
 ## G. Brands removed everywhere (no migration)
 
@@ -138,7 +153,10 @@ BE = `sorento_crm_backend/app`.
   `sales_profile.contact_id` = the user's `respond_contact_id`; NO notification of any kind is created. Required
   fields are not enforced on a draft (title only).
 - J3 The draft is visible (list with a "Draft" pill, detail, edit) to its owner only; another salesperson and staff
-  lists do not show it; `GET /projects/<id>` by anyone else -> 404.
+  lists do not show it; `GET /projects/<id>` by anyone else -> 404. The draft's page shows its fields with Edit and
+  Submit for approval only: no Access card, no data tabs, and no error toast (nothing else is queried).
+- J3b A submit-only user sees Edit only on their own draft or rejected registration (not on pending or approved).
+- J3c For a submit-only user the form has no Lead field (a lead links only to an approved project).
 - J4 Submit (new or from a draft): `approval_state = 'pending'`, `submitted_at` set, decided_* and reject_reason
   cleared; required fields enforced (A5); exactly the portal's "submitted" notice: an in-app notification of type
   `project_registration_submitted` to every active holder of `projects.registrations.approve` in the company except
