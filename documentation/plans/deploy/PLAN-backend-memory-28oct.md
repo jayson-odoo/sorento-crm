@@ -81,10 +81,41 @@ glibc. Treat absolute numbers as indicative and the shape (grows or plateaus) as
    smaller than 1.4 GB per worker; owner step 1 (`Shared_*` against `Private_Dirty` per worker)
    confirms it. `gc.freeze` appears nowhere in the backend today.
 
-**Conclusion:** nothing grows with request count; the growth is time-shaped. The leading cause is
-(7): each worker's garbage collector un-shares the preloaded app heap, so preload's saving erodes
-over hours. glibc malloc arena retention (many threads per worker, 100+ MB numpy temporaries per
-chat turn) may add to it; UNVERIFIED until owner step 1 shows the arena numbers.
+**Conclusion (local):** nothing grows with request count. The leading cause was (7): each
+worker's garbage collector un-shares the preloaded app heap. Superseded in part by the prod
+numbers below.
+
+## Prod numbers (owner steps 0-2, 28 Oct 11:2x) and what they change
+
+PID 1 is gunicorn. MemAvailable 3,681 MB (guard 4,500). backend_blue 7.305 GiB; cgroup anon
+7,421 MiB, file 45 MB (no page cache in play). 2,617 requests in the last hour (0.73 a second).
+**Prod runs 8 workers** (`WORKERS=8` in the prod env; the 10 Sep decision was 4,
+`PLAN-deploy-memory-and-ci-speed.md:42`).
+
+| process | age | rss | shared_dirty | private_dirty | [heap] | arenas |
+|---|---|---|---|---|---|---|
+| master (pid 1) | 7.7 h | 470 | 223 | 230 | 15 | 0 MB |
+| 7 workers | 7.7 h | 916-1264 | 208-216 | 679-1030 | 72-121 | 0-15 MB |
+| 1 worker (replaced ~10:30) | 0.9 h | 1144 | 215 | 905 | 69 | 4 MB |
+
+- **Not a leak, warm-up.** A 0.9 h worker is as big as the 7.7 h ones, so a worker reaches its
+  size within its first hour. Recycling (`max_requests`) cannot beat that, and at about 327
+  requests per worker per hour a limit of 5,000 would recycle each worker once a day:
+  `max_requests` is dropped from this PR.
+- **malloc arenas are negligible** (15 MB at most): no `MALLOC_ARENA_MAX`.
+- **The preload copy is real:** the master's 230 MB `private_dirty` are pages every worker has
+  already copied, so about 8 x 230 = 1.8 GB of the colour is duplicated preload; each worker
+  still shares only about 212 MB of it. `gc.freeze()` stops the share the collector causes
+  (finding 7). Pages that request code writes refcounts into are still copied. Estimate 0.8-1.6 GB
+  saved at 8 workers (UNVERIFIED until measured on prod after release).
+- **What a worker builds after the fork** (local, `postfork_harness.py`, Python-traced): start-up
+  events +25 MB (boto3/botocore and apscheduler first imported there: 103 + 20 modules, only
+  about 3 MB of it), 420 report/list/stock GETs +8 MB (SQLAlchemy's compiled-statement cache),
+  the chat lookup path +151 MB (43 MB of row vectors, 105 MB of indexes and caches in
+  `app/services/chatbot`). Footprint grew 407 MB over the same steps, so about half is outside
+  Python's own accounting (C allocations and memory freed but kept by the allocator).
+- **Worker count dominates:** each worker costs about 0.9 GB, so 8 -> 4 frees about 3.6 GB. That
+  is the owner's call (asked through crew).
 
 ## Zero-downtime recovery today (owner runs)
 
@@ -175,38 +206,30 @@ A stray `TTIN` is undone by one `docker kill -s TTOU $C`.
 
 - `gc.freeze()` in gunicorn's `pre_fork` hook (`gunicorn.conf.py`): the preloaded heap moves to
   the permanent generation before every fork, so a worker's collector never walks it and never
-  un-shares it (finding 7). Red-first.
-- `max_requests` + `max_requests_jitter` (env `GUNICORN_MAX_REQUESTS` 5000,
-  `GUNICORN_MAX_REQUESTS_JITTER` defaults to half the limit, 2500; 0 = off): a worker retires after
-  5000-7500 requests and
-  the master forks a fresh one, which bounds any remaining growth (arenas, caches). The jitter is
-  half the limit on purpose: a retiring worker stops accepting while it drains (up to 100 s with
-  a staff event stream open) and gunicorn forks its replacement only after it exits, so if every
-  worker drains at once nothing accepts. Measured locally (2 workers, tiny limit, slow connections
-  on both): 86 s with no worker accepting, 2 requests timed out. Workers start together after a
-  deploy and take requests at the same rate, so only the jitter separates them: at 10,000 requests
-  an hour (about 69 per worker per 100 s) the chance that all four retire within 100 s of each
-  other is about 0.9% per round with a jitter of 500 and about 0.008% with 2500; three at once
-  (one worker serving) about 0.9%.
-- `DrainingServer` (`app/uvicorn_worker.py`): a self-retiring worker (max_requests or TTOU) gets
-  the deploy's graceful shutdown, not the hard kill above: it stops the inbox drains when shutdown
-  starts (the request limit sends no signal) and keeps gunicorn's heartbeat going through the
-  bounded shutdown from a task on the event loop, never past `graceful_timeout`. On the loop on
-  purpose (review round 1): the drains wait runs off it (`asyncio.to_thread`, `app/main.py`
-  shutdown_event), so the beats continue through it, while a worker whose loop wedges stops
-  beating and is still killed at 120 s. Chosen over raising `timeout` to 210 s or more, which
-  would also leave a genuinely hung worker serving errors for 3.5 minutes before it is replaced.
+  un-shares it (finding 7, prod: 8 x 230 MB copied). Red-first.
+- `DrainingServer` (`app/uvicorn_worker.py`): a worker retired with `TTOU`, the tool for shedding
+  workers without a restart, gets the deploy's graceful shutdown instead of the 60-100 s SIGABRT
+  above. A task on the event loop keeps gunicorn's heartbeat going through the shutdown, never
+  past `graceful_timeout`. It runs on the loop on purpose (review round 1): the drains wait runs
+  off the loop (`asyncio.to_thread`, `app/main.py` shutdown_event), so the beats continue through
+  it, while a worker whose loop wedges stops beating and is still killed at 120 s. This was chosen
+  over raising `timeout` to 210 s or more, which would leave a genuinely hung worker serving
+  errors for 3.5 minutes. The inbox already stops at the TTOU's SIGTERM (`app/tasks/chat_turns.py:178`).
 - The warm path `fill()` honours `_CACHE_CAP` (finding 5).
-- `MALLOC_ARENA_MAX=2`: only if owner step 1 shows the arenas hold the memory.
 
-Cost of each recycle: the new worker re-embeds the lookup texts (`lookup_lists.py:755-829`, the
-cache is per process): 7,035 texts, 213,597 characters, about 53k tokens. On the 20 Oct copy
-the embedder prompt has no production label, so it is OpenAI `text-embedding-3-small` in chunks
-of 500: 15 requests, about USD 0.001 at list price (USD 0.02 per million tokens). On Gemini it
-would be 71 requests of 100, about USD 0.008 (UNVERIFIED list price). The new worker matches by
-spelling only for those 10-70 s, on a quarter of the traffic. At 10,000 requests an hour (the
-real number comes from owner step 2) each worker recycles about every 2-3 hours: about 40
-recycles a day, about USD 0.04 a day on OpenAI, and about 0.5% of chat turns on spelling-only
-matching. If that
-window ever shows up in chat quality, warm the vectors once in the master before the fork (shared,
-no window); not built now, no evidence it is needed.
+Dropped after the prod numbers: `max_requests` and its jitter (no slow leak to bound; at about 327
+requests per worker per hour it would not run), and with it the shutdown's own inbox stop (only
+the request limit retired a worker without a signal). `MALLOC_ARENA_MAX`: not needed (arenas at 15
+MB at most).
+
+Not built, with the trigger that would justify it:
+
+- **Warm the lookup vectors once in the master before the fork** so all workers share them: 43 MB
+  of vectors per worker (`lookup_lists.py:755`), about 300 MB at 8 workers, more if the
+  widest-set matrix and indexes (`:757`, `:192`, `:217`, `list_resolver.py:232`) are built there
+  too. Costs: a boot delay (the warm calls the embedding API, 15 OpenAI requests today), and a
+  fork-safety rule (it must finish synchronously before the fork, or a child inherits a held
+  `_store_lock`). Trigger: the owner keeps 8 workers and the colour is still over budget after
+  this PR ships.
+- **Redis for the vectors**: no. Every turn does matrix maths over the whole row set in process;
+  fetching 43 MB per turn is worse than holding it.

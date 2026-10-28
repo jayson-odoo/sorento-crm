@@ -55,18 +55,6 @@ workers = int(os.environ.get("WORKERS", "4"))
 # uvicorn's worker with a bounded graceful shutdown (CHAT-INBOX-QUEUE, see that module).
 worker_class = "app.uvicorn_worker.InboxUvicornWorker"
 
-# BACKEND-MEMORY: a worker retires itself after this many requests (plus a random jitter, so the
-# workers never retire together) and the master forks a fresh one from the preloaded app. Without
-# it a worker lived as long as the container and kept everything it ever grew: prod's colour was
-# 6.6 GiB six hours after a fresh start (documentation/plans/deploy/PLAN-backend-memory-28oct.md).
-# It retires through the same graceful shutdown as a deploy's stop (app/uvicorn_worker.py).
-# GUNICORN_MAX_REQUESTS=0 turns it off. The jitter defaults to half the limit, whatever the limit
-# is set to: a retiring worker stops accepting while it drains (up to 100 s) and its replacement
-# is forked only once it exits, and workers that start together retire together unless the
-# jitter spreads them.
-max_requests = int(os.environ.get("GUNICORN_MAX_REQUESTS", "5000"))
-max_requests_jitter = int(os.environ.get("GUNICORN_MAX_REQUESTS_JITTER", str(max_requests // 2)))
-
 _api_host = os.environ.get("API_HOST", "0.0.0.0")
 _api_port = os.environ.get("API_PORT", "8000")
 bind = f"{_api_host}:{_api_port}"

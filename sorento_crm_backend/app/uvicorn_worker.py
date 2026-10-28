@@ -8,8 +8,8 @@ before gunicorn's SIGKILL. 100 s lets a sync mode-off `/chat/turn` (n8n's 90 s b
 finish; the budget against `graceful_timeout` is written out in
 `app/tasks/chat_turns.py` (INBOX_SHUTDOWN_GRACE_SECONDS).
 
-BACKEND-MEMORY: a worker also retires on its own (gunicorn `max_requests`, or a `TTOU`), and
-`DrainingServer` makes that shutdown as graceful as a deploy's stop.
+BACKEND-MEMORY: a worker also retires on its own (a `TTOU`), and `DrainingServer` makes that
+shutdown as graceful as a deploy's stop.
 """
 from __future__ import annotations
 
@@ -26,17 +26,15 @@ TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS = 100
 
 
 class DrainingServer(Server):
-    """uvicorn's server, closing two gaps a self-retiring worker hits:
-
-    - uvicorn's request limit (gunicorn `max_requests`) ends the main loop with no signal, so the
-      inbox drains, which stop taking rows at SIGTERM, kept taking them for the whole connection
-      wait; shutdown now stops them first, whatever started it.
-    - gunicorn's heartbeat is sent only from uvicorn's main loop (`Server.on_tick`), so through the
-      shutdown (up to 148 s, app/tasks/chat_turns.py) the arbiter heard nothing and aborted the
-      worker after its `timeout` (120 s), mid-row. A task on the event loop keeps beating until
-      the shutdown returns, never past `heartbeat_for` (gunicorn's graceful_timeout). On the loop
-      on purpose: the drains wait runs off it (`asyncio.to_thread`, app/main.py), so the beats go
-      on through it, while a wedged loop stops beating and the arbiter still kills the worker."""
+    """uvicorn's server for a worker that retires on its own (BACKEND-MEMORY): a `TTOU` sends
+    the worker SIGTERM but gunicorn's master keeps checking its heartbeat against `timeout`
+    (120 s), and uvicorn sends that heartbeat only from its main loop (`Server.on_tick`). An open
+    staff event stream holds the shutdown for 100 s, so the master SIGABRTed the worker 60-100 s
+    in, before the lifespan shutdown let the inbox drains finish. A task on the event loop keeps
+    beating until the shutdown returns, never past `heartbeat_for` (gunicorn's graceful_timeout).
+    On the loop on purpose: the drains wait runs off it (`asyncio.to_thread`, app/main.py), so the
+    beats go on through it, while a wedged loop stops beating and the master still kills it. A
+    deploy's stop is unaffected: the master does not check heartbeats while it stops."""
 
     HEARTBEAT_EVERY = 5.0
 
@@ -46,9 +44,6 @@ class DrainingServer(Server):
         self._heartbeat_for = heartbeat_for
 
     async def shutdown(self, sockets=None) -> None:
-        from app.tasks import chat_turns
-
-        chat_turns.begin_inbox_shutdown()
         beat = asyncio.ensure_future(self._beat())
         try:
             await super().shutdown(sockets)

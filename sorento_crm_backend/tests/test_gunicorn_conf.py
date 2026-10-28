@@ -152,54 +152,7 @@ def test_post_fork_is_idempotent_per_call(monkeypatch):
         assert call.kwargs.get("close") is False
 
 
-def test_max_requests_recycles_workers_by_default(monkeypatch):
-    """BACKEND-MEMORY: with no env set, a worker retires itself after max_requests (plus a
-    jitter so the four workers never retire together). Without it a worker lives as long
-    as the container and keeps every byte it ever grew (prod, 28 Oct: 6.6 GiB six hours
-    after a fresh start)."""
-    monkeypatch.delenv("GUNICORN_MAX_REQUESTS", raising=False)
-    monkeypatch.delenv("GUNICORN_MAX_REQUESTS_JITTER", raising=False)
-    module = _load_conf_module()
-    assert module.max_requests > 0
-    assert 0 < module.max_requests_jitter <= module.max_requests
 
-
-def test_max_requests_env_override_and_zero_turns_recycling_off(monkeypatch):
-    """BACKEND-MEMORY: both knobs come from the env; GUNICORN_MAX_REQUESTS=0 is gunicorn's
-    own "never recycle", the rollback without a rebuild."""
-    monkeypatch.setenv("GUNICORN_MAX_REQUESTS", "500")
-    monkeypatch.setenv("GUNICORN_MAX_REQUESTS_JITTER", "50")
-    module = _load_conf_module()
-    assert (module.max_requests, module.max_requests_jitter) == (500, 50)
-
-    monkeypatch.setenv("GUNICORN_MAX_REQUESTS", "0")
-    module = _load_conf_module()
-    assert module.max_requests == 0
-
-
-def test_the_worker_hands_the_request_limit_to_uvicorn(monkeypatch, tmp_path):
-    """BACKEND-MEMORY: the limit reaches the uvicorn server inside our worker class, which is
-    what actually stops the worker (uvicorn `limit_max_requests`), and the bounded graceful
-    shutdown the inbox drains rely on is still there. Built the way gunicorn builds it: the
-    config file's names set on a real gunicorn Config, then the worker class constructed."""
-    from gunicorn.config import Config
-    from gunicorn.glogging import Logger
-
-    from app.uvicorn_worker import TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS, InboxUvicornWorker
-
-    monkeypatch.setenv("GUNICORN_MAX_REQUESTS", "500")
-    monkeypatch.setenv("GUNICORN_MAX_REQUESTS_JITTER", "50")
-    module = _load_conf_module()
-    cfg = Config()
-    for name, value in vars(module).items():
-        if name in cfg.settings:
-            cfg.set(name, value)
-    cfg.set("worker_tmp_dir", str(tmp_path))
-
-    worker = InboxUvicornWorker(1, 0, [], None, 120, cfg, Logger(cfg))
-
-    assert 500 <= worker.config.limit_max_requests <= 550
-    assert worker.config.timeout_graceful_shutdown == TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS
 
 
 def test_pre_fork_freezes_the_preloaded_heap():
@@ -217,23 +170,3 @@ def test_pre_fork_freezes_the_preloaded_heap():
         assert gc.get_freeze_count() > 0
     finally:
         gc.unfreeze()
-
-
-def test_default_jitter_spreads_retirements_over_half_the_limit(monkeypatch):
-    """BACKEND-MEMORY: a retiring worker stops accepting while it drains (up to 100 s with a
-    staff event stream open), and gunicorn forks its replacement only once it has exited. The
-    workers start together after a deploy and take requests at the same rate, so only the
-    jitter separates their retirements: with all of them draining at once nothing accepts
-    (measured locally 28 Oct, 2 workers: 86 s, 2 requests timed out). A jitter of half the
-    limit makes four workers within 100 s of each other rare (about 0.008% of rounds at
-    10,000 requests an hour, against 0.9% at a tenth)."""
-    monkeypatch.delenv("GUNICORN_MAX_REQUESTS", raising=False)
-    monkeypatch.delenv("GUNICORN_MAX_REQUESTS_JITTER", raising=False)
-    module = _load_conf_module()
-    assert module.max_requests_jitter * 2 >= module.max_requests
-
-    # The limit is re-sized from the owner's request rate; the jitter follows it unless set.
-    for limit in (2000, 20000):
-        monkeypatch.setenv("GUNICORN_MAX_REQUESTS", str(limit))
-        module = _load_conf_module()
-        assert module.max_requests_jitter == limit // 2, (limit, module.max_requests_jitter)
