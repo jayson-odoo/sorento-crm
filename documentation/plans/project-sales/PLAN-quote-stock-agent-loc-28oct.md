@@ -1,7 +1,6 @@
 # PLAN: quotation line stock limited to the user's allowed locations (QUOTE-STOCK-AGENT-LOC)
 
-Status: Plan. Behaviour card filed to the owner, waiting on the open questions. Track: M rule change,
-but a new permission needs a seed migration, so the L steps apply (migration checked on a dev copy,
+Status: Build. Card answered 28 Oct 19:25. Track: M (no migration, no permission change; reviewer, no
 security-reviewer).
 
 ## Owner rulings
@@ -12,6 +11,9 @@ security-reviewer).
 - 28 Oct ~19:10: "if a user with no linked agent then cannot see stock, if got several agent then can
   see combination of different groups, certain permission can see the stocks, actually should depend
   on the location allowed for this contact la, that's the source of truth"
+- 28 Oct ~19:25: "Q1 based on contact's stock visibility, Q2 no one, purely based on contact's allowed
+  location, Q3 quotation screen only first, Q4 a, need to be careful if a contact didn't set any
+  allowed locations mean it is allow all, unless it is configured to exclude all location"
 
 ## What exists today (origin/main 9e41d84fc2)
 
@@ -42,18 +44,32 @@ security-reviewer).
   (`app/dependencies.py:414`). Permissions are registered in `app/rbac/permission_registry.py` and
   seeded to roles by a migration (pattern: `alembic/versions/sat_0001_stock_ask_done.py`).
 
-## Proposed rule (pending the card answers)
+## Rule (owner rulings applied)
 
-For a user without the new permission (and not admin/superadmin):
-1. No linked active agent -> no stock on any quotation line, and no selector.
-2. Linked agent(s) -> the locations allowed for the user's contact (`resolve_policy`), only the
-   warehouse set; the chatbot's mode and hide-zero settings do not apply here.
-3. Line figure = Available summed over those locations; the popover lists only those locations
-   (no "Other group" rows outside the set). No selector.
-4. Enforced on the server: the quotation's stock read computes the set itself; the browser never
-   names the locations.
+Same for every user, admins included (Q2: no bypass; `resolve_policy` has no role check):
+1. No linked ACTIVE agent (`agents_for_contact` on `users.respond_contact_id`) -> no stock, blank.
+2. Otherwise the location set = `scope_warehouse_ids(resolve_policy(contact))`: contact override >
+   access types > global default (`stock_visibility.py:229`). No row anywhere = all
+   (`default_policy` `:121-135` returns `warehouse_ids=None`). Only an empty include list or an
+   exclusion covering every active warehouse gives none -> blank.
+3. Intersected with active `fulfilment_planning` warehouses: the universe the old picker drew from.
+4. The agent's `location_group` plays no part (Q1 (a)); several agents change nothing.
 
-With the permission (or admin/superadmin): today's selector and figures, unchanged.
+## Design
+
+- BE: `GET /api/v1/project-sales/quotation-line-stock?product_id=` in
+  `app/api/v1/projects/quotations.py` (READ pair, like `/quotation-line-images` `:390`). Returns
+  `StockDetail` over the set, or `null`. Set computation in one small service function; the read
+  reuses `FulfilmentBoardService._stock_detail` via a new `warehouse_ids` seam (see Seams).
+- FE: picker and its localStorage removed; `QuotationStockChip`, the popover and the set-part probes
+  read the new endpoint through `fulfilmentPlanningService` -> a hook; `null` renders nothing; the
+  popover shows the read's rows (all-zero rows dropped), AutoCount restates them without appending
+  other locations (`withAutoCount` option), no `pools` read.
+- Untouched (Q3 (b)): `fulfilment-planning/stock-detail`, `inventory/stock-status`, the board.
+
+## Slices
+
+One lane, one slice S1 (BE route + FE swap). Tester red tests from the UAC first, then coder.
 
 ## Seams (mapped 28 Oct, read-only)
 
@@ -69,11 +85,7 @@ With the permission (or admin/superadmin): today's selector and figures, unchang
 - No caller applies a Stock visibility policy to a staff user today; all resolve it from a request
   `contact_id` (e.g. `inventory_service.py:735`, `purchase_orders.py:174`).
 
-## Open questions
-
-See the behaviour card (crew ask, 28 Oct). Answers recorded here once relayed.
-
 ## Next
 
-UAC file alongside, tickets, red tests (tester), coder, kill test, reviewer + security-reviewer,
-agent-browser 1280/375 on the crew copy, hand-test script.
+Red tests (tester), coder, kill test, reviewer, agent-browser 1280/375 on the crew copy, hand-test
+script (agent + restricted contact, agent + unset contact, contact excluding all, no agent).

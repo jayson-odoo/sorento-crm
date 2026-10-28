@@ -1,0 +1,77 @@
+# UAC: quotation line stock = the locations the user's contact may see (QUOTE-STOCK-AGENT-LOC)
+
+Plan: `PLAN-quote-stock-agent-loc-28oct.md` (same folder). Owner rulings 28 Oct 19:00, 19:10, 19:25.
+
+## Journey
+
+1. A salesperson opens a project, then a quotation, then the Lines tab.
+2. Each line with a product shows "N avail" under Qty: Available stock summed over the locations
+   the salesperson's contact may see (the contact's Stock visibility, the same setting the chatbot
+   answers from). There is no "Stock at" picker.
+3. Clicking the figure opens the stock table: only those locations, then the incoming SPOs at them.
+4. A user with no linked sales agent, or whose contact may see no location, sees nothing there.
+
+## Definitions
+
+- **User's contact**: `users.respond_contact_id`.
+- **Linked agent**: an ACTIVE `sales_agents` row whose `contact_id` is the user's contact
+  (`agents_for_contact`, `app/services/sales/portal_agent.py:24`). The agent's `location_group` plays
+  no part in the location set (owner Q1 (a)).
+- **Allowed set**: `scope_warehouse_ids(db, resolve_policy(db, contact))`
+  (`app/services/stock_visibility.py:394`, `:229`); None = every active warehouse. Then intersected
+  with active warehouses where `fulfilment_planning` is true (the universe the old picker drew from).
+- **Planning warehouse**: active `warehouses` row with `fulfilment_planning = true`.
+
+## Phase 2: backend, `GET /api/v1/project-sales/quotation-line-stock?product_id=<uuid>`
+
+Permission: any of `projects.projects.view` / `projects.projects.view_own` (the quotation READ pair).
+Response: the existing `StockDetail` shape over the allowed set, or JSON `null` (no stock allowed).
+
+- **AC-QSA-1 [BE]** Given a user with no `respond_contact_id`, when they ask, then 200 `null`.
+- **AC-QSA-2 [BE]** Given a user whose contact is linked to no agent, or only to an INACTIVE agent,
+  then 200 `null`, even when the contact's Stock visibility allows locations.
+- **AC-QSA-3 [BE]** Given a linked agent and a contact override that includes planning warehouses
+  W1 and W2, and stock of the product at W1, W2 and W3 (another group), then `locations` lists W1 and
+  W2 only, and `available_qty` = sum over W1 and W2 of (on hand - SO qty + SPO qty); W3 adds nothing.
+- **AC-QSA-4 [BE]** Given a linked agent and NO Stock visibility rows at all (no override, no access
+  type row, no default row), then every planning warehouse counts (two different groups and a site
+  pool all contribute). Same answer when the only row is a global default with `warehouse_ids` NULL.
+- **AC-QSA-5 [BE]** Given a linked agent and an override that excludes every active warehouse, then
+  200 `null`. Same for an override whose include list is empty.
+- **AC-QSA-6 [BE]** Given an override that excludes W3 only, then every planning warehouse except W3.
+- **AC-QSA-7 [BE]** Given an allowed set containing a warehouse with `fulfilment_planning = false`
+  that holds stock, then it is neither listed nor counted.
+- **AC-QSA-8 [BE]** Given no override and an access type held by the contact whose row includes W1
+  only, then only W1 (the inherited tier applies, `stock_visibility.py:203`).
+- **AC-QSA-9 [BE]** Given a contact linked to two active agents with DIFFERENT `location_group`
+  values, then the set is the contact's Stock visibility set, unchanged by either group.
+- **AC-QSA-10 [BE]** Given an open SPO for the product at W1 (allowed) and one at W3 (not allowed),
+  then `incoming` carries only the W1 SPO.
+- **AC-QSA-11 [BE]** Given an admin user with no linked agent, then 200 `null` (no role bypass,
+  owner Q2). Given a user without either READ permission, then 403. Given a product_id that is not a
+  uuid, then 422.
+
+## Phase 1/2: frontend, Lines tab
+
+- **AC-QSA-20 [FE]** The Lines tab toolbar renders no "Stock at" picker, for any user; the
+  `quotation-lines.stock-group` localStorage key is neither read nor written.
+- **AC-QSA-21 [FE]** A line with a product reads `quotation-line-stock` for that product and shows
+  "N avail", toned against the quoted qty exactly as today (green covers, amber some, red none).
+- **AC-QSA-22 [FE]** When the read answers `null`, the Qty cell shows no chip and no text.
+- **AC-QSA-23 [FE]** The popover table lists only the read's locations, leaving out rows whose on
+  hand, SO qty and SPO qty are all zero. AutoCount's figures (`useStockStatus`) restate those rows
+  only: no "Other group" rows are appended, and no separate `group=pools` read is made. Incoming lists
+  the read's `incoming` only.
+- **AC-QSA-24 [FE]** A set line's parts read the same endpoint per part (no group), with the same
+  null = nothing rule.
+
+## Phase 3: browser (agent-browser, crew test copy)
+
+- **AC-QSA-30 [E2E]** At 1280 and 375 px, via sidebar navigation: a quotation's Lines tab shows no
+  picker, figures for the signed-in user's allowed locations only, the popover not clipped.
+
+## Out of scope (owner Q3 (b))
+
+The shared `fulfilment-planning/stock-detail` and `inventory/stock-status` endpoints, the fulfilment
+board, and Inventory screens keep today's behaviour. Trigger to revisit: the owner asks for the same
+rule outside the quotation screen.
