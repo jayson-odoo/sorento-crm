@@ -35,7 +35,7 @@ from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import chat_report
 from app.services.chatbot.lanes.business import report_ask
-from app.services.chatbot.lanes.business import sales_company_ask
+from app.services.chatbot.lanes.business import sales_basis_ask, sales_company_ask
 from app.services.chatbot.lanes.business import ranking_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
@@ -1871,7 +1871,7 @@ def run_fetch(
         parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
         order_status_raw = report_ask.ASK_NAME
     _company_answer = isinstance(parse_output.get("required_ask"), dict) and (
-        parse_output["required_ask"].get("ask") == sales_company_ask.ASK_NAME
+        parse_output["required_ask"].get("ask") in (sales_company_ask.ASK_NAME, sales_basis_ask.ASK_NAME)
     )  # the reply to the Yearly comparison's company question re-runs THAT ask: never retyped here
     if (
         domain in contracts.ORDER_OR_SALES_DOMAINS
@@ -2123,6 +2123,39 @@ def run_fetch(
                 trace.add("report_period", {"unreadable": True, "order_status": order_status_raw})
             return _fixed_reply(report_ask.UNREADABLE_PERIOD_LINE)
 
+    slot_open = parse_output.get("required_ask") if isinstance(parse_output.get("required_ask"), dict) else {}
+    answering_basis = slot_open.get("ask") == sales_basis_ask.ASK_NAME
+    if (
+        slot_open.get("ask") != sales_company_ask.ASK_NAME
+        and (
+            answering_basis
+            or (
+                order_status_raw == report_ask.ASK_NAME
+                and parse_output.get("capability_from") == "sales_analysis"
+                and jsc.js_string(parse_output.get("group_by") or "") in ("", "year")
+            )
+        )
+    ):
+        # SALES-TOTAL-ASK (#1931, owner ruling 27 Oct): a company sales total (and the Yearly comparison, axis year) naming
+        # no basis is asked "Invoiced, delivered, ordered or outstanding?" before anything runs, answered ONLY by the
+        # parser's declared answer; never defaulted. The answer runs the first message's own ask on the REPORT ASK
+        # (no chat path calls `crm_sales_analysis`); outstanding, which the analysis never had, keeps #1931's layout.
+        settled = sales_basis_ask.settle(db, parse_output)
+        if settled is not None:
+            if trace is not None:
+                trace.add("required_ask", {"ask": sales_basis_ask.ASK_NAME, "done": settled.done, "values": settled.values})
+            if not settled.done:
+                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            answered = sales_basis_ask.run_input(settled)
+            parse_output = {
+                **parse_output, **answered, "required_ask": None, "order_status": "sales_analysis",
+                "basis": answered.get("sales_basis"),  # the declared answer wins over a stray `basis` key
+            }
+        if sales_basis_ask.named_basis(parse_output) == "outstanding":
+            parse_output = sales_basis_ask.as_report_ask(parse_output)
+        elif parse_output.get("order_status") == "sales_analysis":
+            parse_output = report_ask.take_words(report_ask.by_capability(parse_output, seam=False), "")
+        order_status_raw = report_ask.ASK_NAME
     if order_status_raw == contracts.SALES_TARGET_STATUS and domain in contracts.ORDER_OR_SALES_DOMAINS:
         # SALES-TARGET-CHAT: the target ask has its own tool; the route scopes the contact
         # (its links or its agents) and the grant was checked above, before any pick.

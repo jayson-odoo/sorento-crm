@@ -179,10 +179,17 @@ def test_total_sales_with_no_axis_asks_the_four_option_basis_then_a_picked_deliv
     assert not args.get("group_by"), args
 
 
-def test_total_sales_for_a_two_company_contact_asks_the_company_first(bot) -> None:
+def test_total_sales_for_a_two_company_contact_asks_the_basis_then_the_company(bot) -> None:
+    """#1931 (T6, kept as merged): the company sales total asks the one basis question first; the report ask then asks
+    the company before it runs, and both ride the run."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("sales_analysis", group_by=None, sales_basis=None, basis=None), "total sales 2026")
+    assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
+    text, calls = bot.say(_answer(2), "the middle one")
     assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    text, calls = bot.say(_answer(2), "the second company")
+    args = _only_report_ask(calls)
+    assert args["company"] == MOCHA_ID and args["basis"] == "delivered", args
 
 
 # ---------------------------------------------------------------- the Yearly comparison is the report ask (crew, 28 Oct)
