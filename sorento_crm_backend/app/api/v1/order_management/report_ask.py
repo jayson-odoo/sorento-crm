@@ -411,17 +411,16 @@ def report_ask(
     # sales bases the Sales report one. A linked contact is forced to its own customers on every basis below.
     outstanding_kind = basis_norm in ask.OPEN_BASES
     granted = (OUTSTANDING_GRANT if outstanding_kind else GRANT) in keys
-    # A salesperson is narrowed to its own book: when granted only on `mine`, when not granted
-    # always (it needs an agent link with customers; the agent axes are then refused).
+    # Owner 28 Oct 08:40: ONE rule for totals and rankings, set by the contact's linked customer. A contact with no
+    # linked customer sees ALL figures, a live salesperson without the reveal included; a linked contact is forced to its
+    # customers below (`enforce_customer_scope`). Only a "my ..." ask is narrowed to a salesperson's own book.
     # The one rule the chatbot seams share (`contact_asker.may_ask_sales_ranking`).
     decision, book = contact_asker.may_ask_sales_ranking(db, str(resolved) if resolved else None, granted=granted)
     if decision == "not_granted":
         if outstanding_kind:
             raise AppException(403, "Outstanding is not enabled for your account.", code="outstanding_not_enabled")
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
-    if not granted and (group_norm == "sales_agent" or agents or card_agents):
-        raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
-    narrowed = book is not None and (mine or not granted)
+    narrowed = book is not None and mine
 
     # Brand scope off the contact this route already resolved, whatever the key: the router
     # dependency stamps it only for the legacy shared key (security H1). Stamped before any

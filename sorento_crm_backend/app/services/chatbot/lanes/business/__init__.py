@@ -777,7 +777,10 @@ def sales_figure_decision(
     if order_status == "top_selling" and isinstance(parse_output, dict):
         # REPORT-SMART-L R1: a top_selling verdict that skipped `by_capability` is the sales ranking it becomes.
         parse_output, order_status = report_ask.from_top_selling(parse_output), report_ask.ASK_NAME
-    if order_status != report_ask.ASK_NAME or db is None or not contact_respond_id or not str(contact_respond_id).strip():
+    if (
+        order_status not in (report_ask.ASK_NAME, *report_ask.SALES_STATUSES)  # owner 28 Oct 08:40: a total, like a ranking
+        or db is None or not contact_respond_id or not str(contact_respond_id).strip()
+    ):
         return "not_granted"
     from app.services import contact_asker
     from app.services.field_access import resolve_contact_with_null_workspace_fallback

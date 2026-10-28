@@ -1,9 +1,11 @@
 """RED tests - REPORT-SMART-L UAC AC11: `mine` on the sales report-ask route.
 
 A salesperson (a role-user with role `salesperson` whose `users.respond_contact_id` is the contact)
-asks for sales without the `sales_orders.sales_report` grant and gets their own book only: the
-customers whose `customers.sales_agent_id` is a `sales_agents` row linked to the contact. With the
-grant, `mine=true` narrows to the book and `mine` false is unscoped (today). Staff and unknown
+asks for sales without the `sales_orders.sales_report` grant. Owner 28 Oct 08:40: one rule for totals and
+rankings, set by the contact's linked customer: no linked customer sees ALL figures, a linked contact only its
+customers. Only a "my ..." ask (`mine=true`) narrows a salesperson to their own book: the customers whose
+`customers.sales_agent_id` is a `sales_agents` row linked to the contact. With the grant, `mine=true` narrows
+to the book and `mine` false is unscoped. Staff and unknown
 contacts are never narrowed; a dealer keeps its own customer scope whatever `mine` says.
 Postgres only; every row is seeded here (generic names).
 
@@ -100,12 +102,31 @@ def _refused(resp, codes=("sales_report_not_enabled", "report_dimension_not_allo
 # ------------------------------------------------------------------ 1. salesperson, no grant
 
 
-@pytest.mark.parametrize("mine", MINE)
-@pytest.mark.parametrize("group_by", [None, "customer", "product", "brand", "category", "month"])
-def test_a_salesperson_without_the_grant_sees_only_their_book(client, db, mine, group_by):
+@pytest.mark.parametrize("group_by", [None, "customer", "brand", "month"])
+def test_a_salesperson_without_the_grant_and_no_linked_customer_sees_all_figures(client, db, group_by):
+    """Owner 28 Oct 08:40: the total and every ranking run over ALL customers, never narrowed."""
     w = _world(db)
     contact = _salesperson(db, w, granted=False)
-    body = _ok(client, contact, group_by=group_by, top_n=10 if group_by else None, mine=mine)
+    for mine in (None, False):
+        body = _ok(client, contact, group_by=group_by, top_n=10 if group_by else None, mine=mine)
+        assert _total(body) == ALL_TOTAL, body
+        if group_by and group_by != "month":
+            assert len(body["rows"]) == 3, body["rows"]
+
+
+@pytest.mark.parametrize("group_by", ["product", "category"])
+def test_an_item_or_category_ranking_without_mine_is_refused_like_a_granted_salesperson(client, db, group_by):
+    """REPORT-SMART-L R1 stands (the item / category ranking is the own-book "my ..." ask for a salesperson)."""
+    w = _world(db)
+    resp = _ask(client, _salesperson(db, w, granted=False), group_by=group_by, top_n=10)
+    assert resp.status_code == 403 and resp.json()["code"] == "customer_not_permitted", resp.text
+
+
+@pytest.mark.parametrize("group_by", [None, "customer", "product", "brand", "category", "month"])
+def test_a_salesperson_without_the_grant_with_mine_sees_only_their_book(client, db, group_by):
+    """The 23 Oct "my ..." own-book ruling stands (owner 28 Oct 08:40 keeps it): `mine` narrows."""
+    w = _world(db)
+    body = _ok(client, _salesperson(db, w, granted=False), group_by=group_by, top_n=10 if group_by else None, mine=True)
     assert _total(body) == BOOK_TOTAL, body
     assert not any("Outside" in n or "Brand 3" in n or "Cat 3" in n or "MS-3" in n for n in _names(body)), body["rows"]
     if group_by:
@@ -118,24 +139,25 @@ def test_a_salesperson_without_the_grant_ranks_the_book_customers_by_name(client
     assert _names(body) == {w.in1.customer_name, w.in2.customer_name}, body["rows"]
 
 
-# ------------------------------------------------------------------ 2. salesperson, no grant, agent axes refused
+# ------------------------------------------------------------------ 2. salesperson, no grant, agent axes (owner 28 Oct 08:40: allowed)
 
 
 @pytest.mark.parametrize("mine", MINE)
-def test_a_salesperson_without_the_grant_may_not_rank_by_sales_agent(client, db, mine):
+def test_a_salesperson_without_the_grant_may_rank_by_sales_agent(client, db, mine):
     w = _world(db)
     contact = _salesperson(db, w, granted=False)
-    _refused(_ask(client, contact, group_by="sales_agent", top_n=10, mine=mine))
+    body = _ok(client, contact, group_by="sales_agent", top_n=10, mine=mine)
+    assert body["status"] == "ok" and _total(body) == (BOOK_TOTAL if mine else ALL_TOTAL), body
 
 
 @pytest.mark.parametrize("param", ["sales_agent_ids", "customer_agent_ids"])
-@pytest.mark.parametrize("mine", MINE)
-def test_a_salesperson_without_the_grant_may_not_filter_by_agent(client, db, param, mine):
+def test_a_salesperson_without_the_grant_may_filter_by_agent(client, db, param):
     w = _world(db)
     contact = _salesperson(db, w, granted=False)
     agent = seed_agent(db, code="ZZT Any Agent")
     db.commit()
-    _refused(_ask(client, contact, group_by="customer", top_n=10, mine=mine, **{param: [agent.id]}))
+    resp = _ask(client, contact, group_by="customer", top_n=10, **{param: [agent.id]})
+    assert resp.status_code == 200, resp.text
 
 
 # ------------------------------------------------------------------ 3. salesperson with the grant
@@ -189,6 +211,19 @@ def test_a_dealer_stays_on_its_own_customers_whatever_mine_says(client, db, mine
     db.commit()
     body = _ok(client, contact, group_by="brand", top_n=10, mine=mine)
     assert _total(body) == D("100.00") and len(body["rows"]) == 1, body
+
+
+@pytest.mark.parametrize("group_by", [None, "brand"])
+def test_a_linked_contact_gets_only_its_customer_on_a_total_and_a_ranking(client, db, group_by):
+    """Owner 28 Oct 08:40: a contact WITH a linked customer sees only that customer's figures, totals and rankings alike."""
+    w = _world(db)
+    contact = _contact(db, granted=True)
+    _link(db, contact, w.in2)
+    db.commit()
+    body = _ok(client, contact, group_by=group_by, top_n=10 if group_by else None)
+    assert _total(body) == D("200.00"), body
+    if group_by:
+        assert len(body["rows"]) == 1, body["rows"]
 
 
 @pytest.mark.parametrize("mine", [None, True])
@@ -260,8 +295,11 @@ def test_a_salesperson_also_linked_to_an_outside_customer_gets_only_linked_and_b
     _link(db, contact, w.in1)
     _link(db, contact, w.out)
     db.commit()
-    body = _ok(client, contact, group_by="brand", top_n=10)
+    body = _ok(client, contact, group_by="brand", top_n=10, mine=True)
     assert _total(body) == D("100.00") and len(body["rows"]) == 1, body
+    # Owner 28 Oct 08:40: without `mine` the contact's linked customers are all it sees.
+    body = _ok(client, contact, group_by="brand", top_n=10)
+    assert _total(body) == D("1100.00") and len(body["rows"]) == 2, body
 
 
 def test_a_salesperson_linked_only_outside_the_book_gets_zero_rows(client, db):
@@ -269,8 +307,11 @@ def test_a_salesperson_linked_only_outside_the_book_gets_zero_rows(client, db):
     contact = _salesperson(db, w, granted=False)
     _link(db, contact, w.out)
     db.commit()
-    resp = _ask(client, contact, group_by="brand", top_n=10)
+    resp = _ask(client, contact, group_by="brand", top_n=10, mine=True)
     assert resp.status_code != 200 or (_total(resp.json()) == 0 and not resp.json()["rows"]), resp.text
+    # Owner 28 Oct 08:40: without `mine` the linked customer's own figures are what it sees.
+    body = _ok(client, contact, group_by="brand", top_n=10)
+    assert _total(body) == D("1000.00"), body
 
 
 def test_a_granted_agent_link_only_contact_keeps_todays_behaviour(client, db):
@@ -306,12 +347,19 @@ def test_a_granted_salesperson_with_mine_gets_the_book_echo(client, db, group_by
     assert len(_book_entries(body)) == 1, body["filters"]
 
 
-@pytest.mark.parametrize("mine", MINE)
 @pytest.mark.parametrize("group_by", [None, "customer", "brand"])
-def test_an_ungranted_salesperson_always_gets_the_book_echo(client, db, mine, group_by):
+def test_an_ungranted_salesperson_with_mine_gets_the_book_echo(client, db, group_by):
     w = _world(db)
-    body = _ok(client, _salesperson(db, w, granted=False), group_by=group_by, top_n=10 if group_by else None, mine=mine)
+    body = _ok(client, _salesperson(db, w, granted=False), group_by=group_by, top_n=10 if group_by else None, mine=True)
     assert len(_book_entries(body)) == 1, body["filters"]
+
+
+@pytest.mark.parametrize("mine", [None, False])
+def test_an_ungranted_salesperson_without_mine_gets_no_book_echo(client, db, mine):
+    """Owner 28 Oct 08:40: "Limited to: your customers" prints only when actually narrowed."""
+    w = _world(db)
+    body = _ok(client, _salesperson(db, w, granted=False), group_by="customer", top_n=10, mine=mine)
+    assert _book_entries(body) == [], body["filters"]
 
 
 @pytest.mark.parametrize("mine", [None, False])
