@@ -27,11 +27,16 @@ def test_r3_a_yearly_comparison_naming_no_basis_asks_the_three(bot) -> None:
     assert text.strip() == QUESTION, text
 
 
-@pytest.mark.parametrize("basis", ["invoiced", "delivered", "ordered"])
-def test_r3_the_answer_runs_the_yearly_comparison_with_that_basis(bot, basis) -> None:
+@pytest.mark.parametrize("position, basis", [(1, "invoiced"), (2, "delivered"), (3, "ordered")])
+def test_r3_the_answer_runs_the_yearly_comparison_with_that_basis(bot, position, basis) -> None:
     bot.say(_yearly(), "sales by year")
+    # Parser only (owner rule 28 Oct): the basis is the parser's declared pick of an offered option.
     text, calls = bot.say(
-        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], sales_basis=basis), basis
+        _reply(
+            message_type="business_query", domain_hint=None, intent_hint=None, entities=[], sales_basis=basis,
+            open_question_answer={"mode": "pick", "picked": [position], "items": [], "qty_for_all": None},
+        ),
+        basis,
     )
     assert [n for n, _a in calls] == ["crm_sales_analysis"], (calls, text)
     args = calls[0][1]

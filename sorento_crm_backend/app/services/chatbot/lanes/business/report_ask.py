@@ -314,7 +314,7 @@ SCOPE = rf.FieldSpec(name="scope", noun="scope", question="", resolve=lambda _db
 #: agents only. Never required: it is a field only when `_word_filters` found the word ambiguous.
 SALES_AGENT = rf.FieldSpec(
     name="sales_agent", noun="sales agent", question="Which sales agent?", resolve=lambda _db, _word, _extras: rf.Resolved("unknown"),
-    allow_all=False, required=False, pick_head="Which sales agent? Reply with a number:",
+    allow_all=False, required=False, pick_head="Which sales agent? Reply with a number:", parser_only=True,
 )
 
 def _company_question(extras: dict[str, Any]) -> str:
@@ -343,6 +343,7 @@ def _company_held(extras: dict[str, Any], values: dict[str, Any], args: dict[str
 COMPANY = rf.FieldSpec(
     name="company", noun="company", question="Which company?", question_fn=_company_question,
     resolve=lambda _db, _word, _extras: rf.Resolved("unknown"), allow_all=False, required=False, pick_head_is_question=True,
+    parser_only=True,
 )
 
 SALES_RANKING_ASK = rf.register(rf.AskType(
@@ -1401,6 +1402,14 @@ def _settle(
         args = _dict(extras.get("args"))
         held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
         held = _company_held(extras, _dict(slot.get("values")), args, held)
+        asked_field = next((f for f in SALES_RANKING_ASK.fields if f.name == slot.get("asking")), None)
+        if asked_field is not None and asked_field.parser_only:
+            # The company and the sales agent pick: the parser's declared pick only, never the reply's text.
+            answer = _dict(parse_output.get("required_ask_answer"))
+            return rf.collect(
+                db, SALES_RANKING_ASK, slot=slot, reply=rf.picked_option(slot, answer),
+                cancel=answer.get("mode") == "cancel", given=held,
+            ), None
         filled = _reply_fills(parse_output, _dict(slot.get("values")), held)
         if filled:
             # A partial answer is not a miss: what it settled is kept, and only what is

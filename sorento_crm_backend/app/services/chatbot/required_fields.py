@@ -123,6 +123,10 @@ class FieldSpec:
     pick_head: str | None = None
     #: The pick's first line is the field's own (live) question ("Sorento or Mocha?"), not a "Which ...?" head.
     pick_head_is_question: bool = False
+    #: The field is answered ONLY by the parser's declared pick of one of its offered options (`picked_option`): never
+    #: by the shape fallback of an ask that keeps one for its other fields, never by a typed label or digit
+    #: (owner rule 28 Oct 2026: understanding comes from the semantic parser only).
+    parser_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -378,6 +382,18 @@ def collect(
     return Outcome(values=values, extras=carried)
 
 
+def picked_option(slot: dict[str, Any], answer: Any) -> Resolved:
+    """The option of the open slot the PARSER declared picked (`open_question_answer` mode pick, its first position in
+    range), as `Resolved("ok")`; anything else is `Resolved("unknown")`. Never read from the reply's text."""
+    answer = answer if isinstance(answer, dict) else {}
+    options = list(slot.get("options") or [])
+    picked = [p for p in (answer.get("picked") or []) if isinstance(p, int) and not isinstance(p, bool)]
+    if answer.get("mode") == "pick" and picked and 1 <= picked[0] <= len(options):
+        value, label = options[picked[0] - 1]
+        return Resolved("ok", value=value, label=label)
+    return Resolved("unknown")
+
+
 def reply_verdict(
     verdict: dict[str, Any],
     slot: dict[str, Any] | None,
@@ -399,7 +415,8 @@ def reply_verdict(
     answer = verdict.get("open_question_answer")
     mode = answer.get("mode") if isinstance(answer, dict) else None
     answers = mode in ANSWER_MODES
-    if not ask.answered_by_parser or (ask.shape_fallback and not answers):
+    asked = next((f for f in (*ask.fields, *ask.slot_fields) if f.name == slot.get("asking")), None)
+    if not ask.answered_by_parser or (ask.shape_fallback and not answers and not (asked and asked.parser_only)):
         return _reply_verdict_by_shape(verdict, slot, text, ask)
     if not (text or "").strip() or not answers:
         return verdict, "required_ask_dropped"

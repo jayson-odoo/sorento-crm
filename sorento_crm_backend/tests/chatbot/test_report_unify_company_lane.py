@@ -52,12 +52,18 @@ def test_g5_no_named_subject_is_still_the_company_question(bot) -> None:
     assert f"{sorento} or {mocha}?" in text, text
 
 
+def _pick(position: int) -> dict:
+    """The parser's declared pick of one offered company (parser only, owner rule 28 Oct): Sorento 1, Mocha 2."""
+    return _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
+        open_question_answer={"mode": "pick", "picked": [position], "items": [], "qty_for_all": None},
+    )
+
+
 def test_r1_the_answer_runs_the_held_ask_for_that_company(bot) -> None:
     sorento, mocha = _two_companies(bot)
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    text, calls = bot.say(
-        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[]), mocha
-    )
+    text, calls = bot.say(_pick(2), mocha)
     args = _only_report_ask(calls)
     assert args["company"] == MOCHA_ID, args
     assert args["basis"] == "delivered" and args["date_from"] == "2026-01-01", args
@@ -97,9 +103,7 @@ def test_b1_a_basis_question_does_not_swallow_the_company_question(bot) -> None:
     text, calls = bot.say(answer, "delivered")
     assert calls == [], calls
     assert f"{sorento} or {mocha}?" in text, text
-    text, calls = bot.say(
-        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[]), mocha
-    )
+    text, calls = bot.say(_pick(2), mocha)
     args = _only_report_ask(calls)
     assert args["company"] == MOCHA_ID and args["basis"] == "delivered", args
 
@@ -113,9 +117,7 @@ def test_b1_a_bare_outstanding_kind_answer_still_asks_the_company(bot) -> None:
     )
     assert calls == [], calls
     assert f"{sorento} or {mocha}?" in text, text
-    text, calls = bot.say(
-        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[]), sorento
-    )
+    text, calls = bot.say(_pick(1), sorento)
     args = _only_report_ask(calls)
     assert args["company"] == DEFAULT_COMPANY_ID and args["basis"] == "pending_delivery", args
 
@@ -146,7 +148,11 @@ def test_n5_the_company_question_is_the_one_line_the_yearly_path_asks(bot) -> No
 
 
 def _noise() -> dict:
-    return _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[])
+    """A declared answer that picks nothing offered (the parser read an answer, but none of the options)."""
+    return _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
+        open_question_answer={"mode": "pick", "picked": [], "items": [], "qty_for_all": None},
+    )
 
 
 def _gave_up(text: str, calls) -> None:

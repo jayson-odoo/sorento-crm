@@ -23,23 +23,19 @@ GIVE_UP_BLANK = "I still can't tell which basis you mean. Ask for the yearly com
 CARRIED = ("sales_channel", "group_by", "top_n", "date_filter_start", "date_filter_end", "sales_company")
 
 
-def _bases() -> tuple[str, ...]:
+def _options() -> tuple[tuple[str, str], ...]:
+    """The bases offered as a pick (Invoiced, delivered or ordered), in the question's own order."""
     from app.services.chatbot.lanes.business.fetch import SALES_ANALYSIS_BASES
 
-    return SALES_ANALYSIS_BASES
+    return tuple((b, b.capitalize()) for b in ("invoiced", "delivered", "ordered") if b in SALES_ANALYSIS_BASES)
 
 
-def _resolve(_db: Any, word: str, extras: dict[str, Any]) -> rf.Resolved:
-    """The reply's basis: the parser's own reading (`sales_basis`), else the word itself when it is one of the bases."""
-    said = jsc.js_string(extras.get("reply_basis") or "").strip().lower()
-    typed = " ".join(jsc.js_string(word).split()).lower()
-    for candidate in (said, typed):
-        if candidate in _bases():
-            return rf.Resolved("ok", value=candidate, label=candidate)
+def _unread(_db: Any, _word: str, _extras: dict[str, Any]) -> rf.Resolved:
+    """The reply's words are never read here: only the parser's declared pick (`settle`)."""
     return rf.Resolved("unknown")
 
 
-BASIS = rf.FieldSpec(name="basis", noun="basis", question=QUESTION, resolve=_resolve, allow_all=False)
+BASIS = rf.FieldSpec(name="basis", noun="basis", question=QUESTION, resolve=_unread, allow_all=False)
 
 YEARLY_BASIS_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
@@ -56,23 +52,36 @@ YEARLY_BASIS_ASK = rf.register(rf.AskType(
     give_up=GIVE_UP,
     give_up_blank=GIVE_UP_BLANK,
     answer_drops=("escalation",),
+    # The parser is shown the three options (`turn/question.of_required_ask`) and a reply counts only through its
+    # declared answer; no shape fallback (owner rule 28 Oct 2026).
+    answered_by_parser=True,
 ))
 
 
 def settle(db: Any, parse_output: dict[str, Any]) -> rf.Outcome | None:
     """None when nothing is asked (the message named a basis); otherwise the question to send instead of running, or
-    the answered outcome (`run_input`)."""
+    the answered outcome (`run_input`). The answer is the parser's declared pick (or, for a fill, its own `sales_basis`
+    reading), resolved against the offered options; never the reply's words."""
     slot = parse_output.get("required_ask")
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME:
-        reply = jsc.js_string(parse_output.get("required_ask_reply") or "")
-        return rf.collect(
-            db, YEARLY_BASIS_ASK, slot=slot, reply=reply, extras={"reply_basis": parse_output.get("sales_basis")}
-        )
-    if jsc.js_string(parse_output.get("sales_basis") or "").strip().lower() in _bases():
+        answer = parse_output.get("required_ask_answer")
+        answer = answer if isinstance(answer, dict) else {}
+        reply = rf.picked_option(slot, answer)
+        if reply.status != "ok" and answer.get("mode") == "fill":
+            said = jsc.js_string(parse_output.get("sales_basis") or "").strip()
+            reply = next((rf.Resolved("ok", value=v, label=l) for v, l in _options() if v == said), reply)
+        outcome = rf.collect(db, YEARLY_BASIS_ASK, slot=slot, reply=reply, cancel=answer.get("mode") == "cancel")
+        if outcome.slot:
+            outcome.reply = QUESTION  # one question, one wording (the pick's numbered list is the parser's, not shown)
+        return outcome
+    if jsc.js_string(parse_output.get("sales_basis") or "").strip() in dict(_options()):
         return None
-    return rf.collect(
-        db, YEARLY_BASIS_ASK, extras={"carry": {key: parse_output.get(key) for key in CARRIED}}
+    outcome = rf.collect(
+        db, YEARLY_BASIS_ASK, given={"basis": rf.Resolved("ambiguous", options=_options())},
+        extras={"carry": {key: parse_output.get(key) for key in CARRIED}},
     )
+    outcome.reply = QUESTION
+    return outcome
 
 
 def run_input(outcome: rf.Outcome) -> dict[str, Any]:

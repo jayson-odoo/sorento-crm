@@ -217,6 +217,8 @@ def _pick(n: int) -> dict[str, Any]:
     return _reply(
         message_type="business_query", domain_hint=None, intent_hint=None, entities=[], reference_positions=[n],
         answers_open_question={"resolved": True, "picks": [n], "answer": None},
+        # Parser only (owner rule 28 Oct): the pick counts through the parser's declared answer to the open question.
+        open_question_answer={"mode": "pick", "picked": [n], "items": [], "qty_for_all": None},
     )
 
 
@@ -316,6 +318,17 @@ def test_h3_the_pick_runs_the_held_ask_with_that_agent_the_product_and_no_groupi
     assert not args.get("group_by"), args
     assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
     assert not args.get("customer_ids"), args
+
+
+def test_a_typed_agent_digit_with_no_parser_answer_is_never_the_pick(bot) -> None:
+    """Parser only (owner rule 28 Oct): the digit typed under "Which sales agent?" is not an answer unless the parser
+    declared one; it is a new message, and no agent filter runs."""
+    text, _calls = _ask_h3(bot)
+    n = _number_of(text, "ZZT-YU-3")
+    text, calls = bot.say(
+        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[]), str(n)
+    )
+    assert not [a for name, a in calls if a.get("sales_agent_ids")], (calls, text)
 
 
 def test_h4_total_sale_gives_the_same_pick_and_the_same_args_as_h3(bot) -> None:
