@@ -87,8 +87,8 @@ export function ImpersonationBanner() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <UserCog className="size-4 shrink-0" aria-hidden />
-          <span className="truncate">
-            You are currently impersonating{' '}
+          <span className="min-w-0 truncate">
+            <span className="hidden sm:inline">You are currently impersonating </span>
             <Link
               href={`/user-management/users/${session.targetUser.id}`}
               className="font-semibold underline underline-offset-2 hover:text-amber-950"
@@ -100,7 +100,7 @@ export function ImpersonationBanner() {
             </span>
           </span>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex shrink-0 items-center gap-2">
           <Button
             variant="outline"
             size="sm"
