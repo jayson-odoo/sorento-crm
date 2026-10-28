@@ -821,7 +821,13 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
         if isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= count
     }
     if len(positions) != 1:
-        return verdict
+        # The parser's `basis` naming one of the offered kinds answers the kind question (a parser field resolved against
+        # the offered options, AC-RU-17c), whatever domain or intent hint it also carried.
+        offered = [o[0] for o in (slot.get("options") or []) if isinstance(o, (list, tuple)) and o]
+        basis = verdict.get("basis")
+        if not (_dict(slot.get("extras")).get("kind_ask") and basis in OUTSTANDING_KINDS and basis in offered):
+            return verdict
+        positions = {offered.index(basis) + 1}
     return {**verdict, "open_question_answer": {"mode": "pick", "picked": sorted(positions), "items": [], "qty_for_all": None}}
 
 
@@ -894,6 +900,9 @@ def _settled_by_its_axis(values: dict[str, Any], group_by: Any) -> dict[str, Any
 #: REPORT-SMART-L R8: the engine's stamp (`with_held`), frame-shaped (`date_from`, `date_to`, the route params), plus
 #: `product` when the held products are the gate's carried rows. Listed in `required_fields.ENGINE_KEYS`.
 HELD_KEY = "report_held"
+#: Inside `report_held`: the basis the held total / open ask showed. Read only by the period decision in `_settle` (an
+#: outstanding frame keeps its period for a new axis); the basis question never reads it.
+HELD_SOURCE_BASIS = "held_source_basis"
 #: The route params of a held total that stay on the ranking its reply becomes: the period and the filters.
 _HELD_TOTAL_KEYS = (
     "date_from", "date_to", "product_code", "product_ids", "brand_ids", "category_ids", "customer_ids",
@@ -934,6 +943,7 @@ def with_held(
     back to `sales_report`, whose lane reuses the held window and products as it always has); ordered or
     outstanding, which that report has not, runs the report-ask total on the held product and period below."""
     domains = held_domains if held_domains is not None else getattr(focus, "domains", None)
+    source_basis = None
     if (
         jsc.js_string(verdict.get("order_status") or "").strip() != ASK_NAME
         or verdict.get("entity_op") != "reuse"
@@ -964,10 +974,13 @@ def with_held(
         # A held TOTAL (a report ask run with no axis): its period and filters stay (what that total showed).
         total = _dict(getattr(focus, "sales_ranking_frame", None))
         held = {k: v for k, v in total.items() if k in _HELD_TOTAL_KEYS and v not in (None, "", [])}
+        source_basis = total.get("basis")
     else:
         window = _dict(getattr(focus, "date_window", None))
         held = {"date_from": window.get("start"), "date_to": window.get("end"), "product": bool(getattr(focus, "products", None))}
         held = {k: v for k, v in held.items() if v}
+    if held and source_basis:
+        held = {**held, HELD_SOURCE_BASIS: source_basis}  # the period decision's only reader (`_settle`)
     return {**verdict, HELD_KEY: held} if held else verdict
 
 
@@ -1712,7 +1725,7 @@ def _settle(
     # An outstanding kind uses only a period NAMED in this message: a period carried from an earlier sales ask is dropped.
     # AC-RU-16: a "by X" over a frame already on an outstanding kind keeps the period on screen; only a switch from a
     # sales basis to an outstanding kind drops it.
-    switched = kind_ask_now and source.get("basis") not in OUTSTANDING_KINDS
+    switched = kind_ask_now and (source.get("basis") or source.get(HELD_SOURCE_BASIS)) not in OUTSTANDING_KINDS
     period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or (
         None if switched else held_period
     )

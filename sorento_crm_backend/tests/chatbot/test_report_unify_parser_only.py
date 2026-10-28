@@ -257,14 +257,36 @@ def test_the_yearly_axis_survives_the_basis_answer_when_the_reply_carries_by_wor
     assert args["group_by"] == "year" and args["basis"] == "invoiced", args
 
 
-def test_the_kind_question_is_never_answered_by_a_basis_the_parser_did_not_declare_an_answer_for(bot) -> None:
-    """K3: `basis: "unpaid"` with NO declared answer under the kind question is not taken by shape."""
+@pytest.mark.parametrize("basis", ["invoiced", "delivered", "ordered"])
+def test_the_kind_question_is_not_answered_by_a_basis_outside_the_offered_kinds(bot, basis) -> None:
+    """K3 (i): the kind question offers outstanding / pending_delivery / unpaid. A parser `basis` that is NOT one of them
+    never answers it and never runs that basis. (The old K3 refused every undeclared basis; the owner rule is about
+    message text, and `basis` is a parser field resolved against the offered options, AC-RU-17c.)"""
     bot.say(_bare_outstanding(), "outstanding")
     text, calls = bot.say(
-        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="unpaid"),
-        "unpaid invoices",
+        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis=basis), basis
     )
-    assert not [a for n, a in calls if a.get("basis") == "unpaid"], (calls, text)
+    assert not [a for n, a in calls if a.get("basis") == basis], (calls, text)
+
+
+def test_the_kind_question_with_a_null_basis_and_no_declared_answer_runs_nothing(bot) -> None:
+    """K3 (ii): no parser basis and no declared answer: nothing runs."""
+    bot.say(_bare_outstanding(), "outstanding")
+    text, calls = bot.say(
+        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis=None), "unpaid invoices"
+    )
+    assert calls == [], (calls, text)
+
+
+@pytest.mark.parametrize("kind", ["outstanding", "pending_delivery", "unpaid"])
+def test_the_kind_question_is_answered_by_a_parser_basis_among_the_offered_kinds(bot, kind) -> None:
+    """The parser's `basis` naming an offered kind IS the answer, whatever domain or intent hint it also carried."""
+    bot.say(_bare_outstanding(), "outstanding")
+    text, calls = bot.say(
+        _reply(message_type="business_query", domain_hint="master_products", intent_hint="check_product", entities=[], basis=kind),
+        "that one",
+    )
+    assert _only_report_ask(calls)["basis"] == kind, (calls, text)
 
 
 def test_the_live_v63_company_reply_is_the_pick(bot) -> None:
@@ -470,5 +492,30 @@ def test_held_total_path_does_not_lend_a_sales_total_period_to_an_outstanding_ki
         _bare_outstanding(basis="outstanding", group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
         "outstanding by customer",
     )
+    args = _only_report_ask(calls)
+    assert args["basis"] == "outstanding" and "date_from" not in args, args
+
+
+def test_held_outstanding_total_keeps_its_period_for_a_new_axis(bot) -> None:
+    """AC-RU-16 on the held-total path: an outstanding total for 2026, then "by customer", keeps 2026."""
+    bot.say(_bare_outstanding(basis="outstanding", **YEAR), "outstanding 2026")
+    text, calls = bot.say(
+        _bare_outstanding(basis="outstanding", group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
+        "by customer",
+    )
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "customer" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+
+
+def test_held_sales_total_then_an_outstanding_ask_drops_the_period_and_asks_the_kind(bot) -> None:
+    """The counterpart: a sales total for 2026, then an outstanding ask with no kind: the kind is asked and the sales
+    period is not lent to it."""
+    bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    text, calls = bot.say(
+        _bare_outstanding(group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
+        "outstanding by customer",
+    )
+    assert calls == [] and "Undelivered orders" in text, (text, calls)
+    text, calls = bot.say(_answer(1), "the first one")
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and "date_from" not in args, args
