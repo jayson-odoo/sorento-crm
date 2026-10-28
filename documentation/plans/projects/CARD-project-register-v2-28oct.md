@@ -1,4 +1,44 @@
-# CARD: Register a project v2 (PROJECT-REGISTER-V2), v1, 28 Oct
+# CARD: Register a project v2 (PROJECT-REGISTER-V2), v1.2, 28 Oct
+
+## Owner answers (28 Oct ~14:3x) and what changed in v1.2
+
+- Q1 (a) Register interest; Q2 (a) old owner stays collaborator; Q3 (a) notifications, and the management slug
+  is fixed (`MANAGEMENT_PERMISSION` -> `projects.projects.manage`).
+- Q4 (a) Customer replaces Lead as the required field, Lead optional in Details, BUT salespeople cannot create
+  customers ("that requires AutoCount"): Customer is SEARCH-ONLY over existing customers, no create row.
+- Q5 (b) Brands removed EVERYWHERE (see "Brands removal" below).
+- Long-title clamp stays in scope.
+
+### Customer (search only)
+
+- Picker: async search on the existing `GET /api/v1/order-management/customers/select?query=&limit=`
+  (`BE/api/v1/order_management/customers_select.py:27`, server-side search and paging, built because the client has
+  6,397 customers; dev copy 6,850). No "Create customer" row. Stored in `sales_profile.customer_id` (`M:387`).
+- Required on Register only. Edit keeps it optional so older projects still save (the same rule Lead has today,
+  `ProjectForm.tsx:215-217`). The API enforces it on register (not only the FE).
+- AI extract: `customer_name` is matched against existing customers only; no match = blank with the name as a hint.
+- Conflict found: the Lead wizard CREATES customers today when the buyer is not on file
+  (`select_or_create_customer`, `BE/services/project_lead_service.py:321-360`, rows tagged `source='project_lead'`).
+  The register form still reaches that wizard through Lead's "Create lead" row. See question 6.
+
+### Brands removal (Q5 b): code only, no migration
+
+Readers and writers to remove (all verified by grep on origin/main `30a40cf04f`):
+- BE: `ProjectRegisterRequest.brand_ids`, `ProjectUpdateRequest.brand_ids`, `ProjectApproveRequest.brand_ids`,
+  `ProjectResponse.brands/brand_ids`, `ProjectLeadQualifyRequest.brand_ids` (`BE/schemas/projects.py:223,249,282,374,855`);
+  validation + diff + `_set_brands` + `_brands_for` + list filter `brand_ids` (`BE/services/project_service.py:142-148,
+  186-193,645-661,802,884-885,1106-1112,1180-1214,1288`); clash candidate `brands` (`project_service.py:1511`,
+  `BE/schemas/projects.py:156-187`); list route param `brand_id` (`BE/api/v1/projects/projects.py:224`); lead qualify
+  (`project_lead_service.py:1009`); portal approve (`project_registration_service.py:965`).
+- FE: form field (`ProjectForm.tsx:30,105,135,247,592-606`), Overview line (`ProjectDetailClient.tsx:457-459`), grid
+  column (`ProjectsGrid.tsx:192-206`), board card badges (`PipelineBoard.tsx:312-319`), clash panel badges
+  (`ClashWarningPanel.tsx:153-157`), list filter param (`projectService.ts:113`), types (`project.types.ts:181-182,
+  253,275,346,565`), edit page description (`[projectId]/edit/page.tsx:11`).
+- MCP: the project sanitizer's hidden-field list names `brand_ids` (`sorento_crm_mcp/sorento_crm_mcp/server.py:1402`);
+  project tools stop showing brands.
+- NOT touched: quotation / pricing "series brands" (`ProjectSeriesBrand`), a different table.
+- Migration: none. The table `projects.brands` and its rows (dev copy: 3) stay untouched, so the change is
+  reversible. Dropping the table is destructive and would be a separate owner-approved cleanup.
 
 Paths: FE = `sorento_crm_frontend/app/(protected)/project-sales`, BE = `sorento_crm_backend/app`,
 M = `BE/models/projects.py`. Dev data = shared dev copy `sorento_cagent_stack`, read-only. Person names in
@@ -132,5 +172,11 @@ copy's permissions table, so floor-breach / staleness / PO-mismatch alerts reach
    optional in Details; (b) both optional; (c) keep Lead. Rec (a).
 5. Brands: (a) off the Register form, kept on Edit + Overview, label "Brands we are pushing"; (b) remove everywhere
    (loses the list filter and clash context); (c) keep. Rec (a).
+
+Answered 28 Oct: 1 (a), 2 (a), 3 (a), 4 (a) with search-only Customer, 5 (b).
+
+6. (new in v1.2) The Lead wizard creates customers (see "Customer (search only)"): (a) in this lane its buyer step
+   becomes search-only too, so no screen a salesperson uses creates a customer; (b) a separate lane; (c) leave it.
+   Rec (a): the register form reaches the wizard through "Create lead", so leaving it open keeps a back door.
 
 No migration expected. Security review covers the reassign and interest rules.
