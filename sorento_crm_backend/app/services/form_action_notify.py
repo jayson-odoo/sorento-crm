@@ -171,6 +171,14 @@ def _status_label(value) -> str:
     return _STATUS_LABELS.get(code) or code.replace("_", " ").title() or "its previous state"
 
 
+def _complaint_status_label(value) -> str:
+    """A complaint sent back after a rejection is an appeal (owner, 28 Oct 2026); the stored
+    value stays `resubmitted`, which every other form reads as "Resubmitted"."""
+    if (str(value or "")).strip().lower() == "resubmitted":
+        return "Appealed"
+    return _status_label(value)
+
+
 def _pr_display_status(header) -> str:
     """The state a PR/SF actually SHOWS, not the raw `status` column.
 
@@ -289,7 +297,7 @@ def _notify_contact(db: Session, record, *, number: str, reason: str) -> None:
             ) or resolve_send_identifier(db, getattr(complaint, "contact_id", None))
             if not identifier:
                 return
-            restored = _status_label(getattr(complaint, "status", None))
+            restored = _complaint_status_label(getattr(complaint, "status", None))
             text = _correction_text(number, restored, reason_part)
             service._enqueue_respond_message_for_complaint(
                 complaint_id=entity_id,

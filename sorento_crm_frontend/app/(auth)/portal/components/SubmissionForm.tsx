@@ -120,6 +120,7 @@ import {
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import { complaintStatusLabel } from '@/lib/complaint-status';
 
 type ProductLine = {
   item_code?: string;
@@ -457,6 +458,9 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
 /** Same sentence the server answers with, so a client-side block and a
  *  server-side one never read differently. Required but with no character
  *  floor, by explicit decision - any non-empty reason is accepted. */
+const VERB_DOING = { Submit: 'Submitting...', Resubmit: 'Resubmitting...', Appeal: 'Appealing...' };
+const VERB_DONE = { Submit: 'Submitted.', Resubmit: 'Resubmitted.', Appeal: 'Appealed.' };
+
 const REASON_REQUIRED = 'Tell us what changed and why.';
 const REASON_MAX_LEN = 2000;
 
@@ -509,7 +513,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [detail, setDetail] = useState<PortalSubmissionDetail | null>(null);
-  const verb = submitVerb(detail?.status);
+  const sendVerb = submitVerb(detail?.status);
+  // A rejected complaint goes back as an appeal (owner, 28 Oct 2026); other forms resubmit.
+  const verb = kind === 'complaint' && sendVerb === 'Resubmit' ? 'Appeal' : sendVerb;
   // The id a create call answered with, held in STATE rather than trusted to
   // live only in the `submissionId` prop (the route param) - a retry after
   // create-succeeded-but-flushPendingFiles-failed never gets a fresh prop, so
@@ -1173,7 +1179,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       }
       await flushPendingFiles(id);
       await submitDraft(kind, id, cleanedFields, cleanedProducts);
-      toast.success(verb === 'Resubmit' ? 'Resubmitted.' : 'Submitted.');
+      toast.success(VERB_DONE[verb]);
       router.replace(portalHomePath({ type: kind }));
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
@@ -1697,7 +1703,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     ? { label: 'Draft', variant: 'warning' as const }
     : detail?.status
       ? {
-          label: statusLabel(detail.status),
+          label: kind === 'complaint' ? complaintStatusLabel(detail.status) : statusLabel(detail.status),
           variant:
             detail.status === 'rejected'
               ? ('destructive' as const)
@@ -2296,9 +2302,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               disabled={saving || submitting}
             >
               {submitting
-                ? verb === 'Resubmit'
-                  ? 'Resubmitting...'
-                  : 'Submitting...'
+                ? VERB_DOING[verb]
                 : `${verb} ${SUBMISSION_LABELS[kind].toLowerCase()}`}
             </Button>
           )}

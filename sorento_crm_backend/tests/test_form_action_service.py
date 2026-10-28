@@ -855,6 +855,16 @@ def test_contact_correction_names_the_restored_status_and_reason():
     assert _status_label(None) == "its previous state"
 
 
+def test_contact_correction_calls_a_complaint_resubmission_an_appeal():
+    """COMPLAINT-APPEAL-WORDING (owner, 28 Oct): a complaint back at `resubmitted` reads
+    "Appealed" to its contact; every other form keeps "Resubmitted"."""
+    from app.services.form_action_notify import _complaint_status_label, _status_label
+
+    assert _complaint_status_label("resubmitted") == "Appealed"
+    assert _complaint_status_label("rejected") == "Rejected"
+    assert _status_label("resubmitted") == "Resubmitted"
+
+
 def test_undo_notifies_the_contact_even_for_an_internal_only_action(db, monkeypatch):
     """AC-N-5 as revised: `tells_contact` describes the FORWARD action, and is not a
     reason to keep a reversal from the contact. Sending for approval never messages
