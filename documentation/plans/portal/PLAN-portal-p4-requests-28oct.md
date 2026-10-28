@@ -30,7 +30,9 @@ Server (shared slice S0, before the per-form slices):
 1. Migration `pp4_0001_request_view_own` (insert-only, copies `pp2_0001_view_own_perms.py:23-71` and the grant shape
    of `pp3_0001_salesperson_grants.py:25-38`): slugs `procurement.stock_inquiries.view_own`,
    `complaint_management.complaints.view_own`, `procurement.purchase_requests.view_own`,
-   `procurement.sponsorship_forms.view_own`; grant role `salesperson` those 4 plus the 4 `.add` slugs. Registry
+   `procurement.sponsorship_forms.view_own`, plus `projects.registrations.submit` (owned here for lane PROJECT-REGISTER-V2,
+   its owner-ruled Q7 (b), 28 Oct; that lane's page only references the string); grant role `salesperson` those 5
+   plus the 4 `.add` slugs. Registry
    mirror next to `permission_registry.py:1030-1058`. Dev SQL to `crew/state/migrations/PORTAL-P4-REQUESTS.sql`.
 2. `own_scope.request_clause(model, me)` = `model.contact_id == me.contact_id`.
 3. Staff routers (`procurement/stock_inquiries.py`, `procurement/purchase_requests.py`, `complaints/complaints.py`):
