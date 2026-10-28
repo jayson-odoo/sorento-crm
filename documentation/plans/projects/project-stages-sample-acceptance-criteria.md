@@ -22,7 +22,9 @@ Tests build it themselves; CI's seed has quoted / tendering instead.
   does not fail.
 - AC-PS-04: The 16 existing edges and every rung's label, sort order and flags are unchanged.
 - AC-PS-05 (Q5): win % and stale days of every rung are unchanged (Final Negotiation / Sponsorship Form stay empty).
-- AC-PS-06: Downgrade removes only the edges this migration added.
+- AC-PS-06: Downgrade removes every default-graph project edge matching one of the 12 exact (from, to, label)
+  triples (so an admin edge with the same from, to AND label goes too; there is no marker column); every other
+  edge, including an admin edge with the same from and to but another label, is kept.
 
 ## Header (manual moves)
 
@@ -45,7 +47,9 @@ Tests build it themselves; CI's seed has quoted / tendering instead.
 - AC-PS-20: Clicking "Sample submitted" on a Spec In project moves it to Sample Submission, then opens New
   Sample Request with this project already filled in.
 - AC-PS-21: Clicking "Sponsorship" on a Final Negotiation project moves it to Sponsorship Form, then opens New
-  Sponsorship Form with this project already filled in (project link shows the project's title).
+  Sponsorship Form with this project already filled in: the "Registered project" picker SHOWS the project as
+  "<project code> - <title>" (not the search placeholder, never a UUID), and an empty "Project Title" field is
+  filled with the project's title (a typed one is never overwritten).
 - AC-PS-22: Clicking "Spec In" on a Registered project still moves it and opens the new quotation page (unchanged).
 - AC-PS-23: Back moves (Back to Spec In, Back to sample submission, Back to final negotiation, Back to registered)
   and Final negotiation, PO received, Mark lost, Mark dormant move the project and open no form.
@@ -55,6 +59,8 @@ Tests build it themselves; CI's seed has quoted / tendering instead.
   the stage and opens nothing (as with Spec In today).
 - AC-PS-27: Opening New Sponsorship Form with no project in the link (from the Sponsorship Forms list) works as
   before, project empty.
+- AC-PS-28: A rung whose key is not one of the three form rungs (including an admin key such as "toString")
+  opens no form.
 
 ## First PO
 
@@ -64,5 +70,8 @@ Tests build it themselves; CI's seed has quoted / tendering instead.
 
 ## Text surfaces
 
-- AC-PS-40: The projects list `status_key` description (route, MCP `crm_projects_list`, analytics connector)
-  names sample_submission, final_negotiation, sponsorship_form and no longer promises quoted / tendering.
+- AC-PS-40: The projects list descriptions (route `status_key` Query, MCP `crm_projects_list`, analytics connector)
+  name sample_submission, final_negotiation, sponsorship_form, and nowhere in those descriptions say quoted or
+  tendering (examples included).
+- AC-PS-41: The `only_critical` text describes the critical (management involved) flag as independent of the
+  Final Negotiation stage (Q3), not "the Final Negotiation flag, not a stage".
