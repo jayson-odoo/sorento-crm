@@ -59,15 +59,29 @@ import {
   Briefcase as WorkIcon,
   Zap,
 } from 'lucide-react';
+import type { LucideIcon } from 'lucide-react';
 import { type MenuConfig } from './types';
-import { LANDING_KINDS, LANDING_LABELS } from '@/lib/portal-form-kinds';
+import { LANDING_LABELS, LANDING_KINDS, orderLandingKinds } from '@/lib/portal-form-kinds';
 
 // MY REQUESTS: one item per portal form kind, in portal order. Customer asks and Conversation are
 // MY WORK entries instead (their own CRM pages), so they are not request kinds.
-const MY_REQUEST_ITEMS: MenuConfig = LANDING_KINDS.filter(
-  (k) => k !== 'customer_asks' && k !== 'conversation',
+const MY_REQUEST_ICONS: Partial<Record<(typeof LANDING_KINDS)[number], LucideIcon>> = {
+  complaint: AlertCircle,
+  stock_inquiry: Warehouse,
+  purchase_request: ShoppingCart,
+  sponsorship_form: Gift,
+  project_registration: Building,
+  sample_request: Package,
+  new_product_application: FileText,
+  price_tag_request: Receipt,
+  sales_opportunity: TrendingUp,
+};
+
+const MY_REQUEST_ITEMS: MenuConfig = orderLandingKinds(
+  LANDING_KINDS.filter((k) => k !== 'customer_asks' && k !== 'conversation'),
 ).map((kind) => ({
   title: LANDING_LABELS[kind],
+  icon: MY_REQUEST_ICONS[kind],
   path: `/my-requests?type=${kind}`,
   audience: 'salesperson' as const,
   portalKind: kind,

@@ -36,6 +36,7 @@ import {
 import { isSubmissionKind } from '../lib/portal-client';
 import {
   clearPortalSlug,
+  crmPathForPortalPath,
   portalDetailPath,
   portalHomePath,
   waMeUrl,
@@ -269,11 +270,16 @@ export function PortalVerifyCard({ slug }: Props) {
       // portal home. Slug tree keeps the stable URL; legacy /portal resolves the
       // slug and redirects, keeping the address bar bookmarkable.
       // A salesperson lands in the CRM shell instead (PORTAL-P3-ROLE-MENU).
-      const target =
-        crmHome ??
-        (desiredId && desiredType && isSubmissionKind(desiredType)
+      const portalTarget =
+        desiredId && desiredType && isSubmissionKind(desiredType)
           ? portalDetailPath(desiredType, desiredId, slug ?? null)
-          : portalHomePath({ slug: slug ?? null, type: desiredType }));
+          : portalHomePath({ slug: slug ?? null, type: desiredType });
+      // Already under /my-requests when this card runs inside the CRM verify page.
+      const target = crmHome
+        ? portalTarget.startsWith('/my-requests')
+          ? portalTarget
+          : (crmPathForPortalPath(portalTarget) ?? '/my-requests')
+        : portalTarget;
       // Hard-navigate so the fresh storage values are guaranteed visible.
       if (typeof window !== 'undefined') {
         window.location.assign(target);

@@ -110,6 +110,15 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+vi.mock('@/hooks/usePermissions', () => ({
+  usePermissions: () => ({
+    permissionSet: new Set(['projects.projects.view']),
+    isLoading: false,
+    isError: false,
+  }),
+  useHasAnyPermission: () => false,
+}));
+
 import { PipelineClient } from './PipelineClient';
 
 function project(overrides: Partial<Project> = {}): Project {

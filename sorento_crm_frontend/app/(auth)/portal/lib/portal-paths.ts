@@ -121,3 +121,19 @@ export function waMeUrl(phoneNumber: string, text: string): string {
   const digits = phoneNumber.replace(/\D/g, '');
   return `https://wa.me/${digits}?text=${encodeURIComponent(text)}`;
 }
+
+/**
+ * The CRM twin (`/my-requests/...`) of a slug-tree portal path, for a salesperson's deep link.
+ * The portal token never travels. The verify page and every legacy or non-portal path have no
+ * twin (null).
+ */
+export function crmPathForPortalPath(path: string): string | null {
+  const m = /^\/portal\/c\/[^/?#]+((?:\/[^?#]*)?)(?:\?([^#]*))?/.exec(path);
+  if (!m) return null;
+  const rest = m[1] ?? '';
+  if (rest === '/verify' || rest.startsWith('/verify/')) return null;
+  const qs = new URLSearchParams(m[2] ?? '');
+  qs.delete('token');
+  const q = qs.toString();
+  return `/my-requests${rest}${q ? `?${q}` : ''}`;
+}
