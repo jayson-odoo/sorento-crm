@@ -160,7 +160,7 @@ SPECS: dict[str, Spec] = {
     "complaint": Spec(
         kind="complaint", model=Complaint, slug_prefix="complaint_management.complaints",
         submit_status="submitted", final_status="processed_by_cs", number_attr=None,
-        revisable=False, restart_status=None, frozen=(),
+        revisable=True, restart_status="submitted", frozen=("contact_id", "space_id"),
         notify_created="external_created", notify_resub="external_resubmitted",
         revise_field="quantity", notify_agent="complaint", notify_set="complaint",
     ),
@@ -586,10 +586,7 @@ def flow_happy(sc: Scene, spec: Spec) -> None:
     if spec.number_attr:
         assert getattr(row, spec.number_attr)
     revs = sc.revisions(spec.kind, sid)
-    if spec.kind == "complaint":
-        assert revs == []  # no revision adapter (portal_service.py:1305)
-    else:
-        assert [r.kind for r in revs] == ["original"]
+    assert [r.kind for r in revs] == ["original"]
     trackers = sc.trackers(spec.kind, sid)
     assert len(trackers) == 1 and str(trackers[0].policy_id) == str(cfg.policy_id)
     notifs = sc.notifications(sid)
@@ -623,10 +620,7 @@ def flow_reject_resubmit(sc: Scene, spec: Spec) -> None:
     assert any(a.user_id == sc.sp.id for a in audit[before:]), "audit actor is not the salesperson"
 
     revs = sc.revisions(spec.kind, sid)
-    if spec.kind == "complaint":
-        assert revs == []
-    else:
-        assert [r.kind for r in revs] == ["original", "resubmission"]
+    assert [r.kind for r in revs] == ["original", "resubmission"]
     events = [(n.event_type or "") for n in sc.notifications(sid)]
     assert any(e.startswith(spec.notify_resub) for e in events), events
 

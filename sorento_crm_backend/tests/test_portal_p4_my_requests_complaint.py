@@ -23,8 +23,11 @@ def test_p4_13_reject_then_resubmit_is_resubmitted(scene):
     s.flow_reject_resubmit(scene, SPEC)
 
 
-def test_p4_14_revise_refused_for_a_complaint(scene):
-    s.flow_revision_refused(scene, SPEC)
+def test_p4_14_revise_follows_the_setting_for_a_complaint(scene):
+    """Owner Q6 a: complaint has revision code now, the per-type setting governs it (was: always refused)."""
+    from tests import _portal_p4_complaint_revision as rev
+
+    rev.flow_revise_ok(scene, scene.me)
 
 
 def test_p4_11_delete_and_edit_rules_match_the_portal(scene):
