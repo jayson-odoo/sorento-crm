@@ -139,4 +139,20 @@ describe('PurchaseRequestForm default project', () => {
     await screen.findByLabelText('Customer Name');
     expect(getProject).not.toHaveBeenCalled();
   });
+
+  it('AC-PS-21: a typed title is never overwritten by the project title', async () => {
+    let resolveProject: (p: unknown) => void = () => undefined;
+    vi.mocked(getProject).mockReturnValue(
+      new Promise((resolve) => {
+        resolveProject = resolve;
+      }) as never,
+    );
+    renderForm(PROJECT_ID);
+    await waitFor(() => expect(getProject).toHaveBeenCalledWith(PROJECT_ID));
+    const title = document.querySelector('input[name="project_title"]') as HTMLInputElement;
+    fireEvent.change(title, { target: { value: 'My own title' } });
+    resolveProject({ id: PROJECT_ID, project_code: 'PPF2610003', title: 'Setia Alam' });
+    expect(await screen.findByText('PPF2610003 - Setia Alam')).toBeTruthy();
+    expect(title.value).toBe('My own title');
+  });
 });
