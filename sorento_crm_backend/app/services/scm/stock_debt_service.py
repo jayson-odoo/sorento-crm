@@ -13,10 +13,10 @@ month, less what the lines due in it went short of on their own dates.
 
 **One read per input, never one per product.** The page is the whole flagged catalogue
 (1,000-2,000 products on the live book), so every fact is fetched for the WHOLE set in one
-query and then split by product in Python: on hand, open demand, SPO, PO, the decisions that
-pin stock and the links that pin a document. A per-product query here is what would turn a
-screen into a minute. The trigger for a persisted debt table is stated in plan 3.6 and it is
-this cost - measured, not guessed.
+query and then split by product in Python: on hand, open demand, SPO, PO, the board decisions
+(read on the board's path only, STOCKDEBT-NO-PLAN-REACH) and the links that pin a document.
+A per-product query here is what would turn a screen into a minute. The trigger for a
+persisted debt table is stated in plan 3.6 and it is this cost - measured, not guessed.
 
 **No debt table** (plan 3.6). Debt is computed from the book, and the parts of it that are
 decisions (ORDER_BACK rows, placement links, confirmed allocations) are already persisted by
@@ -1390,8 +1390,9 @@ class StockDebtService:
 
         # #1362 round 5 (owner ruling, 29 Sep 2026): goods that LANDED for a line stay with
         # that line, so they bind before anybody queues, exactly as a confirmed decision
-        # does. After the decision and placement holds, so nothing is pinned twice - off
-        # what those holds really cover (STOCK-DEBT-STALE-PIN), not what they state.
+        # does. After the decision (board path only) and placement holds, so nothing is
+        # pinned twice - off what those holds really cover (STOCK-DEBT-STALE-PIN), not
+        # what they state.
         holds = holds + self._landed_holds(
             supply_rows, demand_rows, holds, lendable_lines=lendable_lines,
             held=held_by_line(holds),
@@ -2249,7 +2250,8 @@ class StockDebtService:
 
         - `project`: the project lines' own month figure off the page's walk - the project
           bins' spare less their lines' shortfalls. A pool reaches a project line only
-          through a link (a placement, the S/O ref, a decision), which the walk has already
+          through a link (a placement, the S/O ref; a board decision gives none,
+          STOCKDEBT-NO-PLAN-REACH), which the walk has already
           pinned at any date, so this is what the drill's Covered by leaves owed. A pool
           bin's own events and lines are left out: unlinked pool stock never counts.
         - `reserve_supply`: a project reserve's stock by month, less what any line took of

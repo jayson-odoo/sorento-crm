@@ -264,8 +264,9 @@ def test_a_pin_at_a_bin_outside_the_span_is_capped_at_its_free_stock(
 ):
     """AC-S2-1b still honours a decision on a bin a read cannot see (an unflagged bin) on
     the BOARD, never for more than that bin's real free stock: 40 planned at a bin holding
-    0 covers nothing, at 10 covers 10, at 500 covers 40. STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026): the VIEW reads a decided line as undecided, so
-    the view covers nothing from that bin whatever it holds."""
+    0 covers nothing, at 10 covers 10, at 500 covers 40. Since STOCKDEBT-NO-PLAN-REACH
+    (owner 28 Oct 2026) the view reads a decided line as undecided and covers nothing from
+    that bin whatever it holds."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -296,7 +297,8 @@ def test_two_routes_at_one_bin_outside_the_span_share_its_free_stock_earliest_du
     """Two decisions (2 confirmed first but due later, 8 confirmed later but due first) on
     an unflagged bin holding 5: on the BOARD the bin covers 5 in all, shared by DATE like
     every route on a bin the walk can see (the line due first takes it), not by confirm
-    time. STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026): the VIEW reads a decided line as undecided, so the view covers neither from it."""
+    time. Since STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026) the view reads a decided line
+    as undecided and covers neither from it."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -419,8 +421,9 @@ def test_a_route_the_walk_does_not_serve_leaves_the_bin_to_the_next_route(scm_ap
     A owes 30, pinned 30 at Y (30) first and 30 at X (40, another group) next; B owes 40,
     pinned 40 at X last. A is covered from Y and B gets the whole 40 at X. Spending A's X
     pin on the bin left 30 of X free while B read short 30 (nothing else B may draw).
-    STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026): the VIEW reads a decided line as undecided, so there it is
-    the board's answer, and the view reads A covered off its own group's Y and B short."""
+    That is now the BOARD's answer: since STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026) the
+    view reads a decided line as undecided, so A is covered off its own group's Y and B
+    reads short."""
     from tests.scm.test_stock_debt_routes import _demand as _demand_line
 
     app, db = _client(scm_app)
@@ -521,8 +524,9 @@ def test_a_routed_line_due_later_is_listed_in_todays_supply_column_only(scm_app)
 
 
 def test_a_routed_bin_outside_the_span_is_not_listed_in_the_supply_tab(scm_app):
-    """A decision on a bin the read cannot see gives the line no reach (STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026): the VIEW reads a decided line as undecided): the line reads short,
-    Covered by names nothing, and the Supply tab lists no row."""
+    """A decision on a bin the read cannot see gives the line no reach (STOCKDEBT-NO-PLAN-
+    REACH, owner 28 Oct 2026: the view reads a decided line as undecided): the line reads
+    short, Covered by names nothing, and the Supply tab lists no row."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")

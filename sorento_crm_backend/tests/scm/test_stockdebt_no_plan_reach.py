@@ -65,6 +65,11 @@ def _board_walk(db, product, span):
     return {row.line.so_number: row for row in result[str(product.id)].lines}
 
 
+#: The month the CB4702 lines fall in: the 1st and the 28th of the month after next, so
+#: all three share one month whatever day the suite runs (prod: 01/12 and 28/12).
+_MONTH = (TODAY.replace(day=1) + timedelta(days=62)).replace(day=1)
+
+
 def _cb4702(db):
     """CB4702 Dec 26, project book: a project bin (-IR) pointed at a site pool (BRW) holding
     477; three open lines at the project bin, none with stock of their own; the last one
@@ -75,15 +80,16 @@ def _cb4702(db):
     product = _product(db, f"{marker}-CB")
     _stock(db, product, pool, on_hand=477)
     _demand(
-        db, product, project_bin, qty=364, required_date=TODAY + timedelta(days=34),
+        db, product, project_bin, qty=364, required_date=_MONTH,
         so_number=f"{marker}-A",
     )
     _demand(
-        db, product, project_bin, qty=256, required_date=TODAY + timedelta(days=61),
+        db, product, project_bin, qty=256, required_date=_MONTH.replace(day=28),
         so_number=f"{marker}-B",
     )
     _planned_line(
-        db, product, project_bin, qty=36, days=61, so_number=f"{marker}-C",
+        db, product, project_bin, qty=36, days=(_MONTH.replace(day=28) - TODAY).days,
+        so_number=f"{marker}-C",
         source_type=ALLOC_SOURCE_BRW, plan_at=pool,
     )
     db.flush()
@@ -132,11 +138,11 @@ def test_1c_cb4702_the_month_reads_minus_656_and_the_supply_tab_agrees(scm_app):
     service = StockDebtService(db)
     service._warehouses = lambda group, book="all": {str(project_bin.id): project_bin}
 
-    month = month_key(TODAY + timedelta(days=61))
+    month = month_key(_MONTH)
     cell = service.cell(str(product.id), month, book="project")
 
     ours = [row for row in cell["demand"] if row["so_number"].startswith(marker)]
-    in_month = sum(row["short_qty"] for row in ours)
+    assert sum(row["short_qty"] for row in ours) == 656
     assert {row["so_number"]: row["short_qty"] for row in ours}[f"{marker}-C"] == 36
     listed = {row["warehouse_code"] for row in cell["supply"]}
     for row in ours:
@@ -144,11 +150,6 @@ def test_1c_cb4702_the_month_reads_minus_656_and_the_supply_tab_agrees(scm_app):
             assert source["kind"] != KIND_ON_HAND or source["ref"].removeprefix(
                 "On hand "
             ) in listed
-    early = TODAY + timedelta(days=34)
-    if month_key(early) == month:
-        assert in_month == 656
-    else:
-        assert in_month == 256 + 36
 
 
 def test_1d_the_board_walk_still_takes_the_reserve_from_brw(scm_app):

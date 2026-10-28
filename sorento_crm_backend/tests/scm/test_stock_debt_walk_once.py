@@ -82,6 +82,19 @@ def test_each_product_is_walked_once_when_its_pins_do_not_change(scm_app, monkey
     assert count[str(plain.id)] == 1, dict(count)
     assert count[str(pinned.id)] == 1, dict(count)
 
+    # Since STOCKDEBT-NO-PLAN-REACH the view hands the walk no decision, so the memo is
+    # only exercised with a non-empty pin set on the BOARD's path, where the routes stay.
+    from app.models.inventory import Warehouse
+    from app.services.scm.stock_debt_service import StockDebtService
+
+    bin_ = db.query(Warehouse).filter(Warehouse.id == _lines[0].warehouse_id).one()
+    calls.clear()
+    StockDebtService(db).assignments_for([str(plain.id), str(pinned.id)], {str(bin_.id): bin_})
+    count = Counter(pid for pid, _pins in calls)
+    assert count[str(plain.id)] == 1, dict(count)
+    assert count[str(pinned.id)] == 1, dict(count)
+    assert any(pins for _pid, pins in calls)
+
 
 def test_the_final_walk_gets_exactly_the_products_holds_in_hold_order(scm_app, monkeypatch):
     """AC-SDP-B2: the pinned set is the holds on the product's own lines, A then B (the

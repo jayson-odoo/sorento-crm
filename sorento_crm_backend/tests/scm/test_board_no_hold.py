@@ -333,9 +333,9 @@ def _pool_world(db):
 
 
 def test_7_a_brw_reserve_draws_the_site_pool_at_its_own_date(scm_app):
-    """On the BOARD walk (STOCKDEBT-NO-PLAN-REACH: the view no longer routes). A project line planned `brw` at an active site pool with stock reads covered at its
-    date and not pinned; an earlier UNDECIDED project line of the same group still cannot
-    draw the pool."""
+    """On the BOARD walk (STOCKDEBT-NO-PLAN-REACH: the view no longer routes). A project line
+    planned `brw` at an active site pool with stock reads covered at its date and not pinned; an
+    earlier UNDECIDED project line of the same group still cannot draw the pool."""
     _app, db, *_ = scm_app
     marker, product, project_bin, pool = _pool_world(db)
     _demand(
@@ -360,8 +360,9 @@ def test_7_a_brw_reserve_draws_the_site_pool_at_its_own_date(scm_app):
 
 
 def test_7b_a_brw_reserve_on_a_pool_outside_the_span_still_covers_its_line(scm_app):
-    """On the BOARD walk (STOCKDEBT-NO-PLAN-REACH: the view no longer routes). Narrowed to the project bin alone (`location=`), the pool is outside the span and
-    the plan is honoured off the pool's real stock (stand-in, capped at what it holds)."""
+    """On the BOARD walk (STOCKDEBT-NO-PLAN-REACH: the view no longer routes). Narrowed to the
+    project bin alone (`location=`), the pool is outside the span and the plan is honoured off
+    the pool's real stock (stand-in, capped at what it holds)."""
     _app, db, *_ = scm_app
     marker, product, project_bin, pool = _pool_world(db)
     _planned_line(

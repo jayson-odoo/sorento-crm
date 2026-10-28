@@ -99,9 +99,10 @@ def test_ac_bnh_2_one_line_with_three_borrows_at_one_bin_reads_covered_and_nothi
 
 
 def test_ac_bnh_3_a_cross_group_borrow_still_reaches_its_bin_at_its_own_date(scm_app):
-    """On the BOARD walk (STOCKDEBT-NO-PLAN-REACH: the view no longer routes). The borrowing line sits at a bin of another group (-XX) and its Borrow names the IB
-    bin (36 on hand). It draws the bin at its own date and is not pinned; an undecided XX
-    line due earlier still cannot draw the IB bin."""
+    """On the BOARD walk (STOCKDEBT-NO-PLAN-REACH: the view no longer routes). The borrowing line
+    sits at a bin of another group (-XX) and its Borrow names the IB bin (36 on hand). It draws
+    the bin at its own date and is not pinned; an undecided XX line due earlier still cannot
+    draw the IB bin."""
     _app, db, *_ = scm_app
     marker = _marker()
     bin_ib = _warehouse(db, f"ZZTBRW{_u()[:4]}-IB")
@@ -132,8 +133,9 @@ def test_ac_bnh_3_a_cross_group_borrow_still_reaches_its_bin_at_its_own_date(scm
 
 
 def test_ac_bnh_4_a_borrow_at_a_site_pool_draws_it_at_its_own_date(scm_app):
-    """On the BOARD walk (STOCKDEBT-NO-PLAN-REACH: the view no longer routes). A project line's Borrow names the site pool (36). A dealer line on the pool due
-    first (30) is served first; the borrower takes the 6 left, short 30, never pinned."""
+    """On the BOARD walk (STOCKDEBT-NO-PLAN-REACH: the view no longer routes). A project line's
+    Borrow names the site pool (36). A dealer line on the pool due first (30) is served first;
+    the borrower takes the 6 left, short 30, never pinned."""
     _app, db, *_ = scm_app
     marker = _marker()
     project_bin = _warehouse(db, f"ZZTBRW{_u()[:4]}-XX")
