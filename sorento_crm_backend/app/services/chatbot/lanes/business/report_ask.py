@@ -1330,6 +1330,24 @@ def _detail_outcome(db: Any, frame: dict[str, Any], detail: dict[str, Any]) -> r
     return outcome
 
 
+#: Owner 28 Oct 09:30 (AC-RU-17a): the pick an undelivered-orders total arms ("Reply 1 for the sales order list.").
+SO_LIST = "sales_order_list"
+
+
+def so_list_outcome(db: Any, frame: dict[str, Any]) -> rf.Outcome:
+    """The open sales orders behind an undelivered-orders total: the SAME held ask (basis, filters, company, period)
+    grouped by the outstanding definition's `sales_order` dimension, so the list is the figure's own population."""
+    args = {k: v for k, v in frame.items() if k not in _FRAME_ONLY}
+    args["group_by"] = "sales_order"
+    args.setdefault("measure", "amount")  # the list prints both figures; the order is by RM
+    given = {**_given_choices(args), **_given_top_n(args, BREAKDOWN_TOP_N)}
+    period = period_from(frame.get("date_from"), frame.get("date_to"))
+    given["period"] = period if period is not None else rf.Resolved("ok", value={"from": None, "to": None}, label="all dates")
+    outcome = rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": BREAKDOWN_TOP_N})
+    outcome.extras["detail"] = True  # a list on screen never replaces the held total
+    return outcome
+
+
 def settle(
     db: Any, parse_output: dict[str, Any], entities: Any, *, dealer: bool = False, agent_filter: bool = True,
     companies: Any = (),
@@ -1369,6 +1387,13 @@ def _settle(
         and ranking_detail.get("group_by") == shown_frame.get("group_by")  # the pick is of the list on screen
     ):
         return _detail_outcome(db, shown_frame, ranking_detail), None
+    if (
+        isinstance(ranking_detail, dict)
+        and ranking_detail.get("group_by") == SO_LIST
+        and shown_frame.get("basis") == "outstanding"
+        and not shown_frame.get("group_by")
+    ):
+        return so_list_outcome(db, shown_frame), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME and slot.get("asking") == "scope":
         return _scope_answer(db, parse_output, slot), None
     if isinstance(slot, dict) and slot.get("ask") == ASK_NAME:

@@ -123,7 +123,8 @@ def test_both_bases_speak_the_same_words(basis):
 def test_dealer_keys():
     from app.services.reports.ask import DEALER_KEYS
 
-    assert set(DEALER_KEYS) == {"product", "brand", "category", "month"}, DEALER_KEYS
+    # Owner 28 Oct 09:30: a dealer's undelivered-orders answer offers its own open sales orders (`sales_order`).
+    assert set(DEALER_KEYS) == {"product", "brand", "category", "month", "sales_order"}, DEALER_KEYS
 
 
 def test_every_ask_basis_is_on_the_reports_screen_as_the_same_definition():

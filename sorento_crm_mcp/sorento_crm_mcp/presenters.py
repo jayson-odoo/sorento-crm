@@ -3508,6 +3508,9 @@ def _not_applied(body: dict) -> list[dict]:
     return out
 
 
+_ASK_SO_LIST_OFFER = "Reply 1 for the sales order list."
+
+
 def _report_ask(body: dict) -> str:
     """The whole reply for `crm_report_ask`: a head line, then one fact per line (`Label: value`
     per filter, then the period; owner rule, REPORT-DRILLDOWN), the ranked rows, `and N more`,
@@ -3548,7 +3551,11 @@ def _report_ask(body: dict) -> str:
             else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
             else f"Sales by {basis}"
         )
-        return "\n".join([head, *facts, f"Total {figures}"])
+        text = "\n".join([head, *facts, f"Total {figures}"])
+        if body.get("basis") == "outstanding" and not body.get("compare_to"):
+            # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure; pending delivery and unpaid get none.
+            text += "\n\n" + _ASK_SO_LIST_OFFER
+        return text
     rows = _ask_rows(body.get("rows") or [], group_by, measure, body.get("sort"))
     if not rows:
         return "\n".join([f"No {basis} found", *facts])

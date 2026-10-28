@@ -2899,6 +2899,9 @@ _ROW_PICK_OFFERS = (
     "Reply with a rank number to see that customer's products and months.",
 )
 
+#: An undelivered-orders total's own offer (owner 28 Oct 09:30; `presenters._ASK_SO_LIST_OFFER`), dropped the same way.
+_SO_LIST_OFFER = "Reply 1 for the sales order list."
+
 
 #: The filter word the route's `not_applied` names each route param by.
 _ARG_FILTERS = {
@@ -2937,7 +2940,7 @@ def _with_not_applied(text: str, words: list[str]) -> str:
 def _without_row_offers(text: str) -> str:
     for offer in _ROW_PICK_OFFERS:
         text = text.replace("\n\n" + offer, "")
-    return text
+    return text.replace("\n\n" + _SO_LIST_OFFER, "")
 
 
 def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -2980,6 +2983,16 @@ def _report_ask_output(result: Any, ctx: dict[str, Any] | None = None) -> dict[s
                     ],
                     "filters": {"tool": "crm_report_ask", "ranking": {"group_by": frame["group_by"]}},
                 }
+        if not frame.get("group_by") and frame.get("basis") == "outstanding" and _SO_LIST_OFFER in text:
+            # Owner 28 Oct 09:30 (AC-RU-17a): an undelivered-orders total offers the open sales orders behind it; "1"
+            # re-runs THIS frame grouped by sales order (`report_ask.settle`, `so_list_outcome`).
+            from app.services.chatbot.lanes.business.report_ask import SO_LIST
+
+            pick = {
+                "kind": "top_selling_pick",
+                "last_result_set": [{"idx": 1, "label": "Sales order list", "code": SO_LIST, "entity_type": "sales_order", "keys": []}],
+                "filters": {"tool": "crm_report_ask", "ranking": {"group_by": SO_LIST}},
+            }
     question = _sole_subject_question(envelope, args)
     if question:
         text, frame, pick = question, None, None
