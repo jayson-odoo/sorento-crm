@@ -460,8 +460,12 @@ export function coveredSheetLines(
       pendingChange: false,
       splits: [],
       savedRemark: line.savedRemark,
-      // The read's own words for the line's row (the email's REMARK), muted under none saved.
-      remarkGenerated: (line.lineId ? byId.get(line.lineId)?.remarkGenerated : undefined) ?? '',
+      // A swapped line's REMARK is the read's own words (the email's NEW ITEM CODE), muted
+      // under none saved; every other line keeps only what the board says it sends.
+      remarkGenerated:
+        (line.lineId && byId.get(line.lineId)?.wasItemCode
+          ? byId.get(line.lineId)?.remarkGenerated
+          : undefined) ?? '',
     }));
   const builtIds = new Set(built.map((line) => line.lineId));
   return {

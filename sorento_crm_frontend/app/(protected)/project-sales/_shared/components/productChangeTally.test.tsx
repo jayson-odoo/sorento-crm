@@ -88,8 +88,9 @@ describe('the Confirm preview tallies with the Order Inquiry email and its attac
       },
     ]);
     expect(headings(table)).not.toContain('New item code');
-    expect(
-      screen.getByTestId(`item-code-${fixture.split_read_line.line_no}`),
-    ).toHaveTextContent(fixture.expected.item_code);
+    const item = screen.getByTestId(`item-code-${fixture.split_read_line.line_no}`);
+    expect(item).toHaveTextContent(fixture.expected.item_code);
+    // A line the board says sends nothing prints no REMARK: the read's words stay out of it.
+    expect(item.closest('tr')).not.toHaveTextContent('REMAIN');
   });
 });

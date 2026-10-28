@@ -1043,12 +1043,15 @@ function DropRow({
   testId,
   over,
   destructive,
+  span,
   children,
 }: {
   id: string;
   testId: string;
   over: boolean;
   destructive?: boolean;
+  /** The sheet's column count (the New item code column adds one). */
+  span: number;
   children: React.ReactNode;
 }) {
   return (
@@ -1061,7 +1064,7 @@ function DropRow({
     >
       <TableRow className="border-0 hover:bg-transparent">
         <TableCell
-          colSpan={COLUMNS.length}
+          colSpan={span}
           className={cn(
             'h-9 border-b border-dashed border-muted-foreground/50 bg-muted/30 ps-3.5 text-start text-xs',
             destructive ? 'text-destructive' : 'text-muted-foreground',
@@ -1370,6 +1373,7 @@ export function LineSplitSheet({
                   id={DROP_NEW}
                   testId="drop-new-date"
                   over={overTarget === DROP_NEW}
+                  span={columns.length}
                 >
                   <CirclePlus
                     aria-hidden
@@ -1381,6 +1385,7 @@ export function LineSplitSheet({
                   id={DROP_CANCEL}
                   testId="drop-cancel"
                   over={overTarget === DROP_CANCEL}
+                  span={columns.length}
                   destructive
                 >
                   Cancel this qty
