@@ -111,7 +111,15 @@ def test_revision_fits_alembic_version_and_sits_on_main_head():
     cfg = Config(str(VERSIONS.parent.parent / "alembic.ini"))
     cfg.set_main_option("script_location", str(VERSIONS.parent))
     script = ScriptDirectory.from_config(cfg)
-    assert script.get_heads() == [NAME]
+    heads = script.get_heads()
+    assert len(heads) == 1
+    ancestry, todo = set(), [heads[0]]  # later lanes stack on this revision: it must stay in the chain
+    while todo:
+        rev = script.get_revision(todo.pop())
+        if rev.revision not in ancestry:
+            ancestry.add(rev.revision)
+            todo.extend(r for r in ([rev.down_revision] if isinstance(rev.down_revision, str) else rev.down_revision or ()))
+    assert NAME in ancestry
     parent = script.get_revision(module.down_revision)
     assert parent is not None and parent.revision != NAME
 

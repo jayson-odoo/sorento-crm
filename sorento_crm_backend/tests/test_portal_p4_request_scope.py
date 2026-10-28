@@ -247,15 +247,22 @@ def no_whatsapp(monkeypatch):
 
 
 @pytest.mark.parametrize("kind", list(KINDS))
-def test_p4_6_limited_reads_and_posts_comments_on_their_own_row_foreign_is_404(scene, no_whatsapp, kind):
+def test_p4_6_limited_may_only_read_comments_on_their_own_row(scene, no_whatsapp, kind):
+    """Read-only on the staff route: a staff post WhatsApps the submitter, so a salesperson
+    would message themselves. They post through the portal path (my-requests) instead."""
+    from app.services.form_comment_service import FormCommentService
+
     db, a, b, _, ca, cb = scene
     mine, theirs = _row(db, kind, ca.id), _row(db, kind, cb.id)
+    comment = FormCommentService(db)._insert(kind, mine, "Test comment", user_id=a)
+    db.flush()
     with acting(db, a, limited(kind)) as client:
         assert client.get(f"{COMMENTS}/{kind}/{mine}").status_code == 200
-        posted = client.post(f"{COMMENTS}/{kind}/{mine}", data={"body": "Test comment"})
-        assert posted.status_code == 201, (posted.status_code, posted.text)
         assert client.get(f"{COMMENTS}/{kind}/{theirs}").status_code == 404
-        assert client.post(f"{COMMENTS}/{kind}/{theirs}", data={"body": "Test comment"}).status_code == 404
+        assert client.post(f"{COMMENTS}/{kind}/{mine}", data={"body": "Test comment"}).status_code == 403
+        assert client.patch(
+            f"{COMMENTS}/{kind}/{mine}/comments/{comment.id}", json={"body": "Edited"}
+        ).status_code == 403
 
 
 # ------------------------------------------------------------------ P4-17: impersonation
