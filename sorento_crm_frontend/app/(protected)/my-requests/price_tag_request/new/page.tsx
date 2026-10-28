@@ -1,8 +1,9 @@
 'use client';
 
-import { PriceTagRequestForm } from '@/app/(auth)/portal/components/PriceTagRequestForm';
-import { MySlug } from '../../MySlug';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
+import { StaffPageRedirect } from '../../StaffPageRedirect';
 
+/** A salesperson's new price tag request is the request page in create mode (PORTAL-P4-REQUESTS S7). */
 export default function MyRequestsPriceTagNewPage() {
-  return <MySlug>{(slug) => <PriceTagRequestForm slug={slug} />}</MySlug>;
+  return <StaffPageRedirect to={`${MY_REQUEST_STAFF_PAGES.price_tag_request.path}/new`} />;
 }

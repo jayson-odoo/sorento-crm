@@ -11,6 +11,7 @@ const BASE: Record<string, string> = {
   sample_request: 'projects.sample_requests',
   new_product_application: 'procurement.new_product_applications',
   sales_opportunity: 'sales.opportunities',
+  price_tag_request: 'dealer_kit.price_tag_requests',
 };
 
 /** Grants that see every row of a kind besides its `view` (`own_scope.VIEW_ALL_ALSO`): a new

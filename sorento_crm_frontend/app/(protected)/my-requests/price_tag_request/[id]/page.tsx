@@ -1,14 +1,16 @@
 'use client';
 
 import { use } from 'react';
-import { PriceTagRequestForm } from '@/app/(auth)/portal/components/PriceTagRequestForm';
-import { MySlug, sanitizeId } from '../../MySlug';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
+import { sanitizeId } from '../../MySlug';
+import { StaffPageRedirect } from '../../StaffPageRedirect';
 
+/** A deep link to a salesperson's price tag request opens the request page (PORTAL-P4-REQUESTS S7). */
 export default function MyRequestsPriceTagDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  return <MySlug>{(slug) => <PriceTagRequestForm requestId={sanitizeId(id)} slug={slug} />}</MySlug>;
+  return <StaffPageRedirect to={`${MY_REQUEST_STAFF_PAGES.price_tag_request.path}/${sanitizeId(id)}`} />;
 }

@@ -40,6 +40,7 @@ import type {
   SalesOpportunityDetail,
   SalesOpportunitySavePayload,
 } from '@/app/(protected)/sales/opportunities/types/salesOpportunity.types';
+import type { PriceTagRequestDetail } from '@/app/(protected)/dealer-kit/services/priceTagRequestService';
 
 const BASE = '/api/v1/my-requests';
 
@@ -261,7 +262,7 @@ export async function deleteSubmissionComment(kind: MyRequestKind, id: string, c
 
 /** The kinds whose files ride the generic attachment routes: the four forms and (S5) the new product
  *  application, whose own router has no upload route, exactly as on the portal. */
-export type MyRequestAttachmentKind = MyRequestKind | 'new_product_application';
+export type MyRequestAttachmentKind = MyRequestKind | 'new_product_application' | 'price_tag_request';
 
 export async function uploadAttachment(
   kind: MyRequestAttachmentKind,
@@ -496,4 +497,126 @@ export async function searchMyNewProductApplicationBrands(q: string): Promise<Se
     'Failed to load brands',
   );
   return rows.map((b) => ({ value: b.id, label: b.name, code: b.code ?? undefined }));
+}
+
+// ---------------------------------------------------------------- Price Tag Request (S7)
+// The portal's own price tag router at /api/v1/my-requests (same paths, bodies and answers as the
+// portal). Its files go through the generic `/attachments` routes and its revise through the
+// generic revision route, as on the portal.
+
+const PRICE_TAG_URL = `${BASE}/submissions/price_tag_request`;
+
+/** One line as the portal writes it: a product or a set, and how many tags. */
+export interface MyPriceTagLineWrite {
+  line_type: 'product' | 'product_set';
+  product_id?: string | null;
+  product_set_id?: string | null;
+  quantity: number;
+  remarks?: string | null;
+}
+
+export interface MyPriceTagWrite {
+  debtor_code?: string | null;
+  debtor_name?: string | null;
+  needed_by_date?: string | null;
+  notes?: string | null;
+  print_by?: 'office' | 'self' | null;
+  lines?: MyPriceTagLineWrite[];
+}
+
+/** The detail body plus the revision policy the portal hands back with it. */
+export type MyPriceTagRequestDetail = PriceTagRequestDetail & {
+  portal_draft_at?: string | null;
+  revision_no?: number;
+  revision?: PortalRevisionPolicy | null;
+};
+
+export interface MyPriceTagDebtor {
+  customer_id: string | null;
+  customer_code: string | null;
+  customer_name: string | null;
+  debtor_code: string | null;
+  debtor_name: string | null;
+  source: string;
+}
+
+export interface MyPriceTagItem {
+  kind: 'product' | 'product_set';
+  id: string;
+  code: string;
+  name: string;
+}
+
+const priceTagUrl = (id: string, action?: 'submit' | 'approve' | 'request-changes' | 'collect' | 'revise') =>
+  `${PRICE_TAG_URL}/${encodeURIComponent(id)}${action ? `/${action}` : ''}`;
+
+export async function fetchMyPriceTagRequest(id: string): Promise<MyPriceTagRequestDetail> {
+  return unwrap(await apiFetch(priceTagUrl(id)), 'Failed to load the price tag request');
+}
+
+export async function createMyPriceTagRequest(data: MyPriceTagWrite): Promise<MyPriceTagRequestDetail> {
+  const res = await apiFetch(PRICE_TAG_URL, jsonBody('POST', data));
+  if (!res.ok) await throwSubmissionError(res, 'Failed to save the price tag request');
+  return (await res.json()) as MyPriceTagRequestDetail;
+}
+
+export async function updateMyPriceTagRequest(id: string, data: MyPriceTagWrite): Promise<MyPriceTagRequestDetail> {
+  const res = await apiFetch(priceTagUrl(id), jsonBody('PUT', data));
+  if (!res.ok) await throwSubmissionError(res, 'Failed to save the price tag request');
+  return (await res.json()) as MyPriceTagRequestDetail;
+}
+
+export async function deleteMyPriceTagRequest(id: string): Promise<void> {
+  await ensureOk(await apiFetch(priceTagUrl(id), { method: 'DELETE' }), 'Failed to delete the draft');
+}
+
+export async function submitMyPriceTagRequest(id: string): Promise<void> {
+  const res = await apiFetch(priceTagUrl(id, 'submit'), { method: 'POST' });
+  if (!res.ok) await throwSubmissionError(res, 'Failed to submit the price tag request');
+}
+
+/** The salesperson approves the proof marketing sent. */
+export async function approveMyPriceTagRequest(id: string): Promise<void> {
+  await ensureOk(await apiFetch(priceTagUrl(id, 'approve'), { method: 'POST' }), 'Failed to approve the proof');
+}
+
+export async function requestMyPriceTagChanges(id: string, note: string): Promise<void> {
+  await ensureOk(
+    await apiFetch(priceTagUrl(id, 'request-changes'), jsonBody('POST', { note })),
+    'Failed to send the change request',
+  );
+}
+
+/** The salesperson has the printed tags in hand. */
+export async function collectMyPriceTagRequest(id: string): Promise<void> {
+  await ensureOk(await apiFetch(priceTagUrl(id, 'collect'), { method: 'POST' }), 'Failed to mark collected');
+}
+
+/** A revision of a submitted request: header fields plus the lines as products (the PTAG adapter). */
+export async function reviseMyPriceTagRequest(
+  id: string,
+  input: { reason: string; expectedRevisionNo: number; fields: Record<string, unknown>; products: MyPriceTagLineWrite[] },
+): Promise<void> {
+  const res = await apiFetch(
+    priceTagUrl(id, 'revise'),
+    jsonBody('POST', {
+      reason: input.reason,
+      expected_revision_no: input.expectedRevisionNo,
+      fields: input.fields,
+      products: input.products,
+    }),
+  );
+  if (!res.ok) await throwSubmissionError(res, 'Failed to send the revision');
+}
+
+/** Every debtor of every agent their contact is linked to (the portal's picker). */
+export async function fetchMyPriceTagDebtors(): Promise<MyPriceTagDebtor[]> {
+  return unwrap(await apiFetch(`${BASE}/lookups/debtors-for-agent`), 'Failed to load customers');
+}
+
+export async function searchMyPriceTagItems(q: string): Promise<MyPriceTagItem[]> {
+  return unwrap(
+    await apiFetch(`${BASE}/lookups/price-tag-items?q=${encodeURIComponent(q)}`),
+    'Failed to search products',
+  );
 }

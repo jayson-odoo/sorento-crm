@@ -27,6 +27,10 @@ routes, which would otherwise answer their literal paths. Same gates, the kind f
 and an application are created with ``.create``, an opportunity with ``.add`` and changed with
 ``.edit``. An application's files ride the generic attachment routes (``_ATTACHMENT_KINDS``), as
 on the portal.
+
+Price tag requests (S7) are the same: their own portal router (``register_price_tag_routes``),
+created with ``dealer_kit.price_tag_requests.create``. Their files ride the generic attachment
+routes and their revise the generic revision routes (``_REVISION_ROUTES``), as on the portal.
 """
 from __future__ import annotations
 
@@ -39,6 +43,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import register_submission_routes
 from app.api.v1.public.portal_new_product_application import register_new_product_application_routes
+from app.api.v1.public.portal_price_tag import register_price_tag_routes
 from app.api.v1.public.portal_sales_opportunity import register_sales_opportunity_routes
 from app.api.v1.public.portal_sample_request import register_sample_request_routes
 from app.api.v1.user_management.contact_impersonation import _resolve_contact_and_space
@@ -61,7 +66,18 @@ _ATTACHMENT_ROUTES = frozenset(
         ("DELETE", "/attachments/{link_id}"),
     }
 )
-_ATTACHMENT_KINDS = ("new_product_application",)
+_ATTACHMENT_KINDS = ("new_product_application", "price_tag_request")
+#: The generic revision routes, and the own-router kinds whose revisions they carry (S7).
+_REVISION_ROUTES = frozenset(
+    {
+        ("GET", "/submissions/{kind}/{submission_id}/revisions"),
+        ("POST", "/submissions/{kind}/{submission_id}/revise"),
+        ("PUT", "/submissions/{kind}/{submission_id}/revision-draft"),
+        ("DELETE", "/submissions/{kind}/{submission_id}/revision-draft"),
+        ("GET", "/submissions/{kind}/{submission_id}/neighbours"),
+    }
+)
+_REVISION_KINDS = ("price_tag_request",)
 
 #: Names the per-user portal rate-limit bucket (the comment route keys it on ``token.id``).
 _TOKEN_NAMESPACE = uuid.UUID("6f1d3c2a-4b7e-4f0a-9a51-2c8e5d0b7a13")
@@ -72,12 +88,14 @@ _WRITE_SLUGS = {
     ("POST", "/submissions/new_product_application"): "procurement.new_product_applications.create",
     ("POST", "/sales-opportunities"): "sales.opportunities.add",
     ("PATCH", "/sales-opportunities/{opportunity_id}"): "sales.opportunities.edit",
+    ("POST", "/submissions/price_tag_request"): "dealer_kit.price_tag_requests.create",
 }
 
 router = APIRouter()
 sample_request_router = APIRouter()
 new_product_application_router = APIRouter()
 sales_opportunity_router = APIRouter()
+price_tag_router = APIRouter()
 
 
 def _add_slug(kind: str) -> str:
@@ -162,6 +180,8 @@ async def my_requests_token(
     known = tuple(own_scope.REQUEST_KINDS)
     if route in _ATTACHMENT_ROUTES:
         known += _ATTACHMENT_KINDS
+    if route in _REVISION_ROUTES:
+        known += _REVISION_KINDS
     if kind is not None and kind not in known:
         raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
@@ -174,7 +194,7 @@ async def my_requests_token(
 
 
 def _kind_token(kind: str):
-    """The token dependency of a kind served by its own portal router (S4, S6)."""
+    """The token dependency of a kind served by its own portal router (S4, S5, S6, S7)."""
 
     async def token(
         request: Request,
@@ -192,4 +212,5 @@ register_new_product_application_routes(
     new_product_application_router, _kind_token("new_product_application")
 )
 register_sales_opportunity_routes(sales_opportunity_router, _kind_token("sales_opportunity"))
+register_price_tag_routes(price_tag_router, _kind_token("price_tag_request"))
 register_submission_routes(router, my_requests_token)

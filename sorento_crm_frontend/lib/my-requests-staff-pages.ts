@@ -34,6 +34,11 @@ export const MY_REQUEST_STAFF_PAGES: Readonly<Record<string, { path: string; per
     path: '/sales/opportunities',
     permission: 'sales.opportunities.view_own',
   },
+  // Dealer Kit > Room Designer > Price Tag Requests: New / Edit are the request page in edit mode.
+  price_tag_request: {
+    path: '/dealer-kit/price-tag-requests',
+    permission: 'dealer_kit.price_tag_requests.view_own',
+  },
 };
 
 /** The staff list path for a kind that moved, or null for a kind still served under /my-requests. */

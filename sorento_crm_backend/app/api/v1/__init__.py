@@ -293,7 +293,7 @@ api_router.include_router(
 )
 # My Requests (PORTAL-P4-REQUESTS): a salesperson's own request forms through the portal's own
 # routes, signed in with the CRM session (my_requests.py). The kind's view_own is the real gate.
-# Sample requests, applications and opportunities first: their literal paths would otherwise be answered by the
+# Sample requests, applications, opportunities and price tag requests first: their literal paths would otherwise be answered by the
 # generic `/submissions/{kind}` routes (D49, as on the portal).
 api_router.include_router(
     my_requests.sample_request_router,
@@ -312,6 +312,12 @@ api_router.include_router(
     prefix="/my-requests",
     tags=["my-requests"],
     dependencies=[Depends(require_any_module_enabled("sales"))],
+)
+api_router.include_router(
+    my_requests.price_tag_router,
+    prefix="/my-requests",
+    tags=["my-requests"],
+    dependencies=[Depends(require_any_module_enabled("dealer_kit"))],
 )
 api_router.include_router(
     my_requests.router,

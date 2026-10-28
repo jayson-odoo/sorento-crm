@@ -22,10 +22,11 @@ unlink, the customer lookup, by-number) has no kind, so it is refused to a user 
 
 ``tests/test_portal_p4_request_scope.py`` enumerates every route of the three routers.
 
-The second section guards the Sample Request, New Product Application and Sales Opportunity staff
-routers (S4, S5, S6), whose
+The second section guards the Sample Request, New Product Application, Sales Opportunity and Price
+Tag Request staff routers (S4, S5, S6, S7), whose
 reads keep their own module rule: for a limited user every write there answers 403 (or 404 on a
-row that is not theirs); they write through ``/api/v1/my-requests``.
+row that is not theirs); they write through ``/api/v1/my-requests``. The price tag list narrows
+itself with ``module_limited_me`` (its reads had no "only theirs" rule before S7).
 """
 from __future__ import annotations
 
@@ -212,11 +213,13 @@ _MODULE_PREFIX = {
     "sample_request": "/api/v1/project-sales",
     "new_product_application": "/api/v1/procurement/new-product-applications",
     "sales_opportunity": "/api/v1/sales/opportunities",
+    "price_tag_request": "/api/v1/dealer-kit/price-tag-requests",
 }
 _MODULE_ROW_ID = {
     "sample_request": "request_id",
     "new_product_application": "application_id",
     "sales_opportunity": "opportunity_id",
+    "price_tag_request": "request_id",
 }
 _MODULE_READS: Dict[str, Dict[Tuple[str, str], str]] = {
     "sample_request": {
@@ -237,27 +240,40 @@ _MODULE_READS: Dict[str, Dict[Tuple[str, str], str]] = {
         ("GET", "/customer-options"): "list",
         ("GET", "/{opportunity_id}"): "row",
     },
+    # The table and the request page only: the designer, its versions and data changes, claim,
+    # transition / void, the print-by and line price PATCHes, export and the staff line pricing
+    # are marketing's. The salesperson's own actions run through /api/v1/my-requests.
+    "price_tag_request": {
+        ("GET", ""): "list",
+        ("GET", "/{request_id}"): "row",
+    },
 }
+
+
+def module_limited_me(db: Session, user_id: str, kind: str) -> Optional[own_scope.Me]:
+    """Who a user limited in ``kind`` is (their own rows' rule), or None when not limited."""
+    from app.services.user_service import UserPermissionService
+
+    service = UserPermissionService(db)
+    if service.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+        return None
+    if own_scope.request_access(service.get_user_permission_slugs(user_id), kind) != "own":
+        return None
+    return own_scope.me(db, user_id)
 
 
 def check_module(
     db: Session, user_id: str, kind: str, method: str, path_format: str, path_params: dict
 ) -> None:
     """Raise unless a user limited in ``kind`` may reach this staff route; no-op for anyone else."""
-    from app.services.user_service import UserPermissionService
-
-    service = UserPermissionService(db)
-    if service.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
-        return
-    if own_scope.request_access(service.get_user_permission_slugs(user_id), kind) != "own":
+    m = module_limited_me(db, user_id, kind)
+    if m is None:
         return
     prefix = _MODULE_PREFIX[kind]
     path = path_format[len(prefix):] if path_format.startswith(prefix) else path_format
     role = _MODULE_READS[kind].get((method, path.rstrip("/")))
     row_id = path_params.get(_MODULE_ROW_ID[kind])
-    if row_id is not None and not own_scope.module_row_in_scope(
-        db, kind, str(row_id), own_scope.me(db, user_id)
-    ):
+    if row_id is not None and not own_scope.module_row_in_scope(db, kind, str(row_id), m):
         raise handle_not_found("Record", str(row_id))
     if role is None:
         raise _refused()
@@ -284,8 +300,9 @@ def _module_guard(kind: str):
     return guard
 
 
-#: Mounted on the sample request, new product application and opportunity staff routers in their
-#: package ``__init__``.
+#: Mounted on the sample request, new product application, opportunity and price tag request staff
+#: routers in their package ``__init__``.
 sample_request_own_scope = _module_guard("sample_request")
 new_product_application_own_scope = _module_guard("new_product_application")
 sales_opportunity_own_scope = _module_guard("sales_opportunity")
+price_tag_request_own_scope = _module_guard("price_tag_request")
