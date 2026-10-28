@@ -128,11 +128,41 @@ def test_compile_uuid_in_takes_a_list_of_ids():
     assert " IN " in str(expr).upper()
 
 
-def test_coerce_value_coerces_each_element_of_a_list():
-    from decimal import Decimal
+def test_in_coerces_each_element_of_the_list():
+    from sqlalchemy import Numeric, column
 
-    from app.services.query.filter_compiler_adapters import _coerce_value
+    from app.services.query.filter_compiler_adapters import _apply_scalar
 
-    ids = ["550e8400-e29b-41d4-a716-446655440000", "650e8400-e29b-41d4-a716-446655440001"]
-    assert _coerce_value(ids, "uuid") == ids
-    assert _coerce_value(["1", "2.5"], "number") == [Decimal("1"), Decimal("2.5")]
+    expr = _apply_scalar(column("qty", Numeric), "in", ["1", "2.5"], "number")
+    assert " IN " in str(expr).upper()
+
+
+# Review round: a list is only meaningful for "In list". On any other operator it is refused
+# (400) rather than coerced: a JSON boolean `eq [False]` would otherwise match "true", and a
+# uuid / number `eq [..]` would reach the database as a 500.
+def test_eq_with_a_list_is_refused():
+    fg = FilterGroup(
+        op="and",
+        children=[
+            FilterCondition(
+                field_key="line_product_id", op="eq", value=["550e8400-e29b-41d4-a716-446655440000"]
+            )
+        ],
+    )
+    meta = {
+        "line_product_id": _field("line_product_id", "line.product_id", "uuid", ["eq", "ne", "in"]),
+    }
+    with pytest.raises(ValueError, match="single value"):
+        compile_filter("orders", fg, meta)
+
+
+def test_workflow_boolean_eq_with_a_list_is_refused():
+    fg = FilterGroup(
+        op="and",
+        children=[FilterCondition(field_key="hdr:f1", op="eq", value=[False])],
+    )
+    meta = {
+        "hdr:f1": _field("hdr:f1", "wf_hdr:f1", "boolean", ["eq"]),
+    }
+    with pytest.raises(ValueError, match="single value"):
+        compile_filter("workflow_form_submissions", fg, meta)
