@@ -1,5 +1,10 @@
 """R6-1 BARE-SIZE-BY-DATA (SIZE-WRONG-KEY; crew rulings a21061914 (a), a22659272; ZZ data).
 
+SUPERSEDED IN PART by DIMENSION-ANY (owner, prod v69, 28 Oct 2026: "when it comes to dimension, it
+shouldn't restrict to just 1 dimension, it should search all dimension"): a bare length now matches
+EVERY dimension key (every numeric registry key in mm), so "never height" and "a WC's bare 300 is
+its trap length only" below are amended to the any-dimension sets. See tests/chatbot/test_dimension_any.py.
+
 Owner rule: a BARE size (no dimension named) matches width OR length; a named dimension stays strict;
 a WC's 200 / 300 is its trap length. All data, no key or class list in code: registry column
 `matches_bare_size` (true for dim_width, dim_length) and trap_length.applies_when {"class": [<WC class>]}.
@@ -118,12 +123,12 @@ WCS = (
 )
 
 
-def test_a_bare_size_matches_width_or_length_never_height(session_factory, seeded, stub_access, monkeypatch):
+def test_a_bare_size_matches_every_dimension_height_included(session_factory, seeded, stub_access, monkeypatch):
     ids = _seed(session_factory, BASINS)
 
     r, calls = _ask(session_factory, stub_access, monkeypatch, "need a 600mm zzbasin", _ent("zzbasin", "category"), _spec("600mm", "size", 600))
 
-    assert _fetched(calls) == sorted([ids["ZZBS-W"], ids["ZZBS-L"]]), (r.reply, calls)
+    assert _fetched(calls) == sorted([ids["ZZBS-W"], ids["ZZBS-L"], ids["ZZBS-H"]]), (r.reply, calls)
 
 
 def test_guard_a_named_dimension_stays_strict(session_factory, seeded, stub_access, monkeypatch):
@@ -134,12 +139,12 @@ def test_guard_a_named_dimension_stays_strict(session_factory, seeded, stub_acce
     assert _fetched(calls) == [ids["ZZBS-W"]], (r.reply, calls)
 
 
-def test_a_bare_size_on_a_class_that_scopes_a_key_reads_that_key(session_factory, seeded, stub_access, monkeypatch):
+def test_a_bare_size_on_a_class_that_scopes_a_key_still_reads_every_dimension(session_factory, seeded, stub_access, monkeypatch):
     ids = _seed(session_factory, WCS)
 
     r, calls = _ask(session_factory, stub_access, monkeypatch, "any 300mm zzwc", _ent("zzwc", "category"), _spec("300mm", "size", 300))
 
-    assert _fetched(calls) == [ids["ZZWC-T"]], (r.reply, calls)
+    assert _fetched(calls) == sorted([ids["ZZWC-T"], ids["ZZWC-W"]]), (r.reply, calls)
 
 
 def test_kill_control_without_the_registry_scope_the_pair_applies(session_factory, seeded, stub_access, monkeypatch):
@@ -148,10 +153,10 @@ def test_kill_control_without_the_registry_scope_the_pair_applies(session_factor
 
     r, calls = _ask(session_factory, stub_access, monkeypatch, "any 300mm zzwc", _ent("zzwc", "category"), _spec("300mm", "size", 300))
 
-    assert _fetched(calls) == [ids["ZZWC-W"]], (r.reply, calls)
+    assert _fetched(calls) == sorted([ids["ZZWC-T"], ids["ZZWC-W"]]), (r.reply, calls)
 
 
-def test_a_held_basin_family_with_a_bare_size_narrows_by_width_or_length(session_factory, seeded, stub_access, monkeypatch):
+def test_a_held_basin_family_with_a_bare_size_narrows_by_any_dimension(session_factory, seeded, stub_access, monkeypatch):
     ids = _seed(session_factory, (
         ("ZZBF1-A", BASIN, {"dim_width": 500, "dim_length": 400}),
         ("ZZBF1-B", BASIN, {"dim_length": 600}),
@@ -161,10 +166,10 @@ def test_a_held_basin_family_with_a_bare_size_narrows_by_width_or_length(session
 
     r, calls = _ask(session_factory, stub_access, monkeypatch, "600mm one pls", _spec("600mm", "size", 600), held=["ZZBF1-A"])
 
-    assert _fetched(calls) == sorted([ids["ZZBF1-B"], ids["ZZBF1-C"]]), (r.reply, calls)
+    assert _fetched(calls) == sorted([ids["ZZBF1-B"], ids["ZZBF1-C"], ids["ZZBF1-D"]]), (r.reply, calls)
 
 
-def test_a_held_wc_with_a_bare_size_reads_its_class_key(session_factory, seeded, stub_access, monkeypatch):
+def test_a_held_wc_with_a_bare_size_reads_every_dimension(session_factory, seeded, stub_access, monkeypatch):
     ids = _seed(session_factory, (
         ("ZZWF2-A", WC, {"trap_length": 150}),
         ("ZZWF2-B", WC, {"trap_length": 300}),
@@ -173,10 +178,10 @@ def test_a_held_wc_with_a_bare_size_reads_its_class_key(session_factory, seeded,
 
     r, calls = _ask(session_factory, stub_access, monkeypatch, "300mm?", _spec("300mm", "size", 300), held=["ZZWF2-A"])
 
-    assert _fetched(calls) == [ids["ZZWF2-B"]], (r.reply, calls)
+    assert _fetched(calls) == sorted([ids["ZZWF2-B"], ids["ZZWF2-C"]]), (r.reply, calls)
 
 
-def test_q3_a_named_length_no_wc_holds_falls_to_the_class_key_that_shares_its_phrase(session_factory, seeded, stub_access, monkeypatch):
+def test_q3_a_named_length_no_wc_holds_falls_back_to_any_dimension(session_factory, seeded, stub_access, monkeypatch):
     ids = _seed(session_factory, (
         ("ZZWQ-A", WC, {"trap_length": 200}),
         ("ZZWQ-B", WC, {"trap_length": 200}),
@@ -186,6 +191,7 @@ def test_q3_a_named_length_no_wc_holds_falls_to_the_class_key_that_shares_its_ph
     r, calls = _ask(session_factory, stub_access, monkeypatch, "length 200mm zzwc", _ent("zzwc", "category"), _spec("length 200mm", "dim_length", 200))
 
     assert _fetched(calls) == sorted([ids["ZZWQ-A"], ids["ZZWQ-B"]]), (r.reply, calls)
+    assert "None with length 200 mm; these have 200 mm in another dimension:" in (r.reply or {}).get("text", ""), r.reply
 
 
 def test_guard_q3_a_named_length_some_wc_holds_stays_strict(session_factory, seeded, stub_access, monkeypatch):
@@ -228,7 +234,7 @@ def test_a_hidden_dim_width_leaves_dim_length_alone_in_the_bare_size_or(session_
     r, calls = _ask(session_factory, stub_access, monkeypatch, "need a 600mm zzbasin", _ent("zzbasin", "category"), _spec("600mm", "size", 600))
 
     assert ids["ZZBS-W"] not in _fetched(calls), (r.reply, calls)
-    assert _fetched(calls) == [ids["ZZBS-L"]], (r.reply, calls)
+    assert _fetched(calls) == sorted([ids["ZZBS-L"], ids["ZZBS-H"]]), (r.reply, calls)
 
 
 # --- R6-5 N3: a bare-size miss line carries the unit --------------------------------------------
@@ -271,7 +277,7 @@ def test_a_hidden_dim_width_never_narrows_a_held_family_by_a_bare_size(session_f
     r, calls = _ask(session_factory, stub_access, monkeypatch, "600mm one pls", _spec("600mm", "size", 600), held=["ZZBH1-A"])
 
     assert ids["ZZBH1-B"] not in _fetched(calls), (r.reply, calls)
-    assert _fetched(calls) == [ids["ZZBH1-C"]], (r.reply, calls)
+    assert _fetched(calls) == sorted([ids["ZZBH1-C"], ids["ZZBH1-D"]]), (r.reply, calls)
 
 
 def test_a_hidden_trap_length_is_never_the_class_key_of_a_bare_size(session_factory, seeded, stub_access, monkeypatch):
@@ -282,7 +288,7 @@ def test_a_hidden_trap_length_is_never_the_class_key_of_a_bare_size(session_fact
 
     text_ = ((r.reply or {}).get("text") or "").lower()
     assert "trap" not in text_, text_
-    assert _fetched(calls) == [ids["ZZWC-W"]], (r.reply, calls)  # the visible width-or-length OR instead
+    assert _fetched(calls) == [ids["ZZWC-W"]], (r.reply, calls)  # the visible dimensions' OR instead
 
 
 def test_a_strict_entry_on_a_hidden_key_is_dropped_from_the_set(session_factory, seeded, stub_access, monkeypatch):
