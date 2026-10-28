@@ -1,7 +1,17 @@
 # PLAN: SPAN-PASS-PROD - the lookup span pass on production, with Gemini embeddings, verified
 
-Status: 28 Oct. Plan + behaviour card filed (crew ask); no code yet. Track: M (prompt text + label config +
-verification; code only if the card's answers need it: warm-up sharing, n-gram Gemini floors). Owner does every prod step.
+Status: 28 Oct ~16:00. Owner answers (~15:4x): Q1 (a) two steps, Q2 (a) shared vector file (UAC
+`span-pass-prod-acceptance-criteria.md`), Q3 span extractor v2 NOW (works on OpenAI 3-small: `list_resolver.py:344-357`
+has no model check, floors `:68-71`), Q4 (a), Q5 (a) eval <= USD 0.25 today. Building Q2 (tester -> coder -> reviewer).
+Track: M (no migration, no auth). Owner does every prod step.
+
+## Owner rulings (28 Oct ~15:4x, via crew)
+
+- Q1 (a): step 1 parser -> v69+spans with the OpenAI 3-small embedder; step 2 Gemini embedder after the Q2 fix ships.
+- Q2 (a): container-shared vector file + lock (this lane's code). Owner activates at midnight.
+- Q3: span extractor v2 (meaning) at step 1, on OpenAI vectors.
+- Q4 (a): accept spelling-only on span-fallback turns; revisit if the prod fallback rate > 5% over a week.
+- Q5 (a): eval today, cap USD 0.25, crew runs it.
 
 Owner (28 Oct ~15:2x): "I want ... the span pass to be working on prod (which I haven't enabled yet cause idk how to turn
 on the google embedding and how to make sure embedding works in prod)". Chat lane rule: understanding is parser-only, no
