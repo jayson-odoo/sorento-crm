@@ -315,7 +315,7 @@ def _capture_next_assignee(monkeypatch, *, response: dict[str, Any] | None = Non
         **(response or {}),
     }
 
-    async def fake_post_next_assignee(body: dict, current_user: dict = None, db: Any = None):
+    def fake_post_next_assignee(body: dict, current_user: dict = None, db: Any = None):
         bodies.append(dict(body))
         return canned
 
@@ -337,8 +337,8 @@ def _capture_real_next_assignee(monkeypatch) -> list[dict[str, Any]]:
     real = next_assignee_mod.post_next_assignee
     calls: list[dict[str, Any]] = []
 
-    async def wrapped(body: dict, current_user: dict = None, db: Any = None):
-        response = await real(body=body, current_user=current_user, db=db)
+    def wrapped(body: dict, current_user: dict = None, db: Any = None):
+        response = real(body=body, current_user=current_user, db=db)
         calls.append({"body": dict(body), "response": dict(response)})
         return response
 

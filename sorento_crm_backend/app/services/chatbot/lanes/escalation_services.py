@@ -29,7 +29,6 @@ than half-working, so promoting the build without wiring it is a loud failure.
 """
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from contextlib import contextmanager
@@ -73,18 +72,14 @@ def _next_assignee(db: Any):
     def call(body: dict[str, Any]) -> dict[str, Any]:
         """The `/external/next-assignee` handler, in process.
 
-        It is declared `async def` and its body contains no `await` at all (measured: zero
-        in the module), so driving it with `asyncio.run` is a formality that costs one
-        event loop and changes nothing about what it does. Calling the handler rather than
-        re-implementing round robin is deliberate: the cursor advance, the working-hours
-        check and the already-assigned check are the behaviour n8n has been getting, and a
-        second implementation of them would drift.
+        A plain `def` handler (API-NONBLOCKING), so it is simply called. Calling the handler
+        rather than re-implementing round robin is deliberate: the cursor advance, the
+        working-hours check and the already-assigned check are the behaviour n8n has been
+        getting, and a second implementation of them would drift.
         """
         from app.api.v1.external.next_assignee import post_next_assignee
 
-        return asyncio.run(
-            post_next_assignee(body=body, current_user={"id": None, "email": "chatbot"}, db=db)
-        )
+        return post_next_assignee(body=body, current_user={"id": None, "email": "chatbot"}, db=db)
 
     return call
 
@@ -100,12 +95,10 @@ def _preview_assignee(db: Any):
         """
         from app.api.v1.external.next_assignee import post_next_assignee
 
-        return asyncio.run(
-            post_next_assignee(
-                body={**body, "preview": True},
-                current_user={"id": None, "email": "chatbot"},
-                db=db,
-            )
+        return post_next_assignee(
+            body={**body, "preview": True},
+            current_user={"id": None, "email": "chatbot"},
+            db=db,
         )
 
     return call

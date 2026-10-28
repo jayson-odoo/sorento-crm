@@ -11,6 +11,7 @@ import base64
 import hashlib
 import hmac
 import json
+from datetime import timezone
 
 import pytest
 from fastapi.testclient import TestClient
@@ -518,7 +519,8 @@ def test_a_stored_row_enters_the_reconcile_window(client, db, transport):
     )
     db.expire_all()
     state = db.query(ChatThreadSyncState).filter(ChatThreadSyncState.contact_id == CONTACT_ID).one()
-    assert state.last_activity_at.timestamp() >= 1786751991
+    # Stored naive UTC; a naive `.timestamp()` would read it as local time (+08 CI runner).
+    assert state.last_activity_at.replace(tzinfo=timezone.utc).timestamp() >= 1786751991
 
 
 def test_the_clock_is_the_message_id_and_a_seconds_timestamp_is_not_1970(client, db, transport):
@@ -529,7 +531,8 @@ def test_the_clock_is_the_message_id_and_a_seconds_timestamp_is_not_1970(client,
     r = _post(client, body)
     assert r.status_code == 200
     (row,) = _rows(db)
-    assert row.sent_at.year == 2026 and int(row.sent_at.timestamp()) == MESSAGE_ID // 1_000_000
+    sent_epoch = int(row.sent_at.replace(tzinfo=timezone.utc).timestamp())  # stored naive UTC
+    assert row.sent_at.year == 2026 and sent_epoch == MESSAGE_ID // 1_000_000
 
     body = _event()
     body["message"]["messageId"] = "abc-not-a-clock"

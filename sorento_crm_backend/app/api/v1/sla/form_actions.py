@@ -95,7 +95,7 @@ def _serialize_pending(db: Session, row, viewer_id: Optional[str]) -> dict:
 
 
 @router.get("/current")
-async def get_current_form_action(
+def get_current_form_action(
     source_entity_type: str = Query(...),
     source_entity_id: str = Query(...),
     current_user: dict = Depends(get_current_user),
@@ -148,7 +148,7 @@ async def get_current_form_action(
 
 
 @router.post("/{action_id}/cancel")
-async def cancel_form_action(
+def cancel_form_action(
     action_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -168,7 +168,7 @@ async def cancel_form_action(
 
 
 @router.post("/undo")
-async def undo_form_action(
+def undo_form_action(
     body: _UndoRequest,
     current_user: dict = Depends(
         require_permission("sla_management.form_sla.undo_action")
@@ -209,7 +209,7 @@ async def undo_form_action(
 
 
 @router.get("/eligibility")
-async def get_undo_eligibility(
+def get_undo_eligibility(
     source_entity_type: str = Query(...),
     source_entity_id: str = Query(...),
     current_user: dict = Depends(get_current_user),

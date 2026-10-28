@@ -48,7 +48,7 @@ _EDIT = "master_data.product_attachments.edit"
 
 
 @router.get("/brochure-images", response_model=BrochureImageList)
-async def list_brochure_images(
+def list_brochure_images(
     promotion_id: Optional[list[str]] = Query(
         None,
         # Validated in the route (`multi_uuids`) rather than in the service: compared against
@@ -81,7 +81,7 @@ async def list_brochure_images(
 
 
 @router.post("/brochure-images/adopt-single", response_model=BrochureImageAdopted)
-async def adopt_single_candidate_images(
+def adopt_single_candidate_images(
     payload: BrochureImageAdoptSingle,
     current_user: dict = Depends(require_permission("master_data.product_attachments.edit")),
     db: Session = Depends(get_db),
@@ -105,7 +105,7 @@ async def adopt_single_candidate_images(
 
 
 @router.put("/brochure-images/{product_id}", response_model=BrochureImageChoice)
-async def set_brochure_image(
+def set_brochure_image(
     product_id: str,
     payload: BrochureImageSet,
     current_user: dict = Depends(require_permission("master_data.product_attachments.edit")),
@@ -129,7 +129,7 @@ async def set_brochure_image(
 
 
 @router.delete("/brochure-images/{product_id}", response_model=BrochureImageChoice)
-async def clear_brochure_image(
+def clear_brochure_image(
     product_id: str,
     current_user: dict = Depends(require_permission("master_data.product_attachments.edit")),
     db: Session = Depends(get_db),
@@ -146,7 +146,7 @@ async def clear_brochure_image(
 
 
 @router.get("/", response_model=ListResponse[ProductAttachmentResponse])
-async def get_product_attachments(
+def get_product_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query("created_at"),
@@ -219,7 +219,7 @@ async def get_product_attachments(
 
 
 @router.get("/{product_attachment_id}", response_model=ProductAttachmentResponse)
-async def get_product_attachment(
+def get_product_attachment(
     product_attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -237,7 +237,7 @@ async def get_product_attachment(
 
 
 @router.post("/", response_model=ProductAttachmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_product_attachment(
+def create_product_attachment(
     product_attachment_data: ProductAttachmentCreate,
     current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db)
@@ -293,7 +293,7 @@ async def create_product_attachment(
 
 
 @router.put("/{product_attachment_id}", response_model=ProductAttachmentResponse)
-async def update_product_attachment(
+def update_product_attachment(
     product_attachment_id: str,
     product_attachment_data: ProductAttachmentUpdate,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -312,7 +312,7 @@ async def update_product_attachment(
 
 
 @router.delete("/{product_attachment_id}", status_code=status.HTTP_200_OK)
-async def delete_product_attachment(
+def delete_product_attachment(
     product_attachment_id: str,
     current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db)
@@ -338,7 +338,7 @@ async def delete_product_attachment(
 
 
 @router.get("/product/{product_id}")
-async def get_product_attachments_by_product(
+def get_product_attachments_by_product(
     product_id: str,
     user_type: Optional[str] = Query(None, description="Legacy single access-level filter."),
     current_user: dict = Depends(get_current_user_or_api_key),

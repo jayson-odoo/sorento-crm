@@ -138,7 +138,7 @@ def _clean_statuses(values: Optional[list[str]]) -> list[str]:
 
 
 @router.get("/revision-configs", response_model=PortalRevisionConfigListResponse)
-async def list_portal_revision_configs(
+def list_portal_revision_configs(
     current_user: dict = Depends(require_permission_with_api_key("user_management.settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -163,7 +163,7 @@ async def list_portal_revision_configs(
     "/revision-configs/enabled",
     response_model=PortalRevisionEnabledMapResponse,
 )
-async def get_portal_revision_enabled_map(
+def get_portal_revision_enabled_map(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -198,7 +198,7 @@ async def get_portal_revision_enabled_map(
     "/revision-configs/{source_entity_type}",
     response_model=PortalRevisionConfigResponse,
 )
-async def upsert_portal_revision_config(
+def upsert_portal_revision_config(
     payload: PortalRevisionConfigUpdate,
     source_entity_type: str = Path(...),
     current_user: dict = Depends(require_permission("user_management.settings.edit")),

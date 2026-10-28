@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=list[LookupEligibilityResponse])
-async def list_eligibility(
+def list_eligibility(
     available: bool = Query(False),
     current_user=Depends(require_permission_with_api_key("master_data.lookup_sets.view")),
     db: Session = Depends(get_db),

@@ -180,7 +180,11 @@ def test_gemini_passes_the_timeout_to_its_request(monkeypatch):
     monkeypatch.setattr(llm_provider.GeminiProvider, "_request", _request)
     with pytest.raises(RuntimeError):
         llm_provider.GeminiProvider("k").chat([{"role": "user", "content": "x"}], timeout=9.0)
-    assert seen == [9.0]
+    # GEMINI-EXPLICIT-CACHE: `_generate` hands each request what is LEFT of the caller's
+    # timeout (cache steps spend from it), so the 9 s arrives less the microseconds already
+    # spent - never the 120 s default, never more than the caller gave.
+    assert seen == [pytest.approx(9.0, abs=0.5)]
+    assert seen[0] <= 9.0
 
 
 class InternalServerError(Exception):

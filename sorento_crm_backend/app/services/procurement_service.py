@@ -10402,9 +10402,13 @@ class PurchaseRequestService:
         approval_comments: Optional[str] = None,
     ):
         """Consume token and update purchase request with approval/rejection. Returns updated header."""
+        # Row lock until this decision commits: a second submission of the same link waits
+        # here, then reads the used_at the first one wrote (API-NONBLOCKING security S1).
         approval_token = (
             self.db.query(ApprovalToken)
             .filter(ApprovalToken.token == token_value)
+            .with_for_update()
+            .populate_existing()  # re-read under the lock even if this session loaded it already
             .first()
         )
         if not approval_token:

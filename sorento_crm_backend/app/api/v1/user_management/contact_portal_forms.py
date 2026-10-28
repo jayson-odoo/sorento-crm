@@ -77,7 +77,7 @@ def _build_view(db: Session, contact_id: str) -> dict:
 
 
 @router.get("/{contact_id}/portal-forms", status_code=status.HTTP_200_OK)
-async def get_contact_portal_forms(
+def get_contact_portal_forms(
     contact_id: str,
     current_user: dict = Depends(require_permission(CONTACT_VIEW_PERMISSION)),
     db: Session = Depends(get_db),
@@ -95,7 +95,7 @@ async def get_contact_portal_forms(
 
 
 @router.put("/{contact_id}/portal-forms", status_code=status.HTTP_200_OK)
-async def update_contact_portal_forms(
+def update_contact_portal_forms(
     contact_id: str,
     payload: ContactPortalFormsUpdate,
     current_user: dict = Depends(require_permission(CONTACT_EDIT_PERMISSION)),
