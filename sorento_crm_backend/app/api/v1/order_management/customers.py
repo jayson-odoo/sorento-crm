@@ -17,6 +17,7 @@ from app.schemas.contact_customer import CustomerLinkedContactsResponse
 from app.services.user_service import UserPermissionService
 import uuid
 from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
+from app.utils.multi_value import multi_uuids
 
 router = APIRouter()
 
@@ -28,16 +29,13 @@ async def get_customers(
     query: Optional[str] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
-    customer_group_id: Optional[str] = Query(None),
+    customer_group_id: Optional[list[str]] = Query(None),
+    status: Optional[str] = Query(None, description="active | inactive; omit for every customer"),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
     """Get customers with pagination, search, and sorting."""
-    if customer_group_id is not None:
-        try:
-            uuid.UUID(customer_group_id)
-        except ValueError:
-            raise handle_unprocessable("Invalid customer group")
+    group_ids = multi_uuids(customer_group_id, "Customer group")
     try:
         service = CustomerService(db)
         result = service.list_customers(
@@ -46,7 +44,8 @@ async def get_customers(
             query=query,
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
-            customer_group_id=customer_group_id,
+            customer_group_id=group_ids,
+            status=status,
         )
         return result
     except Exception as e:

@@ -23,7 +23,8 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useCampaigns } from '../hooks/useCampaigns';
 import type { Campaign } from '../types/campaign.types';
@@ -46,7 +47,7 @@ export default function CampaignsList() {
     isSettling: searchSettling,
     reset: resetSearch,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Back hands the list its own query string back, and the pager keeps
@@ -55,7 +56,7 @@ export default function CampaignsList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
-    setStatusFilter(state.filters.status ?? 'all');
+    setStatusFilter(state.filters.status ?? '');
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
@@ -67,7 +68,7 @@ export default function CampaignsList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    status: statusFilter !== 'all' ? statusFilter : undefined,
+    status: statusFilter || undefined,
   });
 
   // D3: the row opens the campaign, chevron or no chevron - the chevron was
@@ -82,7 +83,7 @@ export default function CampaignsList() {
         sorting,
         searchQuery,
       },
-      statusFilter !== 'all' ? { status: statusFilter } : undefined,
+      statusFilter ? { status: statusFilter } : undefined,
     );
     return `/marketing-management/campaigns/${row.id}${search ? `?${search}` : ''}`;
   };
@@ -222,26 +223,24 @@ export default function CampaignsList() {
             }
             filters={{
               kind: 'custom',
-              active: statusFilter !== 'all',
-              activeCount: statusFilter !== 'all' ? 1 : 0,
+              active: statusFilter !== '',
+              activeCount: statusFilter ? 1 : 0,
               content: (
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
-                      options={[
-                        { value: 'all', label: 'All statuses' },
-                        ...CAMPAIGN_STATUSES.map((s) => ({ value: s.value, label: s.label })),
-                      ]}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
+                      options={CAMPAIGN_STATUSES.map((s) => ({ value: s.value, label: s.label }))}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
+                      clearable
                     />
                   </div>
-                  {statusFilter !== 'all' && (
+                  {statusFilter && (
                     <div className="flex justify-end">
-                      <Button variant="ghost" size="sm" onClick={() => setStatusFilter('all')}>
+                      <Button variant="ghost" size="sm" onClick={() => setStatusFilter('')}>
                         Clear filters
                       </Button>
                     </div>

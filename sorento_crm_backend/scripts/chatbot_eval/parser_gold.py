@@ -51,10 +51,12 @@ EXPECT_KEYS = frozenset({
     "by_words",
     # CHAT-V66-REGRESSIONS: the access levels the message selects, compared as a set, case aside.
     "access_levels",
+    # SALES-TOTAL-ASK: the sales analysis's own basis key (null: the bot asks).
+    "sales_basis",
 })
 #: The expect keys read straight off the verdict (null means null or absent).
 _REPORT_KEYS = ("order_status", "group_by", "measure", "basis", "compare_to", "sales_channel", "ranking_refine",
-                "document")
+                "document", "sales_basis")
 #: LEAN v90: the type each of these expect values must have (null allowed where listed).
 _EXPECT_TYPES: dict[str, tuple[type, ...]] = {
     "products_only": (list,),

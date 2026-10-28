@@ -106,9 +106,11 @@ export interface SpecVerificationWorklistResponse {
 
 export type SpecVerificationWorklistParams = DataGridApiFetchParams & {
   /** Empty string means no state filter. */
-  state?: VerificationState | '';
+  /** One state, or several comma-joined (OR-ed). */
+  state?: string;
   /** Empty string means no class filter. */
-  class_label?: string;
+  /** Class labels are free text, so they ride repeated params (a label can contain a comma). */
+  class_label?: string[];
   include_discontinued?: boolean;
 };
 

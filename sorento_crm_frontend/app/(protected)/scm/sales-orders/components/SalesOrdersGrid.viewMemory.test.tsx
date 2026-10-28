@@ -16,6 +16,7 @@
 import React from 'react';
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { render, screen, cleanup, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 if (!window.matchMedia) {
@@ -117,6 +118,37 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       aria-label={placeholder}
       value={value}
       onChange={(e) => onChange?.(e.target.value)}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
+// The filters are multi-selects now (FILTER-MULTISELECT PR3): the same native stand-in, a multiple <select>.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    id,
+    value = [],
+    onChange,
+    options = [],
+    placeholder,
+  }: {
+    id?: string;
+    value?: string[];
+    onChange?: (v: string[]) => void;
+    options?: Array<{ value: string; label: string }>;
+    placeholder?: string;
+  }) => (
+    <select
+      multiple
+      id={id}
+      aria-label={placeholder}
+      value={value}
+      onChange={(e) => onChange?.(Array.from(e.target.selectedOptions, (o) => o.value))}
     >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
@@ -355,14 +387,10 @@ describe('SalesOrdersGrid remembered view', () => {
     fireEvent.keyDown(await screen.findByRole('button', { name: /Filters/i }), {
       key: 'Enter',
     });
-    const statusSelect = await screen.findByRole('combobox', { name: /status/i });
+    const statusSelect = await screen.findByRole('listbox', { name: /status/i });
 
-    vi.useFakeTimers();
-    fireEvent.change(statusSelect, { target: { value: 'open' } });
-    await vi.advanceTimersByTimeAsync(900);
-    vi.useRealTimers();
-
-    expect(service.upsertUserListColumnConfig).toHaveBeenCalled();
+    await userEvent.setup().selectOptions(statusSelect, ['open']);
+    await waitFor(() => expect(service.upsertUserListColumnConfig).toHaveBeenCalled(), { timeout: 3000 });
     const [key, payload] = service.upsertUserListColumnConfig.mock.calls.at(-1)!;
     expect(key).toBe(LISTING_KEY);
     expect(payload).toMatchObject({ filters: { status: 'open' } });

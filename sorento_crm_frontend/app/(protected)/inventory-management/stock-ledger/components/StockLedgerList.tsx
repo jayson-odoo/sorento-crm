@@ -22,7 +22,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { useStockLedger } from '../hooks/useStockLedger';
 import {
@@ -188,10 +189,10 @@ export default function StockLedgerList() {
                   </div>
                   <div className="space-y-1">
                     <Label htmlFor="stock-ledger-type">Transaction type</Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       id="stock-ledger-type"
-                      value={transactionType}
-                      onChange={setTransactionType}
+                      value={splitMulti(transactionType)}
+                      onChange={(v) => setTransactionType(joinMulti(v))}
                       options={STOCK_LEDGER_TRANSACTION_TYPE_OPTIONS}
                       placeholder="All types"
                       clearable

@@ -204,10 +204,11 @@ def _turn_a() -> dict[str, Any]:
 
 
 def _turn_b(**overrides: Any) -> dict[str, Any]:
-    """"dealer sales september 2026", the no-product ask (a product-naming parse runs the report)."""
+    """"dealer sales september 2026", the no-product ask (a product-naming parse runs the report). Its basis is
+    named: one with none is asked the basis before the company (SALES-TOTAL-ASK, `test_sales_total_ask` T6)."""
     base = dict(
         domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
-        sales_channel="dealer", sales_company=None, sales_basis=None, group_by=None,
+        sales_channel="dealer", sales_company=None, sales_basis="invoiced", group_by=None,
         entities=[], entity_op="replace_combine", domain_in_message=True, **SEP_2026,
     )
     base.update(overrides)
@@ -412,10 +413,11 @@ def test_g4_the_company_question_retires_the_stale_drill_offer(two, turn_c, text
 
 
 def _turn_e1() -> dict[str, Any]:
-    """"dealer sales september 2026", as the parser emitted it live (v63, gpt-5.4-mini)."""
+    """"dealer sales september 2026", as the parser emitted it live (v63, gpt-5.4-mini), with its basis named
+    (one with none is asked the basis before the company: SALES-TOTAL-ASK)."""
     return _parser_output(
         domain_hint="sales", intent_hint="check_order", order_status="sales_analysis",
-        sales_channel="dealer", sales_company=None, sales_basis=None, group_by="month",
+        sales_channel="dealer", sales_company=None, sales_basis="invoiced", group_by="month",
         entities=[], entity_op="reuse", domain_in_message=True, **SEP_2026,
     )
 

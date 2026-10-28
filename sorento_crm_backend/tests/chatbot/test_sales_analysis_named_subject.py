@@ -49,7 +49,7 @@ def _x2(order_status: str = "sales_analysis", entities: list[dict[str, Any]] | N
     return _parser_output(
         message_type="business_query", intent_hint="check_order", domain_hint="sales",
         order_status=order_status, entities=entities, entity_op="replace_combine",
-        sales_channel="dealer", sales_basis=None, sales_company=None, scope_intent="specific",
+        sales_channel="dealer", sales_basis="invoiced", sales_company=None, scope_intent="specific",
         open_question_answer={"mode": None, "items": [], "picked": [], "qty_for_all": None},
         **SEP_2026,
     )

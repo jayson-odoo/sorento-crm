@@ -7,6 +7,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Optional, List
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.product_service import ProductService
@@ -124,8 +125,8 @@ def get_products(
             "separated string, or JSON array. Non-UUID input → HTTP 400."
         ),
     ),
-    category_id: Optional[str] = Query(None),
-    brand_id: Optional[str] = Query(None),
+    category_id: Optional[list[str]] = Query(None),
+    brand_id: Optional[list[str]] = Query(None),
     status: Optional[str] = Query(None),
     discontinued_batch_id: Optional[str] = Query(
         None,
@@ -205,8 +206,8 @@ def get_products(
             query=query,
             entities=_normalize_entities(entities),
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
-            category_id=category_id,
-            brand_id=brand_id,
+            category_id=",".join(multi_values(category_id) or []) or None,
+            brand_id=",".join(multi_values(brand_id) or []) or None,
             status=status,
             discontinued_batch_id=discontinued_batch_id,
             discontinued_from=discontinued_from,

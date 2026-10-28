@@ -5,9 +5,9 @@ import { LIST_QUERY_OPTIONS } from '@/lib/list-query/options';
 import { getSpecKeyProducts } from '../services/productSpecService';
 
 export interface SpecKeyProductsParams {
-  value?: string;
+  value?: string[];
   q?: string;
-  classLabel?: string;
+  classLabel?: string[];
   source?: string;
   limit: number;
   offset: number;

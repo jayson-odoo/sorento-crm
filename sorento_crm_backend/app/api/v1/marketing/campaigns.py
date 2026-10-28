@@ -17,7 +17,7 @@ router = APIRouter()
 async def get_campaigns(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    status: Optional[str] = Query(None, description="Filter by status (case-insensitive)"),
+    status: Optional[list[str]] = Query(None, description="Filter by status (case-insensitive)"),
     current_user: dict = Depends(require_permission_with_api_key("marketing.campaigns.view")),
     db: Session = Depends(get_db)
 ):

@@ -20,6 +20,7 @@ from app.services import document_relations as relations
 from app.services.document_relations import RELATED_SORT_PATTERN
 from app.services.finance import billing_document_query_service as svc
 from app.services.uuid_path_param import UUID_PATTERN
+from app.utils.multi_value import multi_uuids
 
 router = APIRouter()
 customers_router = APIRouter()
@@ -43,9 +44,9 @@ def list_billing_documents(
     query: Optional[str] = Query(None),
     # Repeated (`document_type=a&document_type=b`) or comma separated (`a,b`).
     document_type: Optional[list[str]] = Query(None),
-    status: Optional[str] = Query(None),
-    customer_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
-    agent_code: Optional[str] = Query(None),
+    status: Optional[list[str]] = Query(None),
+    customer_id: Optional[list[str]] = Query(None),
+    agent_code: Optional[list[str]] = Query(None),
     date_from: Optional[DateType] = Query(None),
     date_to: Optional[DateType] = Query(None),
     open_only: bool = Query(False),
@@ -58,13 +59,14 @@ def list_billing_documents(
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
+    customer_ids = multi_uuids(customer_id, "Customer")
     try:
         rows, total = svc.list_documents(
             db,
             query=query,
             document_types=document_type,
             status=status,
-            customer_id=customer_id,
+            customer_id=customer_ids,
             agent_code=agent_code,
             date_from=date_from,
             date_to=date_to,
