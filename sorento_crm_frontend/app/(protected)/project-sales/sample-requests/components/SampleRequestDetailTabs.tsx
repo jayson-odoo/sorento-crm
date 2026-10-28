@@ -3,6 +3,7 @@
 import type { ReactNode } from 'react';
 import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
 
 /**
  * The PR / SF / SI detail tabs for a sample request. The comment thread is read with
@@ -18,11 +19,13 @@ export default function SampleRequestDetailTabs({
   children: ReactNode;
 }) {
   const canView = useHasPermission('projects.sample_requests.view');
+  const { limited } = useRequestScope('sample_request');
   return (
     <FormDetailWithSLATabs
       sourceEntityType="sample_request"
       sourceEntityId={id}
       commentsKind={canView ? 'sample_request' : undefined}
+      limited={limited}
     >
       {children}
     </FormDetailWithSLATabs>
