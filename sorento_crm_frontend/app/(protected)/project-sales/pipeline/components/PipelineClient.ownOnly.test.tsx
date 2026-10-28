@@ -102,7 +102,8 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 const permsRef: { set: Set<string> } = { set: new Set() };
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ permissionSet: permsRef.set, isLoading: false, isError: false }),
-  useHasAnyPermission: () => false,
+  useHasPermission: (slug: string) => permsRef.set.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => permsRef.set.has(s)),
 }));
 
 import { PipelineClient } from './PipelineClient';

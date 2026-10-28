@@ -24,7 +24,7 @@ export default async function DeliveryScheduleReviewPage({
 }) {
   const { projectId, versionId } = await params;
   return (
-    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-4">
         <DeliveryScheduleReviewClient projectId={projectId} versionId={versionId} />
       </Container>

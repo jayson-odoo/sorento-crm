@@ -87,6 +87,9 @@ async def get_grns(
         if entity_echo is not None and isinstance(result, dict):
             result["resolved_entities"] = entity_echo
         return result
+    except HTTPException:
+        # A deliberate refusal (e.g. too many filter values) keeps its own status.
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
 

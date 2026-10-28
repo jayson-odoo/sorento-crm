@@ -14,8 +14,8 @@ const permsRef: { set: Set<string> } = { set: new Set() };
 // to the mocked permission set the way the real gate does (any of the listed slugs) and never
 // renders the page's heavy children.
 vi.mock('@/app/components/common/RequireAccess', () => ({
-  default: ({ permission }: { permission: string | readonly string[] }) => {
-    const wanted = Array.isArray(permission) ? permission : [permission as string];
+  default: ({ permission, anyPermission }: { permission?: string; anyPermission?: string[] }) => {
+    const wanted = anyPermission ?? [permission as string];
     return wanted.some((p) => permsRef.set.has(p)) ? (
       <div data-testid="body" />
     ) : (

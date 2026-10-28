@@ -1,5 +1,5 @@
 /**
- * PROJECT-REG-PORTAL (security N3, final review round): nobody asks to join or disputes a
+ * PROJECT-REG-PORTAL (security N3, final review round): nobody asks to join or registers interest in a
  * portal registration that is not a project yet, so the Access card offers neither button on a
  * pending or rejected one. The server answers 409 `project_not_approved` for the same request.
  */
@@ -7,6 +7,19 @@ import React from 'react';
 import { render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Project } from '../../_shared/types/project.types';
+
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => false,
+  useHasAnyPermission: () => false,
+  usePermissions: () => ({
+    permissions: [],
+    permissionSet: new Set(),
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    refetch: vi.fn(),
+  }),
+}));
 
 vi.mock('../../_shared/hooks/useProjects', () => ({
   useCollaborators: () => ({ data: [], isLoading: false }),
@@ -27,8 +40,6 @@ function project(over: Partial<Project> = {}): Project {
     outcome: 'open',
     owner_name: 'Ali',
     is_critical: false,
-    brands: [],
-    brand_ids: [],
     next_action_overdue: false,
     stale_level: 0,
     is_unattended: false,
@@ -39,17 +50,17 @@ function project(over: Partial<Project> = {}): Project {
   } as Project;
 }
 
-describe('ProjectAccessPanel: join and dispute', () => {
-  it('a staff project someone else owns offers Ask to join and Dispute (the control)', () => {
+describe('ProjectAccessPanel: join and register interest', () => {
+  it('a staff project someone else owns offers Ask to join and Register interest (the control)', () => {
     render(<ProjectAccessPanel project={project()} />);
     expect(screen.getByRole('button', { name: 'Ask to join' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Dispute' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Register interest' })).toBeInTheDocument();
   });
 
   it.each(['pending', 'rejected'] as const)('a %s registration offers neither', (state) => {
     render(<ProjectAccessPanel project={project({ approval_state: state, project_code: null })} />);
     expect(screen.queryByRole('button', { name: 'Ask to join' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Dispute' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Register interest' })).toBeNull();
   });
 
   it('an approved registration offers them again', () => {

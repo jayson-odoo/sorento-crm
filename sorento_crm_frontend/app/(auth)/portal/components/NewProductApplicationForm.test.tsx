@@ -353,13 +353,13 @@ describe('an existing application', () => {
     expect(screen.getByLabelText('Product type')).not.toBeDisabled();
   });
 
-  it('sends a rejected application back with Resubmit, not Submit (RESUBMITTED-STATUS)', async () => {
+  it('sends a rejected application back with Appeal, not Submit (owner, 28 Oct)', async () => {
     asMock(getNewProductApplication).mockResolvedValue(
       detail({ status: 'rejected', status_label: 'Rejected', reject_reason: 'x' }),
     );
     render(<NewProductApplicationForm slug="acme" applicationId="a-1" />);
     expect(
-      await screen.findByRole('button', { name: /^resubmit$/i }),
+      await screen.findByRole('button', { name: /^appeal$/i }),
     ).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: /^submit$/i })).toBeNull();
   });

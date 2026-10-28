@@ -321,6 +321,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
         "title": "Stock status",
       },
       {
+        "path": "/inventory-management/stock-position",
+        "title": "Stock position",
+      },
+      {
         "path": "/inventory-management/stock-batches",
         "title": "Stock Batches",
       },
@@ -935,6 +939,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staf
         "path": "/inventory-management/stock-status",
         "title": "Stock status",
       },
+      {
+        "path": "/inventory-management/stock-position",
+        "title": "Stock position",
+      },
     ],
     "title": "Inventory",
   },
@@ -1023,6 +1031,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > role with projects.projects.view:
       {
         "path": "/inventory-management/stock-status",
         "title": "Stock status",
+      },
+      {
+        "path": "/inventory-management/stock-position",
+        "title": "Stock position",
       },
     ],
     "title": "Inventory",

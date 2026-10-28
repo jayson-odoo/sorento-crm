@@ -106,3 +106,12 @@ def test_build_filename_sanitizes(db: Session) -> None:
     name = ComplaintPDFService(db).build_filename(c)
     assert name.startswith("complaint-CMPPDF-")
     assert name.endswith(".pdf")
+
+
+def test_pdf_calls_a_resubmitted_complaint_appealed(db: Session) -> None:
+    """COMPLAINT-APPEAL-WORDING (owner, 28 Oct): the stored value stays `resubmitted`."""
+    c = _seed_complaint(db)
+    c.status = "resubmitted"
+    html = ComplaintPDFService(db)._html(c)
+    assert "<th>Status</th><td>Appealed</td>" in html
+    assert "resubmitted" not in html.lower()

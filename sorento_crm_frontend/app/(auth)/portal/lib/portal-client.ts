@@ -11,6 +11,7 @@
  * credential on the admin's machine. sessionStorage wins on read so an
  * active impersonation takes precedence in its tab.
  */
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { extractApiError } from '@/lib/api-client';
 import {
   formCommentFormData,
@@ -1028,7 +1029,7 @@ export const SUBMISSION_STATUS_LABELS: Record<string, string> = {
   rejected: 'Rejected',
   responded: 'Responded',
   submitted: 'Submitted',
-  resubmitted: 'Resubmitted',
+  resubmitted: APPEALED_LABEL,
   processed_by_cs: 'Processed by CS',
   closed: 'Closed',
   completed: 'Completed',

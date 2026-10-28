@@ -40,6 +40,21 @@ const listProjectTypes = vi.fn();
 const listingKeys: (string | null | undefined)[] = [];
 const push = vi.fn();
 
+vi.mock('@/hooks/usePermissions', () => ({
+  // projects.projects.view: the pipeline gates the Developer/Type lookups on it (PORTAL-P3-ROLE-MENU).
+  useHasPermission: (slug: string) => ['projects.projects.edit', 'projects.projects.view'].includes(slug),
+  useHasAnyPermission: (slugs: string[]) =>
+    slugs.some((s) => ['projects.projects.edit', 'projects.projects.view'].includes(s)),
+  usePermissions: () => ({
+    permissions: ['projects.projects.edit', 'projects.projects.view'],
+    permissionSet: new Set(['projects.projects.edit', 'projects.projects.view']),
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    refetch: () => undefined,
+  }),
+}));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/pipeline',
   useRouter: () => ({ push, replace: vi.fn() }),
@@ -82,16 +97,6 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
     changeProjectStatus: vi.fn(),
   };
 });
-
-// The pipeline gates Start and the Developer/Type lookups on projects.projects.view (PORTAL-P3-ROLE-MENU).
-vi.mock('@/hooks/usePermissions', () => ({
-  usePermissions: () => ({
-    permissionSet: new Set(['projects.projects.view']),
-    isLoading: false,
-    isError: false,
-  }),
-  useHasAnyPermission: () => false,
-}));
 
 vi.mock('@/lib/toast', () => ({
   toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), custom: vi.fn() },

@@ -63,6 +63,9 @@ export interface PageHeaderProps {
   children?: never;
 }
 
+/** A crumb is one line: a 60-word project title in the trail must not grow the header. */
+const CRUMB_CLAMP = 'block max-w-[14rem] truncate sm:max-w-xs';
+
 /** The root of every trail is the sidebar's own first entry, not "Home" (D11). */
 const ROOT_CRUMB: PageHeaderCrumb = { title: 'Dashboards', path: '/' };
 
@@ -170,13 +173,19 @@ export function PageHeader({
                 <Fragment key={`${crumb.title}-${index}`}>
                   <BreadcrumbItem>
                     {isLast ? (
-                      <BreadcrumbPage>{crumb.title}</BreadcrumbPage>
+                      <BreadcrumbPage className={CRUMB_CLAMP} title={crumb.title}>
+                        {crumb.title}
+                      </BreadcrumbPage>
                     ) : crumb.path ? (
                       <BreadcrumbLink asChild>
-                        <Link href={crumb.path}>{crumb.title}</Link>
+                        <Link href={crumb.path} className={CRUMB_CLAMP} title={crumb.title}>
+                          {crumb.title}
+                        </Link>
                       </BreadcrumbLink>
                     ) : (
-                      <span>{crumb.title}</span>
+                      <span className={CRUMB_CLAMP} title={crumb.title}>
+                        {crumb.title}
+                      </span>
                     )}
                   </BreadcrumbItem>
                   {!isLast && <BreadcrumbSeparator />}

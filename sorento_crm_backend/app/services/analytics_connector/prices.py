@@ -24,20 +24,44 @@ SEED_PRICES: dict[str, tuple[str, str | None, str, str]] = {
     # The chatbot parser's model on dev and prod (crew, 13 Oct 2026). The OpenAI pricing page
     # figures `scripts/chatbot_eval/budget.py` cites, confirmed by the owner 13 Oct 2026.
     "gpt-5.4-mini": ("0.75", "0.075", "4.50", "owner-confirmed 13 Oct 2026 (OpenAI pricing page)"),
+    # The parser's model for most contacts since 28 Oct 2026; it had no row, so every turn on it
+    # read NULL cost (prod watch, 28 Oct). Google's Standard (paid) tier, prompts up to 200k
+    # tokens; output includes thinking tokens. Cache STORAGE ($1.00 per 1M tokens per hour) is
+    # billed per entry, not per call, so it has no column here (GEMINI-EXPLICIT-CACHE).
+    "gemini-3.5-flash-lite": (
+        "0.30", "0.03", "2.50",
+        "Google Standard tier, https://ai.google.dev/gemini-api/docs/pricing, read 28 Oct 2026 (owner-approved)",
+    ),
 }
 
 
-def seed_prices(conn: Any) -> None:
-    """Insert the seed rows that are missing. Never overwrites a price someone edited."""
+def seed_prices(conn: Any, models: Any = None) -> None:
+    """Insert the seed rows that are missing, and fill a cached price that is NULL.
+
+    Never overwrites a price someone set: an existing row keeps its input, output and note,
+    and gains only the cached price it lacked (a cached token without one costs NULL). `models`
+    limits it to those seed rows, so a migration seeds exactly the rows it names.
+    """
     for model, (inp, cached, out, note) in SEED_PRICES.items():
+        if models is not None and model not in models:
+            continue
+        params = {"m": model, "i": inp, "c": cached, "o": out, "n": note}
         conn.execute(
             text(
                 "INSERT INTO llm_model_prices (model, input_usd_per_1m, cached_input_usd_per_1m, output_usd_per_1m, note) "
                 "VALUES (:m, CAST(:i AS numeric), CAST(:c AS numeric), CAST(:o AS numeric), :n) "
                 "ON CONFLICT (model) DO NOTHING"
             ),
-            {"m": model, "i": inp, "c": cached, "o": out, "n": note},
+            params,
         )
+        if cached is not None:
+            conn.execute(
+                text(
+                    "UPDATE llm_model_prices SET cached_input_usd_per_1m = CAST(:c AS numeric), updated_at = now() "
+                    "WHERE model = :m AND cached_input_usd_per_1m IS NULL"
+                ),
+                params,
+            )
 
 
 

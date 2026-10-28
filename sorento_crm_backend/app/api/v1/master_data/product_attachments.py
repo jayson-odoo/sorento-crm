@@ -5,12 +5,11 @@ from typing import Optional
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
-    get_current_user,
     get_current_user_or_api_key,
     require_permission,
     require_permission_with_api_key,
 )
-from app.services import brochure_image_service
+from app.services import brochure_image_service, product_link_audit
 from app.services.product_service import ProductAttachmentService
 from app.services.uuid_list_param import parse_uuid_list
 from app.schemas.product import (
@@ -28,6 +27,10 @@ from app.services.error_handler import handle_internal_error
 from app.utils.multi_value import multi_uuids
 
 router = APIRouter()
+
+# Linking, re-linking and unlinking a product's file all need the edit slug: the link decides
+# what a dealer is shown (access_levels, is_primary). The n8n intake has its own routes and auth.
+_EDIT = "master_data.product_attachments.edit"
 
 
 # --- Brochure images (S7.0) -------------------------------------------------
@@ -236,14 +239,25 @@ async def get_product_attachment(
 @router.post("/", response_model=ProductAttachmentResponse, status_code=status.HTTP_201_CREATED)
 async def create_product_attachment(
     product_attachment_data: ProductAttachmentCreate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db)
 ):
     """Create a new product attachment relationship."""
     try:
         service = ProductAttachmentService(db)
         created_by = str(current_user.get("id", "")) if current_user else None
+        product_id = str(product_attachment_data.product_id)
+        attachment_id = str(product_attachment_data.attachment_id)
+        was_linked = product_link_audit.link_exists(db, product_id, attachment_id)
         product_attachment = service.create_product_attachment(product_attachment_data, created_by=created_by)
+        if not was_linked and product_attachment is not None:
+            product_link_audit.log_product_file_link(
+                db, product_link_audit.LINK,
+                product_id=product_id, attachment_id=attachment_id,
+                entity_type="product_attachments", entity_id=str(product_attachment.id),
+                user_id=created_by,
+            )
+            db.commit()
         # Fan the attachment's field-linkage template (set at upload time) into
         # per-row attachment_field_links rows. Best-effort; never fail the link.
         try:
@@ -282,7 +296,7 @@ async def create_product_attachment(
 async def update_product_attachment(
     product_attachment_id: str,
     product_attachment_data: ProductAttachmentUpdate,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db)
 ):
     """Update a product attachment relationship."""
@@ -300,13 +314,21 @@ async def update_product_attachment(
 @router.delete("/{product_attachment_id}", status_code=status.HTTP_200_OK)
 async def delete_product_attachment(
     product_attachment_id: str,
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission(_EDIT)),
     db: Session = Depends(get_db)
 ):
     """Delete a product attachment relationship."""
     try:
         validate_uuid_path(product_attachment_id, resource="Product Attachment")
         service = ProductAttachmentService(db)
+        link = service.get_product_attachment(product_attachment_id)
+        # Flushed before the delete and committed by it, so a refused delete leaves no row.
+        product_link_audit.log_product_file_link(
+            db, product_link_audit.UNLINK,
+            product_id=str(link.product_id), attachment_id=str(link.attachment_id),
+            entity_type="product_attachments", entity_id=str(link.id),
+            user_id=str(current_user.get("id") or "") or None,
+        )
         service.delete_product_attachment(product_attachment_id)
         return {"message": "Product attachment deleted successfully"}
     except HTTPException:

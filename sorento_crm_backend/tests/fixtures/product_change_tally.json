@@ -1,0 +1,46 @@
+{
+  "_doc": "PRODUCT-CHANGE-TALLY (owner, 28 Oct 2026): one line AutoCount swapped the product of in place (SO426847 line 48 shape, fake but stable names). The SAME line as the Order Inquiry email context carries it (email_line, also what the attachment is written from) and as the split read carries it (split_read_line, what the Confirm preview renders). Read by tests/test_product_change_tally.py (email + attachment) and by the frontend's productChangeTally.test.tsx (preview): all three must print `expected`.",
+  "email_line": {
+    "so_date": "20/10/2026",
+    "so_number": "SO900048",
+    "item_code": "NEW61-CR",
+    "qty": "10",
+    "delivery_date": "03/11/2026",
+    "customer": "ZZT TILES SDN BHD",
+    "project": "RESIDENSI CONTOH",
+    "location": "BRW-BB",
+    "remark": "NEW ITEM CODE",
+    "was": { "item_code": "OLD61-CR" },
+    "continued": false
+  },
+  "split_read_line": {
+    "line_id": "00000000-0000-4000-8000-000000000048",
+    "line_no": 48,
+    "item_code": "NEW61-CR",
+    "was_item_code": "OLD61-CR",
+    "location": "BRW-BB",
+    "base_qty": 10,
+    "base_date": "2026-11-03",
+    "now_qty": 10,
+    "now_date": "2026-11-03",
+    "new_qty": null,
+    "new_date": null,
+    "pending_change": true,
+    "acting": true,
+    "split_state": "acting",
+    "delivered_qty": 0,
+    "delivered_in_full": false,
+    "extra_qty": null,
+    "extra_remark": null,
+    "remark_generated": "NEW ITEM CODE",
+    "splits": [],
+    "split_view": null
+  },
+  "so_number": "SO900048",
+  "so_date": "2026-10-20",
+  "expected": {
+    "item_code": "OLD61-CR",
+    "new_item_code": "NEW61-CR",
+    "remark": "NEW ITEM CODE"
+  }
+}

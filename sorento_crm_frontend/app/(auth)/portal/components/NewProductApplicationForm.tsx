@@ -307,7 +307,7 @@ export default function NewProductApplicationForm({
       const saved = await save();
       await submitNewProductApplication(saved.id);
       toast.success(
-        submitVerb(status) === 'Resubmit' ? 'Application resubmitted' : 'Application submitted',
+        submitVerb(status) === 'Appeal' ? 'Application appealed' : 'Application submitted',
       );
       router.push(backPath);
     } catch (e) {

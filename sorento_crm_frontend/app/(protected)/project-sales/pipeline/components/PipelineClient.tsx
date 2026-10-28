@@ -1,5 +1,6 @@
 'use client';
 
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Filter, KanbanSquare, Table2 } from 'lucide-react';
@@ -26,6 +27,7 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Switch } from '@/components/ui/switch';
+import { useHasAnyPermission, useHasPermission } from '@/hooks/usePermissions';
 import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
 import {
   useChangeProjectStatus,
@@ -63,6 +65,8 @@ export function PipelineClient() {
   const router = useRouter();
   // Start (register, upload) is for `.view` holders; an own-only salesperson gets the list alone.
   const canStart = usePermissions().permissionSet.has('projects.projects.view');
+  const canEdit = useHasPermission('projects.projects.edit');
+  const canRegister = useHasAnyPermission(['projects.projects.edit', 'projects.registrations.submit']);
   const [view, setView] = React.useState<PipelineView>('board');
   const [startAction, setStartAction] = React.useState<StartAction>(null);
   const {
@@ -297,7 +301,7 @@ export function PipelineClient() {
           clearable
           options={[
             { value: 'pending', label: 'Awaiting approval' },
-            { value: 'resubmitted', label: 'Resubmitted' },
+            { value: 'resubmitted', label: APPEALED_LABEL },
             { value: 'rejected', label: 'Rejected' },
           ]}
           placeholder="Any approval state"
@@ -363,7 +367,7 @@ export function PipelineClient() {
                 <Table2 className="size-4" aria-hidden />
               </Button>
             </div>
-            {canStart && (
+            {canRegister && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button type="button">
@@ -375,12 +379,16 @@ export function PipelineClient() {
                   <DropdownMenuItem onSelect={() => router.push('/project-sales/new')}>
                     Register a project
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
-                    Upload PO
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
-                    Upload delivery schedule
-                  </DropdownMenuItem>
+                  {canEdit && (
+                    <>
+                      <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
+                        Upload PO
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
+                        Upload delivery schedule
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}

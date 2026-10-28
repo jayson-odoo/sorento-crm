@@ -44,13 +44,6 @@ vi.mock('@/services/userSelectService', () => ({
   getUserLookup: (...args: unknown[]) => getUserLookup(...args),
 }));
 
-vi.mock(
-  '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query',
-  () => ({
-    useBrandSelectQuery: () => ({ data: [], isLoading: false }),
-  }),
-);
-
 vi.mock('@/hooks/useLookupSetOptions', () => ({
   useLookupSetOptions: () => ({
     data: [
@@ -96,42 +89,86 @@ vi.mock('../services/projectService', async (importOriginal) => {
 
 type Option = { value: string; label: string };
 
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: ({
+vi.mock('@/components/common/SearchableSelect', () => {
+  // Async mode (the party pickers and Customer, PROJECT-REGISTER-V2 B1): a text input that
+  // shows the selected option's label and lists the fetched options as buttons.
+  function AsyncSelect({
     id,
     value,
     onChange,
-    options,
-    disabled,
+    onOptionChange,
+    fetchOptions,
+    selectedOption,
   }: {
     id?: string;
     value: string;
     onChange: (next: string) => void;
-    options?: Option[];
-    disabled?: boolean;
-  }) => (
-    // eslint-disable-next-line no-restricted-syntax -- test stub for SearchableSelect
-    <select
-      id={id}
-      value={value}
-      disabled={disabled}
-      onChange={(e) => onChange(e.target.value)}
-    >
-      <option value="" />
-      {(options ?? []).map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
-  ),
-}));
-
-vi.mock('@/components/common/SearchableMultiSelect', () => ({
-  SearchableMultiSelect: ({ id }: { id?: string }) => (
-    <select id={id} multiple />
-  ),
-}));
+    onOptionChange?: (option: Option | null) => void;
+    fetchOptions: (query: string, pageIndex: number) => Promise<Option[]>;
+    selectedOption?: Option;
+  }) {
+    const [query, setQuery] = React.useState('');
+    const [results, setResults] = React.useState<Option[]>([]);
+    const shown =
+      query === '' && selectedOption && selectedOption.value === value
+        ? selectedOption.label
+        : query;
+    return (
+      <span>
+        <input
+          id={id}
+          value={shown}
+          onChange={(e) => {
+            setQuery(e.target.value);
+            void fetchOptions(e.target.value, 0).then(setResults);
+          }}
+        />
+        {results.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => {
+              onChange(option.value);
+              onOptionChange?.(option);
+              setResults([]);
+              setQuery('');
+            }}
+          >
+            {option.label}
+          </button>
+        ))}
+      </span>
+    );
+  }
+  return {
+    SearchableSelect: (props: Record<string, unknown>) => {
+      if (props.fetchOptions) return <AsyncSelect {...(props as never)} />;
+      const { id, value, onChange, options, disabled } = props as {
+        id?: string;
+        value: string;
+        onChange: (next: string) => void;
+        options?: Option[];
+        disabled?: boolean;
+      };
+      return (
+        // eslint-disable-next-line no-restricted-syntax -- test stub for SearchableSelect
+        <select
+          id={id}
+          value={value}
+          disabled={disabled}
+          onChange={(e) => onChange(e.target.value)}
+        >
+          <option value="" />
+          {(options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      );
+    },
+  };
+});
 
 vi.mock('@/components/ui/date-range-picker', () => ({
   DateRangePicker: ({ id }: { id?: string }) => <input id={id} />,
@@ -164,8 +201,6 @@ function pendingProject(over: Record<string, unknown> = {}): Project {
     architect_name: null,
     main_contractor_party_id: null,
     main_contractor_name: null,
-    brands: [],
-    brand_ids: [],
     lead_id: null,
     lead_code: null,
     next_action_overdue: false,
@@ -198,7 +233,15 @@ function renderEdit(project: Project) {
   );
 }
 
-const select = (label: RegExp | string) => screen.getByLabelText(label) as HTMLSelectElement;
+const select = (label: RegExp | string) =>
+  screen.getByLabelText(label) as HTMLSelectElement;
+const field = (label: RegExp | string) => screen.getByLabelText(label) as HTMLInputElement;
+
+/** Developer is an async search: type, then pick the match. */
+async function pickDeveloper() {
+  fireEvent.change(field(/^Developer/), { target: { value: 'Example' } });
+  fireEvent.click(await screen.findByRole('button', { name: 'Example Developer Sdn Bhd' }));
+}
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -222,27 +265,26 @@ beforeEach(() => {
 describe('editing a pending project: the typed name hint (RW14)', () => {
   it('shows "Typed: <developer_name>" under Developer while no party is picked', async () => {
     renderEdit(pendingProject());
-    await waitFor(() => expect(select(/^Developer/).value).toBe(''));
+    await waitFor(() => expect(field(/^Developer/).value).toBe(''));
     expect(screen.getByText('Typed: Example Developer Sdn Bhd')).toBeInTheDocument();
   });
 
   it('shows the hint under Architect and Main contractor too', async () => {
     renderEdit(pendingProject());
-    await waitFor(() => expect(select(/^Developer/).value).toBe(''));
+    await waitFor(() => expect(field(/^Developer/).value).toBe(''));
     expect(screen.getByText('Typed: Example Architects')).toBeInTheDocument();
     expect(screen.getByText('Typed: Unmatched Builders')).toBeInTheDocument();
   });
 
   it('the hint goes once the approver picks the party', async () => {
     renderEdit(pendingProject());
-    await waitFor(() => expect(within_options(select(/^Developer/))).toContain('d1'));
-    fireEvent.change(select(/^Developer/), { target: { value: 'd1' } });
+    await pickDeveloper();
     await waitFor(() => expect(screen.queryByText('Typed: Example Developer Sdn Bhd')).toBeNull());
   });
 
   it('no Developer hint when the project already has the party; the unpicked ones keep theirs', async () => {
     renderEdit(pendingProject({ developer_party_id: 'd1', developer_name: 'Example Developer Sdn Bhd' }));
-    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+    await waitFor(() => expect(field(/^Developer/).value).toBe('Example Developer Sdn Bhd'));
     expect(screen.queryByText('Typed: Example Developer Sdn Bhd')).toBeNull();
     expect(screen.getByText('Typed: Example Architects')).toBeInTheDocument();
     expect(screen.getByText('Typed: Unmatched Builders')).toBeInTheDocument();
@@ -259,7 +301,7 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
         main_contractor_name: 'Unmatched Builders',
       }),
     );
-    await waitFor(() => expect(select(/^Developer/).value).toBe('d1'));
+    await waitFor(() => expect(field(/^Developer/).value).toBe('Example Developer Sdn Bhd'));
     expect(screen.queryByText(/^Typed:/)).toBeNull();
   });
 
@@ -273,7 +315,7 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
         developer_name: null,
       }),
     );
-    await waitFor(() => expect(select(/^Developer/).value).toBe(''));
+    await waitFor(() => expect(field(/^Developer/).value).toBe(''));
     expect(screen.queryByText(/^Typed:/)).toBeNull();
   });
 
@@ -288,7 +330,7 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
 
   it('has no Approve or Reject button in the form: those live in the project header', async () => {
     renderEdit(pendingProject());
-    await waitFor(() => expect(select(/^Developer/).value).toBe(''));
+    await waitFor(() => expect(field(/^Developer/).value).toBe(''));
     expect(screen.queryByRole('button', { name: 'Approve' })).toBeNull();
     expect(screen.queryByRole('button', { name: 'Reject' })).toBeNull();
   });
@@ -311,8 +353,7 @@ describe('a pending or rejected project never blocks on a clash (review round 3)
       previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
       updateProject.mockResolvedValue(pendingProject({ approval_state: approvalState } as never));
       renderEdit(pendingProject({ approval_state: approvalState } as never));
-      await waitFor(() => expect(within_options(select(/^Developer/))).toContain('d1'));
-      fireEvent.change(select(/^Developer/), { target: { value: 'd1' } });
+      await pickDeveloper();
       const save = screen.getByRole('button', { name: 'Save changes' });
       expect(save).not.toBeDisabled();
       fireEvent.click(save);
@@ -328,8 +369,7 @@ describe('a pending or rejected project never blocks on a clash (review round 3)
     renderEdit(
       pendingProject({ approval_state: null, project_code: 'PRJ-000142', registration: null } as never),
     );
-    await waitFor(() => expect(within_options(select(/^Developer/))).toContain('d1'));
-    fireEvent.change(select(/^Developer/), { target: { value: 'd1' } });
+    await pickDeveloper();
     fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
     await waitFor(() => expect(previewClashes).toHaveBeenCalled());
     expect(updateProject).not.toHaveBeenCalled();
@@ -345,15 +385,13 @@ describe('Check, then Save, on a pending project (final review round)', () => {
     owner_name: 'Ali',
     similarity: 0.98,
     blocks: true,
-    brands: [],
   };
 
   it('pressing Check shows the match as information, and Save still calls updateProject', async () => {
     previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
     updateProject.mockResolvedValue(pendingProject());
     renderEdit(pendingProject());
-    await waitFor(() => expect(within_options(select(/^Developer/))).toContain('d1'));
-    fireEvent.change(select(/^Developer/), { target: { value: 'd1' } });
+    await pickDeveloper();
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
     await waitFor(() => expect(previewClashes).toHaveBeenCalled());
     await screen.findByText(/PPF2509012/);
@@ -366,10 +404,6 @@ describe('Check, then Save, on a pending project (final review round)', () => {
     await waitFor(() => expect(updateProject).toHaveBeenCalledTimes(1));
   });
 });
-
-function within_options(el: HTMLSelectElement): string[] {
-  return Array.from(el.options).map((o) => o.value);
-}
 
 describe('the review mode is removed from the source (RW14)', () => {
   const root = path.resolve(__dirname, '../../../../..');

@@ -26,6 +26,7 @@ from app.services.pdf_render import (
     photos_section_html,
     render_html,
 )
+from app.services.submission_status import APPEALED_LABEL, RESUBMITTED
 
 logger = logging.getLogger(__name__)
 
@@ -46,6 +47,12 @@ def _fmt(value) -> str:
 
 def _row(label: str, value) -> str:
     return f'<tr><th>{escape(label)}</th><td>{_fmt(value)}</td></tr>'
+
+
+def _status_text(status):
+    # A send-back after a rejection is an appeal (owner, 28 Oct 2026); the stored value
+    # stays `resubmitted`.
+    return APPEALED_LABEL if (status or "").strip().lower() == RESUBMITTED else status
 
 
 class ComplaintPDFService:
@@ -95,7 +102,7 @@ class ComplaintPDFService:
             [
                 _row("Complaint No.", getattr(complaint, "complaint_number", None)),
                 _row("Complaint Date", getattr(complaint, "complaint_date", None)),
-                _row("Status", getattr(complaint, "status", None)),
+                _row("Status", _status_text(getattr(complaint, "status", None))),
                 _row("Delivery Order", getattr(complaint, "delivery_order_number", None)),
                 _row("Within Warranty", getattr(complaint, "within_warranty", None)),
                 _row("Complaint Type", getattr(complaint, "complaint_type", None)),

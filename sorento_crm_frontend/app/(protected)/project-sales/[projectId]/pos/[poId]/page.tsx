@@ -23,7 +23,7 @@ export default async function ProjectPurchaseOrderPage({
 }) {
   const { projectId, poId } = await params;
   return (
-    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6 pb-64">
         <PageHeader
           title="Purchase Order"

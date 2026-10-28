@@ -11,7 +11,7 @@ export const metadata: Metadata = {
 
 export default function ProjectPipelinePage() {
   return (
-    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6">
         <PipelineClient />
       </Container>
