@@ -534,3 +534,58 @@ def test_a_kind_answer_that_also_binds_a_customer_runs_for_that_customer_never_t
     text, calls = bot.say(reply, "unpaid for that customer")
     args = _only_report_ask(calls)
     assert args["basis"] == "unpaid" and args.get("customer_ids") == [bot.ids["customer"]], args
+
+
+# ---------------------------------------------------------------- B2: a whole new ask under the kind question
+
+
+def _no_kind_question_or_basis_refusal(text: str) -> None:
+    assert "Undelivered orders" not in text and "as a basis" not in text, text
+
+
+def test_b2a_a_fresh_sales_ask_naming_basis_and_period_under_the_kind_question_runs_that_ask(bot) -> None:
+    """B2a: "invoiced sales this year" under the kind question is a NEW ask, not a basis answer to the kind question."""
+    bot.say(_bare_outstanding(), "outstanding")
+    reply = _status("sales_analysis", group_by=None, measure=None, sales_basis="invoiced", sales_company=None, basis="invoiced", **YEAR)
+    text, calls = bot.say(reply, "invoiced sales this year")
+    _no_kind_question_or_basis_refusal(text)
+    args = _only_report_ask(calls)
+    assert args["basis"] == "invoiced" and args.get("date_from") == YEAR["date_filter_start"], args
+
+
+def test_b2b_a_fresh_delivered_sales_report_under_the_kind_question_is_not_the_kind_question_again(bot) -> None:
+    """B2b: a sales-report ask with basis delivered runs, or asks only what it is missing; never the kind question."""
+    bot.say(_bare_outstanding(), "outstanding")
+    text, calls = bot.say(_status("sales_report", basis="delivered"), "total sales this year")
+    _no_kind_question_or_basis_refusal(text)
+    if calls:
+        assert _only_report_ask(calls)["basis"] == "delivered", calls
+
+
+def test_b2c_an_invoiced_parse_binding_a_customer_under_the_kind_question_is_never_the_kind_question_or_a_run_without_the_customer(bot) -> None:
+    """B2c: basis invoiced + a customer bound this turn, no domain hint: not the kind question; any run keeps the customer."""
+    bot.say(_bare_outstanding(), "outstanding")
+    reply = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, basis="invoiced",
+        entities=[_e(CUSTOMER_NAME, "customer")],
+    )
+    text, calls = bot.say(reply, "invoiced for that customer")
+    _no_kind_question_or_basis_refusal(text)
+    if calls:
+        args = _only_report_ask(calls)
+        assert args["basis"] == "invoiced" and args.get("customer_ids") == [bot.ids["customer"]], args
+
+
+def test_b4_a_kind_pick_by_position_that_also_binds_a_customer_runs_for_that_customer_never_the_whole_scope(bot) -> None:
+    """Kind option 3 is Unpaid invoices; a position pick AND a customer bound this turn keeps the customer."""
+    text, calls = bot.say(_bare_outstanding(), "outstanding")
+    low = text.lower()
+    assert low.index("unpaid invoices") > low.index("pending delivery") > low.index("undelivered orders"), text
+    reply = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, by_words=None, reference_positions=[3],
+        entities=[_e(CUSTOMER_NAME, "customer")],
+        open_question_answer={"mode": "pick", "picked": [3], "items": [], "qty_for_all": None},
+    )
+    text, calls = bot.say(reply, "the invoices one for that customer")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "unpaid" and args.get("customer_ids") == [bot.ids["customer"]], args
