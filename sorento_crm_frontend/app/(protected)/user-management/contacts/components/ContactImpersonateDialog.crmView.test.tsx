@@ -54,8 +54,9 @@ function answer(crmUserId: string | null) {
   });
 }
 
+let client: QueryClient;
 function mount() {
-  const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
       <ContactImpersonateDialog contact={CONTACT as never} onClose={vi.fn()} />
@@ -103,5 +104,56 @@ describe('ContactImpersonateDialog with a linked salesperson user (F1)', () => {
     expect(router.replace).not.toHaveBeenCalled();
     expect(impersonationStore.getState()).toBeNull();
     expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+  });
+});
+
+describe('ContactImpersonateDialog cache and rollback (T1)', () => {
+  it('the admin permission cache is invalidated before navigating to /my-requests', async () => {
+    answer('user-eric-1');
+    mount();
+    client.setQueryData(['my-permissions'], ['admin.everything']);
+    expect(client.getQueryState(['my-permissions'])?.isInvalidated).toBe(false);
+    fireEvent.click(screen.getByRole('button', { name: 'Impersonate' }));
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/my-requests'));
+    expect(client.getQueryState(['my-permissions'])?.isInvalidated).toBe(true);
+  });
+
+  it('navigation waits for the invalidation to finish', async () => {
+    answer('user-eric-1');
+    mount();
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    const spy = vi.spyOn(client, 'invalidateQueries').mockImplementation(() => gate);
+    fireEvent.click(screen.getByRole('button', { name: 'Impersonate' }));
+    await waitFor(() => expect(spy).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(router.push).not.toHaveBeenCalled();
+    release();
+    await waitFor(() => expect(router.push).toHaveBeenCalledWith('/my-requests'));
+  });
+
+  it('CRM impersonation start rejects: contact impersonation stopped, no token, no navigation', async () => {
+    apiFetch.mockImplementation(async (url: string) => {
+      if (url.includes('/contact-impersonation/start')) {
+        return json({
+          session_id: 's1', started_at: '2026-10-28T00:00:00Z', portal_url: PORTAL_URL,
+          target_contact: { id: 'c1', name: 'Eric Ng', phone_number: '60123456789', space_id: 'sp1' },
+          crm_user_id: 'user-eric-1',
+        });
+      }
+      if (url.includes('/user-management/impersonation/start')) {
+        return { ok: false, status: 500, json: async () => ({ detail: 'boom' }), text: async () => 'boom' };
+      }
+      return json({});
+    });
+    mount();
+    fireEvent.click(screen.getByRole('button', { name: 'Impersonate' }));
+    await waitFor(() =>
+      expect(apiFetch.mock.calls.some((c) => String(c[0]).includes('/contact-impersonation/stop'))).toBe(true),
+    );
+    expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(router.push).not.toHaveBeenCalled();
+    expect(open).not.toHaveBeenCalled();
+    expect(impersonationStore.getState()).toBeNull();
   });
 });

@@ -69,3 +69,15 @@ describe('ImpersonationBanner Exit ends the contact impersonation too (F4)', () 
     expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
   });
 });
+
+describe('ImpersonationBanner Exit of a plain staff view-as (T3)', () => {
+  it('no impersonation portal token in this tab: contact stop is not called, stop and reload still happen', async () => {
+    window.sessionStorage.clear();
+    stopContact.mockResolvedValue(undefined);
+    await exit();
+    expect(stopContact).not.toHaveBeenCalled();
+    expect(stop).toHaveBeenCalled();
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
+    expect(window.localStorage.getItem(SLUG_KEY)).toBe('ADMINSLUG01');
+  });
+});

@@ -93,3 +93,19 @@ describe('MySlug under a CRM impersonation without an impersonation token (G1)',
     expect(screen.queryByTestId('child')).toBeNull();
   });
 });
+
+describe('MySlug with a revoked impersonation token (T2)', () => {
+  it('401 on /me: the admin\'s localStorage token and slug survive, visitor goes to verify', async () => {
+    impersonationStore.setSession({
+      sessionId: 's1',
+      startedAt: '2026-10-28T00:00:00Z',
+      targetUser: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+    });
+    fetchMock.mockResolvedValue({ ok: false, status: 401, json: async () => ({}), text: async () => '' });
+    mount();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/my-requests/verify'));
+    expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
+    expect(window.localStorage.getItem(SLUG_KEY)).toBe('ADMINSLUG01');
+  });
+});

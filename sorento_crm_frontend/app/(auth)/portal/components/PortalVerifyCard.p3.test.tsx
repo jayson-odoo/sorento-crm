@@ -9,7 +9,7 @@
  * blocks the portal. The portal token itself is never handed to NextAuth (security review H1).
  */
 import React from 'react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 
 const signInMock = vi.fn();
@@ -36,6 +36,7 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
   };
 });
 
+import { impersonationStore } from '@/lib/impersonation-store';
 import { PortalVerifyCard } from './PortalVerifyCard';
 import {
   CRM_SESSION_FLAG_KEY,
@@ -168,5 +169,27 @@ describe('PortalVerifyCard - salesperson lands in the CRM shell', () => {
 
     await waitFor(() => expect(assignMock).toHaveBeenCalledTimes(1));
     expect(assignMock.mock.calls[0][0]).toBe('/portal/c/SLUG123456');
+  });
+});
+
+describe('PortalVerifyCard under a CRM impersonation (round 7, T4)', () => {
+  beforeEach(() => {
+    impersonationStore.setSession({
+      sessionId: 's1',
+      startedAt: '2026-10-28T00:00:00Z',
+      targetUser: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+    });
+  });
+  afterEach(() => impersonationStore.setSession(null));
+
+  it('stores the token for this tab only and never replaces the admin CRM session', async () => {
+    sessionWith('/my-requests');
+    render(<PortalVerifyCard slug="SLUG123456" />);
+    await enterCode();
+    await waitFor(() => expect(assignMock).toHaveBeenCalledTimes(1));
+    expect(signInMock).not.toHaveBeenCalled();
+    expect(window.sessionStorage.getItem('sorento.portalToken')).toBe('PORTAL-TOKEN');
+    expect(window.localStorage.getItem('sorento.portalToken')).toBeNull();
+    expect(window.localStorage.getItem('sorento.portalSlug')).toBeNull();
   });
 });
