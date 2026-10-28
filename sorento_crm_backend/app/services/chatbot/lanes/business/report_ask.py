@@ -468,7 +468,7 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool 
     # Engine keys only this seam writes: never taken from the parser's own emission.
     verdict = {k: v for k, v in verdict.items() if k not in CAPABILITY_KEYS}
     status = jsc.js_string(verdict.get("order_status") or "").strip()
-    if verdict.get("intent_hint") == "low_stock_report":
+    if verdict.get("intent_hint") == "low_stock_report" and verdict.get("domain_hint") == "inventory":
         return verdict  # the reorder report is its own ask (`low_stock_ask`), whatever order status the parser also read
     if status == "top_selling":
         return from_top_selling(verdict)
@@ -1317,6 +1317,11 @@ def settle(
     outcome, line = _settle(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter, companies=companies)
     if outcome is not None and outcome.slot and outcome.slot.get("asking") == "company" and outcome.reply:
         outcome.reply = _company_question(_dict(outcome.slot.get("extras")))
+    company = _dict(outcome.values.get("company")) if outcome is not None else {}
+    if company.get("value") == rf.ALL and outcome is not None:
+        # Two unreadable answers to the company question: a plain give-up, never a run (the route would 403 "all").
+        word = str(company.get("missed") or "that")
+        return rf.Outcome(values=outcome.values, reply=GIVE_UP.format(word=word), slot=None, extras=outcome.extras), line
     return outcome, line
 
 
@@ -1826,7 +1831,7 @@ def route_args(outcome: rf.Outcome) -> dict[str, Any]:
     if args.get("group_by") and isinstance(top_n, int):
         args["top_n"] = top_n
     company = _dict(outcome.values.get("company")).get("value")
-    if company:
+    if company and company != rf.ALL:
         args["company"] = str(company)  # the company the person chose
     agent = _dict(outcome.values.get("sales_agent")).get("value")
     if agent:
