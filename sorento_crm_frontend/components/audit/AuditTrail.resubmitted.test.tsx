@@ -6,7 +6,9 @@ import type { AuditLogEntry } from '@/types/audit.types';
 
 // AUDIT-TRAIL-RESUBMITTED: every resubmission on a record's trail reads "Resubmitted by <who>"
 // and every rejection "Rejected by <who>", derived from the record's own history (oldest
-// first), so past resubmits read the same as new ones. Fixtures only, no real data.
+// first), so past resubmits read the same as new ones. A complaint's resubmission is called an
+// appeal (COMPLAINT-APPEAL-WORDING, owner 28 Oct): it reads "Appealed", every other form keeps
+// "Resubmitted". Fixtures only, no real data.
 
 const useAuditLogs = vi.fn();
 
@@ -85,7 +87,7 @@ function rowsOldestFirst() {
 }
 
 describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
-  it('past history, rejected twice and resubmitted from the portal each time, reads Rejected / Resubmitted twice', () => {
+  it('past history, rejected twice and resubmitted from the portal each time, reads Rejected / Appealed twice', () => {
     mockHistory([
       entry({ action: 'CREATE', new_values: { status: 'draft' }, ...PORTAL }),
       status('draft', 'submitted', PORTAL),
@@ -117,26 +119,26 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
       'update',
       'update',
       'Rejected',
-      'Resubmitted',
+      'Appealed',
       'update',
       'Rejected',
-      'Resubmitted',
+      'Appealed',
     ]);
     expect(rows[3].text).toContain('by Tech reviewer');
     expect(rows[4].text).toContain('by Portal contact');
     // The past resubmit reads as what it was, with the #1924 field diff under it.
     expect(rows[4].lines).toEqual([
-      'status: rejected → resubmitted',
+      'status: rejected → appealed',
       'Product code: CWCX604-P-RL-NEW → CWCY604',
     ]);
     expect(rows[7].lines).toEqual([
-      'status: rejected → resubmitted',
+      'status: rejected → appealed',
       'Defect description: Cracked → Cracked, photos attached',
     ]);
     expect(document.body.textContent).not.toContain('rejected → submitted');
   });
 
-  it('a new portal resubmit (status resubmitted) reads "Resubmitted by <who>" with its diff', () => {
+  it('a new portal resubmit (status resubmitted) reads "Appealed by <who>" with its diff', () => {
     mockHistory([
       status('responded', 'rejected', STAFF),
       status('rejected', 'resubmitted', {
@@ -148,15 +150,15 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     renderTrail();
 
     const rows = rowsOldestFirst();
-    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
+    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Appealed']);
     expect(rows[1].text).toContain('by Portal contact');
     expect(rows[1].lines).toEqual([
-      'status: rejected → resubmitted',
+      'status: rejected → appealed',
       'Product code: A-1 → B-2',
     ]);
   });
 
-  it('a chatbot edit of a rejected complaint that kept status rejected (before RESUBMITTED-STATUS) reads Resubmitted', () => {
+  it('a chatbot edit of a rejected complaint that kept status rejected (before RESUBMITTED-STATUS) reads Appealed', () => {
     mockHistory([
       status('responded', 'rejected', STAFF),
       entry({
@@ -168,14 +170,14 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     renderTrail();
 
     const rows = rowsOldestFirst();
-    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
+    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Appealed']);
     expect(rows[1].text).toContain('by Chatbot');
     expect(rows[1].lines).toEqual([
       'Defect description: Cracked → Cracked on two panels',
     ]);
   });
 
-  it('a legacy row without the old status still reads Resubmitted from the status the record left', () => {
+  it('a legacy row without the old status still reads Appealed from the status the record left', () => {
     mockHistory([
       status('responded', 'rejected', STAFF),
       entry({
@@ -188,11 +190,11 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
 
     expect(rowsOldestFirst().map((r) => r.heading)).toEqual([
       'Rejected',
-      'Resubmitted',
+      'Appealed',
     ]);
   });
 
-  it('a customer save on a row written before the actor columns (actor legacy, a contact id) reads Resubmitted', () => {
+  it('a customer save on a row written before the actor columns (actor legacy, a contact id) reads Appealed', () => {
     mockHistory([
       status('responded', 'rejected', STAFF),
       entry({
@@ -206,7 +208,7 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     renderTrail();
 
     const rows = rowsOldestFirst();
-    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
+    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Appealed']);
     expect(rows[1].text).toContain('by Customer A');
   });
 
@@ -300,6 +302,38 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     ]);
     renderTrail();
 
-    expect(rowsOldestFirst().map((r) => r.heading)).toEqual(['Rejected', 'update', 'Resubmitted']);
+    expect(rowsOldestFirst().map((r) => r.heading)).toEqual(['Rejected', 'update', 'Appealed']);
+  });
+
+  it('a complaint never says resubmit: the appeal and the staff answer to it both read appealed', () => {
+    mockHistory([
+      status('responded', 'rejected', STAFF),
+      status('rejected', 'resubmitted', PORTAL),
+      status('resubmitted', 'responded', STAFF),
+    ]);
+    renderTrail();
+
+    const rows = rowsOldestFirst();
+    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Appealed', 'update']);
+    expect(rows[1].lines).toEqual(['status: rejected → appealed']);
+    expect(rows[2].lines).toEqual(['status: appealed → responded']);
+    expect(document.body.textContent).not.toMatch(/resubmit/i);
+  });
+
+  it('a customer note that says "resubmitted" is quoted as written, never reworded', () => {
+    mockHistory([
+      status('responded', 'rejected', STAFF),
+      status('rejected', 'resubmitted', {
+        ...PORTAL,
+        old_values: { defect_description: 'Cracked' },
+        new_values: { defect_description: 'Cracked, resubmitted with photos' },
+      }),
+    ]);
+    renderTrail();
+
+    expect(rowsOldestFirst()[1].lines).toEqual([
+      'status: rejected → appealed',
+      'Defect description: Cracked → Cracked, resubmitted with photos',
+    ]);
   });
 });
