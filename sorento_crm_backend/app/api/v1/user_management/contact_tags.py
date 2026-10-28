@@ -46,7 +46,7 @@ EDIT = "user_management.contacts.edit"
 
 
 @router.get("/", response_model=ListResponse[ContactTagResponse])
-async def list_contact_tags(
+def list_contact_tags(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=1000),
     search: Optional[str] = Query(None),
@@ -71,7 +71,7 @@ async def list_contact_tags(
 
 
 @router.get("/settings-catalog")
-async def get_settings_catalog(
+def get_settings_catalog(
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -87,7 +87,7 @@ async def get_settings_catalog(
 
 
 @router.get("/{tag_id}", response_model=ContactTagResponse)
-async def get_contact_tag(
+def get_contact_tag(
     tag_id: str,
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -101,7 +101,7 @@ async def get_contact_tag(
 
 
 @router.post("/", response_model=ContactTagResponse, status_code=status.HTTP_201_CREATED)
-async def create_contact_tag(
+def create_contact_tag(
     data: ContactTagCreate,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -118,7 +118,7 @@ async def create_contact_tag(
 
 
 @router.patch("/{tag_id}", response_model=ContactTagResponse)
-async def update_contact_tag(
+def update_contact_tag(
     tag_id: str,
     data: ContactTagUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -139,7 +139,7 @@ async def update_contact_tag(
 
 
 @router.delete("/{tag_id}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_contact_tag(
+def delete_contact_tag(
     tag_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -155,7 +155,7 @@ async def delete_contact_tag(
 
 
 @contact_router.post("/bulk-tags", response_model=BulkTagResult, status_code=status.HTTP_200_OK)
-async def bulk_tag_contacts(
+def bulk_tag_contacts(
     body: BulkTagRequest,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -203,7 +203,7 @@ def _run_apply(db: Session, current_user: dict, ids: list[str], dry_run: bool, o
 
 
 @contact_router.post("/bulk-apply-tag-settings")
-async def bulk_apply_tag_settings(
+def bulk_apply_tag_settings(
     body: ApplyRequest,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -213,7 +213,7 @@ async def bulk_apply_tag_settings(
 
 
 @router.post("/{tag_id}/apply")
-async def apply_contact_tag(
+def apply_contact_tag(
     tag_id: str,
     body: TagApplyRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -233,7 +233,7 @@ async def apply_contact_tag(
 
 
 @contact_router.put("/{contact_id}/tags", response_model=ContactTagsSetResponse)
-async def set_contact_tags(
+def set_contact_tags(
     contact_id: str,
     body: ContactTagsSet,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -252,7 +252,7 @@ async def set_contact_tags(
 
 
 @contact_router.get("/{contact_id}/tag-settings", response_model=ContactTagSettingsResponse)
-async def get_contact_tag_settings(
+def get_contact_tag_settings(
     contact_id: str,
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),

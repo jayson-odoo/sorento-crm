@@ -53,7 +53,7 @@ def _require_contact(db: Session, contact_id: str) -> RespondContact:
 
 
 @router.get("/{contact_id}/media-access", status_code=status.HTTP_200_OK)
-async def get_contact_media_access(
+def get_contact_media_access(
     contact_id: str,
     current_user: dict = Depends(require_permission(CONTACT_EDIT_PERMISSION)),
     db: Session = Depends(get_db),
@@ -71,7 +71,7 @@ async def get_contact_media_access(
 
 
 @router.put("/{contact_id}/media-access/{modality}", status_code=status.HTTP_200_OK)
-async def update_contact_media_access(
+def update_contact_media_access(
     contact_id: str,
     modality: MediaModality,
     payload: ContactMediaAccessUpdate,
