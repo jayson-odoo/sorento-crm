@@ -1556,13 +1556,11 @@ def test_a_role_holding_projects_view_reaches_stock_debt_through_the_443_sweep(s
 
 
 def _confirmed_hold(db, project_line, warehouse, qty):
-    """A CONFIRMED `so_line_allocations` row that HOLDS - the shape `_hold_query`
-    recognises: located, not an ORDER source, belonging to no decision, and confirmed.
-
-    A BORROW (`other_location`): BOARD-NO-HOLD (owner, 27 Oct 2026) made a Reserve
-    (own / brw / group_take) a plan that holds nothing, so the tests that pin what a HOLD
-    does (`pinned`, honoured outside the span, bound first at any date) seed the kind that
-    still holds. A Reserve's own reading is `tests/scm/test_board_no_hold.py`."""
+    """A CONFIRMED `so_line_allocations` row: located, not an ORDER source, belonging to no
+    decision, and confirmed. It is a ROUTE, not a hold: BOARD-NO-HOLD (27 Oct 2026) made a
+    Reserve and BORROW-NO-HOLD (28 Oct 2026) made a Borrow (`other_location`, what this
+    writes) a plan that holds no stock, so the line draws the bin it names at its own date
+    and never reads `pinned`. The name is historic."""
     from datetime import datetime
 
     from app.models.project_so import ALLOC_SOURCE_OTHER_LOCATION, SOLineAllocation
@@ -1581,12 +1579,12 @@ def _confirmed_hold(db, project_line, warehouse, qty):
     return row
 
 
-def test_a_hold_at_a_pool_or_an_unflagged_bin_still_reads_pinned(scm_app):
-    """AC-S2-1b / R21: pinned means pinned.
+def test_a_decision_at_a_pool_or_an_unflagged_bin_still_reads_covered(scm_app):
+    """AC-S2-1b / R21: the plan is honoured, as a route (covered, not pinned).
 
     Both holds name a bin this read cannot see - a SITE POOL and a bin flagged out of
     fulfilment planning - so the supply event behind them is not in the span. Before this
-    the hold was skipped and the board-covered line printed `short`: 16 pool holds (163
+    the decision was skipped and the board-covered line printed `short`: 16 pool holds (163
     units) and ~103 units at unflagged bins on the 30 Aug dev copy. The drill names the bin
     the HOLD carries, so the source column is a place rather than a blank.
     """
@@ -1618,7 +1616,7 @@ def test_a_hold_at_a_pool_or_an_unflagged_bin_still_reads_pinned(scm_app):
         board = c.get(BASE, params={"query": marker, "only_debt": False}).json()
 
     by_so = {line["so_number"]: line for line in cell["demand"]}
-    assert by_so[f"{marker}-SO-POOL"]["status"] == "pinned"
+    assert by_so[f"{marker}-SO-POOL"]["status"] == "covered"
     assert by_so[f"{marker}-SO-POOL"]["assigned_qty"] == 40
     # R29: one `assigned_from` entry, naming the pool bin the hold pinned.
     assert by_so[f"{marker}-SO-POOL"]["assigned_from"] == [
@@ -1628,7 +1626,7 @@ def test_a_hold_at_a_pool_or_an_unflagged_bin_still_reads_pinned(scm_app):
             "lent_from_so_number": None,
         }
     ]
-    assert by_so[f"{marker}-SO-HP"]["status"] == "pinned"
+    assert by_so[f"{marker}-SO-HP"]["status"] == "covered"
     assert by_so[f"{marker}-SO-HP"]["assigned_from"] == [
         {
             "kind": "on_hand", "ref": f"On hand {unflagged.warehouse_code}",
@@ -1636,17 +1634,17 @@ def test_a_hold_at_a_pool_or_an_unflagged_bin_still_reads_pinned(scm_app):
             "lent_from_so_number": None,
         }
     ]
-    # And the month agrees with the drill: 70 pinned against 70 owed owes nothing.
+    # And the month agrees with the drill: 70 routed against 70 owed owes nothing.
     row = _row_of(board, product.product_code)
     assert {m["key"]: m["balance"] for m in row["months"]}[month_key(due)] == 0
 
 
-def test_a_donor_holds_stock_in_another_group_and_group_bb_still_reads_it_pinned(scm_app):
+def test_a_decision_at_a_bin_in_another_group_and_group_bb_still_reads_it_covered(scm_app):
     """The third way a hold's bin leaves the span: the READER narrowed it.
 
-    A DC1-IB donor holds 25 for a BB line. Under `group=BB` the IB bin is out of the span
-    entirely - and the hold is still honoured, because narrowing the question does not
-    unmake a promise (AC-S2-1b).
+    A BB line's decision names a DC1-IB bin holding 25. Under `group=BB` the IB bin is out
+    of the span entirely - and the plan is still honoured as a route at the line's own
+    date (AC-S2-1b), so the line reads covered, never pinned.
     """
     app, db = _client(scm_app)
     marker = f"ZZTSD{_u()[:6]}".upper()
@@ -1668,7 +1666,7 @@ def test_a_donor_holds_stock_in_another_group_and_group_bb_still_reads_it_pinned
             params={"month": month_key(due), "group": "BB"},
         ).json()
 
-    assert cell["demand"][0]["status"] == "pinned"
+    assert cell["demand"][0]["status"] == "covered"
     assert cell["demand"][0]["assigned_qty"] == 25
     assert cell["demand"][0]["assigned_from"] == [
         {
