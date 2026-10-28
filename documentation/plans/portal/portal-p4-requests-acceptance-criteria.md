@@ -1,10 +1,12 @@
 # UAC: PORTAL-P4-REQUESTS (28 Oct 2026)
 
-Plan: `PLAN-portal-p4-requests-28oct.md`. Card: `CARD-portal-p4-requests-28oct.md`. Status: DRAFT, items marked
-(Qn) follow the owner's answer to that card question.
+Plan: `PLAN-portal-p4-requests-28oct.md`. Card: `CARD-portal-p4-requests-28oct.md`. Status: owner answers to card
+v1 folded in (28 Oct ~14:3x: Q1 a, Q2 a, Q3 a, Q4 follow the per-form revision setting, Q5 c = all 9 kinds). The 5
+extra kinds get their own items after card v1.1 is answered.
 
 "Salesperson" = P3 salesperson view (`phone_signin_service.py:302-309`). "Form" = Stock Inquiry, Complaint,
-Purchase Request, Sponsorship Form. "Theirs" = `contact_id` = their linked contact (Q1).
+Purchase Request, Sponsorship Form. "Theirs" = `contact_id` = their linked contact (Q1 a, the portal rule; a requestor named on someone else's request
+does not see it).
 
 ## Server scope
 
@@ -31,8 +33,11 @@ Purchase Request, Sponsorship Form. "Theirs" = `contact_id` = their linked conta
   Respond.io / `integration_log` records as a portal submit of the same row.
 - P4-13 Reject by a staff approver, then resubmit from the CRM: status `resubmitted`, audit trail headings
   "Rejected" / "Resubmitted" as #1942, then approve to the final state.
-- P4-14 Revise a responded / processed Stock Inquiry, Purchase Request, Sponsorship Form from the CRM: revision row,
-  `revision_no` bump, restart stage, requestor frozen; revision history visible. Complaint: no revise (Q4).
+- P4-14 Revise from the CRM follows the per-form revision setting (User Management > Settings > Portal revisions,
+  `portal_revision_configs` + `system_settings`) exactly as the portal, because it is the same code: where the
+  setting allows it, a revise writes the revision row, bumps `revision_no`, returns to the restart stage, keeps
+  the requestor frozen, and the revision history is visible; where the setting is off (or the form has no revision
+  code), the Revise action is absent and the server refuses it. Complaint: card v1.1 Q.
 - P4-15 Requestor options in the CRM equal the portal's `/requestor-options` for the same contact.
 - P4-16 Attachments added from the CRM appear on the row as portal uploads do; staff uploads cannot be removed by
   the salesperson.
@@ -44,15 +49,19 @@ Purchase Request, Sponsorship Form. "Theirs" = `contact_id` = their linked conta
 - P4-20 MY REQUESTS > each of the 4 forms opens the staff list page; the embedded portal list no longer renders for
   those 4; `/my-requests?type=<one of 4>` and `/my-requests/<kind>/<id>` redirect to the staff list / detail.
 - P4-21 Landing on a favourite among the 4 opens its staff list.
-- P4-22 List: same columns and filters as staff (Q3); empty state for a salesperson with no rows; Create shown.
-- P4-23 Every column of the 4 lists sorts on the server; every dropdown filter is multi-select (Q3).
+- P4-22 List: same columns and filters as staff (Q3 a); empty state for a salesperson with no rows; Create shown.
+- P4-23 Every column of every MY REQUESTS list sorts on the server, for everyone (Q3 a); every dropdown filter is
+  multi-select (already on main for Complaint, Purchase Request / Sponsorship, Price Tag, NPA via #1937 / #1938;
+  Sample Request via #1940, not merged).
 - P4-24 New / Edit for a salesperson: staff-only fields hidden (Stock Inquiry purchasing response; Complaint
   technical team card); Save as draft + Submit; Duplicate (`?from=`) pre-fills a new draft.
-- P4-25 Detail for a salesperson: the portal action set only (Q2); status, responses, comments, attachments and
+- P4-25 Detail for a salesperson: the portal action set only (Q2 a: no PDF, no copy view link, no SLA actions); status, responses, comments, attachments and
   revision history visible; no staff action button.
 - P4-26 Staff screens unchanged.
 - P4-27 Usable at 375 px and 1280 px.
-- P4-28 Other MY REQUESTS kinds (Q5).
+- P4-28 No embedded portal view is left inside the CRM for any MY REQUESTS kind (Q5 c): Project Registration,
+  Sample Request, New Product Application, Price Tag Request and Sales Opportunity open CRM pages too (items after
+  card v1.1; Project Registration opens the PROJECT-REGISTER-V2 page).
 
 ## Proof
 

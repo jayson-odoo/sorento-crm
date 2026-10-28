@@ -6,7 +6,11 @@ portal for all 4 forms; only create / save as draft / submit move to the staff p
 as today. Plan: `PLAN-portal-p4-requests-28oct.md`. Names below are stand-ins (public repo); record numbers are real
 (dev copy `sorento_cagent_stack`, 15 Oct).
 
-**Owner answers:** pending.
+**Owner answers (28 Oct ~14:3x, relayed by crew):** Q1 (a) submitter contact only. Q2 (a) portal action set only.
+Q3 (a) same staff columns and filters; the grid rules are fixed on all grids for everyone. Q4 (a), but revisions follow
+the per-form revision setting for every form, complaint included, exactly as the portal does (setting and values:
+crew-note on #1953). Q5 (c): all 9 MY REQUESTS kinds in this lane, no embedded portal view left in the CRM; Project
+Registration opens the PROJECT-REGISTER-V2 page. The 5 extra kinds go to card v1.1 before they are built.
 
 ## The rule, in plain words
 
