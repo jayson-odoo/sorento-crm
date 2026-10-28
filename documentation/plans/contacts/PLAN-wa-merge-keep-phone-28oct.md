@@ -1,6 +1,6 @@
 # PLAN: WA-MERGE-KEEP-PHONE (28 Oct)
 
-Status: Build (small fix track: one-file service change + tests, no migration, no auth/RBAC change).
+Status: Review passed (reviewer READY with kill test, security-reviewer CLEAN); awaiting CI and owner hand test (small fix track: one-file service change + tests, no migration, no auth/RBAC change).
 
 ## Problem
 
