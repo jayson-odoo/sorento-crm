@@ -86,11 +86,12 @@ const apiFetch = vi.fn(async (url: string, init?: RequestInit) => {
   if (path.endsWith('/lookups/price-tag-items')) return json([CABINET]);
   if (path.includes('/lookups/product-combos/')) return json(state.combos);
   if (path.endsWith('/lookups/line-pricing')) {
-    const lines = (body as { lines: Array<{ product_id: string | null }> }).lines;
+    const lines = (body as { lines: Array<{ key: string; candidate_product_ids?: string[] }> }).lines;
     return json(lines.map((l) => ({
-      list_price: 100, sell_price: 90, sell_price_basis: 'promotion', promotion_id: 'promo-1',
+      key: l.key, list_price: 100, sell_price: 90, sell_price_basis: 'promotion', auto_promotion_id: 'promo-1',
       promotion_options: [{ id: 'promo-1', description: 'ZZT Promo', sell_price: 90 }],
-      part_candidates: [], product_id: l.product_id,
+      parts_at_list: [],
+      candidates: (l.candidate_product_ids ?? []).map((id) => ({ product_id: id, list_price: 10, sell_price: 10 })),
     })));
   }
   if (path.endsWith('/lookups/promotions')) return json([{ id: 'promo-1', description: 'ZZT Promo' }]);
@@ -172,8 +173,9 @@ async function selectOption(label: string | RegExp, value: string) {
 }
 
 async function clickTab(name: RegExp) {
-  const tab = screen.queryByRole('tab', { name });
-  if (tab) fireEvent.mouseDown(tab), fireEvent.click(tab);
+  const tab = await screen.findByRole('tab', { name });
+  fireEvent.mouseDown(tab);
+  fireEvent.click(tab);
 }
 
 beforeEach(() => {
@@ -202,7 +204,7 @@ describe('/new: a picked product brings its package and parts (c)', () => {
     await selectOption(ITEM_PICKER, `product:${CABINET.id}`);
     expect(await screen.findByText(MIRROR.code)).toBeTruthy();
     expect(screen.getByLabelText('Not sure, any of 2')).toBeTruthy();
-    expect(screen.queryByText(BASIN_WHITE.code)).toBeNull();
+    await waitFor(() => expect(screen.queryByText(BASIN_WHITE.code)).toBeNull());
     await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === `${LOOKUPS}/line-pricing`)).toBe(true));
     const body = calls.find((c) => c.url === `${LOOKUPS}/line-pricing`)!.body as { lines: unknown[] };
     expect(Array.isArray(body.lines)).toBe(true);
