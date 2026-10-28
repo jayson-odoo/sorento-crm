@@ -1278,6 +1278,8 @@ class StockDebtService:
             span=set(warehouse_ids),
             supply_rows=supply_rows,
             lendable_lines=lendable_lines,
+            # STOCKDEBT-NO-PLAN-REACH: on the page a board plan gives no reach.
+            routes=not view,
         )
 
         settings = self.supply._fulfilment_settings()
@@ -1682,6 +1684,7 @@ class StockDebtService:
         span: Optional[Set[str]] = None,
         supply_rows: Optional[Dict[str, List[SupplyEvent]]] = None,
         lendable_lines: Optional[Set[str]] = None,
+        routes: bool = True,
     ) -> List[Hold]:
         """What is already promised: confirmed allocations and placement links (R21).
 
@@ -1779,6 +1782,12 @@ class StockDebtService:
         own read to nothing), so without the mark here the feature lent nothing on the real
         book. A decision allocation (`so_line_allocations`) is never lendable: a Borrow
         and a Reserve are both routes, neither is goods that landed for the line. `None` marks nothing.
+
+        `routes=False` (STOCKDEBT-NO-PLAN-REACH, owner 28 Oct 2026, the VIEW's own reading):
+        no decision row is read at all, so a decided line walks exactly as the same line
+        undecided: "even if plan says reserve from BRW, it doesn't care, and how it draws is
+        the same as other lines that don't have a decision". The board and the ladder keep
+        the routes (`assignments_for`), their planning is unchanged.
         """
         if not line_keys:
             return []
@@ -1787,8 +1796,9 @@ class StockDebtService:
 
         # BOARD-NO-HOLD + BORROW-NO-HOLD: ONE read of the live decision allocations. A
         # decision is a plan, not a hold, whatever its source: every row is a ROUTE the
-        # walk takes (the line may draw the bin at its own date, `Hold.route`).
-        route_rows = (
+        # walk takes (the line may draw the bin at its own date, `Hold.route`). None in the
+        # view (STOCKDEBT-NO-PLAN-REACH, see the docstring).
+        route_rows = [] if not routes else (
             self.supply._decision_allocation_query(
                 [str(pid) for pid in product_ids],
                 exclude_line_ids=None,
