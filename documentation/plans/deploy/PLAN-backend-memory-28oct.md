@@ -177,14 +177,24 @@ A stray `TTIN` is undone by one `docker kill -s TTOU $C`.
   the permanent generation before every fork, so a worker's collector never walks it and never
   un-shares it (finding 7). Red-first.
 - `max_requests` + `max_requests_jitter` (env `GUNICORN_MAX_REQUESTS` 5000,
-  `GUNICORN_MAX_REQUESTS_JITTER` 500; 0 = off): a worker retires after about 5000-5500 requests
-  and the master forks a fresh one, which bounds any remaining growth (arenas, caches).
+  `GUNICORN_MAX_REQUESTS_JITTER` 2500; 0 = off): a worker retires after 5000-7500 requests and
+  the master forks a fresh one, which bounds any remaining growth (arenas, caches). The jitter is
+  half the limit on purpose: a retiring worker stops accepting while it drains (up to 100 s with
+  a staff event stream open) and gunicorn forks its replacement only after it exits, so if every
+  worker drains at once nothing accepts. Measured locally (2 workers, tiny limit, slow connections
+  on both): 86 s with no worker accepting, 2 requests timed out. Workers start together after a
+  deploy and take requests at the same rate, so only the jitter separates them: at 10,000 requests
+  an hour (about 69 per worker per 100 s) the chance that all four retire within 100 s of each
+  other is about 0.9% per round with a jitter of 500 and about 0.008% with 2500; three at once
+  (one worker serving) about 0.9%.
 - `DrainingServer` (`app/uvicorn_worker.py`): a self-retiring worker (max_requests or TTOU) gets
   the deploy's graceful shutdown, not the hard kill above: it stops the inbox drains when shutdown
   starts (the request limit sends no signal) and keeps gunicorn's heartbeat going through the
-  bounded shutdown, never past `graceful_timeout`, so a hung shutdown is still killed. Chosen over
-  raising `timeout` to 210 s or more, which would also leave a genuinely hung worker serving
-  errors for 3.5 minutes before it is replaced.
+  bounded shutdown from a task on the event loop, never past `graceful_timeout`. On the loop on
+  purpose (review round 1): the drains wait runs off it (`asyncio.to_thread`, `app/main.py`
+  shutdown_event), so the beats continue through it, while a worker whose loop wedges stops
+  beating and is still killed at 120 s. Chosen over raising `timeout` to 210 s or more, which
+  would also leave a genuinely hung worker serving errors for 3.5 minutes before it is replaced.
 - The warm path `fill()` honours `_CACHE_CAP` (finding 5).
 - `MALLOC_ARENA_MAX=2`: only if owner step 1 shows the arenas hold the memory.
 
@@ -194,7 +204,8 @@ the embedder prompt has no production label, so it is OpenAI `text-embedding-3-s
 of 500: 15 requests, about USD 0.001 at list price (USD 0.02 per million tokens). On Gemini it
 would be 71 requests of 100, about USD 0.008 (UNVERIFIED list price). The new worker matches by
 spelling only for those 10-70 s, on a quarter of the traffic. At 10,000 requests an hour (the
-real number comes from owner step 2) each worker recycles about every 2 hours: 48 recycles a day,
-about USD 0.05 a day on OpenAI, and about 0.5% of chat turns on spelling-only matching. If that
+real number comes from owner step 2) each worker recycles about every 2-3 hours: about 40
+recycles a day, about USD 0.04 a day on OpenAI, and about 0.5% of chat turns on spelling-only
+matching. If that
 window ever shows up in chat quality, warm the vectors once in the master before the fork (shared,
 no window); not built now, no evidence it is needed.
