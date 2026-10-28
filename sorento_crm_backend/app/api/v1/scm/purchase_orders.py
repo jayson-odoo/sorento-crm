@@ -14,6 +14,7 @@ from fastapi import APIRouter, Body, Depends, Query
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.schemas.scm_decisions import (
@@ -54,7 +55,7 @@ def list_purchase_orders(
     sort: Optional[str] = Query(None),
     dir: str = Query("desc"),
     query: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    status: Optional[list[str]] = Query(None),
     supplier: Optional[str] = Query(None),
     product_code: Optional[str] = Query(
         None,
@@ -118,7 +119,7 @@ def list_purchase_orders(
     purchase orders" after a book lands shows that book and not the other 13,000.
     """
     return PurchaseOrderService(db).list(
-        page, limit, sort, dir, query, status, supplier,
+        page, limit, sort, dir, query, multi_values(status), supplier,
         product_code=product_code, outstanding=outstanding, allocated=allocated,
         unclaimed_project_bin=unclaimed_project_bin,
         documents=documents.split(",") if documents is not None else None,
