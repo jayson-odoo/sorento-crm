@@ -16,6 +16,7 @@ import {
 } from '@/app/(auth)/portal/lib/portal-paths';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
+import { useImpersonationSession } from '@/lib/impersonation-store';
 
 /**
  * The CRM-side shell of the portal forms (PORTAL-P3-ROLE-MENU): hands the signed-in salesperson's
@@ -30,6 +31,7 @@ export function MySlug({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const viewingAs = useImpersonationSession() !== null;
   const [ready, setReady] = useState(false);
   const mySlug = salesperson?.portalSlug ?? null;
 
@@ -58,6 +60,12 @@ export function MySlug({
     // device's stored slug is the admin's, not compared and never written; only the token's
     // own identity is checked, and a wrong one drops only that token.
     const impersonating = isImpersonationToken();
+    // Viewing as someone with no token of their own in this tab: the stored token and slug are
+    // the admin's own device sign-in, never cleared here. The code step is the way in.
+    if (viewingAs && !impersonating) {
+      toVerify();
+      return;
+    }
     const token = readPortalToken();
     // A token that is not this salesperson's (shared device) is dropped, as the portal slug page does.
     if (!token || (!impersonating && readPortalSlug() !== mySlug)) {
