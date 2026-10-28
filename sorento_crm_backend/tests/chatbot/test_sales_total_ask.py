@@ -336,3 +336,60 @@ def test_t15_the_live_parser_text_needs_no_edit(one):
     assert "Open question" in block and BASIS_QUESTION in block, block[-2000:]
     positions = [block.find(word) for word in ("Invoiced", "Delivered", "Ordered", "Outstanding")]
     assert -1 not in positions and positions == sorted(positions), block[-2000:]
+
+
+# --------------------------------------------------------------------------- #
+# Review round 3: every declared answer shape guarded
+# --------------------------------------------------------------------------- #
+
+
+def test_t17_a_declared_pick_of_2_runs_delivered(one):
+    _ask(one)
+    _result, captured = one.say(_answer(open_question_answer=_pick(2)), "2")
+    _ran(captured, "delivered")
+
+
+def test_t18_a_declared_pick_of_4_runs_the_outstanding_report_ask(one):
+    _ask(one)
+    _result, captured = one.say(_answer(open_question_answer=_pick(4)), "4")
+    assert _calls(captured, ANALYSIS) == [], captured
+    asks = _calls(captured, "crm_report_ask")
+    assert asks and asks[0].get("basis") == "outstanding", captured
+
+
+def test_t19_the_declared_pick_wins_over_a_stray_basis_key(one):
+    _ask(one)
+    _result, captured = one.say(_answer(open_question_answer=_pick(2), basis="invoiced"), "2")
+    _ran(captured, "delivered")
+
+
+def test_t20_a_declared_cancel_cancels(one):
+    _ask(one)
+    cancel = {"mode": "cancel", "picked": [], "items": [], "qty_for_all": None}
+    result, captured = one.say(_answer(open_question_answer=cancel), "cancel")
+    assert captured == [] or _calls(captured, ANALYSIS) == [], captured
+    assert "Sales report cancelled." in _reply(result), _reply(result)
+    assert (one.next_open_question() or {}).get("about") != "sales_basis"
+
+
+def test_t21_a_declared_answer_naming_no_option_is_asked_again_then_given_up(one):
+    """A declared pick outside the four: asked again in the same words, then given up, never echoing a word."""
+    _ask(one)
+    result, captured = one.say(_answer(open_question_answer=_pick(9)), "zzqq")
+    assert _reply(result).strip() == BASIS_QUESTION and _calls(captured, ANALYSIS) == [], _reply(result)
+    result, captured = one.say(_answer(open_question_answer=_pick(9)), "zzqq")
+    assert "I still can't tell which basis you mean." in _reply(result) and "zzqq" not in _reply(result), _reply(result)
+    assert _calls(captured, ANALYSIS) == [], captured
+
+
+def test_t22_outstanding_with_no_period_reads_this_year_as_the_other_bases_do(one):
+    """The analysis reads this calendar year when no period is said; the outstanding answer does too, never a
+    second question."""
+    from app.services.reports.registry import today_malaysia
+
+    result, _c = one.say(_total(date_mode=None, date_filter_start=None, date_filter_end=None), "total sales")
+    assert _reply(result).strip() == BASIS_QUESTION, _reply(result)
+    _result, captured = one.say(_answer(open_question_answer=_pick(4)), "4")
+    asks = _calls(captured, "crm_report_ask")
+    today = today_malaysia()
+    assert asks and asks[0].get("date_from") == f"{today.year}-01-01" and asks[0].get("date_to") == today.isoformat(), captured
