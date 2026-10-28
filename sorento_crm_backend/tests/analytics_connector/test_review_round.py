@@ -232,7 +232,7 @@ def test_a_route_status_the_gate_does_not_translate_is_still_audited_as_that_sta
 
     from app.services import project_service
 
-    def _raise(*_args, **_kwargs):  # any signature: the detail route passes viewer_user_id (#1957)
+    def _raise(_db, _project_id, **_kwargs):  # the detail route passes viewer_user_id (#1957)
         raise HTTPException(status_code=code, detail="zzt forced")
 
     monkeypatch.setattr(project_service, "get_project_or_404", _raise)
