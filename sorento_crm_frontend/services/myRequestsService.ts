@@ -27,6 +27,14 @@ import {
   type SampleRequestProductHit,
   type SampleRequestWrite,
 } from '@/types/sampleRequest';
+import {
+  NewProductApplicationError,
+  type NewProductApplicationDetail,
+  type NewProductApplicationPrefill,
+  type NewProductApplicationWrite,
+} from '@/types/newProductApplication';
+import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { stockInquiryLabel } from '@/lib/new-product-application-form';
 import type {
   SalesOpportunityCustomerOptionsResponse,
   SalesOpportunityDetail,
@@ -251,7 +259,15 @@ export async function deleteSubmissionComment(kind: MyRequestKind, id: string, c
   );
 }
 
-export async function uploadAttachment(kind: MyRequestKind, submissionId: string, file: File): Promise<PortalAttachment> {
+/** The kinds whose files ride the generic attachment routes: the four forms and (S5) the new product
+ *  application, whose own router has no upload route, exactly as on the portal. */
+export type MyRequestAttachmentKind = MyRequestKind | 'new_product_application';
+
+export async function uploadAttachment(
+  kind: MyRequestAttachmentKind,
+  submissionId: string,
+  file: File,
+): Promise<PortalAttachment> {
   const form = new FormData();
   form.set('kind', kind);
   form.set('submission_id', submissionId);
@@ -383,4 +399,101 @@ export async function updateMySalesOpportunity(
     await apiFetch(`${OPPORTUNITY_URL}/${encodeURIComponent(id)}`, jsonBody('PATCH', withoutAgent(payload))),
     'Failed to save opportunity',
   );
+}
+
+// ---------------------------------------------------------------- New Product Application (S5)
+// The portal's own application router, mounted at /api/v1/my-requests (same paths, bodies and
+// answers as the portal). Its files go through the generic `/attachments` routes above.
+
+const NPA_URL = `${BASE}/submissions/new_product_application`;
+const NPA_OWN = `${BASE}/new-product-application`;
+
+/** A refusal that names a line or field arrives as `{message, code, details: {field}}`. */
+async function npaResult<T>(res: Response, fallback: string): Promise<T> {
+  if (res.ok) return (await res.json()) as T;
+  const spare = res.clone();
+  const message = await extractApiError(res, fallback);
+  type Body = { code?: unknown; details?: { field?: unknown } };
+  let body: Body | null = null;
+  try {
+    body = (await spare.json()) as Body;
+  } catch {
+    body = null;
+  }
+  throw new NewProductApplicationError(
+    message,
+    typeof body?.code === 'string' ? body.code : null,
+    typeof body?.details?.field === 'string' ? body.details.field : null,
+  );
+}
+
+const npaUrl = (id: string, action?: 'submit' | 'revise' | 'cancel') =>
+  `${NPA_URL}/${encodeURIComponent(id)}${action ? `/${action}` : ''}`;
+
+export async function createMyNewProductApplication(
+  data: NewProductApplicationWrite,
+): Promise<NewProductApplicationDetail> {
+  return npaResult(await apiFetch(NPA_URL, { method: 'POST', body: JSON.stringify(data) }), 'Failed to save the application');
+}
+
+export async function updateMyNewProductApplication(
+  id: string,
+  data: NewProductApplicationWrite,
+): Promise<NewProductApplicationDetail> {
+  return npaResult(await apiFetch(npaUrl(id), { method: 'PUT', body: JSON.stringify(data) }), 'Failed to save the application');
+}
+
+export async function submitMyNewProductApplication(id: string): Promise<NewProductApplicationDetail> {
+  return npaResult(await apiFetch(npaUrl(id, 'submit'), { method: 'POST' }), 'Failed to submit the application');
+}
+
+export async function reviseMyNewProductApplication(id: string, reason: string): Promise<NewProductApplicationDetail> {
+  return npaResult(
+    await apiFetch(npaUrl(id, 'revise'), { method: 'POST', body: JSON.stringify({ reason }) }),
+    'Failed to revise the application',
+  );
+}
+
+export async function cancelMyNewProductApplication(id: string, reason?: string): Promise<NewProductApplicationDetail> {
+  return npaResult(
+    await apiFetch(npaUrl(id, 'cancel'), { method: 'POST', body: JSON.stringify(reason ? { reason } : {}) }),
+    'Failed to cancel the application',
+  );
+}
+
+/** "Start from" one of their own responded stock inquiries. */
+export async function fetchMyNewProductApplicationPrefill(stockInquiryId: string): Promise<NewProductApplicationPrefill> {
+  return npaResult(
+    await apiFetch(`${NPA_OWN}/prefill?stock_inquiry_id=${encodeURIComponent(stockInquiryId)}`),
+    'Failed to load the stock inquiry',
+  );
+}
+
+/** The debtors their agent may name: exactly the set submit accepts. */
+export async function fetchMyNewProductApplicationCustomers(q: string): Promise<SampleRequestCustomerHit[]> {
+  return npaResult(
+    await apiFetch(`${NPA_OWN}/customers?q=${encodeURIComponent(q)}`),
+    'Failed to load customers',
+  );
+}
+
+/** Their own responded stock inquiries for the header picker, labelled as the staff picker labels them. */
+export async function searchMyNewProductApplicationInquiries(q: string): Promise<SearchableSelectOption[]> {
+  const rows = await npaResult<{ id: string; inquiry_number?: string | null; product_code?: string | null }[]>(
+    await apiFetch(`${NPA_OWN}/inquiries`),
+    'Failed to load stock inquiries',
+  );
+  const needle = q.trim().toLowerCase();
+  return rows
+    .map((r) => ({ value: r.id, label: stockInquiryLabel(r.inquiry_number, r.product_code) }))
+    .filter((o) => !needle || o.label.toLowerCase().includes(needle));
+}
+
+/** The brand select of the paper sheet, from the portal's lookup. */
+export async function searchMyNewProductApplicationBrands(q: string): Promise<SearchableSelectOption[]> {
+  const rows = await npaResult<{ id: string; code: string | null; name: string }[]>(
+    await apiFetch(`${NPA_OWN}/lookups/brands?q=${encodeURIComponent(q)}`),
+    'Failed to load brands',
+  );
+  return rows.map((b) => ({ value: b.id, label: b.name, code: b.code ?? undefined }));
 }

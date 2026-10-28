@@ -19,12 +19,14 @@ Who may call it (fails closed, before the portal code runs):
 - the user has a linked contact with a workspace (403 / the contact-impersonation answers);
 - a create also needs the form's ``.add``.
 
-Sample requests and opportunities (S4, S6) have their own portal routers
-(``register_sample_request_routes``, ``register_sales_opportunity_routes``), mounted here on their
-own routers ahead of the generic routes, which would otherwise answer their literal paths. Same
-gates, the kind fixed per router (``own_scope.MODULE_REQUEST_KINDS``); the write slugs differ
-(``_WRITE_SLUGS``): a sample request is created with ``.create``, an opportunity with ``.add`` and
-changed with ``.edit``.
+Sample requests, new product applications and opportunities (S4, S5, S6) have their own portal
+routers (``register_sample_request_routes``, ``register_new_product_application_routes``,
+``register_sales_opportunity_routes``), mounted here on their own routers ahead of the generic
+routes, which would otherwise answer their literal paths. Same gates, the kind fixed per router
+(``own_scope.MODULE_REQUEST_KINDS``); the write slugs differ (``_WRITE_SLUGS``): a sample request
+and an application are created with ``.create``, an opportunity with ``.add`` and changed with
+``.edit``. An application's files ride the generic attachment routes (``_ATTACHMENT_KINDS``), as
+on the portal.
 """
 from __future__ import annotations
 
@@ -36,6 +38,7 @@ from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import register_submission_routes
+from app.api.v1.public.portal_new_product_application import register_new_product_application_routes
 from app.api.v1.public.portal_sales_opportunity import register_sales_opportunity_routes
 from app.api.v1.public.portal_sample_request import register_sample_request_routes
 from app.api.v1.user_management.contact_impersonation import _resolve_contact_and_space
@@ -49,6 +52,16 @@ from app.services.user_service import UserPermissionService
 PREFIX = "/api/v1/my-requests"
 _CREATE = ("POST", "/submissions/{kind}")
 _UPLOAD = ("POST", "/attachments")
+#: The generic attachment routes, and the own-router kinds whose files they carry (S5).
+_ATTACHMENT_ROUTES = frozenset(
+    {
+        ("GET", "/attachments"),
+        _UPLOAD,
+        ("GET", "/attachments/{attachment_id}/download"),
+        ("DELETE", "/attachments/{link_id}"),
+    }
+)
+_ATTACHMENT_KINDS = ("new_product_application",)
 
 #: Names the per-user portal rate-limit bucket (the comment route keys it on ``token.id``).
 _TOKEN_NAMESPACE = uuid.UUID("6f1d3c2a-4b7e-4f0a-9a51-2c8e5d0b7a13")
@@ -56,12 +69,14 @@ _TOKEN_NAMESPACE = uuid.UUID("6f1d3c2a-4b7e-4f0a-9a51-2c8e5d0b7a13")
 #: The write slug a route of the own-router kinds needs besides the kind's view_own.
 _WRITE_SLUGS = {
     ("POST", "/submissions/sample_request"): "projects.sample_requests.create",
+    ("POST", "/submissions/new_product_application"): "procurement.new_product_applications.create",
     ("POST", "/sales-opportunities"): "sales.opportunities.add",
     ("PATCH", "/sales-opportunities/{opportunity_id}"): "sales.opportunities.edit",
 }
 
 router = APIRouter()
 sample_request_router = APIRouter()
+new_product_application_router = APIRouter()
 sales_opportunity_router = APIRouter()
 
 
@@ -144,13 +159,16 @@ async def my_requests_token(
     """The CRM caller as a portal token of their own contact, or 403 / 404 (module docstring)."""
     route = _route(request)
     kind = await _kind_of(request, route)
-    if kind is not None and kind not in own_scope.REQUEST_KINDS:
+    known = tuple(own_scope.REQUEST_KINDS)
+    if route in _ATTACHMENT_ROUTES:
+        known += _ATTACHMENT_KINDS
+    if kind is not None and kind not in known:
         raise AppException(
             status_code=status.HTTP_404_NOT_FOUND,
             message="This form is not available here.",
             code="NOT_FOUND",
         )
-    kinds = (kind,) if kind else tuple(own_scope.REQUEST_KINDS)
+    kinds = (kind,) if kind else known
     write_slug = _add_slug(kind) if route == _CREATE and kind else None
     return _token_for(request, db, current_user, kinds, write_slug)
 
@@ -170,5 +188,8 @@ def _kind_token(kind: str):
 
 
 register_sample_request_routes(sample_request_router, _kind_token("sample_request"))
+register_new_product_application_routes(
+    new_product_application_router, _kind_token("new_product_application")
+)
 register_sales_opportunity_routes(sales_opportunity_router, _kind_token("sales_opportunity"))
 register_submission_routes(router, my_requests_token)

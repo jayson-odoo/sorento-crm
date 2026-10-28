@@ -39,6 +39,8 @@ SAMPLE_REQUESTS_VIEW = "projects.sample_requests.view"
 SAMPLE_REQUESTS_VIEW_OWN = "projects.sample_requests.view_own"
 NPA_VIEW = "procurement.new_product_applications.view"
 NPA_VIEW_OWN = "procurement.new_product_applications.view_own"
+NPA_APPROVE = "procurement.new_product_applications.approve"
+NPA_OPEN_CODE = "procurement.new_product_applications.open_code"
 CONVERSATIONS_VIEW = "sla_management.conversations.view"
 CONVERSATIONS_VIEW_OWN = "sla_management.conversations.view_own"
 
@@ -62,13 +64,18 @@ REQUEST_KINDS = {
 
 
 #: The MY REQUESTS forms with a staff router of their own that a salesperson writes through that
-#: form's own portal router (PORTAL-P4-REQUESTS S4, S6): kind -> (view, view_own). Their rows are
-#: theirs by the module rule (``sample_request_clause``, ``opportunity_clause``), which already
-#: narrows the staff reads (PORTAL-P2-ONLY-THEIRS).
+#: form's own portal router (PORTAL-P4-REQUESTS S4, S5, S6): kind -> (view, view_own). Their rows
+#: are theirs by the module rule (``sample_request_clause``, ``npa_clause``,
+#: ``opportunity_clause``), which already narrows the staff reads (PORTAL-P2-ONLY-THEIRS).
 MODULE_REQUEST_KINDS = {
     "sample_request": (SAMPLE_REQUESTS_VIEW, SAMPLE_REQUESTS_VIEW_OWN),
+    "new_product_application": (NPA_VIEW, NPA_VIEW_OWN),
     "sales_opportunity": (OPPORTUNITIES_VIEW, OPPORTUNITIES_VIEW_OWN),
 }
+
+#: Grants that see every row of a kind besides its ``view``: a new product application's
+#: approvers and purchasing (``new_product_application_service.actor_from_slugs``).
+VIEW_ALL_ALSO = {"new_product_application": (NPA_APPROVE, NPA_OPEN_CODE)}
 
 
 def is_limited(perms: Iterable[str], view: str, view_own: str) -> bool:
@@ -186,7 +193,7 @@ def request_access(perms: Iterable[str], kind: str) -> Optional[str]:
     ``kind`` is one of ``REQUEST_KINDS`` or ``MODULE_REQUEST_KINDS``."""
     view, view_own = REQUEST_KINDS.get(kind) or MODULE_REQUEST_KINDS[kind]
     slugs = set(perms or ())
-    if view in slugs:
+    if view in slugs or slugs & set(VIEW_ALL_ALSO.get(kind, ())):
         return "all"
     return "own" if view_own in slugs else None
 
@@ -229,6 +236,7 @@ def module_row_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) ->
     """Is this row of a ``MODULE_REQUEST_KINDS`` kind theirs, by that module's rule?"""
     import uuid
 
+    from app.models.new_product_application import NewProductApplication
     from app.models.sales import SalesOpportunity
     from app.models.sample_request import SampleRequest
 
@@ -239,6 +247,8 @@ def module_row_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) ->
         return False
     if kind == "sample_request":
         model, clause = SampleRequest, sample_request_clause(m)
+    elif kind == "new_product_application":
+        model, clause = NewProductApplication, npa_clause(m)
     else:
         model, clause = SalesOpportunity, opportunity_clause(m)
     return db.query(model.id).filter(model.id == str(row_id), clause).first() is not None

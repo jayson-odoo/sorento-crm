@@ -1,9 +1,11 @@
 'use client';
 
 import { use } from 'react';
-import NewProductApplicationForm from '@/app/(auth)/portal/components/NewProductApplicationForm';
-import { MySlug, sanitizeId } from '../../MySlug';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
+import { sanitizeId } from '../../MySlug';
+import { StaffPageRedirect } from '../../StaffPageRedirect';
 
+/** A deep link to a salesperson's application opens the staff detail (PORTAL-P4-REQUESTS S5). */
 export default function MyRequestsNewProductApplicationDetailPage({
   params,
 }: {
@@ -11,8 +13,8 @@ export default function MyRequestsNewProductApplicationDetailPage({
 }) {
   const { id } = use(params);
   return (
-    <MySlug>
-      {(slug) => <NewProductApplicationForm applicationId={sanitizeId(id)} slug={slug} />}
-    </MySlug>
+    <StaffPageRedirect
+      to={`${MY_REQUEST_STAFF_PAGES.new_product_application.path}/${sanitizeId(id)}`}
+    />
   );
 }

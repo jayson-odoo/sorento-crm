@@ -39,8 +39,23 @@ import {
 } from '../hooks/useNewProductApplications';
 import NewProductApplicationAttachments from './NewProductApplicationAttachments';
 import { searchStockInquiryOptions } from '../services/newProductApplicationService';
+import {
+  useMyNewProductApplicationMutations,
+  useMyNewProductApplicationPrefill,
+} from '@/hooks/useMyRequests';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import {
+  fetchMyNewProductApplicationCustomers,
+  searchMyNewProductApplicationBrands,
+  searchMyNewProductApplicationInquiries,
+} from '@/services/myRequestsService';
 
 const BASE_PATH = '/procurement-management/new-product-applications';
+
+/** What the customer picker shows: a staff lookup row, or the portal's own debtor hit. */
+type CustomerPick = Pick<CustomerLookupItem, 'customer_id' | 'customer_code' | 'debtor_name'>;
+
+const OWN_LOOKUPS = { brands: (q: string) => searchMyNewProductApplicationBrands(q) };
 
 export default function NewProductApplicationForm({
   applicationId,
@@ -52,12 +67,20 @@ export default function NewProductApplicationForm({
   stockInquiryId?: string;
 }) {
   const router = useRouter();
-  const { create, update, submit } = useNewProductApplicationMutations();
+  // A salesperson limited to their own applications writes through My Requests, the portal's own
+  // code: its pickers, its "start from", its draft / submit (PORTAL-P4-REQUESTS S5). A create-only
+  // applicant is staff and keeps the staff routes.
+  const { limited } = useRequestScope('new_product_application');
+  const staffWrites = useNewProductApplicationMutations();
+  const ownWrites = useMyNewProductApplicationMutations();
+  const { create, update, submit } = limited ? ownWrites : staffWrites;
   const existing = useNewProductApplicationQuery(applicationId ?? null);
-  const prefill = useNewProductApplicationPrefillQuery(
-    applicationId ? null : (stockInquiryId ?? null),
-  );
-  const lookups = useNewProductApplicationLookups();
+  const startFrom = applicationId ? null : (stockInquiryId ?? null);
+  const staffPrefill = useNewProductApplicationPrefillQuery(limited ? null : startFrom);
+  const ownPrefill = useMyNewProductApplicationPrefill(limited ? startFrom : null);
+  const prefill = limited ? ownPrefill : staffPrefill;
+  const staffLookups = useNewProductApplicationLookups();
+  const lookups = limited ? OWN_LOOKUPS : staffLookups;
   const [state, setState] = useState<FormState>({
     ...EMPTY_FORM,
     lines: [blankLine()],
@@ -195,7 +218,11 @@ export default function NewProductApplicationForm({
                 clearable
                 placeholder="Search a stock inquiry"
                 emptyMessage="No stock inquiry matches that."
-                fetchOptions={(query) => searchStockInquiryOptions(query)}
+                fetchOptions={(query) =>
+                  limited
+                    ? searchMyNewProductApplicationInquiries(query)
+                    : searchStockInquiryOptions(query)
+                }
                 selectedOption={
                   state.stock_inquiry_id
                     ? {
@@ -224,7 +251,7 @@ export default function NewProductApplicationForm({
             }
             customerField={
               <>
-                <AsyncCombobox<CustomerLookupItem>
+                <AsyncCombobox<CustomerPick>
                   ariaLabel="Customer"
                   value={state.customer_name}
                   onChange={(v, item) =>
@@ -234,7 +261,9 @@ export default function NewProductApplicationForm({
                       customer_name: v,
                     }))
                   }
-                  fetchOptions={lookupCustomersForRequest}
+                  fetchOptions={
+                    limited ? fetchMyNewProductApplicationCustomers : lookupCustomersForRequest
+                  }
                   optionValue={(o) => o.debtor_name}
                   optionLabel={(o) => o.debtor_name}
                   optionMeta={(o) => o.customer_code}
@@ -287,6 +316,7 @@ export default function NewProductApplicationForm({
             applicationId={applicationId}
             attachments={record.attachments ?? []}
             editable={record.status === 'draft' || record.status === 'rejected'}
+            own={limited}
           />
         </div>
       )}

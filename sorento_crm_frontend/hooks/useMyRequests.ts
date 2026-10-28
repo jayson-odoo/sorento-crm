@@ -3,7 +3,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
+  cancelMyNewProductApplication,
   cancelMySampleRequest,
+  createMyNewProductApplication,
   createMySampleRequest,
   deleteDraftSubmission,
   fetchRevisions,
@@ -11,12 +13,19 @@ import {
   reviseSubmission,
   saveDraft,
   submitDraft,
+  fetchMyNewProductApplicationPrefill,
+  reviseMyNewProductApplication,
+  submitMyNewProductApplication,
   submitMySampleRequest,
+  updateMyNewProductApplication,
+  uploadAttachment,
   updateMySampleRequest,
+  type MyRequestAttachmentKind,
   type MyRequestKind,
   type ReviseSubmissionInput,
 } from '@/services/myRequestsService';
 import type { SampleRequestWrite } from '@/types/sampleRequest';
+import type { NewProductApplicationWrite } from '@/types/newProductApplication';
 
 /**
  * A salesperson's own request, read and written through My Requests (PORTAL-P4-REQUESTS): the
@@ -151,4 +160,72 @@ export function useMySampleRequestMutations() {
     onError: fail('Failed to cancel the sample request'),
   });
   return { create, update, submit, cancel };
+}
+
+/**
+ * A salesperson's own new product application written through the portal's application router (S5):
+ * the staff page's create / update / submit / revise / cancel, run by the portal's code. The staff
+ * list and detail read the same rows, so their keys refresh.
+ */
+export function useMyNewProductApplicationMutations() {
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['new-product-applications'] });
+    void queryClient.invalidateQueries({ queryKey: ['new-product-application'] });
+  };
+  const move = (fallback: string, done?: string) => ({
+    onSuccess: () => {
+      refresh();
+      if (done) toast.success(done);
+    },
+    onError: (error: Error) => toast.error(error.message || fallback),
+  });
+  const create = useMutation({
+    mutationFn: (data: NewProductApplicationWrite) => createMyNewProductApplication(data),
+    ...move('Failed to save the application'),
+  });
+  const update = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: NewProductApplicationWrite }) =>
+      updateMyNewProductApplication(id, data),
+    ...move('Failed to save the application'),
+  });
+  const submit = useMutation({
+    mutationFn: (id: string) => submitMyNewProductApplication(id),
+    ...move('Failed to submit the application', 'Application submitted'),
+  });
+  const revise = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason: string }) => reviseMyNewProductApplication(id, reason),
+    ...move('Failed to revise the application', 'Back to draft'),
+  });
+  const cancel = useMutation({
+    mutationFn: ({ id, reason }: { id: string; reason?: string }) => cancelMyNewProductApplication(id, reason),
+    ...move('Failed to cancel the application', 'Application cancelled'),
+  });
+  return { create, update, submit, revise, cancel };
+}
+
+/** "Start from" one of their own responded stock inquiries, read through My Requests. */
+export function useMyNewProductApplicationPrefill(stockInquiryId: string | null) {
+  return useQuery({
+    queryKey: [MY_REQUEST_KEY, 'new_product_application', 'prefill', stockInquiryId],
+    queryFn: () => fetchMyNewProductApplicationPrefill(stockInquiryId as string),
+    enabled: Boolean(stockInquiryId),
+    staleTime: Infinity,
+    retry: 1,
+  });
+}
+
+/** Add a file to their own request through the generic portal upload; `refreshKeys` are the
+ *  staff page's queries that show it. */
+export function useUploadMyRequestAttachment(kind: MyRequestAttachmentKind, refreshKeys: unknown[][]) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: ({ submissionId, file }: { submissionId: string; file: File }) =>
+      uploadAttachment(kind, submissionId, file),
+    onSuccess: () => {
+      for (const key of refreshKeys) void queryClient.invalidateQueries({ queryKey: key });
+      toast.success('File added');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Upload failed.'),
+  });
 }

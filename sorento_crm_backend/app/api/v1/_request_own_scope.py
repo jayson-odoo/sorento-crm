@@ -22,7 +22,8 @@ unlink, the customer lookup, by-number) has no kind, so it is refused to a user 
 
 ``tests/test_portal_p4_request_scope.py`` enumerates every route of the three routers.
 
-The second section guards the Sample Request and Sales Opportunity staff routers (S4, S6), whose
+The second section guards the Sample Request, New Product Application and Sales Opportunity staff
+routers (S4, S5, S6), whose
 reads keep their own module rule: for a limited user every write there answers 403 (or 404 on a
 row that is not theirs); they write through ``/api/v1/my-requests``.
 """
@@ -209,9 +210,14 @@ complaint_own_scope = _guard("complaint")
 #: do, so an id is never confirmed.
 _MODULE_PREFIX = {
     "sample_request": "/api/v1/project-sales",
+    "new_product_application": "/api/v1/procurement/new-product-applications",
     "sales_opportunity": "/api/v1/sales/opportunities",
 }
-_MODULE_ROW_ID = {"sample_request": "request_id", "sales_opportunity": "opportunity_id"}
+_MODULE_ROW_ID = {
+    "sample_request": "request_id",
+    "new_product_application": "application_id",
+    "sales_opportunity": "opportunity_id",
+}
 _MODULE_READS: Dict[str, Dict[Tuple[str, str], str]] = {
     "sample_request": {
         ("GET", "/sample-requests"): "list",
@@ -219,6 +225,11 @@ _MODULE_READS: Dict[str, Dict[Tuple[str, str], str]] = {
         ("GET", "/projects/{project_id}/sample-requests"): "list",
         ("GET", "/sample-requests/{request_id}"): "row",
         ("GET", "/sample-requests/{request_id}/pdf"): "row",
+    },
+    "new_product_application": {
+        ("GET", ""): "list",
+        ("GET", "/{application_id}"): "row",
+        ("GET", "/{application_id}/download"): "row",
     },
     "sales_opportunity": {
         ("GET", ""): "list",
@@ -273,6 +284,8 @@ def _module_guard(kind: str):
     return guard
 
 
-#: Mounted on the sample request and opportunity staff routers in their package ``__init__``.
+#: Mounted on the sample request, new product application and opportunity staff routers in their
+#: package ``__init__``.
 sample_request_own_scope = _module_guard("sample_request")
+new_product_application_own_scope = _module_guard("new_product_application")
 sales_opportunity_own_scope = _module_guard("sales_opportunity")

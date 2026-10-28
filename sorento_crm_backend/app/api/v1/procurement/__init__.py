@@ -1,6 +1,10 @@
 """Procurement API routes."""
 from fastapi import APIRouter, Depends
-from app.api.v1._request_own_scope import purchase_request_own_scope, stock_inquiry_own_scope
+from app.api.v1._request_own_scope import (
+    new_product_application_own_scope,
+    purchase_request_own_scope,
+    stock_inquiry_own_scope,
+)
 from app.api.v1.procurement import suppliers, product_suppliers, packing_lists, grn, spo_allocations, picking_lines, stock_inquiries, purchase_requests, purchase_orders, cost_price_changes, new_product_applications
 
 router = APIRouter()
@@ -19,7 +23,14 @@ router.include_router(
     tags=["stock-inquiries"],
     dependencies=[Depends(stock_inquiry_own_scope)],
 )
-router.include_router(new_product_applications.router, prefix="/new-product-applications", tags=["new-product-applications"])
+# A salesperson limited to their own applications reads here and writes through /api/v1/my-requests
+# (PORTAL-P4-REQUESTS S5): the guard refuses them every staff write.
+router.include_router(
+    new_product_applications.router,
+    prefix="/new-product-applications",
+    tags=["new-product-applications"],
+    dependencies=[Depends(new_product_application_own_scope)],
+)
 router.include_router(
     purchase_requests.router,
     prefix="/purchase-requests",

@@ -25,6 +25,10 @@ export const MY_REQUEST_STAFF_PAGES: Readonly<Record<string, { path: string; per
     path: '/project-sales/sample-requests',
     permission: 'projects.sample_requests.view_own',
   },
+  new_product_application: {
+    path: '/procurement-management/new-product-applications',
+    permission: 'procurement.new_product_applications.view_own',
+  },
   // No staff /new page: the Log opportunity modal opens on the list.
   sales_opportunity: {
     path: '/sales/opportunities',

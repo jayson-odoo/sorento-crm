@@ -179,7 +179,6 @@ export default function NewProductApplicationsList() {
           <DataGridColumnHeader title="Inquiry" column={column} />
         ),
         size: 120,
-        enableSorting: false,
         cell: ({ row }) => truncated(row.original.stock_inquiry_number),
         meta: {
           headerTitle: 'Inquiry',
@@ -204,7 +203,6 @@ export default function NewProductApplicationsList() {
           <DataGridColumnHeader title="First line" column={column} />
         ),
         size: 260,
-        enableSorting: false,
         cell: ({ row }) => truncated(row.original.first_line),
         meta: {
           headerTitle: 'First line',
@@ -217,7 +215,6 @@ export default function NewProductApplicationsList() {
           <DataGridColumnHeader title="Lines" column={column} />
         ),
         size: 80,
-        enableSorting: false,
         cell: ({ row }) => row.original.lines_total,
         meta: {
           headerTitle: 'Lines',
@@ -231,7 +228,6 @@ export default function NewProductApplicationsList() {
           <DataGridColumnHeader title="Done" column={column} />
         ),
         size: 100,
-        enableSorting: false,
         cell: ({ row }) =>
           `${row.original.lines_done} / ${row.original.lines_total}`,
         meta: {
