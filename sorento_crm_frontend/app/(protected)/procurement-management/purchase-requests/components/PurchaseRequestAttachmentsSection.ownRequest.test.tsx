@@ -1,20 +1,11 @@
 /**
- * PORTAL-P4-REQUESTS S-ATT (P4-16, red): Purchase Request / Sponsorship attachments for a salesperson.
- *
- * Contract (new optional prop, absent = today's staff behaviour, unchanged):
- *   <PurchaseRequestAttachmentsSection requestId="..." attachments={...} requestKind="purchase_request" />
- * `requestKind` puts the section in own-request mode:
- *   - a file input uploads through myRequestsService.uploadAttachment(kind, id, file);
- *   - a delete action (accessible name /delete|remove/i, not "Unlink") shows ONLY on rows whose
- *     uploaded_by_role is 'contact' and calls myRequestsService.deleteAttachment(link.id);
- *   - staff rows (uploaded_by_role 'staff') carry no delete;
- *   - download links use myRequestsAttachmentDownloadUrl(attachment_id), not the resource-management route;
- *   - no "Link Attachment" and no "Unlink" (those are staff-only).
- * Without requestKind the staff UI is untouched and never calls myRequestsService.
+ * PORTAL-P4-REQUESTS S-ATT: the staff Purchase Request / Sponsorship attachments section, unchanged.
+ * Never calls myRequestsService. A salesperson's own files live inside the portal's form since R2
+ * (form parity), so the section has no own-request mode (PurchaseRequest.portalForm.test.tsx).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { render, screen, fireEvent, waitFor, within, cleanup } from '@testing-library/react';
+import { render, screen, cleanup } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
@@ -87,55 +78,6 @@ beforeEach(() => {
     entity_id: 'link-own',
     commit_at: new Date(Date.now() + 5_000).toISOString().replace(/\.\d+Z$/, ''),
     window_seconds: 5,
-  });
-});
-
-describe('PurchaseRequestAttachmentsSection, salesperson (requestKind="purchase_request")', () => {
-  it('a file input uploads through myRequestsService.uploadAttachment', async () => {
-    const { container } = mount({ requestKind: 'purchase_request' });
-    const input = container.querySelector('input[type="file"]') as HTMLInputElement | null;
-    expect(input, 'no file input for the salesperson').not.toBeNull();
-    const file = new File(['%PDF'], 'new.pdf', { type: 'application/pdf' });
-    fireEvent.change(input as HTMLInputElement, { target: { files: [file] } });
-    await waitFor(() => expect(svc.uploadAttachment).toHaveBeenCalledWith('purchase_request', 'pr-1', file));
-  });
-
-  it('own file shows a delete action that parks a deferred my_request_attachment.unlink with a countdown and Cancel', async () => {
-    mount({ requestKind: 'purchase_request' });
-    const row = screen.getByText('my-photo.pdf').closest('tr') as HTMLElement;
-    fireEvent.click(within(row).getByRole('button', { name: /delete|remove/i }));
-    await waitFor(() =>
-      expect(pending.createPendingAction).toHaveBeenCalledWith(
-        expect.objectContaining({
-          actionKey: 'my_request_attachment.unlink',
-          entityType: 'my_request_attachment',
-          entityId: 'link-own',
-        }),
-      ),
-    );
-    expect(await screen.findByRole('timer')).toBeTruthy();
-    fireEvent.keyDown(document.body, { key: 'Escape' });
-    expect(pending.cancelPendingAction).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
-    await waitFor(() => expect(pending.cancelPendingAction).toHaveBeenCalledWith('pa-1'));
-    expect(svc.deleteAttachment).not.toHaveBeenCalled();
-  });
-
-  it('a staff-uploaded file shows no delete or unlink for them', () => {
-    mount({ requestKind: 'purchase_request' });
-    const row = screen.getByText('staff-reply.pdf').closest('tr') as HTMLElement;
-    expect(within(row).queryByRole('button', { name: /delete|remove|unlink/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /link attachment/i })).toBeNull();
-    expect(screen.queryByRole('button', { name: /unlink/i })).toBeNull();
-  });
-
-  it('download uses myRequestsAttachmentDownloadUrl, not the staff resource route', () => {
-    const { container } = mount({ requestKind: 'purchase_request' });
-    // A fetch through apiFetch (RequestAttachments.impersonatedDownload.test.tsx), not a plain link.
-    expect(screen.getAllByRole('button', { name: /download/i })).toHaveLength(2);
-    const hrefs = Array.from(container.querySelectorAll('a[href]')).map((a) => a.getAttribute('href'));
-    expect(hrefs.filter((h) => h?.includes('/my-requests/attachments/'))).toEqual([]);
-    expect(hrefs.filter((h) => h?.includes('resource-management'))).toEqual([]);
   });
 });
 

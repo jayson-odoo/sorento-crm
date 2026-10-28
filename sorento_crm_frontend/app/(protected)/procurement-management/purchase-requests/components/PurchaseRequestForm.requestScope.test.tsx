@@ -1,18 +1,11 @@
 /**
- * PORTAL-P4-REQUESTS S3 (P4-14, P4-24, P4-26): the Purchase Request / Sponsorship Form form for a LIMITED user
- * (holds `.view_own`, not `.view`) and for staff (control). Asserted at the HTTP seam (`apiFetch`) so it holds however
- * the coder splits hooks (the staff hooks are NOT mocked: a limited user must not reach them):
- *  - limited /new: "Save as draft" -> POST /api/v1/my-requests/submissions/{kind}; "Submit" -> POST .../{id}/submit;
- *    requestor options from /api/v1/my-requests/requestor-options (not the staff requestor-select endpoint).
- *  - `?from=<id>` pre-fills a NEW draft from GET /api/v1/my-requests/submissions/{kind}/<id> (Duplicate).
- *  - edit: only draft / rejected rows are editable; `?revise=1` on a revisable row freezes the requestor picker and
- *    "Send revision" -> POST .../{id}/revise.
- *  - staff /new: no draft buttons, original Create, requestors from the staff endpoint.
+ * PORTAL-P4-REQUESTS S3 (P4-26): the Purchase Request / Sponsorship Form form for staff (control): no draft
+ * buttons, the original Create, nothing sent to my-requests. Asserted at the HTTP seam (`apiFetch`). A LIMITED
+ * user's form is the portal's own since R2 (PurchaseRequest.portalForm.test.tsx, SponsorshipForm.portalForm.test.tsx).
  */
-import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const push = vi.fn();
@@ -126,7 +119,6 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: [string, RequestInit?]) => apiFet
 import PurchaseRequestForm from './PurchaseRequestForm';
 
 const urls = (pred: (c: (typeof calls)[number]) => boolean) => calls.filter(pred);
-const myPath = (k: Kind) => `/api/v1/my-requests/submissions/${k}`;
 
 function mount(k: (typeof KINDS)[number], slugs: string[], props: { requestId?: string } = {}, search = '') {
   held = new Set(slugs);
@@ -144,123 +136,11 @@ function mount(k: (typeof KINDS)[number], slugs: string[], props: { requestId?: 
   );
 }
 
-/** Click a button, then confirm in a dialog if one opens (either UX is fine). */
-async function clickThrough(name: RegExp) {
-  fireEvent.click(await screen.findByRole('button', { name }));
-  await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
-  const dialog = screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog');
-  if (dialog) {
-    const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => /submit|confirm|yes|send/i.test(b.textContent ?? ''));
-    if (confirm) fireEvent.click(confirm);
-  }
-}
-
 beforeEach(() => {
   cleanup();
   calls.length = 0;
   sources = {};
   vi.clearAllMocks();
-});
-
-describe.each(KINDS)('$kind form, limited user', (k) => {
-  const LIMITED = [`${k.base}.view_own`, `${k.base}.add`];
-
-  it('/new offers Save as draft and Submit, not the staff Create', async () => {
-    mount(k, LIMITED);
-    expect(await screen.findByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^Submit/ })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Create$/ })).toBeNull();
-  });
-
-  it('loads requestors from my-requests/requestor-options, not the staff endpoint', async () => {
-    mount(k, LIMITED);
-    await waitFor(() => expect(urls((c) => c.url.startsWith('/api/v1/my-requests/requestor-options')).length).toBeGreaterThan(0));
-    expect(urls((c) => c.url.includes('requestor') && !c.url.startsWith('/api/v1/my-requests/'))).toHaveLength(0);
-  });
-
-  it('?from=<id> pre-fills a NEW draft from that submission, saves nothing until asked, then POSTs a draft through my-requests', async () => {
-    sources['pr-9'] = detail(k.kind, { id: 'pr-9', status: 'approved', is_draft: false, is_editable: false, customer_name: 'COPY ME SDN BHD', project_title: 'Copied project' });
-    mount(k, LIMITED, {}, '?from=pr-9');
-    await waitFor(() => expect((screen.getByPlaceholderText('Project title') as HTMLInputElement).value).toBe('Copied project'));
-    expect(urls((c) => c.url === `${myPath(k.kind)}/pr-9` && c.method === 'GET').length).toBeGreaterThan(0);
-    expect(urls((c) => c.method !== 'GET')).toHaveLength(0);
-    fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
-    await waitFor(() => expect(urls((c) => c.method === 'POST' && c.url === myPath(k.kind))).toHaveLength(1));
-    const body = urls((c) => c.method === 'POST')[0].body as { fields: Record<string, unknown>; products?: unknown[] };
-    expect(body.fields).toMatchObject({ project_title: 'Copied project' });
-    expect(body.products).toMatchObject([{ item_code: 'ITEM-A' }]);
-    expect(urls((c) => c.url.startsWith('/api/v1/procurement/') && c.method !== 'GET')).toHaveLength(0);
-  });
-
-  it('"Submit" saves the draft then POSTs .../{id}/submit through my-requests', async () => {
-    sources['pr-9'] = detail(k.kind, { id: 'pr-9', status: 'approved', is_draft: false, is_editable: false });
-    mount(k, LIMITED, {}, '?from=pr-9');
-    await waitFor(() => expect((screen.getByPlaceholderText('Project title') as HTMLInputElement).value).toBe('Old project'));
-    await clickThrough(/^Submit/);
-    await waitFor(() =>
-      expect(urls((c) => c.method === 'POST' && /^\/api\/v1\/my-requests\/submissions\/[a-z_]+\/[^/]+\/submit$/.test(c.url))).toHaveLength(1),
-    );
-    expect(urls((c) => c.url.startsWith('/api/v1/procurement/') && c.method !== 'GET')).toHaveLength(0);
-  });
-});
-
-describe.each(KINDS)('$kind form, limited user, edit', (k) => {
-  const LIMITED = [`${k.base}.view_own`, `${k.base}.add`];
-
-  it('a draft row saves through PUT my-requests/submissions/{kind}/{id}', async () => {
-    sources['pr-5'] = detail(k.kind, { id: 'pr-5', status: 'draft' });
-    mount(k, LIMITED, { requestId: 'pr-5' });
-    fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
-    await waitFor(() => expect(urls((c) => c.method === 'PUT' && c.url === `${myPath(k.kind)}/pr-5`)).toHaveLength(1));
-    expect(urls((c) => c.url.startsWith('/api/v1/procurement/') && c.method !== 'GET')).toHaveLength(0);
-  });
-
-  it('a rejected row is editable (send-back button available)', async () => {
-    sources['pr-5'] = detail(k.kind, { id: 'pr-5', status: 'submitted', approval_status: 'rejected', is_draft: true });
-    mount(k, LIMITED, { requestId: 'pr-5' });
-    expect(await screen.findByRole('button', { name: new RegExp(`^${submitVerb('rejected')}`) })).toBeInTheDocument();
-  });
-
-  it.each([
-    ['submitted', 'pending'],
-    ['submitted', 'approved'],
-    ['processed_by_cs', 'approved'],
-  ])('a %s / %s row offers no save or submit when not revising', async (status, approval) => {
-    sources['pr-5'] = detail(k.kind, { id: 'pr-5', status, approval_status: approval, is_draft: false, is_editable: false });
-    mount(k, LIMITED, { requestId: 'pr-5' });
-    await screen.findByPlaceholderText('Project title');
-    expect(screen.queryByRole('button', { name: 'Save as draft' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Submit/ })).toBeNull();
-    expect(screen.queryAllByRole('button', { name: /^Update/ })).toHaveLength(0);
-  });
-
-  it('?revise=1 on a revisable row freezes the requestor picker and Send revision POSTs .../revise', async () => {
-    sources['pr-5'] = detail(k.kind, {
-      id: 'pr-5',
-      status: 'submitted',
-      approval_status: 'approved',
-      is_draft: false,
-      is_editable: false,
-      revision: { enabled: true, allowed: true, used: 0, max: 3, remaining: 3, blocked_reason: null },
-    });
-    mount(k, LIMITED, { requestId: 'pr-5' }, '?revise=1');
-    await screen.findByPlaceholderText('Project title');
-    await waitFor(() => expect(screen.getByTestId('requestor-picker').getAttribute('data-disabled')).toBe('true'));
-    fireEvent.change(await screen.findByPlaceholderText('Project title'), { target: { value: 'Revised project' } });
-    const reason = document.getElementById('revision_reason') ?? screen.getByLabelText(/reason/i);
-    fireEvent.change(reason, { target: { value: 'wrong title' } });
-    await clickThrough(/Send revision/);
-    await waitFor(() => expect(urls((c) => c.method === 'POST' && c.url === `${myPath(k.kind)}/pr-5/revise`)).toHaveLength(1));
-    const body = urls((c) => c.url.endsWith('/revise'))[0].body as Record<string, unknown>;
-    expect(body).toMatchObject({ reason: 'wrong title', expected_revision_no: 0 });
-  });
-
-  it('?revise=1 where the server refuses revision offers no Send revision', async () => {
-    sources['pr-5'] = detail(k.kind, { id: 'pr-5', status: 'submitted', approval_status: 'approved', is_draft: false, is_editable: false });
-    mount(k, LIMITED, { requestId: 'pr-5' }, '?revise=1');
-    await screen.findByPlaceholderText('Project title');
-    expect(screen.queryByRole('button', { name: /Send revision/ })).toBeNull();
-  });
 });
 
 describe.each(KINDS)('$kind form, staff user /new (control, P4-26)', (k) => {

@@ -301,15 +301,6 @@ export function myRequestsAttachmentDownloadUrl(attachmentId: string): string {
   return `${BASE}/attachments/${encodeURIComponent(attachmentId)}/download`;
 }
 
-/** Their own linked contact, from `/users/me` (an `/api/v1/` URL carries the impersonation header,
- *  so under view-as this is the target's). Null when there is none. */
-export async function fetchOwnContactId(): Promise<string | null> {
-  const res = await apiFetch('/api/v1/user-management/users/me');
-  if (!res.ok) return null;
-  const body = (await res.json()) as { salesperson?: { contact_id?: string | null } | null };
-  return body.salesperson?.contact_id ?? null;
-}
-
 /** Save an attachment on their own request. Fetched through `apiFetch`, so an admin viewing as
  *  them sends the impersonation header; a plain link would fetch as the admin. */
 export async function downloadMyRequestAttachment(attachmentId: string, filename: string): Promise<void> {

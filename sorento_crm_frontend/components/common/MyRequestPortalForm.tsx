@@ -15,7 +15,7 @@ import { Button } from '@/components/ui/button';
 import DeferredActionButton from '@/components/common/DeferredActionButton';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { MY_REQUEST_KEY } from '@/hooks/useMyRequests';
-import { SubmissionForm } from '@/app/(auth)/portal/components/SubmissionForm';
+import { SubmissionForm, type SubmissionInitialValues } from '@/app/(auth)/portal/components/SubmissionForm';
 import {
   SubmissionClientProvider,
   type AttachmentRemoveProps,
@@ -107,10 +107,13 @@ function AttachmentRemove({ kind, attachment, disabled, onRemoved }: AttachmentR
 export default function MyRequestPortalForm({
   kind,
   submissionId,
+  initialValues,
 }: {
   kind: MyRequestKind;
   /** None: a new request (`?from=<id>` duplicates one of theirs, as on the portal). */
   submissionId?: string;
+  /** A new request's starting values (a project's stage action seeds its project). */
+  initialValues?: SubmissionInitialValues;
 }) {
   // One client per form: its lookup sets are cached per client, never shared with the portal's.
   const client = useMemo<SubmissionClient>(
@@ -124,7 +127,11 @@ export default function MyRequestPortalForm({
   );
   return (
     <SubmissionClientProvider client={client}>
-      <SubmissionForm kind={kind} submissionId={submissionId} />
+      <SubmissionForm
+        kind={kind}
+        submissionId={submissionId}
+        initialValues={submissionId ? undefined : initialValues}
+      />
     </SubmissionClientProvider>
   );
 }

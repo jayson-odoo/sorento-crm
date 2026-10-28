@@ -46,6 +46,7 @@ async function SponsorshipFormDetailWrapper({
       sourceEntityId={id}
       revisionsKind="sponsorship_form"
       commentsKind="sponsorship_form"
+      portalFormWhenLimited
     >
       <RecordEntityRegistrar entityType="sponsorship_form" id={id} />
       <PurchaseRequestDetail

@@ -1,12 +1,11 @@
 /**
- * PORTAL-P4-REQUESTS review fix (red): the portal form preselects the signed-in salesperson's OWN contact as
- * the requestor (SubmissionForm `defaultFromContact: 'contact_id'`). The CRM limited New Stock Inquiry / Purchase
- * Request / Sponsorship Form must start the same way (own contact from the account profile's salesperson.contact_id),
- * and still list options from /api/v1/my-requests/requestor-options. Staff forms start empty (control).
+ * PORTAL-P4-REQUESTS review fix: a staff New Purchase Request starts with no requestor (control). A salesperson's
+ * own contact as the default requestor is the portal form's `defaultFromContact: 'contact_id'`, which their CRM
+ * form is since R1 (Stock Inquiry) and R2 (Purchase Request, Sponsorship Form: *.portalForm.test.tsx).
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { cleanup, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('next/navigation', () => ({
@@ -76,13 +75,6 @@ beforeEach(() => {
 });
 
 describe.each(CASES)('%s New form', (_n, base, _x, build) => {
-  it('limited: requestor starts as the own contact, options from my-requests', async () => {
-    held = new Set([`${base}.view_own`, `${base}.add`]);
-    mount(build());
-    await waitFor(() => expect(screen.getAllByTestId('requestor-picker').map((e) => e.textContent)).toContain('picked c-own'));
-    expect(calls.some((u) => u.startsWith('/api/v1/my-requests/requestor-options'))).toBe(true);
-  });
-
   it('staff: requestor starts empty', async () => {
     held = new Set([`${base}.view`, `${base}.add`]);
     mount(build());

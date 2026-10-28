@@ -5,9 +5,7 @@ import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
 import { APPEALED_LABEL, isAwaitingReview, RESUBMITTED } from '@/lib/submission-status';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import { MyRequestActions } from '@/components/common/MyRequestActions';
-import type { MyRequestKind } from '@/services/myRequestsService';
-import { useMyRequestSubmission, useSubmitMyRequest } from '@/hooks/useMyRequests';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -221,7 +219,27 @@ function PurchaseRequestLineItemsGrid({
   );
 }
 
-export default function PurchaseRequestDetail({
+/**
+ * A salesperson limited to their own rows (PORTAL-P4-REQUESTS R2, form parity) views their request
+ * in the portal's own form, read-only exactly as the portal shows it; everyone else the staff
+ * detail, unchanged.
+ */
+export default function PurchaseRequestDetail(props: PurchaseRequestDetailProps) {
+  const { requestId, basePath = DEFAULT_BASE_PATH } = props;
+  const isValidId = requestId && requestId !== 'new' && requestId !== 'edit';
+  // The staff detail's own read (one request between them): a sponsorship row is a sponsorship
+  // form whichever list opened it.
+  const { data: request } = usePurchaseRequest(isValidId ? requestId : null);
+  const kind =
+    request?.request_type === 'sponsorship_form' || basePath.includes('sponsorship-forms')
+      ? 'sponsorship_form'
+      : 'purchase_request';
+  const { limited } = useRequestScope(kind);
+  if (limited) return <MyRequestPortalForm key={kind} kind={kind} submissionId={requestId} />;
+  return <StaffPurchaseRequestDetail {...props} />;
+}
+
+function StaffPurchaseRequestDetail({
   requestId,
   basePath = DEFAULT_BASE_PATH,
 }: PurchaseRequestDetailProps) {
@@ -266,13 +284,6 @@ export default function PurchaseRequestDetail({
   const requestTypeForNav = basePath.includes('sponsorship-forms')
     ? 'sponsorship_form'
     : 'purchase_request';
-  // A salesperson limited to their own rows (PORTAL-P4-REQUESTS, owner Q2 a) gets the portal's
-  // action set only, run through My Requests; the revision policy is the server's answer there.
-  const scopeKind: MyRequestKind =
-    request?.request_type === 'sponsorship_form' ? 'sponsorship_form' : requestTypeForNav;
-  const { limited } = useRequestScope(scopeKind);
-  const { data: mine } = useMyRequestSubmission(scopeKind, limited && isValidId ? requestId : null);
-  const submitMine = useSubmitMyRequest(scopeKind);
   // Active form-SLA stage tracker for this form - enables the in-form Escalate button.
   const { data: slaTrackers } = useQuery({
     // Key on the request's updated_at so the active tracker (and the escalation
@@ -280,7 +291,7 @@ export default function PurchaseRequestDetail({
     // the stage changes, the banner must clear without a manual refresh.
     queryKey: ['form-sla-trackers', requestTypeForNav, requestId, request?.updated_at],
     queryFn: () => getFormSLATrackers(requestTypeForNav, requestId),
-    enabled: !!isValidId && !limited,
+    enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
   // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
@@ -290,7 +301,6 @@ export default function PurchaseRequestDetail({
     sourceEntityType: requestTypeForNav,
     sourceEntityId: isValidId ? requestId : null,
     entityKey: request?.updated_at,
-    enabled: !limited,
   });
   // A voided form is fully read-only - every business CTA is suppressed. Folding
   // it into businessCtasEnabled kills all the handling-gated CTAs at once; the
@@ -643,7 +653,6 @@ export default function PurchaseRequestDetail({
             ariaLabel: requestTypeLabelLower(request.request_type),
           }}
           gear={
-            limited ? undefined : (
             <DetailActionsMenu ariaLabel="Request actions">
               {/* The download history is an action, so it sits in the gear with the rest.
                   Edit is the record's primary button and Delete is the last item here; the
@@ -850,24 +859,8 @@ export default function PurchaseRequestDetail({
                 </DropdownMenuItem>
               )}
             </DetailActionsMenu>
-            )
           }
           primary={
-            limited ? (
-              <MyRequestActions
-                status={isRejected ? 'rejected' : lifecycleStatusNorm}
-                revisable={mine?.revision?.allowed === true}
-                busy={submitMine.isPending}
-                kind={scopeKind}
-                requestId={requestId}
-                onEdit={() => router.push(`${basePath}/${requestId}/edit`)}
-                onRevise={() => router.push(`${basePath}/${requestId}/edit?revise=1`)}
-                onDuplicate={() => router.push(`${basePath}/new?from=${requestId}`)}
-                onSubmit={() => submitMine.mutate({ id: requestId })}
-                onDeleted={() => router.push(backHref)}
-                invalidateKeys={[['purchase-requests']]}
-              />
-            ) : (
             <>
             {/* Business CTAs HIDE (not disable) while the handling lock is held by
                 someone else / unclaimed - keeps the header uncluttered. When the lock
@@ -972,10 +965,8 @@ export default function PurchaseRequestDetail({
                 </Button>
               )}
             </>
-            )
           }
           dialogs={
-            limited ? undefined : (
             <EntityDownloadsButton
               entityType="purchase_request"
               entityId={requestId}
@@ -983,7 +974,6 @@ export default function PurchaseRequestDetail({
               open={downloadsOpen}
               onOpenChange={setDownloadsOpen}
             />
-            )
           }
         />
       </div>
@@ -995,14 +985,12 @@ export default function PurchaseRequestDetail({
         onConfirm={handleExportConfirmed}
       />
 
-      {!limited && (
-        <HandlingLockBanner
-          state={handlingLock.state}
-          tracker={handlingLock.tracker}
-          onClaim={handlingLock.claim}
-          onTakeOver={handlingLock.takeOver}
-        />
-      )}
+      <HandlingLockBanner
+        state={handlingLock.state}
+        tracker={handlingLock.tracker}
+        onClaim={handlingLock.claim}
+        onTakeOver={handlingLock.takeOver}
+      />
 
       <FormActionBanner
         view={formAction.view}
@@ -1340,6 +1328,10 @@ export default function PurchaseRequestDetail({
                     <p className="text-sm text-muted-foreground">Expected date to receive PO</p>
                     <p className="font-medium">{expectedPoDisplay || ' - '}</p>
                   </div>
+                  <div>
+                    <p className="text-sm text-muted-foreground">External reference</p>
+                    <p className="font-medium">{request.external_reference || ' - '}</p>
+                  </div>
                   {(request.approver_email || request.approver_user_id) && !request.approved_at && (
                     <div className="sm:col-span-2">
                       <p className="text-sm text-muted-foreground">Approver</p>
@@ -1350,7 +1342,7 @@ export default function PurchaseRequestDetail({
                       </p>
                     </div>
                   )}
-                  {!limited && request.respond_inbox_url && (
+                  {request.respond_inbox_url && (
                     <div className="sm:col-span-2">
                       <p className="text-sm text-muted-foreground">Respond conversation</p>
                       <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
@@ -1513,7 +1505,7 @@ export default function PurchaseRequestDetail({
                       </p>
                     </div>
                   )}
-                  {!limited && request.respond_inbox_url && (
+                  {request.respond_inbox_url && (
                     <div className="sm:col-span-2">
                       <p className="text-sm text-muted-foreground">Respond conversation</p>
                       <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
@@ -1573,7 +1565,6 @@ export default function PurchaseRequestDetail({
           <PurchaseRequestAttachmentsSection
             requestId={requestId}
             attachments={request.attachments}
-            requestKind={limited ? scopeKind : undefined}
           />
         </div>
 
@@ -1582,7 +1573,7 @@ export default function PurchaseRequestDetail({
             form meant scrolling past everything to read it. The query stays here
             because the revise banner above quotes the newest entry. */}
 
-        {!limited && request?.respond_inbox_url && (
+        {request?.respond_inbox_url && (
           <Sheet
             open={conversationSheetOpen}
             onOpenChange={(open) => {
@@ -1621,11 +1612,9 @@ export default function PurchaseRequestDetail({
 
         {/* Direct child of the 2-col grid - without the span it renders half-width while
             every sibling block above it is full-width. */}
-        {!limited && (
-          <div className="lg:col-span-2 w-full">
-            <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
-          </div>
-        )}
+        <div className="lg:col-span-2 w-full">
+          <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
+        </div>
 
         <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
           <AlertDialogContent>

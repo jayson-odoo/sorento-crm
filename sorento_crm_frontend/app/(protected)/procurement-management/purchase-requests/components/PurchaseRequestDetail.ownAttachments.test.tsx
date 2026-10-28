@@ -1,6 +1,7 @@
 /**
- * PORTAL-P4-REQUESTS S-ATT (P4-16, red): the detail page hands the section its own-request kind for a LIMITED user,
- * and not for staff. Scaffolding copied from the requestScope test beside it.
+ * PORTAL-P4-REQUESTS S-ATT (P4-16): the staff detail hands the attachments section no own-request kind. A LIMITED
+ * user's detail is the portal's own form since R2 (PurchaseRequest.portalForm.test.tsx). Scaffolding copied from the
+ * requestScope test beside it.
  */
 import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
@@ -135,13 +136,6 @@ beforeEach(() => {
 });
 
 describe.each(KINDS)('$kind detail passes the attachments section its own-request kind', (k) => {
-  it('limited user: requestKind is the form kind and not readOnly', async () => {
-    mount(k, [`${k.base}.view_own`, `${k.base}.add`]);
-    const el = await screen.findByTestId('att-section');
-    expect(el.dataset.kind).toBe(k.kind);
-    expect(el.dataset.readonly).toBe('false');
-  });
-
   it('staff: no requestKind', async () => {
     mount(k, [`${k.base}.view`, `${k.base}.edit`]);
     const el = await screen.findByTestId('att-section');

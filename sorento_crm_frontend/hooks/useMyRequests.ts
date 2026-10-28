@@ -8,10 +8,6 @@ import {
   createMyNewProductApplication,
   createMySampleRequest,
   fetchRevisions,
-  fetchSubmission,
-  reviseSubmission,
-  saveDraft,
-  submitDraft,
   fetchMyNewProductApplicationPrefill,
   reviseMyNewProductApplication,
   submitMyNewProductApplication,
@@ -19,7 +15,6 @@ import {
   updateMyNewProductApplication,
   uploadAttachment,
   downloadMyRequestAttachment,
-  fetchOwnContactId,
   updateMySampleRequest,
   approveMyPriceTagRequest,
   collectMyPriceTagRequest,
@@ -35,12 +30,10 @@ import {
   type MyPriceTagWrite,
   type MyRequestAttachmentKind,
   type MyRequestKind,
-  type ReviseSubmissionInput,
 } from '@/services/myRequestsService';
 import type { SampleRequestWrite } from '@/types/sampleRequest';
 import type { NewProductApplicationWrite } from '@/types/newProductApplication';
 import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
-import { useImpersonationSession } from '@/lib/impersonation-store';
 
 /**
  * A salesperson's own request, read and written through My Requests (PORTAL-P4-REQUESTS): the
@@ -48,14 +41,6 @@ import { useImpersonationSession } from '@/lib/impersonation-store';
  * staff page's own queries too, since that is the page they are on.
  */
 export const MY_REQUEST_KEY = 'my-request';
-
-export function useMyRequestSubmission(kind: MyRequestKind, id: string | null | undefined) {
-  return useQuery({
-    queryKey: [MY_REQUEST_KEY, kind, id],
-    queryFn: () => fetchSubmission(kind, id as string),
-    enabled: Boolean(id),
-  });
-}
 
 /** Their own request's revision lineage, keyed on its revision counter like the staff reads. */
 export function useMyRequestRevisions(
@@ -67,62 +52,6 @@ export function useMyRequestRevisions(
     queryKey: [MY_REQUEST_KEY, kind, id, 'revisions', revisionNo ?? 0],
     queryFn: () => fetchRevisions(kind, id as string),
     enabled: Boolean(id),
-  });
-}
-
-function useRefresh(kind: MyRequestKind) {
-  const queryClient = useQueryClient();
-  return () => {
-    void queryClient.invalidateQueries({ queryKey: [MY_REQUEST_KEY, kind] });
-    // The staff list / detail / revisions of the same form read these rows too.
-    void queryClient.invalidateQueries({
-      predicate: (q) => typeof q.queryKey[0] === 'string' && q.queryKey[0].startsWith(kind.replace('_', '-')),
-    });
-  };
-}
-
-type Fields = Record<string, unknown>;
-type Products = Record<string, unknown>[] | undefined;
-
-export function useSaveMyRequestDraft(kind: MyRequestKind) {
-  const refresh = useRefresh(kind);
-  return useMutation({
-    mutationFn: ({ fields, products, id }: { fields: Fields; products?: Products; id?: string }) =>
-      saveDraft(kind, fields, products, id),
-    onSuccess: () => {
-      refresh();
-      toast.success('Draft saved');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to save draft.'),
-  });
-}
-
-/** Submit a draft (or a rejected row); an existing row's edits travel with the submit. */
-export function useSubmitMyRequest(kind: MyRequestKind) {
-  const refresh = useRefresh(kind);
-  return useMutation({
-    mutationFn: async ({ fields, products, id }: { fields?: Fields; products?: Products; id?: string }) => {
-      const target = id ?? (await saveDraft(kind, fields ?? {}, products)).id;
-      return submitDraft(kind, String(target), fields, products);
-    },
-    onSuccess: () => {
-      refresh();
-      toast.success('Submitted');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to submit.'),
-  });
-}
-
-export function useReviseMyRequest(kind: MyRequestKind) {
-  const refresh = useRefresh(kind);
-  return useMutation({
-    mutationFn: ({ id, input }: { id: string; input: ReviseSubmissionInput }) =>
-      reviseSubmission(kind, id, input),
-    onSuccess: () => {
-      refresh();
-      toast.success('Revision sent');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to send revision.'),
   });
 }
 
@@ -216,17 +145,6 @@ export function useMyNewProductApplicationPrefill(stockInquiryId: string | null)
     staleTime: Infinity,
     retry: 1,
   });
-}
-
-/** Their own contact, the requestor a new request starts with (the portal's `defaultFromContact`). */
-export function useOwnContactId(): string | null {
-  const targetId = useImpersonationSession()?.targetUser.id ?? null;
-  const { data } = useQuery({
-    queryKey: [MY_REQUEST_KEY, 'own-contact', targetId],
-    queryFn: fetchOwnContactId,
-    staleTime: Infinity,
-  });
-  return data ?? null;
 }
 
 /** Save a file of their own request (`downloadMyRequestAttachment`). */

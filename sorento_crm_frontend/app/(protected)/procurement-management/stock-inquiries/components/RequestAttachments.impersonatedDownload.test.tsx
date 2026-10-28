@@ -2,7 +2,8 @@
  * PORTAL-P4-REQUESTS review fix (red): a limited user's Download in the own-request attachment
  * sections must go through apiFetch (so X-Impersonate-User-Id rides along) and save with saveBlobAs.
  * A plain <a href="/api/v1/my-requests/attachments/{id}/download"> sends no impersonation header.
- * Covers the SI, PR and Complaint sections plus the my-requests service helper.
+ * Covers the SI and Complaint sections plus the my-requests service helper (the PR section has no
+ * own-request mode since R2: a salesperson's PR files live inside the portal's form).
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
@@ -18,9 +19,6 @@ const noop = { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false };
 vi.mock('../hooks/useStockInquiries', () => ({
   useDeleteStockInquiryAttachment: () => noop,
   useDeleteStockInquiryResponseAttachment: () => noop,
-}));
-vi.mock('@/app/(protected)/procurement-management/purchase-requests/hooks/usePurchaseRequests', () => ({
-  useDeletePurchaseRequestAttachment: () => noop,
 }));
 vi.mock('@/app/(protected)/complaint-management/complaints/hooks/useComplaints', () => ({
   useDeleteComplaintAttachment: () => noop,
@@ -38,7 +36,6 @@ vi.mock('@/lib/save-blob', async (importOriginal) => ({
 }));
 
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
-import PurchaseRequestAttachmentsSection from '@/app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestAttachmentsSection';
 import ComplaintManualAttachmentsSection from '@/app/(protected)/complaint-management/complaints/components/ComplaintManualAttachmentsSection';
 
 const ROW = (over: Record<string, unknown>) => ({
@@ -61,7 +58,6 @@ const ROW = (over: Record<string, unknown>) => ({
 
 const CASES: Array<[string, string, (a: unknown[]) => React.ReactElement]> = [
   ['stock_inquiry', 'StockInquiryAttachmentsSection', (a) => <StockInquiryAttachmentsSection inquiryId="x-1" attachments={a as never} requestKind="stock_inquiry" />],
-  ['purchase_request', 'PurchaseRequestAttachmentsSection', (a) => <PurchaseRequestAttachmentsSection requestId="x-1" attachments={a as never} requestKind="purchase_request" />],
   ['complaint', 'ComplaintManualAttachmentsSection', (a) => <ComplaintManualAttachmentsSection complaintId="x-1" attachments={a as never} requestKind="complaint" />],
 ];
 

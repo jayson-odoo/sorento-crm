@@ -1,8 +1,7 @@
 /**
- * PORTAL-P4-REQUESTS S3 (P4-25, P4-26): the Purchase Request / Sponsorship Form detail for a LIMITED user shows the
- * portal action set ONLY (Q2 a): Edit (draft/rejected), Delete (draft), Submit (draft/rejected), Revise (server
- * policy allows), Duplicate (always). Every staff action is absent even when its slug is held. Status, the
- * approval / sign-off footer and the Revisions tab stay visible, read-only. Staff detail unchanged.
+ * PORTAL-P4-REQUESTS S3 (P4-25, P4-26): the staff Purchase Request / Sponsorship Form detail keeps its Audit Trail
+ * and reads the SLA trackers (control). A LIMITED user's detail is the portal's own form since R2, which has
+ * neither (PurchaseRequest.portalForm.test.tsx, SponsorshipForm.portalForm.test.tsx).
  * Scaffolding follows PurchaseRequestDetail.test.tsx and StockInquiryDetail.requestScope.test.tsx.
  */
 import { submitVerb } from '@/lib/submission-status';
@@ -160,12 +159,6 @@ beforeEach(() => {
 
 
 describe.each(KINDS)('$kind Audit Trail (PORTAL-P4-REQUESTS)', (k) => {
-  it('limited user: no Audit Trail section', async () => {
-    mount(k, [`${k.base}.view_own`, `${k.base}.add`]);
-    await screen.findAllByText(new RegExp(k.number));
-    expect(screen.queryByTestId('audit-trail')).toBeNull();
-  });
-
   it('staff: Audit Trail section stays', async () => {
     mount(k, [`${k.base}.view`]);
     await screen.findAllByText(new RegExp(k.number));
@@ -174,13 +167,6 @@ describe.each(KINDS)('$kind Audit Trail (PORTAL-P4-REQUESTS)', (k) => {
 });
 
 describe.each(KINDS)('$kind SLA by-source read (PORTAL-P4-REQUESTS)', (k) => {
-  it('limited user: getFormSLATrackers (conversation-sla-tracking/by-source) is never called', async () => {
-    mount(k, [`${k.base}.view_own`, `${k.base}.add`]);
-    await screen.findAllByText(new RegExp(k.number));
-    await new Promise((r) => setTimeout(r, 100));
-    expect(slaSpy).not.toHaveBeenCalled();
-  });
-
   it('staff: still reads the trackers', async () => {
     mount(k, [`${k.base}.view`]);
     await screen.findAllByText(new RegExp(k.number));

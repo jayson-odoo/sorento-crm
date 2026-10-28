@@ -1,11 +1,8 @@
 /**
- * PORTAL-P4-REQUESTS S3 (P4-25, P4-26): the Purchase Request / Sponsorship Form detail for a LIMITED user shows the
- * portal action set ONLY (Q2 a): Edit (draft/rejected), Delete (draft), Submit (draft/rejected), Revise (server
- * policy allows), Duplicate (always). Every staff action is absent even when its slug is held. Status, the
- * approval / sign-off footer and the Revisions tab stay visible, read-only. Staff detail unchanged.
- * Scaffolding follows PurchaseRequestDetail.test.tsx and StockInquiryDetail.requestScope.test.tsx.
+ * PORTAL-P4-REQUESTS S3 (P4-26): the Purchase Request / Sponsorship Form detail for staff (control) keeps the staff
+ * action set. A LIMITED user's detail is the portal's own form since R2 (PurchaseRequest.portalForm.test.tsx,
+ * SponsorshipForm.portalForm.test.tsx). Scaffolding follows PurchaseRequestDetail.test.tsx.
  */
-import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
@@ -102,7 +99,6 @@ const KINDS: Array<{ kind: Kind; base: string; number: string }> = [
   { kind: 'purchase_request', base: 'procurement.purchase_requests', number: 'PR26-0001' },
   { kind: 'sponsorship_form', base: 'procurement.sponsorship_forms', number: 'SF26-0001' },
 ];
-const PORTAL_SET = ['Edit', 'Delete', 'Submit', submitVerb('rejected'), 'Revise', 'Duplicate'];
 
 function record(k: (typeof KINDS)[number], over: Record<string, unknown> = {}) {
   return {
@@ -153,69 +149,6 @@ async function actionLabels(k: (typeof KINDS)[number]): Promise<string[]> {
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
-});
-
-describe.each(KINDS)('$kind detail, limited user', (k) => {
-  const LIMITED = [`${k.base}.view_own`, `${k.base}.add`];
-  const STAFF_SLUGS = [
-    `${k.base}.send_for_approval`, `${k.base}.approve`, `${k.base}.process`, `${k.base}.close`, `${k.base}.void`,
-    `${k.base}.edit`, `${k.base}.delete`, 'sla_management.conversation_sla_tracking.reassign',
-  ];
-  const STAFF = [`${k.base}.view`, ...STAFF_SLUGS];
-
-  it('draft: Edit, Delete, Submit, Duplicate and nothing outside the portal set', async () => {
-    mount(k, [...LIMITED, ...STAFF_SLUGS]);
-    const labels = await actionLabels(k);
-    for (const want of ['Edit', 'Delete', 'Submit', 'Duplicate']) expect(labels, `missing ${want}`).toContain(want);
-    expect(labels).not.toContain('Revise');
-    expect(labels.filter((l) => !PORTAL_SET.includes(l)), 'non-portal actions leaked').toEqual([]);
-  });
-
-  it('rejected: Edit, Submit, Duplicate, no Delete', async () => {
-    mount(k, LIMITED, { status: 'submitted', approval_status: 'rejected' });
-    const labels = await actionLabels(k);
-    expect(labels).toContain('Edit');
-    expect(labels).toContain(submitVerb('rejected'));
-    expect(labels).toContain('Duplicate');
-    expect(labels).not.toContain('Delete');
-  });
-
-  it('approved with revision allowed: Revise and Duplicate, no Edit/Delete/Submit', async () => {
-    mount(k, LIMITED, { status: 'submitted', approval_status: 'approved' }, true);
-    await waitFor(async () => expect(await actionLabels(k)).toContain('Revise'));
-    const labels = await actionLabels(k);
-    expect(labels).toContain('Duplicate');
-    for (const hidden of ['Edit', 'Delete', 'Submit']) expect(labels).not.toContain(hidden);
-  });
-
-  it('approved with revision refused by the server: no Revise', async () => {
-    mount(k, LIMITED, { status: 'submitted', approval_status: 'approved' }, false);
-    expect(await actionLabels(k)).not.toContain('Revise');
-  });
-
-  it('pending approval: Duplicate only', async () => {
-    mount(k, LIMITED, { status: 'submitted', approval_status: 'pending' });
-    const labels = await actionLabels(k);
-    expect(labels).toContain('Duplicate');
-    expect(labels.filter((l) => !PORTAL_SET.includes(l))).toEqual([]);
-    for (const hidden of ['Edit', 'Delete', 'Submit', 'Revise']) expect(labels).not.toContain(hidden);
-  });
-
-  it.each([
-    'Change to pending approval', 'Reject', 'Approve', 'Processed by CS', 'Mark as closed', 'Void', 'Reassign',
-    'Escalate SLA', 'Extend deadline', 'Chat records', 'Print / Download PDF', 'Export to Excel',
-    'Copy view link', 'Copy approval link', 'Update & Reply', 'Download history',
-  ])('hides %s even with every workflow slug held', async (label) => {
-    mount(k, [...LIMITED, ...STAFF_SLUGS], { status: 'submitted', approval_status: 'approved' });
-    expect(await actionLabels(k)).not.toContain(label);
-  });
-
-  it('still shows the sign-off footer, read-only (the Revisions tab lives in the page wrapper)', async () => {
-    mount(k, LIMITED, { status: 'submitted', approval_status: 'approved' });
-    await screen.findAllByText(new RegExp(k.number));
-    expect(screen.getAllByTestId('signoff-footer').length).toBeGreaterThan(0);
-    expect(screen.queryByRole('button', { name: /^(Approve|Reject)$/ })).toBeNull();
-  });
 });
 
 describe.each(KINDS)('$kind detail, staff user (control, P4-26)', (k) => {

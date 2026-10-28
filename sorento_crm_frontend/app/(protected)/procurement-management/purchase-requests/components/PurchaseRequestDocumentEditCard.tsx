@@ -70,10 +70,6 @@ type Props = {
   }) => void;
   remove: (index: number) => void;
   sponsorshipLineGrandTotal: number;
-  /** A salesperson writing through My Requests reads the portal's requestor set (PORTAL-P4-REQUESTS). */
-  requestorLoadOptions?: (q: string) => Promise<{ id: string; name: string }[]>;
-  /** A revision keeps the requestor the request was sent with. */
-  requestorDisabled?: boolean;
 };
 
 type ProductLineField = FieldArrayWithId<PurchaseRequestSchemaType, 'products', 'id'>;
@@ -87,8 +83,6 @@ export function PurchaseRequestDocumentEditCard({
   append,
   remove,
   sponsorshipLineGrandTotal,
-  requestorLoadOptions,
-  requestorDisabled,
 }: Props) {
   const { control } = form;
   const currencyFormat = useCurrencyFormat();
@@ -744,8 +738,6 @@ export function PurchaseRequestDocumentEditCard({
                               savedContactId={request.requested_by_contact_id}
                               savedContactName={request.requested_by_contact_name ?? request.requested_by}
                               placeholder="Select requestor"
-                              loadOptions={requestorLoadOptions}
-                              disabled={requestorDisabled}
                             />
                           </FormControl>
                           <FormMessage />

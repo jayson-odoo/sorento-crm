@@ -490,9 +490,22 @@ interface Props {
    *  slug-mode verify card - which resolves "this {kind} belongs to {name}"
    *  and the OTP flow - instead of the legacy "message us" dead end. */
   slug?: string;
+  /** What a NEW form starts with; passed by the CRM page only, never by the portal. */
+  initialValues?: SubmissionInitialValues;
 }
 
-export function SubmissionForm({ kind, submissionId, slug }: Props) {
+/**
+ * A new form's starting values (PORTAL-P4-REQUESTS R2, owner ruling (a)): a project's Sponsorship
+ * stage action opens the salesperson's form with that project. `fields` are written in and saved
+ * with the draft, a field hidden for this contact included; `labels` name an id-valued picker's
+ * value, keyed like `FieldDef.displayFromDetail`, until a saved record names it.
+ */
+export interface SubmissionInitialValues {
+  fields: Record<string, string>;
+  labels?: Record<string, string>;
+}
+
+export function SubmissionForm({ kind, submissionId, slug, initialValues }: Props) {
   const router = useRouter();
   // The API this form talks to: portal-client, or the CRM's My Requests client (R1).
   const client = useSubmissionClient();
@@ -507,6 +520,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   // what the visitor has typed.
   const routerRef = useRef(router);
   routerRef.current = router;
+  // The same, for the starting values the seed writes in.
+  const initialValuesRef = useRef(initialValues);
+  initialValuesRef.current = initialValues;
   const [loading, setLoading] = useState(Boolean(submissionId));
   const [saving, setSaving] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -820,6 +836,9 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               .catch(() => {}),
           ),
         );
+        for (const [name, value] of Object.entries(initialValuesRef.current?.fields ?? {})) {
+          if (value) next[name] = value;
+        }
         if (!cancelledNew) {
           setFields(next);
           setComplaintLines([]);
@@ -941,6 +960,12 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
         else if (f.name === 'customer_id') out[f.name] = null;
       }
     }
+    // A seeded value whose field this contact does not see (the stage action's project for an
+    // unflagged contact) is saved all the same.
+    for (const name of Object.keys(initialValues?.fields ?? {})) {
+      const raw = fields[name];
+      if (!(name in out) && typeof raw === 'string' && raw.trim()) out[name] = raw.trim();
+    }
     // Sponsorship: the "Others" detail only applies when the subject is 'others'.
     // Drop a stale value so switching back to Showroom/Mockup doesn't persist it.
     if (kind === 'sponsorship_form' && out.sponsor_subject !== 'others') {
@@ -959,7 +984,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       if (lines.length > 0) out['product_lines'] = lines;
     }
     return out;
-  }, [fieldDefs, fields, kind, complaintLines]);
+  }, [fieldDefs, fields, kind, complaintLines, initialValues]);
 
   const cleanedProducts = useMemo(() => {
     if (!showLines) return undefined;
@@ -1951,6 +1976,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
           onDebtorChange={handleDebtorChange}
           contact={contact}
           resolveContactOption={resolveContactOption}
+          seedLabels={detail ? undefined : initialValues?.labels}
         />
       )}
 
@@ -3017,7 +3043,12 @@ function PurchaseRequestFormSection({
   onDebtorChange,
   contact,
   resolveContactOption,
-}: SectionProps & { kind: PortalSubmissionKind }) {
+  seedLabels,
+}: SectionProps & {
+  kind: PortalSubmissionKind;
+  /** A new form's names for its seeded ids (`SubmissionInitialValues.labels`). */
+  seedLabels?: Record<string, string>;
+}) {
   const heading =
     kind === 'sponsorship_form'
       ? 'Project Sales Sponsorship Form'
@@ -3066,6 +3097,7 @@ function PurchaseRequestFormSection({
                             ] as string | undefined) ?? undefined,
                             f.displayFormat,
                           ) ??
+                          seedLabels?.[f.displayFromDetail] ??
                           // A new form has no detail yet: the read-only agent name comes from /me.
                           (f.widget === 'readonly'
                             ? (contact?.sales_agent_name ?? undefined)
