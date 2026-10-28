@@ -308,7 +308,8 @@ def test_xdist_on_the_mac_runs_two_workers_and_never_respawns_a_crashed_one(job)
 @pytest.mark.parametrize("job", TEST_JOBS)
 def test_the_test_jobs_run_in_utc_like_prod(job):
     """RELEASE5-FIX: the sorento-mac VM is Asia/Kuala_Lumpur, and naive-time tests moved 8 h on it
-    (release run 40680704839). Prod sets no TZ (the image default, UTC), so every test job pins it."""
+    (release run 40680704839). GitHub-hosted runners were UTC, and no tracked image or deploy file sets a
+    TZ for prod (image default, UTC), so every test job pins UTC."""
     wf = _workflow()
     spec = wf["jobs"][job]
     assert spec.get("env", {}).get("TZ", wf.get("env", {}).get("TZ")) == "UTC", job

@@ -49,4 +49,4 @@ third test.
 | test_filter_multiselect_pr6_lists parties x2 | #1957 parties list on require_any_permission (slug set) | test client answers every slug |
 | vitest options.inventory M4-01 | #1913 useStockPosition own placeholderData | spread LIST_QUERY_OPTIONS |
 | vitest loading-inventory M5-01, PageHeader S5-05 (found locally) | #1913 no loading.tsx; `c.id.slice(3)` | loading.tsx; named prefix |
-| systemic | sorento-mac VM is Asia/Kuala_Lumpur, prod is UTC (no TZ anywhere in images/compose/deploy) | workflow `env: TZ: UTC`, pinned by test_ci_runner_routing |
+| systemic | sorento-mac VM is Asia/Kuala_Lumpur; GitHub-hosted runners and (by inference: no TZ in any tracked Dockerfile/compose/deploy script; the server compose and .env are untracked, UNVERIFIED on the box) prod are UTC | workflow `env: TZ: UTC`, pinned by test_ci_runner_routing |
