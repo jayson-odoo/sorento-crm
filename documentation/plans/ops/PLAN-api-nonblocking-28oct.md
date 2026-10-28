@@ -55,10 +55,13 @@ now), and the pool / limiter change rests on a premise checked below.
    mechanically per domain. One PR because the CI guard (3) needs a clean baseline; a ratchet
    list of 900 entries would be noise. Phase 2 commits can be dropped from the PR if the owner
    prefers a follow-up.
-2. **How each handler is converted.** No await -> drop `async` (FastAPI runs it in the
-   threadpool; nothing else changes). Awaits `file.read()` / `request.form()` and then does sync
-   work -> keep the awaits on the loop and move the sync remainder into one
-   `await run_in_threadpool(...)`. Handlers whose only work is building an async stream
+2. **How each handler is converted (as shipped).** No await -> drop `async` (FastAPI runs it in
+   the threadpool; nothing else changes). Awaits only `file.read()` and then does sync work ->
+   plain `def` reading the already-spooled upload with `file.file.read()` (the precedent in
+   `dealer_kit/assets.py:93-102`; Starlette's `UploadFile.read` is that same call in a thread).
+   The async SCM / comment upload helpers (`upload_intake.read_upload*`,
+   `form_comments.read_uploads`) became sync; callers that keep other awaits read through
+   `run_in_threadpool`. Handlers whose only work is building an async stream
    (`sla/conversation_events.py:138`) stay `async` and go on the allow-list.
 3. **Guard:** `tests/test_no_blocking_async_routes.py` walks every mounted route
    (`app.routes`) and fails when an endpoint is a coroutine function whose body (nested defs
@@ -71,7 +74,11 @@ now), and the pool / limiter change rests on a premise checked below.
    one mutable object shared by reference (`app/audit_context.py:246`). No converted handler
    calls `asyncio.get_running_loop` / `create_task` (AST scan; `projects/tasks.py:91`'s
    `create_task` is a service method).
-5. **Threadpool / DB pool:** see "Sizing" below (filled in from a local measurement).
+5. **Threadpool / DB pool:** see "Sizing" below.
+6. **A race this lane widens is closed here.** The public one-time approval link
+   (`procurement_service.submit_approval`) checked `used_at` without a lock; on the loop, one
+   worker ran it start to finish. Now the token row is read `FOR UPDATE`
+   (`tests/test_approval_token_single_use.py`, red-first).
 
 ## Proof
 
@@ -143,6 +150,15 @@ If `max_client_conn` is below 4 x 30 plus the RQ workers plus n8n, raise it or l
 `max_overflow`. That is a one-line change, made once the numbers are known.
 
 ## Not built, with the trigger
+
+- Handlers kept `async` that still do a cheap sync query before their first await (reviewer
+  S2): `scm/proforma_invoices.py:191,240` (`assert_supplier`), `scm/import_mapping.py:128-129`.
+  Pre-existing, one indexed lookup each. Trigger: either shows up in the slow-handler list.
+- `project_quotation_document_service.accept_issue` (:1063, public quotation sign) has the same
+  check-then-set shape as the approval link: two simultaneous signs can both see
+  `accepted_at is None` and the second overwrites the first signature. Pre-existing across
+  workers, lower stakes (one customer double-tapping). Trigger: owner says fix; the fix is
+  `db.refresh(record, with_for_update=True)` before the check.
 
 - `users.py:779` (profile update) and `settings.py:1315` (sign-in background) still await
   `request.form()` and then do one S3 put plus a small update on the loop. Both are rare,
