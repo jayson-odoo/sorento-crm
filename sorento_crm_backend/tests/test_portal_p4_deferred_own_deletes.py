@@ -64,6 +64,24 @@ def _exists(sc, spec, sid):
     return sc.db.query(spec.model).filter(spec.model.id == sid).first() is not None
 
 
+def _deletes(sc, sid):
+    return [a for a in sc.audit(sid) if str(a.action).lower().startswith("delet")]
+
+
+def _assert_impersonated_trace(rows, sp, admin):
+    assert rows, "the hard delete wrote no audit_logs row"
+    assert all(a.user_id == sp.id for a in rows), [a.user_id for a in rows]
+    assert all(a.real_user_id == admin.id for a in rows), [a.real_user_id for a in rows]
+    assert all(a.auth_method == "impersonation" for a in rows), [a.auth_method for a in rows]
+
+
+def _assert_own_trace(rows, sp):
+    assert rows, "the hard delete wrote no audit_logs row"
+    assert all(a.user_id == sp.id for a in rows), [a.user_id for a in rows]
+    assert all(a.real_user_id in (None, sp.id) for a in rows), [a.real_user_id for a in rows]
+    assert all(a.auth_method != "impersonation" for a in rows), [a.auth_method for a in rows]
+
+
 def _draft(sc, kind, api=None):
     return s._id((api or sc.me).create(kind, s.SPECS[kind].body(sc)))
 
@@ -84,6 +102,7 @@ def test_my_request_delete_parks_then_commits_like_the_portal_delete(scene, kind
     out = _settle(scene.client, scene.sp.headers, kind, sid)
     assert out["last_outcome"]["status"] == "committed", out
     assert not _exists(scene, spec, sid)
+    _assert_own_trace(_deletes(scene, sid), scene.sp)
     # the control: the portal's own delete leaves the same trace (gone row, 204)
     ctl = _draft(scene, kind, scene.portal)
     assert scene.portal.delete(kind, ctl).status_code == 204
@@ -156,6 +175,7 @@ def test_my_request_delete_as_an_impersonating_admin_is_the_salespersons(scene, 
     _lapse(scene.db, row.id)
     assert _settle(scene.client, scene.sp.headers, kind, sid)["last_outcome"]["status"] == "committed"
     assert not _exists(scene, spec, sid)
+    _assert_impersonated_trace(_deletes(scene, sid), scene.sp, admin)
 
 
 def test_my_request_delete_price_tag_request_parks_commits_cancels_and_refuses(world):
@@ -220,6 +240,7 @@ def test_attachment_unlink_own_upload_is_removed_after_the_window(scene, kind):
     _lapse(scene.db, r.json()["id"])
     assert _settle(scene.client, scene.sp.headers, "my_request_attachment", link)["last_outcome"]["status"] == "committed"
     assert not _link_exists(scene, kind, sid, link)
+    _assert_own_trace(_deletes(scene, link), scene.sp)
 
 
 @pytest.mark.parametrize("kind", ATT_KINDS)
@@ -269,3 +290,7 @@ def test_attachment_unlink_as_an_impersonating_admin_is_the_salespersons(scene):
     scene.db.expire_all()
     row = scene.db.query(SlaFormAction).filter(SlaFormAction.id == r.json()["id"]).one()
     assert row.requested_by_id == scene.sp.id
+    _lapse(scene.db, row.id)
+    assert _settle(scene.client, scene.sp.headers, "my_request_attachment", link)["last_outcome"]["status"] == "committed"
+    assert not _link_exists(scene, kind, sid, link)
+    _assert_impersonated_trace(_deletes(scene, link), scene.sp, admin)
