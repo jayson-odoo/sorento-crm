@@ -26,7 +26,7 @@ import { ContactImpersonateDialog } from './ContactImpersonateDialog';
 
 const TOKEN_KEY = 'sorento.portalToken';
 const PORTAL_URL = 'http://localhost:3000/portal?token=IMP-TOKEN-123&impersonation=1';
-const CONTACT = { id: 'c1', name: 'Eric Ng', phone_number: '60123456789' };
+const CONTACT = { id: 'c1', name: 'Test Salesperson A', phone_number: '6000000000' };
 
 function json(body: unknown) {
   return { ok: true, status: 200, json: async () => body };
@@ -39,7 +39,7 @@ function answer(crmUserId: string | null) {
         session_id: 's1',
         started_at: '2026-10-28T00:00:00Z',
         portal_url: PORTAL_URL,
-        target_contact: { id: 'c1', name: 'Eric Ng', phone_number: '60123456789', space_id: 'sp1' },
+        target_contact: { id: 'c1', name: 'Test Salesperson A', phone_number: '6000000000', space_id: 'sp1' },
         crm_user_id: crmUserId,
       });
     }
@@ -47,7 +47,7 @@ function answer(crmUserId: string | null) {
       return json({
         session_id: 'u1',
         started_at: '2026-10-28T00:00:00Z',
-        target_user: { id: crmUserId, name: 'Eric Ng', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+        target_user: { id: crmUserId, name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
       });
     }
     return json({});
@@ -137,7 +137,7 @@ describe('ContactImpersonateDialog cache and rollback (T1)', () => {
       if (url.includes('/contact-impersonation/start')) {
         return json({
           session_id: 's1', started_at: '2026-10-28T00:00:00Z', portal_url: PORTAL_URL,
-          target_contact: { id: 'c1', name: 'Eric Ng', phone_number: '60123456789', space_id: 'sp1' },
+          target_contact: { id: 'c1', name: 'Test Salesperson A', phone_number: '6000000000', space_id: 'sp1' },
           crm_user_id: 'user-eric-1',
         });
       }

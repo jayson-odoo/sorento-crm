@@ -40,9 +40,9 @@ const apiFetch = vi.fn(async (url: string) => {
   calls.push(url);
   const ok = (b: unknown) => new Response(JSON.stringify(b), { status: 200, headers: { 'content-type': 'application/json' } });
   if (url.includes('/account/') || url.endsWith('/users/me')) {
-    return ok({ name: 'Eric Ng', salesperson: { portal_kinds: ['stock_inquiry'], portal_slug: 'SLUG', contact_id: 'c-own' } });
+    return ok({ name: 'Test Salesperson A', salesperson: { portal_kinds: ['stock_inquiry'], portal_slug: 'SLUG', contact_id: 'c-own' } });
   }
-  if (url.includes('requestor')) return ok({ items: [{ id: 'c-own', name: 'Eric Ng' }, { id: 'c2', name: 'Ann' }], has_more: false });
+  if (url.includes('requestor')) return ok({ items: [{ id: 'c-own', name: 'Test Salesperson A' }, { id: 'c2', name: 'Ann' }], has_more: false });
   return ok({});
 });
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -75,8 +75,8 @@ describe.each(CASES)('%s New form, requestor label', (_n, base, placeholder, bui
   it('limited: the combobox shows the own name on load without opening the dropdown', async () => {
     held = new Set([`${base}.view_own`, `${base}.add`]);
     mount(build());
-    const box = () => screen.getAllByRole('combobox').find((c) => /Eric Ng|Select (sales person|requestor)/.test(c.textContent ?? ''));
-    await waitFor(() => expect(box()?.textContent).toContain('Eric Ng'));
+    const box = () => screen.getAllByRole('combobox').find((c) => /Test Salesperson A|Select (sales person|requestor)/.test(c.textContent ?? ''));
+    await waitFor(() => expect(box()?.textContent).toContain('Test Salesperson A'));
     expect(box()?.textContent).not.toContain(placeholder);
   });
 });

@@ -28,7 +28,7 @@ import { impersonationStore } from '@/lib/impersonation-store';
 import PortalPage from './page';
 
 const meBody = (crmUserId: string | null) => ({
-  contact_id: 'c1', space_id: 's1', name: 'Eric', phone_number: '6012',
+  contact_id: 'c1', space_id: 's1', name: 'Test Salesperson A', phone_number: '6012',
   expires_at: '2026-11-27T00:00:00Z', portal_slug: 'ERICSLUG01',
   visible_form_types: ['stock_inquiry'],
   impersonation: { session_id: 'cs1', admin_user_id: 'a1', admin_name: 'Admin', admin_email: 'a@x.test', started_at: 'x' },
@@ -55,7 +55,7 @@ beforeEach(() => {
         ok: true, status: 200, text: async () => '',
         json: async () => ({
           session_id: 'u1', started_at: '2026-10-28T00:00:00Z',
-          target_user: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+          target_user: { id: 'u-sales-a', name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
         }),
       };
     }
@@ -65,7 +65,7 @@ beforeEach(() => {
 
 describe('legacy /portal impersonation entry S8', () => {
   it('crm_user_id: goes to /my-requests and writes no portal token in either storage', async () => {
-    me.mockResolvedValue(meBody('u-eric'));
+    me.mockResolvedValue(meBody('u-sales-a'));
     mount();
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/my-requests'));
     expect(window.localStorage.getItem('sorento.portalToken')).toBeNull();

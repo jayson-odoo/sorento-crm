@@ -50,7 +50,7 @@ const ME = {
   contact_id: 'contact-1',
   space_id: 'space-1',
   name: 'Agent Lim',
-  phone_number: '60123456789',
+  phone_number: '6000000000',
   expires_at: '2026-10-01T00:00:00Z',
   portal_slug: 'ah-lim',
   visible_form_types: ['stock_inquiry', 'complaint'],

@@ -12,7 +12,7 @@ vi.mock('@/hooks/useImpersonation', () => ({
     session: {
       sessionId: 's1',
       startedAt: '2026-10-28T00:00:00Z',
-      targetUser: { id: 'u1', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+      targetUser: { id: 'u1', name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
     },
     stop: (...a: unknown[]) => stop(...a),
     stopping: false,

@@ -177,7 +177,7 @@ describe('PortalVerifyCard under a CRM impersonation (round 7, T4)', () => {
     impersonationStore.setSession({
       sessionId: 's1',
       startedAt: '2026-10-28T00:00:00Z',
-      targetUser: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+      targetUser: { id: 'u-sales-a', name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
     });
   });
   afterEach(() => impersonationStore.setSession(null));
@@ -201,7 +201,7 @@ describe('PortalVerifyCard "Not your number?" (round 8, S2)', () => {
     impersonationStore.setSession({
       sessionId: 's1',
       startedAt: '2026-10-28T00:00:00Z',
-      targetUser: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+      targetUser: { id: 'u-sales-a', name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
     });
     render(<PortalVerifyCard slug="SLUG123456" />);
     await screen.findByLabelText(/verification code/i);

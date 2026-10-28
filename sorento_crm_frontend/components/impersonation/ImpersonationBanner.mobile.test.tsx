@@ -12,7 +12,7 @@ vi.mock('@/hooks/useImpersonation', () => ({
     session: {
       sessionId: 's1',
       startedAt: '2026-10-28T00:00:00Z',
-      targetUser: { id: 'u1', name: 'Eric Ng', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+      targetUser: { id: 'u1', name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
     },
     stop: vi.fn(),
     stopping: false,
@@ -48,7 +48,7 @@ function classesOf(el: Element | null): string[] {
 describe('ImpersonationBanner on a phone (S3)', () => {
   it('the target name is visible text, the Records sentence is hidden below sm', () => {
     render(<ImpersonationBanner />);
-    const name = screen.getByText('Eric Ng');
+    const name = screen.getByText('Test Salesperson A');
     expect(name.closest('.hidden')).toBeNull();
     const sentence = screen.getByText(/Records you create or modify are still attributed to you\./);
     const cls = classesOf(sentence);
@@ -94,7 +94,7 @@ describe('ImpersonationBanner name stays readable at 375 (round 9)', () => {
   it('the name can shrink and truncate', () => {
     render(<ImpersonationBanner />);
     const banner = screen.getByTestId('impersonation-banner');
-    let el: Element | null = screen.getByText('Eric Ng');
+    let el: Element | null = screen.getByText('Test Salesperson A');
     let ok = false;
     while (el && el !== banner) {
       const cls = classesOf(el);

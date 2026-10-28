@@ -34,7 +34,7 @@ const TOKEN_KEY = 'sorento.portalToken';
 
 function meBody(crmUserId: string | null) {
   return {
-    contact_id: 'c1', space_id: 's1', name: 'Eric', phone_number: '6012',
+    contact_id: 'c1', space_id: 's1', name: 'Test Salesperson A', phone_number: '6012',
     expires_at: '2026-11-27T00:00:00Z', portal_slug: 'ERICSLUG01',
     visible_form_types: ['stock_inquiry'],
     impersonation: { session_id: 'cs1', admin_user_id: 'a1', admin_name: 'Admin', admin_email: 'a@x.test', started_at: 'x' },
@@ -50,7 +50,7 @@ function crmStart(ok: boolean) {
         ok: true, status: 200, text: async () => '',
         json: async () => ({
           session_id: 'u1', started_at: '2026-10-28T00:00:00Z',
-          target_user: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+          target_user: { id: 'u-sales-a', name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
         }),
       };
     }
@@ -78,19 +78,19 @@ beforeEach(() => {
 
 describe('legacy /portal impersonation entry (B)', () => {
   it('crm_user_id: CRM impersonation started, no portal token kept, goes to /my-requests', async () => {
-    me.mockResolvedValue(meBody('u-eric'));
+    me.mockResolvedValue(meBody('u-sales-a'));
     crmStart(true);
     mount();
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/my-requests'));
-    expect(JSON.parse(String(startCalls()[0][1].body)).target_user_id).toBe('u-eric');
-    expect(impersonationStore.getState()?.targetUser.id).toBe('u-eric');
+    expect(JSON.parse(String(startCalls()[0][1].body)).target_user_id).toBe('u-sales-a');
+    expect(impersonationStore.getState()?.targetUser.id).toBe('u-sales-a');
     expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(screen.queryByTestId('legacy-landing')).toBeNull();
   });
 
   it('CRM start rejected: today\'s legacy landing renders', async () => {
-    me.mockResolvedValue(meBody('u-eric'));
+    me.mockResolvedValue(meBody('u-sales-a'));
     crmStart(false);
     mount();
     expect(await screen.findByTestId('legacy-landing')).toBeInTheDocument();

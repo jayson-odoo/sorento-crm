@@ -31,7 +31,7 @@ function answer(crmUserId: string | null) {
         session_id: 's1',
         started_at: '2026-10-28T00:00:00Z',
         portal_url: PORTAL_URL,
-        target_contact: { id: 'c1', name: 'Eric Ng', phone_number: '60123456789', space_id: 'sp1' },
+        target_contact: { id: 'c1', name: 'Test Salesperson A', phone_number: '6000000000', space_id: 'sp1' },
         crm_user_id: crmUserId,
       });
     }
@@ -39,7 +39,7 @@ function answer(crmUserId: string | null) {
       return json({
         session_id: 'u1',
         started_at: '2026-10-28T00:00:00Z',
-        target_user: { id: crmUserId, name: 'Eric Ng', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+        target_user: { id: crmUserId, name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
       });
     }
     return json({});
@@ -50,7 +50,7 @@ function mount() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
   return render(
     <QueryClientProvider client={client}>
-      <ContactImpersonateDialog contact={{ id: 'c1', name: 'Eric Ng', phone_number: '60123456789' } as never} onClose={vi.fn()} />
+      <ContactImpersonateDialog contact={{ id: 'c1', name: 'Test Salesperson A', phone_number: '6000000000' } as never} onClose={vi.fn()} />
     </QueryClientProvider>,
   );
 }

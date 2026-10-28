@@ -18,7 +18,7 @@ import { impersonationStore } from '@/lib/impersonation-store';
 const apiFetch = vi.fn(async (url: string) => {
   const impersonating = !!impersonationStore.getState() && url.includes('/api/v1/');
   const body = impersonating
-    ? { name: 'Eric', email: 'e@x.test', salesperson: { portal_kinds: ['stock_inquiry'], portal_slug: 'TARGETSLUG' } }
+    ? { name: 'Test Salesperson A', email: 'e@x.test', salesperson: { portal_kinds: ['stock_inquiry'], portal_slug: 'TARGETSLUG' } }
     : { name: 'Admin', email: 'a@x.test', salesperson: null };
   return { ok: true, status: 200, json: async () => body };
 });
@@ -46,7 +46,7 @@ describe('useAccountProfileForHeader under CRM impersonation (F2)', () => {
     impersonationStore.setSession({
       sessionId: 's1',
       startedAt: '2026-10-28T00:00:00Z',
-      targetUser: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+      targetUser: { id: 'u-sales-a', name: 'Test Salesperson A', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
     });
     const { result } = run();
     await waitFor(() => expect(result.current.isLoading).toBe(false));
