@@ -73,13 +73,23 @@ Frontend (per-form slices after S0; one coder each, parallel worktrees, folded b
 - Detail: for a limited user the portal action set only (Q2); responses, status, comments, attachments and revision
   history visible (owner requirement 5).
 
-## Slices
+## Slices (status 28 Oct)
 
-- S0 shared server (red tests first, kill test, security reviewer): items 1-4 above + API-level E2E per form
-  through flows 1-4 of the card.
-- S1 Stock Inquiry FE, S2 Complaint FE, S3 Purchase Request + Sponsorship FE (shared components), each with its grid
-  sort/filter fixes (item 5) and vitest.
-- Browser pass on the crew copy, hand test.
+| Slice | Scope | Red test | Fix | State |
+| --- | --- | --- | --- | --- |
+| S0-A | pp4_0001 + registry + own_scope REQUEST_KINDS / request_clause + staff router guard (`app/api/v1/_request_own_scope.py`) + comments read | 9841649735 | 9f1f74f29f | green 30/30 |
+| S0-A2 | staff comments: limited user reads only (POST/PATCH 403); pp3 head test -> ancestry | 59935edb0f | (in S0-B) | red |
+| S0-B | `/api/v1/my-requests` = portal routes from the CRM session, one shared code path | 24a7e991c8 | coder running | red 57 |
+| S1 | Stock Inquiry FE: menu -> staff list, salesperson New/Edit (draft, submit, revise, duplicate), detail portal action set, all columns server-sortable | - | - | todo |
+| S2 | Complaint FE (same) + complaint revision code (owner Q6 a: adapter, settings governs it) | - | - | todo |
+| S3 | Purchase Request + Sponsorship FE (shared components) | - | - | todo |
+| S4 | Sample Request (M), S5 NPA (L), S6 Sales Opportunity (M-), S7 Price Tag (L: staff request page edit mode, portal route bodies to a service, `dealer_kit.price_tag_requests.view_own`) | - | - | todo |
+| S8 | remove embedded portal pages from the CRM (`/my-requests/*`), redirects for deep links, landing | - | - | todo |
+
+Dropped: Project Registration (owner v1.1 Q7: one Projects page, lane PROJECT-REGISTER-V2; P4 ships only
+`projects.registrations.submit` + grant). Dev SQL: `crew/state/migrations/PORTAL-P4-REQUESTS.sql` (dry-run OK).
+Known: `tests/test_record_action_endpoints.py` 3 failures pre-exist (fail with the S0-A patch reverted).
+Follow-up for S2: `test_p4_14_revise_refused_for_a_complaint` flips when complaint revision lands (Q6).
 
 ## Known pre-existing gaps (not closed here, P3 Q4 accepted)
 
