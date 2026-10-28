@@ -142,3 +142,20 @@ describe('MENU_SIDEBAR for staff is unchanged', () => {
     expect(slim(applyMenuAccess(MENU_SIDEBAR, acc))).toMatchSnapshot(name);
   });
 });
+
+// PORTAL-P4-REQUESTS review fix (red): pp4_0001 grants salespeople `.create` on New Product Applications; the
+// staff item (SUPPLY CHAIN > Procurement > New Product Applications) must still never reach them.
+describe('MENU_SIDEBAR for a salesperson holding the P4 grants', () => {
+  it('shows only MY WORK and MY REQUESTS, no staff group or staff item', () => {
+    const perms = [...SALES_PERMS, 'procurement.new_product_applications.create'];
+    const out = applyMenuAccess(MENU_SIDEBAR, access(perms, { portalKinds: ALL_KINDS }));
+    const headings = out.filter((i) => i.heading).map((i) => i.heading);
+    expect(headings).toEqual(['MY WORK', 'MY REQUESTS']);
+    // Every non-heading top-level item is a flat link (no staff group with children).
+    expect(out.filter((i) => !i.heading && i.children?.length)).toEqual([]);
+    const flat = JSON.stringify(slim(out));
+    expect(flat).not.toMatch(/SUPPLY CHAIN|Procurement"/);
+    const npaItems = slim(out).filter((i) => i.path === '/procurement-management/new-product-applications');
+    expect(npaItems).toHaveLength(1); // only the MY REQUESTS twin
+  });
+});
