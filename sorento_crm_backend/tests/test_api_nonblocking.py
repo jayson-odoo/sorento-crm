@@ -127,6 +127,8 @@ CASES = [
         None,
     ),
     ("app.api.v1.procurement.stock_inquiries", "export_stock_inquiry_pdf", None, {}, {}, None),
+    # The activity timeline: with no date filter it counts and DISTINCTs all of audit_logs.
+    ("app.api.v1.audit.activity", "get_activity", None, {}, {}, None),
     # AN-2: uploads that awaited the file, then parsed and wrote on the loop.
     ("app.api.v1.order_management.customers", "import_customers", None, _upload(), {}, None),
     ("app.api.v1.procurement.grn", "import_grn_lines", None, _upload(), {}, None),
