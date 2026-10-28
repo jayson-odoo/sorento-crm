@@ -515,7 +515,7 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool 
         and jsc.js_string(e.get("hint") or "").strip().lower() in WORD_HINTS
         for e in jsc.array(verdict.get("entities"))
     )
-    if seam and jsc.array(verdict.get("document")) and not (status in SALES_STATUSES and named_word and typed_group_by(verdict).get("group_by") in GROUP_BY):
+    if seam and jsc.array(verdict.get("document")) and not (status in SALES_STATUSES and named_word and jsc.js_string(verdict.get("group_by") or "").strip().lower() in GROUP_BY):
         # The parser read an order DOCUMENT (an SO / DO list ask): the so_status seams decide it from the words; an
         # outstanding or sales report status it carried with it is converted later, at `run_fetch` (`seam=False`),
         # if it stands.
