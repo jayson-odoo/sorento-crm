@@ -140,3 +140,42 @@ def test_n5_the_company_question_is_the_one_line_the_yearly_path_asks(bot) -> No
     sorento, mocha = _two_companies(bot)
     text, _calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     assert text.strip() == f"{sorento} or {mocha}?", text
+
+
+# ---------------------------------------------------------------- round 3 fold-in
+
+
+def _noise() -> dict:
+    return _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[])
+
+
+def _gave_up(text: str, calls) -> None:
+    assert all(n != "crm_report_ask" for n, _a in calls), calls
+    assert "I still can't read" in text, text
+
+
+def test_two_unreadable_company_answers_give_up_on_the_first_message_path(bot) -> None:
+    _two_companies(bot)
+    bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    bot.say(_noise(), "blah blah")
+    text, calls = bot.say(_noise(), "zzz qqq")
+    _gave_up(text, calls)
+
+
+def test_two_unreadable_company_answers_give_up_on_the_after_basis_path(bot) -> None:
+    _two_companies(bot)
+    bot.say(_status("sales_report", basis=None, **YEAR), "total sales 2026")
+    bot.say(_reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="delivered"), "delivered")
+    bot.say(_noise(), "blah blah")
+    text, calls = bot.say(_noise(), "zzz qqq")
+    _gave_up(text, calls)
+
+
+def test_the_low_stock_guard_is_the_inventory_domain_only(bot) -> None:
+    """An outstanding ask carrying the low stock intent under the order domain is still the report ask's."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    base = {"order_status": "outstanding", "intent_hint": "low_stock_report", "message_type": "business_query"}
+    assert report_ask.by_capability({**base, "domain_hint": "inventory"}).get("order_status") == "outstanding"
+    routed = report_ask.by_capability({**base, "domain_hint": "order"})
+    assert routed.get("order_status") == report_ask.ASK_NAME, routed
