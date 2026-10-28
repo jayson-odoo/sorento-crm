@@ -454,8 +454,6 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
 
 
 _SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)([a-z]+)")
-#: Length units that are also ordinary words, read only when joined to the number ("6in", "2m").
-_WORD_UNITS = frozenset({"in", "m"})
 
 
 def _unit_index(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, tuple[list[str], set[str]]]:
@@ -472,6 +470,22 @@ def _unit_index(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str
         if getattr(row, "matches_bare_size", False) or (getattr(row, "applies_when", None) or {}).get("class"):
             bare.add(row.spec_key)
     return {unit: (sorted(set(keys)), bare) for unit, (keys, bare) in units.items()}
+
+
+def _unit_aliases(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, tuple[str, float]]:
+    """DIMENSION-ANY: every other unit a numeric key's quantity is written in, off the registry's
+    own `unit_aliases` (`{"cm": 10}` on a mm key): `{"cm": ("mm", 10.0)}`. Data only, no unit list
+    in code; the parser decides what a word beside a number means."""
+    out: dict[str, tuple[str, float]] = {}
+    for row in sorted(_registry(db, hidden), key=lambda r: r.spec_key):
+        unit = str(getattr(row, "unit", None) or "").strip().casefold()
+        if (row.data_type or "").lower() != "numeric" or not unit or row.spec_key in SKIP_KEYS:
+            continue
+        for alias, factor in (getattr(row, "unit_aliases", None) or {}).items():
+            word = str(alias).strip().casefold()
+            if word and word != unit and isinstance(factor, (int, float)) and factor > 0:
+                out.setdefault(word, (unit, float(factor)))
+    return out
 
 
 def _support(
@@ -524,18 +538,15 @@ def _size_candidates(
     it spans are never code words (a code merely holding "600mm" is not what was said). The
     units are the registry's own (`product_spec_registry.unit`). The entries come back
     unresolved (`size` set): which keys hold the number is the value index's count."""
-    from app.services.product_spec_search import length_factor
-
     units = _unit_index(db, hidden)
     if not units:
         return [], set()
-    # DIMENSION-ANY: a length in another unit ("15cm") is read in the registry's millimetres.
-    mm = next((u for u in units if length_factor(u) == 1.0), None)
+    # DIMENSION-ANY: a quantity in another unit ("15cm") is offered in the key's own unit, off the
+    # registry's aliases.
+    aliases = _unit_aliases(db, hidden)
 
-    def known(unit: str, *, alone: bool = False) -> bool:
-        # A unit typed apart from its number is read only when it is no everyday word too: "5 in
-        # stock" is a quantity, never 5 inches.
-        return unit in units or (mm is not None and length_factor(unit) is not None and not (alone and unit in _WORD_UNITS))
+    def known(unit: str) -> bool:
+        return unit in units or unit in aliases
 
     out: list[WordCandidates] = []
     spanned: set[int] = set()
@@ -543,14 +554,15 @@ def _size_candidates(
         joined = _SIZE_RE.fullmatch(token)
         if joined and known(joined.group(2)):
             number, unit_name, shown, span = joined.group(1), joined.group(2), token, {position}
-        elif _is_number(token) and position + 1 < len(tokens) and known(tokens[position + 1], alone=True):
+        elif _is_number(token) and position + 1 < len(tokens) and known(tokens[position + 1]):
             unit_name = tokens[position + 1]
             number, shown, span = token, f"{token} {unit_name}", {position, position + 1}
         else:
             continue
         if unit_name not in units:
-            in_mm = float(number) * (length_factor(unit_name) or 1.0)
-            number, unit_name = (str(int(in_mm)) if in_mm.is_integer() else f"{in_mm:g}"), str(mm)
+            unit_name, factor = aliases[unit_name]
+            converted = round(float(number) * factor, 3)
+            number = str(int(converted)) if converted.is_integer() else f"{converted:g}"
         keys, bare = units[unit_name]
         out.append(WordCandidates(gram=shown, position=position, size=(number, unit_name, keys, bare)))
         spanned |= span

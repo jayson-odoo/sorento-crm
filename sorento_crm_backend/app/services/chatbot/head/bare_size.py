@@ -1,9 +1,10 @@
 """BARE-SIZE-BY-DATA (CHAT-CLOSED-LISTS R6-1, widened by DIMENSION-ANY, owner 28 Oct 2026).
 
-The parser picks the reserved spec_key "size" for a number with a unit and no dimension named.
-A length (any unit the catalog's millimetres convert from: "150mm", "15cm") matches EVERY
-dimension key of the registry (`product_spec_search.dimension_keys`: every numeric key held in
-millimetres), as an OR (`spec_any_keys`), never one of them: "it should search all dimension".
+The parser picks the reserved spec_key "size" off the candidate line "size N mm (no dimension
+named)", which already gave a centimetre or inch size in mm through the registry's `unit_aliases`.
+A length matches EVERY dimension key of the registry (`product_spec_search.dimension_keys`: every
+numeric key held in millimetres), as an OR (`spec_any_keys`), never one of them: "it should search
+all dimension". The message text is never read here; only the parser's value and unit are.
 Another unit keeps R6-1: a numeric key a class scopes (`applies_when.class`) that holds the number
 in that class, else the keys flagged `matches_bare_size`. A NAMED dimension is the parser's own
 key; when nothing holds it the set falls back to any dimension
@@ -11,7 +12,6 @@ key; when nothing holds it the set falls back to any dimension
 """
 from __future__ import annotations
 
-import re
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -20,8 +20,6 @@ if TYPE_CHECKING:
     from app.services.chatbot.head.grounding import Grounded, Vocabulary
 
 RESERVED_KEY = "size"
-#: The number and the unit typed beside it ("15cm", "150 mm").
-_SAID = re.compile(r"(\d+(?:\.\d+)?)\s*([a-z\"\u201d']*)", re.IGNORECASE)
 
 
 def _number(value: Any) -> float | None:
@@ -107,23 +105,18 @@ def ground_bare(
         r for r in active_registry(db)
         if (r.data_type or "").lower() == "numeric" and getattr(r, "unit", None) and r.spec_key not in hidden_keys
     ]
-    typed = _SAID.search(said)
-    # The unit typed beside the number when the parser kept that number ("15cm", 15), else the
-    # resolver's own `spec_unit`. A word after the number that is no unit ("150 x 400mm", "150
-    # wide") says nothing about one.
-    units = {str(r.unit).casefold() for r in rows}
-    word = (typed.group(2) if typed else "").casefold()
-    word = word if length_factor(word) is not None or word in units else ""
-    beside = word if typed and _number(typed.group(1)) == number else ""
-    unit_said = str(beside or entity.get("spec_unit") or word or "").strip().casefold()
+    # The parser's own unit (`spec_unit`), read through the registry's aliases. The message text
+    # is never read here: the candidate line already offered "15cm" as "size 150 mm", and the
+    # parser picked it (owner rule, 28 Oct 2026: understanding is the parser's).
+    unit_said = str(entity.get("spec_unit") or "").strip().casefold()
     dims = dimension_keys(rows)
-    if dims and (not unit_said or length_factor(unit_said) is not None):
-        # The parser copied the typed number off "15cm": read it in millimetres. A number the
-        # candidate line already gave in millimetres ("size 150 mm") stays as it is.
-        if typed and _number(typed.group(1)) == number:
-            number *= length_factor(unit_said) or 1.0
-        unit = next(str(r.unit) for r in rows if r.spec_key == dims[0])
-        return Grounded(RESERVED_KEY, "Size", said, _plain(number), unit, any_keys=dims)
+    dim_rows = [r for r in rows if r.spec_key in dims]
+    base = str(dim_rows[0].unit).casefold() if dim_rows else ""
+    aliases = {str(k).casefold(): v for r in dim_rows for k, v in (getattr(r, "unit_aliases", None) or {}).items()}
+    if dims and (not unit_said or unit_said == base or unit_said in aliases):
+        if unit_said in aliases and unit_said != base:
+            number = round(number * float(aliases[unit_said]), 3)
+        return Grounded(RESERVED_KEY, "Size", said, _plain(number), str(dim_rows[0].unit), any_keys=dims)
     # Another unit (litres, ounces): R6-1, over the keys of that unit.
     rows = [r for r in rows if length_factor(r.unit) is None]
     classes = _classes(db, entities, held_ids)
