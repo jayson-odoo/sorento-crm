@@ -294,6 +294,12 @@ def link_phone(db: Session, client: Any, *, contact_respond_id: str, phone: str)
             if survivor is None:
                 again = parse_respond_contact_payload(client.get_contact_by_phone(f"+{num}"))
                 survivor = again.get("respond_io_id")
+            elif survivor != phone_contact_id:
+                # The card sender survived (it was older), and the phone left with the merged-away
+                # contact: the survivor must hold the verified phone. A survivor found by the phone
+                # lookup already does.
+                merged_phone_contact = survivor
+                client.update_contact(survivor, {"phone": f"+{num}"})
             if survivor is None:
                 return _failed("the merge did not name a surviving contact", merged_phone_contact, phone=shown)
             status = "merged"
