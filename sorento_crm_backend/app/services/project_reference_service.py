@@ -161,23 +161,22 @@ def create_party(
             code="project_party_name_required",
         )
 
-    # Same-name, same-type duplicates are what destroy the reuse the table exists
-    # for, so they are refused with a pointer to the existing row rather than merged.
+    # Same-name, same-type duplicates are what destroy the reuse the table exists for, so
+    # the existing row comes back instead of a second one (PROJECT-REGISTER-V2 B4); case and
+    # repeated spaces do not make a name different.
+    name = " ".join(name.split())
     existing = (
         db.query(ProjectParty)
         .filter(
             ProjectParty.company_id == company_id,
             ProjectParty.party_type == payload["party_type"],
-            func.lower(ProjectParty.name) == name.lower(),
+            func.lower(func.regexp_replace(func.btrim(ProjectParty.name), r"\s+", " ", "g"))
+            == name.lower(),
         )
         .first()
     )
     if existing:
-        raise AppException(
-            status_code=409,
-            message=f'"{existing.name}" already exists. Use the existing record.',
-            code="project_party_duplicate",
-        )
+        return existing
 
     party = ProjectParty(
         company_id=company_id,

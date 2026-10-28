@@ -1006,7 +1006,6 @@ def qualify_lead(
         type_id=payload.pop("type_id", None),
         template_id=payload.pop("template_id", None),
         details=details,
-        brand_ids=payload.pop("brand_ids", None),
         owner_user_id=payload.pop("owner_user_id", None) or lead.owner_user_id,
     )
     project.lead_id = lead.id

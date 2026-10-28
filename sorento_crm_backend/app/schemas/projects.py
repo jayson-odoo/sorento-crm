@@ -170,7 +170,6 @@ class ClashCandidateResponse(BaseModel):
     owner_name: Optional[str] = None
     developer_name: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = None
-    brands: List[str] = Field(default_factory=list)
     last_activity_at: Optional[datetime] = None
     similarity: float
     blocks: bool
@@ -208,6 +207,11 @@ class ProjectRegisterRequest(BaseModel):
     # lead another project already carries is refused.
     lead_id: Optional[str] = None
     admin_ref: Optional[str] = Field(None, max_length=64)
+    # Required to register or submit (422 project_customer_required); a draft and an edit
+    # may leave it out.
+    customer_id: Optional[str] = None
+    # A salesperson holding only the submit grant: false saves a draft, true submits it.
+    submit: bool = False
 
     registered_company_name: Optional[str] = None
     location: Optional[str] = None
@@ -220,7 +224,6 @@ class ProjectRegisterRequest(BaseModel):
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brand_ids: List[str] = Field(default_factory=list)
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -246,9 +249,9 @@ class ProjectUpdateRequest(BaseModel):
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brand_ids: Optional[List[str]] = None
     # Sent as null to unlink; omitted leaves the link as it is (#1339).
     lead_id: Optional[str] = None
+    customer_id: Optional[str] = None
 
     # AC-G7: critical is a flag settable at any status, never a funnel rung.
     is_critical: Optional[bool] = None
@@ -279,7 +282,6 @@ class ProjectApproveRequest(BaseModel):
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brand_ids: Optional[List[str]] = None
 
 
 class ProjectRejectRequest(BaseModel):
@@ -342,6 +344,7 @@ class ProjectResponse(BaseModel):
     # Null with no lead, or with a lead whose buyer is not known yet.
     customer_id: Optional[str] = None
     customer_name: Optional[str] = None
+    customer_code: Optional[str] = None
     customer_phone: Optional[str] = None
     customer_attn: Optional[str] = None
 
@@ -370,8 +373,6 @@ class ProjectResponse(BaseModel):
     launch_date: Optional[date] = None
     expected_delivery_from: Optional[date] = None
     expected_delivery_to: Optional[date] = None
-    brands: List[str] = Field(default_factory=list)
-    brand_ids: List[str] = Field(default_factory=list)
 
     last_meaningful_activity_at: Optional[datetime] = None
     days_since_last_activity: Optional[int] = None
@@ -852,7 +853,6 @@ class ProjectLeadQualifyRequest(BaseModel):
     type_id: Optional[str] = None
     template_id: Optional[str] = None
     owner_user_id: Optional[str] = None
-    brand_ids: Optional[List[str]] = None
     details: Optional[Dict[str, Any]] = Field(
         None, description="Sales-profile fields, same shape as registration."
     )

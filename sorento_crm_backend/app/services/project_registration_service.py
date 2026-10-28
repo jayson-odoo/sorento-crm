@@ -67,6 +67,26 @@ PROFILE_FIELD_KEYS = tuple(k for k in FIELD_KEYS if k != "title")
 REGISTRATION_SEMANTIC_THRESHOLD = 0.80
 DUPLICATE_LIMIT = 5
 
+#: The detail fields a CRM salesperson's draft or submission may carry; they land on the
+#: project or its sales profile through `project_service.apply_sales_details`.
+_CRM_DETAIL_KEYS = (
+    "customer_id",
+    "registered_company_name",
+    "location",
+    "address",
+    "state",
+    "mukim",
+    "architect_party_id",
+    "main_contractor_party_id",
+    "estimated_sales_value",
+    "launch_date",
+    "expected_delivery_from",
+    "expected_delivery_to",
+    "type_id",
+    "template_id",
+    "admin_ref",
+)
+
 #: Required on submit (UAC A8), in form order.
 REQUIRED_ON_SUBMIT = ("title", "state", "developer_name")
 
@@ -684,6 +704,118 @@ def portal_submit(
         return _portal_detail(db, project, profile, with_duplicates=False)
 
 
+# ------------------------------------------------------------------ CRM salesperson (J)
+
+
+def require_customer(customer_id: Optional[str]) -> None:
+    """A registration needs its customer (PROJECT-REGISTER-V2 A5)."""
+    if not customer_id:
+        raise AppException(
+            status_code=422,
+            message="Pick the customer before registering.",
+            code="project_customer_required",
+        )
+
+
+def _to_pending(project: Project) -> bool:
+    """Draft or rejected -> pending or resubmitted, the state change `portal_submit` makes.
+    Returns True when it is a resubmission."""
+    resubmitted = project.approval_state == APPROVAL_REJECTED
+    project.approval_state = submission_status.status_on_submit(
+        was_rejected=resubmitted, stage=APPROVAL_PENDING
+    )
+    project.submitted_at = _now()
+    project.reject_reason = None
+    project.decided_at = None
+    project.decided_by = None
+    return resubmitted
+
+
+def crm_register(
+    db: Session, *, company_id: str, user_id: str, payload: Dict[str, Any], submit: bool
+) -> Project:
+    """A salesperson who holds only the submit grant saves a draft (title only) or submits a
+    new registration (customer required). The caller commits and, when ``submit``, notifies
+    with `notify(db, project, "submitted")` AFTER the commit."""
+    from app.models.user import User
+    from app.services import project_service
+    from app.services.project_clash_service import normalise_project_title
+    from app.services.sales.portal_agent import agents_for_contact
+
+    title = _clean(payload.get("title"))
+    if not title:
+        raise AppException(
+            status_code=422, message="A project title is required.", code="project_title_required"
+        )
+    project_service.check_company_refs(db, company_id, payload)
+    if submit:
+        require_customer(payload.get("customer_id"))
+    contact_id = db.query(User.respond_contact_id).filter(User.id == str(user_id)).scalar()
+    agents = agents_for_contact(db, contact_id) if contact_id else []
+    details = {k: payload[k] for k in _CRM_DETAIL_KEYS if k in payload}
+    developer_party_id = payload.get("developer_party_id")
+    try:
+        with db.begin_nested():
+            project = Project(
+                company_id=company_id,
+                title=title,
+                normalised_title=normalise_project_title(title),
+                developer_party_id=developer_party_id,
+                outcome=OUTCOME_OPEN,
+                approval_state=APPROVAL_DRAFT,
+                owner_user_id=user_id,
+                created_by=user_id,
+            )
+            db.add(project)
+            db.flush()
+            db.add(
+                ProjectSalesProfile(
+                    project_id=project.id,
+                    contact_id=str(contact_id) if contact_id else None,
+                    sales_agent_id=agents[0].id if agents else None,
+                )
+            )
+            db.flush()
+            project_service.apply_sales_details(db, project, details)
+            if submit:
+                _to_pending(project)
+            db.flush()
+    except IntegrityError as exc:
+        if "uq_projects_company_developer_title" not in str(getattr(exc, "orig", exc)):
+            raise
+        raise _exact_duplicate(db, project, developer_party_id, title)
+    return project
+
+
+def crm_submit(
+    db: Session, project: Project, *, user_id: str, payload: Dict[str, Any], permissions
+) -> bool:
+    """Submit the user's own draft or rejected registration. Returns True for a resubmission.
+    Required fields are checked on what the project holds after ``payload`` is applied; a
+    refusal leaves the state as it was."""
+    from app.services import project_service
+
+    if project.approval_state not in (APPROVAL_DRAFT, APPROVAL_REJECTED) or str(
+        project.owner_user_id or ""
+    ) != str(user_id):
+        raise AppException(
+            status_code=403,
+            message="Only your own draft or rejected registration can be submitted.",
+            code="project_not_editable",
+        )
+    if payload:
+        project_service.update_project(
+            db, project, payload, actor_user_id=user_id, permissions=permissions
+        )
+    profile = db.get(ProjectSalesProfile, project.id)
+    require_customer(getattr(profile, "customer_id", None))
+    if not _clean(project.title):
+        raise AppException(
+            status_code=422, message="A project title is required.", code="project_title_required"
+        )
+    return _to_pending(project)
+
+
 def portal_delete(db: Session, token, registration_id: str) -> None:
     with _scope(db, token):
         project, _profile = _own(db, token, registration_id)
@@ -699,7 +831,12 @@ def portal_delete(db: Session, token, registration_id: str) -> None:
 def _applicant_user_id(db: Session, project: Project) -> Optional[str]:
     """The CRM user linked to the contact who registered it: who hears the decision."""
     profile = db.get(ProjectSalesProfile, project.id)
-    return _linked_user_id(db, getattr(profile, "contact_id", None))
+    contact_id = getattr(profile, "contact_id", None)
+    if not contact_id and project.owner_user_id:
+        # A CRM-submitted registration whose salesperson has no linked portal contact:
+        # the owner is the applicant (PROJECT-REGISTER-V2 J6).
+        return str(project.owner_user_id)
+    return _linked_user_id(db, contact_id)
 
 
 def _holders(db: Session, project: Project, exclude: Iterable[Any] = ()) -> List[str]:
@@ -962,7 +1099,6 @@ def approve(
                 project,
                 actor_user_id=actor_user_id,
                 details=details,
-                brand_ids=payload.get("brand_ids"),
             )
     except IntegrityError as exc:
         if "uq_projects_company_developer_title" not in str(getattr(exc, "orig", exc)):

@@ -150,6 +150,7 @@ _ID_LESS = frozenset(
     {
         ("GET", "/projects/"),
         ("POST", "/projects/"),
+        ("POST", "/projects/ai-extract"),
         ("GET", "/sample-requests"),
         ("POST", "/sample-requests"),
         ("GET", "/sample-requests/products"),

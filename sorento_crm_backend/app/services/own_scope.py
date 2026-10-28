@@ -73,12 +73,26 @@ def me(db: Session, user_id: str) -> Me:
 
 
 def project_clause(m: Me):
-    from app.models.projects import Project, ProjectCollaborator, ProjectSalesProfile
+    from app.models.projects import (
+        Project,
+        ProjectCollaborator,
+        ProjectSalesProfile,
+        ProjectTakeoverRequest,
+    )
 
     conditions = [
         Project.owner_user_id == m.user_id,
         Project.id.in_(
             select(ProjectCollaborator.project_id).where(ProjectCollaborator.user_id == m.user_id)
+        ),
+        # A pending interest opens the project to the person who registered it (PROJECT-
+        # REGISTER-V2 E7); a decided or dismissed one does not.
+        Project.id.in_(
+            select(ProjectTakeoverRequest.project_id).where(
+                ProjectTakeoverRequest.requester_user_id == m.user_id,
+                ProjectTakeoverRequest.kind == "dispute",
+                ProjectTakeoverRequest.status == "pending",
+            )
         ),
     ]
     if m.contact_id:

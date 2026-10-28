@@ -5,7 +5,8 @@ fan-out belonged to this slice, because the thing they were missing was not the 
 the RECIPIENT RULE: "management" had to mean one auditable thing, not three per-feature
 recipient lists that drift.
 
-That rule is `projects.projects.view_all_financials` (grill finding G20), resolved from RBAC
+That rule is `projects.projects.manage` (PROJECT-REGISTER-V2 F3; it was view_all_financials,
+grill finding G20), resolved from RBAC
 rather than a configured list, so a newly-promoted sales manager starts receiving alerts the
 moment they get the role and a departing one stops when the role goes. Nobody has to remember
 a per-feature recipient screen.
@@ -30,7 +31,7 @@ from app.services.project_service import project_label
 logger = logging.getLogger(__name__)
 
 # The single definition of "management" for this module (G20).
-MANAGEMENT_PERMISSION = "projects.projects.view_all_financials"
+MANAGEMENT_PERMISSION = "projects.projects.manage"
 
 
 def management_user_ids(db: Session) -> List[str]:
@@ -181,6 +182,66 @@ def _send(
             if not db.is_active:
                 db.rollback()
     return sent
+
+
+def notify_interest_registered(
+    db: Session, *, project: Project, request, requester_user_id: str
+) -> int:
+    """Someone registered interest in a project (a dispute-kind takeover request): tell the
+    owner and every active manager, never the requester (PROJECT-REGISTER-V2 F1)."""
+    from app.services.project_service import resolve_user_names
+
+    requester_name = resolve_user_names(db, [requester_user_id]).get(str(requester_user_id)) or "A colleague"
+    recipients = {str(project.owner_user_id)} if project.owner_user_id else set()
+    recipients.update(management_user_ids(db))
+    recipients.discard(str(requester_user_id))
+    label = project_label(project)
+    return _send(
+        db,
+        user_ids=sorted(recipients),
+        notif_type="project_interest_registered",
+        title=f"{requester_name} registered interest in {label}",
+        body=f"{requester_name} registered interest in {label}: {project.title}",
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "request_id": str(request.id),
+            "link": f"/project-sales/{project.id}",
+        },
+        project_id=str(project.id),
+        dedup_key=f"{request.id}:interest",
+    )
+
+
+def notify_reassigned(
+    db: Session,
+    *,
+    project: Project,
+    request,
+    previous_owner_id: Optional[str],
+    new_owner_id: str,
+) -> int:
+    """An interest was approved and the owner changed: tell the new and the previous owner
+    (PROJECT-REGISTER-V2 F2)."""
+    label = project_label(project)
+    recipients = {str(new_owner_id)}
+    if previous_owner_id:
+        recipients.add(str(previous_owner_id))
+    return _send(
+        db,
+        user_ids=sorted(recipients),
+        notif_type="project_reassigned",
+        title=f"{label} was reassigned",
+        body=f"{label}: {project.title} has a new owner.",
+        data={
+            "project_id": str(project.id),
+            "project_code": project.project_code,
+            "request_id": str(request.id),
+            "link": f"/project-sales/{project.id}",
+        },
+        project_id=str(project.id),
+        dedup_key=f"{request.id}:reassigned",
+    )
 
 
 def floor_breach_dedup_key(event: Dict[str, Any]) -> str:
