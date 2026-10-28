@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
-import { isAwaitingReview } from '@/lib/submission-status';
+import { APPEALED_LABEL, isAwaitingReview, RESUBMITTED } from '@/lib/submission-status';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -1232,12 +1232,14 @@ export default function PurchaseRequestDetail({
                             : request.approval_status === 'rejected'
                               ? 'Rejected'
                               : isSubmittedLifecycle
-                                ? 'Submitted'
+                                ? (lifecycleStatusNorm === RESUBMITTED ? APPEALED_LABEL : 'Submitted')
                                 : isDraftLifecycle
                                   ? 'Draft'
                                   : (request.approval_status || request.status || 'Draft');
                       return (
-                        <span className={`${STATUS_PILL_BASE} ${statusPillClass(statusText)}`}>
+                        <span
+                          className={`${STATUS_PILL_BASE} ${statusPillClass(statusText === APPEALED_LABEL ? RESUBMITTED : statusText)}`}
+                        >
                           {statusText}
                         </span>
                       );
@@ -1375,12 +1377,14 @@ export default function PurchaseRequestDetail({
                             : request.approval_status === 'rejected'
                               ? 'Rejected'
                               : isSubmittedLifecycle
-                                ? 'Submitted'
+                                ? (lifecycleStatusNorm === RESUBMITTED ? APPEALED_LABEL : 'Submitted')
                                 : isDraftLifecycle
                                   ? 'Draft'
                                   : (request.approval_status || request.status || 'Draft');
                       return (
-                        <span className={`${STATUS_PILL_BASE} ${statusPillClass(statusText)}`}>
+                        <span
+                          className={`${STATUS_PILL_BASE} ${statusPillClass(statusText === APPEALED_LABEL ? RESUBMITTED : statusText)}`}
+                        >
                           {statusText}
                         </span>
                       );

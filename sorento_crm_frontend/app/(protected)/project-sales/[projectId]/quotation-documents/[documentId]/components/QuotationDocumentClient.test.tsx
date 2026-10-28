@@ -1264,7 +1264,7 @@ function approvalGraph(sendLabel = 'Send for approval'): StatusGraph {
     { key: 'draft', label: 'Draft', sort_order: 0, is_initial: true },
     { key: 'rejected', label: 'Rejected', sort_order: 1, is_initial: false },
     { key: 'pending_approval', label: 'Pending Approval', sort_order: 2, is_initial: false },
-    { key: 'resubmitted', label: 'Resubmitted', sort_order: 2, is_initial: false },
+    { key: 'resubmitted', label: 'Appealed', sort_order: 2, is_initial: false },
     { key: 'approved', label: 'Approved', sort_order: 3, is_initial: false },
     { key: 'issued', label: 'Issued', sort_order: 4, is_initial: false },
   ];
@@ -1292,7 +1292,7 @@ function approvalGraph(sendLabel = 'Send for approval'): StatusGraph {
     ['rejected', 'draft', 'Back to draft', 0],
     ['approved', 'issued', 'Issued to the customer', 0],
     ['issued', 'pending_approval', 'Send for approval', 0],
-    ['draft', 'resubmitted', 'Resubmit for approval', 1],
+    ['draft', 'resubmitted', 'Appeal', 1],
     ['resubmitted', 'approved', 'Approve', 0],
     ['resubmitted', 'rejected', 'Reject', 1],
   ] as const;
@@ -1401,7 +1401,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     );
   });
 
-  it('C3: a rejected quotation shows the reason and leads with Resubmit for approval, with no Back to draft anywhere', async () => {
+  it('C3: a rejected quotation shows the reason and leads with Appeal, with no Back to draft anywhere', async () => {
     graphData = approvalGraph();
     getQuotationDocument.mockResolvedValue(
       belowFloor('rejected', {
@@ -1412,7 +1412,7 @@ describe('QuotationDocumentClient: one primary CTA (E1-E9)', () => {
     renderScreen();
 
     // RESUBMITTED-STATUS: the label comes off the draft -> resubmitted edge.
-    const send = await screen.findByRole('button', { name: 'Resubmit for approval' });
+    const send = await screen.findByRole('button', { name: 'Appeal' });
     expect(screen.getByText(/Bring the WC suite back to RM 240\./)).toBeInTheDocument();
     expect(screen.queryByText(/Back to draft/i)).toBeNull();
     expect(screen.queryByRole('button', { name: /Back to draft/i })).toBeNull();

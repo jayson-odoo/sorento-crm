@@ -143,7 +143,7 @@ def test_api_resubmit_into_another_stage_keeps_that_stage(db, quiet, monkeypatch
     assert inquiry.status == target
 
 
-def test_portal_resubmit_notifies_project_sales_as_resubmitted(db, monkeypatch):
+def test_portal_resubmit_notifies_project_sales_as_appealed(db, monkeypatch):
     captured = {}
     monkeypatch.setattr(
         StockInquiryService, "_notify_team_stock_inquiry", lambda self, **kw: captured.update(kw)
@@ -153,8 +153,9 @@ def test_portal_resubmit_notifies_project_sales_as_resubmitted(db, monkeypatch):
 
     PortalService(db)._post_submit_notify("stock_inquiry", row, is_resubmission=True)
 
-    assert captured["title"] == "Stock inquiry resubmitted"
-    assert "resubmitted" in captured["intro_plain"]
+    assert captured["title"] == "Stock inquiry appealed"
+    assert "appealed" in captured["intro_plain"]
+    assert "resubmit" not in captured["intro_plain"].lower()
 
 
 # ---- project sales acts on it like pending_project_sales ----------------------
@@ -187,5 +188,5 @@ def test_resubmitted_is_revisable_where_pending_project_sales_is(db):
     assert policy.allowed is True, policy.blocked_reason
 
 
-def test_pdf_label_reads_resubmitted():
-    assert PDF_LABELS["resubmitted"] == "Resubmitted"
+def test_pdf_label_reads_appealed():
+    assert PDF_LABELS["resubmitted"] == "Appealed"

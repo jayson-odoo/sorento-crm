@@ -215,7 +215,7 @@ export function useQuotationDocumentMutations(projectId: string, documentId?: st
         record.approval_status_key === 'pending_approval'
           ? 'Sent to a manager for approval'
           : record.approval_status_key === 'resubmitted'
-            ? 'Resubmitted to a manager for approval'
+            ? 'Appealed to a manager for approval'
             : `Moved to ${record.approval_status_label ?? 'draft'}`,
       );
     },

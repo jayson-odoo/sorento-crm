@@ -28,7 +28,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
-import { isAwaitingReview } from '@/lib/submission-status';
+import { APPEAL_VERB, isAwaitingReview } from '@/lib/submission-status';
 
 import {
   useApproveEdition,
@@ -126,7 +126,7 @@ export function EditionDetail({ editionId }: { editionId: string }) {
                 {submit.isPending
                   ? 'Sending'
                   : edition.rejectionReason
-                    ? 'Resubmit for approval'
+                    ? APPEAL_VERB
                     : 'Send for approval'}
               </Button>
             )}
