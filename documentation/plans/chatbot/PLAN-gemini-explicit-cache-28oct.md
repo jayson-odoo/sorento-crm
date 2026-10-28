@@ -1,6 +1,6 @@
 # PLAN: explicit Gemini context caching for parser calls (GEMINI-EXPLICIT-CACHE)
 
-Status: built, review round 1 folded; awaiting a live check on gemini-3.5-flash-lite (small fix
+Status: in review (reviewer READY 28 Oct); awaiting a live check on gemini-3.5-flash-lite (small fix
 track: backend only, no migration, no auth/RBAC, no new ingest surface)
 
 ## Why

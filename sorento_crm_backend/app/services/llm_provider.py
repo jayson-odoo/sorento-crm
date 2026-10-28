@@ -1541,6 +1541,11 @@ class GeminiProvider:
         if created_now:
             logger.warning("gemini cache: new entry %s refused (%s); not caching for a while", name, refusal)
             gemini_context_cache.mark_failed(key)
+            try:
+                # Nothing will use it, so stop its storage bill now rather than in an hour.
+                self._request("DELETE", name, timeout=gemini_context_cache.CREATE_TIMEOUT_SECONDS)
+            except Exception:  # noqa: BLE001 - it expires on its own
+                logger.warning("gemini cache: delete of refused %s failed", name, exc_info=True)
         else:
             gemini_context_cache.forget(key, name)
 

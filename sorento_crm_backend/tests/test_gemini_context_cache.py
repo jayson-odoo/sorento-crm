@@ -377,6 +377,7 @@ def test_an_entry_refused_right_after_create_is_backed_off(google) -> None:
     assert len(google.creates()) == 1
     cached_calls = [g for g in google.generates() if g["json"].get("cachedContent")]
     assert len(cached_calls) == 1
+    assert any(c["method"] == "DELETE" and c["url"].endswith("cachedContents/c1") for c in google.calls)
 
 
 # Review round 1 (S2): a 400 the request itself earns does not throw the cache away.
@@ -414,3 +415,21 @@ def test_a_create_that_lands_after_another_workers_failure_marker_is_used(shared
 
     assert gemini_context_cache.claim(key, "cachedContents/ours") == "cachedContents/ours"
     assert shared_store.get(gemini_context_cache._redis_key(key)) == b"cachedContents/ours"
+
+
+def test_the_generate_gets_only_the_time_the_create_left(google, monkeypatch) -> None:
+    import app.services.llm_provider as llm_provider
+
+    clock = {"now": 1000.0}
+    monkeypatch.setattr(llm_provider.time, "monotonic", lambda: clock["now"])
+    real = google.__call__
+
+    def _create_takes_four_seconds(method, url, **kwargs):
+        if url.endswith("/cachedContents"):
+            clock["now"] += 4.0
+        return real(method, url, **kwargs)
+
+    monkeypatch.setattr("httpx.request", _create_takes_four_seconds)
+    _chat(timeout=20.0)
+
+    assert google.generates()[0]["timeout"] == pytest.approx(16.0)
