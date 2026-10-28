@@ -1819,7 +1819,12 @@ def _refine(
         args["measure"] = metric_from(parse_output)  # `measure`, else the top selling key `rank_by`
     # An outstanding refine never infers its kind: unless the parser picked or declared one, the held sales basis is not
     # carried and the kind is asked (the held period stays: a "by X" follow-up keeps what is on screen, AC-RU-16).
-    asks_kind = parse_output.get("capability_from") == "outstanding" and parse_output.get("basis") not in OUTSTANDING_KINDS
+    # A frame already on an outstanding kind keeps it: the user chose it (Q12).
+    asks_kind = (
+        parse_output.get("capability_from") == "outstanding"
+        and parse_output.get("basis") not in OUTSTANDING_KINDS
+        and args.get("basis") not in OUTSTANDING_KINDS
+    )
     if asks_kind:
         args.pop("basis", None)
     if parse_output.get("compare_to") in COMPARE_TO:
