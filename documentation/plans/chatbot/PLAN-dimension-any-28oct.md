@@ -1,6 +1,6 @@
 # PLAN: DIMENSION-ANY (a bare measurement matches any dimension)
 
-Status: Build (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: Review (standard track since the crew audit of 482bc55a: one additive migration, `dimany_0001_unit_aliases`; no auth/RBAC change, no new ingest surface)
 
 ## Journey (owner, prod v69, 28 Oct)
 
@@ -37,10 +37,16 @@ length only".
 - "Dimension" is data: every numeric registry key whose unit is millimetres
   (`product_spec_search.dimension_keys`), today diameter, length, width, height, depth, thickness,
   trap outlet length, hose length; a key added later in mm joins without code.
-- Candidates: a length in cm / m / inch is read in mm (`length_factor`); the size line is always first
-  for a length. Parser prompt and output contract unchanged (prompt md5 pins unaffected).
-- Grounding: a bare length is `size` with `any_keys` = every visible dimension key, the number in mm.
-  Other units (L, oz, hp) keep R6-1. The Q3 phrase swap is retired (rule 2 covers it).
+- Unit aliases are registry data (crew audit, owner rule 28 Oct: understanding is the parser's, no
+  word lists in code): `product_spec_registry.unit_aliases` (`{"cm": 10, "m": 1000, "in": 25.4, ...}`
+  on every mm key, migration `dimany_0001_unit_aliases`).
+- Candidates: a number beside a registry unit or alias is offered in the key's unit ("15cm" as
+  "size 150 mm (no dimension named)"), and the size line always leads for a length. "5 in stock" is
+  offered too; the parser decides (prompt + eval), never a code word list. Parser prompt and output
+  contract unchanged (prompt md5 pins unaffected).
+- Grounding: a bare length is `size` with `any_keys` = every visible dimension key. The number is the
+  parser's pick; its `spec_unit`, when it gives one, converts through the aliases. The message text is
+  never read. Other units (L, oz, hp) keep R6-1. The Q3 phrase swap is retired (rule 2 covers it).
 - Rule 2: `resolve_product_set` reruns a zero set with its one named dimension widened to every
   dimension; a hit carries `dimension_fallback`, and the set header leads with the line.
 - The spec filter stays `membership_clause` (shared with REPORT-UNIFY #1922's `spec_set`); unchanged.
