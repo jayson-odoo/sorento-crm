@@ -91,6 +91,7 @@ from app.models.project_so import (
     ACK_AWAITING,
     ALLOC_SOURCE_BRW,
     ALLOC_SOURCE_GROUP_TAKE,
+    ALLOC_BORROW_SOURCES,
     ALLOC_RESERVE_SOURCES,
     ALLOC_SOURCE_ORDER,
     ALLOC_SOURCE_OTHER_LOCATION,
@@ -5531,7 +5532,14 @@ class ProjectSupplyService:
         # read here at all - the change batch is the only thing that supersedes an active
         # revision now, and `_write_decision` below finds this one still active and
         # supersedes it in the same transaction the new composition is written in.
-        carried_holds = self._frozen_by_line(self.active_decision(str(order.id)))
+        active = self.active_decision(str(order.id))
+        carried_holds = self._frozen_by_line(active)
+        # The shortfall each line's revision recorded, so the credit is what was HELD
+        # (`_carried_component_qty`), not what was asked.
+        for snapshot in (active.line_snapshots or []) if active is not None else []:
+            held = carried_holds.get(str(snapshot.get("project_line_id") or ""))
+            if held is not None and snapshot.get("stock_short"):
+                held["stock_short"] = list(snapshot["stock_short"])
         self._lock_stock(payload_lines, lines)
 
         named = {str(entry.project_line_id) for entry in payload_lines}
@@ -5801,8 +5809,15 @@ class ProjectSupplyService:
         location: Optional[str],
         asked: Decimal,
         short: Decimal,
+        *,
+        warehouse_id: Optional[str] = None,
+        donor_project_id: Optional[str] = None,
     ) -> None:
-        """One component's shortfall, added to what an earlier check already found short."""
+        """One component's shortfall, added to what an earlier check already found short.
+
+        `warehouse_id` / `donor_project_id` are the keys `_snapshot` freezes the component
+        under, so a later confirm credits the shortfall back to that component only
+        (`_carried_component_qty`)."""
         if short <= _ZERO:
             return
         entries = self._stock_short.setdefault(line_id, [])
@@ -5815,6 +5830,8 @@ class ProjectSupplyService:
                 "kind": kind,
                 "index": index,
                 "location": location,
+                "warehouse_id": warehouse_id,
+                "donor_project_id": donor_project_id,
                 "asked": asked,
                 "short": min(short, asked),
             }
@@ -5844,6 +5861,14 @@ class ProjectSupplyService:
                 "asked": qty_text(entry["asked"]),
                 "short": qty_text(entry["short"]),
                 "note": self._short_sentence(entry),
+                **(
+                    {
+                        "warehouse_id": entry["warehouse_id"],
+                        "donor_project_id": entry["donor_project_id"],
+                    }
+                    if entry.get("warehouse_id")
+                    else {}
+                ),
             }
             for entry in (getattr(self, "_stock_short", None) or {}).get(line_id, ())
         ]
@@ -6017,9 +6042,10 @@ class ProjectSupplyService:
         (PLAN-so-book-diff-replanning.md section 10, defect A). `kind`/`source_warehouse_id`
         /`donor_project_id` are the same keys `_snapshot` freezes a component under.
         """
-        components = (carried_holds.get(line_id) or {}).get("components") or []
+        snapshot = carried_holds.get(line_id) or {}
         total = _ZERO
-        for component in components:
+        locations: set = set()
+        for component in snapshot.get("components") or []:
             if str(component.get("kind") or "") != kind:
                 continue
             if str(component.get("source_warehouse_id") or "") != warehouse_id:
@@ -6029,7 +6055,28 @@ class ProjectSupplyService:
             ) != (donor_project_id or ""):
                 continue
             total += _dec(component.get("qty"))
-        return total
+            locations.add(str(component.get("source_location") or ""))
+        # CONFIRM-DOUBLE-ROWS (owner, 28 Oct 2026): net of what that revision recorded
+        # SHORT there (OI-CLOSED-LINE). The component froze what was ASKED but only what
+        # existed was held, so crediting the asked quantity let a repeat press of the same
+        # decision skip the recheck and write in full what the first press found short.
+        # Matched on the component's own keys; a shortfall frozen before it carried them
+        # is matched on the location code.
+        short = _ZERO
+        for entry in snapshot.get("stock_short") or []:
+            if str(entry.get("kind") or "") != kind:
+                continue
+            if entry.get("warehouse_id"):
+                if str(entry["warehouse_id"]) != warehouse_id:
+                    continue
+                if kind == BORROW and str(
+                    entry.get("donor_project_id") or ""
+                ) != (donor_project_id or ""):
+                    continue
+            elif str(entry.get("location") or "") not in locations:
+                continue
+            short += _dec(entry.get("short"))
+        return max(total - short, _ZERO)
 
     def _check_line(
         self,
@@ -6379,16 +6426,16 @@ class ProjectSupplyService:
                 borrow_left.take_free(
                     fact.product_id, own_id, max(qty - reserve_credit[index], _ZERO)
                 )
-            ask = qty - carried if qty > carried else _ZERO
-            if ask <= _ZERO:
-                continue
             # OI-CLOSED-LINE (owner Q1, 11 Oct 2026): what the customer already received
             # needs no free stock to be "reserved", so the delivered quantity is credited
             # first and only the remainder is judged against live capacity. The hold cap
             # stays `_open_of`, so nothing is held for the delivered part.
-            covered = min(reserve_credit[index], ask)
-            ask -= covered
+            # CONFIRM-DOUBLE-ROWS: credited off the carried part too, which froze the same
+            # delivered units; crediting them a second time grew a repeat press's hold.
+            covered = min(reserve_credit[index], qty)
             qty -= covered
+            carried = max(carried - covered, _ZERO)
+            ask = qty - carried if qty > carried else _ZERO
             if ask <= _ZERO:
                 continue
             # TEMPORARY LIFT (the captain, 8 Sep 2026): an ownership group's net can be
@@ -6422,14 +6469,20 @@ class ProjectSupplyService:
                 # this line. OI-CLOSED-LINE (owner rule, 12 Oct 2026): confirmed as decided
                 # with the shortfall recorded, never a refusal of the order. Nothing new is
                 # held here; what the line already carries stays.
-                self._record_short(str(line.id), RESERVE, index, warehouse, qty, ask)
+                self._record_short(
+                    str(line.id), RESERVE, index, warehouse, qty, ask,
+                    warehouse_id=str(item.warehouse_id),
+                )
                 continue
             if qty > capacity[warehouse]:
                 # Short by what `capacity` cannot give. `capacity` never had the carried part
                 # subtracted (it was excluded, not credited), so the carried part is never
                 # counted short. Only what exists is taken and held.
                 short = min(ask, qty - max(capacity[warehouse], carried, _ZERO))
-                self._record_short(str(line.id), RESERVE, index, warehouse, qty, short)
+                self._record_short(
+                    str(line.id), RESERVE, index, warehouse, qty, short,
+                    warehouse_id=str(item.warehouse_id),
+                )
                 qty -= short
                 if qty <= _ZERO:
                     continue
@@ -6515,9 +6568,16 @@ class ProjectSupplyService:
                 item = item.model_copy(update={"qty": _dec(item.qty) - covered})
             self._check_borrow(
                 item, fact, borrow_left, refuse, stale, invalid, carried_holds,
-                record_short=lambda location, asked, short, _i=index: self._record_short(
-                    str(line.id), BORROW, _i, location, asked, short
+                record_short=lambda location, asked, short, _i=index, _item=item: (
+                    self._record_short(
+                        str(line.id), BORROW, _i, location, asked, short,
+                        warehouse_id=str(_item.warehouse_id),
+                        donor_project_id=(
+                            str(_item.donor_project_id) if _item.donor_project_id else None
+                        ),
+                    )
                 ),
+                delivered=covered,
             )
 
         total = timely + reserve_total + borrow_total + buy
@@ -6693,6 +6753,7 @@ class ProjectSupplyService:
                         warehouse.warehouse_code if warehouse else None,
                         _dec(item.qty) - reserve_credit[index],
                         qty - room,
+                        warehouse_id=warehouse_id,
                     )
                     qty = room
                 mine[key].append(
@@ -6813,7 +6874,10 @@ class ProjectSupplyService:
         invalid: List[Dict[str, Any]],
         carried_holds: Dict[str, Dict[str, Any]],
         record_short: Optional[Callable[[Optional[str], Decimal, Decimal], None]] = None,
+        delivered: Decimal = _ZERO,
     ) -> None:
+        """`delivered` is the delivered credit already taken off `item.qty`; the carried
+        part froze the same units, so it comes off that too (CONFIRM-DOUBLE-ROWS)."""
         qty = _dec(item.qty)
         if not (item.reason or "").strip():
             refuse(
@@ -6840,7 +6904,7 @@ class ProjectSupplyService:
         if item.source == ALLOC_SOURCE_OTHER_LOCATION and donor_core_line_id:
             self._check_group_borrow(
                 item, fact, warehouse, donor_core_line_id, refuse, stale, invalid,
-                carried_holds, borrow_left,
+                carried_holds, borrow_left, delivered=delivered,
             )
             return
 
@@ -6867,8 +6931,12 @@ class ProjectSupplyService:
             carried = (
                 _ZERO
                 if own
-                else self._carried_component_qty(
-                    carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+                else max(
+                    self._carried_component_qty(
+                        carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+                    )
+                    - delivered,
+                    _ZERO,
                 )
             )
             ask = qty - carried if qty > carried else _ZERO
@@ -6927,12 +6995,16 @@ class ProjectSupplyService:
         free = borrow_left.free(fact.product_id, str(warehouse.id), self._free_at)
         # What this order's own active revision already holds here FROM THIS SAME donor,
         # resubmitted: not a new ask (PLAN-so-book-diff-replanning.md section 10, defect A).
-        carried = self._carried_component_qty(
-            carried_holds,
-            str(fact.line.id),
-            BORROW,
-            str(warehouse.id),
-            donor_project_id=str(donor.id),
+        carried = max(
+            self._carried_component_qty(
+                carried_holds,
+                str(fact.line.id),
+                BORROW,
+                str(warehouse.id),
+                donor_project_id=str(donor.id),
+            )
+            - delivered,
+            _ZERO,
         )
         ask = qty - carried if qty > carried else _ZERO
         if ask <= _ZERO:
@@ -7164,6 +7236,8 @@ class ProjectSupplyService:
         invalid: List[Dict[str, Any]],
         carried_holds: Dict[str, Dict[str, Any]],
         borrow_left: Optional["_BorrowLedger"] = None,
+        *,
+        delivered: Decimal = _ZERO,
     ) -> None:
         """The group borrow a person picked in Amend (section 1c), re-read live (AC-C03).
 
@@ -7284,8 +7358,12 @@ class ProjectSupplyService:
             # re-confirm reason as the Reserve draw. The ledger floors at 0.
             borrow_left.free(fact.product_id, str(warehouse.id), self._free_at)
             borrow_left.take_free(fact.product_id, str(warehouse.id), qty)
-        carried = self._carried_component_qty(
-            carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+        carried = max(
+            self._carried_component_qty(
+                carried_holds, str(fact.line.id), BORROW, str(warehouse.id)
+            )
+            - delivered,
+            _ZERO,
         )
         ask = qty - carried if qty > carried else _ZERO
         if ask <= _ZERO:
@@ -9798,8 +9876,11 @@ class ProjectSupplyService:
     ):
         """The one predicate for "this allocation row is holding stock right now".
 
-        A Reserve is a plan, not a hold (BOARD-NO-HOLD, owner 27 Oct 2026): only a Borrow
-        holds stock. The Reserve rows come from the same base, `_decision_allocation_query`.
+        A decision is a plan, not a hold (BOARD-NO-HOLD 27 Oct 2026 for a Reserve,
+        BORROW-NO-HOLD 28 Oct 2026 for a Borrow): no decision row holds stock, so the
+        Reserve and Borrow sources are both excluded from the base,
+        `_decision_allocation_query`. That base already leaves out Buy, so this query now
+        matches no row; the readers are kept for now and a later cleanup removes them.
 
         A hold counts when its allocation belongs to no decision (every row written before
         Stage 1C) or to an ACTIVE one; the LINES being replaced (`exclude_line_ids`, project
@@ -9823,7 +9904,11 @@ class ProjectSupplyService:
             product_ids,
             exclude_line_ids=exclude_line_ids,
             entities=entities,
-        ).filter(SOLineAllocation.source_type.notin_(ALLOC_RESERVE_SOURCES))
+        ).filter(
+            SOLineAllocation.source_type.notin_(
+                tuple(ALLOC_RESERVE_SOURCES) + tuple(ALLOC_BORROW_SOURCES)
+            )
+        )
 
     def _decision_allocation_query(
         self,

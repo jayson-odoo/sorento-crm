@@ -310,7 +310,7 @@ export function BrochureImagePicker() {
     <div className="flex flex-col gap-5">
       <Card>
         <CardContent className="flex flex-col gap-4 py-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
             <div className="flex min-w-0 flex-col gap-1.5">
               <Label htmlFor="dk-bi-promotion" className="text-xs text-muted-foreground">
                 Promotion
@@ -329,7 +329,7 @@ export function BrochureImagePicker() {
                 )}
                 placeholder="Every product"
                 clearable
-                className="w-full sm:w-72"
+                triggerClassName="w-full sm:w-72"
               />
             </div>
             <div className="flex min-w-0 flex-col gap-1.5">

@@ -1,10 +1,11 @@
 # PLAN: every dropdown filter is multi-select (FILTER-MULTISELECT)
 
-Status: Review. All seven PRs built red-first and reviewed READY (28 Oct): PR1 #1930 and PR2 #1928
-(CI green 80a3f862, browser pass on the exact head, combined hand test filed) wait for the owner's
-hand test and merge; PR3 #1937, PR4 #1938, PR5 #1939, PR6 #1940 (security CLEAN), PR7 #1941 (security
-finding fixed) are stacked and ready, each retargeting to main as the one below merges; their browser
-pass and hand test run on the crew copy once PR2 merges. Track: full lane, stacked PRs; no migration.
+Status: Review. Scan done (27 Oct); owner answered the card (28 Oct, section 0). PR1 #1930, PR2
+#1928, PR3 #1937, PR4 #1938, PR5 #1939 and PR6 #1940 MERGED to main (241a45d8, 61758cc4, 1ad7572f,
+8e534691, 549a6842, 4dd5b711), each owner hand-tested. PR7 #1941 (Advanced filter pick lists;
+security finding fixed) retargeted to main 28 Oct with PR6 and main merged in; browser pass and hand
+test next.
+Track: full lane, stacked PRs (diff well over 300 lines; no migration, no auth change).
 
 Owner standing rule (27 Oct 2026): "do a scan through the filter in our system, all dropdown
 filter should be able to multi select". Same family as "every grid column sortable server-side".

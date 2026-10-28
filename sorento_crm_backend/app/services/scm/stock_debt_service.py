@@ -13,10 +13,10 @@ month, less what the lines due in it went short of on their own dates.
 
 **One read per input, never one per product.** The page is the whole flagged catalogue
 (1,000-2,000 products on the live book), so every fact is fetched for the WHOLE set in one
-query and then split by product in Python: on hand, open demand, SPO, PO, the decisions that
-pin stock and the links that pin a document. A per-product query here is what would turn a
-screen into a minute. The trigger for a persisted debt table is stated in plan 3.6 and it is
-this cost - measured, not guessed.
+query and then split by product in Python: on hand, open demand, SPO, PO, the board decisions
+(read on the board's path only, STOCKDEBT-NO-PLAN-REACH) and the links that pin a document.
+A per-product query here is what would turn a screen into a minute. The trigger for a
+persisted debt table is stated in plan 3.6 and it is this cost - measured, not guessed.
 
 **No debt table** (plan 3.6). Debt is computed from the book, and the parts of it that are
 decisions (ORDER_BACK rows, placement links, confirmed allocations) are already persisted by
@@ -48,7 +48,6 @@ from app.models.procurement import (
 )
 from app.models.product import Product, ProductCategory
 from app.models.project_so import (
-    ALLOC_RESERVE_SOURCES,
     INQUIRY_CANCELLED,
     OrderInquiry,
     OrderInquiryLink,
@@ -1211,7 +1210,8 @@ class StockDebtService:
         PO line is dated on its Delivery date (`expected_date`, else `issue + lead`), and a
         PO line whose S/O names a sales order is pinned to that order's lines before the
         walk (`_book_so_holds`). `list()`/`cell()` pass it; `assignments_for` (the board
-        and the ladder) never does.
+        and the ladder) never does. Under `view` no board decision reaches the walk either
+        (STOCKDEBT-NO-PLAN-REACH, `_holds(routes=False)`).
         """
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
@@ -1279,6 +1279,8 @@ class StockDebtService:
             span=set(warehouse_ids),
             supply_rows=supply_rows,
             lendable_lines=lendable_lines,
+            # STOCKDEBT-NO-PLAN-REACH: on the page a board plan gives no reach.
+            routes=not view,
         )
 
         settings = self.supply._fulfilment_settings()
@@ -1388,8 +1390,9 @@ class StockDebtService:
 
         # #1362 round 5 (owner ruling, 29 Sep 2026): goods that LANDED for a line stay with
         # that line, so they bind before anybody queues, exactly as a confirmed decision
-        # does. After the decision and placement holds, so nothing is pinned twice - off
-        # what those holds really cover (STOCK-DEBT-STALE-PIN), not what they state.
+        # does. After the decision (board path only) and placement holds, so nothing is
+        # pinned twice - off what those holds really cover (STOCK-DEBT-STALE-PIN), not
+        # what they state.
         holds = holds + self._landed_holds(
             supply_rows, demand_rows, holds, lendable_lines=lendable_lines,
             held=held_by_line(holds),
@@ -1683,6 +1686,7 @@ class StockDebtService:
         span: Optional[Set[str]] = None,
         supply_rows: Optional[Dict[str, List[SupplyEvent]]] = None,
         lendable_lines: Optional[Set[str]] = None,
+        routes: bool = True,
     ) -> List[Hold]:
         """What is already promised: confirmed allocations and placement links (R21).
 
@@ -1696,10 +1700,12 @@ class StockDebtService:
         anybody queues (AC-S2-2), and both are keyed to the CORE sales-order line, which is
         what the demand read above is keyed on.
 
-        **The allocation half is `ProjectSupplyService._hold_query` (Borrows, pinned) and
-        `_decision_allocation_query` split by source (Reserves are `Hold.route`: a plan, not a hold, BOARD-NO-HOLD),
-        not a second spelling of it.** That is the one predicate for "this row is holding stock right now" - confirmed,
-        located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
+        **The allocation half is `ProjectSupplyService._decision_allocation_query`, not a
+        second spelling of it.** No decision holds stock (BOARD-NO-HOLD, BORROW-NO-HOLD), so
+        every one of its rows, Reserve or Borrow, is a `Hold.route`: a plan the line may
+        draw at its own date. `_hold_query` is that base minus those sources and matches no
+        decision row now. It is the one predicate for "this row is holding stock right now"
+        - confirmed, located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
         it is shared with the free-stock arithmetic precisely so the two cannot come to
         disagree. Restated by hand here, it had already lost `confirmed_at IS NOT NULL`, so a
         decision saved but never confirmed held stock on this screen and nowhere else.
@@ -1766,7 +1772,7 @@ class StockDebtService:
         holds. A bin OUTSIDE the span is still honoured off a stand-in (AC-S2-1b), which
         `assign()` caps at that bin's free stock (`stand_in_floors`, read by
         `_stand_in_floors`). Either way the bin is shared by the pins on it in the order
-        they were made: confirmed decisions first, then placements, each the earliest
+        they were made: confirmed decisions (routes), then placements, each the earliest
         first. The cap stays in `assign()`, the one place that knows whether a line still
         needs the pin: spent here, a second pin of a line its first pin already covered
         took a bin the next line was pinned on (dev, 14 Oct 2026).
@@ -1777,17 +1783,24 @@ class StockDebtService:
         through the auto placement on SPO-2026/05-0001, and `_landed_holds` then nets its
         own read to nothing), so without the mark here the feature lent nothing on the real
         book. A decision allocation (`so_line_allocations`) is never lendable: a Borrow
-        pins and a Reserve is a route, neither is goods that landed for the line. `None` marks nothing.
+        and a Reserve are both routes, neither is goods that landed for the line. `None` marks nothing.
+
+        `routes=False` (STOCKDEBT-NO-PLAN-REACH, owner 28 Oct 2026, the VIEW's own reading):
+        no decision row is read at all, so a decided line walks exactly as the same line
+        undecided: "even if plan says reserve from BRW, it doesn't care, and how it draws is
+        the same as other lines that don't have a decision". The board and the ladder keep
+        the routes (`assignments_for`), their planning is unchanged.
         """
         if not line_keys:
             return []
         keys = list(line_keys)
         out: List[Hold] = []
 
-        # BOARD-NO-HOLD: ONE read of the live decision allocations (the base `_hold_query`
-        # narrows), split here: a Borrow is a pin, a Reserve is a plan the walk takes as a
-        # ROUTE (the line may draw the bin at its own date, `Hold.route`).
-        tagged = (
+        # BOARD-NO-HOLD + BORROW-NO-HOLD: ONE read of the live decision allocations. A
+        # decision is a plan, not a hold, whatever its source: every row is a ROUTE the
+        # walk takes (the line may draw the bin at its own date, `Hold.route`). None in the
+        # view (STOCKDEBT-NO-PLAN-REACH, see the docstring).
+        route_rows = [] if not routes else (
             self.supply._decision_allocation_query(
                 [str(pid) for pid in product_ids],
                 exclude_line_ids=None,
@@ -1797,7 +1810,6 @@ class StockDebtService:
                     held_qty_expr(),
                     Warehouse.warehouse_code,
                     _hold_product,
-                    SOLineAllocation.source_type,
                 ),
             )
             .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
@@ -1811,9 +1823,6 @@ class StockDebtService:
             )
             .all()
         )
-        rows = [r[:5] for r in tagged if r[5] not in ALLOC_RESERVE_SOURCES]
-        route_rows = [r[:5] for r in tagged if r[5] in ALLOC_RESERVE_SOURCES]
-
         links = (
             self.db.query(
                 OrderInquiryLink.id.label("link_id"),
@@ -1870,8 +1879,7 @@ class StockDebtService:
                 if event.kind == KIND_ON_HAND
             }
 
-        walked = [(False, row) for row in rows] + [(True, row) for row in route_rows]
-        for is_route, (core_line_id, warehouse_id, qty, warehouse_code, product_id) in walked:
+        for core_line_id, warehouse_id, qty, warehouse_code, product_id in route_rows:
             # STOCK-DEBT-STALE-PIN (see the docstring): a pin on stock the bin no longer
             # holds (or never held: the own location may be chosen at 0) covers nobody.
             if _float(qty) <= 0 or found_empty(str(product_id), str(warehouse_id)):
@@ -1883,7 +1891,7 @@ class StockDebtService:
                     qty=_float(qty),
                     kind=KIND_ON_HAND,
                     warehouse=warehouse_code,
-                    route=is_route,
+                    route=True,
                 )
             )
 
@@ -2242,7 +2250,8 @@ class StockDebtService:
 
         - `project`: the project lines' own month figure off the page's walk - the project
           bins' spare less their lines' shortfalls. A pool reaches a project line only
-          through a link (a placement, the S/O ref, a decision), which the walk has already
+          through a link (a placement, the S/O ref; a board decision gives none,
+          STOCKDEBT-NO-PLAN-REACH), which the walk has already
           pinned at any date, so this is what the drill's Covered by leaves owed. A pool
           bin's own events and lines are left out: unlinked pool stock never counts.
         - `reserve_supply`: a project reserve's stock by month, less what any line took of

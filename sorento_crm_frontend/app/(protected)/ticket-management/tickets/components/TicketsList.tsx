@@ -22,14 +22,7 @@ import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { bulkDeleteTickets, getTickets } from '../services/ticketService';
-import type {
-  Ticket,
-  TicketCategory,
-  TicketListFilters,
-  TicketPriority,
-  TicketSourceChannel,
-  TicketStatus,
-} from '../types/ticket.types';
+import type { Ticket, TicketListFilters } from '../types/ticket.types';
 import {
   TICKET_CATEGORIES,
   TICKET_PRIORITIES,

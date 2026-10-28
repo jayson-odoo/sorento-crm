@@ -174,6 +174,22 @@ _UNIT_TO_MM: dict[str, float] = {
     "''": 25.4,
 }
 
+
+def length_factor(unit: Any) -> float | None:
+    """The millimetres in one `unit`, or None when it is no length unit."""
+    return _UNIT_TO_MM.get(str(unit or "").strip().casefold())
+
+
+def dimension_keys(rows: Any) -> list[str]:
+    """DIMENSION-ANY (owner, 28 Oct 2026: "it should search all dimension"): the registry keys a
+    measurement with no dimension named may be under. Every numeric key held in millimetres
+    (length, width, height, depth, diameter, a trap outlet...), read off the registry's own unit,
+    never a key list."""
+    return sorted({
+        row.spec_key for row in rows
+        if (row.data_type or "").lower() == "numeric" and length_factor(getattr(row, "unit", None)) == 1.0
+    })
+
 # A number with an optional trailing unit. The leading guard stops it eating the digits
 # out of a product code (CKS1050), which is text a customer legitimately types.
 _QUANTITY_RE = re.compile(

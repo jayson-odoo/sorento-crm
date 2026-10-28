@@ -81,4 +81,5 @@ def test_the_held_familys_key_comes_first_in_the_size_words_candidate_line(sessi
         engine_mod.run_turn(_envelope(message=_message(text, n)), session_factory=session_factory)
 
     line = next((ln for ln in blocks[1].splitlines() if ln.startswith('- "150 mm"')), "")
-    assert line.startswith('- "150 mm": spec trap_length = 150'), (line, blocks[1][-600:])
+    # DIMENSION-ANY: the size line leads; the held family's key is the first spec line.
+    assert line.startswith('- "150 mm": size 150 mm (no dimension named); spec trap_length = 150'), (line, blocks[1][-600:])

@@ -38,13 +38,14 @@ vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/components/common/SearchableMultiSelect')>();
   const React = await import('react');
   type Props = Parameters<typeof actual.SearchableMultiSelect>[0];
-  const Stub = ({ value, onChange, options, fetchOptions, placeholder }: Props) => {
+  const Stub = ({ value, onChange, options, fetchOptions, placeholder, className, triggerClassName }: Props) => {
     const [loaded, setLoaded] = React.useState(options ?? []);
     React.useEffect(() => {
       if (fetchOptions) void fetchOptions('').then(setLoaded);
     }, [fetchOptions]);
     return (
       <select multiple aria-label={placeholder ?? 'multi'} value={value}
+        data-class={className ?? ''} data-trigger-class={triggerClassName ?? ''}
         onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}>
         {(fetchOptions ? loaded : (options ?? [])).map((o) => (
           <option key={o.value} value={o.value}>{o.label}</option>
@@ -112,5 +113,14 @@ describe('PO worklist - multi Status filter', () => {
     await waitFor(() => expect(screen.queryByTitle('ZZT-KEYING')).toBeNull());
     await user.deselectOptions(await box('keyed'), ['keyed', 'not_keyed']);
     await waitFor(() => expect(screen.getByTitle('ZZT-KEYING')).toBeInTheDocument());
+  });
+
+  // A width on `className` sizes the popover (SearchableMultiSelect.tsx:457) and squeezes the menu
+  // under its 16rem floor; the trigger takes `triggerClassName`.
+  it('sizes the Status trigger, not its popover', async () => {
+    renderView();
+    const control = await box('keyed');
+    expect(control.getAttribute('data-trigger-class')).toContain('w-44');
+    expect(control.getAttribute('data-class')).not.toContain('w-44');
   });
 });
