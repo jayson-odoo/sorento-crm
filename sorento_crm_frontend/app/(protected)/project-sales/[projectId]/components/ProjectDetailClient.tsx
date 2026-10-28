@@ -113,6 +113,13 @@ type TabId = (typeof TABS)[number]['id'];
 /** The three tabs Orders replaced; their old links (and bookmarks) open Orders. */
 const LEGACY_ORDER_TABS = ['pos', 'schedules', 'sales-orders'];
 
+// Rung key -> the form its forward stage action opens.
+const STAGE_FORM_ROUTE: Record<string, (projectId: string) => string> = {
+  specified: (id) => `/project-sales/${id}/quotation-documents/new`,
+  sample_submission: (id) => `/project-sales/sample-requests/new?project_id=${id}`,
+  sponsorship_form: (id) => `/procurement-management/sponsorship-forms/new?project_id=${id}`,
+};
+
 export function resolveProjectTab(requested: string | null): TabId {
   if (requested && LEGACY_ORDER_TABS.includes(requested)) return 'orders';
   return requested && TABS.some((tab) => tab.id === requested)
@@ -211,7 +218,8 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
-   * 13 Oct). Only after the move lands: a refused move leaves the person where they were.
+   * 13 Oct); Sample Submission and Sponsorship open their forms the same way (owner,
+   * 28 Oct). Only after the move lands: a refused move leaves the person where they were.
    * Matched on the rung's KEY, which an admin relabel cannot break.
    */
   function moveTo(toStatusId: string) {
@@ -221,9 +229,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {
         onSuccess: () => {
           // Forward only: Quoted -> Spec In ("Re-specify") is a correction, not a new quote.
-          if (target?.toKey === 'specified' && target.isForward) {
-            router.push(`/project-sales/${project!.id}/quotation-documents/new`);
-          }
+          const formRoute =
+            target?.isForward && Object.hasOwn(STAGE_FORM_ROUTE, target.toKey)
+              ? STAGE_FORM_ROUTE[target.toKey]
+              : undefined;
+          if (formRoute) router.push(formRoute(project!.id));
         },
       },
     );

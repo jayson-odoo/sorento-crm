@@ -255,7 +255,7 @@ def _child_labels(db: Session, items, entity_type: str, entity_id: str) -> dict[
 
 
 @router.get("/", response_model=ListResponse[AuditLogResponse])
-async def get_audit_logs(
+def get_audit_logs(
     entity_type: Optional[list[str]] = Query(None, description="Filter by entity type(s) (e.g. complaint, stock_inquiry, purchase_request)"),
     entity_id: Optional[str] = Query(None, description="Filter by entity id"),
     user_id: Optional[list[str]] = Query(None),

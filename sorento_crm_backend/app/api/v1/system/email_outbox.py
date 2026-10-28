@@ -62,7 +62,7 @@ def _to_response(row: EmailOutbox) -> EmailOutboxRowResponse:
 
 
 @router.get("/email-outbox", response_model=ListResponse[EmailOutboxRowResponse])
-async def list_email_outbox(
+def list_email_outbox(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     status_filter: Optional[list[str]] = Query(None, alias="status"),
@@ -101,7 +101,7 @@ async def list_email_outbox(
 
 
 @router.get("/email-outbox/{row_id}", response_model=EmailOutboxRowResponse)
-async def get_email_outbox(
+def get_email_outbox(
     row_id: str,
     current_user: dict = Depends(require_permission("system.email_outbox.view")),
     db: Session = Depends(get_db),
@@ -154,7 +154,7 @@ def download_email_outbox_attachment(
 
 
 @router.post("/email-outbox/{row_id}/retry", response_model=EmailOutboxRowResponse)
-async def retry_email_outbox(
+def retry_email_outbox(
     row_id: str,
     current_user: dict = Depends(require_permission("system.email_outbox.manage")),
     db: Session = Depends(get_db),
@@ -167,7 +167,7 @@ async def retry_email_outbox(
 
 
 @router.post("/email-outbox/{row_id}/cancel", response_model=EmailOutboxRowResponse)
-async def cancel_email_outbox(
+def cancel_email_outbox(
     row_id: str,
     current_user: dict = Depends(require_permission("system.email_outbox.manage")),
     db: Session = Depends(get_db),
@@ -203,7 +203,7 @@ def _bulk_apply(db: Session, row_ids: list[str], action) -> BulkOutboxResult:
 
 
 @router.post("/email-outbox/bulk-retry", response_model=BulkOutboxResult)
-async def bulk_retry_email_outbox(
+def bulk_retry_email_outbox(
     payload: BulkOutboxRequest,
     current_user: dict = Depends(require_permission("system.email_outbox.manage")),
     db: Session = Depends(get_db),
@@ -214,7 +214,7 @@ async def bulk_retry_email_outbox(
 
 
 @router.post("/email-outbox/bulk-cancel", response_model=BulkOutboxResult)
-async def bulk_cancel_email_outbox(
+def bulk_cancel_email_outbox(
     payload: BulkOutboxRequest,
     current_user: dict = Depends(require_permission("system.email_outbox.manage")),
     db: Session = Depends(get_db),

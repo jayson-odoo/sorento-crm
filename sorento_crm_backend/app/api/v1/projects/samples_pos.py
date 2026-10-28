@@ -83,7 +83,7 @@ def _project_for_edit(db: Session, project_id: str, current_user: dict):
     "/projects/{project_id}/samples",
     response_model=ListResponse[ProjectSampleResponse],
 )
-async def list_samples(
+def list_samples(
     project_id: str,
     version_id: str | None = Query(None, description="Narrow to one quotation version"),
     _user: dict = Depends(require_any_permission(READ)),
@@ -103,7 +103,7 @@ async def list_samples(
     response_model=ProjectSampleResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_sample(
+def create_sample(
     project_id: str,
     payload: ProjectSampleCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -127,7 +127,7 @@ async def create_sample(
 
 
 @router.put("/samples/{sample_id}", response_model=ProjectSampleResponse)
-async def update_sample(
+def update_sample(
     sample_id: str,
     payload: ProjectSampleUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -151,7 +151,7 @@ async def update_sample(
 
 
 @router.delete("/samples/{sample_id}")
-async def delete_sample(
+def delete_sample(
     sample_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -175,7 +175,7 @@ async def delete_sample(
     "/projects/{project_id}/purchase-orders",
     response_model=ListResponse[ProjectPurchaseOrderResponse],
 )
-async def list_purchase_orders(
+def list_purchase_orders(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -194,7 +194,7 @@ async def list_purchase_orders(
     response_model=ProjectPurchaseOrderResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_purchase_order(
+def create_purchase_order(
     project_id: str,
     payload: ProjectPurchaseOrderCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -228,7 +228,7 @@ async def create_purchase_order(
 
 
 @router.put("/purchase-orders/{po_id}", response_model=ProjectPurchaseOrderResponse)
-async def update_purchase_order(
+def update_purchase_order(
     po_id: str,
     payload: ProjectPurchaseOrderUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -271,7 +271,7 @@ async def update_purchase_order(
 
 
 @router.delete("/purchase-orders/{po_id}")
-async def delete_purchase_order(
+def delete_purchase_order(
     po_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -298,7 +298,7 @@ async def delete_purchase_order(
     "/purchase-orders/{po_id}/lines",
     response_model=ListResponse[ProjectPurchaseOrderLineResponse],
 )
-async def list_po_lines(
+def list_po_lines(
     po_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -387,7 +387,7 @@ def _notify_po_mismatches(db: Session, po, lines) -> None:
     response_model=ProjectPurchaseOrderLineResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_po_line(
+def create_po_line(
     po_id: str,
     payload: ProjectPurchaseOrderLineCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -416,7 +416,7 @@ async def create_po_line(
     "/purchase-orders/{po_id}/lines/{line_id}",
     response_model=ProjectPurchaseOrderLineResponse,
 )
-async def update_po_line(
+def update_po_line(
     po_id: str,
     line_id: str,
     payload: ProjectPurchaseOrderLineUpdate,
@@ -443,7 +443,7 @@ async def update_po_line(
 
 
 @router.delete("/purchase-orders/{po_id}/lines/{line_id}")
-async def delete_po_line(
+def delete_po_line(
     po_id: str,
     line_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -493,7 +493,7 @@ def _line_or_404(db: Session, po_id: str, line_id: str):
     "/projects/{project_id}/sponsorships",
     response_model=ListResponse[ProjectSponsorshipResponse],
 )
-async def list_project_sponsorships(
+def list_project_sponsorships(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -517,7 +517,7 @@ async def list_project_sponsorships(
     "/projects/{project_id}/sponsorships/rollup",
     response_model=ProjectSponsorshipRollupResponse,
 )
-async def project_sponsorship_rollup(
+def project_sponsorship_rollup(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -536,7 +536,7 @@ async def project_sponsorship_rollup(
 @router.get(
     "/sponsorships/conversion", response_model=SponsorshipConversionResponse
 )
-async def sponsorship_conversion(
+def sponsorship_conversion(
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):

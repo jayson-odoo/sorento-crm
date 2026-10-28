@@ -39,7 +39,7 @@ PROJECT_SALES_GRAPHS = frozenset(
 
 
 @router.get("/status-graph/{entity_type}", response_model=StatusGraphResponse)
-async def get_project_sales_status_graph(
+def get_project_sales_status_graph(
     entity_type: str,
     scope_id: Optional[str] = Query(
         default=None,

@@ -108,7 +108,6 @@ interface GridContextValue {
   uomError: unknown;
   onUomRetry: () => void;
   brandOptions: SearchableSelectOption[];
-  stockGroup: string | null;
   total: string | null;
   update: (key: string, patch: LineDraft) => void;
   selectProduct: (key: string, option: SearchableSelectOption | null) => void;
@@ -307,7 +306,6 @@ function SetStock({ row, quantity }: { row: GridRow; quantity: string }) {
   return (
     <SetStockChip
       parts={parts.filter((part): part is typeof part & { product_id: string } => Boolean(part.product_id))}
-      group={grid.stockGroup}
       quantity={quantity}
       label={grid.labelOf(row)}
     />
@@ -456,7 +454,6 @@ function QtyCell({ row: tableRow }: CellContext<GridRow, unknown>) {
   ) : productId ? (
     <QuotationStockChip
       productId={productId}
-      group={grid.stockGroup}
       quantity={quantity}
       uom={uom}
       label={label}
@@ -987,8 +984,7 @@ export interface QuotationLinesGridProps {
   uomError: unknown;
   onUomRetry: () => void;
   brandOptions: SearchableSelectOption[];
-  stockGroup: string | null;
-  /** The search and "Stock at" controls, drawn in the grid's own toolbar beside Columns. */
+  /** The search control, drawn in the grid's own toolbar beside Columns. */
   toolbar?: React.ReactNode;
   /** Every edit, addition and reorder, as the whole staged set. Edit mode only. */
   onStage?: (lines: StagedQuotationLine[]) => void;
@@ -1019,7 +1015,6 @@ export function QuotationLinesGrid({
   uomError,
   onUomRetry,
   brandOptions,
-  stockGroup,
   onStage,
   onToggleRemoved,
   toolbar,
@@ -1305,7 +1300,6 @@ export function QuotationLinesGrid({
       uomError,
       onUomRetry,
       brandOptions,
-      stockGroup,
       total,
       update,
       selectProduct,
@@ -1333,7 +1327,6 @@ export function QuotationLinesGrid({
       quotationId,
       resolveProduct,
       selectProduct,
-      stockGroup,
       total,
       uomError,
       uomOptions,

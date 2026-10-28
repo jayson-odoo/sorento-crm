@@ -18,7 +18,7 @@ router = APIRouter()
 
 
 @router.get("/active", response_model=list)
-async def list_active_access_levels_for_contact(
+def list_active_access_levels_for_contact(
     contact_id: str = Query(..., description="Respond.io contact id (respond_io_id)."),
     space_id: str = Query(..., description="Respond.io space id (matches respond_workspaces.space_id)."),
     current_user: dict = Depends(get_external_api_user),

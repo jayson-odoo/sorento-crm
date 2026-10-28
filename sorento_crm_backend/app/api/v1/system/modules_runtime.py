@@ -73,7 +73,7 @@ def _build_my_modules_response(db: Session) -> MyModulesResponse:
 
 @router.get("/", response_model=MyModulesResponse)
 @router.get("/me", response_model=MyModulesResponse)
-async def get_my_modules(
+def get_my_modules(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -82,7 +82,7 @@ async def get_my_modules(
 
 
 @router.get("/bundles", response_model=List[BundleAdminResponse])
-async def get_module_bundles(
+def get_module_bundles(
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
 ):
@@ -92,7 +92,7 @@ async def get_module_bundles(
 
 
 @router.post("/bundles", response_model=BundleAdminResponse, status_code=status.HTTP_201_CREATED)
-async def create_module_bundle(
+def create_module_bundle(
     body: BundleCreateRequest,
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -119,7 +119,7 @@ async def create_module_bundle(
 
 
 @router.put("/bundles/{bundle_key}", response_model=BundleAdminResponse)
-async def update_module_bundle(
+def update_module_bundle(
     bundle_key: str,
     body: BundleUpdateRequest,
     current_user: dict = Depends(require_permission("system.modules.manage")),
@@ -147,7 +147,7 @@ async def update_module_bundle(
 
 
 @router.delete("/bundles/{bundle_key}", status_code=status.HTTP_204_NO_CONTENT)
-async def delete_module_bundle(
+def delete_module_bundle(
     bundle_key: str,
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -157,7 +157,7 @@ async def delete_module_bundle(
 
 
 @router.get("/events", response_model=ModuleInstallEventsListResponse)
-async def get_module_install_events(
+def get_module_install_events(
     limit: int = Query(100, ge=1, le=500),
     offset: int = Query(0, ge=0),
     current_user: dict = Depends(require_permission("system.modules.manage")),
@@ -194,7 +194,7 @@ async def get_module_install_events(
 
 
 @router.post("/install", response_model=InstallModulesResponse)
-async def install_modules_or_bundle(
+def install_modules_or_bundle(
     body: InstallModulesRequest,
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -218,7 +218,7 @@ async def install_modules_or_bundle(
 
 
 @router.post("/{module_key}/enable", response_model=ModuleMutationResponse)
-async def enable_module_route(
+def enable_module_route(
     module_key: str,
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -228,7 +228,7 @@ async def enable_module_route(
 
 
 @router.post("/{module_key}/disable", response_model=ModuleMutationResponse)
-async def disable_module_route(
+def disable_module_route(
     module_key: str,
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -238,7 +238,7 @@ async def disable_module_route(
 
 
 @router.post("/{module_key}/uninstall", response_model=UninstallModuleResponse)
-async def uninstall_module_route(
+def uninstall_module_route(
     module_key: str,
     body: UninstallModuleRequest,
     current_user: dict = Depends(require_permission("system.modules.manage")),
@@ -270,7 +270,7 @@ async def uninstall_module_route(
 # ---------------------------------------------------------------------------
 
 @router.post("/upload")
-async def upload_module_zip(
+def upload_module_zip(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -289,7 +289,7 @@ async def upload_module_zip(
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     try:
-        tmp.write(await file.read())
+        tmp.write(file.file.read())
         tmp.flush()
         tmp.close()
         result = install_uploaded_zip(Path(tmp.name))
@@ -317,7 +317,7 @@ async def upload_module_zip(
 
 
 @router.post("/{module_key}/activate", response_model=InstallModulesResponse)
-async def activate_uploaded_module(
+def activate_uploaded_module(
     module_key: str,
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -328,7 +328,7 @@ async def activate_uploaded_module(
 
 
 @router.get("/available")
-async def list_available_modules(
+def list_available_modules(
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
 ):
@@ -363,7 +363,7 @@ async def list_available_modules(
 
 
 @router.delete("/{module_key}/remove")
-async def remove_module(
+def remove_module(
     module_key: str,
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -391,7 +391,7 @@ async def remove_module(
 # ---------------------------------------------------------------------------
 
 @router.get("/{module_key}/export")
-async def export_module(
+def export_module(
     module_key: str,
     current_user: dict = Depends(require_permission("system.modules.manage")),
 ):

@@ -139,19 +139,23 @@ vi.mock('@/app/(protected)/master-data-management/shared/hooks/use-uom-select-qu
   }),
 }));
 
-// QUOTATION-UX (S6/S7). The stock chip reads the board's stock detail per fulfilment-planning
-// group, and the "Stock at" dropdown derives its groups from the warehouse list. ASSUMED sources
-// the coder must read: `useStockDetail` from `_shared/hooks/useFulfilmentPlanning` and
-// `getWarehouses` from the inventory warehouseService (the one OrderInquiryStockGrid uses).
-const stockByGroup: Record<string, unknown> = {};
-const useStockDetailMock = vi.fn(
-  (_productId: string, _wh: string | null, _lineIds?: string[], group?: string | null) => ({
-    data: group ? stockByGroup[group] : undefined,
-    isLoading: false,
-    isError: false,
-    error: null,
-  }),
-);
+// QUOTE-STOCK-AGENT-LOC. The stock chip reads ONE hook per product, `useQuotationLineStock`
+// (GET /project-sales/quotation-line-stock), no group. `null` data = the read answered null
+// (the user may see no stock); `undefined` = not answered. The old group read `useStockDetail`
+// stays mocked only so a test can prove the chip no longer calls it.
+const stockByProduct: Record<string, unknown> = {};
+const useQuotationLineStockMock = vi.fn((productId: string) => ({
+  data: productId in stockByProduct ? stockByProduct[productId] : undefined,
+  isLoading: false,
+  isError: false,
+  error: null,
+}));
+const useStockDetailMock = vi.fn(() => ({
+  data: undefined,
+  isLoading: false,
+  isError: false,
+  error: null,
+}));
 // STOCK-STATUS round 6: the popover's AutoCount read, unanswered here (today's figures).
 vi.mock('@/components/stock-status/useStockStatus', () => ({
   useStockStatus: () => ({ data: undefined, isLoading: false, isError: true }),
@@ -160,7 +164,8 @@ vi.mock('../../_shared/hooks/useFulfilmentPlanning', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../_shared/hooks/useFulfilmentPlanning')>();
   return {
     ...actual,
-    useStockDetail: (...args: Parameters<typeof useStockDetailMock>) => useStockDetailMock(...args),
+    useQuotationLineStock: (productId: string) => useQuotationLineStockMock(productId),
+    useStockDetail: (...args: unknown[]) => (useStockDetailMock as (...a: unknown[]) => unknown)(...args),
   };
 });
 vi.mock('@/app/(protected)/inventory-management/warehouses/services/warehouseService', async (importOriginal) => {
@@ -423,7 +428,7 @@ function expectNothingWritten() {
 beforeEach(() => {
   vi.clearAllMocks();
   session = null;
-  Object.keys(stockByGroup).forEach((key) => delete stockByGroup[key]);
+  Object.keys(stockByProduct).forEach((key) => delete stockByProduct[key]);
   window.localStorage.clear();
   listQuotationVersions.mockResolvedValue(VERSIONS);
   listQuotationLines.mockResolvedValue([line()]);
@@ -1630,18 +1635,8 @@ const STOCK_IB = {
   sales_orders: [],
   bins: [],
 };
-const STOCK_POOLS = {
-  available_qty: '9',
-  locations: [{ location: 'BRW', where: 'site_pool', available_qty: '9', so_qty: '0', spo_qty: '0', qty_on_hand: '9' }],
-  incoming: [],
-  sales_orders: [],
-  bins: [],
-};
-
-function withStock(ib: Record<string, unknown> = STOCK_IB) {
-  stockByGroup.IB = ib;
-  stockByGroup.BB = { ...STOCK_IB, available_qty: '3' };
-  stockByGroup.pools = STOCK_POOLS;
+function withStock(read: Record<string, unknown> | null = STOCK_IB) {
+  stockByProduct.p1 = read;
 }
 
 describe('QuotationVersionEditor stock chip (QUOTATION-UX)', () => {
@@ -1650,13 +1645,13 @@ describe('QuotationVersionEditor stock chip (QUOTATION-UX)', () => {
     listQuotationLines.mockResolvedValue([ext({ product_id: 'p1' })]);
   });
 
-  it('shows available stock for the chosen group, toned by the line quantity', async () => {
+  it('AC-QSA-21: shows available stock from the product read, toned by the line quantity', async () => {
     withStock();
     await renderEditing();
     const chip = await screen.findByRole('button', { name: 'Stock on SRT-WC-01' });
     expect(chip).toHaveTextContent(/25 avail/);
     expect(chip).toHaveAttribute('data-tone', 'ok');
-    expect(useStockDetailMock).toHaveBeenCalledWith('p1' as never, null, null as never, 'IB');
+    expect(useQuotationLineStockMock).toHaveBeenCalledWith('p1');
   });
 
   it.each([
@@ -1670,43 +1665,42 @@ describe('QuotationVersionEditor stock chip (QUOTATION-UX)', () => {
     expect(await screen.findByRole('button', { name: 'Stock on SRT-WC-01' })).toHaveAttribute('data-tone', tone);
   });
 
-  it('lists the groups in Stock at, remembers the pick, and restores it on remount', async () => {
+  it('AC-QSA-20: the toolbar has no Stock at picker and never touches the old localStorage key', async () => {
     withStock();
-    const first = await renderEditing();
-    const select = await screen.findByRole('combobox', { name: 'Stock at' });
-    fireEvent.click(select);
-    fireEvent.click(await screen.findByRole('option', { name: /BB/ }));
-    await waitFor(() => expect(window.localStorage.getItem('quotation-lines.stock-group')).toBe('BB'));
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Stock on SRT-WC-01' })).toHaveTextContent(/3 avail/));
-    first.unmount();
-    session = null;
-    await renderEditing();
-    expect(await screen.findByRole('button', { name: 'Stock on SRT-WC-01' })).toHaveTextContent(/3 avail/);
-  });
-
-  it('still renders when localStorage throws', async () => {
-    withStock();
-    const get = vi.spyOn(Storage.prototype, 'getItem').mockImplementation(() => { throw new Error('denied'); });
-    const set = vi.spyOn(Storage.prototype, 'setItem').mockImplementation(() => { throw new Error('denied'); });
+    const get = vi.spyOn(Storage.prototype, 'getItem');
+    const set = vi.spyOn(Storage.prototype, 'setItem');
     try {
       await renderEditing();
-      expect(await screen.findByRole('combobox', { name: 'Stock at' })).toBeInTheDocument();
+      await screen.findByRole('button', { name: 'Stock on SRT-WC-01' });
+      expect(screen.queryByRole('combobox', { name: 'Stock at' })).toBeNull();
+      expect(screen.queryByText('Stock at')).toBeNull();
+      expect(get.mock.calls.map((call) => call[0])).not.toContain('quotation-lines.stock-group');
+      expect(set.mock.calls.map((call) => call[0])).not.toContain('quotation-lines.stock-group');
     } finally {
       get.mockRestore();
       set.mockRestore();
     }
   });
 
-  it('opens a popover with the group and pool locations and the incoming SPO numbers', async () => {
+  it('AC-QSA-22: a read that answers null shows no chip and no text in the Qty cell', async () => {
+    withStock(null);
+    await renderEditing();
+    await screen.findByRole('textbox', { name: 'Qty on SRT-WC-01' });
+    expect(useQuotationLineStockMock).toHaveBeenCalledWith('p1');
+    expect(screen.queryByRole('button', { name: 'Stock on SRT-WC-01' })).toBeNull();
+    expect(screen.queryByText(/avail/)).toBeNull();
+    expect(screen.queryByText(/Stock -/)).toBeNull();
+  });
+
+  it('AC-QSA-23: opens a popover with the read\'s locations and incoming SPO numbers', async () => {
     withStock();
     await renderEditing();
     const chip = await screen.findByRole('button', { name: 'Stock on SRT-WC-01' });
     fireEvent.pointerDown(chip, { button: 0, ctrlKey: false });
     fireEvent.click(chip);
     expect((await screen.findAllByText(/MWH-IB/)).length).toBeGreaterThan(0);
-    expect(screen.getAllByText(/BRW/).length).toBeGreaterThan(0);
     expect(screen.getByText(/SPO-1001/)).toBeInTheDocument();
-    expect(useStockDetailMock).toHaveBeenCalledWith('p1' as never, null, null as never, 'pools');
+    expect(useStockDetailMock).not.toHaveBeenCalled();
   });
 
   it('gives a custom item no stock button', async () => {
@@ -2318,28 +2312,30 @@ describe('QuotationVersionEditor sets (SET-QUOTE-LINE)', () => {
   });
 
   describe('F3 set stock pill', () => {
-    const original = useStockDetailMock.getMockImplementation();
+    const original = useQuotationLineStockMock.getMockImplementation();
     const PARTS = [
       { product_id: 'pa', product_code: 'CWCX1009-RL', quantity: '1', is_driver: true },
       { product_id: 'pb', product_code: 'CWCY1009', quantity: '1', is_driver: false },
       { product_id: 'pc', product_code: 'CWC1009-SC', quantity: '2', is_driver: false },
     ];
-    const stockFor = (available: Record<string, string>) => {
-      useStockDetailMock.mockImplementation(((productId: string, _w: unknown, _l: unknown, group?: string | null) => ({
+    const stockFor = (available: Record<string, string | null>) => {
+      useQuotationLineStockMock.mockImplementation(((productId: string) => ({
         data:
-          group && available[productId] !== undefined
-            ? { ...STOCK_IB, available_qty: available[productId] }
-            : undefined,
+          available[productId] === null
+            ? null
+            : available[productId] !== undefined
+              ? { ...STOCK_IB, available_qty: available[productId] }
+              : undefined,
         isLoading: false,
         isError: false,
         error: null,
       })) as never);
     };
     afterEach(() => {
-      if (original) useStockDetailMock.mockImplementation(original);
+      if (original) useQuotationLineStockMock.mockImplementation(original);
     });
 
-    it('F3: shows the product stock pill with the complete sets N (smallest part available / part quantity)', async () => {
+    it('AC-QSA-24: F3: shows the product stock pill with the complete sets N (smallest part available / part quantity)', async () => {
       stockFor({ pa: '30', pb: '10', pc: '7' });
       listQuotationLines.mockResolvedValue([setLine({ set_parts: PARTS })]);
       await renderEditing();
@@ -2347,8 +2343,9 @@ describe('QuotationVersionEditor sets (SET-QUOTE-LINE)', () => {
       const pill = await screen.findByRole('button', { name: 'Stock on CWC1009-RL' });
       expect(pill).toHaveTextContent('3 avail');
       expect(pill).toHaveAttribute('data-tone');
-      expect(useStockDetailMock).toHaveBeenCalledWith('pa' as never, null, null as never, 'IB');
-      expect(useStockDetailMock).toHaveBeenCalledWith('pc' as never, null, null as never, 'IB');
+      expect(useQuotationLineStockMock).toHaveBeenCalledWith('pa');
+      expect(useQuotationLineStockMock).toHaveBeenCalledWith('pc');
+      expect(useStockDetailMock).not.toHaveBeenCalled();
     });
 
     it('F3: the pill is red (data-tone none) when a part cannot make one set', async () => {
@@ -2375,6 +2372,37 @@ describe('QuotationVersionEditor sets (SET-QUOTE-LINE)', () => {
       expect(popover.getByText(/CWCY1009/)).toBeInTheDocument();
       expect(popover.getByText(/CWC1009-SC/)).toBeInTheDocument();
       expect(popover.getAllByText(/MWH-IB/).length).toBeGreaterThanOrEqual(3);
+    });
+
+    it('AC-QSA-24: a part whose read answers null leaves the Qty cell with no pill, skeleton or text', async () => {
+      stockFor({ pa: '30', pb: null, pc: '7' });
+      listQuotationLines.mockResolvedValue([setLine({ set_parts: PARTS })]);
+      await renderEditing();
+
+      await waitFor(() => expect(useQuotationLineStockMock).toHaveBeenCalledWith('pb'));
+      const cell = screen.getByRole('textbox', { name: 'Qty on CWC1009-RL' }).closest('td') as HTMLElement;
+      expect(screen.queryByRole('button', { name: 'Stock on CWC1009-RL' })).toBeNull();
+      expect(cell.querySelector('[class*="animate-pulse"], [data-slot="skeleton"]')).toBeNull();
+      expect(cell.textContent ?? '').not.toMatch(/avail|Stock -/);
+    });
+
+    it('review gap 5: a set part popover leaves out a location with no on hand, SO or SPO', async () => {
+      const zero = { location: 'ZZ-ZERO', where: 'group', available_qty: '0', so_qty: '0', spo_qty: '0', qty_on_hand: '0' };
+      useQuotationLineStockMock.mockImplementation(((productId: string) => ({
+        data: { ...STOCK_IB, available_qty: '30', locations: [...STOCK_IB.locations, zero] },
+        isLoading: false,
+        isError: false,
+        error: null,
+      })) as never);
+      listQuotationLines.mockResolvedValue([setLine({ set_parts: PARTS })]);
+      await renderEditing();
+
+      const pill = await screen.findByRole('button', { name: 'Stock on CWC1009-RL' });
+      fireEvent.pointerDown(pill, { button: 0, ctrlKey: false });
+      fireEvent.click(pill);
+      const popover = within(await screen.findByRole('dialog'));
+      expect(popover.getAllByText(/MWH-IB/).length).toBeGreaterThan(0);
+      expect(popover.queryAllByText(/ZZ-ZERO/)).toHaveLength(0);
     });
 
     it('F3: the old "N complete sets" text is gone from the quantity cell', async () => {

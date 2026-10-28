@@ -41,6 +41,7 @@ _load_env_file()
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.encoders import jsonable_encoder
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
 from fastapi.responses import JSONResponse
@@ -610,7 +611,7 @@ async def shutdown_event():
 
 
 @app.get("/")
-async def root():
+def root():
     """Root endpoint."""
     return {"message": "Sorento CRM API", "version": "1.0.0"}
 
@@ -646,15 +647,20 @@ async def health_check():
     Also names the code and the prompt that answered, so a stack check can tell a lane
     running yesterday's commit from one running today's (`scripts/chatbot-stack-check.sh`).
     """
-    try:
+    def _database_check():
         from sqlalchemy import text
         from app.database import SessionLocal
         db = SessionLocal()
         try:
             db.execute(text("SELECT 1"))
-            prompt_version = _production_prompt_version(db)
+            return _production_prompt_version(db)
         finally:
             db.close()
+
+    try:
+        # Off the event loop (API-NONBLOCKING): a slow or starved connection checkout must
+        # not freeze every other request this worker holds.
+        prompt_version = await run_in_threadpool(_database_check)
     except Exception as e:
         # The error stays server-side: a Postgres connection error names the internal host
         # and port.

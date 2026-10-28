@@ -186,7 +186,7 @@ async def search_contact_thread(
 
 
 @router.get("/{contact_ref}/comments")
-async def list_contact_comments(
+def list_contact_comments(
     contact_ref: str,
     _own: None = Depends(_contact_in_scope),
     current_user: dict = Depends(require_any_permission(READ)),
@@ -266,7 +266,7 @@ async def send_contact_template_message(
     response_model=TicketCommentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_contact_comment(
+def create_contact_comment(
     contact_ref: str,
     payload: TicketCommentCreate,
     _own: None = Depends(_contact_in_scope),
