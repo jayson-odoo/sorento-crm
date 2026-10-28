@@ -166,5 +166,27 @@ opportunity amount as the portal form sends it): identical by construction once 
 | R3 Price Tag / NPA / Sample Request / Opportunity portal components | - | - | todo |
 | R4 side-by-side browser pass (portal vs CRM + staff buttons), crew re-files hand test | - | - | todo |
 
+#### R3 architecture (fixed before code, 29 Oct)
+
+Measured 29 Oct at head 16b23b3589 (route table diff, `app.routes`): every portal FORM route is already mounted on
+`/api/v1/my-requests` at the same relative path (72 of 72; the per-kind `register_*_routes` in
+`public/portal_{sample_request,new_product_application,sales_opportunity,price_tag}.py`, mounted at
+`my_requests.py:407-415`). Portal-only today, and staying so: landing `GET /submissions`, conversations,
+customer-asks, ideas, OTP / token / logout / impersonation stop, slug-info. So R3 needs no new BE route.
+
+FE: the four portal components call module services (`lib/sample-request-service.ts`,
+`lib/new-product-application-service.ts`, `lib/price-tag-request-service.ts`, `lib/sales-opportunity-service.ts`)
+that hard-code `/api/v1/public/portal` and `portalFetch`. One mechanism, R1's: each service module gains a
+`make<Kind>Service(fetcher)` factory holding its functions, its named exports stay the portal instance (portal
+callers and every `vi.mock` of those names unchanged), and the component reads the service from the injected client
+(default = the module namespace, read at call time as R1 does). The CRM side builds each service over ONE fetcher,
+`apiFetch` with the `/api/v1/public/portal` prefix swapped for `/api/v1/my-requests` (in
+`services/myRequestsSubmissionClient.ts`). No per-kind CRM copy of any call.
+BE: one parity test per R3 kind pinning PAR-6 (price tag customer `debtor_code ?? customer_code`, `print_by='self'`;
+opportunity amount / qty / unit price as the portal sends them): the same body POSTed to the portal and to
+my-requests stores the same row.
+Open with R2: `?project_id=` on a salesperson's Sample Request (`ProjectDetailClient.tsx:119`) follows the crew
+answer on the Sponsorship case.
+
 Known unrelated: `PageHeader.inventory.test.ts` S5-05 flags main's `StockPositionGrid.tsx` (RELEASE5-FIX 8e56966136).
 Dead after R1, delete in a cleanup slice: own-request mode of the SI / Complaint attachment sections; limited complaint branch in `FormRevisionsTab`.
