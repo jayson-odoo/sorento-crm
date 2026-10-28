@@ -837,16 +837,20 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
     # The kind question: the kind is the parser's declared pick, else its own `basis` naming an offered kind (AC-RU-17c),
     # else exactly one position it read. Any other declared answer (cancel, fill, no or several picks) stands untouched.
     offered = [o[0] for o in options if isinstance(o, (list, tuple)) and o]
-    kind = None
+    kind = position = None
     if declared:
         picked = {p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= len(options)}
-        if answer.get("mode") != "pick" or len(picked) != 1:
+        if answer.get("mode") == "fill" and verdict.get("basis") in OUTSTANDING_KINDS and verdict.get("basis") in offered:
+            kind = verdict.get("basis")  # a fill naming an offered kind: the kind, so a subject bound beside it is kept
+        elif answer.get("mode") != "pick" or len(picked) != 1:
             return verdict
-        kind = options[next(iter(picked)) - 1][0]
+        else:
+            kind = options[next(iter(picked)) - 1][0]
     elif verdict.get("basis") in OUTSTANDING_KINDS and verdict.get("basis") in offered:
         kind = verdict.get("basis")
     elif len(positions) == 1:
-        kind = options[next(iter(positions)) - 1][0]
+        position = next(iter(positions))
+        kind = options[position - 1][0]
     if kind is None:
         own_ask = bool(verdict.get("capability_from") or verdict.get("order_status")) or _binds_subject(verdict)
         if verdict.get("basis") in BASES and not own_ask:  # a bare sales basis is no kind: the kind is asked again
@@ -858,7 +862,7 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
         return {**{k: v for k, v in verdict.items() if k != "open_question_answer"}, "order_status": "outstanding", "basis": kind}
     if declared:
         return verdict
-    return {**verdict, "open_question_answer": {"mode": "pick", "picked": [offered.index(kind) + 1], "items": [], "qty_for_all": None}}
+    return {**verdict, "open_question_answer": {"mode": "pick", "picked": [position or offered.index(kind) + 1], "items": [], "qty_for_all": None}}
 
 
 def restates_the_ask(verdict: dict[str, Any]) -> bool:
