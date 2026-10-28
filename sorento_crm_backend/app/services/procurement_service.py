@@ -10310,6 +10310,7 @@ class PurchaseRequestService:
             self.db.query(ApprovalToken)
             .filter(ApprovalToken.token == token_value)
             .with_for_update()
+            .populate_existing()  # re-read under the lock even if this session loaded it already
             .first()
         )
         if not approval_token:

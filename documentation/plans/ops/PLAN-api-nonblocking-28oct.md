@@ -1,6 +1,6 @@
 # PLAN: API-NONBLOCKING - blocking route handlers run in the threadpool, not on the event loop
 
-Status: Review (track: standard, backend only, no behaviour change, no migration). PR #1951.
+Status: Review, reviewer + security reviewer READY (track: standard, backend only, no behaviour change, no migration). PR #1951.
 Lane: API-NONBLOCKING. UAC: `api-nonblocking-acceptance-criteria.md`.
 
 ## Why

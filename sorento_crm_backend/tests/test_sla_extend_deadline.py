@@ -543,7 +543,6 @@ from app.api.v1.sla.sla_tracking import (  # noqa: E402
 )
 
 
-
 def test_route_preview_both_days_and_date_422():
     """Preview route: exactly-one guard -> 422."""
     with pytest.raises(HTTPException) as ei:
