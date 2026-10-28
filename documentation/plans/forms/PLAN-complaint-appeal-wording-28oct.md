@@ -1,6 +1,6 @@
 # PLAN: complaint appeal wording (COMPLAINT-APPEAL-WORDING)
 
-Status: merge-ready, reviewer READY (small fix track: wording only, no migration, no auth change)
+Status: in review, round 2 every form (wording only; one data-only label migration, no auth change)
 
 ## Ask
 
@@ -53,7 +53,29 @@ Left as is, on purpose:
   does for every other code.
 - Complaints Excel export writes raw status codes for every status (existing pattern).
 
-## Other forms still showing "Resubmitted" / "Resubmit" (owner to decide)
+## Round 2: every form (owner, 28 Oct: "change every form, standardize")
+
+One source of the words: `APPEALED_LABEL` / `APPEAL_VERB` in `sorento_crm_frontend/lib/submission-status.ts` and
+`sorento_crm_backend/app/services/submission_status.py`; `appealWording` rewords status lines. The stored value
+stays `resubmitted` everywhere (filters still send it).
+
+- Frontend: `submitVerb` (portal send button for every form, NPA staff button), portal label map, `formatStatusLabel`,
+  stock inquiry labels, purchase request / sponsorship list, filter, edit card and detail pill, NPA list filter and
+  portal toast, dealer-kit edition button, quotation fallback button + standing + hook text, project registration
+  pill / code label / board filter, revision file marker `appealed-v<N>`, audit trail on every entity (heading
+  "Appealed", status lines of the record's own rows, create rows included).
+- Backend: notification titles and sentences (stock inquiry portal + staff + external, purchase request,
+  sponsorship form, NPA, project registration, quotation), WhatsApp undo correction, record-context bubble,
+  revision label and PDF file marker, stock inquiry PDF, sponsorship report dataset, NPA labels, project label,
+  chatbot-facing duplicate-number errors.
+- Data migration `appeal_0001_appeal_labels`: the quotation and dealer-kit edition graphs keep labels in
+  `statuses` / `status_transitions`; it relabels only the seeded "Resubmitted" / "Resubmit for approval" (an admin
+  rename is left alone). Seed constants changed to match. Downgrade reverses.
+
+Still left: the `complaint_created` email template admin name (frozen in seed eml_0002, see above).
+Unrelated meanings kept: promotion flyer bulk "Resubmit", attachment n8n webhook "Resubmit".
+
+## Round 1 inventory of other forms (all changed in round 2)
 
 - Shared portal send verb `lib/submission-status.ts` `submitVerb` (stock inquiry, purchase request,
   sponsorship, NPA portal + NPA staff detail) and toasts in `SubmissionForm.tsx` / `NewProductApplicationForm.tsx`.
