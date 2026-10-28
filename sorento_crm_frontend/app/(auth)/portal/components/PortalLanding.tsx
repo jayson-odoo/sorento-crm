@@ -333,10 +333,15 @@ export function PortalLanding({ slug, embedded = false }: { slug?: string; embed
     router.replace(`/my-requests?type=${activeTab}`);
   }, [embedded, activeTab, searchParams, router]);
 
-  const handleTabChange = useCallback((next: PortalLandingKind) => {
-    userPickedTabRef.current = true;
-    setActiveTab(next);
-  }, []);
+  const handleTabChange = useCallback(
+    (next: PortalLandingKind) => {
+      userPickedTabRef.current = true;
+      setActiveTab(next);
+      // Embedded in the CRM: the URL names the kind shown, so the sidebar highlight follows.
+      if (embedded) router.replace(`/my-requests?type=${next}`);
+    },
+    [embedded, router],
+  );
 
   const defaultTabKey = useMemo(() => {
     if (!contact?.contact_id) return null;

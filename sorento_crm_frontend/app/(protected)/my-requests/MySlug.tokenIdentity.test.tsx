@@ -24,7 +24,7 @@ vi.mock('@/hooks/useAccountProfileForHeader', () => ({
 const fetchMe = vi.fn();
 vi.mock('@/app/(auth)/portal/lib/portal-client', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/app/(auth)/portal/lib/portal-client')>();
-  return { ...original, fetchMe: (...a: unknown[]) => fetchMe(...a) };
+  return { ...original, fetchMeWithGrace: (...a: unknown[]) => fetchMe(...a) };
 });
 
 import { PortalUnauthorizedError } from '@/app/(auth)/portal/lib/portal-client';

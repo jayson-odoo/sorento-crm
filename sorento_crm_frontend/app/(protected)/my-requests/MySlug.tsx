@@ -5,10 +5,13 @@ import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   PortalUnauthorizedError,
   clearPortalToken,
-  fetchMe,
+  fetchMeWithGrace,
   readPortalToken,
 } from '@/app/(auth)/portal/lib/portal-client';
-import { clearPortalSlug, readPortalSlug } from '@/app/(auth)/portal/lib/portal-paths';
+import {
+  clearPortalSlug,
+  readPortalSlug,
+} from '@/app/(auth)/portal/lib/portal-paths';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 
@@ -16,7 +19,11 @@ import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
  * The CRM-side shell of the portal forms (PORTAL-P3-ROLE-MENU): hands the signed-in salesperson's
  * portal slug (from /users/me) to the same portal components the `/portal/c/{slug}` tree renders.
  */
-export function MySlug({ children }: { children: (slug: string) => ReactNode }) {
+export function MySlug({
+  children,
+}: {
+  children: (slug: string) => ReactNode;
+}) {
   const { salesperson, isLoading, isError } = useAccountProfileForHeader();
   const router = useRouter();
   const pathname = usePathname();
@@ -53,7 +60,7 @@ export function MySlug({ children }: { children: (slug: string) => ReactNode }) 
       return;
     }
     // The stored slug is only a hint: the token's own identity must be this salesperson's too.
-    void fetchMe()
+    void fetchMeWithGrace()
       .then((me) => {
         if (cancelled) return;
         if (me.portal_slug !== mySlug) {

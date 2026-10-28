@@ -232,38 +232,38 @@ export function PipelineClient() {
     <div className="space-y-3">
       {canStart && (
         <>
-      <div className="space-y-1.5">
-        <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
-          Developer
-        </Label>
-        <SearchableSelect
-          id="filter-developer"
-          value={developerFilter}
-          onChange={setDeveloperFilter}
-          clearable
-          options={(developers.data?.data ?? []).map((party) => ({
-            value: party.id,
-            label: party.name,
-          }))}
-          placeholder="All developers"
-        />
-      </div>
-      <div className="space-y-1.5">
-        <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
-          Type
-        </Label>
-        <SearchableSelect
-          id="filter-type"
-          value={typeFilter}
-          onChange={setTypeFilter}
-          clearable
-          options={(types.data ?? []).map((type) => ({
-            value: type.id,
-            label: type.name,
-          }))}
-          placeholder="All types"
-        />
-      </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
+              Developer
+            </Label>
+            <SearchableSelect
+              id="filter-developer"
+              value={developerFilter}
+              onChange={setDeveloperFilter}
+              clearable
+              options={(developers.data?.data ?? []).map((party) => ({
+                value: party.id,
+                label: party.name,
+              }))}
+              placeholder="All developers"
+            />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
+              Type
+            </Label>
+            <SearchableSelect
+              id="filter-type"
+              value={typeFilter}
+              onChange={setTypeFilter}
+              clearable
+              options={(types.data ?? []).map((type) => ({
+                value: type.id,
+                label: type.name,
+              }))}
+              placeholder="All types"
+            />
+          </div>
         </>
       )}
       <div className="space-y-1.5">

@@ -92,7 +92,12 @@ export function SidebarMenu() {
       const q = path.indexOf('?');
       if (q !== -1) {
         const wanted = new URLSearchParams(path.slice(q + 1)).get('type');
-        return pathname === path.slice(0, q) && wanted !== null && wanted === currentType;
+        const base = path.slice(0, q);
+        if (wanted === null) return false;
+        if (pathname === base) return wanted === currentType;
+        // A form page (`/my-requests/<kind>/new` or `/<id>`) keeps its own kind highlighted.
+        if (pathname.startsWith(`${base}/`)) return pathname.slice(base.length + 1).split('/')[0] === wanted;
+        return false;
       }
       return matchesMenuPath(path, pathname, menuPaths);
     },

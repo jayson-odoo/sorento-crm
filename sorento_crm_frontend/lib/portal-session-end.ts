@@ -1,4 +1,7 @@
-import { clearPortalToken, portalLogout } from '@/app/(auth)/portal/lib/portal-client';
+import {
+  clearPortalToken,
+  portalLogout,
+} from '@/app/(auth)/portal/lib/portal-client';
 import { clearPortalSlug } from '@/app/(auth)/portal/lib/portal-paths';
 
 /**

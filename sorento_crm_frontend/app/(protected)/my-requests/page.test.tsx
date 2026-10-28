@@ -33,7 +33,7 @@ vi.mock('@/app/(auth)/portal/lib/portal-client', async (importOriginal) => {
   return {
     ...original,
     readPortalToken: () => token.value,
-    fetchMe: vi.fn(async () => ({ portal_slug: 'MYSLUG1234' })),
+    fetchMeWithGrace: vi.fn(async () => ({ portal_slug: 'MYSLUG1234' })),
   };
 });
 
