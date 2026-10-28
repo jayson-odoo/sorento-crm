@@ -5,7 +5,6 @@
  * root cause, resolution and technical response stay visible, read-only. Staff detail unchanged.
  * Scaffolding follows ComplaintDetail.test.tsx and the S1 StockInquiryDetail.requestScope.test.tsx.
  */
-import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
@@ -97,7 +96,6 @@ vi.mock('@/lib/api', () => ({
 
 import ComplaintDetail from './ComplaintDetail';
 
-const LIMITED = ['complaint_management.complaints.view_own', 'complaint_management.complaints.add'];
 const WORKFLOW_SLUGS = [
   'complaint_management.complaints.approve',
   'complaint_management.complaints.reject',
@@ -110,13 +108,6 @@ const WORKFLOW_SLUGS = [
   'sla_management.conversation_sla_tracking.reassign',
 ];
 const STAFF = ['complaint_management.complaints.view', ...WORKFLOW_SLUGS];
-const PORTAL_SET = ['Edit', 'Delete', 'Submit', submitVerb('rejected'), 'Revise', 'Duplicate'];
-// Every staff action the detail card offers today (ComplaintDetail.tsx gear menu, header CTAs, inline Edit buttons).
-const STAFF_ACTIONS = [
-  'Edit technical team response', 'Approve', 'Reject', 'Processed by CS', 'Mark as closed', 'Void',
-  'Settled on site', 'Reassign', 'Escalate SLA', 'Extend deadline', 'Edit root cause', 'Edit resolution',
-  'Chat records', 'Update & Reply', 'Download PDF', 'Download history', 'Copy view link', 'View in system',
-];
 
 function record(over: Record<string, unknown> = {}) {
   return {
@@ -173,90 +164,7 @@ beforeEach(() => {
   apiCalls.length = 0;
 });
 
-describe('limited user, detail', () => {
-  it('draft: Edit, Delete, Submit, Duplicate and nothing outside the portal set', async () => {
-    mount([...LIMITED, ...WORKFLOW_SLUGS]);
-    const labels = await actionLabels();
-    for (const want of ['Edit', 'Delete', 'Submit', 'Duplicate']) expect(labels, `missing ${want}`).toContain(want);
-    expect(labels).not.toContain('Revise');
-    expect(labels.filter((l) => !PORTAL_SET.includes(l)), 'non-portal actions leaked').toEqual([]);
-  });
-
-  it('rejected: Edit, Submit, Duplicate, no Delete', async () => {
-    mount(LIMITED, { status: 'rejected' });
-    const labels = await actionLabels();
-    for (const want of ['Edit', submitVerb('rejected'), 'Duplicate']) expect(labels).toContain(want);
-    expect(labels).not.toContain('Delete');
-  });
-
-  it('processed with revision allowed: Revise and Duplicate, no Edit/Delete/Submit', async () => {
-    mount(LIMITED, { status: 'processed_by_cs' }, true);
-    await waitFor(async () => expect(await actionLabels()).toContain('Revise'));
-    const labels = await actionLabels();
-    expect(labels).toContain('Duplicate');
-    for (const hidden of ['Edit', 'Delete', 'Submit']) expect(labels).not.toContain(hidden);
-  });
-
-  it('processed with revision refused by the server: no Revise', async () => {
-    mount(LIMITED, { status: 'processed_by_cs' }, false);
-    expect(await actionLabels()).not.toContain('Revise');
-  });
-
-  it('submitted (with the staff slugs held): Duplicate only', async () => {
-    mount([...LIMITED, ...WORKFLOW_SLUGS], { status: 'submitted' });
-    const labels = await actionLabels();
-    expect(labels).toContain('Duplicate');
-    expect(labels.filter((l) => !PORTAL_SET.includes(l))).toEqual([]);
-    for (const hidden of ['Edit', 'Delete', 'Submit', 'Revise']) expect(labels).not.toContain(hidden);
-  });
-
-  it.each(STAFF_ACTIONS)('hides %s even with every workflow slug held', async (label) => {
-    // Processed by CS / Mark as closed only show for staff on an approved complaint, the rest on a responded one.
-    const status = label === 'Processed by CS' || label === 'Mark as closed' ? 'approved' : 'responded';
-    mount([...LIMITED, ...WORKFLOW_SLUGS], { status });
-    expect(await actionLabels()).not.toContain(label);
-  });
-
-  it('Duplicate goes to /new?from=<id>', async () => {
-    mount(LIMITED, { status: 'submitted' });
-    await actionLabels();
-    fireEvent.click(await screen.findByText('Duplicate'));
-    await waitFor(() => expect(push).toHaveBeenCalled());
-    expect(String(push.mock.calls[0][0])).toContain('/complaint-management/complaints/new?from=cmp-1');
-  });
-
-  it('Revise goes to /<id>/edit?revise=1', async () => {
-    mount(LIMITED, { status: 'processed_by_cs' }, true);
-    await waitFor(async () => expect(await actionLabels()).toContain('Revise'));
-    fireEvent.click(await screen.findByText('Revise'));
-    await waitFor(() => expect(push).toHaveBeenCalled());
-    expect(String(push.mock.calls[0][0])).toContain('/complaint-management/complaints/cmp-1/edit?revise=1');
-  });
-
-  it('Submit on a draft POSTs through my-requests', async () => {
-    mount(LIMITED, { status: 'draft' });
-    await actionLabels();
-    fireEvent.click(await screen.findByText('Submit'));
-    await new Promise((r) => setTimeout(r, 150));
-    const dialog = screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog');
-    const confirm = dialog && Array.from(dialog.querySelectorAll('button')).find((b) => /submit|confirm|yes|send/i.test(b.textContent ?? ''));
-    if (confirm) fireEvent.click(confirm);
-    await waitFor(() =>
-      expect(apiCalls).toContainEqual({ url: '/api/v1/my-requests/submissions/complaint/cmp-1/submit', method: 'POST' }),
-    );
-  });
-
-  it('still shows status, root cause, resolution and technical response, read-only', async () => {
-    mount(LIMITED, { status: 'responded' });
-    await screen.findAllByText(/CMP-2026-0001/);
-    expect(screen.getAllByText('Responded').length).toBeGreaterThan(0);
-    expect(screen.getByText('ZZT worn seal')).toBeInTheDocument();
-    expect(screen.getByText('ZZT part replaced')).toBeInTheDocument();
-    expect(screen.getByText(/ZZT replace the cartridge\./)).toBeInTheDocument();
-    expect(document.querySelector('textarea')).toBeNull();
-    expect(screen.queryAllByRole('button', { name: /^Edit (root cause|resolution|technical team response)/ })).toHaveLength(0);
-  });
-});
+// PORTAL-P4-REQUESTS R1: a limited user now gets the portal's own form; its cases live in Complaint.portalForm.test.tsx and the portal's own SubmissionForm tests.
 
 describe('staff user, detail (control, P4-26)', () => {
   it('keeps the staff action set', async () => {

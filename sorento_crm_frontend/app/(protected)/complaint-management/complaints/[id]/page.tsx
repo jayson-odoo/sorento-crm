@@ -58,6 +58,7 @@ async function ComplaintDetailWrapper({
       sourceEntityId={id}
       revisionsKind="complaint"
       commentsKind="complaint"
+      portalFormWhenLimited
       extraTabs={[
         {
           value: 'fulfilment',

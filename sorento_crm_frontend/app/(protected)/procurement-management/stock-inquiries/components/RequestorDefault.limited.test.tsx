@@ -58,11 +58,10 @@ vi.mock('@/lib/api', async (importOriginal) => ({
   apiFetch: (...a: [string]) => apiFetch(...a),
 }));
 
-import StockInquiryForm from './StockInquiryForm';
 import PurchaseRequestForm from '@/app/(protected)/procurement-management/purchase-requests/components/PurchaseRequestForm';
 
 const CASES: Array<[string, string, string, () => React.ReactElement]> = [
-  ['stock inquiry', 'procurement.stock_inquiries', 'my-requests', () => <StockInquiryForm />],
+  // stock inquiry: R1 moved a salesperson's form to the portal's own (defaultFromContact 'contact_id').
   ['purchase request', 'procurement.purchase_requests', 'my-requests', () => <PurchaseRequestForm />],
 ];
 

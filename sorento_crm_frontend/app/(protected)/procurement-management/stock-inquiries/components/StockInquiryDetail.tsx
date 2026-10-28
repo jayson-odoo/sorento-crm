@@ -71,8 +71,7 @@ import { toast } from '@/lib/toast';
 import { formatDate } from '@/lib/helpers';
 import { isAwaitingReview, SI_REVIEW_STAGE } from '@/lib/submission-status';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import { MyRequestActions } from '@/components/common/MyRequestActions';
-import { useMyRequestSubmission, useSubmitMyRequest } from '@/hooks/useMyRequests';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -91,7 +90,18 @@ interface StockInquiryDetailProps {
   inquiryId: string;
 }
 
-export default function StockInquiryDetail({
+/**
+ * A salesperson limited to their own rows (PORTAL-P4-REQUESTS R1, form parity) views their inquiry
+ * in the portal's own form, read-only exactly as the portal shows it; everyone else the staff
+ * detail, unchanged.
+ */
+export default function StockInquiryDetail(props: StockInquiryDetailProps) {
+  const { limited } = useRequestScope('stock_inquiry');
+  if (limited) return <MyRequestPortalForm kind="stock_inquiry" submissionId={props.inquiryId} />;
+  return <StaffStockInquiryDetail {...props} />;
+}
+
+function StaffStockInquiryDetail({
   inquiryId,
 }: StockInquiryDetailProps) {
   const router = useRouter();
@@ -111,14 +121,6 @@ export default function StockInquiryDetail({
   const exportPdfMutation = useExportStockInquiryPdf();
   const reassignMutation = useReassignSLATracking();
   const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
-  // A salesperson limited to their own rows (PORTAL-P4-REQUESTS, owner Q2 a) gets the portal's
-  // action set only, run through My Requests; the revision policy is the server's answer there.
-  const { limited } = useRequestScope('stock_inquiry');
-  const { data: mine } = useMyRequestSubmission(
-    'stock_inquiry',
-    limited && isValidId ? inquiryId : null,
-  );
-  const submitMine = useSubmitMyRequest('stock_inquiry');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [replyComposePrefill, setReplyComposePrefill] = useState<{
@@ -141,7 +143,7 @@ export default function StockInquiryDetail({
     // Key on updated_at so the escalation banner clears on resolve without a refresh.
     queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId, inquiry?.updated_at],
     queryFn: () => getFormSLATrackers('stock_inquiry', inquiryId),
-    enabled: !!isValidId && !limited,
+    enabled: !!isValidId,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
   // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
@@ -149,7 +151,6 @@ export default function StockInquiryDetail({
     sourceEntityType: 'stock_inquiry',
     sourceEntityId: isValidId ? inquiryId : null,
     entityKey: inquiry?.updated_at,
-    enabled: !limited,
   });
   // A voided stock inquiry is fully read-only - suppress every business CTA.
   const isVoided = (inquiry?.status ?? '').trim().toLowerCase() === 'voided';
@@ -439,7 +440,6 @@ export default function StockInquiryDetail({
             ariaLabel: 'stock inquiry',
           }}
           gear={
-            limited ? undefined : (
             <DetailActionsMenu ariaLabel="Stock inquiry actions">
               {/* The download history is an action, so it sits in the gear with the rest;
                   the record card carries the pager, the gear and the workflow CTAs, and
@@ -625,26 +625,8 @@ export default function StockInquiryDetail({
                 </DropdownMenuItem>
               )}
             </DetailActionsMenu>
-            )
           }
           primary={
-            limited ? (
-              <MyRequestActions
-                status={inquiry.status ?? ''}
-                revisable={mine?.revision?.allowed === true}
-                busy={submitMine.isPending}
-                kind="stock_inquiry"
-                requestId={inquiryId}
-                onEdit={() => router.push(`/procurement-management/stock-inquiries/${inquiryId}/edit`)}
-                onRevise={() =>
-                  router.push(`/procurement-management/stock-inquiries/${inquiryId}/edit?revise=1`)
-                }
-                onDuplicate={() => router.push(`/procurement-management/stock-inquiries/new?from=${inquiryId}`)}
-                onSubmit={() => submitMine.mutate({ id: inquiryId })}
-                onDeleted={() => router.push(backHref)}
-                invalidateKeys={[['stock-inquiries']]}
-              />
-            ) : (
             <>
             {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
                 by someone else / unclaimed - keeps the header uncluttered. When the lock
@@ -747,10 +729,8 @@ export default function StockInquiryDetail({
               </Button>
             )}
             </>
-            )
           }
           dialogs={
-            limited ? undefined : (
             <EntityDownloadsButton
               entityType="stock_inquiry"
               entityId={inquiryId}
@@ -758,7 +738,6 @@ export default function StockInquiryDetail({
               open={downloadsOpen}
               onOpenChange={setDownloadsOpen}
             />
-            )
           }
         />
       </div>
@@ -1179,7 +1158,7 @@ export default function StockInquiryDetail({
         <InquiryFormTableRow label="Additional remark" labelClassName="items-start pt-3">
           <InquiryReadValue>{inquiry.additional_remark}</InquiryReadValue>
         </InquiryFormTableRow>
-        {!limited && inquiry.respond_inbox_url && (
+        {inquiry.respond_inbox_url && (
           <InquiryFormTableRow label="Respond inbox">
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
               <a
@@ -1212,7 +1191,7 @@ export default function StockInquiryDetail({
               <div className="min-w-0 flex-1">
                 <InquiryReadValue>{inquiry.purchasing_response}</InquiryReadValue>
               </div>
-              {!limited && !isVoided && responseWritable && (
+              {!isVoided && responseWritable && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1230,7 +1209,7 @@ export default function StockInquiryDetail({
             </div>
           </div>
         </InquiryFormTableRow>
-        {!limited && canSeeApplications && (
+        {canSeeApplications && (
           <InquiryFormTableRow label="New product applications" labelClassName="items-start pt-3">
             {applications && applications.length > 0 ? (
               <ul className="space-y-1.5 py-2 text-sm">
@@ -1312,7 +1291,7 @@ export default function StockInquiryDetail({
         )}
       </ProductInquiryFormLayout>
 
-      {!limited && inquiry.respond_inbox_url && (
+      {inquiry.respond_inbox_url && (
         <Sheet
           open={conversationSheetOpen}
           onOpenChange={(open) => {
@@ -1352,7 +1331,6 @@ export default function StockInquiryDetail({
       <StockInquiryAttachmentsSection
         inquiryId={inquiryId}
         attachments={inquiry.attachments ?? []}
-        requestKind={limited ? 'stock_inquiry' : undefined}
       />
 
       {/* The lineage lives in the page's own "Revisions" TAB (round 6), not in
@@ -1360,7 +1338,7 @@ export default function StockInquiryDetail({
           form meant scrolling past everything to read it. The query stays here
           because the revise banner above quotes the newest entry. */}
 
-      {!limited && <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />}
+      <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>
   );
 }

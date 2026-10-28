@@ -22,6 +22,11 @@ interface FormDetailTabsWithRevisionsProps {
   revisionsKind: FormRevisionsKind;
   /** Adds the "Comments (N)" tab right after Details. */
   commentsKind?: FormCommentKind;
+  /**
+   * A limited user's detail is the portal's own form (PORTAL-P4-REQUESTS R1), which carries its
+   * own Comments and Revisions tabs: no second tab strip around it.
+   */
+  portalFormWhenLimited?: boolean;
 }
 
 /**
@@ -61,6 +66,7 @@ export default function FormDetailTabsWithRevisions({
   extraTabs = [],
   revisionsKind,
   commentsKind,
+  portalFormWhenLimited = false,
 }: FormDetailTabsWithRevisionsProps) {
   // A user limited to their own rows reads neither the SLA trackers nor a staff-only tab.
   const { limited } = useRequestScope(sourceEntityType);
@@ -91,6 +97,8 @@ export default function FormDetailTabsWithRevisions({
         },
       ]
     : extraTabs;
+
+  if (limited && portalFormWhenLimited) return <>{children}</>;
 
   return (
     <FormDetailWithSLATabs

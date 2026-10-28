@@ -5,7 +5,6 @@
  * even when the slug is held. Status and the purchasing response stay visible, read-only. Staff detail unchanged.
  * Scaffolding follows StockInquiryDetail.test.tsx.
  */
-import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
@@ -84,7 +83,6 @@ vi.mock('@/lib/api', () => ({
 
 import StockInquiryDetail from './StockInquiryDetail';
 
-const LIMITED = ['procurement.stock_inquiries.view_own', 'procurement.stock_inquiries.add'];
 // Slugs that light up workflow buttons on the staff page: a limited user holding them still gets none of it.
 const WORKFLOW_SLUGS = [
   'procurement.stock_inquiries.submit_for_project_sales',
@@ -98,7 +96,6 @@ const WORKFLOW_SLUGS = [
   'sla_management.conversation_sla_tracking.reassign',
 ];
 const STAFF = ['procurement.stock_inquiries.view', 'procurement.stock_inquiries.edit', 'procurement.stock_inquiries.delete', ...WORKFLOW_SLUGS];
-const PORTAL_SET = ['Edit', 'Delete', 'Submit', submitVerb('rejected'), 'Revise', 'Duplicate'];
 
 function record(over: Record<string, unknown> = {}) {
   return {
@@ -148,62 +145,7 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('limited user, detail', () => {
-  it('draft: exactly Edit, Delete, Submit, Duplicate from the portal set', async () => {
-    mount([...LIMITED, ...WORKFLOW_SLUGS.filter((s) => s.includes('view_own') === false)].filter((s) => !s.endsWith('.view')));
-    const labels = await actionLabels();
-    for (const want of ['Edit', 'Delete', 'Submit', 'Duplicate']) expect(labels, `missing ${want}`).toContain(want);
-    expect(labels).not.toContain('Revise');
-    expect(labels.filter((l) => !PORTAL_SET.includes(l)), 'non-portal actions leaked').toEqual([]);
-  });
-
-  it('rejected: Edit and Submit, no Delete', async () => {
-    mount(LIMITED, { status: 'rejected' });
-    const labels = await actionLabels();
-    expect(labels).toContain('Edit');
-    expect(labels).toContain(submitVerb('rejected'));
-    expect(labels).toContain('Duplicate');
-    expect(labels).not.toContain('Delete');
-  });
-
-  it('responded with revision allowed: Revise and Duplicate, no Edit/Delete/Submit', async () => {
-    mount(LIMITED, { status: 'responded' }, true);
-    const labels = await actionLabels();
-    await waitFor(async () => expect(await actionLabels()).toContain('Revise'));
-    expect(labels).not.toContain('Edit');
-    expect(labels).not.toContain('Delete');
-    expect(labels).not.toContain('Submit');
-  });
-
-  it('responded with revision refused by the server: no Revise', async () => {
-    mount(LIMITED, { status: 'responded' }, false);
-    expect(await actionLabels()).not.toContain('Revise');
-  });
-
-  it('pending purchasing: Duplicate only', async () => {
-    mount(LIMITED, { status: 'pending_purchasing' });
-    const labels = await actionLabels();
-    expect(labels).toContain('Duplicate');
-    expect(labels.filter((l) => !PORTAL_SET.includes(l))).toEqual([]);
-    for (const hidden of ['Edit', 'Delete', 'Submit', 'Revise']) expect(labels).not.toContain(hidden);
-  });
-
-  it.each([
-    'Update & Reply', 'Edit purchasing response', 'Escalate SLA', 'Extend deadline', 'Reassign', 'Chat records',
-    'Print / Download PDF', 'Export to Excel', 'Copy view link', 'Download history', 'Void',
-  ])('hides %s even with every workflow slug held', async (label) => {
-    mount([...LIMITED, ...WORKFLOW_SLUGS], { status: 'pending_purchasing' });
-    expect(await actionLabels()).not.toContain(label);
-  });
-
-  it('still shows the status and the purchasing response, read-only', async () => {
-    mount(LIMITED, { status: 'responded' });
-    await screen.findAllByText(/SI-2026-0001/);
-    expect(screen.getByText('Responded')).toBeInTheDocument();
-    expect(screen.getByText(/We have stock\./)).toBeInTheDocument();
-    expect(document.querySelector('textarea')).toBeNull();
-  });
-});
+// PORTAL-P4-REQUESTS R1: a limited user now gets the portal's own form; its cases live in StockInquiry.portalForm.test.tsx and the portal's own SubmissionForm tests.
 
 describe('staff user, detail (control, P4-26)', () => {
   it('keeps the staff action set', async () => {

@@ -81,7 +81,6 @@ vi.mock('@/lib/api', () => ({
 
 import StockInquiryDetail from './StockInquiryDetail';
 
-const LIMITED = ['procurement.stock_inquiries.view_own', 'procurement.stock_inquiries.add'];
 // Slugs that light up workflow buttons on the staff page: a limited user holding them still gets none of it.
 const WORKFLOW_SLUGS = [
   'procurement.stock_inquiries.submit_for_project_sales',
@@ -130,12 +129,7 @@ beforeEach(() => {
 });
 
 describe('stock inquiry detail passes the attachments section its own-request kind', () => {
-  it('limited user: requestKind="stock_inquiry" and not readOnly (they can attach)', async () => {
-    mount(LIMITED);
-    const el = await screen.findByTestId('att-section');
-    expect(el.dataset.kind).toBe('stock_inquiry');
-    expect(el.dataset.readonly).toBe('false');
-  });
+  // PORTAL-P4-REQUESTS R1: a limited user now gets the portal's own form; its cases live in StockInquiry.portalForm.test.tsx (its dropzone).
 
   it('staff: no requestKind', async () => {
     mount(STAFF);

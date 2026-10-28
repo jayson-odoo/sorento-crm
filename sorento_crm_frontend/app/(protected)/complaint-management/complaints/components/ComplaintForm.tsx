@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFieldArray } from "react-hook-form";
 import { Plus, Trash2 } from "lucide-react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import { LoaderCircleIcon, Save, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
@@ -18,7 +18,6 @@ import {
 import { Input } from "@/components/ui/input";
 import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
-import { Label } from "@/components/ui/label";
 import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import LookupBoundField from "@/components/common/LookupBoundField";
@@ -49,13 +48,7 @@ import { complaintsPagerQuery } from '../hooks/useComplaints';
 import ComplaintManualAttachmentsSection from "./ComplaintManualAttachmentsSection";
 import { usePublicViewLinksEnabled } from "@/hooks/usePublicViewLinksEnabled";
 import { useRequestScope } from "@/hooks/useRequestScope";
-import {
-  useMyRequestSubmission,
-  useReviseMyRequest,
-  useSaveMyRequestDraft,
-  useSubmitMyRequest,
-} from "@/hooks/useMyRequests";
-import { submitVerb } from "@/lib/submission-status";
+import MyRequestPortalForm from "@/components/common/MyRequestPortalForm";
 
 interface ComplaintFormProps {
   complaintId?: string;
@@ -117,90 +110,26 @@ function cleanProductLines(
   return cleaned.length > 0 ? cleaned : undefined;
 }
 
-/** The complaint's own fields as the portal takes them (its edit whitelist); the Technical
- *  Team's fields, the registered project and the Respond.io ids are staff-only. */
-const MY_REQUEST_FIELDS = [
-  "delivery_order_number",
-  "customer_type",
-  "customer_type_others",
-  "within_warranty",
-  "defects_discovered",
-  "complaint_type",
-  "defect_description",
-  "salesperson",
-  "customer_name",
-  "contact_person",
-  "contact_number",
-  "customer_address",
-  "project_title",
-] as const;
-
-/** The portal body for a salesperson's own complaint. Every field travels (null when blank) so
- *  clearing one sticks; the product lines rebuild the legacy product columns server side. */
-function myRequestFields(data: ComplaintSchemaType): Record<string, unknown> {
-  const fields: Record<string, unknown> = {};
-  for (const key of MY_REQUEST_FIELDS) {
-    const v = data[key];
-    fields[key] = v == null || v === "" ? null : v;
-  }
-  fields.complaint_date = data.complaint_date
-    ? new Date(data.complaint_date).toISOString().split("T")[0]
-    : null;
-  fields.product_lines = cleanProductLines(data.product_lines) ?? [];
-  return fields;
-}
-
 /**
- * A salesperson limited to their own complaints (PORTAL-P4-REQUESTS) writes through My Requests:
- * the portal's drafts, submit and revise, over the same form without the Technical Team card.
- * `?from=<id>` starts a new draft from one of theirs, `?revise=1` sends a revision when the server
- * allows it. Only that user reads the query string; everyone else gets the staff form, unchanged.
+ * A salesperson limited to their own complaints (PORTAL-P4-REQUESTS R1, form parity) creates and
+ * edits in the portal's own form, written through My Requests; everyone else the staff form,
+ * unchanged.
  */
 export default function ComplaintForm(props: ComplaintFormProps) {
   const { limited } = useRequestScope("complaint");
-  if (limited) return <LimitedComplaintForm {...props} />;
-  return <ComplaintFormBody {...props} limited={false} />;
+  if (limited) return <MyRequestPortalForm kind="complaint" submissionId={props.complaintId} />;
+  return <StaffComplaintForm {...props} />;
 }
 
-function LimitedComplaintForm(props: ComplaintFormProps) {
-  const searchParams = useSearchParams();
-  return (
-    <ComplaintFormBody
-      {...props}
-      limited
-      fromId={!props.complaintId ? searchParams?.get("from") || null : null}
-      revise={Boolean(props.complaintId) && searchParams?.get("revise") === "1"}
-    />
-  );
-}
-
-function ComplaintFormBody({
+function StaffComplaintForm({
   complaintId,
   onSuccess,
-  limited,
-  fromId = null,
-  revise: revising = false,
-}: ComplaintFormProps & { limited: boolean; fromId?: string | null; revise?: boolean }) {
+}: ComplaintFormProps) {
   const router = useRouter();
   const isEditMode = !!complaintId;
-  // The staff read also serves a salesperson's own row (attachments); their form values come
-  // from My Requests, the portal's shape.
-  const { data: staffComplaint, isLoading: isLoadingStaff } = useComplaint(
+  const { data: complaint, isLoading: isLoadingComplaint } = useComplaint(
     complaintId || null,
   );
-  const { data: mine, isLoading: isLoadingMine } = useMyRequestSubmission(
-    "complaint",
-    limited ? (complaintId ?? fromId) : null,
-  );
-  const saveMine = useSaveMyRequestDraft("complaint");
-  const submitMine = useSubmitMyRequest("complaint");
-  const reviseMine = useReviseMyRequest("complaint");
-  const [savedId, setSavedId] = useState<string | undefined>(complaintId);
-  const [revisionReason, setRevisionReason] = useState("");
-  const complaint = (limited ? mine : staffComplaint) as
-    | (typeof staffComplaint & Record<string, unknown>)
-    | undefined;
-  const isLoadingComplaint = limited ? isLoadingMine : isLoadingStaff;
   const createMutation = useCreateComplaint();
   const updateMutation = useUpdateComplaint();
 
@@ -258,7 +187,7 @@ function ComplaintFormBody({
 
   // Load complaint data when editing (normalize dates so schema validation passes)
   useEffect(() => {
-    if (complaint && (isEditMode || fromId) && !formInitialized) {
+    if (complaint && isEditMode && !formInitialized) {
       const toDate = (v: unknown): Date | undefined => {
         if (!v) return undefined;
         if (v instanceof Date) return v;
@@ -271,8 +200,7 @@ function ComplaintFormBody({
         const n = typeof v === "number" ? v : Number(v);
         return Number.isFinite(n) ? n : null;
       };
-      // A salesperson's copy comes in the portal's shape; its files are not form data.
-      const attachments = (limited ? [] : complaint.attachments || []).map((att) => ({
+      const attachments = (complaint.attachments || []).map((att) => ({
         ...att,
         file_size_bytes: toNum(att.file_size_bytes) ?? null,
         uploaded_at: toDate(att.uploaded_at),
@@ -315,7 +243,7 @@ function ComplaintFormBody({
       });
       setFormInitialized(true);
     }
-  }, [complaint, isEditMode, fromId, limited, form, formInitialized]);
+  }, [complaint, isEditMode, form, formInitialized]);
 
   useEffect(() => {
     setFormInitialized(false);
@@ -462,7 +390,7 @@ function ComplaintFormBody({
     }
   };
 
-  if ((isEditMode || fromId) && isLoadingComplaint) {
+  if (isEditMode && isLoadingComplaint) {
     return (
       <div className="flex items-center justify-center p-8">
         <LoaderCircleIcon className="size-6 animate-spin" />
@@ -473,58 +401,7 @@ function ComplaintFormBody({
   const isLoading =
     createMutation.isPending ||
     updateMutation.isPending ||
-    updateAndReplyMutation.isPending ||
-    saveMine.isPending ||
-    submitMine.isPending ||
-    reviseMine.isPending;
-
-  const openRecord = (id: unknown) =>
-    router.push(`/complaint-management/complaints/${String(id)}`);
-  const mineStatus = isEditMode ? String(mine?.status ?? "") : "draft";
-  const mineEditable = !isEditMode || mine?.is_editable === true;
-  const canRevise = revising && mine?.revision?.allowed === true;
-  // A complaint already sent is read-only here unless it is being revised.
-  const locked = limited && !mineEditable && !canRevise;
-
-  const onSaveMineDraft = async () => {
-    try {
-      const saved = await saveMine.mutateAsync({
-        fields: myRequestFields(form.getValues()),
-        id: savedId,
-      });
-      setSavedId(String(saved.id));
-      openRecord(saved.id);
-    } catch {
-      // toast from the mutation
-    }
-  };
-  const onSubmitMine = async () => {
-    try {
-      const done = await submitMine.mutateAsync({
-        fields: myRequestFields(form.getValues()),
-        id: savedId,
-      });
-      openRecord(done.id ?? savedId);
-    } catch {
-      // toast from the mutation
-    }
-  };
-  const onSendRevision = async () => {
-    if (!complaintId) return;
-    try {
-      await reviseMine.mutateAsync({
-        id: complaintId,
-        input: {
-          reason: revisionReason.trim(),
-          expectedRevisionNo: Number(mine?.revision?.used ?? mine?.revision_no ?? 0),
-          fields: myRequestFields(form.getValues()),
-        },
-      });
-      openRecord(complaintId);
-    } catch {
-      // toast from the mutation
-    }
-  };
+    updateAndReplyMutation.isPending;
 
   const onFormSubmit = form.handleSubmit(onSubmit, (errors) => {
     // eslint-disable-next-line no-console
@@ -560,12 +437,8 @@ function ComplaintFormBody({
 
   return (
     <Form {...form}>
-      <form
-        onSubmit={limited ? (e) => e.preventDefault() : onFormSubmit}
-        className="space-y-6"
-      >
-        <fieldset disabled={locked} className="m-0 min-w-0 space-y-6 border-0 p-0">
-        {!limited && isEditMode && complaintId && (
+      <form onSubmit={onFormSubmit} className="space-y-6">
+        {isEditMode && complaintId && (
           <div className="flex justify-end">
             <ListPager
               {...complaintsPagerQuery}
@@ -1024,9 +897,7 @@ function ComplaintFormBody({
 
             {/* AC-L3. The link sits next to the free-text title rather than replacing it: the
                 text is what thousands of historical complaints have, and typing a development
-                name is still faster than picking when the project was never registered.
-                Staff-only: the portal does not take it. */}
-            {!limited && (
+                name is still faster than picking when the project was never registered. */}
             <FormField
               control={form.control}
               name="project_id"
@@ -1062,11 +933,9 @@ function ComplaintFormBody({
                 </FormItem>
               )}
             />
-            )}
           </CardContent>
         </Card>
 
-        {!limited && (
         <Card>
           <CardHeader>
             <CardTitle>Tecnical Team</CardTitle>
@@ -1188,28 +1057,12 @@ function ComplaintFormBody({
             />
           </CardContent>
         </Card>
-        )}
 
         {isEditMode && complaintId && (
           <ComplaintManualAttachmentsSection
             complaintId={complaintId}
-            attachments={staffComplaint?.attachments ?? []}
-            readOnly={limited}
+            attachments={complaint?.attachments ?? []}
           />
-        )}
-        </fieldset>
-
-        {canRevise && (
-          <div className="space-y-2">
-            <Label htmlFor="revision_reason">Reason for revision</Label>
-            <Textarea
-              id="revision_reason"
-              value={revisionReason}
-              onChange={(e) => setRevisionReason(e.target.value)}
-              rows={3}
-              className="min-h-[4.5rem] resize-y"
-            />
-          </div>
         )}
 
         <div className="flex justify-end gap-4">
@@ -1221,7 +1074,7 @@ function ComplaintFormBody({
           >
             Cancel
           </Button>
-          {!limited && isEditMode && (
+          {isEditMode && (
             <Button
               type="button"
               variant="secondary"
@@ -1241,38 +1094,6 @@ function ComplaintFormBody({
               )}
             </Button>
           )}
-          {limited ? (
-            canRevise ? (
-              <Button
-                type="button"
-                onClick={onSendRevision}
-                disabled={isLoading || !revisionReason.trim()}
-              >
-                <Send className="size-4" />
-                {reviseMine.isPending ? "Sending..." : "Send revision"}
-              </Button>
-            ) : (
-              mineEditable && (
-                <>
-                  {(!isEditMode || mineStatus === "draft") && (
-                    <Button
-                      type="button"
-                      variant="outline"
-                      onClick={onSaveMineDraft}
-                      disabled={isLoading}
-                    >
-                      <Save className="size-4" />
-                      Save as draft
-                    </Button>
-                  )}
-                  <Button type="button" onClick={onSubmitMine} disabled={isLoading}>
-                    <Send className="size-4" />
-                    {submitMine.isPending ? "Submitting..." : submitVerb(mineStatus)}
-                  </Button>
-                </>
-              )
-            )
-          ) : (
           <Button type="submit" disabled={isLoading}>
             {isLoading ? (
               <>
@@ -1286,7 +1107,6 @@ function ComplaintFormBody({
               </>
             )}
           </Button>
-          )}
         </div>
       </form>
     </Form>

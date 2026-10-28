@@ -93,7 +93,6 @@ vi.mock('@/lib/api', () => ({
 
 import ComplaintDetail from './ComplaintDetail';
 
-const LIMITED = ['complaint_management.complaints.view_own', 'complaint_management.complaints.add'];
 const WORKFLOW_SLUGS = [
   'complaint_management.complaints.approve',
   'complaint_management.complaints.reject',
@@ -151,12 +150,7 @@ beforeEach(() => {
 
 // Red until S2 lands the complaint own-request attachments.
 describe('complaint detail passes the attachments section its own-request kind', () => {
-  it('limited user: requestKind="complaint" and not readOnly', async () => {
-    mount(LIMITED);
-    const el = await screen.findByTestId('att-section');
-    expect(el.dataset.kind).toBe('complaint');
-    expect(el.dataset.readonly).toBe('false');
-  });
+  // PORTAL-P4-REQUESTS R1: a limited user now gets the portal's own form; its cases live in Complaint.portalForm.test.tsx (its dropzone).
 
   it('staff: no requestKind', async () => {
     mount(STAFF);

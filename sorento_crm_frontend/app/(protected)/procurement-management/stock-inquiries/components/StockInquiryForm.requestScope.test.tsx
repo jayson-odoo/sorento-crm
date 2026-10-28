@@ -9,9 +9,8 @@
  *  - staff /new: no draft buttons, purchasing response present, requestors from the staff endpoint.
  */
 import React from 'react';
-import { submitVerb } from '@/lib/submission-status';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { cleanup, render, screen } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 const push = vi.fn();
@@ -97,7 +96,6 @@ vi.mock('@/lib/api', () => ({ apiFetch: (...a: [string, RequestInit?]) => apiFet
 
 import StockInquiryForm from './StockInquiryForm';
 
-const LIMITED = ['procurement.stock_inquiries.view_own', 'procurement.stock_inquiries.add'];
 const STAFF = ['procurement.stock_inquiries.view', 'procurement.stock_inquiries.add', 'procurement.stock_inquiries.edit'];
 const urls = (pred: (c: (typeof calls)[number]) => boolean) => calls.filter(pred);
 
@@ -112,24 +110,6 @@ function mount(slugs: string[], props: { inquiryId?: string } = {}, search = '')
   );
 }
 
-async function fillBasics() {
-  fireEvent.change(await screen.findByPlaceholderText('Code'), { target: { value: 'ABC-9' } });
-  fireEvent.change(screen.getByPlaceholderText('Description'), { target: { value: 'ten boxes' } });
-  fireEvent.change(screen.getByPlaceholderText('Quantity'), { target: { value: '10' } });
-  fireEvent.click(screen.getByTestId('requestor-picker'));
-}
-
-/** Click a button, then confirm in a dialog if one opens (the portal confirms a submit; either UX is fine). */
-async function clickThrough(name: RegExp) {
-  fireEvent.click(await screen.findByRole('button', { name }));
-  await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
-  const dialog = screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog');
-  if (dialog) {
-    const confirm = Array.from(dialog.querySelectorAll('button')).find((b) => /submit|confirm|yes|send/i.test(b.textContent ?? ''));
-    if (confirm) fireEvent.click(confirm);
-  }
-}
-
 beforeEach(() => {
   cleanup();
   calls.length = 0;
@@ -137,96 +117,9 @@ beforeEach(() => {
   vi.clearAllMocks();
 });
 
-describe('limited user, /new', () => {
-  it('has no purchasing response field', async () => {
-    mount(LIMITED);
-    await screen.findByPlaceholderText('Code');
-    expect(screen.queryByPlaceholderText('For purchasing use')).toBeNull();
-    expect(screen.queryByText(/reply by purchasing/i)).toBeNull();
-  });
+// PORTAL-P4-REQUESTS R1: a limited user now gets the portal's own form; its cases live in StockInquiry.portalForm.test.tsx and the portal's own SubmissionForm tests.
 
-  it('loads requestors from my-requests/requestor-options, not the staff endpoint', async () => {
-    mount(LIMITED);
-    await waitFor(() => expect(urls((c) => c.url.startsWith('/api/v1/my-requests/requestor-options')).length).toBeGreaterThan(0));
-    expect(urls((c) => c.url.includes('requestor') && !c.url.startsWith('/api/v1/my-requests/'))).toHaveLength(0);
-  });
 
-  it('"Save as draft" POSTs a draft through my-requests with the typed fields and no purchasing_response', async () => {
-    mount(LIMITED);
-    await fillBasics();
-    fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
-    await waitFor(() => expect(urls((c) => c.method === 'POST' && c.url === '/api/v1/my-requests/submissions/stock_inquiry')).toHaveLength(1));
-    const body = urls((c) => c.method === 'POST')[0].body as { fields: Record<string, unknown> };
-    expect(body.fields).toMatchObject({ product_code: 'ABC-9', item_description: 'ten boxes' });
-    expect(body.fields).not.toHaveProperty('purchasing_response');
-    expect(urls((c) => c.url.startsWith('/api/v1/procurement/stock-inquiries') && c.method !== 'GET')).toHaveLength(0);
-  });
-
-  it('"Submit" saves the draft then POSTs .../{id}/submit through my-requests', async () => {
-    mount(LIMITED);
-    await fillBasics();
-    await clickThrough(/^Submit/);
-    await waitFor(() =>
-      expect(urls((c) => c.method === 'POST' && /^\/api\/v1\/my-requests\/submissions\/stock_inquiry\/[^/]+\/submit$/.test(c.url))).toHaveLength(1),
-    );
-    expect(urls((c) => c.url.startsWith('/api/v1/procurement/stock-inquiries') && c.method !== 'GET')).toHaveLength(0);
-  });
-
-  it('?from=<id> pre-fills a NEW draft from that submission and saves nothing until asked', async () => {
-    sources['si-9'] = detail({ id: 'si-9', status: 'responded', is_draft: false, is_editable: false, product_code: 'DUP-1', item_description: 'copy me', quantity: '4' });
-    mount(LIMITED, {}, '?from=si-9');
-    await waitFor(() => expect((screen.getByPlaceholderText('Code') as HTMLInputElement).value).toBe('DUP-1'));
-    expect((screen.getByPlaceholderText('Description') as HTMLTextAreaElement).value).toBe('copy me');
-    expect(urls((c) => c.url === '/api/v1/my-requests/submissions/stock_inquiry/si-9' && c.method === 'GET').length).toBeGreaterThan(0);
-    expect(urls((c) => c.method !== 'GET')).toHaveLength(0);
-    fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
-    await waitFor(() => expect(urls((c) => c.method === 'POST' && c.url === '/api/v1/my-requests/submissions/stock_inquiry')).toHaveLength(1));
-  });
-});
-
-describe('limited user, edit', () => {
-  it('a draft row saves through PUT my-requests/submissions/stock_inquiry/{id}', async () => {
-    sources['si-5'] = detail({ id: 'si-5', status: 'draft' });
-    mount(LIMITED, { inquiryId: 'si-5' });
-    fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
-    await waitFor(() => expect(urls((c) => c.method === 'PUT' && c.url === '/api/v1/my-requests/submissions/stock_inquiry/si-5')).toHaveLength(1));
-  });
-
-  it('a rejected row is editable (send-back button available)', async () => {
-    sources['si-5'] = detail({ id: 'si-5', status: 'rejected', is_draft: true });
-    mount(LIMITED, { inquiryId: 'si-5' });
-    expect(await screen.findByRole('button', { name: new RegExp(`^${submitVerb('rejected')}`) })).toBeInTheDocument();
-  });
-
-  it.each(['pending_purchasing', 'responded', 'resubmitted'])('a %s row offers no save or submit when not revising', async (status) => {
-    sources['si-5'] = detail({ id: 'si-5', status, is_draft: false, is_editable: false });
-    mount(LIMITED, { inquiryId: 'si-5' });
-    await screen.findByPlaceholderText('Code');
-    expect(screen.queryByRole('button', { name: 'Save as draft' })).toBeNull();
-    expect(screen.queryByRole('button', { name: /^Submit/ })).toBeNull();
-    expect(screen.queryByRole('button', { name: /Update Stock Inquiry|Update & Reply/ })).toBeNull();
-  });
-
-  it('?revise=1 on a revisable row freezes the requestor picker and Send revision POSTs .../revise', async () => {
-    sources['si-5'] = detail({
-      id: 'si-5',
-      status: 'responded',
-      is_draft: false,
-      is_editable: false,
-      revision: { enabled: true, allowed: true, used: 0, max: 3, remaining: 3, blocked_reason: null },
-    });
-    mount(LIMITED, { inquiryId: 'si-5' }, '?revise=1');
-    await screen.findByPlaceholderText('Code');
-    await waitFor(() => expect(screen.getByTestId('requestor-picker').getAttribute('data-disabled')).toBe('true'));
-    fireEvent.change(await screen.findByPlaceholderText('Code'), { target: { value: 'NEW-2' } });
-    const reason = document.getElementById('revision_reason') ?? screen.getByLabelText(/reason/i);
-    fireEvent.change(reason, { target: { value: 'wrong code' } });
-    await clickThrough(/Send revision/);
-    await waitFor(() => expect(urls((c) => c.method === 'POST' && c.url === '/api/v1/my-requests/submissions/stock_inquiry/si-5/revise')).toHaveLength(1));
-    const body = urls((c) => c.url.endsWith('/revise'))[0].body as Record<string, unknown>;
-    expect(body).toMatchObject({ reason: 'wrong code', expected_revision_no: 0 });
-  });
-});
 
 describe('staff user, /new (control, P4-26)', () => {
   it('keeps the purchasing response, shows no draft buttons, and never touches my-requests', async () => {

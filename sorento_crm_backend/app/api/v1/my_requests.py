@@ -35,6 +35,11 @@ and an application are created with ``.create``, an opportunity with ``.add`` an
 ``.edit``. An application's files ride the generic attachment routes (``_ATTACHMENT_KINDS``), as
 on the portal.
 
+The portal form's own profile and lookups (R1, form parity): ``/me``, ``/lookups/products``,
+``/lookups/debtors``, ``/lookups/projects``, ``/lookups/delivery-orders``, ``/lookups/sets/{key}``
+and the AI extract pair (``register_profile_routes``, ``register_ai_extract_routes``), gated by
+``my_requests_profile_token``: any of the forms above held as ``"own"``.
+
 Price tag requests (S7) are the same: their own portal router (``register_price_tag_routes``),
 created with ``dealer_kit.price_tag_requests.create``. Their files ride the generic attachment
 routes and their revise the generic revision routes (``_REVISION_ROUTES``), as on the portal.
@@ -54,9 +59,11 @@ from typing import Iterable, Iterator, Optional
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
+from app.api.v1.public.ai_extract import register_ai_extract_routes
 from app.api.v1.public.portal import (
     deletable_submission_draft,
     delete_submission_draft,
+    register_profile_routes,
     register_submission_routes,
     removable_attachment_link,
     remove_attachment_link,
@@ -284,6 +291,18 @@ async def my_requests_token(
     return _token_for(request, db, current_user, kinds, write_slug)
 
 
+async def my_requests_profile_token(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PortalToken:
+    """The token of the routes a portal form calls besides its own rows (R1): ``/me``, the
+    lookups and AI extract. They name no form (a lookup's query ``kind`` is a filter, not the
+    form being written), so any MY REQUESTS form held as ``"own"``, its module on, opens them,
+    as any portal contact may call them on the portal."""
+    return _token_for(request, db, current_user, tuple(_KIND_MODULES), None)
+
+
 def _kind_token(kind: str):
     """The token dependency of a kind served by its own portal router (S4, S5, S6, S7)."""
 
@@ -391,4 +410,6 @@ register_new_product_application_routes(
 )
 register_sales_opportunity_routes(sales_opportunity_router, _kind_token("sales_opportunity"))
 register_price_tag_routes(price_tag_router, _kind_token("price_tag_request"))
+register_profile_routes(router, my_requests_profile_token)
+register_ai_extract_routes(router, my_requests_profile_token)
 register_submission_routes(router, my_requests_token)

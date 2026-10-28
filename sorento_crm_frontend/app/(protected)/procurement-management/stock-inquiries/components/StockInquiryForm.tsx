@@ -43,7 +43,7 @@ import {
 import type { StockInquiryFormData } from '../types/stockInquiry.types';
 import StockInquiryAttachmentsSection from './StockInquiryAttachmentsSection';
 import StockInquiryFieldRows from './StockInquiryFieldRows';
-import MyStockInquiryForm from './MyStockInquiryForm';
+import MyRequestPortalForm from '@/components/common/MyRequestPortalForm';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
 import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
@@ -54,12 +54,12 @@ interface StockInquiryFormProps {
 }
 
 /**
- * A salesperson limited to their own rows (PORTAL-P4-REQUESTS) gets their own form, written
- * through My Requests; everyone else the staff form, unchanged.
+ * A salesperson limited to their own rows (PORTAL-P4-REQUESTS R1, form parity) creates and edits
+ * in the portal's own form, written through My Requests; everyone else the staff form, unchanged.
  */
 export default function StockInquiryForm(props: StockInquiryFormProps) {
   const { limited } = useRequestScope('stock_inquiry');
-  if (limited) return <MyStockInquiryForm inquiryId={props.inquiryId} />;
+  if (limited) return <MyRequestPortalForm kind="stock_inquiry" submissionId={props.inquiryId} />;
   return <StaffStockInquiryForm {...props} />;
 }
 

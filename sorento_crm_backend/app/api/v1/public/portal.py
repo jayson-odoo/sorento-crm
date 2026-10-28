@@ -329,7 +329,8 @@ class PortalMeResponse(BaseModel):
     space_id: str
     name: Optional[str]
     phone_number: Optional[str]
-    expires_at: str
+    # None for a CRM session through my-requests (no portal token to expire).
+    expires_at: Optional[str] = None
     portal_slug: Optional[str] = None
     whatsapp_number: Optional[str] = None
     # AC-F4: per-contact sponsorship rollout. The form reads this to decide whether the
@@ -357,68 +358,6 @@ def _sales_agent_name(db: Session, contact_id: str) -> Optional[str]:
 
     agents = _active_agents(db, contact_id)
     return _agent_name(agents[0]) if agents else None
-
-
-@router.get("/me", response_model=PortalMeResponse)
-def portal_me(
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    service = PortalService(db)
-    contact = service.get_contact(token)
-    # Lazily mint the stable slug so even legacy tokens surface a
-    # bookmarkable URL on first /me. Impersonation sessions stay slug-less on
-    # the FE (legacy tree), but the slug itself is harmless to mint.
-    portal_slug = service.get_or_create_slug(contact)
-
-    # Surface admin-impersonation context so the portal can show a banner.
-    from app.models.impersonation import ContactImpersonationSession
-    from app.models.user import User
-
-    impersonation_info: Optional[PortalImpersonationInfo] = None
-    session_row = (
-        db.query(ContactImpersonationSession)
-        .filter(
-            ContactImpersonationSession.portal_token_id == token.id,
-            ContactImpersonationSession.ended_at.is_(None),
-        )
-        .first()
-    )
-    if session_row is not None:
-        admin = (
-            db.query(User)
-            .filter(User.id == session_row.admin_user_id)
-            .first()
-        )
-        impersonation_info = PortalImpersonationInfo(
-            session_id=session_row.id,
-            admin_user_id=session_row.admin_user_id,
-            admin_name=admin.name if admin else None,
-            admin_email=admin.email if admin else None,
-            started_at=session_row.started_at.isoformat(),
-        )
-
-    return PortalMeResponse(
-        contact_id=token.contact_id,
-        space_id=token.space_id,
-        name=contact.name or " ".join(filter(None, [contact.first_name, contact.last_name])).strip() or None,
-        phone_number=contact.phone_number,
-        expires_at=token.expires_at.isoformat(),
-        portal_slug=portal_slug,
-        whatsapp_number=service.whatsapp_number_for_contact(contact),
-        requires_registered_project=bool(
-            getattr(contact, "requires_registered_project", False)
-        ),
-        impersonation=impersonation_info,
-        visible_form_types=sorted(
-            resolve_visible_form_types(db, token.contact_id)
-        ),
-        attachment_allowed_extensions=service.portal_allowed_extensions(),
-        sales_agent_name=_sales_agent_name(db, token.contact_id),
-        crm_user_id=(
-            salesperson_user_id_for_contact(db, contact) if token.is_impersonation else None
-        ),
-    )
 
 
 @router.post("/impersonation/stop")
@@ -491,61 +430,11 @@ class ProductLookupItem(BaseModel):
     list_price: Optional[Decimal] = None
 
 
-@router.get("/lookups/products", response_model=list[ProductLookupItem])
-def lookup_products(
-    q: str = Query("", description="Substring match on code or name"),
-    limit: int = Query(20, ge=1, le=50),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    from app.models.product import Product, ProductCategory
-    query = (
-        db.query(Product, ProductCategory)
-        .outerjoin(ProductCategory, Product.category_id == ProductCategory.id)
-        .filter(Product.is_active.is_(True))
-    )
-    qs = (q or "").strip()
-    if qs:
-        like = f"%{qs}%"
-        query = query.filter((Product.product_code.ilike(like)) | (Product.product_name.ilike(like)))
-    rows = query.order_by(Product.product_code).limit(limit).all()
-    return [
-        ProductLookupItem(
-            product_id=str(p.id) if p.id else None,
-            product_code=p.product_code,
-            product_name=p.product_name,
-            category_id=str(p.category_id) if p.category_id else None,
-            category_code=c.category_code if c else None,
-            category_name=c.category_name if c else None,
-            list_price=flyer_price(p.list_price),
-        )
-        for (p, c) in rows
-    ]
-
-
 class DebtorLookupItem(BaseModel):
     customer_id: str
     debtor_name: str
     customer_code: str
     sales_type: Optional[str] = None
-
-
-@router.get("/lookups/debtors", response_model=list[DebtorLookupItem])
-def lookup_debtors(
-    q: str = Query(""),
-    limit: int = Query(20, ge=1, le=50),
-    kind: Optional[str] = Query(None),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    if kind == "project_registration":
-        # The registration form takes only the agent's own debtors (what the save accepts).
-        from app.services import project_registration_service
-
-        return project_registration_service.portal_debtors(db, token, q, limit)
-    from app.services.debtor_type import lookup_customers
-
-    return lookup_customers(db, q, limit)
 
 
 class ProjectLookupItem(BaseModel):
@@ -562,35 +451,6 @@ class ProjectLookupItem(BaseModel):
     company_name: Optional[str] = None
 
 
-@router.get("/lookups/projects", response_model=list[ProjectLookupItem])
-def lookup_projects(
-    q: str = Query("", description="Substring match on the code or the title"),
-    limit: int = Query(20, ge=1, le=50),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    """Only the projects of the companies this contact is linked to (AC-F4a).
-
-    A contact linked to no company gets an empty list, which the form turns into "ask the
-    Sorento team to link your company" rather than an empty dropdown that looks broken.
-    """
-    from app.services import sponsorship_link_service
-
-    contact = PortalService(db).get_contact(token)
-    rows = sponsorship_link_service.projects_for_contact(
-        db, contact=contact, query=q, limit=limit
-    )
-    return [
-        ProjectLookupItem(
-            id=str(row["id"]),
-            project_code=row["project_code"],
-            title=row["title"],
-            company_name=row["company_name"],
-        )
-        for row in rows
-    ]
-
-
 class DOProductLine(BaseModel):
     product_code: str
     product_name: Optional[str] = None
@@ -604,120 +464,6 @@ class DOLookupItem(BaseModel):
     products: list[str] = []
     product_lines: list[DOProductLine] = []
     order_date: Optional[str] = None
-
-
-@router.get("/lookups/delivery-orders", response_model=list[DOLookupItem])
-def lookup_delivery_orders(
-    q: str = Query(""),
-    limit: int = Query(20, ge=1, le=50),
-    start_date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD) lower bound on order_date"),
-    end_date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD) upper bound on order_date"),
-    product_code: Optional[str] = Query(None, description="Filter to DOs containing this product code (substring)"),
-    debtor_name: Optional[str] = Query(None, description="Filter to DOs whose debtor or customer name matches (substring)"),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    from datetime import date as _date, datetime
-    from sqlalchemy import or_
-    from app.models.order import Customer, Order, OrderLine
-    from app.models.product import Product
-
-    qs = (q or "").strip()
-    base = db.query(Order).outerjoin(Customer, Order.customer_id == Customer.id)
-    if qs:
-        like = f"%{qs}%"
-        product_subq = (
-            db.query(OrderLine.order_id)
-            .join(Product, OrderLine.product_id == Product.id)
-            .filter(Product.product_code.ilike(like))
-        )
-        base = base.filter(
-            or_(
-                Order.order_number.ilike(like),
-                Order.debtor_name.ilike(like),
-                Customer.customer_name.ilike(like),
-                Order.id.in_(product_subq),
-            )
-        )
-    if start_date:
-        try:
-            base = base.filter(Order.order_date >= datetime.fromisoformat(start_date))
-        except ValueError:
-            raise handle_validation_error(f"Invalid start_date: {start_date!r}")
-    if end_date:
-        try:
-            # inclusive upper bound: end of that day
-            end_dt = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
-            base = base.filter(Order.order_date <= end_dt)
-        except ValueError:
-            raise handle_validation_error(f"Invalid end_date: {end_date!r}")
-    if product_code and product_code.strip():
-        like_p = f"%{product_code.strip()}%"
-        product_subq = (
-            db.query(OrderLine.order_id)
-            .join(Product, OrderLine.product_id == Product.id)
-            .filter(Product.product_code.ilike(like_p))
-        )
-        base = base.filter(Order.id.in_(product_subq))
-    if debtor_name and debtor_name.strip():
-        like_d = f"%{debtor_name.strip()}%"
-        base = base.filter(
-            or_(
-                Order.debtor_name.ilike(like_d),
-                Customer.customer_name.ilike(like_d),
-            )
-        )
-    rows = base.order_by(Order.order_date.desc().nullslast(), Order.order_number.desc()).limit(limit).all()
-    out: list[DOLookupItem] = []
-    for o in rows:
-        customer_name = o.customer.customer_name if getattr(o, "customer", None) else None
-        products: list[str] = []
-        product_lines: list[DOProductLine] = []
-        try:
-            from app.models.order import OrderLine as _OrderLine
-            from app.models.product import Product as _Product
-
-            lines = (
-                db.query(_Product.product_code, _Product.product_name, _OrderLine.quantity)
-                .join(_OrderLine, _OrderLine.product_id == _Product.id)
-                .filter(_OrderLine.order_id == o.id)
-                .order_by(_OrderLine.line_sequence.asc())
-                .limit(200)
-                .all()
-            )
-            for code, name, qty in lines:
-                if not code:
-                    continue
-                products.append(code)
-                product_lines.append(
-                    DOProductLine(
-                        product_code=code,
-                        product_name=name,
-                        quantity=float(qty) if qty is not None else None,
-                    )
-                )
-        except Exception:
-            pass
-        od = o.order_date
-        if od is None:
-            order_date_iso = None
-        elif isinstance(od, datetime):
-            order_date_iso = od.date().isoformat()
-        elif isinstance(od, _date):
-            order_date_iso = od.isoformat()
-        else:
-            order_date_iso = str(od)
-        out.append(
-            DOLookupItem(
-                order_number=o.order_number,
-                debtor_name=o.debtor_name,
-                customer_name=customer_name,
-                products=products,
-                product_lines=product_lines,
-                order_date=order_date_iso,
-            )
-        )
-    return out
 
 
 _PORTAL_LOOKUP_SET_WHITELIST = {
@@ -745,33 +491,295 @@ class LookupSetResponse(BaseModel):
     default_value: Optional[str] = None
 
 
-@router.get("/lookups/sets/{set_key}", response_model=LookupSetResponse)
-def lookup_set_options(
-    set_key: str = Path(...),
-    token: PortalToken = Depends(get_portal_token),
-    db: Session = Depends(get_db),
-):
-    if set_key not in _PORTAL_LOOKUP_SET_WHITELIST:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail=f"Lookup set not allowed for portal: {set_key}",
-        )
-    from app.models.lookup import LookupBinding, LookupOption, LookupSet
+def register_profile_routes(router: APIRouter, token_dependency: Callable[..., Any]) -> None:
+    """Register the contact's profile (``/me``) and the form lookups on ``router``.
 
-    s = db.query(LookupSet).filter(LookupSet.set_key == set_key).first()
-    if not s:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lookup set not found")
-    opts = (
-        db.query(LookupOption)
-        .filter(LookupOption.set_id == s.id, LookupOption.is_active.is_(True))
-        .order_by(LookupOption.sort_order)
-        .all()
-    )
-    binding = db.query(LookupBinding).filter(LookupBinding.set_id == s.id).first()
-    return LookupSetResponse(
-        options=[LookupSetOption(value=o.value, label=o.label) for o in opts],
-        default_value=getattr(binding, "default_value", None) if binding else None,
-    )
+    Same split as ``register_submission_routes`` (PORTAL-P4-REQUESTS R1): the portal mounts them
+    below with ``get_portal_token``; ``app/api/v1/my_requests.py`` mounts them on
+    ``/api/v1/my-requests``, so the portal's own form runs inside a CRM page on the same answers.
+    """
+
+    @router.get("/me", response_model=PortalMeResponse)
+    def portal_me(
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        service = PortalService(db)
+        contact = service.get_contact(token)
+        # Lazily mint the stable slug so even legacy tokens surface a
+        # bookmarkable URL on first /me. Impersonation sessions stay slug-less on
+        # the FE (legacy tree), but the slug itself is harmless to mint.
+        portal_slug = service.get_or_create_slug(contact)
+
+        # Surface admin-impersonation context so the portal can show a banner.
+        from app.models.impersonation import ContactImpersonationSession
+        from app.models.user import User
+
+        impersonation_info: Optional[PortalImpersonationInfo] = None
+        session_row = (
+            db.query(ContactImpersonationSession)
+            .filter(
+                ContactImpersonationSession.portal_token_id == token.id,
+                ContactImpersonationSession.ended_at.is_(None),
+            )
+            .first()
+        )
+        if session_row is not None:
+            admin = (
+                db.query(User)
+                .filter(User.id == session_row.admin_user_id)
+                .first()
+            )
+            impersonation_info = PortalImpersonationInfo(
+                session_id=session_row.id,
+                admin_user_id=session_row.admin_user_id,
+                admin_name=admin.name if admin else None,
+                admin_email=admin.email if admin else None,
+                started_at=session_row.started_at.isoformat(),
+            )
+
+        return PortalMeResponse(
+            contact_id=token.contact_id,
+            space_id=token.space_id,
+            name=contact.name or " ".join(filter(None, [contact.first_name, contact.last_name])).strip() or None,
+            phone_number=contact.phone_number,
+            # A my-requests token is transient (``my_requests.portal_token_for``) and never expires.
+            expires_at=token.expires_at.isoformat() if token.expires_at else None,
+            portal_slug=portal_slug,
+            whatsapp_number=service.whatsapp_number_for_contact(contact),
+            requires_registered_project=bool(
+                getattr(contact, "requires_registered_project", False)
+            ),
+            impersonation=impersonation_info,
+            visible_form_types=sorted(
+                resolve_visible_form_types(db, token.contact_id)
+            ),
+            attachment_allowed_extensions=service.portal_allowed_extensions(),
+            sales_agent_name=_sales_agent_name(db, token.contact_id),
+            crm_user_id=(
+                salesperson_user_id_for_contact(db, contact) if token.is_impersonation else None
+            ),
+        )
+
+    @router.get("/lookups/products", response_model=list[ProductLookupItem])
+    def lookup_products(
+        q: str = Query("", description="Substring match on code or name"),
+        limit: int = Query(20, ge=1, le=50),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        from app.models.product import Product, ProductCategory
+        query = (
+            db.query(Product, ProductCategory)
+            .outerjoin(ProductCategory, Product.category_id == ProductCategory.id)
+            .filter(Product.is_active.is_(True))
+        )
+        qs = (q or "").strip()
+        if qs:
+            like = f"%{qs}%"
+            query = query.filter((Product.product_code.ilike(like)) | (Product.product_name.ilike(like)))
+        rows = query.order_by(Product.product_code).limit(limit).all()
+        return [
+            ProductLookupItem(
+                product_id=str(p.id) if p.id else None,
+                product_code=p.product_code,
+                product_name=p.product_name,
+                category_id=str(p.category_id) if p.category_id else None,
+                category_code=c.category_code if c else None,
+                category_name=c.category_name if c else None,
+                list_price=flyer_price(p.list_price),
+            )
+            for (p, c) in rows
+        ]
+
+    @router.get("/lookups/debtors", response_model=list[DebtorLookupItem])
+    def lookup_debtors(
+        q: str = Query(""),
+        limit: int = Query(20, ge=1, le=50),
+        kind: Optional[str] = Query(None),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        if kind == "project_registration":
+            # The registration form takes only the agent's own debtors (what the save accepts).
+            from app.services import project_registration_service
+
+            return project_registration_service.portal_debtors(db, token, q, limit)
+        from app.services.debtor_type import lookup_customers
+
+        return lookup_customers(db, q, limit)
+
+    @router.get("/lookups/projects", response_model=list[ProjectLookupItem])
+    def lookup_projects(
+        q: str = Query("", description="Substring match on the code or the title"),
+        limit: int = Query(20, ge=1, le=50),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        """Only the projects of the companies this contact is linked to (AC-F4a).
+
+        A contact linked to no company gets an empty list, which the form turns into "ask the
+        Sorento team to link your company" rather than an empty dropdown that looks broken.
+        """
+        from app.services import sponsorship_link_service
+
+        contact = PortalService(db).get_contact(token)
+        rows = sponsorship_link_service.projects_for_contact(
+            db, contact=contact, query=q, limit=limit
+        )
+        return [
+            ProjectLookupItem(
+                id=str(row["id"]),
+                project_code=row["project_code"],
+                title=row["title"],
+                company_name=row["company_name"],
+            )
+            for row in rows
+        ]
+
+    @router.get("/lookups/delivery-orders", response_model=list[DOLookupItem])
+    def lookup_delivery_orders(
+        q: str = Query(""),
+        limit: int = Query(20, ge=1, le=50),
+        start_date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD) lower bound on order_date"),
+        end_date: Optional[str] = Query(None, description="ISO date (YYYY-MM-DD) upper bound on order_date"),
+        product_code: Optional[str] = Query(None, description="Filter to DOs containing this product code (substring)"),
+        debtor_name: Optional[str] = Query(None, description="Filter to DOs whose debtor or customer name matches (substring)"),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        from datetime import date as _date, datetime
+        from sqlalchemy import or_
+        from app.models.order import Customer, Order, OrderLine
+        from app.models.product import Product
+
+        qs = (q or "").strip()
+        base = db.query(Order).outerjoin(Customer, Order.customer_id == Customer.id)
+        if qs:
+            like = f"%{qs}%"
+            product_subq = (
+                db.query(OrderLine.order_id)
+                .join(Product, OrderLine.product_id == Product.id)
+                .filter(Product.product_code.ilike(like))
+            )
+            base = base.filter(
+                or_(
+                    Order.order_number.ilike(like),
+                    Order.debtor_name.ilike(like),
+                    Customer.customer_name.ilike(like),
+                    Order.id.in_(product_subq),
+                )
+            )
+        if start_date:
+            try:
+                base = base.filter(Order.order_date >= datetime.fromisoformat(start_date))
+            except ValueError:
+                raise handle_validation_error(f"Invalid start_date: {start_date!r}")
+        if end_date:
+            try:
+                # inclusive upper bound: end of that day
+                end_dt = datetime.fromisoformat(end_date).replace(hour=23, minute=59, second=59)
+                base = base.filter(Order.order_date <= end_dt)
+            except ValueError:
+                raise handle_validation_error(f"Invalid end_date: {end_date!r}")
+        if product_code and product_code.strip():
+            like_p = f"%{product_code.strip()}%"
+            product_subq = (
+                db.query(OrderLine.order_id)
+                .join(Product, OrderLine.product_id == Product.id)
+                .filter(Product.product_code.ilike(like_p))
+            )
+            base = base.filter(Order.id.in_(product_subq))
+        if debtor_name and debtor_name.strip():
+            like_d = f"%{debtor_name.strip()}%"
+            base = base.filter(
+                or_(
+                    Order.debtor_name.ilike(like_d),
+                    Customer.customer_name.ilike(like_d),
+                )
+            )
+        rows = base.order_by(Order.order_date.desc().nullslast(), Order.order_number.desc()).limit(limit).all()
+        out: list[DOLookupItem] = []
+        for o in rows:
+            customer_name = o.customer.customer_name if getattr(o, "customer", None) else None
+            products: list[str] = []
+            product_lines: list[DOProductLine] = []
+            try:
+                from app.models.order import OrderLine as _OrderLine
+                from app.models.product import Product as _Product
+
+                lines = (
+                    db.query(_Product.product_code, _Product.product_name, _OrderLine.quantity)
+                    .join(_OrderLine, _OrderLine.product_id == _Product.id)
+                    .filter(_OrderLine.order_id == o.id)
+                    .order_by(_OrderLine.line_sequence.asc())
+                    .limit(200)
+                    .all()
+                )
+                for code, name, qty in lines:
+                    if not code:
+                        continue
+                    products.append(code)
+                    product_lines.append(
+                        DOProductLine(
+                            product_code=code,
+                            product_name=name,
+                            quantity=float(qty) if qty is not None else None,
+                        )
+                    )
+            except Exception:
+                pass
+            od = o.order_date
+            if od is None:
+                order_date_iso = None
+            elif isinstance(od, datetime):
+                order_date_iso = od.date().isoformat()
+            elif isinstance(od, _date):
+                order_date_iso = od.isoformat()
+            else:
+                order_date_iso = str(od)
+            out.append(
+                DOLookupItem(
+                    order_number=o.order_number,
+                    debtor_name=o.debtor_name,
+                    customer_name=customer_name,
+                    products=products,
+                    product_lines=product_lines,
+                    order_date=order_date_iso,
+                )
+            )
+        return out
+
+    @router.get("/lookups/sets/{set_key}", response_model=LookupSetResponse)
+    def lookup_set_options(
+        set_key: str = Path(...),
+        token: PortalToken = Depends(token_dependency),
+        db: Session = Depends(get_db),
+    ):
+        if set_key not in _PORTAL_LOOKUP_SET_WHITELIST:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Lookup set not allowed for portal: {set_key}",
+            )
+        from app.models.lookup import LookupBinding, LookupOption, LookupSet
+
+        s = db.query(LookupSet).filter(LookupSet.set_key == set_key).first()
+        if not s:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Lookup set not found")
+        opts = (
+            db.query(LookupOption)
+            .filter(LookupOption.set_id == s.id, LookupOption.is_active.is_(True))
+            .order_by(LookupOption.sort_order)
+            .all()
+        )
+        binding = db.query(LookupBinding).filter(LookupBinding.set_id == s.id).first()
+        return LookupSetResponse(
+            options=[LookupSetOption(value=o.value, label=o.label) for o in opts],
+            default_value=getattr(binding, "default_value", None) if binding else None,
+        )
+
+
+register_profile_routes(router, get_portal_token)
 
 
 class RequestorOption(BaseModel):

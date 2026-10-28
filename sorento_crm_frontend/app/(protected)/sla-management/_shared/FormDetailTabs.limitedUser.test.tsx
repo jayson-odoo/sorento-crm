@@ -103,11 +103,13 @@ describe('complaint page', () => {
     wrap(inner);
   }
 
-  it('limited user: no Fulfilment DOs tab', async () => {
+  it('limited user: no Fulfilment DOs tab, and no outer tab strip (R1: the portal form carries its own)', async () => {
     held = new Set(['complaint_management.complaints.view_own']);
     await mountPage();
-    await waitFor(() => expect(tabs()).toContain('Details'));
-    expect(tabs()).not.toContain('Fulfilment DOs');
+    await new Promise((r) => setTimeout(r, 50));
+    const names = screen.queryAllByRole('tab').map((t) => t.textContent);
+    expect(names).not.toContain('Fulfilment DOs');
+    expect(names).not.toContain('Details');
   });
 
   it('staff: Fulfilment DOs tab stays', async () => {

@@ -180,7 +180,8 @@ beforeEach(() => {
 describe('Audit Trail for a limited user (PORTAL-P4-REQUESTS)', () => {
   it('limited user: no Audit Trail section (the portal has none; /audit/logs answers 403)', async () => {
     mount(LIMITED);
-    await screen.findAllByText(/CMP-2026-0001/);
+    // R1: their page is the portal's own form, loaded through my-requests.
+    await waitFor(() => expect(apiCalls.some((c) => c.url.startsWith('/api/v1/my-requests/submissions/complaint/'))).toBe(true));
     expect(screen.queryByTestId('audit-trail')).toBeNull();
   });
 
@@ -194,7 +195,7 @@ describe('Audit Trail for a limited user (PORTAL-P4-REQUESTS)', () => {
 describe('SLA by-source read (PORTAL-P4-REQUESTS)', () => {
   it('limited user: getFormSLATrackers (conversation-sla-tracking/by-source) is never called', async () => {
     mount(LIMITED);
-    await screen.findAllByText(/CMP-2026-0001/);
+    await waitFor(() => expect(apiCalls.some((c) => c.url.startsWith('/api/v1/my-requests/submissions/complaint/'))).toBe(true));
     await new Promise((r) => setTimeout(r, 100));
     expect(slaSpy).not.toHaveBeenCalled();
   });
