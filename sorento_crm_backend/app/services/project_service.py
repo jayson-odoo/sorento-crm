@@ -741,8 +741,16 @@ def serialize_projects(
 
     # The customer is the lead's buyer (owner, 13 Oct): the Overview shows it and the
     # quotation header defaults its name, phone and Attn from it. Bulk like the rest.
-    # The customer is the one picked on the register form (sales_profile.customer_id).
-    customers = _customers_for(db, [pr.customer_id for pr in profiles.values() if pr.customer_id])
+    # The customer is the one picked on the register form (sales_profile.customer_id);
+    # where none was, the linked lead's buyer.
+    def _effective_customer_id(project_row):
+        pr = profiles.get(project_row.id)
+        if pr and pr.customer_id:
+            return pr.customer_id
+        lead = leads.get(project_row.lead_id) if project_row.lead_id else None
+        return getattr(lead, "customer_id", None)
+
+    customers = _customers_for(db, [_effective_customer_id(p) for p in projects])
     # The phone and the main contact are the customer master's, which sits behind its own
     # grant; a project reader without it sees the buyer's name only (security review, 13 Oct).
     can_see_customer_contact = CUSTOMERS_VIEW_PERMISSION in permissions
@@ -821,7 +829,7 @@ def serialize_projects(
                     else None
                 ),
                 **_customer_fields(
-                    customers.get(profile.customer_id) if profile and profile.customer_id else None,
+                    customers.get(_effective_customer_id(project)),
                     with_contact=can_see_customer_contact,
                 ),
                 "status_id": project.status_id,

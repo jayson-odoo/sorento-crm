@@ -285,7 +285,9 @@ export function ProjectForm(props: ProjectFormProps) {
       launch_date: launchDate || null,
       expected_delivery_from: deliveryFrom || null,
       expected_delivery_to: deliveryTo || null,
-      customer_id: customerId || null,
+      ...(mode === 'create' || customerId !== (project?.customer_id ?? '')
+        ? { customer_id: customerId || null }
+        : {}),
       lead_id: leadId || null,
     };
   }

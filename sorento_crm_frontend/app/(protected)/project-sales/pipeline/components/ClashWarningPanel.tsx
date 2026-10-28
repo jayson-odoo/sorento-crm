@@ -40,7 +40,7 @@ export function ClashWarningPanel({
   const context = candidates.filter((candidate) => !candidate.blocks);
 
   return (
-    <div className="space-y-2" aria-live="polite">
+    <div className="w-full min-w-0 max-w-full space-y-2 overflow-hidden" aria-live="polite">
       {blocking.map((candidate) => (
         <ClashLine
           key={candidate.project_id}
@@ -75,8 +75,8 @@ function ClashLine({
     <div
       className={
         tone === 'blocking'
-          ? 'flex items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2'
-          : 'flex items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2'
+          ? 'flex w-full min-w-0 items-center gap-2 rounded-lg border border-destructive/40 bg-destructive/5 px-3 py-2'
+          : 'flex w-full min-w-0 items-center gap-2 rounded-lg border border-border bg-muted/40 px-3 py-2'
       }
     >
       <Icon
@@ -98,7 +98,7 @@ function ClashLine({
         <span className="min-w-0 truncate" title={candidate.title}>
           {candidate.title}
         </span>
-        {candidate.outcome !== 'open' && (
+        {candidate.outcome && candidate.outcome !== 'open' && (
           <Badge variant="secondary" className="shrink-0 capitalize">
             {candidate.outcome}
           </Badge>

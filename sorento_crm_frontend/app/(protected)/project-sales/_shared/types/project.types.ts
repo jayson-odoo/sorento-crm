@@ -272,7 +272,7 @@ export interface ClashCandidate {
   project_id: string;
   project_code: string;
   title: string;
-  outcome: ProjectOutcome;
+  outcome?: ProjectOutcome;
   status_label?: string | null;
   owner_user_id?: string | null;
   owner_name?: string | null;
