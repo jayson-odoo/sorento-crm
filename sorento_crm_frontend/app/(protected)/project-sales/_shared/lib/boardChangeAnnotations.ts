@@ -64,7 +64,7 @@ export interface BoardChangeSide {
  * "changed" cannot come to mean two things on one screen.
  */
 export interface BoardChangeField {
-  key: 'qty' | 'date' | 'decision';
+  key: 'product' | 'qty' | 'date' | 'decision';
   label: string;
   /** Both empty on a field that is a STATEMENT rather than a move: a cancelled line. */
   from: string;
@@ -168,7 +168,10 @@ export function shortDay(value: string | null | undefined): string {
  * ("Release 50 to dealer pool", "Reallocate PO-B 84 to dealer pool").
  */
 export function changedFieldsOf(
-  annotation: Pick<BoardChangeAnnotation, 'was' | 'now' | 'closed'>,
+  annotation: Pick<
+    BoardChangeAnnotation,
+    'was' | 'now' | 'closed' | 'itemCode' | 'productChangedFrom'
+  >,
 ): BoardChangeField[] {
   const { was, now, closed } = annotation;
   if (closed) {
@@ -190,6 +193,11 @@ export function changedFieldsOf(
       to: to || 'Not stated',
     });
   };
+  // PRODUCT-CHANGE-TALLY (owner, 28 Oct 2026): a product AutoCount swapped in place is the
+  // first row, Was the old code and Now the line's own (new) code, as the Order Inquiry
+  // email's ITEM CODE / NEW ITEM CODE print it.
+  const productFrom = annotation.productChangedFrom ?? '';
+  push('product', 'Product', productFrom, productFrom ? annotation.itemCode : '');
   push('qty', 'Qty', was.qty ?? '', now.qty ?? '');
   push('date', 'Date', shortDay(was.date), shortDay(now.date));
   push('decision', 'Decision', was.decision ?? '', now.decision ?? '');
