@@ -58,6 +58,14 @@ asserted on the board walk instead (`test_board_no_hold.py` 7 / 7b, `test_borrow
 `test_stock_debt_stale_pin.py`, `test_stock_debt_routes.py`, `test_stock_debt_walk_once.py`,
 `test_stock_debt_projection_linked_only.py`).
 
+## Measured reach (dev copy 20 Oct, read-only, crew 28 Oct)
+
+The SQL below as written: 104 lines / 3,740 qty (brw 90 / 3,496, other_location 12 / 229, own 2 / 15).
+Tighter bound, summing `held_qty_expr` (caps at what the line still owes, cancelled = 0) instead of raw
+`a.qty`: **62 lines / 2,475 qty** still owe anything and can flip (brw to a site pool 54 / 2,253;
+other_location to another group 4 / 202; other_location to a site pool 2 / 5; own to a site pool 2 / 15).
+The other 42 are delivered or cancelled and cannot flip. 62 / 2,475 is the upper bound.
+
 ## Count SQL (dev clone, read-only)
 
 Upper bound on Stock Debt view lines whose reach changes: open lines whose live confirmed plan names a
