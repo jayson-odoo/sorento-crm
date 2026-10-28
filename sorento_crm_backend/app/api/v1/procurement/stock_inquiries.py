@@ -425,9 +425,9 @@ async def create_stock_inquiry(
                         inquiry_id=str(inquiry.id),
                         agent_code="lead_time_enquiries",
                         team_assignment_code="project_sales",
-                        title="Stock Inquiry updated (appealed)",
-                        intro_plain="Dear Project Sales Team,\n\nA previously rejected stock inquiry has been updated and appealed for your review.",
-                        intro_html="Dear Project Sales Team,<br /><br />A previously rejected stock inquiry has been updated and appealed for your review.",
+                        title="Stock inquiry appealed",
+                        intro_plain="Dear Project Sales Team,\n\nA previously rejected stock inquiry has been edited and appealed, and requires your review.",
+                        intro_html="Dear Project Sales Team,<br /><br />A previously rejected stock inquiry has been edited and appealed, and requires your review.",
                         event_type="resubmitted",
                     )
                 else:

@@ -48,12 +48,14 @@ function collectChangeLines(
   if (entry.action === 'INSERT') return [{ text: childName ? `${childName} added` : 'Record created' }];
   if (entry.action === 'DELETE') return [{ text: childName ? `${childName} removed` : 'Record deleted' }];
   const summary = entry.description?.trim() || '';
-  if (entry.action !== 'UPDATE') return [{ text: summary || entry.action }];
+  // Only a status move is reworded: an undo row's summary quotes the reason as typed.
+  const statusMove = /^(status|approval_status|order_status)(:|\s+changed to)\s/i.test(summary);
+  if (entry.action !== 'UPDATE') {
+    return [{ text: (own && statusMove ? appealWording(summary) : summary) || entry.action }];
+  }
   const prefix = childName ? `${childName}: ` : '';
   // A past resubmit's "rejected → submitted" reads as what it is called today.
   const resubmit = heading === 'Appealed' ? resubmittedSummary(summary) : summary;
-  // Only a status move is reworded: an undo row's summary quotes the reason as typed.
-  const statusMove = /^(status|approval_status|order_status)(:|\s+changed to)\s/i.test(summary);
   const shown = own && statusMove ? appealWording(resubmit) : resubmit;
   const lines: ChangeLine[] = summary ? [{ text: `${prefix}${shown}` }] : [];
   for (const change of auditFieldChanges(entry.old_values, entry.new_values)) {

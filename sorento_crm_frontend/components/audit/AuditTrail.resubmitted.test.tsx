@@ -352,4 +352,18 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
       'Undo: customer resubmitted the wrong photos (reversed approve)',
     );
   });
+
+  it('a row of another action that sets the status (a create) also reads appealed', () => {
+    mockHistory([
+      entry({
+        action: 'CREATE',
+        entity_type: 'stock_inquiry',
+        description: 'status: ∅ → resubmitted',
+        new_values: { status: 'resubmitted' },
+      }),
+    ]);
+    renderTrail('stock_inquiry');
+
+    expect(rowsOldestFirst()[0].lines).toEqual(['status: ∅ → appealed']);
+  });
 });

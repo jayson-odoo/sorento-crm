@@ -6274,7 +6274,7 @@ class StockInquiryService:
                 if existing.status != "rejected":
                     raise handle_validation_error(
                         f"Inquiry number {lookup!r} already exists with status {existing.status!r}. "
-                        "Use inquiry_number only to resubmit a rejected inquiry."
+                        "Use inquiry_number only to appeal a rejected inquiry."
                     )
                 # For update, enforce completion against merged existing+incoming values
                 # BEFORE asking for explicit confirmation.
@@ -8364,7 +8364,7 @@ class PurchaseRequestService:
                     raise handle_validation_error(
                         f"Request number {lookup!r} already exists with approval_status "
                         f"{getattr(existing, 'approval_status', None)!r}. "
-                        "Use request_number only to resubmit a rejected request."
+                        "Use request_number only to appeal a rejected request."
                     )
                 self._require_complete_external_request_submission(payload, existing=existing)
                 if getattr(payload, "user_confirmed", None) is not True:

@@ -102,7 +102,7 @@ const STATUS_KEYS = ['status', 'approval_status', 'order_status'];
 // rejected into one of them is a resubmission, whenever it was written.
 const REVIEW_STAGES = new Set(['pending_project_sales', 'pending', 'pending_approval']);
 // Status-engine records carry the labels only in the summary: "Status: Rejected → Submitted".
-const SUMMARY_RESUBMIT = /\brejected\s*→\s*(re)?submitted\b/i;
+const SUMMARY_RESUBMIT = /\brejected\s*→\s*((re)?submitted|appealed)\b/i;
 const SUMMARY_REJECT = /→\s*rejected\s*$/i;
 // "Status: Draft → Submitted" / "Status changed to Submitted": the label the record moved to.
 const SUMMARY_STATUS_TO = /^Status(?::.*→|\s+changed to)\s*(.+)$/;

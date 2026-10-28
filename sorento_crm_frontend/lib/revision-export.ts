@@ -58,7 +58,7 @@ export function revisionDocumentNumber(
  * the same rule `_entry_filename_marker` applies to the PDF.
  *
  * Always present, exactly one of three: `original` for the version-0 entry
- * (whose own number is the bare one), `resubmitted-v<N>` for a resubmission
+ * (whose own number is the bare one), `appealed-v<N>` for a resubmission
  * (which carries the record's CURRENT revision number, since an office reject
  * never burns a revision, UAC C4), and `as-submitted` for any other revision.
  *
