@@ -16,6 +16,8 @@ import {
 } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { formatDateInMalaysia } from '@/lib/helpers';
 import {
   useCollaborators,
   useTakeoverMutations,
@@ -23,6 +25,7 @@ import {
 } from '../../_shared/hooks/useProjects';
 import type { Project } from '../../_shared/types/project.types';
 import { isProjectApproved } from '../../_shared/lib/projectApproval';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
 
 /**
  * Who may work this project, and the recorded history of how that was decided.
@@ -36,9 +39,17 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
   const collaborators = useCollaborators(project.id);
   const requests = useTakeoverRequests(project.id);
   const { decide } = useTakeoverMutations(project.id);
+  const canManage = useHasPermission('projects.projects.manage');
   const [requesting, setRequesting] = React.useState<'join' | 'dispute' | null>(null);
 
-  const pending = (requests.data ?? []).filter((request) => request.status === 'pending');
+  // An interest is the existing dispute request, shown to everyone; join requests stay
+  // under Open requests for the owner to rule on.
+  const interested = (requests.data ?? []).filter(
+    (request) => request.status === 'pending' && request.kind === 'dispute',
+  );
+  const pending = (requests.data ?? []).filter(
+    (request) => request.status === 'pending' && request.kind !== 'dispute',
+  );
   const decided = (requests.data ?? []).filter((request) => request.status !== 'pending');
 
   return (
@@ -83,11 +94,59 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                   Ask to join
                 </Button>
                 <Button type="button" size="sm" variant="ghost" onClick={() => setRequesting('dispute')}>
-                  Dispute
+                  Register interest
                 </Button>
               </div>
             </div>
           )}
+
+          <div>
+            <p className="text-xs text-muted-foreground">Interested</p>
+            {interested.length === 0 ? (
+              <p className="text-sm text-muted-foreground">-</p>
+            ) : (
+              <ul className="mt-1 space-y-2">
+                {interested.map((request) => (
+                  <li key={request.id} className="rounded-md border border-border p-2.5">
+                    <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                      <span className="text-sm font-medium">
+                        {request.requester_name ?? 'Someone'}
+                      </span>
+                      {request.created_at && (
+                        <span className="text-xs text-muted-foreground">
+                          {formatDateInMalaysia(request.created_at)}
+                        </span>
+                      )}
+                    </div>
+                    <p className="mt-1 break-words text-sm text-muted-foreground">
+                      {request.reason}
+                    </p>
+                    {canManage && (
+                      <div className="mt-2 flex flex-wrap gap-2">
+                        <Button
+                          type="button"
+                          size="sm"
+                          disabled={decide.isPending}
+                          onClick={() => decide.mutate({ id: request.id, approve: true })}
+                        >
+                          Reassign to {request.requester_name ?? 'requester'}
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          disabled={decide.isPending}
+                          onClick={() => decide.mutate({ id: request.id, approve: false })}
+                        >
+                          Dismiss
+                        </Button>
+                      </div>
+                    )}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
 
           <div>
             <p className="text-xs text-muted-foreground">Open requests</p>
@@ -98,9 +157,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                 {pending.map((request) => (
                   <li key={request.id} className="rounded-md border border-border p-2.5">
                     <div className="flex flex-wrap items-center gap-1.5">
-                      <Badge variant={request.kind === 'dispute' ? 'destructive' : 'secondary'}>
-                        {request.kind === 'dispute' ? 'Dispute' : 'Join request'}
-                      </Badge>
+                      <Badge variant="secondary">Join request</Badge>
                       <span className="text-sm font-medium">
                         {request.requester_name ?? 'Someone'}
                       </span>
@@ -149,7 +206,7 @@ export function ProjectAccessPanel({ project }: { project: Project }) {
                         {request.status}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
-                        {request.kind === 'dispute' ? 'Dispute' : 'Join'} by{' '}
+                        {request.kind === 'dispute' ? 'Interest' : 'Join'} by{' '}
                         {request.requester_name ?? 'someone'}
                         {request.decided_by_name ? ` · decided by ${request.decided_by_name}` : ''}
                       </span>
@@ -198,7 +255,9 @@ function RequestDialog({
     <Dialog open onOpenChange={(next) => !next && onDone()}>
       <DialogContent className="max-h-[92vh] w-full max-w-lg overflow-hidden">
         <DialogHeader>
-          <DialogTitle>{isJoin ? 'Ask to join this project' : 'Dispute this project'}</DialogTitle>
+          <DialogTitle>
+            {isJoin ? 'Ask to join this project' : `Register interest in ${projectCodeLabel(project)}`}
+          </DialogTitle>
           <DialogDescription>
             {isJoin
               ? `${project.owner_name ?? 'The owner'} decides. On approval you get edit rights.`
@@ -216,7 +275,8 @@ function RequestDialog({
           <DialogBody className="max-h-[60vh] overflow-y-auto">
             <div className="space-y-1.5">
               <Label htmlFor="access-reason">
-                Reason <span className="text-destructive">*</span>
+                {isJoin ? 'Reason' : 'How and when did you find this project?'}{' '}
+                <span className="text-destructive">*</span>
               </Label>
               <Textarea
                 id="access-reason"
@@ -237,7 +297,7 @@ function RequestDialog({
               Cancel
             </Button>
             <Button type="submit" disabled={!reason.trim() || request.isPending}>
-              {isJoin ? 'Send request' : 'Raise dispute'}
+              {isJoin ? 'Send request' : 'Register interest'}
             </Button>
           </DialogFooter>
         </form>

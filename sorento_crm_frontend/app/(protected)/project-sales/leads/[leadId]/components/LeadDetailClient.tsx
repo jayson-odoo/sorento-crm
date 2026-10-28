@@ -2,6 +2,7 @@
 
 import * as React from 'react';
 import Link from 'next/link';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import type { ColumnDef } from '@tanstack/react-table';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useSession } from 'next-auth/react';
@@ -243,7 +244,9 @@ export function LeadDetailClient({ leadId }: { leadId: string }) {
             <LeadStatusPill statusKey={lead.status_key} label={lead.status_label} />
             {!lead.can_edit && <Badge variant="secondary">Read only</Badge>}
           </div>
-          <h2 className="mt-1 text-xl font-semibold">{lead.title}</h2>
+          <h2 className="mt-1 text-xl font-semibold">
+            <TruncatedTextCell text={lead.title} lines={2} dialogTitle="Lead title" />
+          </h2>
           <p className="text-sm text-muted-foreground">
             {[lead.developer_name, lead.location].filter(Boolean).join(' · ') || '-'}
           </p>

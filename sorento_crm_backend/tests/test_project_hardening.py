@@ -574,7 +574,7 @@ def test_one_failing_recipient_does_not_silence_the_rest_of_management(seeded, m
         notification_module, "NotificationService", _FlakyNotifications
     )
     monkeypatch.setattr(
-        notify, "management_user_ids", lambda _db: [good_one, bad, good_two]
+        notify, "management_user_ids", lambda _db, _company=None: [good_one, bad, good_two]
     )
 
     sent = notify.notify_floor_breach(

@@ -110,9 +110,7 @@ function buildProjectParams(params: ProjectListParams): string {
   if (params.limit) sp.set('limit', String(params.limit));
   if (params.sort) sp.set('sort', params.sort);
   if (params.dir) sp.set('dir', params.dir);
-  (
-    ['status_id', 'outcome', 'owner_user_id', 'developer_party_id', 'type_id', 'brand_id'] as const
-  ).forEach((key) => {
+  (['status_id', 'outcome', 'owner_user_id', 'developer_party_id', 'type_id'] as const).forEach((key) => {
     (params[key] ?? []).forEach((value) => sp.append(key, value));
   });
   const query = sp.toString();
@@ -201,6 +199,65 @@ export async function registerProject(body: ProjectRegisterBody): Promise<Projec
   if (!response.ok)
     throw new Error(await extractApiError(response, 'Failed to register the project'));
   return response.json();
+}
+
+/** Submits the user's own draft or rejected registration for approval (J1, J5). */
+export async function submitProject(projectId: string): Promise<Project> {
+  const response = await apiFetch(`${BASE}/projects/${projectId}/submit`, { method: 'POST' });
+  if (!response.ok)
+    throw new Error(await extractApiError(response, 'Failed to submit the registration'));
+  return response.json();
+}
+
+/** One proposal per field from the register form's AI extract (PROJECT-REGISTER-V2 C3). */
+export type ProjectExtractProposal = {
+  status: 'match' | 'new' | 'not_found';
+  id?: string;
+  name?: string;
+  value?: string;
+};
+
+export type ProjectExtractFieldKey =
+  | 'developer'
+  | 'architect'
+  | 'main_contractor'
+  | 'project_type'
+  | 'state'
+  | 'mukim'
+  | 'title'
+  | 'customer';
+
+/** The backend sends title and mukim as plain strings, the rest as proposal objects. */
+export type ProjectExtractResult = Partial<
+  Record<ProjectExtractFieldKey, ProjectExtractProposal | string>
+>;
+
+/** `text` is the title box text; `files` are photos. Writes nothing on the server (C4). */
+export async function aiExtractProject(
+  text: string | null,
+  files: File[],
+): Promise<ProjectExtractResult> {
+  const form = new FormData();
+  if (text) form.set('text', text);
+  for (const file of files) form.append('files', file, file.name);
+  const response = await apiFetch(`${BASE}/projects/ai-extract`, { method: 'POST', body: form });
+  if (!response.ok) throw new Error(await extractApiError(response, 'AI extract failed.'));
+  return response.json();
+}
+
+/** Customers by name for the register form's Customer picker (A3): name only, no code. */
+export async function listCustomerOptions(
+  query: string,
+): Promise<{ value: string; label: string }[]> {
+  const sp = new URLSearchParams({ limit: '20' });
+  if (query.trim()) sp.set('query', query.trim());
+  const response = await apiFetch(`/api/v1/order-management/customers/select?${sp.toString()}`);
+  if (!response.ok) throw new Error(await extractApiError(response, 'Failed to load customers'));
+  const body = (await response.json()) as { data?: { id: string; customer_name: string }[] };
+  return (body.data ?? []).map((customer) => ({
+    value: customer.id,
+    label: customer.customer_name,
+  }));
 }
 
 export async function updateProject(
@@ -393,14 +450,18 @@ export async function listParties(
   return response.json();
 }
 
-export async function createParty(body: ProjectPartyBody): Promise<ProjectParty> {
+/** A 200 answer means the party already existed for that type (B4); 201 means it was created. */
+export async function createParty(
+  body: ProjectPartyBody,
+): Promise<ProjectParty & { already_existed?: boolean }> {
   const response = await apiFetch(`${BASE}/parties/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to create the party'));
-  return response.json();
+  const party = (await response.json()) as ProjectParty;
+  return { ...party, already_existed: response.status === 200 };
 }
 
 export async function updateParty(
