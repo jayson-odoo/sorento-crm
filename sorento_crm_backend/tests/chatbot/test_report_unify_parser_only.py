@@ -558,8 +558,7 @@ def test_b2b_a_fresh_delivered_sales_report_under_the_kind_question_is_not_the_k
     bot.say(_bare_outstanding(), "outstanding")
     text, calls = bot.say(_status("sales_report", basis="delivered"), "total sales this year")
     _no_kind_question_or_basis_refusal(text)
-    if calls:
-        assert _only_report_ask(calls)["basis"] == "delivered", calls
+    assert _only_report_ask(calls)["basis"] == "delivered", calls
 
 
 def test_b2c_an_invoiced_parse_binding_a_customer_under_the_kind_question_is_never_the_kind_question_or_a_run_without_the_customer(bot) -> None:
@@ -571,9 +570,7 @@ def test_b2c_an_invoiced_parse_binding_a_customer_under_the_kind_question_is_nev
     )
     text, calls = bot.say(reply, "invoiced for that customer")
     _no_kind_question_or_basis_refusal(text)
-    if calls:
-        args = _only_report_ask(calls)
-        assert args["basis"] == "invoiced" and args.get("customer_ids") == [bot.ids["customer"]], args
+    assert calls == [], calls
 
 
 def test_b4_a_kind_pick_by_position_that_also_binds_a_customer_runs_for_that_customer_never_the_whole_scope(bot) -> None:
@@ -589,3 +586,47 @@ def test_b4_a_kind_pick_by_position_that_also_binds_a_customer_runs_for_that_cus
     text, calls = bot.say(reply, "the invoices one for that customer")
     args = _only_report_ask(calls)
     assert args["basis"] == "unpaid" and args.get("customer_ids") == [bot.ids["customer"]], args
+
+
+# ---------------------------------------------------------------- B5: the kind under the kind question, with a subject
+
+
+def _kind_with_customer(bot, *, declared=None, positions=(), basis=None):
+    text, calls = bot.say(_bare_outstanding(), "outstanding")
+    low = text.lower()
+    assert low.index("undelivered orders") < low.index("pending delivery") < low.index("unpaid invoices"), text
+    extra = {"basis": basis} if basis else {}
+    reply = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, by_words=None,
+        reference_positions=list(positions), entities=[_e(CUSTOMER_NAME, "customer")],
+        open_question_answer=declared, **extra,
+    )
+    return bot.say(reply, "that one for that customer")
+
+
+def _pick(*positions: int) -> dict[str, Any]:
+    return {"mode": "pick", "picked": list(positions), "items": [], "qty_for_all": None}
+
+
+def test_p1_a_declared_pick_with_a_customer_and_no_positions_runs_that_kind_for_the_customer(bot) -> None:
+    text, calls = _kind_with_customer(bot, declared=_pick(3))
+    args = _only_report_ask(calls)
+    assert args["basis"] == "unpaid" and args.get("customer_ids") == [bot.ids["customer"]], args
+
+
+def test_p2_the_declared_pick_wins_over_reference_positions(bot) -> None:
+    text, calls = _kind_with_customer(bot, declared=_pick(2), positions=[3])
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery" and args.get("customer_ids") == [bot.ids["customer"]], args
+
+
+def test_p6_a_declared_cancel_is_honoured_over_reference_positions(bot) -> None:
+    cancel = {"mode": "cancel", "picked": [], "items": [], "qty_for_all": None}
+    text, calls = _kind_with_customer(bot, declared=cancel, positions=[2])
+    assert not [n for n, a in calls if n == "crm_report_ask"], (calls, text)
+
+
+def test_p3_the_parsers_offered_kind_basis_wins_over_reference_positions(bot) -> None:
+    text, calls = _kind_with_customer(bot, positions=[1], basis="pending_delivery")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery" and args.get("customer_ids") == [bot.ids["customer"]], args
