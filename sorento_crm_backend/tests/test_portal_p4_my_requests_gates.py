@@ -41,12 +41,13 @@ def test_no_linked_contact_is_403(scene, kind):
 def test_staff_view_holder_is_403_even_with_a_contact(scene, kind):
     _mounted(scene)
     spec = s.SPECS[kind]
-    staff = s.make_user(scene.db, perms=[spec.view, spec.view_own, spec.add], contact=scene.contact, name="ZZT Staff")
+    c, portal = s.own_contact(scene)
+    staff = s.make_user(scene.db, perms=[spec.view, spec.view_own, spec.add], contact=c, name="ZZT Staff")
     api = s.my_api(scene, staff)
-    resp = api.create(kind, spec.body(scene))
+    resp = api.create(kind, spec.body(scene, contact=c))
     assert resp.status_code == 403, resp.text
     s.not_a_missing_route(resp)
-    sid = s.ok(scene.portal.create(kind, spec.body(scene))).json()["id"]
+    sid = s.ok(portal.create(kind, spec.body(scene, contact=c))).json()["id"]
     assert api.get(kind, sid).status_code == 403
     assert api.submit(kind, sid).status_code == 403
 
@@ -55,20 +56,22 @@ def test_staff_view_holder_is_403_even_with_a_contact(scene, kind):
 def test_create_without_add_is_403_but_reading_own_works(scene, kind):
     _mounted(scene)
     spec = s.SPECS[kind]
-    reader = s.make_user(scene.db, perms=[spec.view_own], contact=scene.contact, name="ZZT Reader")
+    c, portal = s.own_contact(scene)
+    reader = s.make_user(scene.db, perms=[spec.view_own], contact=c, name="ZZT Reader")
     api = s.my_api(scene, reader)
-    resp = api.create(kind, spec.body(scene))
+    resp = api.create(kind, spec.body(scene, contact=c))
     assert resp.status_code == 403, resp.text
     s.not_a_missing_route(resp)
-    sid = s.ok(scene.portal.create(kind, spec.body(scene))).json()["id"]
+    sid = s.ok(portal.create(kind, spec.body(scene, contact=c))).json()["id"]
     assert api.get(kind, sid).status_code == 200
 
 
 def test_another_kinds_slugs_do_not_open_this_kind(scene):
     _mounted(scene)
-    only_si = s.make_user(scene.db, perms=s.sp_perms(SI), contact=scene.contact, name="ZZT SI only")
+    c, _ = s.own_contact(scene)
+    only_si = s.make_user(scene.db, perms=s.sp_perms(SI), contact=c, name="ZZT SI only")
     api = s.my_api(scene, only_si)
-    s.ok(api.create("stock_inquiry", SI.body(scene)))
+    s.ok(api.create("stock_inquiry", SI.body(scene, contact=c)))
     resp = api.create("complaint", CX.body(scene))
     assert resp.status_code == 403, resp.text
     s.not_a_missing_route(resp)
@@ -77,9 +80,10 @@ def test_another_kinds_slugs_do_not_open_this_kind(scene):
 @pytest.mark.parametrize("kind", ["sample_request", "price_tag_request", "no_such_kind"])
 def test_kinds_outside_the_four_are_404(scene, kind):
     _mounted(scene)
+    c, _ = s.own_contact(scene)
     everything = s.make_user(
         scene.db, perms=s.sp_perms(*s.SPECS.values()) + ["projects.sample_requests.view_own"],
-        contact=scene.contact, name="ZZT Everything",
+        contact=c, name="ZZT Everything",
     )
     api = s.my_api(scene, everything)
     resp = api.create(kind, {"fields": {}})

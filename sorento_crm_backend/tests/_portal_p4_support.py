@@ -335,7 +335,7 @@ def make_user(db, *, perms=(), roles=(), contact=None, name="ZZT User") -> Actor
             db.flush()
         db.add(UserRoleAssignment(user_id=user.id, role_id=role.id))
     if perms:
-        role = UserRole(id=uid(), slug=unique_code("p4role").lower(), name="ZZT p4", is_protected=False, is_default=False)
+        role = UserRole(id=uid(), slug=unique_code("p4role").lower(), name=unique_code("ZZT p4"), is_protected=False, is_default=False)
         db.add(role)
         db.flush()
         for slug in perms:
@@ -426,6 +426,13 @@ def scene(monkeypatch):
                 )
         finally:
             app.dependency_overrides.clear()
+
+
+def own_contact(sc: Scene):
+    """A fresh contact (users.respond_contact_id is unique) and a portal handle for it."""
+    c = _contact(sc.db, unique_code("ZZT Own"), sc.workspace)
+    sc.db.commit()
+    return c, Api(sc.client, PORTAL, {"X-Portal-Token": _portal_token(sc.db, c, sc.space_id)})
 
 
 def my_api(sc: Scene, actor: Actor, **extra_headers) -> Api:
@@ -542,13 +549,15 @@ def flow_parity(sc: Scene, spec: Spec) -> None:
     assert mine_id != portal_id
     a, b = sc.row(spec, mine_id), sc.row(spec, portal_id)
     for col in ("status", "contact_id", "space_id", "source"):
+        if col == "source" and spec.model is not PurchaseRequestHeader:
+            continue  # only the request header has a source column
         assert getattr(a, col, None) == getattr(b, col, None), col
     assert a.status == "draft"
     assert a.portal_draft_at is not None
     assert a.contact_id == sc.contact.id
     assert a.space_id == sc.space_id
-    if spec.kind != "complaint":
-        assert getattr(a, "source", None) == "portal"
+    if spec.model is PurchaseRequestHeader:
+        assert a.source == "portal"
     # The submit runs the same rules: status, number shape, history row.
     ok(sc.me.submit(spec.kind, mine_id))
     ok(sc.portal.submit(spec.kind, portal_id))
