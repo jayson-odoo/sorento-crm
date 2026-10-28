@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Edit, Plus, Trash2, FileDown, Printer, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
+import { Check, Copy, Edit, Plus, Trash2, FileDown, Printer, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -69,7 +69,13 @@ import {
 } from '../services/stockInquiryService';
 import { toast } from '@/lib/toast';
 import { formatDate } from '@/lib/helpers';
-import { isAwaitingReview, SI_REVIEW_STAGE } from '@/lib/submission-status';
+import { isAwaitingReview, SI_REVIEW_STAGE, submitVerb } from '@/lib/submission-status';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import {
+  useDeleteMyRequestDraft,
+  useMyRequestSubmission,
+  useSubmitMyRequest,
+} from '@/hooks/useMyRequests';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -108,6 +114,15 @@ export default function StockInquiryDetail({
   const exportPdfMutation = useExportStockInquiryPdf();
   const reassignMutation = useReassignSLATracking();
   const canReassign = useHasPermission('sla_management.conversation_sla_tracking.reassign');
+  // A salesperson limited to their own rows (PORTAL-P4-REQUESTS, owner Q2 a) gets the portal's
+  // action set only, run through My Requests; the revision policy is the server's answer there.
+  const { limited } = useRequestScope('stock_inquiry');
+  const { data: mine } = useMyRequestSubmission(
+    'stock_inquiry',
+    limited && isValidId ? inquiryId : null,
+  );
+  const deleteMine = useDeleteMyRequestDraft('stock_inquiry');
+  const submitMine = useSubmitMyRequest('stock_inquiry');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
   const [replyComposePrefill, setReplyComposePrefill] = useState<{
@@ -427,6 +442,7 @@ export default function StockInquiryDetail({
             ariaLabel: 'stock inquiry',
           }}
           gear={
+            limited ? undefined : (
             <DetailActionsMenu ariaLabel="Stock inquiry actions">
               {/* The download history is an action, so it sits in the gear with the rest;
                   the record card carries the pager, the gear and the workflow CTAs, and
@@ -612,8 +628,25 @@ export default function StockInquiryDetail({
                 </DropdownMenuItem>
               )}
             </DetailActionsMenu>
+            )
           }
           primary={
+            limited ? (
+              <MyRequestActions
+                status={inquiry.status ?? ''}
+                revisable={mine?.revision?.allowed === true}
+                busy={deleteMine.isPending || submitMine.isPending}
+                onEdit={() => router.push(`/procurement-management/stock-inquiries/${inquiryId}/edit`)}
+                onRevise={() =>
+                  router.push(`/procurement-management/stock-inquiries/${inquiryId}/edit?revise=1`)
+                }
+                onDuplicate={() => router.push(`/procurement-management/stock-inquiries/new?from=${inquiryId}`)}
+                onDelete={() =>
+                  deleteMine.mutate(inquiryId, { onSuccess: () => router.push(backHref) })
+                }
+                onSubmit={() => submitMine.mutate({ id: inquiryId })}
+              />
+            ) : (
             <>
             {/* Workflow actions: HIDDEN (not disabled) while the handling lock is held
                 by someone else / unclaimed - keeps the header uncluttered. When the lock
@@ -716,8 +749,10 @@ export default function StockInquiryDetail({
               </Button>
             )}
             </>
+            )
           }
           dialogs={
+            limited ? undefined : (
             <EntityDownloadsButton
               entityType="stock_inquiry"
               entityId={inquiryId}
@@ -725,6 +760,7 @@ export default function StockInquiryDetail({
               open={downloadsOpen}
               onOpenChange={setDownloadsOpen}
             />
+            )
           }
         />
       </div>
@@ -1145,7 +1181,7 @@ export default function StockInquiryDetail({
         <InquiryFormTableRow label="Additional remark" labelClassName="items-start pt-3">
           <InquiryReadValue>{inquiry.additional_remark}</InquiryReadValue>
         </InquiryFormTableRow>
-        {inquiry.respond_inbox_url && (
+        {!limited && inquiry.respond_inbox_url && (
           <InquiryFormTableRow label="Respond inbox">
             <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
               <a
@@ -1178,7 +1214,7 @@ export default function StockInquiryDetail({
               <div className="min-w-0 flex-1">
                 <InquiryReadValue>{inquiry.purchasing_response}</InquiryReadValue>
               </div>
-              {!isVoided && responseWritable && (
+              {!limited && !isVoided && responseWritable && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1196,7 +1232,7 @@ export default function StockInquiryDetail({
             </div>
           </div>
         </InquiryFormTableRow>
-        {canSeeApplications && (
+        {!limited && canSeeApplications && (
           <InquiryFormTableRow label="New product applications" labelClassName="items-start pt-3">
             {applications && applications.length > 0 ? (
               <ul className="space-y-1.5 py-2 text-sm">
@@ -1278,7 +1314,7 @@ export default function StockInquiryDetail({
         )}
       </ProductInquiryFormLayout>
 
-      {inquiry.respond_inbox_url && (
+      {!limited && inquiry.respond_inbox_url && (
         <Sheet
           open={conversationSheetOpen}
           onOpenChange={(open) => {
@@ -1318,6 +1354,7 @@ export default function StockInquiryDetail({
       <StockInquiryAttachmentsSection
         inquiryId={inquiryId}
         attachments={inquiry.attachments ?? []}
+        readOnly={limited}
       />
 
       {/* The lineage lives in the page's own "Revisions" TAB (round 6), not in
@@ -1327,5 +1364,71 @@ export default function StockInquiryDetail({
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>
+  );
+}
+
+/**
+ * The portal's action set on their own request (owner Q2 a): Edit and Submit while it is a
+ * draft or rejected, Delete while it is a draft, Revise when the server allows it, Duplicate
+ * always. The submit label follows the shared rule (a rejected row is sent back).
+ */
+function MyRequestActions({
+  status,
+  revisable,
+  busy,
+  onEdit,
+  onRevise,
+  onDuplicate,
+  onDelete,
+  onSubmit,
+}: {
+  status: string;
+  revisable: boolean;
+  busy: boolean;
+  onEdit: () => void;
+  onRevise: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onSubmit: () => void;
+}) {
+  const draft = status === 'draft';
+  const open = draft || status === 'rejected';
+  return (
+    <>
+      {open && (
+        <Button variant="outline" size="sm" onClick={onEdit} disabled={busy}>
+          <Edit className="size-4" />
+          Edit
+        </Button>
+      )}
+      {draft && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onDelete}
+          disabled={busy}
+          className="text-destructive border-destructive/40 hover:bg-destructive/10"
+        >
+          <Trash2 className="size-4" />
+          Delete
+        </Button>
+      )}
+      {revisable && (
+        <Button variant="outline" size="sm" onClick={onRevise} disabled={busy}>
+          <RotateCcw className="size-4" />
+          Revise
+        </Button>
+      )}
+      <Button variant="outline" size="sm" onClick={onDuplicate} disabled={busy}>
+        <Copy className="size-4" />
+        Duplicate
+      </Button>
+      {open && (
+        <Button variant="primary" size="sm" onClick={onSubmit} disabled={busy}>
+          <Send className="size-4" />
+          {submitVerb(status)}
+        </Button>
+      )}
+    </>
   );
 }

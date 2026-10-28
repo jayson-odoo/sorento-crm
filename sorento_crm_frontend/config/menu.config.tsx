@@ -62,6 +62,7 @@ import {
 import type { LucideIcon } from 'lucide-react';
 import { type MenuConfig } from './types';
 import { LANDING_LABELS, LANDING_KINDS, orderLandingKinds } from '@/lib/portal-form-kinds';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
 
 // MY REQUESTS: one item per portal form kind, in portal order. Customer asks and Conversation are
 // MY WORK entries instead (their own CRM pages), so they are not request kinds.
@@ -70,22 +71,33 @@ const MY_REQUEST_ICONS: Partial<Record<(typeof LANDING_KINDS)[number], LucideIco
   stock_inquiry: Warehouse,
   purchase_request: ShoppingCart,
   sponsorship_form: Gift,
-  project_registration: Building,
   sample_request: Package,
   new_product_application: FileText,
   price_tag_request: Receipt,
   sales_opportunity: TrendingUp,
 };
 
+// The four request forms open the STAFF pages (MY_REQUEST_STAFF_PAGES, PORTAL-P4-REQUESTS); the
+// other kinds still render the portal form in place. Project Registration has no item: the
+// salesperson registers projects on the one Projects page.
 const MY_REQUEST_ITEMS: MenuConfig = orderLandingKinds(
-  LANDING_KINDS.filter((k) => k !== 'customer_asks' && k !== 'conversation'),
-).map((kind) => ({
-  title: LANDING_LABELS[kind],
-  icon: MY_REQUEST_ICONS[kind],
-  path: `/my-requests?type=${kind}`,
-  audience: 'salesperson' as const,
-  portalKind: kind,
-}));
+  LANDING_KINDS.filter(
+    (k) =>
+      k !== 'customer_asks' &&
+      k !== 'conversation' &&
+      k !== 'project_registration',
+  ),
+).map((kind) => {
+  const staff = MY_REQUEST_STAFF_PAGES[kind];
+  return {
+    title: LANDING_LABELS[kind],
+    icon: MY_REQUEST_ICONS[kind],
+    path: staff ? staff.path : `/my-requests?type=${kind}`,
+    ...(staff ? { permission: staff.permission } : {}),
+    audience: 'salesperson' as const,
+    portalKind: kind,
+  };
+});
 
 
 export const MENU_SIDEBAR: MenuConfig = [

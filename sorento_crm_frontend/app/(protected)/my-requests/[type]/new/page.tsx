@@ -4,7 +4,9 @@ import { use } from 'react';
 import { notFound } from 'next/navigation';
 import { SubmissionForm } from '@/app/(auth)/portal/components/SubmissionForm';
 import { PortalSubmissionKind, isSubmissionKind } from '@/app/(auth)/portal/lib/portal-client';
+import { myRequestStaffPath } from '@/lib/my-requests-staff-pages';
 import { MySlug } from '../../MySlug';
+import { StaffPageRedirect } from '../../StaffPageRedirect';
 
 export default function MyRequestsNewSubmissionPage({
   params,
@@ -12,6 +14,8 @@ export default function MyRequestsNewSubmissionPage({
   params: Promise<{ type: string }>;
 }) {
   const { type } = use(params);
+  const staffList = myRequestStaffPath(type);
+  if (staffList) return <StaffPageRedirect to={`${staffList}/new`} />;
   if (!isSubmissionKind(type)) {
     notFound();
   }

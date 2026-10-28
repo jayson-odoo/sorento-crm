@@ -32,11 +32,14 @@ import {
 interface StockInquiryAttachmentsSectionProps {
   inquiryId: string;
   attachments?: StockInquiryAttachment[];
+  /** No link / unlink: a salesperson reading their own request (PORTAL-P4-REQUESTS). */
+  readOnly?: boolean;
 }
 
 export default function StockInquiryAttachmentsSection({
   inquiryId,
   attachments: attachmentsFromInquiry = [],
+  readOnly = false,
 }: StockInquiryAttachmentsSectionProps) {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -182,18 +185,20 @@ export default function StockInquiryAttachmentsSection({
                   Download
                 </a>
               </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment });
-                }}
-                disabled={unlinkPending}
-              >
-                <Trash2 className="size-4" />
-                Unlink
-              </Button>
+              {!readOnly && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment });
+                  }}
+                  disabled={unlinkPending}
+                >
+                  <Trash2 className="size-4" />
+                  Unlink
+                </Button>
+              )}
             </div>
           );
         },
@@ -202,7 +207,7 @@ export default function StockInquiryAttachmentsSection({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [attachments, unlinkPending],
+    [attachments, unlinkPending, readOnly],
   );
 
   return (
@@ -215,10 +220,12 @@ export default function StockInquiryAttachmentsSection({
           </span>
         }
         toolbar={
-          <Button onClick={() => setLinkDialogOpen(true)}>
-            <Link2 className="size-4" />
-            Link Attachment
-          </Button>
+          readOnly ? undefined : (
+            <Button onClick={() => setLinkDialogOpen(true)}>
+              <Link2 className="size-4" />
+              Link Attachment
+            </Button>
+          )
         }
         columns={columns}
         rows={attachments}

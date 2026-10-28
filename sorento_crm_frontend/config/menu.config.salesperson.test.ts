@@ -50,14 +50,33 @@ const SALES_PERMS = [
   'sales.customer_asks.view',
   'sales.customer_asks.edit',
   'ideation.board.view',
+  // PORTAL-P4-REQUESTS (pp4_0001): the salesperson role holds the four request forms' view_own.
+  'procurement.stock_inquiries.view_own',
+  'complaint_management.complaints.view_own',
+  'procurement.purchase_requests.view_own',
+  'procurement.sponsorship_forms.view_own',
 ];
 
 const ALL_KINDS = [...LANDING_KINDS] as string[];
 // Portal landing order (landingKindsFor): Stock Inquiry first, then LANDING_KINDS order.
+// PORTAL-P4-REQUESTS: no Project Registration item (one Projects page), and the four request
+// forms open their staff list pages.
 const REQUEST_KINDS = [
   'stock_inquiry',
-  ...ALL_KINDS.filter((k) => k !== 'stock_inquiry' && k !== 'customer_asks' && k !== 'conversation'),
+  ...ALL_KINDS.filter(
+    (k) =>
+      k !== 'stock_inquiry' &&
+      k !== 'customer_asks' &&
+      k !== 'conversation' &&
+      k !== 'project_registration',
+  ),
 ];
+const STAFF_LIST: Record<string, string> = {
+  stock_inquiry: '/procurement-management/stock-inquiries',
+  complaint: '/complaint-management/complaints',
+  purchase_request: '/procurement-management/purchase-requests',
+  sponsorship_form: '/procurement-management/sponsorship-forms',
+};
 
 describe('MENU_SIDEBAR for a salesperson', () => {
   it('is exactly MY WORK then MY REQUESTS, in portal order', () => {
@@ -70,7 +89,7 @@ describe('MENU_SIDEBAR for a salesperson', () => {
       { heading: 'MY REQUESTS' },
       ...REQUEST_KINDS.map((k) => ({
         title: LANDING_LABELS[k as keyof typeof LANDING_LABELS],
-        path: `/my-requests?type=${k}`,
+        path: STAFF_LIST[k] ?? `/my-requests?type=${k}`,
       })),
     ]);
   });
@@ -81,7 +100,7 @@ describe('MENU_SIDEBAR for a salesperson', () => {
     const paths = out.map((i) => i.path);
     expect(paths).not.toContain('/my-requests?type=sample_request');
     expect(paths).not.toContain('/my-requests?type=price_tag_request');
-    expect(paths).toContain('/my-requests?type=stock_inquiry');
+    expect(paths).toContain('/procurement-management/stock-inquiries');
   });
 
   it('no MY REQUESTS heading when the contact has no request kind', () => {

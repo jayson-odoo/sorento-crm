@@ -34,6 +34,8 @@ import { buildDetailSearch } from '@/lib/listNavQuery';
 import { revisionBadgeLabel, withRevisionSuffix } from '@/lib/document-number';
 import { useListingViewPreferences } from '@/lib/listing-column-preferences/useListingViewPreferences';
 import { useStockInquiries } from '../hooks/useStockInquiries';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { statusPillClass, STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import type { StockInquiry } from '../types/stockInquiry.types';
@@ -61,9 +63,20 @@ const FILTERS_VERSION = 1;
 
 type StockInquiriesFilters = { statuses: string[] };
 
+/** A user limited to their own rows (PORTAL-P4-REQUESTS) also filters by their drafts. */
+const LIMITED_STATUS_LABELS: Record<string, string> = {
+  draft: 'Draft',
+  ...STOCK_INQUIRY_STATUS_LABELS,
+};
+
 export default function StockInquiriesList() {
   const router = useRouter();
   const pathname = usePathname();
+  // A salesperson sees only their own rows (the server narrows the list): Create needs
+  // `.add`, and there is no bulk Delete (a draft is deleted on its own page).
+  const { limited } = useRequestScope('stock_inquiry');
+  const canAdd = useHasPermission('procurement.stock_inquiries.add');
+  const statusLabels = limited ? LIMITED_STATUS_LABELS : STOCK_INQUIRY_STATUS_LABELS;
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -155,7 +168,7 @@ export default function StockInquiriesList() {
   };
 
   const statusFilterLabel = (() => {
-    const labels = statusFilter.map((v) => STOCK_INQUIRY_STATUS_LABELS[v] ?? v);
+    const labels = statusFilter.map((v) => statusLabels[v] ?? v);
     if (labels.length === 0) return '';
     if (labels.length === 1) return labels[0];
     return `${labels[0]} +${labels.length - 1} more`;
@@ -194,7 +207,6 @@ export default function StockInquiriesList() {
           <DataGridColumnHeader title="Rev" column={column} />
         ),
         size: 80,
-        enableSorting: false,
         // Denormalized on the row - no per-row query (UAC H4).
         cell: ({ row }) => {
           const label = revisionBadgeLabel(row.original.revision_no);
@@ -361,7 +373,6 @@ export default function StockInquiriesList() {
           <DataGridColumnHeader title="Assigned To" column={column} />
         ),
         size: 160,
-        enableSorting: false,
         cell: ({ row }) => (
           <span
             className="truncate"
@@ -381,7 +392,6 @@ export default function StockInquiriesList() {
           <DataGridColumnHeader title="Handled By" column={column} />
         ),
         size: 160,
-        enableSorting: false,
         cell: ({ row }) => (
           <span
             className="truncate"
@@ -401,7 +411,6 @@ export default function StockInquiriesList() {
           <DataGridColumnHeader title="Print Count" column={column} />
         ),
         size: 110,
-        enableSorting: false,
         cell: ({ row }) => (
           <EntityDownloadsButton
             entityType="stock_inquiry"
@@ -439,7 +448,7 @@ export default function StockInquiriesList() {
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction = (
+  const listPrimaryAction = limited && !canAdd ? undefined : (
     <Button
       onClick={() =>
         router.push('/procurement-management/stock-inquiries/new')
@@ -490,7 +499,7 @@ export default function StockInquiriesList() {
                   </div>
                   <Separator />
                   <div className="py-1">
-                    {Object.entries(STOCK_INQUIRY_STATUS_LABELS).map(
+                    {Object.entries(statusLabels).map(
                       ([value, label]) => {
                         const checked = statusFilter.includes(value);
                         return (
@@ -537,15 +546,19 @@ export default function StockInquiriesList() {
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
-            bulkActions={[
-              {
-                key: 'delete',
-                label: 'Delete',
-                icon: Trash2,
-                destructive: true,
-                onClick: () => setBulkDeleteDialogOpen(true),
-              },
-            ]}
+            bulkActions={
+              limited
+                ? []
+                : [
+                    {
+                      key: 'delete',
+                      label: 'Delete',
+                      icon: Trash2,
+                      destructive: true,
+                      onClick: () => setBulkDeleteDialogOpen(true),
+                    },
+                  ]
+            }
           />
         </CardHeader>
         <CardTable>

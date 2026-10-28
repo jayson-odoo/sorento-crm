@@ -15,6 +15,11 @@ interface RequestorContactSelectProps {
   savedContactName?: string | null;
   placeholder?: string;
   disabled?: boolean;
+  /**
+   * Where the eligible set comes from. Defaults to the staff requestor-select endpoint; a
+   * salesperson writing their own request reads the portal's set through My Requests.
+   */
+  loadOptions?: (q: string) => Promise<{ id: string; name: string }[]>;
 }
 
 /**
@@ -32,6 +37,7 @@ export function RequestorContactSelect({
   savedContactName,
   placeholder = 'Select requestor',
   disabled,
+  loadOptions,
 }: RequestorContactSelectProps) {
   const selectedOption = useMemo(() => {
     if (!savedContactId) return undefined;
@@ -43,11 +49,15 @@ export function RequestorContactSelect({
       value={value ?? ''}
       onChange={(v) => onChange(v || null)}
       fetchOptions={async (q) => {
-        const res = await getRequestorSelectOptions({
-          q,
-          includeIds: [submitterContactId, savedContactId],
-        });
-        return res.items.map((i) => ({ value: i.id, label: i.name }));
+        const items = loadOptions
+          ? await loadOptions(q)
+          : (
+              await getRequestorSelectOptions({
+                q,
+                includeIds: [submitterContactId, savedContactId],
+              })
+            ).items;
+        return items.map((i) => ({ value: i.id, label: i.name }));
       }}
       selectedOption={selectedOption}
       clearable
