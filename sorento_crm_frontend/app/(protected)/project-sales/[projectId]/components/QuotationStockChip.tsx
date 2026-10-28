@@ -181,13 +181,22 @@ function StockPopoverBody({
   // AutoCount, so its figures and PO qty show. It restates the read's rows only; a location the
   // user may not see never joins from AutoCount. A failed read leaves today's figures.
   const autoCount = useStockStatus(productId);
-  const allowedStatus = React.useMemo(
-    () =>
-      autoCount.data
-        ? onlyLocations(autoCount.data, new Set(locations.map((row) => row.location ?? '')))
+  // A row stays when the CRM read or AutoCount has a figure for it; AutoCount is narrowed to
+  // exactly those rows, so nothing is ever appended as an "Other group" row.
+  const { rows, allowedStatus } = React.useMemo(() => {
+    const counted = new Set(
+      (autoCount.data?.locations ?? [])
+        .filter((loc) => loc.on_hand || loc.so_qty || loc.po_qty || loc.spo_qty)
+        .map((loc) => loc.warehouse_code),
+    );
+    const kept = locations.filter((row) => hasFigures(row) || counted.has(row.location ?? ''));
+    return {
+      rows: kept,
+      allowedStatus: autoCount.data
+        ? onlyLocations(autoCount.data, new Set(kept.map((row) => row.location ?? '')))
         : null,
-    [autoCount.data, locations],
-  );
+    };
+  }, [autoCount.data, locations]);
 
   return (
     <>
@@ -201,7 +210,7 @@ function StockPopoverBody({
         <Skeleton className="h-10 w-full" />
       ) : (
         <CellStockTable
-          locations={locations.filter(hasFigures)}
+          locations={rows}
           showGroupSubtotal
           stockOnly
           autoCount={allowedStatus}

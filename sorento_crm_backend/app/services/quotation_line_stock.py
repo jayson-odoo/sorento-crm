@@ -20,7 +20,8 @@ def allowed_warehouse_ids(db: Session, user_id: str) -> Optional[List[str]]:
     if not contact_id:
         return None
     policy = stock_visibility.resolve_policy(db, contact_id)
-    if policy is None:
+    # Availability-only contacts are told yes/no elsewhere, never quantities on a quotation.
+    if policy is None or policy.mode == "availability":
         return None
     allowed = stock_visibility.scope_warehouse_ids(db, policy)
     query = db.query(Warehouse.id).filter(
