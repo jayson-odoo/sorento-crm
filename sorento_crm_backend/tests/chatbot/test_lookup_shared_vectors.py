@@ -24,7 +24,8 @@ LOGGER = "app.services.chatbot.head.lookup_lists"
 class Fake:
     """request(chunk): records every requested text, returns deterministic non-zero dim-8 vectors."""
 
-    def __init__(self, delay=0.0, fail_on_call=None, forbid=False):
+    def __init__(self, delay=0.0, fail_on_call=None, forbid=False, dim=8):
+        self.dim = dim
         self.texts: list[str] = []
         self.calls = 0
         self.delay = delay
@@ -42,7 +43,7 @@ class Fake:
             time.sleep(self.delay)
         if self.fail_on_call == n:
             raise RuntimeError("zz provider down")
-        return [vec(t) for t in chunk]
+        return [(vec(t) * 2)[: self.dim] for t in chunk]
 
 
 def vec(text):
@@ -126,7 +127,7 @@ def test_ac2_concurrent_warms_send_each_text_once(env):
         except BaseException as exc:  # noqa: BLE001
             errors.append(exc)
 
-    threads = [threading.Thread(target=run) for _ in range(2)]
+    threads = [threading.Thread(target=run, daemon=True) for _ in range(2)]
     for t in threads:
         t.start()
     for t in threads:
@@ -156,6 +157,29 @@ def test_ac3_file_is_written_by_atomic_rename(env, monkeypatch):
     assert not [p for p in files(env) if "tmp" in p.name.lower()], files(env)
 
 
+def test_ac3_merge_keeps_the_files_other_vectors(env):
+    m = model()
+    a, b = texts(3, "zz alpha"), texts(3, "zz beta")
+    ll._vector_embedder(m, Fake(), 2).fill(a)
+    new_process()
+    ll._vector_embedder(m, Fake(), 2).fill(b)
+    new_process()
+    both = Fake(forbid=True)
+    ll._vector_embedder(m, both, 2).fill(a + b)
+    assert both.calls == 0
+
+
+def test_ac3_a_warm_that_embeds_nothing_does_not_rewrite(env):
+    m, ts = model(), texts(4)
+    ll._vector_embedder(m, Fake(), 2).fill(ts)
+    (path,) = [p for p in files(env, m) if p.stat().st_size > 0][:1]
+    before = os.stat(path)
+    new_process()
+    ll._vector_embedder(m, Fake(forbid=True), 2).fill(ts)
+    after = os.stat(path)
+    assert (after.st_ino, after.st_mtime_ns) == (before.st_ino, before.st_mtime_ns), "the file was rewritten"
+
+
 # ---- AC-4
 def test_ac4_failed_warm_keeps_stored_chunks_and_releases_lock(env):
     m, ts = model(), texts(4)
@@ -171,7 +195,7 @@ def test_ac4_failed_warm_keeps_stored_chunks_and_releases_lock(env):
         ll._vector_embedder(m, nxt, 2).fill(ts)
         done.append(True)
 
-    t = threading.Thread(target=run)
+    t = threading.Thread(target=run, daemon=True)
     t.start()
     t.join(10)
     assert done, "the next warm hung: the lock was not released after the error"
@@ -250,6 +274,28 @@ def test_ac7_unusable_directory_warns_and_the_warm_goes_on(env, tmp_path, monkey
     assert sorted(fake.texts) == sorted(ts)
     assert emb.is_cached(ts)
     assert any(r.levelno == logging.WARNING for r in caplog.records), caplog.records
+
+
+def test_ac7_file_of_another_width_is_ignored(env, caplog):
+    m, ts = model(), texts(4)
+    ll._vector_embedder(m, Fake(dim=4), 2).fill(ts)
+    assert files(env, m)
+    new_process()
+    pre = np.ones(8, dtype=np.float32) / np.sqrt(8)
+    ll._cache[ll._key("zz pre-stored", m)] = pre
+    fake = Fake(dim=8)
+    emb = ll._vector_embedder(m, fake, 2)
+    with caplog.at_level(logging.WARNING, logger=LOGGER):
+        emb.fill(ts)
+    assert sorted(fake.texts) == sorted(ts), "the other-width file vectors were used"
+    for t in ts:
+        assert ll._cache[ll._key(t, m)].shape == (8,)
+    assert emb.matrix(ts).shape == (len(ts), 8)
+    assert any(r.levelno == logging.WARNING for r in caplog.records), caplog.records
+    new_process()
+    again = Fake(dim=8, forbid=True)
+    ll._vector_embedder(m, again, 2).fill(ts)
+    assert again.calls == 0
 
 
 # ---- AC-8
