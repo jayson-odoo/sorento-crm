@@ -244,8 +244,8 @@ async def get_complaints(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    assigned_to: Optional[list[str]] = Query(None),
+    status: Optional[list[str]] = Query(None),
     root_cause_ids: Optional[str] = Query(
         None, description="Comma-separated root cause ids; matches complaints with ANY of them"
     ),

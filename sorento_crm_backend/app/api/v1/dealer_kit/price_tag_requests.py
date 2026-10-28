@@ -57,6 +57,7 @@ from app.services import price_tag_review_service
 from app.services.uuid_path_param import validate_uuid_path
 from app.services.dealer_kit import tag_data_service, tag_sheet_export_service
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 from app.services.price_tag_request_service import (
     PriceTagRequestService,
     PRINT_BY_CHOICES,
@@ -157,7 +158,7 @@ class PriceTagRequestPage(BaseModel):
 
 @router.get("", response_model=PriceTagRequestPage)
 def list_price_tag_requests(
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
@@ -178,7 +179,7 @@ def list_price_tag_requests(
     """
     rows, total = PriceTagRequestService.list_page(
         db,
-        status=status_filter,
+        status=multi_values(status_filter),
         search=query,
         include_drafts=False,
         page=page,

@@ -572,9 +572,9 @@ def list_opportunities(
     db: Session,
     *,
     query: Optional[str] = None,
-    status_id: Optional[str] = None,
+    status_id: Optional[list[str] | str] = None,
     sales_agent_id: Optional[AgentIds] = None,
-    customer_id: Optional[str] = None,
+    customer_id: Optional[list[str] | str] = None,
     close_from=None,
     close_to=None,
     outcome: Optional[str] = None,
@@ -603,7 +603,7 @@ def list_opportunities(
             )
         )
     if status_id:
-        q = q.filter(SalesOpportunity.status_id == status_id)
+        q = q.filter(SalesOpportunity.status_id.in_([status_id] if isinstance(status_id, str) else status_id))
     if isinstance(sales_agent_id, str):
         if sales_agent_id:
             q = q.filter(SalesOpportunity.sales_agent_id == sales_agent_id)
@@ -611,7 +611,7 @@ def list_opportunities(
         # A list (the portal's linked agents) filters even when empty: it matches nothing.
         q = q.filter(SalesOpportunity.sales_agent_id.in_(list(sales_agent_id)))
     if customer_id:
-        q = q.filter(SalesOpportunity.customer_id == customer_id)
+        q = q.filter(SalesOpportunity.customer_id.in_([customer_id] if isinstance(customer_id, str) else customer_id))
     if close_from:
         q = q.filter(SalesOpportunity.expected_close_date >= close_from)
     if close_to:

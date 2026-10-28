@@ -70,7 +70,7 @@ def _iso(value: Any) -> Optional[str]:
 def _split(values: Optional[Iterable[str]]) -> list[str]:
     """Repeated `x=a&x=b` and comma separated `x=a,b` both, blanks dropped."""
     out: list[str] = []
-    for value in values or []:
+    for value in [values] if isinstance(values, str) else (values or []):
         out.extend(part.strip() for part in str(value).split(",") if part.strip())
     return out
 
@@ -81,9 +81,9 @@ def _filtered(
     *,
     query: Optional[str] = None,
     document_types: Optional[Iterable[str]] = None,
-    status: Optional[str] = None,
-    customer_id: Optional[str] = None,
-    agent_code: Optional[str] = None,
+    status: Optional[Iterable[str] | str] = None,
+    customer_id: Optional[Iterable[str] | str] = None,
+    agent_code: Optional[Iterable[str] | str] = None,
     date_from: Optional[date] = None,
     date_to: Optional[date] = None,
     open_only: bool = False,
@@ -103,12 +103,13 @@ def _filtered(
     types = _split(document_types)
     if types:
         q = q.filter(BillingDocument.document_type.in_(types))
-    if status:
-        q = q.filter(BillingDocument.status == status)
-    if customer_id:
-        q = q.filter(BillingDocument.customer_id == customer_id)
-    if agent_code:
-        q = q.filter(BillingDocument.agent_code == agent_code)
+    statuses, customer_ids, agent_codes = _split(status), _split(customer_id), _split(agent_code)
+    if statuses:
+        q = q.filter(BillingDocument.status.in_(statuses))
+    if customer_ids:
+        q = q.filter(BillingDocument.customer_id.in_(customer_ids))
+    if agent_codes:
+        q = q.filter(BillingDocument.agent_code.in_(agent_codes))
     if date_from:
         q = q.filter(BillingDocument.doc_date >= date_from)
     if date_to:
@@ -404,9 +405,11 @@ def export_rows(
     if unknown:
         raise ValueError(f"Unknown or non-exportable field: {unknown[0]}")
     if customer_id is not None:
-        customer_id = _canonical_uuid(customer_id)
-        if customer_id is None:
+        # Several customers (comma-joined, like the list): each id is canonicalised on its own.
+        customer_id = [_canonical_uuid(v) for v in _split(customer_id)]
+        if None in customer_id:
             raise ValueError("Invalid customer_id")
+        customer_id = customer_id or None
     if record_ids:
         record_ids = [_canonical_uuid(v) for v in record_ids]
         if None in record_ids:

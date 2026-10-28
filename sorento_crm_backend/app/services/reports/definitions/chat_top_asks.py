@@ -49,18 +49,24 @@ def _roles_condition(ctx, values):
     """Filters the products grain only; the ask grain has no item table to filter."""
     if ctx.dataset is not ITEMS_DATASET:
         return None
-    if values[0] == "shown":
-        return _ITEMS.c.role == "shown"
-    # Named or asked; an `asked` row of a product the same ask also NAMED is the same
-    # product, so it is left out and the product counts once.
-    twin = sa.alias(_ITEMS)
-    named_too = sa.exists().where(
-        twin.c.ask_id == _ITEMS.c.ask_id,
-        twin.c.kind == _ITEMS.c.kind,
-        twin.c.ref_id == _ITEMS.c.ref_id,
-        twin.c.role == "named",
-    )
-    return sa.and_(_ITEMS.c.role.in_(("named", "asked")), sa.not_(sa.and_(_ITEMS.c.role == "asked", named_too)))
+    clauses = []
+    if "shown" in values:
+        clauses.append(_ITEMS.c.role == "shown")
+    if any(v != "shown" for v in values):
+        # Named or asked; an `asked` row of a product the same ask also NAMED is the same
+        # product, so it is left out and the product counts once.
+        twin = sa.alias(_ITEMS)
+        named_too = sa.exists().where(
+            twin.c.ask_id == _ITEMS.c.ask_id,
+            twin.c.kind == _ITEMS.c.kind,
+            twin.c.ref_id == _ITEMS.c.ref_id,
+            twin.c.role == "named",
+        )
+        clauses.append(
+            sa.and_(_ITEMS.c.role.in_(("named", "asked")), sa.not_(sa.and_(_ITEMS.c.role == "asked", named_too)))
+        )
+    # Several roles are OR-ed: the rows of either.
+    return sa.or_(*clauses)
 
 
 def params() -> tuple:
@@ -103,7 +109,7 @@ def params() -> tuple:
         reg.SelectParam(
             key="products",
             label="Products",
-            multi=False,
+            multi=True,
             default=(PRODUCT_ROLES[0][0],),
             options=lambda db: list(PRODUCT_ROLES),
             condition=_roles_condition,

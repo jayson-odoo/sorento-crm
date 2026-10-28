@@ -38,6 +38,8 @@ import { useOrders } from '../hooks/useOrders';
 import { useOrderStatusSelectQuery } from '../../shared/hooks/use-order-status-select-query';
 import type { Order } from '../types/order.types';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDate } from '@/lib/helpers';
 import { TemplateUploadDialog } from '@/components/template/TemplateUploadDialog';
 import { bulkImportOrders, importOrderTracking, validateOrderTracking, validateDeliveryOrderDetail } from '../services/orderService';
@@ -77,7 +79,7 @@ export default function OrdersList() {
   const [orderLinesImportOpen, setOrderLinesImportOpen] = useState(false);
   const [advancedFilter, setAdvancedFilter] = useState<ListQueryFilterGroup | null>(null);
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('');
   const [linesFilter, setLinesFilter] = useState<'all' | 'yes' | 'no'>('all');
 
   const { data: orderStatuses = [] } = useOrderStatusSelectQuery();
@@ -95,7 +97,7 @@ export default function OrdersList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
-    setStatusFilter(state.filters.order_status_id ?? 'all');
+    setStatusFilter(state.filters.order_status_id ?? '');
     const lines = state.filters.has_order_lines;
     setLinesFilter(lines === 'yes' || lines === 'no' ? lines : 'all');
     setAdvancedFilter(decodeAdvancedFilter<ListQueryFilterGroup>(state.filters.advFilter));
@@ -110,7 +112,7 @@ export default function OrdersList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    order_status_id: statusFilter === 'all' ? undefined : statusFilter,
+    order_status_id: statusFilter || undefined,
     has_order_lines: linesFilter,
     advancedFilter: advancedFilter ?? undefined,
   });
@@ -165,7 +167,7 @@ export default function OrdersList() {
         searchQuery,
       },
       {
-        order_status_id: statusFilter === 'all' ? undefined : statusFilter,
+        order_status_id: statusFilter || undefined,
         has_order_lines: linesFilter !== 'all' ? linesFilter : undefined,
         advFilter: encodeAdvancedFilter(advancedFilter),
       },
@@ -310,7 +312,7 @@ export default function OrdersList() {
     [],
   );
 
-  const quickFilterActive = statusFilter !== 'all' || linesFilter !== 'all';
+  const quickFilterActive = statusFilter !== '' || linesFilter !== 'all';
 
   const table = useReactTable({
     columns,
@@ -375,7 +377,7 @@ export default function OrdersList() {
               getPayload: () => ({
                 filter: advancedFilter ?? undefined,
                 quick_search: searchQuery || undefined,
-                order_status_id: statusFilter === 'all' ? undefined : statusFilter,
+                order_status_id: statusFilter || undefined,
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),
             }}
@@ -386,7 +388,7 @@ export default function OrdersList() {
               getPayload: () => ({
                 filter: advancedFilter ?? undefined,
                 quick_search: searchQuery || undefined,
-                order_status_id: statusFilter === 'all' ? undefined : statusFilter,
+                order_status_id: statusFilter || undefined,
                 has_order_lines: linesFilter === 'all' ? undefined : linesFilter,
               }),
             }}
@@ -443,23 +445,28 @@ export default function OrdersList() {
               <Label htmlFor="orders-quick-status" className="text-xs text-muted-foreground">
                 Status
               </Label>
-              <SearchableSelect
-                value={statusFilter}
+              <SearchableMultiSelect
+                value={splitMulti(statusFilter)}
                 onChange={(v) => {
-                  setStatusFilter(v);
+                  setStatusFilter(joinMulti(v));
                   setPagination((p) => ({ ...p, pageIndex: 0 }));
                 }}
                 id="orders-quick-status"
                 size="sm"
                 triggerClassName="w-48"
-                options={[
-                  { value: 'all', label: 'All statuses' },
-                  ...orderStatuses.map((status) => ({
-                    value: status.id,
-                    label: status.status_name,
-                  })),
-                ]}
+                options={orderStatuses.map((status) => ({
+                  value: status.id,
+                  label: status.status_name,
+                }))}
                 placeholder="Status"
+                clearable
+                renderTriggerLabel={(chosen) =>
+                  chosen.length ? (
+                    <span className="block truncate">{multiChipLabel('Status', idFilterLabels(chosen))}</span>
+                  ) : (
+                    <span className="text-muted-foreground">Status: any</span>
+                  )
+                }
               />
             </div>
             <div className="flex items-center gap-2">
@@ -488,7 +495,7 @@ export default function OrdersList() {
                 variant="ghost"
                 size="sm"
                 onClick={() => {
-                  setStatusFilter('all');
+                  setStatusFilter('');
                   setLinesFilter('all');
                   setPagination((p) => ({ ...p, pageIndex: 0 }));
                 }}

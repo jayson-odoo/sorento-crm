@@ -367,7 +367,7 @@ async def get_orders(
         ),
     ),
     customer_id: Optional[str] = Query(None),
-    order_status_id: Optional[str] = Query(None),
+    order_status_id: Optional[list[str]] = Query(None),
     order_status: Optional[str] = Query(
         None,
         description=(
