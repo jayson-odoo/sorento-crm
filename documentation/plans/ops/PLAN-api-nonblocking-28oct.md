@@ -1,6 +1,6 @@
 # PLAN: API-NONBLOCKING - blocking route handlers run in the threadpool, not on the event loop
 
-Status: Build (track: standard, backend only, no behaviour change, no migration). PR #1951.
+Status: Review (track: standard, backend only, no behaviour change, no migration). PR #1951.
 Lane: API-NONBLOCKING. UAC: `api-nonblocking-acceptance-criteria.md`.
 
 ## Why
@@ -77,18 +77,80 @@ now), and the pool / limiter change rests on a premise checked below.
 
 - Red-first: `tests/test_api_nonblocking.py`, one case per heavy handler: the real route on one
   event loop, database stand-in blocks 1.5 s on first touch, `/health` on the same loop must
-  answer within 0.75 s of the slow part starting. Red on main for all 9 (1.51-3.01 s).
+  answer within 0.75 s of the slow part starting. 16 cases (9 reports/exports/PDFs, the two audit
+  listings, 4 uploads incl. order tracking, `/health` itself), every one red against main
+  (1.51-3.02 s).
 - Kill test: re-add `async` to one converted handler -> its case goes red.
 - Response equality: Phase 1 report/export handlers called before/after on the same seeded data,
   bytes (xlsx/CSV/zip) or parsed JSON compared.
 - Phase 2: an AST check that every Phase 2 change is exactly `async def` -> `def` (no other
   token changed), plus the route table (path, methods, response model, dependencies) identical
-  before/after.
+  before/after. Result: 942 converted functions byte-identical in AST (body, args, decorators);
+  the 30 that differ are exactly the upload / chained-await edits above. Route table: 2006
+  routes, same SHA256 with the coroutine flag set aside; 979 route entries flipped to `def`.
 - Full backend suite + SCM suite; failures compared name-for-name with main.
 
 ## Sizing (threadpool / DB pool at 4 workers)
 
-Pending the local measurement; filled in before review.
+Facts from code:
+
+- Threadpool: anyio's default limiter, 40 threads per worker process; nothing in the backend
+  overrides it (no `current_default_thread_limiter` / `total_tokens` anywhere in `app/`).
+- DB pool: `app/database.py:13-14`, `pool_size=10, max_overflow=20` = 30 connections per worker,
+  SQLAlchemy's default `pool_timeout` 30 s. The analytics connector's read-only engine is separate
+  and small (`analytics_connector/datasets.py:308`, 2+3).
+- One request holds one session (`get_db`), so at most one pooled connection per request.
+- Prod reaches Postgres through pgbouncer (`documentation/runbooks/prod-edge-lockdown.md:71,141`;
+  `tests/test_blue_green_deploy_guards.py:121` uses `pgbouncer:6432`). Its `pool_mode`,
+  `default_pool_size` and `max_client_conn` are not in this repo.
+
+What changes at 4 workers with this lane:
+
+- Before: 972 routes were already `def` and could use up to 40 threads at once; the 943 blocking
+  ones serialised on the loop. Client-side connection ceiling 8 x 30 = 240 at today's 8 workers.
+- After: every route can run concurrently up to 40 per worker; ceiling 4 x 30 = 120 client
+  connections, half of today's.
+- Load (owner, 28 Oct 14:35 MYT): 2,098 requests in an hour, about 0.6 per second. Little's law:
+  in-flight requests = rate x mean duration. Even a pessimistic 2 s mean is about 1.2 in flight
+  across the whole API. A burst of 4 slow reports plus ordinary traffic is under 10 per worker,
+  well inside 40 threads and 30 connections.
+
+Recommendation: **no change to the thread or pool numbers in this PR.** 40 threads and 30
+connections per worker are enough for report bursts at 4 workers, and halving the worker count
+halves the connection ceiling the database side has to absorb.
+
+The one real edge, not new and not made worse here: the auth dependencies stay `async def`
+(AC-12) and do their session lookup on the loop (`app/dependencies.py:280`, `:652`;
+`user_session_service.resolve_session` commits). If one worker ever had all 30 connections
+checked out, the next request's auth checkout would wait up to `pool_timeout` (30 s) ON the
+loop. That needs 30+ concurrent DB requests in one worker, which the load above is two orders of
+magnitude away from. Trigger to act: `QueuePool limit of size 10 overflow 20 reached` in the
+backend log, or pgbouncer `SHOW POOLS` showing `cl_waiting > 0`. Then the fix is to cap the
+anyio limiter below the pool (for example 24 threads against 30 connections) so threads can
+never take the connections the loop needs.
+
+Owner check (read-only, prod), to confirm the database side fits 120 client connections:
+
+```bash
+# pgbouncer admin console: pool mode, per-pool server connections, client cap, live waiting
+psql -h 127.0.0.1 -p 6432 -U <admin> pgbouncer -c 'SHOW CONFIG;' | grep -E 'pool_mode|default_pool_size|max_client_conn|max_db_connections'
+psql -h 127.0.0.1 -p 6432 -U <admin> pgbouncer -c 'SHOW POOLS;'
+# Postgres: the hard cap and what is connected now
+docker compose exec -T db sh -c 'psql -U "$POSTGRES_USER" -c "SHOW max_connections" -c "SELECT state, count(*) FROM pg_stat_activity GROUP BY 1"'
+```
+
+If `max_client_conn` is below 4 x 30 plus the RQ workers plus n8n, raise it or lower
+`max_overflow`. That is a one-line change, made once the numbers are known.
+
+## Not built, with the trigger
+
+- `users.py:779` (profile update) and `settings.py:1315` (sign-in background) still await
+  `request.form()` and then do one S3 put plus a small update on the loop. Both are rare,
+  single-user admin actions. Trigger: either shows up in the slow-handler list.
+- `/audit/logs` and `/audit/activity` stop freezing their worker but are not faster: a COUNT
+  over all of `audit_logs` (415k rows) still takes about 37 s on prod. Trigger: already met
+  (owner data 28 Oct); needs its own lane, because the fix (a default date window) changes what
+  the screen shows.
 
 ## Coordination
 
