@@ -1,7 +1,7 @@
 # UAC: project stages follow the document, Sample Submission included
 
 Plan: `PLAN-project-stages-sample-28oct.md`. Card: `CARD-project-stages-sample-28oct.md`.
-Status: DRAFT on the card's recommended answers; final once the owner answers Q1-Q5.
+Status: FINAL - owner answers 28 Oct ~19:45 (card section "Owner answers").
 
 Graph under test = the prod-shaped default project graph (rungs identified, registered, specified,
 sample_submission, final_negotiation, sponsorship_form, po_received, lost, dormant with prod's 16 edges).
@@ -21,8 +21,7 @@ Tests build it themselves; CI's seed has quoted / tendering instead.
 - AC-PS-03: On a graph without these rungs (fresh seed: quoted / tendering) the migration adds nothing and
   does not fail.
 - AC-PS-04: The 16 existing edges and every rung's label, sort order and flags are unchanged.
-- AC-PS-05 [Q5]: Final Negotiation gets win 85 % / stale 7 days and Sponsorship Form 90 % / 7 days only where
-  the value is empty; a value an admin set is kept.
+- AC-PS-05 (Q5): win % and stale days of every rung are unchanged (Final Negotiation / Sponsorship Form stay empty).
 - AC-PS-06: Downgrade removes only the edges this migration added.
 
 ## Header (manual moves)
@@ -41,20 +40,21 @@ Tests build it themselves; CI's seed has quoted / tendering instead.
 - AC-PS-16: The pills for Sample Submission, Final Negotiation and Sponsorship Form are coloured, not the grey
   fallback.
 
-## Automatic move on sample request submit [Q1]
+## The stage action opens the form (Q1, Q4: mirror Spec In -> quotation)
 
-- AC-PS-20: Submitting the first sample request linked to a Spec In project moves the project to Sample
-  Submission; staff form and portal both.
-- AC-PS-21: The project history shows the stage change with the sample request number.
-- AC-PS-22: A second submitted sample request does not move the project again.
-- AC-PS-23: A project at Final Negotiation, Sponsorship Form or a terminal rung is not moved (never backwards).
-- AC-PS-24: A project at Registered or Identified is not moved (no legal edge) and the sample request still
-  submits.
-- AC-PS-25: A sample request with no project submits as before.
-- AC-PS-26: If the graph has no Sample Submission rung, the request submits and nothing moves.
-- AC-PS-27: Saving or cancelling a draft never moves the project.
-- AC-PS-28: After submitting from the project's Sample requests tab, the project header shows Sample Submission
-  without a manual reload.
+- AC-PS-20: Clicking "Sample submitted" on a Spec In project moves it to Sample Submission, then opens New
+  Sample Request with this project already filled in.
+- AC-PS-21: Clicking "Sponsorship" on a Final Negotiation project moves it to Sponsorship Form, then opens New
+  Sponsorship Form with this project already filled in (project link shows the project's title).
+- AC-PS-22: Clicking "Spec In" on a Registered project still moves it and opens the new quotation page (unchanged).
+- AC-PS-23: Back moves (Back to Spec In, Back to sample submission, Back to final negotiation, Back to registered)
+  and Final negotiation, PO received, Mark lost, Mark dormant move the project and open no form.
+- AC-PS-24: A refused move shows the error and opens no form; the project stays where it was.
+- AC-PS-25: Leaving the opened form without saving keeps the project at the new stage (same as Spec In today).
+- AC-PS-26: The form opens only from the project page's stage action; dragging a card on the pipeline board moves
+  the stage and opens nothing (as with Spec In today).
+- AC-PS-27: Opening New Sponsorship Form with no project in the link (from the Sponsorship Forms list) works as
+  before, project empty.
 
 ## First PO
 

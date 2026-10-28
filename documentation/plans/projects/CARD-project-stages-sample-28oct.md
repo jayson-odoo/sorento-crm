@@ -97,3 +97,24 @@ that have none. Header layout unchanged (one button + gear menu), so no mock.
    projects that already have a submitted sample request (owner-run UPDATE). **Recommend (b)**: forecast stays
    whole on deploy, values stay editable; no stage backfill because a delivered sample on an old project may
    be from an earlier round.
+
+## Owner answers (28 Oct ~19:45, relayed by crew, verbatim)
+
+"Q1 should be same as quotation, when click spec in, quotation opens, so when click sample submission, the
+submission form also opens, Q2 no skipping, Q3a, Q4 when click, open sponsorship form request, just like sample
+request and quotation, the form is the sponsorship form that we are moving from portal to a unified page, Q5 just
+leave empty"
+
+Resulting rules (supersede rule 2 and Q1 / Q4 / Q5 above):
+
+- Q1: no automatic move on sample request submit. Mirror Spec In -> quotation
+  (`ProjectDetailClient.tsx:200-219`): the stage moves when the button is CLICKED; once the move lands, a
+  FORWARD move into `sample_submission` opens `/project-sales/sample-requests/new?project_id=<id>` (the Sample
+  requests tab's own Create route, `SampleRequestsPanel.tsx:122`). Leaving the form unsent keeps the stage,
+  exactly as with Spec In today.
+- Q2: strict ladder, one step back, PO received / Lost / Dormant from every live rung.
+- Q3: (a) rung and `is_critical` flag independent, no code.
+- Q4: a FORWARD move into `sponsorship_form` opens `/procurement-management/sponsorship-forms/new?project_id=<id>`
+  with the project filled in. That staff page is the one PORTAL-P4-REQUESTS #1953 unifies (it keeps the route and
+  edits `new/page.tsx` + `PurchaseRequestForm.tsx`); neither main nor #1953 reads `?project_id=` there yet.
+- Q5: no dial fill; Final Negotiation / Sponsorship Form keep empty win % and stale days.

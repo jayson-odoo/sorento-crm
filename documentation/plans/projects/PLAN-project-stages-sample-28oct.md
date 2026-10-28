@@ -1,7 +1,7 @@
 # PLAN: project pipeline stages incl. Sample Submission, via the status graph
 
-Status: Plan - behaviour card filed (`CARD-project-stages-sample-28oct.md`, 28 Oct), waiting on the owner's
-answers to Q1-Q5. Drafted on the recommended answers; revised when they land. Track: size M, NOT the small fix
+Status: Build - owner answered the card 28 Oct ~19:45 (Q1 mirror Spec In -> form on click, Q2 strict, Q3 a,
+Q4 sponsorship form on click, Q5 no dials). Track: size M, NOT the small fix
 track (carries a migration). UAC: `project-stages-sample-acceptance-criteria.md`.
 
 ## Owner ask (28 Oct, verbatim)
@@ -58,40 +58,52 @@ quoted / tendering and is skipped once any project status exists (`:334-340`), s
 
 ## Architecture
 
-- Layer: graph edges are DATA (status graph rows); the one automatic rule is a service hook beside the
-  existing first-PO hook, not an evaluator for `trigger_mode = auto` edges (`derived.py` ships no evaluator;
-  one rule does not earn one - trigger to build it: a third automatic stage rule).
-- Shared mechanism: the body of `_advance_to_po_received` becomes one helper
-  `advance_project_to(db, project, key, *, reason)` (status lookup with template-scope fallback, forward-only
-  by sort_order, legal-edge check), used by both the PO hook and the new sample-request hook. The PO hook keeps
-  its return value and route contract (`status_moved_to_po_received`).
-- Fixed classes: every rung reachable along the ladder; every automatic move legal per the graph; every
-  automatic move leaves a `stage_changed` activity row.
+- Layer: graph edges are DATA (status graph rows, one idempotent migration). The stage action's "open the form"
+  is FE only, in the one place that already does it for Spec In (`ProjectDetailClient.tsx:200-219` `moveTo`).
+  No backend hook, no `trigger_mode = auto` evaluator (owner Q1: the move happens on click, like Spec In).
+- Shared mechanism: `moveTo`'s single `if specified` becomes one key -> route map
+  (`specified` -> quotation new, `sample_submission` -> sample request new, `sponsorship_form` -> sponsorship
+  form new), still forward-only and still only after the move lands. Matched on the rung KEY so a relabel
+  cannot break it.
+- Fixed classes: every rung reachable along the ladder; every forward move into a rung that has a form opens it
+  with this project filled in; back moves never open a form.
 
 ## Slices
 
 1. Migration `stg_0001_project_ladder_edges` (revision id <= 32 chars): INSERT the 12 manual edges where both
-   rungs exist in the default project graph and the edge does not; NULL-only fill of win % / stale days for
-   `final_negotiation` (85 / 7) and `sponsorship_form` (90 / 7) [Q5]. Downgrade removes only those exact
-   edges. Same SQL, idempotent, to `crew/state/migrations/PROJECT-STAGES-SAMPLE.sql`.
-2. BE: shared advance helper; `sample_request_service.submit` calls it for the linked project with key
-   `sample_submission` [Q1]; never raises into the submit; writes `stage_changed` with the request number.
-3. FE: pill colours for the three rungs; submit invalidates the project detail + list queries.
-4. Text: MCP / connector / route descriptions name the live rungs (read from the graph where cheap, else text).
+   rungs exist in the default project graph and the edge does not. No dial fill (Q5). Downgrade removes only
+   those exact edges. Same idempotent SQL to `crew/state/migrations/PROJECT-STAGES-SAMPLE.sql`.
+2. FE stage action: `moveTo` key -> route map (Spec In unchanged; Sample Submission; Sponsorship Form).
+   Pill colours for the three rungs (`_shared/components/ProjectStatusPill.tsx:19-28`).
+3. FE sponsorship prefill: `procurement-management/sponsorship-forms/new/page.tsx` reads `?project_id=` like
+   `sample-requests/new/page.tsx:13-31` and passes it to `PurchaseRequestForm`, which fills the project link
+   (id + title). Staged LAST because #1953 rewrites both files (see Dependency).
+4. Text: route / MCP / connector `status_key` descriptions name the live rungs, not quoted / tendering.
+
+## Dependency on PORTAL-P4-REQUESTS #1953
+
+#1953 (open, Build, itself stacked on #1944) keeps `/procurement-management/sponsorship-forms/new` and edits
+`new/page.tsx` (Suspense wrapper) and `PurchaseRequestForm.tsx` (+197 lines). Not stacked on it (a stacked PR
+gets no CI until retargeted, and #1953 is stacked on #1944 already). Slices 1, 2 and 4 are independent. Slice 3
+touches the two shared files minimally (one search param, one prop, one prefill) and the PR asks merge order
+#1953 first, then this lane rebases onto main and resolves; if the owner wants this lane first, #1953's worker
+gets a crew-note naming the exact lines.
 
 ## Tests (tester writes red first, from the UAC)
 
-- pytest `tests/test_project_stages_ladder.py` (new): migration edges + idempotence + fresh-DB no-op;
-  sample-request submit moves Spec In -> Sample Submission; no move from Registered / beyond / unapproved /
-  no project / second request; activity row; first PO from Final Negotiation and Sponsorship Form moves to
+- pytest `tests/test_project_stages_ladder.py` (new): migration adds the 12 edges on a prod-shaped graph, runs
+  twice without duplicates, keeps an admin-made edge's label, is a no-op on the seed graph, leaves the 16 old
+  edges; manual move refusals for skips (422); first PO from Final Negotiation / Sponsorship Form moves to
   PO Received.
-- vitest `ProjectStatusAction.test.tsx`: from Spec In the primary is "Sample submitted" and PO received sits
-  in the overflow; pill test for the three keys.
-- Direct suites to re-run: `tests/test_project_samples_pos_routes.py`, `tests/test_sample_requests_core.py`,
-  `tests/test_status_engine.py`, `tests/test_project_mcp_surface.py`.
+- vitest `ProjectStatusAction.test.tsx` (+ detail test for `moveTo` routes): primary per rung; forward move into
+  sample_submission / sponsorship_form pushes the form route with project_id; back moves push nothing; refused
+  move pushes nothing; Spec In unchanged. Pill colours. Sponsorship new page prefill from `?project_id=`.
+- Direct suites to re-run: `tests/test_project_samples_pos_routes.py`, `tests/test_status_engine.py`,
+  `tests/test_project_mcp_surface.py`, `tests/test_project_seed.py`.
 
 ## Out of scope (named triggers)
 
 - Realigning the code seed to the document ladder: 14 test files pin quoted / tendering; trigger = a second
   install that seeds a fresh graph.
-- Automatic Sponsorship move [Q4] and Final Negotiation <-> critical flag coupling [Q3].
+- Final Negotiation <-> critical flag coupling (Q3 a: independent).
+- Opening the form from a kanban drag: the board never opened the quotation either (`PipelineClient.tsx:430-434`).
