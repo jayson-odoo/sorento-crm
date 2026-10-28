@@ -30,16 +30,28 @@ status-engine summary for `status_id` records).
 - A move out of `rejected` into a review stage (`submitted`, `resubmitted`,
   `pending_project_sales`, `pending`, `pending_approval`, or a cleared `approval_status`):
   "Resubmitted by <who>".
-- A customer save (portal contact, integration, public link; legacy rows: a contact id) with
-  field changes while the record is rejected: "Resubmitted by <who>".
+- A customer save (portal contact, integration, public link; `legacy` rows: a contact id) with
+  field changes while the record is rejected: "Resubmitted by <who>". History only: rows written
+  before RESUBMITTED-STATUS went live (28 Oct 03:40 MYT). Since then every resubmit moves the
+  status, and an n8n (integration) edit of a rejected record is not a resubmit.
 - On a Resubmitted row the summary "rejected → submitted" reads "rejected → resubmitted" (what
   #1925 writes today). A named stage stays as recorded. Child rows never move the record status.
 
+Known limits: a status-engine record reads Resubmitted only on "Rejected → Submitted" (no engine
+type has another review stage after a rejection today). A rejection older than the trail's 200
+newest rows can only drop a heading, never invent one.
+
+## Review
+
+Reviewer round 1 NOT READY: child-row test could not fail (fixed: the child moves out of rejected
+and the record's own save must still read Resubmitted); pre-S0 rows carry `actor_type = legacy`,
+not null (fixed); the customer-save rule would head later n8n edits (fixed: history only).
+
 ## Tests
 
-- vitest `components/audit/AuditTrail.resubmitted.test.tsx` (8): CMP26-0219-shaped history, new
-  portal resubmit, chatbot save while rejected, legacy row without old status, staff edit stays
-  update, stock inquiry stage, status-engine record, child row. Red before the fix.
+- vitest `components/audit/AuditTrail.resubmitted.test.tsx` (10): CMP26-0219-shaped history, new
+  portal resubmit, chatbot save while rejected, legacy row without old status, legacy-actor
+  customer save, integration save after go-live stays update, staff edit stays update, stock inquiry stage, status-engine record, child row. Red before the fix.
 - vitest `AuditTrail.diff.test.tsx`: two assertions now read "rejected → resubmitted" (owner ruling).
 - pytest `tests/test_audit_trail_resubmitted.py` (2): the portal and chatbot resubmit each write
   one complaint audit row with the move out of rejected plus the changed fields (the contract the

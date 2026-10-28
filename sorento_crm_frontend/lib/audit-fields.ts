@@ -1,3 +1,4 @@
+import { parseDateTimeAsUTC } from './helpers';
 import { isAwaitingReview } from './submission-status';
 
 /**
@@ -107,7 +108,11 @@ const SUMMARY_REJECT = /→\s*rejected\s*$/i;
 const SUMMARY_STATUS_TO = /^Status(?::.*→|\s+changed to)\s*(.+)$/;
 // The customer's own side: a save by one of them while the record is rejected answers the
 // rejection (the chatbot's edit-via-submit kept the status `rejected` before RESUBMITTED-STATUS).
+// History only: since RESUBMITTED-STATUS went live (28 Oct 2026 03:40 MYT) every resubmit moves
+// the status, and a later integration save on a rejected record (an n8n edit) is not one.
 const CUSTOMER_ACTORS = new Set(['contact', 'integration', 'public_link']);
+const RESUBMITTED_STATUS_LIVE = Date.parse('2026-10-27T19:40:00Z');
+const at = (changedAt: string) => parseDateTimeAsUTC(changedAt).getTime();
 
 export type AuditTrailHeading = 'Resubmitted' | 'Rejected';
 
@@ -144,7 +149,7 @@ export function auditTrailHeadings(entries: TrailEntry[]): Map<string, AuditTrai
   // keep their written order.
   const oldestFirst = [...entries]
     .reverse()
-    .sort((a, b) => Date.parse(a.changed_at) - Date.parse(b.changed_at));
+    .sort((a, b) => at(a.changed_at) - at(b.changed_at));
   for (const entry of oldestFirst) {
     const oldV = entry.old_values || {};
     const newV = entry.new_values || {};
@@ -178,7 +183,10 @@ export function auditTrailHeadings(entries: TrailEntry[]): Map<string, AuditTrai
       !moved &&
       !heading &&
       Object.values(current).includes('rejected') &&
-      (CUSTOMER_ACTORS.has(entry.actor_type ?? '') || (!entry.actor_type && !!entry.contact_id)) &&
+      at(entry.changed_at) < RESUBMITTED_STATUS_LIVE &&
+      // Rows written before the actor columns read `legacy`: a contact id names the customer.
+      (CUSTOMER_ACTORS.has(entry.actor_type ?? '') ||
+        ((entry.actor_type ?? 'legacy') === 'legacy' && !!entry.contact_id)) &&
       auditFieldChanges(oldV, newV).length > 0
     ) {
       heading = 'Resubmitted';
