@@ -16,9 +16,7 @@ import { changeTicketStatus, getTicketsKanban } from '../services/ticketService'
 import {
   TICKET_STATUSES,
   type Ticket,
-  type TicketCategory,
   type TicketListFilters,
-  type TicketPriority,
   type TicketStatus,
 } from '../types/ticket.types';
 import { TicketPriorityBadge } from './TicketStatusBadge';

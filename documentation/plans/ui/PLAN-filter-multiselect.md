@@ -1,12 +1,10 @@
 # PLAN: every dropdown filter is multi-select (FILTER-MULTISELECT)
 
-Status: Review. Scan done (27 Oct); owner answered the card (28 Oct, section 0). PR1 #1930
-(Contacts Company filter + Companies column) merge-ready. PR2 #1928 (contacts, users, permissions,
-onboarding, SLA, system logs / outboxes / chatbot / ideas: ~40 filters on 27 screens) built
-red-first in 5 batches, reviewer READY with kill tests per batch, review round green at 3b3da207,
-browser pass 7 of 8 screens (Ideas blocked by the copy's ideation 502; vitest covers it). PR3 #1937
-(sales / orders / customers / complaints / tickets / marketing) building; PR4 and PR5 red tests
-written. Track: full lane, stacked PRs (diff well over 300 lines; no migration, no auth change).
+Status: Review. Scan done (27 Oct); owner answered the card (28 Oct, section 0). PR1 #1930, PR2
+#1928, PR3 #1937 and PR4 #1938 MERGED to main (241a45d8, 61758cc4, 1ad7572f, 8e534691), each
+owner hand-tested. PR5 #1939 (SCM) retargeted to main 28 Oct with PR4 and main merged in; browser
+pass and hand test next. PR6 #1940 and PR7 #1941 reviewer READY, follow one at a time.
+Track: full lane, stacked PRs (diff well over 300 lines; no migration, no auth change).
 
 Owner standing rule (27 Oct 2026): "do a scan through the filter in our system, all dropdown
 filter should be able to multi select". Same family as "every grid column sortable server-side".

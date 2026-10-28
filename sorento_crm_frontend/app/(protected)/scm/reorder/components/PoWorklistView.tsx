@@ -578,7 +578,7 @@ export function PoWorklistView({ runId = null, onBack }: PoWorklistViewProps) {
             onChange={(v) => setStatusFilter(joinMulti(v))}
             options={STATUS_OPTIONS}
             placeholder="Still to key"
-            className="w-44"
+            triggerClassName="w-44"
             id="keyed-status-filter"
           />
         </div>

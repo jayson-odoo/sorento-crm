@@ -59,7 +59,8 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     ]);
     renderTrail();
     const lines = screen.getAllByTestId('audit-change-line').map((li) => li.textContent);
-    expect(lines[0]).toBe('status: rejected → submitted');
+    // AUDIT-TRAIL-RESUBMITTED (owner, 28 Oct): a past resubmit reads as what it is called today.
+    expect(lines[0]).toBe('status: rejected → resubmitted');
     // The summary already says it; the raw status field is not listed twice.
     expect(lines.filter((l) => l?.includes('rejected'))).toHaveLength(1);
     // Long text: a collapsible before/after, with BOTH full values present (never cut).
@@ -82,7 +83,7 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     ]);
     renderTrail();
     const lines = screen.getAllByTestId('audit-change-line').map((li) => li.textContent);
-    expect(lines).toEqual(['status: rejected → submitted', 'Product code: CWCX604-P-RL-NEW → CWCY604']);
+    expect(lines).toEqual(['status: rejected → resubmitted', 'Product code: CWCX604-P-RL-NEW → CWCY604']);
   });
 
   it('hides an UPDATE whose only change is a bookkeeping field', () => {

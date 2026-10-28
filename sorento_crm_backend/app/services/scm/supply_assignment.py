@@ -99,6 +99,9 @@ reads the same answer so the board and the view can never disagree about what is
    narrowed span (`group=`) a route to a bin outside the span is honoured off that bin's
    free stock and cannot see the bin's own earlier demand, so the narrowed view may read a
    routed line covered that the full view reads short: the limit a stand-in pin had too.
+   Routes are the BOARD's and the ladder's reading only: the Stock Debt VIEW hands this walk
+   no route (STOCKDEBT-NO-PLAN-REACH, owner 28 Oct 2026), so on the page a decided line
+   draws exactly as the same line undecided.
 
 **Status.** `short` when anything is left uncovered beyond what the line lent,
 `order_back` when the line lent something and is still owed it, `pinned` when a decision
@@ -348,7 +351,7 @@ class Hold:
     #: `order_back` for what nearer lines drew first. The CALLER decides it (the Stock
     #: Debt view, off `reserve_window_end`); the board never sets it.
     lendable: bool = False
-    #: BOARD-NO-HOLD (rule 7): a confirmed Reserve plan. Not spent in step 1 and never
+    #: BOARD-NO-HOLD (rule 7): a confirmed decision (Reserve or Borrow) plan. Not spent in step 1 and never
     #: pinned; the line may draw the named bin at its own date, in date order.
     route: bool = False
 
