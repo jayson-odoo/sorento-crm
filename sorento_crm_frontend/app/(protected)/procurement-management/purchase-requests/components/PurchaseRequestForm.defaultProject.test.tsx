@@ -100,11 +100,13 @@ async function submitSponsorship() {
   return createMutateAsync.mock.calls[0][0] as { project_id?: string | null };
 }
 
+const PROJECT_ID = '3f2b8c1e-7a4d-4c2e-9b1f-6d5e4a3c2b10';
+
 describe('PurchaseRequestForm default project', () => {
   it('AC-PS-21: defaultProjectId seeds project_id in the create payload', async () => {
-    renderForm('p1');
+    renderForm(PROJECT_ID);
     const payload = await submitSponsorship();
-    expect(payload.project_id).toBe('p1');
+    expect(payload.project_id).toBe(PROJECT_ID);
   });
 
   it('AC-PS-27: without defaultProjectId project_id stays null', async () => {
