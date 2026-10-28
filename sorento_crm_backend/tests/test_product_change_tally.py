@@ -224,16 +224,20 @@ def test_a_split_swapped_line_prints_item_code_and_new_item_code_on_its_rows(
 
 
 @pytest.mark.parametrize(
-    ("own", "buy", "words"),
+    ("qty", "own", "buy", "words"),
     [
         # The draft keeps the held Buy: the email sends only the swap's settle line.
-        (None, "10", "NEW ITEM CODE"),
+        ("10", None, "10", "NEW ITEM CODE"),
+        # The same Buy grown with the line: still the settle line, with its qty word.
+        ("12", None, "12", "ORDER 2, NEW ITEM CODE"),
         # The draft takes the Buy back: the email tells the change, and no NEW ITEM CODE.
-        ("10", "0", "CHANGED: ORDER 10 -> USE {own} 10"),
+        ("10", "10", "0", "CHANGED: ORDER 10 -> USE {own} 10"),
+        # A new kind of part beside the held Buy: the email tells the decision's words.
+        ("12", "2", "10", "ORDER 10"),
     ],
 )
 def test_a_swapped_line_with_a_saved_draft_reads_alike_on_board_email_and_attachment(
-    api, monkeypatch, stored, own, buy, words,
+    api, monkeypatch, stored, qty, own, buy, words,
 ):
     """SWAP-REMARK-TALLY (follow-up of #1956): with a saved draft the Confirm review prints the
     board's `saved_remark` (`savedRemark ?? remarkGenerated`), so for a swapped line it must be
@@ -243,7 +247,7 @@ def test_a_swapped_line_with_a_saved_draft_reads_alike_on_board_email_and_attach
     calls = _captured_dispatches(monkeypatch)
     _drain_on_test_connection(monkeypatch, world)
     _enabled_handover(world)
-    fx = _swap_fixture(api, acknowledged=True)
+    fx = _swap_fixture(api, acknowledged=True, new_qty=qty)
     new = fx["new"].product_code
     params = {"orders": fx["order"].autocount_doc_no, "granularity": "week"}
     base = "/api/v1/project-sales/fulfilment-planning"
@@ -274,7 +278,9 @@ def test_a_swapped_line_with_a_saved_draft_reads_alike_on_board_email_and_attach
     calls.clear()
     response = _confirm(
         fx["client"], fx["order"].id,
-        [_line_payload(fx["line"].id, reserve=reserve, buy_qty=buy)],
+        [_line_payload(
+            fx["line"].id, reserve=reserve, buy_qty=buy, amend_reason="Planner choice.",
+        )],
         batch_id=str(fx["batch"].id),
     )
     assert response.status_code == 200, response.text

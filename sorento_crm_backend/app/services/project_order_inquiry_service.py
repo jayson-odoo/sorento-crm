@@ -715,8 +715,8 @@ def saved_draft_remark(
 
     SWAP-REMARK-TALLY (follow-up of #1956): `settle_words` are what the email's settle line says
     for a held line whose product AutoCount swapped (`NEW ITEM CODE`, the split read's own
-    `remark_generated`). A draft that keeps what purchasing holds (no CHANGED) sends no saved
-    line, only that settle line, so those are its words."""
+    `remark_generated`). A draft of the same kinds of decision as the held one (no CHANGED, no
+    new part) sends no saved line, only that settle line, so those are its words."""
     if not decision:
         return None
     verdict = decision.get("verdict")
@@ -739,7 +739,9 @@ def saved_draft_remark(
         changed = held_change_remark(held, now) if _shrinks(held, now) else None
         if changed:
             return changed
-        if settle_words:
+        if settle_words and _decision_words(held) == _decision_words(now):
+            # The same kinds of decision: the email's `_queue_saved_line` says nothing of its
+            # own (`same_kinds`), so the settle line is the line purchasing reads.
             return settle_words
     return purchasing_remark(now) or None
 
