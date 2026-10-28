@@ -64,6 +64,27 @@ vi.mock('@/components/common/SearchableSelect', async (importOriginal) => {
   return { ...actual, SearchableSelect: (props: Props) => <Stub {...props} /> };
 });
 
+vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/common/SearchableMultiSelect')>();
+  const React = await import('react');
+  type Props = Parameters<typeof actual.SearchableMultiSelect>[0];
+  const Stub = ({ value, onChange, options, fetchOptions, placeholder }: Props) => {
+    const [loaded, setLoaded] = React.useState(options ?? []);
+    React.useEffect(() => {
+      if (fetchOptions) void fetchOptions('').then(setLoaded);
+    }, [fetchOptions]);
+    return (
+      <select multiple aria-label={placeholder ?? 'multi'} value={value}
+        onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}>
+        {(fetchOptions ? loaded : (options ?? [])).map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    );
+  };
+  return { ...actual, SearchableMultiSelect: (props: Props) => <Stub {...props} /> };
+});
+
 const ROW = {
   id: 'contact-1', name: 'ZZT One', phone_number: '+60100000011', first_name: 'ZZT', last_name: 'One',
   respond_io_id: '1', outbound_enabled: true, access_type_codes: [], access_types: [], regions: ['west'],
@@ -121,7 +142,7 @@ describe('ContactsList filters popover', () => {
     renderList();
     await screen.findByText('+60100000011');
     await user.click(filtersButton());
-    await user.selectOptions(await screen.findByLabelText(/region/i), 'west');
+    await user.selectOptions(await screen.findByLabelText(/region/i), ['west']);
     await waitFor(() => expect(lastFilters().region).toBe('west'));
     await user.keyboard('{Escape}');
 
@@ -141,7 +162,7 @@ describe('ContactsList filters popover', () => {
     await screen.findByText('+60100000011');
     await user.selectOptions(screen.getByLabelText('Tag settings'), 'differs');
     await user.click(filtersButton());
-    await user.selectOptions(await screen.findByLabelText(/region/i), 'west');
+    await user.selectOptions(await screen.findByLabelText(/region/i), ['west']);
     await user.click(screen.getByLabelText(/no customers linked/i));
     await waitFor(() => {
       expect(lastFilters().region).toBe('west');

@@ -246,7 +246,7 @@ DEFAULT_LIST_DIR = "desc"
 def _list_query(
     db: Session,
     *,
-    status_key: Optional[str] = None,
+    status_key: Optional[list[str]] = None,
     query: Optional[str] = None,
     sort_field: str = DEFAULT_LIST_SORT,
     sort_dir: str = DEFAULT_LIST_DIR,
@@ -259,7 +259,7 @@ def _list_query(
     """
     q = db.query(OnboardingRequest)
     if status_key:
-        q = q.filter(OnboardingRequest.status_key == status_key)
+        q = q.filter(OnboardingRequest.status_key.in_(status_key))
     if query:
         like = f"%{query.strip().lower()}%"
         q = q.filter(
@@ -292,7 +292,7 @@ def _list_query(
 def list_requests(
     db: Session,
     *,
-    status_key: Optional[str] = None,
+    status_key: Optional[list[str]] = None,
     query: Optional[str] = None,
     sort_field: str = DEFAULT_LIST_SORT,
     sort_dir: str = DEFAULT_LIST_DIR,

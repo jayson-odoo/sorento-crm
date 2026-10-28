@@ -22,6 +22,7 @@ from app.models.integration import IntegrationLog
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.respond_outbox import RespondOutboxRowResponse
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_values
 
 logger = logging.getLogger(__name__)
 
@@ -89,7 +90,7 @@ def _parse_payload(
 async def list_respond_outbox(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     business_table: Optional[str] = Query(None),
     query: Optional[str] = Query(None, description="Search message text or contact"),
     current_user: dict = Depends(require_permission("system.respond_outbox.view")),
@@ -100,8 +101,9 @@ async def list_respond_outbox(
             IntegrationLog.integration_channel == "respond_io",
             IntegrationLog.direction == "outbound",
         )
-        if status_filter:
-            q = q.filter(IntegrationLog.status == status_filter.strip())
+        statuses = multi_values(status_filter)
+        if statuses:
+            q = q.filter(IntegrationLog.status.in_(statuses))
         if business_table:
             q = q.filter(IntegrationLog.business_table == business_table.strip())
         if query and query.strip():

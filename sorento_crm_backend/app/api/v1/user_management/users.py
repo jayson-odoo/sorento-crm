@@ -30,6 +30,7 @@ from app.services.notification_service import NotificationService
 from app.services.product_discontinued_scope_service import serialize_scopes
 from app.services.user_service import UserService, UserPermissionService
 from app.services.user_avatar_url import resolve_avatar_url_for_client
+from app.utils.multi_value import multi_uuids, multi_values
 
 logger = logging.getLogger(__name__)
 
@@ -58,8 +59,9 @@ async def get_users(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
-    roleId: Optional[str] = Query(None),
+    # FILTER-MULTISELECT: status and roleId take several values (repeat or comma-join).
+    status: Optional[list[str]] = Query(None),
+    roleId: Optional[list[str]] = Query(None),
     respond_synced: Optional[str] = Query(None),
     tier: Optional[str] = Query(None, description="Filter by tier (comma-separated, e.g. 1,2,3)"),
     trashed: Optional[str] = Query(None, description="exclude (default), only, or all"),
@@ -69,14 +71,15 @@ async def get_users(
     db: Session = Depends(get_db)
 ):
     """Get users with pagination, filtering, and sorting."""
+    role_ids = multi_uuids(roleId, "Role")
     try:
         service = UserService(db)
         result = service.list_users(
             page=page,
             limit=limit,
             query=query,
-            status=status,
-            role_id=roleId,
+            status=multi_values(status),
+            role_id=role_ids,
             respond_synced=respond_synced,
             tier=tier,
             trashed=trashed,

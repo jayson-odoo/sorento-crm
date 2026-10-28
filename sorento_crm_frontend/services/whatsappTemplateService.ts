@@ -460,7 +460,8 @@ export async function listTemplates(params: {
   page?: number;
   limit?: number;
   query?: string;
-  status?: TemplateStatus | 'all';
+  /** One status, several comma-joined, or 'all' / absent for no filter. */
+  status?: string;
 }): Promise<TemplateListResult> {
   const sp = new URLSearchParams();
   sp.set('page', String(params.page ?? 1));

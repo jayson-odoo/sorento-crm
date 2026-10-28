@@ -12,7 +12,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -48,7 +49,8 @@ export default function ChatbotStatusWordsList() {
         r.value.toLowerCase().includes(q) ||
         r.label.toLowerCase().includes(q) ||
         r.trigger_words.some((w) => w.toLowerCase().includes(q));
-      return matchesSearch && (!domainFilter || r.domain === domainFilter);
+      const domainsPicked = splitMulti(domainFilter);
+      return matchesSearch && (!domainsPicked.length || domainsPicked.includes(r.domain));
     });
   }, [rows, searchQuery, domainFilter]);
 
@@ -161,9 +163,9 @@ export default function ChatbotStatusWordsList() {
                   <div className="space-y-4">
                     <div>
                       <Label>Domain</Label>
-                      <SearchableSelect
-                        value={domainFilter}
-                        onChange={setDomainFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(domainFilter)}
+                        onChange={(v) => setDomainFilter(joinMulti(v))}
                         clearable
                         placeholder="All domains"
                         triggerClassName="mt-1"
