@@ -40,6 +40,19 @@ const listProjectTypes = vi.fn();
 const listingKeys: (string | null | undefined)[] = [];
 const push = vi.fn();
 
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: (slug: string) => slug === 'projects.projects.edit',
+  useHasAnyPermission: (slugs: string[]) => slugs.includes('projects.projects.edit'),
+  usePermissions: () => ({
+    permissions: ['projects.projects.edit'],
+    permissionSet: new Set(['projects.projects.edit']),
+    isLoading: false,
+    isError: false,
+    isFetching: false,
+    refetch: () => undefined,
+  }),
+}));
+
 vi.mock('next/navigation', () => ({
   usePathname: () => '/project-sales/pipeline',
   useRouter: () => ({ push, replace: vi.fn() }),
