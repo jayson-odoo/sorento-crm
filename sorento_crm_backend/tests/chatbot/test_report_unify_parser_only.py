@@ -630,3 +630,15 @@ def test_p3_the_parsers_offered_kind_basis_wins_over_reference_positions(bot) ->
     text, calls = _kind_with_customer(bot, positions=[1], basis="pending_delivery")
     args = _only_report_ask(calls)
     assert args["basis"] == "pending_delivery" and args.get("customer_ids") == [bot.ids["customer"]], args
+
+
+def test_p7_a_declared_fill_naming_a_kind_with_a_customer_runs_that_kind_for_the_customer(bot) -> None:
+    bot.say(_bare_outstanding(), "outstanding")
+    reply = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, by_words=None, basis="unpaid",
+        entities=[_e(CUSTOMER_NAME, "customer")],
+        open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None},
+    )
+    text, calls = bot.say(reply, "unpaid for that customer")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "unpaid" and args.get("customer_ids") == [bot.ids["customer"]], args
