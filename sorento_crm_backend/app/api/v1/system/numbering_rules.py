@@ -10,7 +10,7 @@ router = APIRouter()
 
 
 @router.get("/numbering-rules", response_model=list[DocumentNumberingRuleResponse])
-async def list_numbering_rules(
+def list_numbering_rules(
     current_user: dict = Depends(require_permission("system.numbering_rules.view")),
     db: Session = Depends(get_db),
 ):
@@ -21,7 +21,7 @@ async def list_numbering_rules(
 
 
 @router.get("/numbering-rules/{doc_type}", response_model=DocumentNumberingRuleResponse)
-async def get_numbering_rule(
+def get_numbering_rule(
     doc_type: str,
     current_user: dict = Depends(require_permission("system.numbering_rules.view")),
     db: Session = Depends(get_db),
@@ -35,7 +35,7 @@ async def get_numbering_rule(
 
 
 @router.patch("/numbering-rules/{doc_type}", response_model=DocumentNumberingRuleResponse)
-async def update_numbering_rule(
+def update_numbering_rule(
     doc_type: str,
     payload: DocumentNumberingRuleUpdate,
     current_user: dict = Depends(require_permission("system.numbering_rules.edit")),
