@@ -78,11 +78,11 @@ Frontend (per-form slices after S0; one coder each, parallel worktrees, folded b
 | Slice | Scope | Red test | Fix | State |
 | --- | --- | --- | --- | --- |
 | S0-A | pp4_0001 + registry + own_scope REQUEST_KINDS / request_clause + staff router guard (`app/api/v1/_request_own_scope.py`) + comments read | 9841649735 | 9f1f74f29f | green 30/30 |
-| S0-A2 | staff comments: limited user reads only (POST/PATCH 403); pp3 head test -> ancestry | 59935edb0f | (in S0-B) | red |
-| S0-B | `/api/v1/my-requests` = portal routes from the CRM session, one shared code path | 24a7e991c8 | coder running | red 57 |
-| S1 | Stock Inquiry FE: menu -> staff list, salesperson New/Edit (draft, submit, revise, duplicate), detail portal action set, all columns server-sortable | - | - | todo |
+| S0-A2 | staff comments: limited user reads only (POST/PATCH 403); pp3 head test -> ancestry | 59935edb0f | 80cf000466 | green |
+| S0-B | `/api/v1/my-requests` = portal routes from the CRM session (`public/portal.py:1281` register_submission_routes, `api/v1/my_requests.py:66` token adapter); fixture fixes 534f3a7b6e | 24a7e991c8 | 80cf000466 | green 86/87 (1 = S2 red); kill-proof posted |
+| S-FE0 + S1 | shared FE (menu, redirects, myRequestsService, useRequestScope, comments) + Stock Inquiry FE + SI sort keys | 7413655e9f | coder running | red 47 FE + 8 BE |
 | S2 | Complaint FE (same) + complaint revision code (owner Q6 a: adapter, settings governs it) | - | - | todo |
-| S3 | Purchase Request + Sponsorship FE (shared components) | - | - | todo |
+| S3 | Purchase Request + Sponsorship FE + PR/SF sort keys | 8afda83c66 | - | red 60 FE + 32 BE |
 | S4 | Sample Request (M), S5 NPA (L), S6 Sales Opportunity (M-), S7 Price Tag (L: staff request page edit mode, portal route bodies to a service, `dealer_kit.price_tag_requests.view_own`) | - | - | todo |
 | S8 | remove embedded portal pages from the CRM (`/my-requests/*`), redirects for deep links, landing | - | - | todo |
 
