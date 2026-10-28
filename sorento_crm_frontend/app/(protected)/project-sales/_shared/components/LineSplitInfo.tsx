@@ -450,6 +450,8 @@ export function coveredSheetLines(
       lineId: line.lineId ?? `board:${line.key}`,
       lineNo: line.lineNo,
       itemCode: line.itemCode,
+      // PRODUCT-CHANGE-TALLY: the product AutoCount swapped the line from, off the read.
+      wasItemCode: (line.lineId ? byId.get(line.lineId)?.wasItemCode : null) ?? null,
       location: line.location,
       baseQty: line.qty,
       baseDate: line.date,
@@ -458,6 +460,12 @@ export function coveredSheetLines(
       pendingChange: false,
       splits: [],
       savedRemark: line.savedRemark,
+      // A swapped line's REMARK is the read's own words (the email's NEW ITEM CODE), muted
+      // under none saved; every other line keeps only what the board says it sends.
+      remarkGenerated:
+        (line.lineId && byId.get(line.lineId)?.wasItemCode
+          ? byId.get(line.lineId)?.remarkGenerated
+          : undefined) ?? '',
     }));
   const builtIds = new Set(built.map((line) => line.lineId));
   return {

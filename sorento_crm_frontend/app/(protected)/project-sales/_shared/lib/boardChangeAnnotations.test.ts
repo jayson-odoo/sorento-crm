@@ -13,6 +13,7 @@ import {
   annotationsByCell,
   annotationsByLine,
   cellKeyOf,
+  changedFieldsOf,
   decisionWords,
   preMarkedKeys,
   uncoverChangedLines,
@@ -995,5 +996,34 @@ describe('uncoverChangedLines', () => {
     const byLine = annotationsByLine(batch);
     expect(byLine.get('pl-16')?.map((entry) => entry.rowId)).toEqual(['pcr-cfh14']);
     expect(byLine.get('pl-20')?.map((entry) => entry.rowId)).toEqual(['pcr-moved']);
+  });
+});
+
+describe('changedFieldsOf: the product swap (PRODUCT-CHANGE-TALLY)', () => {
+  const base = {
+    closed: false,
+    itemCode: 'NEWCODE-CR',
+    was: { qty: '10', date: '2026-11-03', decision: null },
+    now: { qty: '10', date: '2026-11-03', decision: null },
+  };
+
+  it('a product swap is the FIRST moved field, Was the old code and Now the new one', () => {
+    const fields = changedFieldsOf({
+      ...base,
+      productChangedFrom: 'OLDCODE-CR',
+      now: { qty: '12', date: '2026-11-03', decision: null },
+    });
+    expect(fields.map((field) => field.key)).toEqual(['product', 'qty']);
+    expect(fields[0]).toEqual({
+      key: 'product',
+      label: 'Product',
+      from: 'OLDCODE-CR',
+      to: 'NEWCODE-CR',
+    });
+  });
+
+  it('no swap, or the same code on both sides, is not a product field', () => {
+    expect(changedFieldsOf({ ...base, productChangedFrom: null })).toEqual([]);
+    expect(changedFieldsOf({ ...base, productChangedFrom: 'NEWCODE-CR' })).toEqual([]);
   });
 });
