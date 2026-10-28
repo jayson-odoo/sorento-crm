@@ -179,4 +179,14 @@ Answered 28 Oct: 1 (a), 2 (a), 3 (a), 4 (a) with search-only Customer, 5 (b).
    becomes search-only too, so no screen a salesperson uses creates a customer; (b) a separate lane; (c) leave it.
    Rec (a): the register form reaches the wizard through "Create lead", so leaving it open keeps a back door.
 
+7. (new, from the PORTAL-P4-REQUESTS lane: the owner ruled MY REQUESTS > Project Registration for a CRM salesperson
+   opens this Register page). Today the page and API need `projects.projects.edit` (`FE/new/page.tsx:16`,
+   `BE/api/v1/projects/projects.py:257`); a salesperson holds only `view_own`. (a) A salesperson without edit uses the
+   same form, button "Submit for approval": the project is created with `approval_state='pending'`, owner = the
+   salesperson, and the existing approve / reject / notify (`project_registration_service.py:910/974/713`) run; they
+   see it in the Projects list and pipeline (Awaiting approval / Rejected already shown), scoped by `view_own`; slug
+   `projects.registrations.submit` defined and granted to the salesperson role by P4's migration; no CRM draft, a
+   rejected one is fixed via Edit + Resubmit. (b) (a) plus Save draft. (c) grant salespeople `projects.projects.edit`
+   (direct registration, no approval). Rec (a).
+
 No migration expected. Security review covers the reassign and interest rules.
