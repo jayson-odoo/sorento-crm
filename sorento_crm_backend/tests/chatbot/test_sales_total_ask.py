@@ -390,7 +390,7 @@ def test_t21_a_declared_answer_naming_no_option_is_asked_again_then_given_up(one
     result, captured = one.say(_answer(open_question_answer=_pick(9)), "zzqq")
     assert "I still can't tell which basis you mean." in _reply(result) and "zzqq" not in _reply(result), _reply(result)
     assert captured == [], captured
-    assert captured == [], captured
+
 
 def test_t22_outstanding_with_no_period_reads_every_date_never_a_second_question(one):
     """An outstanding kind takes no period (Q2): none said means every date, and it is never asked."""

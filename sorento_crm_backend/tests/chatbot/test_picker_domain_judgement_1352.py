@@ -377,6 +377,8 @@ def test_c_outstanding_customer_pick_then_the_kind_question(session_factory, mon
         qf=outstanding._parser_output(
             message_type="business_query", intent_hint="check_product", domain_hint="master_products", entities=[],
             basis="pending_delivery", domain_in_message=False, order_status=None,
+            # Parser only (owner rule 28 Oct): the kind is the parser's declared pick of option 2 of the three offered.
+            open_question_answer={"mode": "pick", "picked": [2], "items": [], "qty_for_all": None},
         ),
         text_body="pending delivery",
         msg_id="ZZT-1352-outstanding-2",

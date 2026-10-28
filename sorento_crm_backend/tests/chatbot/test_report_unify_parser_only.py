@@ -281,3 +281,48 @@ def test_the_live_v63_company_reply_is_the_pick(bot) -> None:
     args = _only_report_ask(calls)
     assert args["company"] != MOCHA_ID and args["company"], args
     assert not args.get("group_by"), args
+
+
+# ---------------------------------------------------------------- reviewer ec60a404: the company pick skip is narrow
+
+
+def _under_the_company_question(bot):
+    sorento, mocha = _two_companies(bot)
+    text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    return sorento, mocha
+
+
+def test_a_fresh_ranking_naming_a_company_under_the_company_question_is_a_new_ask(bot) -> None:
+    """`sales_company` alone is not the pick: a ranking with a typed axis and a count is its own ask."""
+    sorento, _mocha = _under_the_company_question(bot)
+    fresh = _reply(
+        message_type="business_query", domain_hint="order", intent_hint="check_order", order_status="sales_ranking",
+        ranking_refine=False, group_by="customer", by_words="dealers", top_n=5, sales_company=sorento,
+        domain_in_message=False, entities=[], **YEAR,
+    )
+    text, calls = bot.say(fresh, "top 5 dealers for sorento")
+    assert calls == [] and "By quantity or by amount?" in text, (text, calls)
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        # `by_words` is ABSENT (a prompt version without it) or null: the `group_by` is a guess, never a typed axis.
+        dict(order_status="sales_ranking", ranking_refine=False, group_by="customer"),
+        dict(order_status="sales_report", group_by="date"),
+        dict(order_status="sales_report", group_by="customer", by_words=None),
+    ],
+    ids=["ranking-no-typed-axis", "report-stray-axis", "report-null-by-words"],
+)
+def test_the_two_shapes_the_company_pick_skip_exists_for_are_the_pick(bot, shape) -> None:
+    """The live parser reads a bare "Sorento" as one of these: no typed axis (`by_words` null) and no count, so the
+    `group_by` is a guess; the matched company is the answer and the held total runs for it."""
+    sorento, _mocha = _under_the_company_question(bot)
+    reply = _reply(
+        message_type="business_query", domain_hint="order", intent_hint="check_order", entities=[],
+        sales_company=sorento, domain_in_message=False, **shape,
+    )
+    text, calls = bot.say(reply, sorento)
+    args = _only_report_ask(calls)
+    assert args["company"] and args["company"] != MOCHA_ID and not args.get("group_by"), args

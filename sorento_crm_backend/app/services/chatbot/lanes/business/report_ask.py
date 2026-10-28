@@ -798,6 +798,26 @@ def _carries_answer_op(verdict: dict[str, Any], parser_ops: Any = ()) -> bool:
     return "answer" in ops and not ops & {"new_subject", "set"}
 
 
+def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
+    """Engine seam, the basis (or outstanding kind) question open: the parser's own position reading of the reply
+    (`reference_positions`, exactly one in range of the offered options) is the pick, as `sales_company_ask.as_answer`
+    does for the company question. Without it the position is read against whatever list stands underneath (a customer
+    roster the kind question replaced) and picks the wrong row. Parser fields only."""
+    if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME or slot.get("asking") != "basis":
+        return verdict
+    answer = verdict.get("open_question_answer")
+    if isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES:
+        return verdict
+    count = len(slot.get("options") or [])
+    positions = {
+        p for p in jsc.array(verdict.get("reference_positions"))
+        if isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= count
+    }
+    if len(positions) != 1:
+        return verdict
+    return {**verdict, "open_question_answer": {"mode": "pick", "picked": sorted(positions), "items": [], "qty_for_all": None}}
+
+
 def restates_the_ask(verdict: dict[str, Any]) -> bool:
     """REPORT-SMART-1021 (#1721 hand test step 7): a verdict flagged `ranking_refine` that the
     parser marked `new_subject` is the whole ask typed again, not a refine: it starts a new

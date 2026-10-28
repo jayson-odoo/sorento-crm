@@ -5942,14 +5942,22 @@ def _run_stages_body(  # noqa: PLR0915
         if opportunity_lane.own_pending(state_in.pending) is not None:
             state_in = dataclasses_replace(state_in, pending=None)
         parser_ops = (remembered_before.get("_chat_state") or {}).get("changes")
+        _company_pick = False
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "company":
-            # The company question's pick from the parser's own output (`sales_company`, `reference_positions`): it is the
-            # answer, whatever stray axis the reply also carried.
-            verdict = sales_company_ask.as_answer(verdict, open_ask)
-        _answered = (verdict.get("open_question_answer") or {}).get("mode") in required_fields.ANSWER_MODES
-        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not (
-            _answered and open_ask.get("asking") == "company"
-        ) and report_ask.names_its_own_ask(verdict, open_ask, parser_ops=parser_ops):
+            # The company question's pick from the parser's own output (`sales_company`, `reference_positions`) is the
+            # answer, whatever stray axis the reply also carried: only when the reply types no axis of its own
+            # (`by_words` null or absent, so its `group_by` is a guess) and no count, direction or ranked measure.
+            _candidate = sales_company_ask.as_answer(verdict, open_ask)
+            _typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
+                verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
+            )
+            if _candidate is not verdict and not _typed:
+                verdict, _company_pick = _candidate, True
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
+            verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
+        if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and report_ask.names_its_own_ask(
+            verdict, open_ask, parser_ops=parser_ops
+        ):
             replaced_ask, open_ask = open_ask, None  # a new sales ranking ask, not the answer to the open question
         if (open_ask or {}).get("ask") == chat_report.ASK_NAME and not verdict.get("order_status"):
             # The reply to a chat report question is read ONCE by the extractor, with the open ask;

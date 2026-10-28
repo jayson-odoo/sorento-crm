@@ -2139,7 +2139,7 @@ def run_fetch(
         # SALES-TOTAL-ASK (#1931, owner ruling 27 Oct): a company sales total (and the Yearly comparison, axis year) naming
         # no basis is asked "Invoiced, delivered, ordered or outstanding?" before anything runs, answered ONLY by the
         # parser's declared answer; never defaulted. The answer runs the first message's own ask on the REPORT ASK
-        # (no chat path calls `crm_sales_analysis`); outstanding, which the analysis never had, keeps #1931's layout.
+        # (no chat path calls `crm_sales_analysis`): one total layout for every basis, outstanding included.
         settled = sales_basis_ask.settle(db, parse_output)
         if settled is not None:
             if trace is not None:
