@@ -16,9 +16,8 @@ The supplier on the product's NEWEST purchase-order line:
   docstring has the measurement), so a link fallback is the caller's choice, never this rule's.
 
 Readers: the stock position report, the low stock report's Supplier column
-(`summary_order_service._last_po_supplier_map`). Stock Debt's `_last_supplier_map` asks the same
-question with this ordering (#1901) and moves onto this helper once #1901 merges (it then skips a
-supplier-less PO as well, where today it would answer "no supplier" for that product).
+(`summary_order_service._last_po_supplier_map`) and Stock Debt's Last supplier
+(`stock_debt_service._last_supplier_map`, which adds its own primary-supplier fallback).
 
 Not yet on this rule (named, not changed in this lane): `supply_origin` and
 `scripts/backfill_product_supplier_from_last_po.py`, which repeat the older

@@ -70,7 +70,7 @@ def _months_ago(n: int) -> date:
     return month_shift(month_shift(date.today(), 0), -n).replace(day=15)
 
 
-def _billing(db, product, qty, doc_date, *, doc_type="invoice", status="posted") -> None:
+def _billing(db, product, qty, doc_date, *, doc_type="invoice", status="posted", company_id=None) -> None:
     doc = BillingDocument(
         id=str(uuid.uuid4()),
         document_type=doc_type,
@@ -79,12 +79,14 @@ def _billing(db, product, qty, doc_date, *, doc_type="invoice", status="posted")
         status=status,
         local_net_total=0,
         source_ref=uuid.uuid4().hex,
+        **({"company_id": company_id} if company_id else {}),
     )
     db.add(doc)
     db.flush()
     db.add(BillingDocumentLine(
         id=str(uuid.uuid4()), document_id=doc.id, product_id=product.id, quantity=qty,
         source_ref=uuid.uuid4().hex,
+        **({"company_id": company_id} if company_id else {}),
     ))
     db.flush()
 
@@ -319,6 +321,51 @@ def test_monthly_sales_reads_the_one_shared_sales_function(scm_app, monkeypatch)
     assert until == date.today().replace(day=1)
     assert (until.year - since.year) * 12 + until.month - since.month == 12
     assert product_ids is None
+
+
+def _other_company(db) -> str:
+    from app.models.company import Company
+
+    cid = str(uuid.uuid4())
+    db.add(Company(id=cid, name=f"{MARKER} other {cid[:6]}", code=f"{MARKER}{uuid.uuid4().hex[:6]}".upper(),
+                   is_active=True))
+    db.flush()
+    return cid
+
+
+def test_monthly_sales_of_a_scoped_session_count_only_its_own_company(scm_app):
+    app, db, w = _setup(scm_app)
+    p = w.product("A")
+    _on_hand(db, p, _wh(db, "BRW"), 1)
+    _billing(db, p, 12, _months_ago(1))
+    _billing(db, p, 600, _months_ago(1), company_id=_other_company(db))
+
+    assert _row(_get(app), p)["highest_month"] == 12
+
+
+def test_an_unrestricted_caller_reads_every_companys_sales_not_a_500(scm_app):
+    """An integration key with no contact runs unrestricted (scope None). The shared function
+    refuses to guess the companies, so the report names every company, as every other column of
+    the report reads for such a caller."""
+    from app.models.base import set_company_scope
+    from app.services.company_scope_resolver import apply_company_scope
+
+    app, db, w = _setup(scm_app)
+    p = w.product("A")
+    _on_hand(db, p, _wh(db, "BRW"), 1)
+    _billing(db, p, 12, _months_ago(1))
+    _billing(db, p, 600, _months_ago(1), company_id=_other_company(db))
+
+    async def _unrestricted():
+        set_company_scope(db, None)
+        return None
+
+    app.dependency_overrides[apply_company_scope] = _unrestricted
+    set_company_scope(db, None)
+    r = TestClient(app).get(URL, params={"limit": 500})
+    assert r.status_code == 200, r.text
+    row = next(x for x in r.json()["data"] if x["product_id"] == str(p.id))
+    assert row["highest_month"] == 612
 
 
 def test_sales_basis_is_no_longer_a_choice(scm_app):

@@ -15,8 +15,11 @@ once rather than one, so the panel and this report cannot disagree:
 * **Outstanding dealer**: the panel's SO rule (`so_outstanding_clauses`) on non-project orders,
   printed negative as the sheet does (owed, Q2). **Outstanding PO**: `po_outstanding_clauses`.
 * **Supplier**: the last PO's supplier (`scm/last_po_supplier.py`, Q4).
-* **Monthly sales / Highest per month**: the loading plan's 12-full-month series (`_series`)
-  over the chosen basis (`SALES_BASES`, Q3).
+* **Monthly sales / Highest per month**: the ONE shared sales quantity,
+  `invoiced_sales.quantity_by_product_month` (IV + CS + DN - CN, by document date, cancelled
+  excluded; owner ruling Q3, 27 Oct), over the twelve full months before this one (the loading
+  plan's `history_window`), as the loading plan's `_series` reads a series: the mean over all 12
+  (an empty month is 0) and the peak. This module sums nothing itself.
 
 All figures are built in Python over a handful of grouped reads, then filtered, sorted and paged
 here, so every column sorts on the server. Trigger for pushing that into SQL: a page load over
@@ -32,13 +35,15 @@ from typing import Any, Optional
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
-from app.models.finance import CREDIT_NOTE, DOCUMENT_TYPES, POSTED, BillingDocument, BillingDocumentLine
+from app.models.base import get_company_scope
+from app.models.company import Company
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import PurchaseOrder, PurchaseOrderLine, Supplier
 from app.models.product import Brand, Product
 from app.services.error_handler import AppException
-from app.services.scm.container_request_service import _series, history_window, ordered_qty_by_month
+from app.services.sales import invoiced_sales
+from app.services.scm.container_request_service import _series, history_window
 from app.services.scm import last_po_supplier
 from app.services.scm.pool_predicate import PROJECT_SEGMENT, is_site_pool
 from app.services.scm.supplier_scope import is_uuid
@@ -48,10 +53,6 @@ from app.services.stock_status_service import (
     po_outstanding_clauses,
     so_outstanding_clauses,
 )
-
-#: The monthly sales bases (Q3): SO quantity ordered by order date (the loading plan's own
-#: history), or invoiced = invoice + cash sale + debit note - credit note lines by document date.
-SALES_BASES = ("so_ordered", "invoiced")
 
 #: The figure columns after the warehouse ones, in the sheet's order: (key, header).
 FIGURE_COLUMNS = (
@@ -74,38 +75,25 @@ def _num(value: Any) -> float:
     return float(value or 0)
 
 
-def _monthly_sales(db: Session, basis: str, as_of: Optional[date]) -> dict[str, dict]:
-    """Per product, the chosen basis's 12-full-month series (`avg`, `peak_qty`)."""
+def _monthly_sales(db: Session, as_of: Optional[date]) -> dict[str, dict]:
+    """Per product, the shared sales quantity's 12-full-month series (`avg`, `peak_qty`).
+
+    The companies are the rest of the report's: a session's scope reads itself; an unrestricted
+    caller (an integration key with no contact) reads every company, as every other column of
+    this report does for it, named explicitly because the shared function refuses to guess; an
+    unresolved scope reads nothing (fail closed)."""
     since, until, buckets = history_window(as_of)
-    by_product: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
-    if basis == "so_ordered":
-        # Every channel: the sheet's monthly sales is the item's, not one channel's.
-        for r in ordered_qty_by_month(db, None, since, until):
-            by_product[r["product_id"]][r["month"]] += _num(r["qty"])
+    scope = get_company_scope(db)
+    if isinstance(scope, frozenset):
+        rows = invoiced_sales.quantity_by_product_month(db, since, until)
+    elif scope is None:
+        every = [str(cid) for (cid,) in db.query(Company.id).all()]
+        rows = invoiced_sales.quantity_by_product_month(db, since, until, company_ids=every)
     else:
-        month = func.to_char(func.date_trunc("month", BillingDocument.doc_date), "YYYY-MM")
-        rows = (
-            db.query(
-                BillingDocumentLine.product_id,
-                month.label("month"),
-                BillingDocument.document_type,
-                func.sum(func.coalesce(BillingDocumentLine.quantity, 0)).label("qty"),
-            )
-            .join(BillingDocument, BillingDocument.id == BillingDocumentLine.document_id)
-            .filter(
-                BillingDocumentLine.product_id.isnot(None),
-                BillingDocument.status == POSTED,
-                BillingDocument.document_type.in_(DOCUMENT_TYPES),
-                BillingDocument.doc_date >= since,
-                BillingDocument.doc_date < until,
-            )
-            .group_by(BillingDocumentLine.product_id, month, BillingDocument.document_type)
-            .all()
-        )
-        for r in rows:
-            # A credit note is stored positive as AutoCount prints it and subtracts here.
-            sign = -1.0 if r.document_type == CREDIT_NOTE else 1.0
-            by_product[str(r.product_id)][r.month] += sign * _num(r.qty)
+        return {}
+    by_product: dict[str, dict[str, float]] = defaultdict(lambda: defaultdict(float))
+    for pid, month, qty in rows:
+        by_product[str(pid)][month] += _num(qty)
     return {pid: _series(buckets, months) for pid, months in by_product.items()}
 
 
@@ -117,10 +105,8 @@ def _grouped(query) -> dict[tuple[str, str], float]:
     return out
 
 
-def build_rows(db: Session, *, sales_basis: str = "so_ordered", as_of: Optional[date] = None) -> dict:
+def build_rows(db: Session, *, as_of: Optional[date] = None) -> dict:
     """Every item with something to show, every figure computed, unfiltered and unsorted."""
-    if sales_basis not in SALES_BASES:
-        raise AppException(422, f"Unknown sales basis '{sales_basis}'")
 
     # Every warehouse of the caller's company (the ORM scope), inactive included: a document
     # bound to one the caller cannot see is in no figure, as on the panel.
@@ -157,7 +143,7 @@ def build_rows(db: Session, *, sales_basis: str = "so_ordered", as_of: Optional[
         pid: sum(s["counted"] for s in shipments)
         for pid, shipments in incoming_pl_by_product(db, None, spos, False).items()
     }
-    sales = _monthly_sales(db, sales_basis, as_of)
+    sales = _monthly_sales(db, as_of)
 
     figures: dict[str, dict[str, Any]] = defaultdict(lambda: {
         "stock": {}, "incoming_pool": 0.0, "incoming_project": 0.0, "outstanding_dealer": 0.0,
@@ -237,7 +223,7 @@ def build_rows(db: Session, *, sales_basis: str = "so_ordered", as_of: Optional[
         ({"id": wid, "code": warehouses[wid].warehouse_code} for wid in used_columns),
         key=lambda c: c["code"] or "",
     )
-    return {"warehouses": columns, "rows": rows, "sales_basis": sales_basis}
+    return {"warehouses": columns, "rows": rows}
 
 
 def _sort_key(sort: str, codes: set[str]):
@@ -261,11 +247,10 @@ def stock_position(
     warehouse_ids: Optional[list[str]] = None,
     sort: Optional[str] = None,
     direction: str = "asc",
-    sales_basis: str = "so_ordered",
     as_of: Optional[date] = None,
 ) -> dict:
     """The filtered, sorted row set (unpaged) and its warehouse columns."""
-    built = build_rows(db, sales_basis=sales_basis, as_of=as_of)
+    built = build_rows(db, as_of=as_of)
     # A warehouse sort names one of THIS result's columns; any other is as unknown as `sort=nope`.
     key = _sort_key(sort or "item_code", {c["code"] for c in built["warehouses"]})
     rows = built["rows"]
@@ -281,7 +266,7 @@ def stock_position(
         rows = [r for r in rows if r["brand_id"] in wanted]
     if warehouse_ids:
         # A value that is not an id matches nothing (the query string is the caller's typo,
-        # not a server error), the same rule `ordered_qty_by_month` follows.
+        # not a server error), the same rule `container_request_service.history` follows.
         ids = [w for w in warehouse_ids if is_uuid(w)]
         codes = {
             code for (code,) in db.query(Warehouse.warehouse_code).filter(Warehouse.id.in_(ids)).all()
@@ -299,7 +284,6 @@ def page(result: dict, page_no: int, limit: int) -> dict:
     return {
         "data": rows[start:start + limit],
         "warehouses": result["warehouses"],
-        "sales_basis": result["sales_basis"],
         "pagination": {
             "page": page_no,
             "limit": limit,

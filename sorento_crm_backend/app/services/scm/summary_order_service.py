@@ -928,7 +928,7 @@ def _last_po_supplier_map(db: Session, product_ids: list[str]) -> dict[str, dict
     `product_suppliers` link that already agrees with its own last PO.
 
     The newest PO line for the product (`scm/last_po_supplier.py`, the one rule the stock
-    position report reads too and Stock Debt moves onto after #1901: `issue_date` desc, NULLs
+    position report and Stock Debt read too: `issue_date` desc, NULLs
     last, then the line's `created_at`, `po_number` and line id desc) names who it was
     actually bought from last, which is the buyer's own reading of "Supplier". Until 27 Oct
     this query broke an exact tie on `po.created_at` then `supplier_id`, as

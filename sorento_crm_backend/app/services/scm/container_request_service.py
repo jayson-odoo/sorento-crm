@@ -1759,7 +1759,8 @@ def _series(buckets: list[str], qty_by_month: dict[str, float]) -> dict:
 
 
 def history_window(as_of: Optional[date] = None) -> tuple[date, date, list[str]]:
-    """The twelve FULL months before `as_of`'s own month: (since, until exclusive, buckets)."""
+    """The twelve FULL months before `as_of`'s own month: (since, until exclusive, buckets).
+    Read by `history` and the stock position report's monthly sales."""
     # `month_shift(d, 0)` is the first of d's own month - the floor, and the same
     # arithmetic `trajectory_service` and `purchase_trend_service` already share.
     until = month_shift(as_of or date.today(), 0)
@@ -1768,45 +1769,6 @@ def history_window(as_of: Optional[date] = None) -> tuple[date, date, list[str]]
         _month_label(month_shift(since, i)) for i in range(_HISTORY_MONTHS)
     ]
     return since, until, buckets
-
-
-def ordered_qty_by_month(
-    db: Session, product_ids: Optional[list[str]], since: date, until: date
-) -> list:
-    """SO quantity ORDERED per product, channel (`project` / `retail`) and month, booked on
-    `since` <= order date < `until`, in the caller's company. Read by the loading plan's
-    history (these products) and the stock position report's monthly sales (None: every
-    product)."""
-    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="crh")
-    sql = f"""
-        SELECT sol.product_id::text AS product_id,
-               CASE WHEN so.demand_class = 'project' THEN 'project' ELSE 'retail' END
-                   AS series,
-               to_char(date_trunc('month', so.order_date), 'YYYY-MM') AS month,
-               SUM(COALESCE(sol.qty_ordered, 0)) AS qty
-        FROM sales_order_lines sol
-        JOIN sales_orders so ON so.id = sol.sales_order_id
-        WHERE so.order_date >= :since AND so.order_date < :until
-          {"AND sol.product_id = ANY(CAST(:pids AS uuid[]))" if product_ids is not None else ""}
-          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
-          AND NOT sol.removed_unreferenced
-          {("AND " + co) if co else ""}
-        GROUP BY 1, 2, 3
-    """
-    # Id-SHAPED values only. These arrive off a query string, so "nope" is a caller's typo
-    # rather than a server error - the same rule `list_for_supplier` follows - and the filter
-    # below casts to `uuid[]` (for the index on a 90k-row table), which is a good deal less
-    # forgiving than the text comparison it replaced. A value that never parsed simply
-    # matches nothing, and the zero-fill below still answers for it.
-    return db.execute(
-        text(sql),
-        {
-            "pids": [p for p in (product_ids or []) if is_uuid(p)],
-            "since": since,
-            "until": until,
-            **co_params,
-        },
-    ).mappings().all()
 
 
 def history(
@@ -1849,7 +1811,36 @@ def history(
     if not product_ids:
         return result
 
-    rows = ordered_qty_by_month(db, product_ids, since, until)
+    co, co_params = company_sql_predicate(db, "so.company_id", param_prefix="crh")
+    sql = f"""
+        SELECT sol.product_id::text AS product_id,
+               CASE WHEN so.demand_class = 'project' THEN 'project' ELSE 'retail' END
+                   AS series,
+               to_char(date_trunc('month', so.order_date), 'YYYY-MM') AS month,
+               SUM(COALESCE(sol.qty_ordered, 0)) AS qty
+        FROM sales_order_lines sol
+        JOIN sales_orders so ON so.id = sol.sales_order_id
+        WHERE sol.product_id = ANY(CAST(:pids AS uuid[]))
+          AND so.order_date >= :since AND so.order_date < :until
+          -- AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
+          AND NOT sol.removed_unreferenced
+          {("AND " + co) if co else ""}
+        GROUP BY 1, 2, 3
+    """
+    # Id-SHAPED values only. These arrive off a query string, so "nope" is a caller's typo
+    # rather than a server error - the same rule `list_for_supplier` follows - and the filter
+    # below casts to `uuid[]` (for the index on a 90k-row table), which is a good deal less
+    # forgiving than the text comparison it replaced. A value that never parsed simply
+    # matches nothing, and the zero-fill below still answers for it.
+    rows = db.execute(
+        text(sql),
+        {
+            "pids": [p for p in product_ids if is_uuid(p)],
+            "since": since,
+            "until": until,
+            **co_params,
+        },
+    ).mappings().all()
 
     by_product: dict[str, dict[str, dict[str, float]]] = {}
     for r in rows:

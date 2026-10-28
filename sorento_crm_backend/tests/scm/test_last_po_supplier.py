@@ -165,3 +165,30 @@ def test_the_low_stock_report_reads_the_same_rule(scm_app, monkeypatch):
     out = summary_order_service._last_po_supplier_map(db, [p.id])
     assert calls == [[p.id]]
     assert out[p.id]["supplier_name"] == s.supplier_name
+
+
+def test_stock_debt_reads_the_same_rule_with_its_primary_fallback(scm_app, monkeypatch):
+    """Stock Debt's Last supplier asks the shared helper; a product it names nothing for falls
+    back to the primary product supplier (Stock Debt's A1, Stock Debt only)."""
+    from app.services.scm import last_po_supplier
+    from app.services.scm.stock_debt_service import StockDebtService
+
+    db, w = _setup(scm_app)
+    bought, flagged = w.product("A"), w.product("B")
+    s, primary = _supplier(db, "bought from"), _supplier(db, "primary flag")
+    _line(db, bought, s, date(2026, 1, 1))
+    db.add(ProductSupplier(id=str(uuid.uuid4()), product_id=flagged.id, supplier_id=primary.id,
+                           is_primary_supplier=True))
+    db.flush()
+    calls = []
+    real = last_po_supplier.last_po_supplier_ids
+
+    def spy(session, product_ids):
+        calls.append(sorted(product_ids))
+        return real(session, product_ids)
+
+    monkeypatch.setattr(last_po_supplier, "last_po_supplier_ids", spy)
+    out = StockDebtService(db)._last_supplier_map([bought.id, flagged.id])
+    assert calls == [sorted([bought.id, flagged.id])]
+    assert out[str(bought.id)]["name"] == s.supplier_name
+    assert out[str(flagged.id)]["name"] == primary.supplier_name

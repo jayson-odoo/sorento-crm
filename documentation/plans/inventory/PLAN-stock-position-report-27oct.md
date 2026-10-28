@@ -1,8 +1,8 @@
 # PLAN: Stock position report (all suppliers)
 
-Status: Build round 2 on the owner's answers (27 Oct ~16:55). Q4 and Q5 done; Q3 waits for
-SALES-UNIFIED #1916 to merge (its shared `invoiced_sales.quantity_by_product_month`). Track: standard (no
-migration, no RBAC change).
+Status: Review (28 Oct): Q1-Q5 built on the owner's answers. Q3 is on SALES-UNIFIED's shared function (#1916,
+merged), and Stock Debt is on the shared last-PO helper (#1901, merged). Track: standard (no migration, no
+RBAC change).
 
 Lane: STOCK-POSITION-REPORT. Owner request 27 Oct 2026: reproduce the supplier stock sheet ("<SUPPLIER> STOCK AS AT
 <date>") inside the CRM for ALL suppliers in one report, one row per item code, with a Supplier column.
@@ -69,19 +69,26 @@ transferred to SPO, and 12 months of SO lines summing 3,408 (avg 284) with an 85
 - **Q3:** "our sales calculation should be the same across all, using a shared function". Monthly sales and
   Highest / month come from SALES-UNIFIED's ONE function, `invoiced_sales.quantity_by_product_month`
   (#1916: IV + CS + DN - CN line quantity, by document date, cancelled excluded, every sales type). This
-  report adds only the window (12 full months before this one), the mean over all 12 (an empty month is 0)
-  and the peak. The SO-ordered basis and the page's basis switch are removed: no second calculation. Lands
-  after #1916 merges (decided: wait, not stack, so #1916's 2,200 lines do not ride in this PR).
+  report adds only the window (12 full months before this one, `container_request_service.history_window`),
+  the mean over all 12 (an empty month is 0) and the peak (`_series`). The SO-ordered basis and the page's
+  basis switch are removed: no second calculation. Built after #1916 merged (decided: wait, not stack).
+  Companies: a session's scope is the shared function's default; an unrestricted caller (an integration
+  key with no contact, scope None) passes `company_ids` = every company, the same set every other column
+  of this report reads for it, since the shared function refuses an unrestricted scope (#1916 security
+  review L6); an unresolved scope reads nothing.
 - **Q4:** supplier = the LAST PO's supplier, ONE shared rule: `app/services/scm/last_po_supplier.py`.
   Measured: Stock Debt (`stock_debt_service._last_supplier_map`) and the low stock report
   (`summary_order_service._last_po_supplier_map`) were two functions with different tiebreaks (line
   `created_at` vs PO `created_at` + `supplier_id`), and Stock Debt also falls back to the primary product
   supplier. The helper takes STOCKDEBT-PERF's ordering (#1901): `issue_date` desc NULLS last, line
-  `created_at`, `po_number`, line id. The low stock report and this report read it now. Stock Debt moves
-  onto it when #1901 merges; editing that function now would conflict with #1901, #1902 and #1906. No PO =
+  `created_at`, `po_number`, line id. The low stock report, this report and (since #1901 merged,
+  28 Oct) Stock Debt's `_last_supplier_map` read it. No PO =
   no supplier (no link fallback: the live links nearly all name DEFAULT). Not moved in this lane, named
   as follow-ups: `supply_origin` and `scripts/backfill_product_supplier_from_last_po.py` still spell the
-  older tiebreak in their own SQL.
+  older tiebreak in their own SQL. A PO with no supplier is skipped (the next-newest PO names it), the
+  low stock report's old behaviour. Stock Debt keeps its primary-supplier fallback on top; its one
+  behaviour change is that a product whose newest PO names no supplier now shows the next-newest PO's
+  supplier (or, with no supplier-named PO at all, the primary flag) instead of none.
 - **Q5:** the user picks which warehouse columns show, with the DataGrid's own Columns chooser and the saved
   per-user column preferences (listing key = the page path). The grid mounts once the warehouse columns are
   known, so a saved choice applies to them. Export to Excel writes only the shown warehouse columns (`wh`).

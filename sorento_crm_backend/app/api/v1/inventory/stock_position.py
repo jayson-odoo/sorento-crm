@@ -19,7 +19,7 @@ router = APIRouter()
 _XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 
-def _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir, sales_basis):
+def _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir):
     return svc.stock_position(
         db,
         query=query,
@@ -28,7 +28,6 @@ def _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir, sales_bas
         warehouse_ids=warehouse_id,
         sort=sort,
         direction=dir,
-        sales_basis=sales_basis,
     )
 
 
@@ -42,12 +41,11 @@ def get_stock_position(
     supplier_id: Optional[List[str]] = Query(None),
     brand_id: Optional[List[str]] = Query(None),
     warehouse_id: Optional[List[str]] = Query(None),
-    sales_basis: str = Query("so_ordered", description="so_ordered or invoiced."),
     _user: dict = Depends(require_any_permission_with_api_key(READ_PERMISSIONS)),
     db: Session = Depends(get_db),
 ):
     """One page of items, every figure computed and sorted on the server."""
-    result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir, sales_basis)
+    result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir)
     return svc.page(result, page, limit)
 
 
@@ -59,13 +57,12 @@ def export_stock_position(
     supplier_id: Optional[List[str]] = Query(None),
     brand_id: Optional[List[str]] = Query(None),
     warehouse_id: Optional[List[str]] = Query(None),
-    sales_basis: str = Query("so_ordered"),
     wh: Optional[List[str]] = Query(None, description="The warehouse columns shown, by code; all when absent."),
     _user: dict = Depends(require_any_permission_with_api_key(READ_PERMISSIONS)),
     db: Session = Depends(get_db),
 ):
     """Every row of the same filtered, sorted set, as an Excel workbook."""
-    result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir, sales_basis)
+    result = _result(db, query, supplier_id, brand_id, warehouse_id, sort, dir)
     return Response(
         content=svc.workbook(result, wh),
         media_type=_XLSX,
