@@ -84,4 +84,18 @@ describe('SidebarMenu MY REQUESTS active item', () => {
     const { container } = render(<SidebarMenu />);
     expect(activeTitles(container)).toEqual(['Projects']);
   });
+
+  it('/my-requests/complaint/new: only Complaint is active', () => {
+    nav.pathname = '/my-requests/complaint/new';
+    nav.search = '';
+    const { container } = render(<SidebarMenu />);
+    expect(activeTitles(container)).toEqual(['Complaint']);
+  });
+
+  it('/my-requests/stock_inquiry/<id>: only Stock Inquiry is active', () => {
+    nav.pathname = '/my-requests/stock_inquiry/3f2a9c1e-0000-4000-8000-000000000001';
+    nav.search = '';
+    const { container } = render(<SidebarMenu />);
+    expect(activeTitles(container)).toEqual(['Stock Inquiry']);
+  });
 });

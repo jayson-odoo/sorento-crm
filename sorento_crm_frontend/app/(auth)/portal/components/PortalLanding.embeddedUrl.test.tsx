@@ -5,7 +5,7 @@
  */
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { render as rtlRender, waitFor } from '@testing-library/react';
+import { fireEvent, render as rtlRender, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 function render(ui: React.ReactElement) {
@@ -14,9 +14,10 @@ function render(ui: React.ReactElement) {
 }
 
 const router = { push: vi.fn(), replace: vi.fn() };
+let search = '';
 vi.mock('next/navigation', () => ({
   useRouter: () => router,
-  useSearchParams: () => new URLSearchParams(''),
+  useSearchParams: () => new URLSearchParams(search),
   usePathname: () => '/my-requests',
 }));
 
@@ -30,6 +31,15 @@ vi.mock('../lib/portal-client', async (importOriginal) => {
     readPortalToken: vi.fn(() => 'tok-123'),
   };
 });
+vi.mock('@/components/common/SearchableSelect', () => ({
+  SearchableSelect: ({ value, onChange, options }: {
+    value: string; onChange: (v: string) => void; options?: { value: string; label: string }[];
+  }) => (
+    <select data-testid="kind-picker" value={value} onChange={(e) => onChange(e.target.value)}>
+      {(options ?? []).map((o) => (<option key={o.value} value={o.value}>{o.label}</option>))}
+    </select>
+  ),
+}));
 vi.mock('../lib/price-tag-request-service', () => ({ listRequestsAsSummaries: vi.fn() }));
 
 import { fetchMeWithGrace, fetchSubmissions } from '../lib/portal-client';
@@ -48,6 +58,7 @@ const ME = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  search = '';
   window.localStorage.clear();
   (fetchMeWithGrace as ReturnType<typeof vi.fn>).mockResolvedValue(ME);
   (fetchSubmissions as ReturnType<typeof vi.fn>).mockResolvedValue([]);
@@ -75,5 +86,28 @@ describe('PortalLanding embedded, no ?type=', () => {
     render(<PortalLanding slug="ah-lim" />);
     await waitFor(() => expect(fetchSubmissions).toHaveBeenCalled());
     expect(router.replace).not.toHaveBeenCalledWith(expect.stringContaining('?type='));
+  });
+});
+
+describe('PortalLanding kind switch (F2)', () => {
+  it('embedded: picking another kind replaces the URL with that kind', async () => {
+    search = 'type=stock_inquiry';
+    render(<PortalLanding slug="ah-lim" embedded />);
+    const picker = await screen.findByTestId('kind-picker');
+    await waitFor(() => expect(fetchSubmissions).toHaveBeenCalled());
+    fireEvent.change(picker, { target: { value: 'complaint' } });
+    await waitFor(() =>
+      expect(router.replace).toHaveBeenCalledWith('/my-requests?type=complaint'),
+    );
+  });
+
+  it('not embedded (the portal): picking another kind does not replace the URL', async () => {
+    search = 'type=stock_inquiry';
+    render(<PortalLanding slug="ah-lim" />);
+    const picker = await screen.findByTestId('kind-picker');
+    fireEvent.change(picker, { target: { value: 'complaint' } });
+    await waitFor(() => expect(fetchSubmissions).toHaveBeenCalled());
+    await new Promise((r) => setTimeout(r, 50));
+    expect(router.replace).not.toHaveBeenCalledWith(expect.stringContaining('/my-requests'));
   });
 });
