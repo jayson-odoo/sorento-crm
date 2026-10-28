@@ -104,6 +104,16 @@ def _pinned_line(
     return core_line
 
 
+def _board_line(db, product, so_number):
+    """The BOARD's own reading of one line (`planning_assignments`), which still takes a
+    decision as a route (STOCKDEBT-NO-PLAN-REACH changed the view only)."""
+    from app.services.project_supply_service import ProjectSupplyService
+
+    result = ProjectSupplyService(db).planning_assignments([str(product.id)])[str(product.id)]
+    [line] = [row for row in result.lines if row.line.so_number == so_number]
+    return line
+
+
 def _at(minutes):
     """A confirm / link time `minutes` after a fixed base, so pin order is explicit."""
     from datetime import datetime
@@ -252,9 +262,11 @@ def test_two_pins_on_one_empty_bin_both_read_short(scm_app):
 def test_a_pin_at_a_bin_outside_the_span_is_capped_at_its_free_stock(
     scm_app, on_hand, covered
 ):
-    """AC-S2-1b still honours a pin on a bin this read cannot see (an unflagged bin), but
-    never for more than that bin's real free stock: 40 pinned at a bin holding 0 covers
-    nothing, at a bin holding 10 covers 10, at a bin holding 500 covers 40."""
+    """AC-S2-1b still honours a decision on a bin a read cannot see (an unflagged bin) on
+    the BOARD, never for more than that bin's real free stock: 40 planned at a bin holding
+    0 covers nothing, at 10 covers 10, at 500 covers 40. Since STOCKDEBT-NO-PLAN-REACH
+    (owner 28 Oct 2026) the view reads a decided line as undecided and covers nothing from
+    that bin whatever it holds."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -271,21 +283,22 @@ def test_a_pin_at_a_bin_outside_the_span_is_capped_at_its_free_stock(
         balance = _balance(c, marker, product, month_key(due))
 
     [line] = cell["demand"]
-    assert line["assigned_qty"] == covered
-    assert line["short_qty"] == 40 - covered
-    assert line["status"] == ("covered" if covered == 40 else "short")
-    assert line["assigned_from"] == (
-        [_on_hand_entry(unflagged, covered)] if covered else []
-    )
-    assert balance == -(40 - covered)
+    assert (line["assigned_qty"], line["short_qty"], line["status"]) == (0, 40, "short")
+    assert line["assigned_from"] == []
+    assert balance == -40
+
+    board = _board_line(db, product, f"{marker}-SO1")
+    assert round(sum(item.qty for item in board.assigned), 4) == covered
 
 
 def test_two_routes_at_one_bin_outside_the_span_share_its_free_stock_earliest_due_first(
     scm_app,
 ):
     """Two decisions (2 confirmed first but due later, 8 confirmed later but due first) on
-    an unflagged bin holding 5: the bin covers 5 in all, shared by DATE like every route on
-    a bin the walk can see (the line due first takes it), not by confirm time."""
+    an unflagged bin holding 5: on the BOARD the bin covers 5 in all, shared by DATE like
+    every route on a bin the walk can see (the line due first takes it), not by confirm
+    time. Since STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026) the view reads a decided line
+    as undecided and covers neither from it."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -308,8 +321,13 @@ def test_two_routes_at_one_bin_outside_the_span_share_its_free_stock_earliest_du
 
     by_so = {line["so_number"]: line for line in cell["demand"]}
     due_later, due_first = by_so[f"{marker}-SO2"], by_so[f"{marker}-SO1"]
-    assert (due_first["assigned_qty"], due_first["short_qty"]) == (5, 3)
+    assert (due_first["assigned_qty"], due_first["short_qty"]) == (0, 8)
     assert (due_later["assigned_qty"], due_later["short_qty"]) == (0, 2)
+
+    first = _board_line(db, product, f"{marker}-SO1")
+    later = _board_line(db, product, f"{marker}-SO2")
+    assert (round(sum(i.qty for i in first.assigned), 4), first.uncovered) == (5, 3)
+    assert (round(sum(i.qty for i in later.assigned), 4), later.uncovered) == (0, 2)
 
 
 @pytest.mark.parametrize(
@@ -402,7 +420,10 @@ def test_a_route_the_walk_does_not_serve_leaves_the_bin_to_the_next_route(scm_ap
     FIRST pin takes nothing from its second, so that second pin must not spend the bin.
     A owes 30, pinned 30 at Y (30) first and 30 at X (40, another group) next; B owes 40,
     pinned 40 at X last. A is covered from Y and B gets the whole 40 at X. Spending A's X
-    pin on the bin left 30 of X free while B read short 30 (nothing else B may draw)."""
+    pin on the bin left 30 of X free while B read short 30 (nothing else B may draw).
+    That is now the BOARD's answer: since STOCKDEBT-NO-PLAN-REACH (owner 28 Oct 2026) the
+    view reads a decided line as undecided, so A is covered off its own group's Y and B
+    reads short."""
     from tests.scm.test_stock_debt_routes import _demand as _demand_line
 
     app, db = _client(scm_app)
@@ -434,10 +455,12 @@ def test_a_route_the_walk_does_not_serve_leaves_the_bin_to_the_next_route(scm_ap
     assert [(entry["ref"], entry["qty"]) for entry in a["assigned_from"]] == [
         (f"On hand {y_bin.warehouse_code}", 30),
     ]
-    assert (b["assigned_qty"], b["short_qty"], b["status"]) == (40, 0, "covered")
-    assert [(entry["ref"], entry["qty"]) for entry in b["assigned_from"]] == [
-        (f"On hand {x_bin.warehouse_code}", 40),
-    ]
+    assert (b["assigned_qty"], b["short_qty"], b["status"]) == (0, 40, "short")
+
+    board_a = _board_line(db, product, f"{marker}-SO1")
+    board_b = _board_line(db, product, f"{marker}-SO2")
+    assert [(i.event.key, i.qty) for i in board_a.assigned] == [(f"on_hand:{y_bin.id}", 30.0)]
+    assert [(i.event.key, i.qty) for i in board_b.assigned] == [(f"on_hand:{x_bin.id}", 40.0)]
 
 
 def test_a_line_that_lends_keeps_its_lent_units_out_of_the_book_so(scm_app):
@@ -501,8 +524,9 @@ def test_a_routed_line_due_later_is_listed_in_todays_supply_column_only(scm_app)
 
 
 def test_a_routed_bin_outside_the_span_is_not_listed_in_the_supply_tab(scm_app):
-    """A decision on a bin the read cannot see covers its line off a stand-in, which is
-    nobody's stock: the line reads covered from that bin, and the Supply tab lists no row."""
+    """A decision on a bin the read cannot see gives the line no reach (STOCKDEBT-NO-PLAN-
+    REACH, owner 28 Oct 2026: the view reads a decided line as undecided): the line reads
+    short, Covered by names nothing, and the Supply tab lists no row."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -518,8 +542,8 @@ def test_a_routed_bin_outside_the_span_is_not_listed_in_the_supply_tab(scm_app):
         cell = _cell(c, product, month_key(due))
 
     [line] = cell["demand"]
-    assert (line["status"], line["assigned_qty"]) == ("covered", 30)
-    assert line["assigned_from"] == [_on_hand_entry(unflagged, 30)]
+    assert (line["status"], line["assigned_qty"]) == ("short", 0)
+    assert line["assigned_from"] == []
     assert cell["supply"] == []
 
 
@@ -561,9 +585,10 @@ def test_a_routed_reserve_bin_outside_the_span_lists_no_supply_row_under_the_pro
     scm_app,
 ):
     """Reviewer, rounds 1-2: under `group=BB` the HQ project reserve is outside the span, so
-    a BB line whose decision names it is covered off a stand-in. With the projection switch
-    on, the Supply tab lists no row for that bin: the stand-in is nobody's stock, and the
-    reserve's whole projected remainder (470 here) must not appear in its place."""
+    a BB line whose decision names it gets nothing from it (STOCKDEBT-NO-PLAN-REACH, owner
+    28 Oct 2026: the view reads it as undecided). With the projection switch on, the Supply
+    tab lists no row for that bin, and the reserve's whole projected remainder must not
+    appear in its place."""
     from tests.scm.test_stock_debt_projection_routes import _warehouse as _segment_warehouse
 
     app, db = _client(scm_app)
@@ -577,19 +602,27 @@ def test_a_routed_reserve_bin_outside_the_span_lists_no_supply_row_under_the_pro
     db.flush()
     product = _product(db, f"{marker}-SRTWT2215")
     _stock(db, product, hq, on_hand=500)
-    _pinned_line(
+    core_line = _pinned_line(
         db, product, bb, qty=30, due=TODAY, so_number=f"{marker}-SO-PIN", pin_at=hq
     )
 
-    with TestClient(app) as c:
-        cell = _cell(
-            c, product, month_key(TODAY), group="BB", book="project", projected="true"
-        )
+    def read():
+        with TestClient(app) as c:
+            return _cell(
+                c, product, month_key(TODAY), group="BB", book="project", projected="true"
+            )
 
+    cell = read()
     [line] = cell["demand"]
-    assert (line["so_number"], line["assigned_qty"]) == (f"{marker}-SO-PIN", 30)
-    rows = [
-        row for row in cell["supply"]
-        if row["kind"] == "on_hand" and row["warehouse_code"] == hq.warehouse_code
-    ]
-    assert rows == []
+    assert (line["so_number"], line["assigned_qty"]) == (f"{marker}-SO-PIN", 0)
+    # No stand-in row: the reserve is listed exactly as it is for the same line undecided.
+    from app.models.project_so import ProjectSalesOrderLine, SOLineAllocation
+
+    project_line = (
+        db.query(ProjectSalesOrderLine)
+        .filter(ProjectSalesOrderLine.core_sales_order_line_id == core_line.id)
+        .one()
+    )
+    db.query(SOLineAllocation).filter(SOLineAllocation.so_line_id == project_line.id).delete()
+    db.flush()
+    assert read() == cell
