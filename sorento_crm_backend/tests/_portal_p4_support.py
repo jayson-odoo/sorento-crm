@@ -512,8 +512,14 @@ def staff_reject(sc: Scene, spec: Spec, sid: str) -> None:
     assert sc.row(spec, sid).status == "rejected"
 
 
+_PASS = {}
+
+
 def staff_to_final(sc: Scene, spec: Spec, sid: str) -> None:
     """From the review stage (submitted / resubmitted) to the form's final status."""
+    # A distinct /process note per pass: the same note + session inside the idempotency window replays the first response.
+    _PASS[sid] = _PASS.get(sid, 0) + 1
+    note = f"ZZT done {_PASS[sid]}"
     if spec.kind == "stock_inquiry":
         ok(sc.staff_call("POST", f"{SI}/{sid}/project-sales-approve"))
         assert sc.row(spec, sid).status == "pending_purchasing"
@@ -523,12 +529,12 @@ def staff_to_final(sc: Scene, spec: Spec, sid: str) -> None:
         assert sc.row(spec, sid).status == "responded"
         ok(sc.staff_call("POST", f"{CX}/{sid}/approve"))
         assert sc.row(spec, sid).status == "approved"
-        ok(sc.staff_call("POST", f"{CX}/{sid}/process", json={"note": "ZZT done"}))
+        ok(sc.staff_call("POST", f"{CX}/{sid}/process", json={"note": note}))
     else:
         ok(sc.staff_call("POST", f"{PR}/{sid}/set-pending-approval"))
         ok(sc.staff_call("POST", f"{PR}/{sid}/approval-decision", json={"action": "approved", "comments": "ZZT ok"}))
         assert sc.row(spec, sid).status == "approved"
-        ok(sc.staff_call("POST", f"{PR}/{sid}/process", json={"note": "ZZT done"}))
+        ok(sc.staff_call("POST", f"{PR}/{sid}/process", json={"note": note}))
     assert sc.row(spec, sid).status == spec.final_status
 
 

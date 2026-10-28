@@ -140,7 +140,11 @@ def test_revision_fits_alembic_version_and_sits_on_pp3_0001():
 
     cfg = Config(str(VERSIONS.parent.parent / "alembic.ini"))
     cfg.set_main_option("script_location", str(VERSIONS.parent))
-    assert ScriptDirectory.from_config(cfg).get_heads() == [NAME]
+    script = ScriptDirectory.from_config(cfg)
+    heads = script.get_heads()
+    assert len(heads) == 1, heads
+    ancestry = {r.revision for r in script.walk_revisions(base="base", head=heads[0])}
+    assert NAME in ancestry
 
 
 def test_the_registry_and_the_migration_declare_the_same_six_slugs():

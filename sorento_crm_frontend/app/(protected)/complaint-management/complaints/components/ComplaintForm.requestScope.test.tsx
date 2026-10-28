@@ -9,6 +9,7 @@
  *  - staff /new: no draft buttons, the Technical Team card present, nothing sent to my-requests.
  * Modelled on StockInquiryForm.requestScope.test.tsx.
  */
+import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -189,7 +190,7 @@ describe('limited user, edit', () => {
   it('a rejected row is editable (Submit available)', async () => {
     sources['cp-5'] = detail({ id: 'cp-5', status: 'rejected', is_draft: true });
     mount(LIMITED, { complaintId: 'cp-5' });
-    expect(await screen.findByRole('button', { name: /^Submit/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: new RegExp(`^${submitVerb('rejected')}`) })).toBeInTheDocument();
   });
 
   it.each(['submitted', 'responded', 'approved', 'processed_by_cs'])('a %s row offers no save or submit when not revising', async (status) => {

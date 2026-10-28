@@ -5,6 +5,7 @@
  * root cause, resolution and technical response stay visible, read-only. Staff detail unchanged.
  * Scaffolding follows ComplaintDetail.test.tsx and the S1 StockInquiryDetail.requestScope.test.tsx.
  */
+import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
@@ -109,7 +110,7 @@ const WORKFLOW_SLUGS = [
   'sla_management.conversation_sla_tracking.reassign',
 ];
 const STAFF = ['complaint_management.complaints.view', ...WORKFLOW_SLUGS];
-const PORTAL_SET = ['Edit', 'Delete', 'Submit', 'Revise', 'Duplicate'];
+const PORTAL_SET = ['Edit', 'Delete', 'Submit', submitVerb('rejected'), 'Revise', 'Duplicate'];
 // Every staff action the detail card offers today (ComplaintDetail.tsx gear menu, header CTAs, inline Edit buttons).
 const STAFF_ACTIONS = [
   'Edit technical team response', 'Approve', 'Reject', 'Processed by CS', 'Mark as closed', 'Void',
@@ -184,7 +185,7 @@ describe('limited user, detail', () => {
   it('rejected: Edit, Submit, Duplicate, no Delete', async () => {
     mount(LIMITED, { status: 'rejected' });
     const labels = await actionLabels();
-    for (const want of ['Edit', 'Submit', 'Duplicate']) expect(labels).toContain(want);
+    for (const want of ['Edit', submitVerb('rejected'), 'Duplicate']) expect(labels).toContain(want);
     expect(labels).not.toContain('Delete');
   });
 

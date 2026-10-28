@@ -38,8 +38,14 @@ def _final_complaint(sc: s.Scene, api: s.Api) -> str:
 
 
 def flow_revise_ok(sc: s.Scene, api: s.Api) -> None:
-    s.seed_revisions(sc, SPEC, enabled=True)
-    sid = _final_complaint(sc, api)
+    # Revise from `responded`: the stage seed_sla opened is still open there. Staff /process emits
+    # `resolved`, which closes it, and the engine only voids OPEN stages.
+    s.seed_revisions(sc, SPEC, enabled=True, allowed=["responded"])
+    s.seed_sla(sc, SPEC)
+    sid = s._id(api.create(SPEC.kind, SPEC.body(sc)))
+    s.ok(api.submit(SPEC.kind, sid))
+    s.ok(sc.staff_call("POST", f"{s.CX}/{sid}/update-and-reply", json={"technical_team_response": "ZZT answer"}))
+    assert sc.row(SPEC, sid).status == "responded"
     before = sc.row(SPEC, sid)
     frozen_before = {f: getattr(before, f) for f in SPEC.frozen}
     assert frozen_before["contact_id"] == sc.contact.id
