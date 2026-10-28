@@ -1,6 +1,6 @@
 # Backend memory growth (BACKEND-MEMORY)
 
-Status: in progress (2026-10-28), PR #1950. Track: small fix track (under 300 lines, no migration,
+Status: in review (2026-10-28), PR #1950 reviewer READY; ships in a release after #3. Track: small fix track (under 300 lines, no migration,
 no auth/RBAC, no ingest surface).
 Lane: `crew/backend-memory`
 UAC: `backend-memory-28oct-acceptance-criteria.md`
@@ -114,8 +114,10 @@ PID 1 is gunicorn. MemAvailable 3,681 MB (guard 4,500). backend_blue 7.305 GiB; 
   the chat lookup path +151 MB (43 MB of row vectors, 105 MB of indexes and caches in
   `app/services/chatbot`). Footprint grew 407 MB over the same steps, so about half is outside
   Python's own accounting (C allocations and memory freed but kept by the allocator).
-- **Worker count dominates:** each worker costs about 0.9 GB, so 8 -> 4 frees about 3.6 GB. That
-  is the owner's call (asked through crew).
+- **Worker count dominates:** each worker costs about 0.9 GB, so 8 -> 4 frees about 3.6 GB.
+  **Owner ruling (28 Oct 13:5x): WORKERS=4**; the owner edits the server compose before release #4.
+  Release #3 went live after the owner's TTOU x4. Lane API-NONBLOCKING (#1951) moves the blocking
+  `async def` handlers off the event loop so 4 workers carry the load; no file overlap with this PR.
 
 ## Zero-downtime recovery today (owner runs)
 
