@@ -84,6 +84,7 @@ describe('below sm the title drops to its own truncated line; label and code kee
 
     expect(row.className).toMatch(/\bflex\b/);
     expect(row.className).toMatch(/\bflex-wrap\b/);
+    expect(row.className).toMatch(/\bsm:flex-nowrap\b/);
     expect(row.className).not.toMatch(/\[flex-flow/);
     expect(row.className).toMatch(/\bmin-w-0\b/);
     expect(labelEl.className).toMatch(/\bshrink-0\b/);
