@@ -186,3 +186,339 @@ WHERE d.status = 'posted' AND d.document_type IN ('invoice','cash_sale','credit_
 GROUP BY 1 ORDER BY 3 DESC LIMIT 60;
 ROLLBACK;
 ```
+
+# Round 2 (28 Oct, after the owner's Q1 pushback: the block follows the SO's order type)
+
+Run R1 to R4 first (above), then R7. R8 answers "an agent can handle both retail and project".
+R9 is the class-data dry run (Q3): a SELECT only; its apply block is held for the owner.
+
+## R7. Why `sales_order_line_id` stays empty (the ingest-time DO hop)
+
+Purpose: `sales_order_line_id` is resolved ONCE, when the invoice is pushed
+(`billing_document_ingest_service.py:550-604`): the line's `from_line_ref`
+`{book}:DO:{DocKey}:{DtlKey}` must name a DO line already in `orders` / `order_lines` that already
+carries a `sales_order_line_id`. Nothing re-resolves it later. This shows, per outcome, whether the
+ref is missing or malformed, the DO or its line is missing, the DO line has no SO line, or the DO
+arrived AFTER the invoice (so the hop missed it). Expected: one outcome holds most lines.
+
+```sql
+BEGIN READ ONLY;
+WITH srt AS (SELECT id FROM companies WHERE code = 'SRT'),
+l AS (
+  SELECT l.id, l.from_line_ref, l.sales_order_line_id, d.created_at AS doc_created,
+         split_part(l.from_line_ref, ':', 1) AS book,
+         split_part(l.from_line_ref, ':', 2) AS kind,
+         split_part(l.from_line_ref, ':', 3) AS doc_key,
+         split_part(l.from_line_ref, ':', 4) AS dtl_key
+  FROM finance.billing_documents d
+  JOIN finance.billing_document_lines l ON l.document_id = d.id
+  WHERE d.company_id = (SELECT id FROM srt) AND d.status = 'posted' AND d.document_type = 'invoice'
+    AND d.doc_date >= '2026-01-01' AND d.doc_date < '2026-02-01'),
+r AS (
+  SELECT l.*, o.id AS do_id, o.created_at AS do_created, ol.id AS do_line_id,
+         ol.sales_order_line_id AS do_so_line
+  FROM l
+  LEFT JOIN orders o ON l.kind = 'DO' AND l.doc_key ~ '^[0-9]{1,18}$'
+        AND o.company_id = (SELECT id FROM srt) AND o.source_book = l.book AND o.doc_key = l.doc_key::bigint
+  LEFT JOIN order_lines ol ON ol.order_id = o.id AND l.dtl_key ~ '^[0-9]{1,18}$' AND ol.dtl_key = l.dtl_key::bigint)
+SELECT CASE
+         WHEN sales_order_line_id IS NOT NULL THEN '0 linked'
+         WHEN from_line_ref IS NULL           THEN '1 no from_line_ref'
+         WHEN kind <> 'DO'                    THEN '2 ref not a DO ref: ' || kind
+         WHEN do_id IS NULL                   THEN '3 DO (book + DocKey) not in CRM'
+         WHEN do_line_id IS NULL              THEN '4 DO there, line (DtlKey) not'
+         WHEN do_so_line IS NULL              THEN '5 DO line has no SO line'
+         WHEN do_created > doc_created        THEN '6 DO arrived after the invoice'
+         ELSE                                      '7 resolvable now, not resolved'
+       END AS outcome,
+       count(*) AS lines,
+       (array_agg(from_line_ref ORDER BY from_line_ref))[1:3] AS sample_refs
+FROM r GROUP BY 1 ORDER BY 1;
+-- The books the DO feed has, against the books the invoice refs name.
+SELECT 'orders' AS src, source_book, count(*) FROM orders
+WHERE company_id = (SELECT id FROM companies WHERE code = 'SRT') AND doc_key IS NOT NULL GROUP BY 2
+UNION ALL
+SELECT 'invoice refs', split_part(l.from_line_ref, ':', 1), count(*)
+FROM finance.billing_documents d JOIN finance.billing_document_lines l ON l.document_id = d.id
+WHERE d.company_id = (SELECT id FROM companies WHERE code = 'SRT') AND d.doc_date >= '2026-01-01'
+  AND d.doc_date < '2026-02-01' AND l.from_line_ref IS NOT NULL GROUP BY 2
+ORDER BY 1, 2;
+ROLLBACK;
+```
+
+## R8. Do agents sell both types on their sales orders?
+
+Purpose: the owner's point, "sometimes the agent can be handling both retail and project". Per
+agent, SRT sales orders dated Nov 2025 to Jan 2026 by stored class, and how many carry an order
+type AutoCount STATED (only a stated type can differ from the agent's class: the re-derive rule
+is stated order type, else the agent's class on the SO date,
+`agent_class_service.py` `_rederive`). Expected: on the dev copy 4,979 of 5,000 SOs stated no type,
+so most agents show one class; an agent with real rows in two classes is the case the owner means.
+
+```sql
+BEGIN READ ONLY;
+SELECT coalesce(a.sales_agent, '(no agent)') AS agent,
+       coalesce(so.demand_class, '(none)')   AS so_class,
+       count(*)                               AS sos,
+       count(*) FILTER (WHERE nullif(btrim(so.order_type), '') IS NOT NULL) AS stated_type,
+       string_agg(DISTINCT nullif(btrim(so.order_type), ''), ', ') AS stated_values,
+       coalesce(sum((SELECT sum(sol.line_total) FROM sales_order_lines sol WHERE sol.sales_order_id = so.id)), 0) AS rm
+FROM sales_orders so
+JOIN companies c ON c.id = so.company_id AND c.code = 'SRT'
+LEFT JOIN sales_agents a ON a.id = so.sales_agent_id
+WHERE so.order_date >= '2025-11-01' AND so.order_date < '2026-02-01'
+GROUP BY 1, 2 ORDER BY 1, 2;
+ROLLBACK;
+```
+
+## R9. Class data (Q3): dry run
+
+Purpose: the agent-class fix, as a SELECT that changes nothing. Every SRT agent with a January
+2026 billing document, its class today (dated rows, and the `sales_agents.demand_class` mirror),
+the proposed class, and January RM, plus the RM per proposed class. Proposed (crew lists, owner
+Q3/Q4): an area-suffixed code (ending ` I`, ` II`, ` III`, ` IV`, ` V`) `retail`; the five codes in
+`other_codes` `other`; every other agent with January sales `project`; IRENE blank (untouched).
+Crew fills `other_codes` from its Q10 list before relaying (the list is not committed here).
+
+Expected per proposed class: retail 6,513,047.67, project 6,084,471.57, other + no agent
+2,144,760.05 (set apart comes out of that once the 4 debtors are entered), total 14,742,279.29.
+That proves the class lists are AutoCount's lists before anything is written. It does NOT
+predict the SO-type split: that also needs the re-derive and the invoice chain (R1 to R7).
+
+```sql
+BEGIN READ ONLY;
+WITH other_codes(code) AS (VALUES ('<OTHER 1>'), ('<OTHER 2>'), ('<OTHER 3>'), ('<OTHER 4>'), ('<OTHER 5>')),
+jan AS (
+  SELECT d.sales_agent_id,
+         sum(CASE WHEN d.document_type = 'credit_note' THEN -d.local_net_total ELSE d.local_net_total END) AS rm
+  FROM finance.billing_documents d JOIN companies c ON c.id = d.company_id AND c.code = 'SRT'
+  WHERE d.status = 'posted' AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
+    AND d.doc_date >= '2026-01-01' AND d.doc_date < '2026-02-01'
+  GROUP BY 1),
+plan AS (
+  SELECT a.id, a.sales_agent, a.demand_class AS mirror_now, jan.rm,
+         (SELECT string_agg(ac.demand_class || ' ' || coalesce(ac.from_month::text, 'start') || '..'
+                            || coalesce(ac.to_month::text, 'open'), '; ' ORDER BY ac.from_month NULLS FIRST)
+          FROM sales.agent_classes ac WHERE ac.sales_agent_id = a.id) AS rows_now,
+         (SELECT count(*) FROM sales.agent_classes ac WHERE ac.sales_agent_id = a.id) AS n_rows,
+         CASE WHEN upper(btrim(a.sales_agent)) IN (SELECT code FROM other_codes) THEN 'other'
+              WHEN upper(btrim(a.sales_agent)) ~ ' (I|II|III|IV|V)$'             THEN 'retail'
+              ELSE 'project' END AS proposed
+  FROM jan JOIN sales_agents a ON a.id = jan.sales_agent_id)
+SELECT sales_agent, rows_now, mirror_now, proposed, n_rows,
+       CASE WHEN n_rows > 1 THEN 'CHECK BY HAND: dated history'
+            WHEN coalesce(rows_now, '') = proposed || ' start..open' AND mirror_now = proposed THEN 'no change'
+            ELSE 'change' END AS action,
+       rm
+FROM plan ORDER BY proposed, sales_agent;
+-- RM per proposed class (the tally check), and the documents with no agent.
+WITH other_codes(code) AS (VALUES ('<OTHER 1>'), ('<OTHER 2>'), ('<OTHER 3>'), ('<OTHER 4>'), ('<OTHER 5>')),
+jan AS (
+  SELECT d.sales_agent_id,
+         sum(CASE WHEN d.document_type = 'credit_note' THEN -d.local_net_total ELSE d.local_net_total END) AS rm
+  FROM finance.billing_documents d JOIN companies c ON c.id = d.company_id AND c.code = 'SRT'
+  WHERE d.status = 'posted' AND d.document_type IN ('invoice','cash_sale','credit_note','debit_note')
+    AND d.doc_date >= '2026-01-01' AND d.doc_date < '2026-02-01'
+  GROUP BY 1)
+SELECT proposed, count(*) AS agents, sum(rm) AS rm FROM (
+  SELECT CASE WHEN upper(btrim(a.sales_agent)) IN (SELECT code FROM other_codes) THEN 'other'
+              WHEN upper(btrim(a.sales_agent)) ~ ' (I|II|III|IV|V)$' THEN 'retail'
+              WHEN a.id IS NULL THEN '(no agent)' ELSE 'project' END AS proposed, jan.rm
+  FROM jan LEFT JOIN sales_agents a ON a.id = jan.sales_agent_id) x
+GROUP BY 1 ORDER BY 1;
+ROLLBACK;
+```
+
+### R9 apply (HELD: the owner runs it only after reading the dry run)
+
+Writes, for every agent the dry run marks `change` and that has at most one dated row: one dated
+row `{proposed} from start to open` (the existing single row is updated in place, else one is
+inserted), and the `sales_agents.demand_class` mirror. Agents marked `CHECK BY HAND` are skipped.
+After it: `python -m scripts.sales_order_class_rederive --company SRT` (dry run), read it, then
+the same with `--apply` (the SO classes follow the agent classes; plan 2.9 Q8).
+
+```sql
+BEGIN;
+WITH other_codes(code) AS (VALUES ('<OTHER 1>'), ('<OTHER 2>'), ('<OTHER 3>'), ('<OTHER 4>'), ('<OTHER 5>')),
+jan_agents AS (
+  SELECT DISTINCT d.sales_agent_id AS id
+  FROM finance.billing_documents d JOIN companies c ON c.id = d.company_id AND c.code = 'SRT'
+  WHERE d.status = 'posted' AND d.doc_date >= '2026-01-01' AND d.doc_date < '2026-02-01'
+    AND d.sales_agent_id IS NOT NULL),
+plan AS (
+  SELECT a.id,
+         CASE WHEN upper(btrim(a.sales_agent)) IN (SELECT code FROM other_codes) THEN 'other'
+              WHEN upper(btrim(a.sales_agent)) ~ ' (I|II|III|IV|V)$' THEN 'retail'
+              ELSE 'project' END AS proposed
+  FROM sales_agents a JOIN jan_agents j ON j.id = a.id
+  WHERE (SELECT count(*) FROM sales.agent_classes ac WHERE ac.sales_agent_id = a.id) <= 1),
+upd AS (
+  UPDATE sales.agent_classes ac SET demand_class = p.proposed, from_month = NULL, to_month = NULL,
+         updated_at = now()
+  FROM plan p WHERE ac.sales_agent_id = p.id AND ac.demand_class IS DISTINCT FROM p.proposed
+  RETURNING ac.sales_agent_id),
+ins AS (
+  INSERT INTO sales.agent_classes (id, sales_agent_id, demand_class, from_month, to_month)
+  SELECT gen_random_uuid(), p.id, p.proposed, NULL, NULL FROM plan p
+  WHERE NOT EXISTS (SELECT 1 FROM sales.agent_classes ac WHERE ac.sales_agent_id = p.id)
+  RETURNING sales_agent_id)
+UPDATE sales_agents a SET demand_class = p.proposed
+FROM plan p WHERE a.id = p.id AND a.demand_class IS DISTINCT FROM p.proposed;
+-- Check before COMMIT: re-run the R9 dry run inside this transaction; every row 'no change'
+-- except CHECK BY HAND. Then COMMIT (or ROLLBACK).
+```
+
+# Round 3 (28 Oct ~09:30, owner FINAL on Q1: the SO's order type decides the block)
+
+## R10. Every gap against AutoCount, document by document: DATA or GENUINE
+
+Purpose: owner, 28 Oct: "maybe the agent class or customer class is wrong? if it is data setting
+then we fix the data setting". For each January SRT document this puts the CRM block (the SO
+type rule as built, `invoiced_sales.sales_type()`, same trace as crew query 3) beside the AutoCount
+block (the document's own agent's AutoCount list, set-apart debtors first) and names the FIRST
+reason that explains a difference:
+
+| reason | kind | fixed by |
+| --- | --- | --- |
+| `1 match` | - | - |
+| `2 set-apart debtor not entered` | DATA | entering the 4 set-apart debtors |
+| `3 no sales order traced` | CHAIN | the trace repair (R1 to R7) |
+| `4 SO states an order type of the other kind` | GENUINE cross-type sale (or a wrong SO type field in AutoCount: owner reads the samples) | nothing in the CRM, or AutoCount's SO |
+| `5 SO sold by another agent than the invoice` | GENUINE (AutoCount files by the invoice's agent) | nothing, or the SO's / invoice's agent in AutoCount |
+| `6 SO class stale` | DATA | `sales_order_class_rederive.py --apply` |
+| `7 SO agent's class is not AutoCount's list` | DATA | R9 apply, then the re-derive |
+| `8 other` | look at the samples | |
+
+A customer's debtor type does not choose a block in either system (it is the report's COLUMN), so
+it is not a reason here. Crew fills `other_codes` (5 agent codes) and `set_apart_codes` (4 debtor
+codes) before relaying. Run it now (before the class fix) and again after R9 apply + re-derive:
+after both, only reasons 1, 3, 4 and 5 should remain.
+
+```sql
+BEGIN READ ONLY;
+SET LOCAL statement_timeout = '300s';
+WITH other_codes(code) AS (VALUES ('<OTHER 1>'), ('<OTHER 2>'), ('<OTHER 3>'), ('<OTHER 4>'), ('<OTHER 5>')),
+set_apart_codes(code) AS (VALUES ('<DEBTOR 1>'), ('<DEBTOR 2>'), ('<DEBTOR 3>'), ('<DEBTOR 4>')),
+docs AS (
+    SELECT bd.id, bd.company_id, bd.customer_id, bd.doc_date, bd.against_document_id, bd.doc_no,
+           bd.sales_agent_id, upper(btrim(bd.debtor_code)) AS debtor_code,
+           CASE WHEN bd.document_type = 'credit_note' THEN -bd.local_net_total ELSE bd.local_net_total END AS signed_rm
+    FROM finance.billing_documents bd JOIN public.companies c ON c.id = bd.company_id
+    WHERE c.code = 'SRT' AND bd.status = 'posted'
+      AND bd.document_type IN ('invoice', 'cash_sale', 'credit_note', 'debit_note')
+      AND bd.doc_date >= DATE '2026-01-01' AND bd.doc_date < DATE '2026-02-01'),
+need AS (SELECT id AS doc_id, company_id FROM docs
+         UNION SELECT against_document_id, company_id FROM docs WHERE against_document_id IS NOT NULL),
+do_hit AS (
+    SELECT DISTINCT n.doc_id, n.company_id, o.id AS do_id
+    FROM need n JOIN finance.billing_document_lines l ON l.document_id = n.doc_id
+    JOIN public.orders o ON l.from_doc_type = 'DO' AND l.from_doc_no = o.order_number
+    WHERE o.company_id = n.company_id AND o.deleted_at IS NULL),
+traced AS (
+    SELECT n.doc_id, n.company_id, sol.sales_order_id AS so_id
+    FROM need n JOIN finance.billing_document_lines l ON l.document_id = n.doc_id
+    JOIN public.sales_order_lines sol ON sol.id = l.sales_order_line_id
+    UNION
+    SELECT n.doc_id, n.company_id, so.id
+    FROM need n JOIN finance.billing_document_lines l ON l.document_id = n.doc_id
+    JOIN public.sales_orders so ON l.from_doc_type = 'SO' AND l.from_doc_no = so.so_number
+    WHERE so.company_id = n.company_id
+    UNION
+    SELECT h.doc_id, h.company_id, sol.sales_order_id
+    FROM do_hit h JOIN public.order_lines ol ON ol.order_id = h.do_id
+    JOIN public.sales_order_lines sol ON sol.id = ol.sales_order_line_id
+    UNION
+    SELECT h.doc_id, h.company_id, so.id
+    FROM do_hit h JOIN public.order_lines ol ON ol.order_id = h.do_id
+    JOIN public.sales_orders so ON ol.from_doc_no = so.so_number
+     AND (ol.from_doc_type IS NULL OR ol.from_doc_type = 'SO')
+    WHERE so.company_id = h.company_id
+    UNION
+    SELECT h.doc_id, h.company_id, o.sales_order_id
+    FROM do_hit h JOIN public.orders o ON o.id = h.do_id WHERE o.sales_order_id IS NOT NULL),
+doc_sos AS (
+    SELECT d.id AS document_id, t.so_id FROM docs d JOIN traced t ON t.doc_id = d.id AND t.company_id = d.company_id
+    UNION
+    SELECT d.id, t.so_id FROM docs d JOIN traced t ON t.doc_id = d.against_document_id AND t.company_id = d.company_id
+    WHERE d.against_document_id IS NOT NULL
+      AND NOT EXISTS (SELECT 1 FROM traced own WHERE own.doc_id = d.id AND own.company_id = d.company_id)),
+agent_list AS (     -- the AutoCount list an agent is on (crew's Q10 lists; R9's rule)
+    SELECT a.id,
+           CASE WHEN upper(btrim(a.sales_agent)) IN (SELECT code FROM other_codes) THEN 'left_out'
+                WHEN upper(btrim(a.sales_agent)) ~ ' (I|II|III|IV|V)$' THEN 'retail'
+                ELSE 'project' END AS list_class
+    FROM public.sales_agents a),
+so_facts AS (       -- each traced SO: stored class, stated type's class, its agent's class on its date
+    SELECT ds.document_id, so.id AS so_id, so.so_number, so.sales_agent_id AS so_agent, so.demand_class,
+           CASE WHEN nullif(btrim(so.order_type), '') IS NULL THEN NULL
+                WHEN lower(so.order_type) ~ '(project|contract)' THEN 'project' ELSE 'retail' END AS stated_class,
+           coalesce(
+             (SELECT ac.demand_class FROM sales.agent_classes ac
+              WHERE ac.sales_agent_id = so.sales_agent_id
+                AND (ac.from_month IS NULL OR ac.from_month <= date_trunc('month', so.order_date)::date)
+                AND (ac.to_month IS NULL OR ac.to_month >= date_trunc('month', so.order_date)::date) LIMIT 1),
+             CASE WHEN NOT EXISTS (SELECT 1 FROM sales.agent_classes ac WHERE ac.sales_agent_id = so.sales_agent_id)
+                  THEN (SELECT a.demand_class FROM public.sales_agents a WHERE a.id = so.sales_agent_id) END
+           ) AS so_agent_class_now
+    FROM doc_sos ds JOIN public.sales_orders so ON so.id = ds.so_id),
+kind AS (
+    SELECT d.*,
+           (SELECT list_class FROM agent_list al WHERE al.id = d.sales_agent_id) AS doc_list,
+           (SELECT count(*) FROM so_facts f WHERE f.document_id = d.id) AS n_so,
+           (SELECT count(DISTINCT f.demand_class) FROM so_facts f WHERE f.document_id = d.id) AS n_cls,
+           (SELECT max(f.demand_class) FROM so_facts f WHERE f.document_id = d.id) AS one_cls,
+           EXISTS (SELECT 1 FROM sales.set_apart_customers s
+                   WHERE s.company_id = d.company_id AND s.customer_id = d.customer_id
+                     AND s.from_month <= date_trunc('month', d.doc_date)::date
+                     AND (s.to_month IS NULL OR s.to_month >= date_trunc('month', d.doc_date)::date)) AS set_apart_row
+    FROM docs d),
+blocks AS (
+    SELECT k.*,
+           CASE WHEN k.set_apart_row THEN 'set_apart'
+                WHEN k.n_so = 0 THEN 'no_sales_order'
+                WHEN k.n_cls > 1 THEN 'mixed'
+                WHEN k.n_cls = 0 THEN 'type_not_set'
+                WHEN k.one_cls = 'retail' THEN 'dealer'
+                WHEN k.one_cls = 'project' THEN 'project'
+                WHEN k.one_cls = 'other' THEN 'other' ELSE 'type_not_set' END AS crm_block,
+           CASE WHEN k.debtor_code IN (SELECT code FROM set_apart_codes) THEN 'set_apart'
+                WHEN k.doc_list = 'retail' THEN 'dealer'
+                WHEN k.doc_list = 'project' THEN 'project'
+                ELSE 'left_out' END AS ac_block
+    FROM kind k),
+want AS (SELECT b.*, CASE b.ac_block WHEN 'dealer' THEN 'retail' WHEN 'project' THEN 'project' END AS ac_cls FROM blocks b),
+reasoned AS (
+    SELECT w.*,
+      CASE
+        WHEN w.crm_block = w.ac_block OR (w.ac_block = 'left_out' AND w.crm_block IN ('other', 'type_not_set'))
+             THEN '1 match'
+        WHEN w.ac_block = 'set_apart' THEN '2 set-apart debtor not entered'
+        WHEN w.n_so = 0 THEN '3 no sales order traced'
+        WHEN EXISTS (SELECT 1 FROM so_facts f WHERE f.document_id = w.id AND f.stated_class IS NOT NULL
+                     AND f.stated_class IS DISTINCT FROM coalesce(w.ac_cls, 'other'))
+             THEN '4 SO states an order type of the other kind'
+        WHEN EXISTS (SELECT 1 FROM so_facts f WHERE f.document_id = w.id
+                     AND f.so_agent IS DISTINCT FROM w.sales_agent_id)
+             THEN '5 SO sold by another agent than the invoice'
+        WHEN EXISTS (SELECT 1 FROM so_facts f WHERE f.document_id = w.id
+                     AND f.demand_class IS DISTINCT FROM coalesce(f.stated_class, f.so_agent_class_now))
+             THEN '6 SO class stale'
+        WHEN EXISTS (SELECT 1 FROM so_facts f WHERE f.document_id = w.id
+                     AND f.stated_class IS NULL
+                     AND f.so_agent_class_now IS DISTINCT FROM coalesce(w.ac_cls, 'other'))
+             THEN '7 SO agent''s class is not AutoCount''s list'
+        ELSE '8 other' END AS reason
+    FROM want w)
+SELECT reason, ac_block, crm_block, count(*) AS docs, sum(signed_rm) AS rm,
+       (array_agg(doc_no ORDER BY abs(signed_rm) DESC))[1:3] AS sample_docs,
+       (array_agg(DISTINCT (SELECT f.so_number FROM so_facts f WHERE f.document_id = reasoned.id LIMIT 1)))[1:3] AS sample_sos
+FROM reasoned
+GROUP BY 1, 2, 3 ORDER BY 1, 2, 3;
+ROLLBACK;
+```
+
+Expected now (before the class fix and the chain repair), from the owner's 28 Oct run (query 3
+and 3b): reason 3 holds 5,760 documents, 14,871,452.95. Of the 24 traced: 10 match (Dealer 5 docs
+-2,063.26, Project team 5 docs -92,874.38); 13 sit on `retail` SOs of two agents AutoCount leaves
+out (-34,077.02: reason 6 or 7, DATA, fixed by R9 apply + re-derive); 1 sits on a `project` SO of a
+Dealer-list agent (-159.00: reason 4, 5 or 7; R10 says which).

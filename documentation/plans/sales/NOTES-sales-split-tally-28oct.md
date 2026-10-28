@@ -1,6 +1,7 @@
 # NOTES: Sales split tally (Dealer / Project team / Set apart vs AutoCount)
 
-Status: Plan, behaviour card out for the owner's ruling (28 Oct 2026). crew-lane: SALES-SPLIT-TALLY.
+Status: Plan; rule ruled (owner 28 Oct ~09:30: the SO's order type decides), waiting on the owner's
+R1 to R10 results for the trace repair. crew-lane: SALES-SPLIT-TALLY.
 Track: small fix (expected diff well under 300 lines, no migration, no RBAC change). Follows
 `PLAN-sales-unified-27oct.md` (#1916, live in prod 745be3f35b). Read-only owner SQL:
 `evidence/sales-split-tally-owner-sql-28oct.md`. No agent code or per-agent figure is committed
@@ -56,46 +57,54 @@ So the AutoCount blocks are the document's own agent's list membership, with set
 pulled out. They are not a sales order property: the 24 documents that do trace show it: 14 of them (three agents)
 land in a different block by their SO than by their agent.
 
-## 4. Proposed rule (changes ruling Q1 (b) for the invoiced basis)
+## 4. The rule (owner FINAL, 28 Oct ~09:30): the sales order's type decides
 
-A billing document's sales type, first match wins:
+Ruling Q1 (b) stands, unchanged in code (`invoiced_sales.sales_type()`): set apart, else the
+traced SOs' class (`retail` Dealer, `project` Project team, `other` Other, both Mixed, none set
+Type not set), else No sales order. A document with no agent, or an agent with no class, follows
+its SO too (Q2). The agent-class rule offered in round 1 is withdrawn. Owner, on the AutoCount
+gap: "maybe the agent class or customer class is wrong? if it is data setting then we fix the data
+setting". So every gap left after the trace repair is classified (R10) as:
 
-1. **Set apart**: the customer has a `sales.set_apart_customers` row covering the document's month
-   (unchanged).
-2. **The class of the document's own agent on the document date** (`sales.agent_classes`, the
-   dated table of ruling Q6; an agent with no dated row reads `sales_agents.demand_class`, the
-   same fallback as `agent_class_service.ClassCache`): `retail` Dealer, `project` Project team,
-   `other` Other.
-3. Else **No agent class** (no agent, or an agent with no class): visible, never guessed.
+- **DATA**: the set-apart debtors not entered (reason 2); the SO's stored class stale against its
+  rule (6); the SO agent's class on the SO date not AutoCount's list (7). Fixed by R9 apply, the
+  re-derive and the set-apart rows; nothing in code.
+- **GENUINE cross-type sale**: the SO states an order type of the other kind (4), or the SO was sold
+  by another agent than the invoice (5). AutoCount files these by the invoice's agent, the CRM by
+  the SO: they stay as a stated difference (or the owner corrects the SO in AutoCount).
+- **CHAIN**: no SO traced (3). Fixed by the trace repair (Q5, this lane, after R1 to R7).
 
-The agent is `invoiced_sales.agent_id()` (the document's own, or the customer's on Mocha).
-Never a sales order, a customer segment or the stored `billing_documents.demand_class`.
+A customer's debtor type is the report's column in both systems and never picks a block.
 
-Changes ruling **Q1 (b)** ("the sales type should depend on sales order") for invoiced sales:
-the SO chain stays for the Related tabs but stops deciding the invoiced block. Q8 (a) (no
-customer-segment fallback) holds. Ordered and Delivered bases are unchanged (they read
-`sales_orders.demand_class`).
+### Expected January 2026 SRT under the rule
 
-January 2026 SRT under this rule, once the class data matches the AutoCount lists (section 5):
-
-| Block | CRM | AutoCount | Gap |
+| Block | Today (prod) | After R9 apply + re-derive + set-apart rows, before the trace repair | AutoCount |
 | --- | ---: | ---: | ---: |
-| Dealer | 6,513,047.67 | 6,513,047.67 | 0.00 |
-| Project team | 6,084,471.57 | 6,084,471.57 | 0.00 |
-| Set apart | 122,232.99 (expected; R6 confirms the debtors) | 122,232.99 | 0.00 |
-| Other + No agent class | 2,022,527.06 | (left out) | |
-| ALL SALES | 14,742,279.29 | 14,742,279.29 | 0.00 |
+| Dealer | -36,140.28 | -2,063.26 if GENUINE, -2,222.26 if DATA (note) | 6,513,047.67 |
+| Project team | -93,033.38 | -93,033.38 if GENUINE, -92,874.38 if DATA | 6,084,471.57 |
+| Other | 0.00 | -34,077.02 | (left out) |
+| Set apart | 0.00 | the set-apart debtors' share of the 24 (0.00 on the 24 today) | 122,232.99 |
+| No sales order | 14,871,452.95 | 14,871,452.95 | |
+| ALL SALES | 14,742,279.29 | 14,742,279.29 | 14,742,279.29 |
 
-The alternative (SO chain first, agent class only for "No sales order") lands Dealer -33,918.02
-and Project team -159.00 from AutoCount on January, and drifts further as the invoice chain is
-repaired.
+Note: one traced credit note, -159.00, is on a `project` SO of a Dealer-list agent: Project team if
+R10 calls it GENUINE (reason 4 or 5), Dealer if DATA (reason 7).
 
-## 5. Data steps it needs (owner, crew SQL, after a dry run)
+After the trace repair, each block is AutoCount's figure minus the GENUINE documents (reasons 4
+and 5), which R10 lists one by one, plus whatever still traces to no SO. On the 24 that trace
+today, the GENUINE share is at most -159.00. The figure to the cent can only be stated once the
+January invoices trace, which needs R1 to R7.
 
-1. Agent classes, from the start, open: the 27 Dealer-list codes `retail`; the 16 Project-list
-   codes `project` (one of them is `retail` on prod today); the five left-out codes `other` (prod
-   today: three `retail`, two with no class). Crew holds the lists.
-2. The four set-apart debtors with their start month (R6 lists January debtors to confirm they
-   sum to 122,232.99).
-3. Optional for this tally, needed for SCM and the ordered basis: `scripts/sales_order_class_rederive.py`
+## 5. Data steps (owner Q3 (a) and Q4, crew SQL after a dry run)
+
+1. R9 dry run (SELECT): every January agent, its class today, the proposed class (AutoCount's
+   lists) and January RM; the per-class sums must read retail 6,513,047.67, project 6,084,471.57,
+   other + no agent 2,144,760.05 before anything is written. IRENE stays blank (Q4).
+2. R9 apply (held for the owner), then `scripts/sales_order_class_rederive.py --company SRT`
    dry run, then `--apply`.
+3. The four set-apart debtors with their start month (R6 to confirm 122,232.99).
+4. R10 again: only reasons 1, 3, 4, 5 should remain.
+
+R9 and R10 are run as written, on seeded fictional data, by
+`sorento_crm_backend/tests/test_sales_split_tally_owner_sql.py` (kill-tested: breaking the
+stated-type mapping or the Dealer-list match fails all three tests).
