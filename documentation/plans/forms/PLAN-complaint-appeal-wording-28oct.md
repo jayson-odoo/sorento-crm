@@ -1,6 +1,6 @@
 # PLAN: complaint appeal wording (COMPLAINT-APPEAL-WORDING)
 
-Status: in review (small fix track: wording only, no migration, no auth change)
+Status: merge-ready, reviewer READY (small fix track: wording only, no migration, no auth change)
 
 ## Ask
 
