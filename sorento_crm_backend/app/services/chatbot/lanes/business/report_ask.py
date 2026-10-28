@@ -304,7 +304,22 @@ PERIOD = rf.FieldSpec(name="period", noun="period", question=PERIOD_QUESTION, re
 TOP_N = rf.FieldSpec(name="top_n", noun="number", question=TOP_N_QUESTION, resolve=_resolve_top_n, allow_all=False)
 
 METRIC = rf.FieldSpec(name="metric", noun="measure", question=ranking_ask.METRIC_LINE, question_fn=_metric_question, resolve=_resolve_metric, allow_all=False)
-BASIS = rf.FieldSpec(name="basis", noun="basis", question=ranking_ask.RANKING_BASIS_LINE, question_fn=_basis_question, resolve=_resolve_basis, allow_all=False)
+#: The kind question's options (the outstanding kinds, in the question's order) and the basis question's, as the
+#: pick the parser is shown (`FieldSpec.offered`).
+KIND_OPTIONS = (("outstanding", "Undelivered orders"), ("pending_delivery", "Pending delivery"), ("unpaid", "Unpaid invoices"))
+BASIS_OPTIONS = (("invoiced", "Invoiced"), ("delivered", "Delivered"), ("ordered", "Ordered"), ("outstanding", "Outstanding"))
+
+
+def _basis_offered(extras: dict[str, Any]) -> tuple[tuple[str, str], ...]:
+    return KIND_OPTIONS if extras.get("kind_ask") else BASIS_OPTIONS
+
+
+# Parser only (owner rule 28 Oct): the answer is the parser's declared pick of an offered option, or its own `basis`
+# reading when it is one of them; never a shape fallback and never the reply's text.
+BASIS = rf.FieldSpec(
+    name="basis", noun="basis", question=ranking_ask.RANKING_BASIS_LINE, question_fn=_basis_question,
+    resolve=_resolve_basis, allow_all=False, offered=_basis_offered, parser_only=True,
+)
 
 #: The scope question's slot (`asking == "scope"`, the drill ask): its words ride on the slot's
 #: extras; the spec only lets the parser be shown it as the Open question (REPORT-SMART-L S3-1).
@@ -331,6 +346,10 @@ COMPANY_FORBIDDEN_LINE = "You do not have access to that company."
 def _company_held(extras: dict[str, Any], values: dict[str, Any], args: dict[str, Any], held: dict[str, Any]) -> dict[str, Any]:
     """`held` with the company question brought back while it is still owed: the first message found the company
     unnamed (its options ride the slot's extras) and neither an answer nor a named company has settled it."""
+    period = _dict(extras.get("held_period"))
+    if period and "period" not in values:
+        # The company is asked first, so the first message's period was never settled onto the slot: it rides the extras.
+        held = {**held, "period": rf.Resolved("ok", value=period.get("value"), label=str(period.get("label") or ""))}
     options = extras.get("company_options")
     if not options or "company" in values or args.get("company"):
         return held
@@ -348,7 +367,7 @@ COMPANY = rf.FieldSpec(
 
 SALES_RANKING_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
-    fields=(PERIOD, TOP_N, METRIC, BASIS, COMPANY, SALES_AGENT),
+    fields=(COMPANY, PERIOD, TOP_N, METRIC, BASIS, SALES_AGENT),  # a two-company contact is asked the company first
     slot_fields=(SCOPE,),
     # REPORT-SMART-L S3-1: the parser is shown the question (owed fields + held values) and
     # its declared answer (mode fill) runs the ask, as the low stock report's.
@@ -1404,7 +1423,16 @@ def _settle(
         held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
         held = _company_held(extras, _dict(slot.get("values")), args, held)
         asked_field = next((f for f in SALES_RANKING_ASK.fields if f.name == slot.get("asking")), None)
-        if asked_field is not None and asked_field.parser_only:
+        if asked_field is not None and asked_field.name == "basis":
+            # The basis (or kind) question: the parser's pick of an offered option, else its own `basis` reading when it is
+            # one of the options the question offers; anything else is no basis (never "invoiced" for a kind question).
+            offered = {v for v, _l in (_basis_offered(extras) if extras.get("kind_ask") else BASIS_OPTIONS)}
+            picked = rf.picked_option(slot, _dict(parse_output.get("required_ask_answer")))
+            said = picked.value if picked.status == "ok" else parse_output.get("basis")
+            parse_output = {**parse_output, "basis": said if said in offered else None}
+        elif extras.get("kind_ask") and parse_output.get("basis") not in OUTSTANDING_KINDS:
+            parse_output = {**parse_output, "basis": None}
+        if asked_field is not None and asked_field.parser_only and asked_field.name != "basis":
             # The company and the sales agent pick: the parser's declared pick only, never the reply's text.
             answer = _dict(parse_output.get("required_ask_answer"))
             return rf.collect(
@@ -1461,11 +1489,16 @@ def _settle(
                 again.slot["misses"] = 1
             return again, None
         reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
+        reply: Any = jsc.js_string(parse_output.get("required_ask_reply") or "")
+        if asked_field is not None and asked_field.parser_only:
+            # An option-bearing question never reads the reply's text (`_from_pick` would take a typed digit or label).
+            said = basis_from(parse_output)
+            reply = rf.Resolved("ok", value=said, label=said) if said else rf.Resolved("unknown")
         outcome = rf.collect(
             db,
             SALES_RANKING_ASK,
             slot=slot,
-            reply=jsc.js_string(parse_output.get("required_ask_reply") or ""),
+            reply=reply,
             given=held,
             extras={
                 "reply_dates": reply_dates,
@@ -1635,6 +1668,9 @@ def _settle(
     if period is None and (args.get("basis") in OUTSTANDING_KINDS or extras.get("kind_ask")):
         # An outstanding kind takes no period: none named means every date (the route's own reading).
         given["period"] = rf.Resolved("ok", value={"from": None, "to": None}, label="all dates")
+    first_period = given.get("period")
+    if company_options and isinstance(first_period, rf.Resolved) and first_period.status == "ok":
+        extras["held_period"] = {"value": first_period.value, "label": first_period.label}
     if across_all and frame.get("group_by") in AXIS_NOUNS and _drill_source(frame):
         # Owner ruling B: after a ranking, a new axis runs across all, and the header line says so.
         extras["note"] = f"Across all {AXIS_NOUNS[frame['group_by']][1]}"

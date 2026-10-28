@@ -329,7 +329,8 @@ def _build_base_json_schema() -> dict[str, Any]:
             # (owner rulings 26 Sep 2026: never assume the basis or the grain). A null
             # `rank_by` is asked too (no default metric).
             "rank_by": {"type": ["string", "null"], "enum": ["quantity", "amount", None]},
-            "basis": {"type": ["string", "null"], "enum": ["invoiced", "delivered", "ordered", "outstanding", "unclear", None]},
+            # The outstanding kinds (REPORT-UNIFY Q2) are bases of the report ask: a message that names one carries it.
+            "basis": {"type": ["string", "null"], "enum": ["invoiced", "delivered", "ordered", "outstanding", "pending_delivery", "unpaid", "unclear", None]},
             "rank_group": {"type": ["string", "null"], "enum": ["item", "category", "unclear", None]},
             # Fix lane round 4 (owner retest, 27 Sep 2026): "cold selling", "least sold"
             # rank ascending. Same shape and same exemption as the three above.

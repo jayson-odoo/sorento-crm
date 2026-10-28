@@ -45,8 +45,10 @@ def value_text(row: ProductSpecRegistry, value: Any) -> str:
         return "Yes" if value else "No"
     if isinstance(value, (int, float, Decimal)):
         return f"{value:g}"
+    from app.services.product_spec_registry import display_spec_value
+
     labels = {str(k).lower(): v for k, v in (row.value_labels or {}).items()}
-    return str(labels.get(str(value).lower()) or value)
+    return str(labels.get(str(value).lower()) or display_spec_value(value))
 
 
 def _typed(row: ProductSpecRegistry, value: str) -> tuple[Any, Optional[str]]:

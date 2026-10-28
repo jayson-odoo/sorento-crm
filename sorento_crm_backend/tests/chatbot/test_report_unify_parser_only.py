@@ -103,3 +103,83 @@ def test_a_short_reply_whose_parse_is_a_fresh_report_ask_goes_by_the_parse(bot) 
     bot.say(_yearly(), "sales by year")
     text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "sales 2026")
     assert [n for n, _a in calls] == ["crm_report_ask"], (calls, text)
+
+
+# ---------------------------------------------------------------- the outstanding KIND question (crew hand test, head 59c9d237)
+# The parser's schema `basis` enum carries the kinds, the kind question is stated to it as a pick of three options, and
+# the answer is its pick resolved against them. Never "invoiced".
+
+NO_DATES = {"date_filter_start": None, "date_filter_end": None}
+
+
+def _bare_outstanding(**over: Any) -> dict[str, Any]:
+    return _status("outstanding", **{"basis": None, **NO_DATES, **over})
+
+
+def test_the_parser_schema_basis_enum_carries_the_outstanding_kinds() -> None:
+    from app.services.chatbot.head import parser
+
+    enum = parser._build_json_schema()["properties"]["basis"]["enum"]
+    assert {"outstanding", "pending_delivery", "unpaid"} <= set(enum), enum
+
+
+def test_the_kind_question_is_stated_to_the_parser_as_a_pick_of_three_that_owes_the_basis() -> None:
+    from app.services.chatbot import required_fields as rf
+    from app.services.chatbot.lanes.business import report_ask
+    from app.services.chatbot.turn import question
+
+    ok = rf.Resolved("ok", value=None, label="")
+    out = rf.collect(
+        None, report_ask.SALES_RANKING_ASK, given={"period": ok, "top_n": ok, "metric": ok},
+        extras={"args": {}, "kind_ask": True},
+    )
+    shown = question.of_required_ask(out.slot)
+    assert shown["kind"] == "pick_one" and shown["owed"] == ["basis"], shown
+    assert [o["code"] for o in shown["options"]] == ["Undelivered orders", "Pending delivery", "Unpaid invoices"], shown
+
+
+def test_the_kind_answered_by_the_parsers_pick_position_runs_unpaid_with_no_dates(bot) -> None:
+    text, calls = bot.say(_bare_outstanding(), "outstanding")
+    assert calls == [], calls
+    text, calls = bot.say(_answer(3), "the invoices one")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "unpaid" and "date_from" not in args and "date_to" not in args, args
+
+
+def test_the_kind_answered_by_a_declared_fill_naming_unpaid_runs_unpaid(bot) -> None:
+    bot.say(_bare_outstanding(), "outstanding")
+    declared = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="unpaid",
+        open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None},
+    )
+    text, calls = bot.say(declared, "unpaid invoices")
+    assert _only_report_ask(calls)["basis"] == "unpaid", calls
+
+
+@pytest.mark.parametrize("mode", ["fill", "pick"])
+def test_the_kind_question_is_never_answered_with_invoiced(bot, mode) -> None:
+    bot.say(_bare_outstanding(), "outstanding")
+    declared = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="invoiced",
+        open_question_answer={"mode": mode, "picked": [], "items": [], "qty_for_all": None},
+    )
+    text, calls = bot.say(declared, "unpaid invoices")
+    assert not [a for n, a in calls if a.get("basis") == "invoiced"], (calls, text)
+
+
+# ---------------------------------------------------------------- "total sales 2026" is a total on the report ask
+
+
+def test_total_sales_with_no_axis_asks_the_four_option_basis_then_a_picked_delivered_runs_the_report_ask(bot) -> None:
+    text, calls = bot.say(_status("sales_analysis", group_by=None, sales_basis=None, basis=None), "total sales 2026")
+    assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
+    text, calls = bot.say(_answer(2), "the middle one")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "delivered" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert not args.get("group_by"), args
+
+
+def test_total_sales_for_a_two_company_contact_asks_the_company_first(bot) -> None:
+    sorento, mocha = _two_companies(bot)
+    text, calls = bot.say(_status("sales_analysis", group_by=None, sales_basis=None, basis=None), "total sales 2026")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)

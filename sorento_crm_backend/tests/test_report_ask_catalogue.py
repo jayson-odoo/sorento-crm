@@ -135,3 +135,14 @@ def test_every_ask_basis_is_on_the_reports_screen_as_the_same_definition():
     for basis, definition in _definitions().items():
         assert get(definition.key) is definition, basis
         assert any(d is definition for d in all_definitions()), basis
+
+
+def test_a_spec_value_with_no_registry_label_is_echoed_in_the_words_a_customer_reads():
+    """Crew hand test (59c9d237): the header read "Specification: Trap: p_trap". The shared display rule applies."""
+    from types import SimpleNamespace
+
+    from app.services.reports import spec_set
+
+    row = SimpleNamespace(value_labels=None)
+    assert spec_set.value_text(row, "p_trap") == "P trap"
+    assert spec_set.value_text(SimpleNamespace(value_labels={"p_trap": "P-Trap"}), "p_trap") == "P-Trap"

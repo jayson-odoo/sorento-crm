@@ -127,6 +127,10 @@ class FieldSpec:
     #: by the shape fallback of an ask that keeps one for its other fields, never by a typed label or digit
     #: (owner rule 28 Oct 2026: understanding comes from the semantic parser only).
     parser_only: bool = False
+    #: The options this field's question offers, `(value, label)`, read when it is asked (with the ask's carried extras)
+    #: and kept on the slot, so the parser is shown the question as a pick of them (`turn/question.of_required_ask`)
+    #: and the answer is its pick resolved against them. The numbered text the field's question prints is unchanged.
+    offered: Callable[[dict[str, Any]], tuple[tuple[Any, str], ...]] | None = None
 
 
 @dataclass(frozen=True)
@@ -337,9 +341,9 @@ def collect(
                     return Outcome(values=values, reply=line, slot=None, extras=carried)
                 # A reply the caller could read nothing from is asked again, plainly (a
                 # numbered pick shows its list again).
-                again = _pick_line(spec, options) if options else spec.question
+                again = _pick_line(spec, options) if options and not spec.offered else spec.question
                 reply_line = _miss_line(word, spec, got.note) if word else again
-                if not options and _others_open(ask, spec, values, given, carried):
+                if (not options or spec.offered) and _others_open(ask, spec, values, given, carried):
                     # `ask_all` with several open: the reply may have meant any of them, so
                     # it is not named as one field's miss; every open field is asked again.
                     asked = _question(ask, spec, values, given, carried)
@@ -378,7 +382,8 @@ def collect(
         if not spec.required:
             continue
         return Outcome(values=values, reply=_question(ask, spec, values, given, carried),
-                       slot=_slot(ask, values, carried, asking=spec.name), extras=carried)
+                       slot=_slot(ask, values, carried, asking=spec.name,
+                                  options=spec.offered(carried) if spec.offered else None), extras=carried)
     return Outcome(values=values, extras=carried)
 
 
