@@ -3,11 +3,12 @@
 "Total sales should ask": a sales total (`crm_sales_analysis`, "total sales Jan 2026") whose
 message names no basis is asked the sales ranking's own line, "Invoiced, delivered, ordered or
 outstanding?" (`ranking_ask.RANKING_BASIS_LINE`, Invoiced first), never run on a default. The
-question is a `required_fields` slot like the company question (`sales_company_ask`), so the next
-message is read against it.
+question is a `required_fields` slot like the company question (`sales_company_ask`): the next
+turn's parser is shown it with the four options (`turn/question.of_required_ask`) and says whether
+the message answers it. Nothing here reads the typed text (owner rule, 28 Oct 2026).
 
-* `settle` (lane): a fresh analysis with no basis is asked; the answer (the parser's `basis` or
-  `sales_basis`, a position, or the basis word) runs the first message's own ask with it.
+* `settle` (lane): a fresh analysis with no basis is asked; the parser's declared answer (the basis
+  it filled, or the option it picked) runs the first message's own ask with it.
 * Outstanding is not a basis of `crm_sales_analysis`: that answer runs the report ask's
   outstanding total instead (`as_report_ask`), never a defaulted figure.
 """
@@ -33,7 +34,7 @@ CARRIED = ("sales_channel", "sales_company", "group_by", "top_n", "date_filter_s
 
 
 def _unread(_db: Any, _word: str, _extras: dict[str, Any]) -> rf.Resolved:
-    """A typed word is matched against the options by the helper (`_from_pick`); nothing else."""
+    """Never called with typed words: every answer is the parser's (`_reply`)."""
     return rf.Resolved("unknown")
 
 
@@ -55,10 +56,9 @@ SALES_BASIS_ASK = rf.register(rf.AskType(
     cancelled=CANCELLED,
     give_up=GIVE_UP,
     give_up_blank=GIVE_UP_BLANK,
+    # Owner rule (28 Oct): only the parser's declared answer answers it; a reply it declared none for drops the
+    # question (`required_fields.reply_verdict`), and the typed text is never read here.
     answered_by_parser=True,
-    # A bare "1" or "invoiced" the parser declared no answer for is still the answer, as the
-    # ranking's own basis question reads it (REPORT-SMART-L S3-1).
-    shape_fallback=True,
     answer_drops=("escalation", "sales_channel", "status", "document"),
 ))
 
@@ -71,25 +71,9 @@ def named_basis(parse_output: dict[str, Any]) -> str | None:
     return None
 
 
-def names_its_own_ask(verdict: dict[str, Any]) -> bool:
-    """Engine seam, the basis question open: a message the parser declared no answer for that carries an ask of
-    its own is that new ask, never read as the basis by the reply's shape. Its own ask is an axis or a period
-    ("top 5 dealers in Feb", "total delivered sales Feb 2026"); one naming no basis is also its own ask with just
-    its domain word ("stock for SRTWC286"). A basis word is the answer unless it comes with its domain word AND
-    an axis or period of its own: a bare "invoiced" whatever the parser added to it (noise on an answering turn,
-    `report_ask.names_its_own_ask`). A count alone is no ask: "1" read as `top_n` 1 is the option's number."""
-    answer = verdict.get("open_question_answer")
-    if isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES:
-        return False
-    own = bool(verdict.get("group_by") or verdict.get("date_filter_start") or verdict.get("date_filter_end"))
-    if named_basis(verdict):
-        return own and verdict.get("domain_in_message") is True
-    return own or verdict.get("domain_in_message") is True
-
-
-def _reply(parse_output: dict[str, Any]) -> rf.Resolved | str:
-    """An answering turn's basis: the parser's own reading, else its declared pick, else the reply's words
-    (a position or an option's name, matched by the helper)."""
+def _reply(parse_output: dict[str, Any]) -> rf.Resolved:
+    """An answering turn's basis, from the parser's declared answer only: the basis it filled (`sales_basis` /
+    `basis`), else the one offered option it picked. Anything else is a miss, asked again."""
     basis = named_basis(parse_output)
     if basis:
         return rf.Resolved("ok", value=basis, label=basis)
@@ -98,7 +82,7 @@ def _reply(parse_output: dict[str, Any]) -> rf.Resolved | str:
     if len(picked) == 1 and 1 <= picked[0] <= len(BASES):
         basis = BASES[picked[0] - 1]
         return rf.Resolved("ok", value=basis, label=basis)
-    return jsc.js_string(parse_output.get("required_ask_reply") or "")
+    return rf.Resolved("unknown", label="")
 
 
 def settle(db: Any, parse_output: dict[str, Any]) -> rf.Outcome | None:
