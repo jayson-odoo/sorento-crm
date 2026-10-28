@@ -39,12 +39,16 @@ function entry(overrides: Partial<AuditLogEntry>): AuditLogEntry {
   };
 }
 
-function status(from: string, to: string, extra: Partial<AuditLogEntry> = {}): AuditLogEntry {
+function status(
+  from: string,
+  to: string,
+  extra: Partial<AuditLogEntry> = {},
+): AuditLogEntry {
   return entry({
+    ...extra,
     description: `status: ${from} → ${to}`,
     old_values: { status: from, ...(extra.old_values ?? {}) },
     new_values: { status: to, ...(extra.new_values ?? {}) },
-    ...extra,
   });
 }
 
@@ -52,7 +56,11 @@ function status(from: string, to: string, extra: Partial<AuditLogEntry> = {}): A
 function mockHistory(oldestFirst: AuditLogEntry[]) {
   const entries = [...oldestFirst].reverse();
   useAuditLogs.mockReturnValue({
-    data: { data: entries, pagination: { total: entries.length, page: 1, limit: 200 }, empty: false },
+    data: {
+      data: entries,
+      pagination: { total: entries.length, page: 1, limit: 200 },
+      empty: false,
+    },
     isLoading: false,
   });
 }
@@ -117,7 +125,10 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     expect(rows[3].text).toContain('by Tech reviewer');
     expect(rows[4].text).toContain('by Portal contact');
     // The past resubmit reads as what it was, with the #1924 field diff under it.
-    expect(rows[4].lines).toEqual(['status: rejected → resubmitted', 'Product code: CWCX604-P-RL-NEW → CWCY604']);
+    expect(rows[4].lines).toEqual([
+      'status: rejected → resubmitted',
+      'Product code: CWCX604-P-RL-NEW → CWCY604',
+    ]);
     expect(rows[7].lines).toEqual([
       'status: rejected → resubmitted',
       'Defect description: Cracked → Cracked, photos attached',
@@ -139,7 +150,10 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     const rows = rowsOldestFirst();
     expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
     expect(rows[1].text).toContain('by Portal contact');
-    expect(rows[1].lines).toEqual(['status: rejected → resubmitted', 'Product code: A-1 → B-2']);
+    expect(rows[1].lines).toEqual([
+      'status: rejected → resubmitted',
+      'Product code: A-1 → B-2',
+    ]);
   });
 
   it('a chatbot edit of a rejected complaint that kept status rejected (before RESUBMITTED-STATUS) reads Resubmitted', () => {
@@ -156,7 +170,9 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     const rows = rowsOldestFirst();
     expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
     expect(rows[1].text).toContain('by Chatbot');
-    expect(rows[1].lines).toEqual(['Defect description: Cracked → Cracked on two panels']);
+    expect(rows[1].lines).toEqual([
+      'Defect description: Cracked → Cracked on two panels',
+    ]);
   });
 
   it('a legacy row without the old status still reads Resubmitted from the status the record left', () => {
@@ -170,24 +186,45 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     ]);
     renderTrail();
 
-    expect(rowsOldestFirst().map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
+    expect(rowsOldestFirst().map((r) => r.heading)).toEqual([
+      'Rejected',
+      'Resubmitted',
+    ]);
   });
 
   it('a staff edit while rejected, and a customer save on a record that is not rejected, stay "update"', () => {
     mockHistory([
-      entry({ ...PORTAL, old_values: { product_code: 'A-1' }, new_values: { product_code: 'A-2' } }),
+      entry({
+        ...PORTAL,
+        old_values: { product_code: 'A-1' },
+        new_values: { product_code: 'A-2' },
+      }),
       status('responded', 'rejected', STAFF),
-      entry({ ...STAFF, old_values: { salesperson: 'X' }, new_values: { salesperson: 'Y' } }),
+      entry({
+        ...STAFF,
+        old_values: { salesperson: 'X' },
+        new_values: { salesperson: 'Y' },
+      }),
     ]);
     renderTrail();
 
-    expect(rowsOldestFirst().map((r) => r.heading)).toEqual(['update', 'Rejected', 'update']);
+    expect(rowsOldestFirst().map((r) => r.heading)).toEqual([
+      'update',
+      'Rejected',
+      'update',
+    ]);
   });
 
   it('a stage-based form resubmitted before the status existed (stock inquiry) reads Resubmitted', () => {
     mockHistory([
-      status('pending_project_sales', 'rejected', { ...STAFF, entity_type: 'stock_inquiry' }),
-      status('rejected', 'pending_project_sales', { ...PORTAL, entity_type: 'stock_inquiry' }),
+      status('pending_project_sales', 'rejected', {
+        ...STAFF,
+        entity_type: 'stock_inquiry',
+      }),
+      status('rejected', 'pending_project_sales', {
+        ...PORTAL,
+        entity_type: 'stock_inquiry',
+      }),
     ]);
     renderTrail('stock_inquiry');
 
@@ -195,6 +232,23 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
     // Only the plain "submitted" stage is renamed; a named stage stays as recorded.
     expect(rows[1].lines).toEqual(['status: rejected → pending_project_sales']);
+  });
+
+  it('a status-engine record (labels only in the summary) reads Rejected, then Resubmitted on the customer save', () => {
+    const engine = { entity_type: 'purchase_request' };
+    mockHistory([
+      entry({
+        ...engine,
+        ...STAFF,
+        description: 'Status: Submitted → Rejected',
+        old_values: { status_id: 'f0000000-0000-4000-8000-000000000006' },
+        new_values: { status_id: 'f0000000-0000-4000-8000-000000000007' },
+      }),
+      entry({ ...engine, ...PORTAL, old_values: { remarks: 'a' }, new_values: { remarks: 'b' } }),
+    ]);
+    renderTrail('purchase_request');
+
+    expect(rowsOldestFirst().map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
   });
 
   it('a child row on the trail never moves the record status', () => {
@@ -208,10 +262,18 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
         old_values: { status: 'rejected' },
         new_values: { status: 'open' },
       }),
-      entry({ ...STAFF, old_values: { salesperson: 'X' }, new_values: { salesperson: 'Y' } }),
+      entry({
+        ...STAFF,
+        old_values: { salesperson: 'X' },
+        new_values: { salesperson: 'Y' },
+      }),
     ]);
     renderTrail();
 
-    expect(rowsOldestFirst().map((r) => r.heading)).toEqual(['Rejected', 'update', 'update']);
+    expect(rowsOldestFirst().map((r) => r.heading)).toEqual([
+      'Rejected',
+      'update',
+      'update',
+    ]);
   });
 });

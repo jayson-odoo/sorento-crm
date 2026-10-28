@@ -96,30 +96,105 @@ export function auditFieldChanges(
   return out;
 }
 
-const RESUBMIT_KEYS = ['status', 'approval_status', 'order_status'];
-const RESUBMIT_SUMMARY = /\brejected\s*→\s*(re)?submitted\b/i;
+const STATUS_KEYS = ['status', 'approval_status', 'order_status'];
+// The review stage each form's submit lands on (lib/submission-status.ts); a move from
+// rejected into one of them is a resubmission, whenever it was written.
+const REVIEW_STAGES = new Set(['pending_project_sales', 'pending', 'pending_approval']);
+// Status-engine records carry the labels only in the summary: "Status: Rejected → Submitted".
+const SUMMARY_RESUBMIT = /\brejected\s*→\s*(re)?submitted\b/i;
+const SUMMARY_REJECT = /→\s*rejected\s*$/i;
+// "Status: Draft → Submitted" / "Status changed to Submitted": the label the record moved to.
+const SUMMARY_STATUS_TO = /^Status(?::.*→|\s+changed to)\s*(.+)$/;
+// The customer's own side: a save by one of them while the record is rejected answers the
+// rejection (the chatbot's edit-via-submit kept the status `rejected` before RESUBMITTED-STATUS).
+const CUSTOMER_ACTORS = new Set(['contact', 'integration', 'public_link']);
 
-/**
- * A rejected record sent back in: an UPDATE moving rejected -> submitted, or rejected ->
- * resubmitted now that the status exists (RESUBMITTED-STATUS). Derived from the transition itself
- * (raw status values, or the status-engine summary that carries the labels), so history written
- * before the "Resubmitted" status existed reads the same way.
- */
-export function isAuditResubmit(entry: {
+export type AuditTrailHeading = 'Resubmitted' | 'Rejected';
+
+type TrailEntry = {
+  id: string;
   action: string;
+  changed_at: string;
   old_values: Record<string, unknown> | null;
   new_values: Record<string, unknown> | null;
   description: string | null;
-}): boolean {
-  if (entry.action !== 'UPDATE') return false;
-  const norm = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
-  for (const key of RESUBMIT_KEYS) {
-    if (
-      norm(entry.old_values?.[key]) === 'rejected' &&
-      isAwaitingReview(norm(entry.new_values?.[key]))
-    ) {
-      return true;
+  actor_type?: string | null;
+  contact_id?: string | null;
+};
+
+const norm = (v: unknown) => (typeof v === 'string' ? v.trim().toLowerCase() : '');
+
+function isReviewStage(key: string, status: string): boolean {
+  if (isAwaitingReview(status) || REVIEW_STAGES.has(status)) return true;
+  // A purchase request's resubmit clears its approval_status.
+  return key === 'approval_status' && status === '';
+}
+
+/**
+ * The heading of each of a record's own rows that rejected it or sent it back in, keyed by
+ * row id. Walks the rows oldest first and carries the status each one left, so a row reads
+ * right even when it does not carry the status it moved from, and history written before the
+ * "Resubmitted" status existed reads the same as a resubmit written today. Pass the record's
+ * own rows only: a child row's status is not the record's.
+ */
+export function auditTrailHeadings(entries: TrailEntry[]): Map<string, AuditTrailHeading> {
+  const headings = new Map<string, AuditTrailHeading>();
+  const current: Record<string, string> = {};
+  // The API returns newest first; reversed before the sort so rows stamped the same instant
+  // keep their written order.
+  const oldestFirst = [...entries]
+    .reverse()
+    .sort((a, b) => Date.parse(a.changed_at) - Date.parse(b.changed_at));
+  for (const entry of oldestFirst) {
+    const oldV = entry.old_values || {};
+    const newV = entry.new_values || {};
+    if (entry.action !== 'UPDATE') {
+      for (const key of STATUS_KEYS) {
+        if (key in newV) current[key] = norm(newV[key]);
+      }
+      continue;
     }
+    let heading: AuditTrailHeading | null = null;
+    let moved = false;
+    for (const key of STATUS_KEYS) {
+      if (!(key in newV)) continue;
+      const from = key in oldV ? norm(oldV[key]) : (current[key] ?? '');
+      const to = norm(newV[key]);
+      current[key] = to;
+      if (from === to) continue;
+      moved = true;
+      if (to === 'rejected') heading = 'Rejected';
+      else if (from === 'rejected' && isReviewStage(key, to)) heading ??= 'Resubmitted';
+    }
+    const summary = entry.description?.trim() ?? '';
+    const engineTo = moved ? null : SUMMARY_STATUS_TO.exec(summary);
+    if (engineTo) {
+      moved = true;
+      current.status_id = norm(engineTo[1]);
+      if (SUMMARY_RESUBMIT.test(summary)) heading = 'Resubmitted';
+      else if (SUMMARY_REJECT.test(summary)) heading = 'Rejected';
+    }
+    if (
+      !moved &&
+      !heading &&
+      Object.values(current).includes('rejected') &&
+      (CUSTOMER_ACTORS.has(entry.actor_type ?? '') || (!entry.actor_type && !!entry.contact_id)) &&
+      auditFieldChanges(oldV, newV).length > 0
+    ) {
+      heading = 'Resubmitted';
+    }
+    if (heading) headings.set(entry.id, heading);
   }
-  return RESUBMIT_SUMMARY.test(entry.description ?? '');
+  return headings;
+}
+
+/**
+ * A past resubmit's summary says "rejected → submitted": the status it is called today
+ * (RESUBMITTED-STATUS) is what the reader sees. A named stage stays as recorded.
+ */
+export function resubmittedSummary(summary: string): string {
+  return summary.replace(
+    /\b(rejected\s*→\s*)(s)(ubmitted)\b/i,
+    (_m, lead: string, s: string, rest: string) => `${lead}${s === 'S' ? 'Res' : 'res'}${rest}`,
+  );
 }
