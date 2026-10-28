@@ -169,3 +169,14 @@ def test_near_miss_a_staff_contact_with_the_grant_runs_as_today(console) -> None
     _staff(console)
     text, calls = console.say(_rank(_e("Sorento", "brand")), "top 3 salesman for Sorento brand last month")
     assert len(calls) == 1 and not calls[0].get("mine"), (text, calls)
+
+
+def test_an_ungranted_salesperson_asking_the_yearly_comparison_is_refused_with_no_question_first(console_no_grant, monkeypatch) -> None:
+    """Security re-check of owner 28 Oct 08:40: only a verdict that runs on the report ask passes the early gate. The
+    Yearly comparison (`group_by` year, which `by_capability` leaves alone) is refused at once, never asked its basis."""
+    _make_salesperson(console_no_grant)
+    qf = _rank(domain_hint="order", intent_hint="check_order",
+               **{"order_status": "sales_analysis", "group_by": "year", "measure": None, "basis": None})
+    text, log = _say_all(console_no_grant, monkeypatch, qf, "sales by year")
+    assert text.strip() == DENIAL, text
+    assert not [n for n in _names(log) if n in (TOOL, "crm_sales_analysis", "crm_sales_report")], _names(log)

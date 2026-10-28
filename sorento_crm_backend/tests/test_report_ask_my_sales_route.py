@@ -377,3 +377,70 @@ def test_near_miss_a_granted_staff_contact_gets_no_book_echo(client, db, mine):
     db.commit()
     body = _ok(client, contact, group_by="customer", top_n=10, mine=mine)
     assert _book_entries(body) == [], body["filters"]
+
+
+# ------------------------------------------------------------------ 10. outstanding kinds keep Q6 (security re-check of owner 28 Oct 08:40)
+# The 08:40 ruling is about SALES figures. The outstanding kinds follow the Outstanding reveal: a salesperson without it
+# stays on its own book there, and the agent axes stay refused.
+
+
+def _open_world(db):
+    """The `_world` customers with open demand (nothing delivered): outstanding in1 100 / in2 200 / out 1000."""
+    other = seed_agent(db, code="ZZT Other Agent")
+    w = SimpleNamespace()
+    w.in1 = seed_customer(db, name="ZZT Book Customer One")
+    w.in2 = seed_customer(db, name="ZZT Book Customer Two")
+    w.out = seed_customer(db, name="ZZT Outside Customer")
+    rows = [(w.in1, "1", 1, "100.00"), (w.in2, "2", 2, "200.00"), (w.out, "3", 10, "1000.00")]
+    for cust, n, qty, total in rows:
+        prod = _prod(db, f"ZZTOS-{n}", brand=_brand(db, f"ZZT OBrand {n}"), category=_category(db, f"ZZT OCat {n}"))
+        seed_so_line(db, cust=cust, prod=prod, qty=qty, total=total, agent=other, delivered=0)
+    db.flush()
+    return w
+
+
+def _outstanding(client, contact, **params):
+    q = {"basis": "outstanding", "measure": "amount", **_as_contact(contact), **params}
+    return client.get(ROUTE, params={k: v for k, v in q.items() if v is not None}, headers=KEY)
+
+
+def _with_outstanding_reveal(db, contact):
+    from app.services.contact_field_reveal_service import set_granted_keys
+
+    set_granted_keys(db, contact.id, ["sales_orders.outstanding"], actor_id=None)
+    db.commit()
+
+
+@pytest.mark.parametrize("group_by", [None, "customer"])
+def test_a_salesperson_without_the_outstanding_reveal_stays_on_their_book_there(client, db, group_by):
+    """Owner 28 Oct 08:40 is for sales figures; the outstanding kinds keep Q6 (the Outstanding reveal)."""
+    w = _open_world(db)
+    contact = _salesperson(db, w, granted=False)
+    resp = _outstanding(client, contact, group_by=group_by, top_n=10 if group_by else None)
+    assert resp.status_code == 200, resp.text
+    body = resp.json()
+    assert _total(body) == BOOK_TOTAL, body
+    assert not any("Outside" in n for n in _names(body)), body["rows"]
+
+
+@pytest.mark.parametrize("basis", ["outstanding", "unpaid"])
+@pytest.mark.parametrize("group_by", ["sales_agent"])
+def test_a_salesperson_without_the_outstanding_reveal_may_not_use_the_agent_axis(client, db, basis, group_by):
+    w = _open_world(db)
+    contact = _salesperson(db, w, granted=False)
+    _refused(_outstanding(client, contact, basis=basis, group_by=group_by, top_n=10))
+
+
+def test_a_salesperson_with_the_outstanding_reveal_sees_all_outstanding(client, db):
+    w = _open_world(db)
+    contact = _salesperson(db, w, granted=False)
+    _with_outstanding_reveal(db, contact)
+    body = _outstanding(client, contact, group_by="customer", top_n=10).json()
+    assert _total(body) == ALL_TOTAL and w.out.customer_name in _names(body), body
+    assert _outstanding(client, contact, group_by="sales_agent", top_n=10).status_code == 200
+
+
+def test_the_sales_bases_stay_all_for_a_salesperson_without_a_reveal(client, db):
+    w = _world(db)
+    body = _ok(client, _salesperson(db, w, granted=False), group_by="customer", top_n=10)
+    assert _total(body) == ALL_TOTAL, body

@@ -68,6 +68,7 @@ Status: Agreed (owner answers 27 Oct ~19:15). Plan: `PLAN-report-unify-27oct.md`
 - **AC-RU-17b** (owner 28 Oct 08:40). A contact without a linked customer sees all figures, on totals and rankings
   alike. A contact with a linked customer sees only that customer's figures. "My ..." from a live salesperson stays
   its own book.
+  Outstanding kinds keep Q6: a salesperson without the Outstanding reveal stays on its own book there.
 
 ## Span binding (slice 3)
 

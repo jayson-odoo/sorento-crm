@@ -420,7 +420,12 @@ def report_ask(
         if outstanding_kind:
             raise AppException(403, "Outstanding is not enabled for your account.", code="outstanding_not_enabled")
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
-    narrowed = book is not None and mine
+    # The 08:40 ruling is about SALES figures. The outstanding kinds keep Q6 (the Outstanding reveal): a salesperson without
+    # it stays on its own book there and never takes the agent axes.
+    own_book_only = outstanding_kind and not granted
+    if own_book_only and (group_norm == "sales_agent" or agents or card_agents):
+        raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")
+    narrowed = book is not None and (mine or own_book_only)
 
     # Brand scope off the contact this route already resolved, whatever the key: the router
     # dependency stamps it only for the legacy shared key (security H1). Stamped before any
