@@ -76,6 +76,7 @@ export function fetchPromotionsPage(
       quick_search: params.searchQuery || undefined,
       promotion_status: params.status,
       promotion_access_level: params.user_type,
+      promotion_attachment_state: params.attachment_state,
     });
   }
   return getPromotions(params);
@@ -103,8 +104,7 @@ export function promotionsListParamsFromUrl(
     date_from: params.filters.date_from,
     date_to: params.filters.date_to,
     user_type: params.filters.user_type,
-    attachment_state: params.filters
-      .attachment_state as PromotionsListParams['attachment_state'],
+    attachment_state: params.filters.attachment_state,
     expiry_notify_batch_id: params.filters.expiry_notify_batch_id,
     advancedFilter:
       decodeAdvancedFilter<ListQueryFilterGroup>(params.filters.advFilter) ?? undefined,

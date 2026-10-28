@@ -47,7 +47,14 @@ export type SearchableMultiSelectProps = {
   /** Static mode: full option set, filtered client-side. Mutually exclusive with `fetchOptions`. */
   options?: SearchableMultiSelectOption[];
   /** Async mode: server-search, debounced 300ms, stale-dropped. Empty query on open = first page. */
-  fetchOptions?: (query: string) => Promise<SearchableMultiSelectOption[]>;
+  fetchOptions?: (query: string, pageIndex: number) => Promise<SearchableMultiSelectOption[]>;
+  /**
+   * Async mode: append pages instead of replacing, with a "Load more" row while the last fetch
+   * came back full (same contract as `SearchableSelect.paginated`).
+   */
+  paginated?: boolean;
+  /** Async + paginated: page size used to decide whether another page may exist. Default 50. */
+  pageSize?: number;
   /**
    * Async mode: the currently-selected options, so trigger chips + checkmarks survive when the
    * selected values aren't in the fetched page.
@@ -123,6 +130,8 @@ export function SearchableMultiSelect({
   onChange,
   options,
   fetchOptions,
+  paginated = false,
+  pageSize = 50,
   selectedOptions,
   size,
   'aria-label': ariaLabel,
@@ -169,6 +178,9 @@ export function SearchableMultiSelect({
   const [loading, setLoading] = React.useState(false);
   const [query, setQuery] = React.useState('');
   const lastQueryRef = React.useRef<string>(' ');
+  const [page, setPage] = React.useState(0);
+  const [hasMore, setHasMore] = React.useState(false);
+  const [loadingMore, setLoadingMore] = React.useState(false);
 
   const runFetch = React.useCallback(
     async (q: string) => {
@@ -176,21 +188,42 @@ export function SearchableMultiSelect({
       lastQueryRef.current = q;
       setLoading(true);
       try {
-        const items = await fetchOptions(q);
+        const items = await fetchOptions(q, 0);
         if (lastQueryRef.current !== q) return;
         setAsyncError(null);
         setAsyncOptions(items);
+        setPage(0);
+        setHasMore(paginated && items.length >= pageSize);
       } catch (error) {
         if (lastQueryRef.current !== q) return;
         // A failed read is not an empty list (L5): keep the error so the menu says so.
         setAsyncError(error ?? new Error('These options could not be loaded.'));
         setAsyncOptions([]);
+        setHasMore(false);
       } finally {
         if (lastQueryRef.current === q) setLoading(false);
       }
     },
-    [fetchOptions],
+    [fetchOptions, paginated, pageSize],
   );
+
+  const loadMore = React.useCallback(async () => {
+    if (!fetchOptions || loadingMore) return;
+    const next = page + 1;
+    setLoadingMore(true);
+    try {
+      const items = await fetchOptions(query, next);
+      // A query change mid-flight invalidates this page.
+      if (lastQueryRef.current !== query) return;
+      setAsyncOptions((prev) => [...prev, ...items]);
+      setPage(next);
+      setHasMore(items.length >= pageSize);
+    } catch {
+      setHasMore(false);
+    } finally {
+      setLoadingMore(false);
+    }
+  }, [fetchOptions, loadingMore, page, query, pageSize]);
 
   React.useEffect(() => {
     if (!isAsync || !open) return;
@@ -531,6 +564,23 @@ export function SearchableMultiSelect({
                 })}
               </CommandGroup>
             ))}
+            {hasMore ? (
+              <div className="border-t p-1">
+                <button
+                  type="button"
+                  data-slot="searchable-multi-select-load-more"
+                  onClick={() => void loadMore()}
+                  disabled={loadingMore}
+                  className="flex w-full items-center justify-center gap-2 rounded-sm px-2 py-1.5 text-sm text-muted-foreground hover:bg-accent disabled:opacity-60"
+                >
+                  {loadingMore ? (
+                    <Loader2 className="size-4 animate-spin" aria-label="Loading" />
+                  ) : (
+                    'Load more'
+                  )}
+                </button>
+              </div>
+            ) : null}
           </CommandList>
         </Command>
       </PopoverContent>

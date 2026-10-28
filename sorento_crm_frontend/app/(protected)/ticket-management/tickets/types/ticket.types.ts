@@ -176,12 +176,13 @@ export interface TicketWatchersUpdateInput {
 }
 
 export interface TicketListFilters {
-  status?: TicketStatus;
+  /** Status, priority, category and source channel: one value, or several comma-joined (OR-ed). */
+  status?: string;
   assigned_to?: string;
   raised_by?: string;
-  priority?: TicketPriority;
-  category?: TicketCategory;
-  source_channel?: TicketSourceChannel;
+  priority?: string;
+  category?: string;
+  source_channel?: string;
   due_before?: string;
   q?: string;
 }

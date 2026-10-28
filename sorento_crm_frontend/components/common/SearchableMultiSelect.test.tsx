@@ -297,3 +297,106 @@ describe('SearchableMultiSelect scroll lock only while open (renderTrigger)', ()
     );
   });
 });
+
+describe('SearchableMultiSelect async pagination', () => {
+  const page = (n: number, size: number) =>
+    Array.from({ length: size }, (_, i) => ({ value: `p${n}-${i}`, label: `Item ${n}-${i}` }));
+  const rows = () => [...document.querySelectorAll('[role="option"]')];
+  const labels = () => rows().map((r) => r.textContent?.trim());
+  const loadMore = () =>
+    document.querySelector('[data-slot="searchable-multi-select-load-more"]') as HTMLElement | null;
+
+  /** A controlled wrapper, so picks made on page 1 are still in `value` after page 2 arrives. */
+  function Controlled({ fetchOptions, onValue }: { fetchOptions: (q: string, p: number) => Promise<SearchableMultiSelectOption[]>; onValue: (v: string[]) => void }) {
+    const [value, setValue] = React.useState<string[]>([]);
+    return (
+      <SearchableMultiSelect
+        value={value}
+        onChange={(v) => {
+          setValue(v);
+          onValue(v);
+        }}
+        fetchOptions={fetchOptions}
+        paginated
+        pageSize={2}
+      />
+    );
+  }
+
+  afterEach(() => cleanup());
+
+  it('Load more appends the next page, asks for pageIndex 1, and keeps picks across pages', async () => {
+    const fetchOptions = vi
+      .fn()
+      .mockImplementationOnce(async () => page(0, 2))
+      .mockImplementationOnce(async () => page(1, 2))
+      .mockImplementation(async () => []);
+    const onValue = vi.fn();
+    render(<Controlled fetchOptions={fetchOptions} onValue={onValue} />);
+    openMenu();
+
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    fireEvent.click(rows()[0]);
+    expect(onValue).toHaveBeenLastCalledWith(['p0-0']);
+
+    fireEvent.click(loadMore()!);
+
+    await waitFor(() => expect(rows()).toHaveLength(4));
+    expect(fetchOptions).toHaveBeenNthCalledWith(2, '', 1);
+    expect(loadMore()).toBeTruthy(); // a full page means there may be more
+    expect(labels()).toEqual(expect.arrayContaining(['Item 0-0', 'Item 0-1', 'Item 1-0', 'Item 1-1']));
+
+    fireEvent.click(rows().find((r) => r.textContent?.includes('Item 1-1'))!);
+    expect(onValue).toHaveBeenLastCalledWith(['p0-0', 'p1-1']);
+  });
+
+  it('offers no Load more once a page comes back short', async () => {
+    const fetchOptions = vi
+      .fn()
+      .mockImplementationOnce(async () => page(0, 2))
+      .mockImplementationOnce(async () => page(1, 1));
+    render(<Controlled fetchOptions={fetchOptions} onValue={vi.fn()} />);
+    openMenu();
+
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    expect(loadMore()).toBeTruthy();
+    fireEvent.click(loadMore()!);
+
+    await waitFor(() => expect(rows()).toHaveLength(3));
+    await waitFor(() => expect(loadMore()).toBeNull());
+  });
+
+  it('offers no Load more when pagination is off', async () => {
+    const fetchOptions = vi.fn().mockResolvedValue(page(0, 50));
+    render(<SearchableMultiSelect value={[]} onChange={vi.fn()} fetchOptions={fetchOptions} />);
+    openMenu();
+
+    await waitFor(() => expect(rows().length).toBeGreaterThan(0));
+    expect(loadMore()).toBeNull();
+  });
+
+  it('a query change while a page is loading discards that stale page', async () => {
+    let releasePage1: (items: SearchableMultiSelectOption[]) => void = () => {};
+    const fetchOptions = vi.fn(async (q: string, p: number) => {
+      if (q === 'zz') return [{ value: 'zz-0', label: 'Fresh zz' }];
+      if (p === 0) return page(0, 2);
+      return new Promise<SearchableMultiSelectOption[]>((resolve) => {
+        releasePage1 = resolve;
+      });
+    });
+    render(<Controlled fetchOptions={fetchOptions} onValue={vi.fn()} />);
+    openMenu();
+
+    await waitFor(() => expect(rows()).toHaveLength(2));
+    fireEvent.click(loadMore()!);
+    await waitFor(() => expect(fetchOptions).toHaveBeenCalledWith('', 1));
+
+    fireEvent.change(screen.getByPlaceholderText('Search...'), { target: { value: 'zz' } });
+    await waitFor(() => expect(labels()).toEqual(['Fresh zz']));
+
+    releasePage1(page(1, 2));
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(labels()).toEqual(['Fresh zz']);
+  });
+});
