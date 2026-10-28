@@ -219,7 +219,8 @@ def test_r4_a_size_no_key_holds_offers_every_key_of_its_unit_in_name_order_uncut
 
     items = _items(db, "need a 999 mm one", "999 mm")
 
-    assert items == [f"spec {key} = 999" for key in MM_KEYS], items
+    # DIMENSION-ANY (owner, 28 Oct 2026): a length leads with the size line, no dimension named.
+    assert items == ["size 999 mm (no dimension named)", *[f"spec {key} = 999" for key in MM_KEYS]], items
 
 
 @contextmanager
@@ -318,7 +319,7 @@ def test_guard_a_product_outside_the_scope_or_not_chat_searchable_does_not_count
     _products(db, (("ZZSC12-F", {"depth": 12}), ("ZZSC12-G", {"depth": 12})), searchable=False)
     _scoped(db)
 
-    assert _items(db, "a 12mm panel", "12mm") == ["spec thickness = 12"]
+    assert _items(db, "a 12mm panel", "12mm") == ["size 12 mm (no dimension named)", "spec thickness = 12"]
 
 
 def test_guard_a_product_type_stays_ahead_of_a_spec_under_the_same_phrase(db):

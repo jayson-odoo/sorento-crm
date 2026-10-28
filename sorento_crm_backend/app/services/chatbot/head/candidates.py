@@ -472,6 +472,22 @@ def _unit_index(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str
     return {unit: (sorted(set(keys)), bare) for unit, (keys, bare) in units.items()}
 
 
+def _unit_aliases(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, tuple[str, float]]:
+    """DIMENSION-ANY: every other unit a numeric key's quantity is written in, off the registry's
+    own `unit_aliases` (`{"cm": 10}` on a mm key): `{"cm": ("mm", 10.0)}`. Data only, no unit list
+    in code; the parser decides what a word beside a number means."""
+    out: dict[str, tuple[str, float]] = {}
+    for row in sorted(_registry(db, hidden), key=lambda r: r.spec_key):
+        unit = str(getattr(row, "unit", None) or "").strip().casefold()
+        if (row.data_type or "").lower() != "numeric" or not unit or row.spec_key in SKIP_KEYS:
+            continue
+        for alias, factor in (getattr(row, "unit_aliases", None) or {}).items():
+            word = str(alias).strip().casefold()
+            if word and word != unit and isinstance(factor, (int, float)) and not isinstance(factor, bool) and factor > 0:
+                out.setdefault(word, (unit, float(factor)))
+    return out
+
+
 def _support(
     db: "Session", pairs: set[tuple[str, str, str]], held_ids: list[str] | None
 ) -> dict[tuple[str, str, str], tuple[int, int]]:
@@ -525,17 +541,30 @@ def _size_candidates(
     units = _unit_index(db, hidden)
     if not units:
         return [], set()
+    # DIMENSION-ANY: a quantity in another unit ("15cm") is offered in the key's own unit, off the
+    # registry's aliases.
+    aliases = _unit_aliases(db, hidden)
+
+    def known(unit: str) -> bool:
+        return unit in units or unit in aliases
+
     out: list[WordCandidates] = []
     spanned: set[int] = set()
     for position, token in enumerate(tokens):
         joined = _SIZE_RE.fullmatch(token)
-        if joined and joined.group(2) in units:
+        if joined and known(joined.group(2)):
             number, unit_name, shown, span = joined.group(1), joined.group(2), token, {position}
-        elif _is_number(token) and position + 1 < len(tokens) and tokens[position + 1] in units:
+        elif _is_number(token) and position + 1 < len(tokens) and known(tokens[position + 1]):
             unit_name = tokens[position + 1]
             number, shown, span = token, f"{token} {unit_name}", {position, position + 1}
         else:
             continue
+        if unit_name not in units:
+            unit_name, factor = aliases[unit_name]
+            converted = round(float(number) * factor, 3)
+            number = str(int(converted)) if converted.is_integer() else f"{converted:g}"
+        if unit_name not in units:
+            continue  # an alias of a unit no visible key carries
         keys, bare = units[unit_name]
         out.append(WordCandidates(gram=shown, position=position, size=(number, unit_name, keys, bare)))
         spanned |= span
@@ -544,15 +573,19 @@ def _size_candidates(
 
 def _resolve(entries: list[WordCandidates], counts: dict) -> None:
     """F3-a: a size's lines are the keys that hold the number, ranked by data (every key of the
-    unit, in name order, when none does), the bare-size line first when a flagged key holds it
-    (R6-1); a shared phrase's exact spec lines are ranked by data in the slots they hold."""
+    unit, in name order, when none does), the bare-size line first for a length or when a flagged
+    key holds it (R6-1); a shared phrase's exact spec lines are ranked by data in the slots they hold."""
+    from app.services.product_spec_search import length_factor
+
     for entry in entries:
         if entry.size:
             number, unit_name, keys, bare = entry.size
             holders = [k for k in keys if counts.get((k, number, "num"), (0, 0))[0] > 0]
             ranked = sorted(holders, key=lambda k: _by_data(counts, (k, number, "num"))) or keys
             entry.items = [f"spec {key} = {number}" for key in ranked]
-            if bare & set(holders):
+            # DIMENSION-ANY: a length is offered as a size with no dimension named whatever key holds
+            # it (the prod miss: only height held 150, so the parser saw height alone and picked it).
+            if bare & set(holders) or length_factor(unit_name) == 1.0:
                 entry.items.insert(0, f"size {number} {unit_name} (no dimension named)")
             continue
         slots = [n for n, item in enumerate(entry.items) if item in entry.pairs]

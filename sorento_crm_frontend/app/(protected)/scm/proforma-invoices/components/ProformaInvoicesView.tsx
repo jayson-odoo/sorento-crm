@@ -43,7 +43,8 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useFulfilmentSuppliers } from '../../hooks/useFulfilment';
@@ -53,10 +54,7 @@ import {
   useProformaInvoices,
   useProformaInvoicesApplied,
 } from '../../hooks/useProformaInvoices';
-import type {
-  ProformaInvoiceListRow,
-  ProformaPlacement,
-} from '../../services/proformaInvoiceService';
+import type { ProformaInvoiceListRow } from '../../services/proformaInvoiceService';
 import { EM_DASH, fmtDate, fmtInt, fmtQty, fmtSupplierCost } from '../../lib/format';
 import { ConvertToPackingListDialog } from './ConvertToPackingListDialog';
 import { OverCapacityDialog } from './OverCapacityDialog';
@@ -125,8 +123,11 @@ const PLACEMENT_FILTER: { value: string; label: string }[] = [
   { value: 'converted', label: 'In a packing list' },
 ];
 
-function placementLabel(placement: ProformaPlacement | null): string | null {
-  return PLACEMENT_FILTER.find((o) => o.value === placement)?.label ?? null;
+function placementLabel(placement: string | null): string | null {
+  const labels = splitMulti(placement).map(
+    (p) => PLACEMENT_FILTER.find((o) => o.value === p)?.label ?? p,
+  );
+  return labels.length ? multiValueSummary(labels) : null;
 }
 
 /** Can this invoice still go into a container? */
@@ -162,13 +163,14 @@ export function ProformaInvoicesView() {
     isSettling: searchSettling,
     reset: resetSearchQuery,
   } = useDebouncedSearch();
+  // Several suppliers / placements are comma-joined and OR-ed.
   const [supplierId, setSupplierId] = useState<string | null>(null);
   // No default filter (AC-D1, S4): a fresh visit shows every invoice, newest first. The
   // Aug plan's default of `not_converted` (AC-F6) looked like missing data - a book where
   // everything was already placed read as empty rather than as "nothing left to place",
   // and the chip was silently applied before anyone chose it. `placement` is still honoured
   // from the URL, one click away in the filter popover.
-  const [placement, setPlacement] = useState<ProformaPlacement | null>(null);
+  const [placement, setPlacement] = useState<string | null>(null);
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 25 });
 
   // Back hands the list its own query string back, and the pager keeps
@@ -177,7 +179,7 @@ export function ProformaInvoicesView() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     resetSearchQuery(state.searchQuery);
     setSupplierId(state.filters.supplier_id ?? null);
-    setPlacement((state.filters.placement as ProformaPlacement) ?? null);
+    setPlacement(state.filters.placement ?? null);
   });
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
   const [uploadOpen, setUploadOpen] = useState(false);
@@ -470,7 +472,11 @@ export function ProformaInvoicesView() {
     const parts = [
       placementLabel(placement),
       supplierId
-        ? (suppliers.data ?? []).find((s) => s.value === supplierId)?.label ?? 'One supplier'
+        ? multiValueSummary(
+            splitMulti(supplierId).map(
+              (id) => (suppliers.data ?? []).find((s) => s.value === id)?.label ?? 'Supplier',
+            ),
+          )
         : null,
     ].filter(Boolean);
     return parts.length ? { label: parts.join(' - '), onClear: clearFilters } : undefined;
@@ -627,23 +633,32 @@ export function ProformaInvoicesView() {
                       <Label htmlFor="proforma-supplier-filter" className="mb-1 block">
                         Supplier
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="proforma-supplier-filter"
-                        value={supplierId ?? ''}
-                        onChange={(v: string) => setSupplierId(v || null)}
+                        value={splitMulti(supplierId)}
+                        onChange={(v) => setSupplierId(joinMulti(v) || null)}
                         options={suppliers.data ?? []}
                         placeholder="All suppliers"
                         clearable
+                        renderTriggerLabel={(chosen) =>
+                          chosen.length ? (
+                            <span className="block truncate">
+                              {multiChipLabel('Supplier', idFilterLabels(chosen))}
+                            </span>
+                          ) : (
+                            <span className="text-muted-foreground">Supplier: any</span>
+                          )
+                        }
                       />
                     </div>
                     <div>
                       <Label htmlFor="proforma-placement-filter" className="mb-1 block">
                         Packing list
                       </Label>
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="proforma-placement-filter"
-                        value={placement ?? ''}
-                        onChange={(v: string) => setPlacement((v as ProformaPlacement) || null)}
+                        value={splitMulti(placement)}
+                        onChange={(v) => setPlacement(joinMulti(v) || null)}
                         options={PLACEMENT_FILTER}
                         placeholder="Any"
                         clearable

@@ -3906,6 +3906,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
             not_understood=jsc.get(predicate, "unrecognized_terms"),
             offset=offset,
             previous_total=jsc.get(predicate, "previous_total"),
+            dimension_fallback=jsc.get(predicate, "dimension_fallback"),
         )
         set_header = header
         # Round 3 W4: the default brand answered, so the reply closes with the others -
@@ -3969,6 +3970,7 @@ def output_structurer(result: Any, ctx: dict[str, Any] | None) -> dict[str, Any]
                         not_understood=jsc.get(predicate, "unrecognized_terms"),
                         offset=offset,
                         previous_total=jsc.get(predicate, "previous_total"),
+                        dimension_fallback=jsc.get(predicate, "dimension_fallback"),
                     )
                 ),
                 cap=answer_mod.SET_LIST_MAX,
