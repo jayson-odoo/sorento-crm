@@ -163,8 +163,9 @@ async def list_projects(
     status_key: Optional[List[str]] = Query(
         None,
         description=(
-            "Funnel rung by stable KEY (identified, registered, specified, quoted, "
-            "tendering, po_received, lost, dormant). Unknown keys are a 422 naming the "
+            "Funnel rung by stable KEY, from the status graph (identified, registered, "
+            "specified (Spec In), sample_submission, final_negotiation, sponsorship_form, "
+            "po_received, lost, dormant). Unknown keys are a 422 naming the "
             "valid ones."
         ),
     ),
