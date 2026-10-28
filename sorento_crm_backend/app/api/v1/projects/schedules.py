@@ -140,7 +140,7 @@ async def list_delivery_schedule_versions(
     response_model=DeliveryScheduleUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def upload_delivery_schedule(
+def upload_delivery_schedule(
     po_id: str,
     file: UploadFile = File(...),
     issuer_party_id: Optional[str] = Form(None),
@@ -170,7 +170,7 @@ async def upload_delivery_schedule(
             db, project, current_user["id"], permission_slugs(db, current_user["id"])
         )
 
-        content = await file.read()
+        content = file.file.read()
         mime = (file.content_type or "").lower().split(";")[0].strip()
         if mime not in ALLOWED_MIMES:
             raise AppException(

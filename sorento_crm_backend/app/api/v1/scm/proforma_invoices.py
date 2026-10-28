@@ -189,7 +189,7 @@ async def preview_proforma_invoice(
 ):
     """Every invoice the file holds, in which currency, and which codes we do not hold."""
     proforma_invoice_service.assert_supplier(db, supplier_id)
-    data = await read_upload(file)
+    data = await run_in_threadpool(read_upload, file)
     return await run_in_threadpool(
         proforma_invoice_service.preview,
         db,
@@ -238,7 +238,7 @@ async def apply_proforma_invoice(
 ):
     """One proforma invoice per document block. Re-uploading the same file updates in place."""
     proforma_invoice_service.assert_supplier(db, supplier_id)
-    data = await read_upload(file)
+    data = await run_in_threadpool(read_upload, file)
     if validate_only:
         return await run_in_threadpool(
             proforma_invoice_service.validate,

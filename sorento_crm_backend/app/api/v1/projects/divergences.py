@@ -114,14 +114,14 @@ async def ingest_sales_order(
 
 
 @router.post("/sales-orders/ingest-file", response_model=IngestResponse)
-async def ingest_sales_order_file(
+def ingest_sales_order_file(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
     """Stage 1: the export a CS takes out of AutoCount, read by column heading."""
     try:
-        payload = await file.read()
+        payload = file.file.read()
         if not payload:
             raise AppException(
                 status_code=422, message="That file is empty.", code="so_ingest_empty_file"

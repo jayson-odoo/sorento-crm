@@ -270,7 +270,7 @@ async def uninstall_module_route(
 # ---------------------------------------------------------------------------
 
 @router.post("/upload")
-async def upload_module_zip(
+def upload_module_zip(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission("system.modules.manage")),
     db: Session = Depends(get_db),
@@ -289,7 +289,7 @@ async def upload_module_zip(
 
     tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".zip")
     try:
-        tmp.write(await file.read())
+        tmp.write(file.file.read())
         tmp.flush()
         tmp.close()
         result = install_uploaded_zip(Path(tmp.name))

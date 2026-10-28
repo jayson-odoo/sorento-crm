@@ -121,7 +121,7 @@ def get_outstanding_upload_config(_user: dict = Depends(_WRITE)):
 
 
 @router.post("/outstanding/{kind}/preview")
-async def preview_outstanding_import(
+def preview_outstanding_import(
     kind: str,
     file: UploadFile = File(..., description="AutoCount outstanding-orders extract (.xlsx)"),
     current_user: dict = Depends(_WRITE),
@@ -135,7 +135,7 @@ async def preview_outstanding_import(
     """
     doc_type = _doc_type(kind)
     _require_single_company(db)
-    result = svc.preview(db, await read_upload(file), doc_type)
+    result = svc.preview(db, read_upload(file), doc_type)
     # A file whose header cannot answer the question is a 200 carrying `ok: false`, not an
     # error: the screen needs to render WHICH columns are missing so the export can be
     # fixed, and an exception body would lose that.
@@ -143,7 +143,7 @@ async def preview_outstanding_import(
 
 
 @router.post("/outstanding/{kind}/apply", status_code=status.HTTP_202_ACCEPTED)
-async def apply_outstanding_import(
+def apply_outstanding_import(
     kind: str,
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     current_user: dict = Depends(_WRITE),
@@ -161,7 +161,7 @@ async def apply_outstanding_import(
     """
     doc_type = _doc_type(kind)
     _assert_writable(kind, doc_type)
-    upload = await read_upload_retained(file)
+    upload = read_upload_retained(file)
 
     # Refused BEFORE any job row exists, so a refused upload leaves nothing behind for
     # somebody to wonder about.

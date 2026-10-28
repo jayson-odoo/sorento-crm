@@ -1082,7 +1082,7 @@ async def import_series_products(
     response_model=SeriesProductImportJobResponse,
     status_code=202,
 )
-async def upload_series_products(
+def upload_series_products(
     series_id: str,
     file: UploadFile = File(..., description="An .xlsx or .csv carrying a PRODUCT CODE column"),
     mode: str = Form("append"),
@@ -1129,7 +1129,7 @@ async def upload_series_products(
             )
 
         series = _series_or_404(db, series_id)
-        content = await file.read()
+        content = file.file.read()
         if not content:
             raise AppException(
                 status_code=422, message="That file is empty.", code="series_import_empty_file"

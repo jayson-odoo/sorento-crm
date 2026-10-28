@@ -1540,7 +1540,7 @@ def portal_download_attachment(
 
 
 @router.post("/attachments")
-async def portal_upload_attachment(
+def portal_upload_attachment(
     kind: Annotated[str, Form()],
     submission_id: Annotated[str, Form()],
     file: Annotated[UploadFile, File(...)],
@@ -1557,7 +1557,7 @@ async def portal_upload_attachment(
         portal.get_submission(token, k, submission_id)  # ownership check
     attachment_type = portal.get_portal_attachment_type()
 
-    contents = await file.read()
+    contents = file.file.read()
     incoming_size = len(contents)
     extension = _ext(file.filename, file.content_type)
     _check_quota(
@@ -1660,7 +1660,7 @@ def portal_list_comments(
 
 
 @router.post("/submissions/{kind}/{submission_id}/comments", status_code=status.HTTP_201_CREATED)
-async def portal_add_comment(
+def portal_add_comment(
     kind: str,
     submission_id: str,
     body: Annotated[str, Form()] = "",
@@ -1693,7 +1693,7 @@ async def portal_add_comment(
                 detail="Too many comments. Try again later.",
                 headers={"Retry-After": str(result.retry_after_seconds or _COMMENT_RATE_WINDOW_SECONDS)},
             )
-    uploads = await read_uploads(files)
+    uploads = read_uploads(files)
     out = FormCommentService(db).add_contact_comment(
         k, sid, token.contact_id, token.space_id, body, uploads, acting_user_id, parent_id or None
     )

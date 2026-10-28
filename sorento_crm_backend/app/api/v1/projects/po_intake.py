@@ -107,7 +107,7 @@ def _action_body(service: ProjectPOExtractionService, result: dict) -> dict:
     response_model=POVersionUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def upload_purchase_order_document(
+def upload_purchase_order_document(
     project_id: str,
     file: UploadFile = File(..., description="The customer PO as a PDF, JPEG or PNG"),
     po_number: Optional[str] = Form(None),
@@ -124,7 +124,7 @@ async def upload_purchase_order_document(
         project = _project_for_edit(db, project_id, current_user)
         if purchase_order_id:
             validate_uuid_path(purchase_order_id, resource="Purchase order")
-        content = await file.read()
+        content = file.file.read()
         if len(content) > MAX_UPLOAD_BYTES:
             raise AppException(
                 status_code=413,

@@ -138,7 +138,7 @@ async def download_latest_container_status(
 
 
 @router.post("/container-status-import", status_code=status.HTTP_202_ACCEPTED)
-async def import_container_status(
+def import_container_status(
     file: UploadFile = File(..., description="Container Status workbook (.xlsx / .xls / .xlsm)."),
     validate_only: bool = Query(
         False, description="Dry run: report what would change and write nothing."
@@ -177,7 +177,7 @@ async def import_container_status(
             detail=f"Invalid file type: {file.filename}. Please upload Excel (.xlsx, .xls or .xlsm).",
         )
 
-    raw = await file.read()
+    raw = file.file.read()
     if not raw:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="The uploaded file is empty."

@@ -410,7 +410,7 @@ async def link_attachment_to_complaint(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_current_revision("complaint", "complaint_id"))],
 )
-async def upload_complaint_response_attachment(
+def upload_complaint_response_attachment(
     complaint_id: str,
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user),
@@ -424,7 +424,7 @@ async def upload_complaint_response_attachment(
         validate_uuid_path(complaint_id, resource="Complaint")
         service = ComplaintService(db)
         complaint = service.get_complaint(complaint_id)
-        contents = await file.read()
+        contents = file.file.read()
         from app.services.entity_attachment_service import create_response_attachment
 
         return create_response_attachment(

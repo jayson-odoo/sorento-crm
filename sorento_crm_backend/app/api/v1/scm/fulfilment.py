@@ -130,7 +130,7 @@ def _refuse_cancelled(plan: LoadingPlan) -> None:
 
 
 @router.post("/supplier-inventory/preview")
-async def preview_supplier_inventory(
+def preview_supplier_inventory(
     file: UploadFile = File(..., description="The supplier's own stock list"),
     supplier_id: str = Form(..., description="Which supplier sent it"),
     loading_plan_id: Optional[str] = Form(
@@ -154,7 +154,7 @@ async def preview_supplier_inventory(
     """
     return supplier_inventory_service.preview(
         db,
-        await read_upload(file),
+        read_upload(file),
         supplier_id=supplier_id,
         loading_plan_id=loading_plan_id,
         header_row=header_row,
@@ -162,7 +162,7 @@ async def preview_supplier_inventory(
 
 
 @router.post("/supplier-inventory/apply")
-async def apply_supplier_inventory(
+def apply_supplier_inventory(
     file: UploadFile = File(..., description="The same file the preview was taken from"),
     supplier_id: str = Form(...),
     loading_plan_id: Optional[str] = Form(
@@ -184,7 +184,7 @@ async def apply_supplier_inventory(
     db: Session = Depends(get_db),
 ):
     """Replace a stock snapshot - this plan's own, or the supplier's."""
-    upload = await read_upload_retained(file)
+    upload = read_upload_retained(file)
     if validate_only:
         return supplier_inventory_service.validate(
             db, upload.data, supplier_id=supplier_id, header_row=header_row
@@ -950,7 +950,7 @@ async def preview_supplier_documents(
     already in the memory. `run_in_threadpool` (B4) for the same reason the sibling upload
     route above does - a slow read must not freeze every other request this worker holds.
     """
-    read = [(f.filename, await read_upload(f)) for f in files]
+    read = await run_in_threadpool(lambda: [(f.filename, read_upload(f)) for f in files])
     out = await run_in_threadpool(
         supplier_document_service.preview,
         db,
@@ -1000,7 +1000,9 @@ async def apply_supplier_documents(
     """Proforma invoices first, then packing lists (S2). Each file is filed in Drive under
     its own type (Proforma Invoice / Packing List) and linked to the invoice it belongs to;
     a packing list's rows land on that invoice, and no shipment is created here (AC-C1)."""
-    read = [(f.filename, await read_upload(f), f.content_type) for f in files]
+    read = await run_in_threadpool(
+        lambda: [(f.filename, read_upload(f), f.content_type) for f in files]
+    )
     parsed_translations = None
     if translations:
         try:

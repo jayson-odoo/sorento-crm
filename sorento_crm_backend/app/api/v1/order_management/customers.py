@@ -53,7 +53,7 @@ async def get_customers(
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
-async def import_customers(
+def import_customers(
     file: UploadFile = File(..., description="Excel file: customer (debtor) listing"),
     validate_only: bool = Query(
         False, description="If true, read the file and report what it would do. Writes nothing."
@@ -67,7 +67,7 @@ async def import_customers(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Excel file (.xlsx, .xls or .xlsm) required",
         )
-    file_data = await file.read()
+    file_data = file.file.read()
     if not file_data:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST, detail="The uploaded file is empty"

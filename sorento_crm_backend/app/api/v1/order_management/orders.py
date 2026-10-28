@@ -1400,7 +1400,7 @@ async def bulk_import_orders(
 
 
 @router.post("/import-tracking", status_code=status.HTTP_202_ACCEPTED)
-async def import_order_tracking(
+def import_order_tracking(
     file: UploadFile = File(...),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(get_current_user),
@@ -1413,7 +1413,7 @@ async def import_order_tracking(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
-        file_data = await file.read()
+        file_data = file.file.read()
         # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
         source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
         from app.services.excel_macro_stripper import maybe_strip
@@ -1471,7 +1471,7 @@ async def import_order_tracking(
 
 
 @router.post("/import-order-lines", status_code=status.HTTP_202_ACCEPTED)
-async def import_delivery_order_detail(
+def import_delivery_order_detail(
     file: UploadFile = File(...),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("order_management.orders.import")),
@@ -1484,7 +1484,7 @@ async def import_delivery_order_detail(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid file type. Please upload an Excel file (.xlsx, .xls, or .xlsm)."
             )
-        file_data = await file.read()
+        file_data = file.file.read()
         # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
         source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
         from app.services.excel_macro_stripper import (

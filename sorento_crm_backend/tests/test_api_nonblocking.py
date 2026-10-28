@@ -76,7 +76,24 @@ def _route(module: str, name: str):
     raise AssertionError(f"route {module}.{name} not mounted")
 
 
-# (module, endpoint, query string or None, JSON body or None, slow hook)
+def _xlsx() -> bytes:
+    """A real one-cell workbook: the upload routes read and macro-strip it before any query."""
+    import io
+
+    from openpyxl import Workbook
+
+    buf = io.BytesIO()
+    wb = Workbook()
+    wb.active["A1"] = "zzt"
+    wb.save(buf)
+    return buf.getvalue()
+
+
+def _upload() -> dict:
+    return {"files": {"file": ("zzt.xlsx", _xlsx(), "application/octet-stream")}}
+
+
+# (module, endpoint, query string or None, request kwargs, path params, slow hook)
 # A slow hook names a callable to replace with a blocking sleep, for a handler whose slow part
 # is not the database.
 CASES = [
@@ -84,42 +101,50 @@ CASES = [
         "app.api.v1.order_management.orders",
         "get_sales_report",
         "product_code=ZZT-SKU&date_from=2026-01-01&date_to=2026-01-31",
-        None,
-        None,
-    ),
-    (
-        "app.api.v1.order_management.orders",
-        "get_outstanding_report",
-        "product_code=ZZT-SKU",
-        None,
+        {},
+        {},
         None,
     ),
-    ("app.api.v1.projects.quotation_documents", "download_quotation_issue_xlsx", None, None, None),
-    ("app.api.v1.projects.sales_orders", "export_autocount_change_list", None, None, None),
-    ("app.api.v1.system.jobs", "export_job_rows", None, None, None),
+    ("app.api.v1.order_management.orders", "get_outstanding_report", "product_code=ZZT-SKU", {}, {}, None),
+    ("app.api.v1.projects.quotation_documents", "download_quotation_issue_xlsx", None, {}, {}, None),
+    ("app.api.v1.projects.sales_orders", "export_autocount_change_list", None, {}, {}, None),
+    ("app.api.v1.system.jobs", "export_job_rows", None, {}, {}, None),
     (
         "app.api.v1.system.modules_runtime",
         "export_module",
         None,
-        None,
+        {},
+        {"module_key": "zzt"},
         ("app.services.module_export_service", "build_export_zip"),
     ),
-    ("app.api.v1.complaints.complaints", "export_complaint_pdf", None, None, None),
+    ("app.api.v1.complaints.complaints", "export_complaint_pdf", None, {}, {}, None),
     (
         "app.api.v1.marketing.promotions",
         "export_promotions_pdf",
         None,
-        {"promotion_ids": [str(uuid.uuid4())]},
+        {"json": {"promotion_ids": [str(uuid.uuid4())]}},
+        {},
         None,
     ),
-    ("app.api.v1.procurement.stock_inquiries", "export_stock_inquiry_pdf", None, None, None),
+    ("app.api.v1.procurement.stock_inquiries", "export_stock_inquiry_pdf", None, {}, {}, None),
+    # AN-2: uploads that awaited the file, then parsed and wrote on the loop.
+    ("app.api.v1.order_management.customers", "import_customers", None, _upload(), {}, None),
+    ("app.api.v1.procurement.grn", "import_grn_lines", None, _upload(), {}, None),
+    (
+        "app.api.v1.scm.outstanding_import",
+        "preview_outstanding_import",
+        None,
+        _upload(),
+        {"kind": "sales-orders"},
+        None,
+    ),
 ]
 
 
-def _url(route, query) -> str:
+def _url(route, query, params) -> str:
     path = route.path
     for p in route.param_convertors:
-        path = path.replace("{" + p + "}", "zzt" if p.endswith("_key") else str(uuid.uuid4()))
+        path = path.replace("{" + p + "}", params.get(p) or str(uuid.uuid4()))
     return path + (f"?{query}" if query else "")
 
 
@@ -132,7 +157,7 @@ def stubbed():
     app.dependency_overrides.update(saved)
 
 
-async def _race(method: str, url: str, body):
+async def _race(method: str, url: str, kwargs: dict, light_path: str = "/health"):
     transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         warm = await client.get("/health")  # first call pays the probes' cold start
@@ -140,7 +165,7 @@ async def _race(method: str, url: str, body):
         done: dict[str, float] = {}
 
         async def slow():
-            await client.request(method, url, json=body)
+            await client.request(method, url, **kwargs)
             done["slow"] = time.monotonic()
 
         async def light():
@@ -148,7 +173,7 @@ async def _race(method: str, url: str, body):
             # loop, this poll itself cannot run until it is over.
             while not _entered.is_set():
                 await asyncio.sleep(0.005)
-            r = await client.get("/health")
+            r = await client.get(light_path)
             done["light"] = time.monotonic()
             assert r.status_code == 200, r.text
 
@@ -158,8 +183,10 @@ async def _race(method: str, url: str, body):
         return _entered_at["t"], done
 
 
-@pytest.mark.parametrize("module,name,query,body,hook", CASES, ids=[c[1] for c in CASES])
-def test_a_slow_report_does_not_freeze_the_worker(stubbed, monkeypatch, module, name, query, body, hook):
+@pytest.mark.parametrize("module,name,query,kwargs,params,hook", CASES, ids=[c[1] for c in CASES])
+def test_a_slow_report_does_not_freeze_the_worker(
+    stubbed, monkeypatch, module, name, query, kwargs, params, hook
+):
     route = _route(module, name)
     slow_db = _SlowDB()
     for dep in route.dependant.dependencies:
@@ -179,7 +206,7 @@ def test_a_slow_report_does_not_freeze_the_worker(stubbed, monkeypatch, module, 
         monkeypatch.setattr(importlib.import_module(hook[0]), hook[1], _slow)
 
     method = sorted(route.methods)[0]
-    started, done = asyncio.run(_race(method, _url(route, query), body))
+    started, done = asyncio.run(_race(method, _url(route, query, params), kwargs))
 
     # Not vacuous: the slow part really ran, and really took its time.
     assert slow_db.touched + hooked["calls"] >= 1, "the request never reached its slow part"
@@ -190,5 +217,45 @@ def test_a_slow_report_does_not_freeze_the_worker(stubbed, monkeypatch, module, 
     assert light < SLOW_SECONDS / 2, (
         f"/health answered {light:.2f}s after {name} entered its slow part "
         f"(which took {done['slow'] - started:.2f}s): {name} holds the event loop"
+    )
+    assert done["light"] < done["slow"]
+
+
+def test_a_slow_database_check_in_health_does_not_freeze_the_worker(monkeypatch):
+    """AN-3: `/health`'s own DB check ran on the loop before its one await, so a starved
+    connection checkout froze the worker it was meant to vouch for."""
+    import app.database as database
+
+    slow_db = _SlowDB()
+    real = database.SessionLocal
+
+    async def _go():
+        transport = httpx.ASGITransport(app=app, raise_app_exceptions=False)
+        async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+            # Warm the probe cache with the real database, so /health/deep reads it from memory.
+            assert (await client.get("/health")).status_code == 200
+            monkeypatch.setattr(database, "SessionLocal", lambda: slow_db)
+            done: dict[str, float] = {}
+
+            async def slow():
+                await client.get("/health")
+                done["slow"] = time.monotonic()
+
+            async def light():
+                while not _entered.is_set():
+                    await asyncio.sleep(0.005)
+                await client.get("/health/deep")
+                done["light"] = time.monotonic()
+
+            _entered.clear()
+            _entered_at.clear()
+            await asyncio.wait_for(asyncio.gather(slow(), light()), timeout=30)
+            monkeypatch.setattr(database, "SessionLocal", real)
+            return _entered_at["t"], done
+
+    started, done = asyncio.run(_go())
+    assert slow_db.touched >= 1
+    assert done["light"] - started < SLOW_SECONDS / 2, (
+        f"/health/deep answered {done['light'] - started:.2f}s after /health's DB check began"
     )
     assert done["light"] < done["slow"]

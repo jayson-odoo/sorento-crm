@@ -270,7 +270,7 @@ async def get_spo_document(
 
 
 @router.post("/import", status_code=status.HTTP_202_ACCEPTED)
-async def import_spo_allocations(
+def import_spo_allocations(
     files: List[UploadFile] = File(..., description="One or more Excel files (.xlsx). Filename = SPO number."),
     validate_only: bool = Query(False, description="If true, validate all uploaded files and return aggregated errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.spo_allocations.import")),
@@ -304,7 +304,7 @@ async def import_spo_allocations(
         all_valid = True
         multi = len(files) > 1
         for upload in files:
-            file_data = await upload.read()
+            file_data = upload.file.read()
             file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")
             result = validate_spo_import(
                 file_data, cleaned_name, company_scope=get_company_scope(db)
@@ -330,7 +330,7 @@ async def import_spo_allocations(
     job_service = JobService(db)
     from app.services.import_source_store import store_import_source_file
     for upload in files:
-        file_data = await upload.read()
+        file_data = upload.file.read()
         # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
         source_bytes, source_name, source_ctype = file_data, upload.filename, upload.content_type
         file_data, cleaned_name = maybe_strip(file_data, upload.filename or "unknown.xlsx")

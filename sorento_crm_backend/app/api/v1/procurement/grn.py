@@ -92,7 +92,7 @@ async def get_grns(
 
 
 @router.post("/import-listing", status_code=status.HTTP_202_ACCEPTED)
-async def import_grn_listing(
+def import_grn_listing(
     file: UploadFile = File(..., description="Excel file: GRN listing (doc number, transfer from, date)"),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.grn.import")),
@@ -101,7 +101,7 @@ async def import_grn_listing(
     """Queue GRN listing import. Use validate_only=true to test without importing."""
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx, .xls or .xlsm) required")
-    file_data = await file.read()
+    file_data = file.file.read()
     # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
     source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
     from app.services.excel_macro_stripper import maybe_strip
@@ -151,7 +151,7 @@ async def import_grn_listing(
 
 
 @router.post("/import-lines", status_code=status.HTTP_202_ACCEPTED)
-async def import_grn_lines(
+def import_grn_lines(
     file: UploadFile = File(..., description="Excel file: GRN lines (doc no, item code, location, quantity)"),
     validate_only: bool = Query(False, description="If true, validate file only and return errors/warnings (no import)."),
     current_user: dict = Depends(require_permission("procurement.grn.import")),
@@ -160,7 +160,7 @@ async def import_grn_lines(
     """Queue GRN lines import. Use validate_only=true to test without importing."""
     if not file.filename or not file.filename.lower().endswith((".xlsx", ".xls", ".xlsm")):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Excel file (.xlsx, .xls or .xlsm) required")
-    file_data = await file.read()
+    file_data = file.file.read()
     # Retain the ORIGINAL bytes (pre-macro-strip) for source-file tracing.
     source_bytes, source_name, source_ctype = file_data, file.filename, file.content_type
     from app.services.excel_macro_stripper import maybe_strip

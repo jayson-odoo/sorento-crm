@@ -240,7 +240,7 @@ async def link_attachment_to_stock_inquiry(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def upload_stock_inquiry_response_attachment(
+def upload_stock_inquiry_response_attachment(
     inquiry_id: str,
     file: UploadFile = File(...),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -254,7 +254,7 @@ async def upload_stock_inquiry_response_attachment(
         validate_uuid_path(inquiry_id, resource="Stock Inquiry")
         service = StockInquiryService(db)
         inquiry = service.get_inquiry(inquiry_id)
-        contents = await file.read()
+        contents = file.file.read()
         from app.services.entity_attachment_service import create_response_attachment
 
         return create_response_attachment(
