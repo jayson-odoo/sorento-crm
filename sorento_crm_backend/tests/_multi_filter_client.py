@@ -25,8 +25,9 @@ SORENTO = DEFAULT_COMPANY_ID
 
 
 class _EverySlug(frozenset):
-    """A slug set that holds every slug: ``require_any_permission`` reads the user's slug set
-    rather than ``check_user_has_permission`` (the parties list moved onto it in #1957)."""
+    """A slug set that holds every slug for ``in``: ``require_any_permission`` reads the user's slug
+    set rather than ``check_user_has_permission`` (the parties list moved onto it in #1957).
+    Iterated, copied or ``set()``-ed it is empty, as the actor's real slug set always was."""
 
     def __contains__(self, _slug):
         return True
