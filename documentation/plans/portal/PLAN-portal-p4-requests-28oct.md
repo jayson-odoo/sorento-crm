@@ -152,3 +152,15 @@ opportunity amount as the portal form sends it): identical by construction once 
 | R2 | PR + Sponsorship (SF); staff detail read-only portal fields (External reference ...) |
 | R3 | Price Tag (PriceTagRequestForm), NPA, Sample Request, Opportunity portal components; delete OwnPriceTagRequest + limited branches |
 | R4 | side-by-side browser pass per kind (portal vs CRM + staff buttons), crew re-files hand test |
+
+### Parity rework progress (checkpoint 28/29 Oct)
+
+| Slice | Red | Fix | State |
+| --- | --- | --- | --- |
+| R1 shared SubmissionClient + SI + Complaint (salesperson renders the portal form; BE `register_profile_routes` /me + 5 lookups and ai-extract on my-requests) | a3943deeba | 97801a93d3 | FE 49/49 new green, portal suite green; BE 5 red = test gaps (complaints_* lookup sets not seeded in parity test; WRITE_ROUTES lacks POST /ai-extract) being fixed by a tester; kill-proof + push owed |
+| R2 PR + Sponsorship + staff detail read-only portal fields | - | - | todo |
+| R3 Price Tag / NPA / Sample Request / Opportunity portal components | - | - | todo |
+| R4 side-by-side browser pass (portal vs CRM + staff buttons), crew re-files hand test | - | - | todo |
+
+Known unrelated: `PageHeader.inventory.test.ts` S5-05 flags main's `StockPositionGrid.tsx` (RELEASE5-FIX 8e56966136).
+Dead after R1, delete in a cleanup slice: own-request mode of the SI / Complaint attachment sections; limited complaint branch in `FormRevisionsTab`.
