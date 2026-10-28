@@ -156,7 +156,6 @@ class _Db:
 
 
 def test_staff_signature_records_the_proxied_client_ip(monkeypatch):
-
     from app.api.v1.projects import quotation_documents as route
 
     seen = {}
@@ -178,7 +177,6 @@ def test_staff_signature_records_the_proxied_client_ip(monkeypatch):
 
 
 def test_customer_acceptance_records_the_proxied_client_ip(monkeypatch):
-
     from app.api.v1.public import quotation_sign as route
 
     seen = {}
