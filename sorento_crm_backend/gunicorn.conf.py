@@ -36,7 +36,17 @@ this is a REBUILD-time toggle only: with preload_app on, a `kill -HUP` on the
 master respawns workers from the app already imported in the master's
 memory, so a code change needs the colour recreated (new container), not a
 SIGHUP.
+
+Why pre_fork freezes the heap (BACKEND-MEMORY, 28 Oct 2026): copy-on-write sharing only
+lasts while no worker writes to the inherited pages, and a full garbage collection writes
+into the header of every object it tracks. After `import app.main` the master holds about
+3.5 million of them; one full collection in a forked worker touched about 1.4 GB of shared
+pages (87,217 faults, 1.67 s), so each worker gradually copied the preload into its own
+memory. `gc.freeze()` moves everything the master holds into the permanent generation,
+which the collector never walks: the same collection then took 32 faults. See
+documentation/plans/deploy/PLAN-backend-memory-28oct.md.
 """
+import gc
 import os
 
 preload_app = os.environ.get("GUNICORN_PRELOAD", "1") != "0"
@@ -44,6 +54,15 @@ preload_app = os.environ.get("GUNICORN_PRELOAD", "1") != "0"
 workers = int(os.environ.get("WORKERS", "4"))
 # uvicorn's worker with a bounded graceful shutdown (CHAT-INBOX-QUEUE, see that module).
 worker_class = "app.uvicorn_worker.InboxUvicornWorker"
+
+# BACKEND-MEMORY: a worker retires itself after this many requests (plus a random jitter, so the
+# workers never retire together) and the master forks a fresh one from the preloaded app. Without
+# it a worker lived as long as the container and kept everything it ever grew: prod's colour was
+# 6.6 GiB six hours after a fresh start (documentation/plans/deploy/PLAN-backend-memory-28oct.md).
+# It retires through the same graceful shutdown as a deploy's stop (app/uvicorn_worker.py).
+# GUNICORN_MAX_REQUESTS=0 turns it off.
+max_requests = int(os.environ.get("GUNICORN_MAX_REQUESTS", "5000"))
+max_requests_jitter = int(os.environ.get("GUNICORN_MAX_REQUESTS_JITTER", "500"))
 
 _api_host = os.environ.get("API_HOST", "0.0.0.0")
 _api_port = os.environ.get("API_PORT", "8000")
@@ -68,6 +87,11 @@ keepalive = int(os.environ.get("GUNICORN_KEEP_ALIVE", "75"))
 accesslog = "-"
 errorlog = "-"
 loglevel = "info"
+
+
+def pre_fork(server, worker):
+    """Runs in the master right before each fork (start-up, a recycle, a TTIN)."""
+    gc.freeze()
 
 
 def post_fork(server, worker):

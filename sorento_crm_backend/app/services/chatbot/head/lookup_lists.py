@@ -812,6 +812,10 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
         then the error is re-raised; a large warm is back-to-back requests and trips the per-minute limit."""
         with _store_lock:
             todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+            if len(_cache) + len(todo) > _CACHE_CAP:  # the cap `embed` keeps, so the store stays bounded
+                _cache.clear()
+                _matrices.clear()
+                todo = list(dict.fromkeys(texts))
         for i in range(0, len(todo), chunk_size):
             chunk = todo[i : i + chunk_size]
             for wait in (*WARM_RETRY_WAITS, None):

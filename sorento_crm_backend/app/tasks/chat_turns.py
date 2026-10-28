@@ -220,6 +220,15 @@ def start_inbox_queue() -> None:
     inbox_queue.start_sweeper()
 
 
+def begin_inbox_shutdown() -> None:
+    """The worker's shutdown has started (app/uvicorn_worker.py `DrainingServer`): the drains stop
+    taking rows now, as at the signal (IQ-28). A shutdown that gunicorn's `max_requests` starts
+    has no signal. Repeat calls are no-ops; the first one stamps when shutdown began."""
+    from app.services.chatbot import inbox_queue
+
+    inbox_queue.begin_shutdown()
+
+
 def start_lookup_warm():
     """App start-up: the lookup-vector warm (ENTITY-EXTRACT-MATCH AC-S3-9), a daemon thread the engine starts
     unless `CHATBOT_LOOKUP_WARM_ENABLED` is off. Returns the thread, or None."""
