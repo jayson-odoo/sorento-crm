@@ -82,3 +82,31 @@ describe('ImpersonationBanner on a phone (S3)', () => {
     expect(innerWidthReads).toBe(0);
   });
 });
+
+describe('ImpersonationBanner name stays readable at 375 (round 9)', () => {
+  it('the lead-in words are hidden below sm', () => {
+    render(<ImpersonationBanner />);
+    const cls = classesOf(screen.getByText(/You are currently impersonating/));
+    expect(cls).toContain('hidden');
+    expect(cls).toContain('sm:inline');
+  });
+
+  it('the name can shrink and truncate', () => {
+    render(<ImpersonationBanner />);
+    const banner = screen.getByTestId('impersonation-banner');
+    let el: Element | null = screen.getByText('Eric Ng');
+    let ok = false;
+    while (el && el !== banner) {
+      const cls = classesOf(el);
+      if (cls.includes('min-w-0') && cls.includes('truncate')) ok = true;
+      el = el.parentElement;
+    }
+    expect(ok).toBe(true);
+  });
+
+  it('the Exit control does not shrink', () => {
+    render(<ImpersonationBanner />);
+    const exit = screen.getByRole('button', { name: 'Exit impersonation' });
+    expect(classesOf(exit).includes('shrink-0') || classesOf(exit.parentElement).includes('shrink-0')).toBe(true);
+  });
+});
