@@ -239,8 +239,9 @@ def _hold(db, line, warehouse, qty: str, *, actor: str,
     (`project_supply_service`), and dragging a whole Project SO confirmation into a
     candidate-ranking test would test the wrong thing.
 
-    A BORROW (`other_location`) by default: BOARD-NO-HOLD (27 Oct 2026) made a Reserve
-    (own / brw / group_take) hold nothing, so only a Borrow makes a pile "held".
+    A BORROW (`other_location`) by default. Since BOARD-NO-HOLD (27 Oct 2026) and
+    BORROW-NO-HOLD (28 Oct 2026) no confirmed component makes a pile "held": the row is a
+    plan, which these tests pin as holding nothing.
     """
     from app.models.project_so import SOLineAllocation
 
@@ -259,7 +260,7 @@ def _hold(db, line, warehouse, qty: str, *, actor: str,
     db.flush()
 
 
-def test_candidates_rank_brw_first_and_name_the_holding_project(api):
+def test_candidates_rank_brw_first_and_name_no_holding_project(api):
     client, world = api
     db = world.db
     brw = _warehouse(db, BRW_CODE)
@@ -268,7 +269,7 @@ def test_candidates_rank_brw_first_and_name_the_holding_project(api):
     _stock(db, world.product, mwh, 200)
     _order, line = _sales_order(db, world.project, product=world.product, qty="135")
 
-    # Seri Heights already holds the whole MWH pile.
+    # Seri Heights has planned (confirmed) the whole MWH pile, which holds nothing.
     _other_order, other_line = _sales_order(
         db, world.other_project, product=world.product, qty="200"
     )
@@ -279,22 +280,25 @@ def test_candidates_rank_brw_first_and_name_the_holding_project(api):
     assert response.status_code == 200, response.text
     body = response.json()
 
-    assert [c["source_type"] for c in body["candidates"]] == ["brw", "other_project", "order"]
+    assert [c["source_type"] for c in body["candidates"]] == ["brw", "own", "order"]
     brw_candidate = body["candidates"][0]
     assert brw_candidate["warehouse_code"] == BRW_CODE
     assert brw_candidate["on_hand"] == "80"
     assert brw_candidate["available"] == "80"
 
-    held = body["candidates"][1]
-    assert held["held_for_other_projects"] == "200"
-    assert held["available"] == "0"
-    assert held["requires_claim"] is True
-    assert held["holders"][0]["project_code"] == world.other_project.project_code
-    assert held["holders"][0]["cs_name"] == f"{MARKER} Farah"
+    free = body["candidates"][1]
+    assert free["warehouse_code"] == mwh.warehouse_code
+    assert free["held_for_other_projects"] == "0"
+    assert free["available"] == "200"
+    assert free["requires_claim"] is False
+    assert free["holders"] == []
 
-    assert body["covered"] is False
-    assert body["shortfall"] == "55"
-    assert body["plan"] == [{"warehouse_id": brw.id, "warehouse_code": BRW_CODE, "qty": "80"}]
+    assert body["covered"] is True
+    assert body["shortfall"] == "0"
+    assert body["plan"] == [
+        {"warehouse_id": brw.id, "warehouse_code": BRW_CODE, "qty": "80"},
+        {"warehouse_id": mwh.id, "warehouse_code": mwh.warehouse_code, "qty": "55"},
+    ]
 
 
 def _candidate_at(body, code):
@@ -326,8 +330,8 @@ def test_another_orders_confirmed_reserve_is_not_held_and_allocatable_is_on_hand
     assert candidate["allocatable"] == "75"
 
 
-def test_another_orders_confirmed_borrow_is_still_held(api):
-    """Control: the same shape with a BORROW still holds, as today."""
+def test_another_orders_confirmed_borrow_is_not_held(api):
+    """BORROW-NO-HOLD (AC-BNH-6): the same shape with a BORROW holds nothing either."""
     client, world = api
     db = world.db
     mwh = _warehouse(db, f"ZZT-MWH-{_uid()[:4]}")
@@ -342,9 +346,10 @@ def test_another_orders_confirmed_borrow_is_still_held(api):
     body = client.get(f"{BASE}/sales-order-lines/{line.id}/allocation-candidates").json()
     candidate = _candidate_at(body, mwh.warehouse_code)
 
-    assert candidate["held_for_other_projects"] == "60"
-    assert candidate["holders"][0]["project_code"] == world.other_project.project_code
-    assert candidate["available"] == "15"
+    assert candidate["held_for_other_projects"] == "0"
+    assert candidate["holders"] == []
+    assert candidate["requires_claim"] is False
+    assert candidate["available"] == "75"
 
 
 def test_inactive_locations_are_not_offered(api):
