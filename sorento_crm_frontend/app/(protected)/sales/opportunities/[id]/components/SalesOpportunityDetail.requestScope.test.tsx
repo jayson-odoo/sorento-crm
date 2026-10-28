@@ -148,7 +148,7 @@ describe('Sales Opportunity detail, limited user', () => {
     expect(screen.queryByLabelText('Sales order')).toBeNull();
     expect(calls.filter((c) => c.url.includes('sales-order-options'))).toHaveLength(0);
     fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
-    fireEvent.click(screen.getByRole('button', { name: /^edit$/i }));
+    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
     await screen.findByDisplayValue('ZZT Deal');
     expect(screen.queryByLabelText('Agent')).toBeNull();
     expect(calls.filter((c) => c.url.includes('agent-options'))).toHaveLength(0);

@@ -55,6 +55,9 @@ const SALES_PERMS = [
   'complaint_management.complaints.view_own',
   'procurement.purchase_requests.view_own',
   'procurement.sponsorship_forms.view_own',
+  'projects.sample_requests.view_own',
+  'sales.opportunities.view_own',
+  'procurement.new_product_applications.view_own',
 ];
 
 const ALL_KINDS = [...LANDING_KINDS] as string[];
@@ -76,6 +79,9 @@ const STAFF_LIST: Record<string, string> = {
   complaint: '/complaint-management/complaints',
   purchase_request: '/procurement-management/purchase-requests',
   sponsorship_form: '/procurement-management/sponsorship-forms',
+  sample_request: '/project-sales/sample-requests',
+  sales_opportunity: '/sales/opportunities',
+  new_product_application: '/procurement-management/new-product-applications',
 };
 
 describe('MENU_SIDEBAR for a salesperson', () => {
