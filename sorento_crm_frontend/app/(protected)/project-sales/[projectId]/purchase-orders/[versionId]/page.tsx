@@ -22,7 +22,7 @@ export default async function PurchaseOrderVersionPage({
 }) {
   const { projectId, versionId } = await params;
   return (
-    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-4">
         <POIntakeConfirmClient projectId={projectId} versionId={versionId} />
       </Container>

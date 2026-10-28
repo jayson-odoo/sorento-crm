@@ -11,8 +11,8 @@ type RequireAccessProps = {
   children: ReactNode;
 } & (
   | { superadmin: true; permission?: never; anyPermission?: never }
-  | { permission: string | readonly string[]; superadmin?: never; anyPermission?: never }
-  | { anyPermission: readonly string[]; permission?: never; superadmin?: never }
+  | { permission: string; superadmin?: never; anyPermission?: never }
+  | { anyPermission: string[]; permission?: never; superadmin?: never }
 );
 
 /**
@@ -25,7 +25,7 @@ type RequireAccessProps = {
  * - <RequireAccess superadmin> - allowed only for superadmin/admin roles, judged on the
  *    EFFECTIVE user: an admin viewing as a non-admin is denied (MENU-PERM-GATE).
  * - <RequireAccess permission="slug"> - allowed only when the user's
- *    permission set includes `slug`; given a list, when it includes any one of them.
+ *    permission set includes `slug`.
  * - <RequireAccess anyPermission={[...]}> - allowed when the set includes any of them.
  */
 export default function RequireAccess(props: RequireAccessProps) {
@@ -33,12 +33,7 @@ export default function RequireAccess(props: RequireAccessProps) {
     return <SuperadminGate>{props.children}</SuperadminGate>;
   }
   return (
-    <PermissionGate
-      permissions={
-        props.anyPermission ??
-        (typeof props.permission === 'string' ? [props.permission] : (props.permission ?? []))
-      }
-    >
+    <PermissionGate permissions={props.anyPermission ?? [props.permission as string]}>
       {props.children}
     </PermissionGate>
   );
@@ -55,7 +50,7 @@ function PermissionGate({
   permissions,
   children,
 }: {
-  permissions: readonly string[];
+  permissions: string[];
   children: ReactNode;
 }) {
   const { permissionSet, isLoading, isError, isFetching, refetch } = usePermissions();

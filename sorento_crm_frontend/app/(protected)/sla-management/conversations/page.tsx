@@ -21,7 +21,7 @@ export default async function ConversationsPage() {
       <Container>
         {/* The sidebar entry is permission-gated, but a deep link is not: without
             the guard a denied user would land on an inbox whose every call 403s. */}
-        <RequireAccess permission={CONVERSATIONS_VIEW_PERMISSIONS}>
+        <RequireAccess anyPermission={CONVERSATIONS_VIEW_PERMISSIONS}>
           <ConversationsInbox />
         </RequireAccess>
       </Container>

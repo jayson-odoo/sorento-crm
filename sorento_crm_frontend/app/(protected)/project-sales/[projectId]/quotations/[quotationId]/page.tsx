@@ -27,7 +27,7 @@ export default async function ProjectQuotationPage({
 }) {
   const { projectId, quotationId } = await params;
   return (
-    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6 pb-64">
         {/* Crumbs left, one Back right (D6, S3-01). The Back carries the query
             string the list handed over, so it returns to the tab and page the

@@ -19,7 +19,7 @@ export default async function ProjectDetailPage({
 }) {
   const { projectId } = await params;
   return (
-    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6">
         {/* Crumbs left, one Back right (D6, S3-01). The Back carries the pipeline's
             query string, so it returns to the page the reader left. */}

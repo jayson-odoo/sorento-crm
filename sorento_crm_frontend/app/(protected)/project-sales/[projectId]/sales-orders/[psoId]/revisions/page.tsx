@@ -18,7 +18,7 @@ export default async function ProjectSalesOrderRevisionsPage({
 }) {
   const { projectId, psoId } = await params;
   return (
-    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
+    <RequireAccess anyPermission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6">
         <PageHeader
           title="Revision Review"

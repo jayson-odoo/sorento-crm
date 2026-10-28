@@ -8,7 +8,7 @@ import type { PaginationState, SortingState } from '@tanstack/react-table';
 import type { ProjectListParams } from '../../_shared/types/project.types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { useHasAnyPermission, useHasPermission, usePermissions } from '@/hooks/usePermissions';
+import { usePermissions } from '@/hooks/usePermissions';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -27,6 +27,7 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { Switch } from '@/components/ui/switch';
+import { useHasAnyPermission, useHasPermission } from '@/hooks/usePermissions';
 import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
 import {
   useChangeProjectStatus,
@@ -434,7 +435,7 @@ export function PipelineClient() {
         ) : (
           <EmptyState
             title="No projects registered yet"
-            body={canRegister ? 'Register one from Start.' : 'Projects assigned to you appear here.'}
+            body={canStart ? 'Register one from Start.' : 'Projects assigned to you appear here.'}
           />
         )
       ) : view === 'board' ? (

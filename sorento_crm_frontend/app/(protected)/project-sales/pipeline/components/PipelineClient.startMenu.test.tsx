@@ -101,7 +101,6 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 const permsRef: { set: Set<string> } = { set: new Set() };
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ permissionSet: permsRef.set, isLoading: false, isError: false }),
-  // main (PROJECT-REGISTER-V2) gates Start on edit / registrations.submit: answer from the same set.
   useHasPermission: (slug: string) => permsRef.set.has(slug),
   useHasAnyPermission: (slugs: string[]) => slugs.some((s) => permsRef.set.has(s)),
 }));
@@ -158,8 +157,7 @@ describe('PipelineClient Start menu by permission (PORTAL-P3-ROLE-MENU P3-14, P3
   });
 
   it('view holder: Start opens the same three items as today', async () => {
-    // main (PROJECT-REGISTER-V2): Start needs the right to register (edit or registrations.submit).
-    permsRef.set = new Set(['projects.projects.view', 'projects.projects.edit']);
+    permsRef.set = new Set(['projects.projects.view', 'projects.projects.edit']); // Start needs edit since #1957
     renderClient();
     openStart();
     const items = await screen.findAllByRole('menuitem');

@@ -41,9 +41,10 @@ const listingKeys: (string | null | undefined)[] = [];
 const push = vi.fn();
 
 vi.mock('@/hooks/usePermissions', () => ({
-  // projects.projects.view: PORTAL-P3-ROLE-MENU gates the Developer / Type filters on it.
-  useHasPermission: (slug: string) => slug === 'projects.projects.edit' || slug === 'projects.projects.view',
-  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => s === 'projects.projects.edit' || s === 'projects.projects.view'),
+  // projects.projects.view: the pipeline gates the Developer/Type lookups on it (PORTAL-P3-ROLE-MENU).
+  useHasPermission: (slug: string) => ['projects.projects.edit', 'projects.projects.view'].includes(slug),
+  useHasAnyPermission: (slugs: string[]) =>
+    slugs.some((s) => ['projects.projects.edit', 'projects.projects.view'].includes(s)),
   usePermissions: () => ({
     permissions: ['projects.projects.edit', 'projects.projects.view'],
     permissionSet: new Set(['projects.projects.edit', 'projects.projects.view']),
