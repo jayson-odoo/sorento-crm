@@ -23,6 +23,24 @@ from tests.chatbot.test_closed_lists_spec_over_held import _fetched
 from tests.chatbot.test_engine import seeded, stub_access  # noqa: F401
 
 
+#: The registry's own unit aliases for its millimetre keys (migration dimany_0001_unit_aliases).
+MM_ALIASES = {"cm": 10, "m": 1000, "in": 25.4, "inch": 25.4, "inches": 25.4}
+
+
+def _aliases(session_factory, aliases: dict | None = None) -> None:
+    """Unit aliases are registry DATA, never a list in code (crew audit, owner rule 28 Oct)."""
+    import json
+
+    from sqlalchemy import text
+
+    db = session_factory()
+    db.execute(
+        text("UPDATE product_spec_registry SET unit_aliases = CAST(:a AS jsonb) WHERE unit = 'mm'"),
+        {"a": json.dumps(MM_ALIASES if aliases is None else aliases)},
+    )
+    db.commit()
+
+
 def _with_depth(session_factory) -> None:
     """The R6-1 fixture's registry has no depth; DIMENSION-ANY's prod case has one."""
     db = session_factory()
@@ -64,11 +82,13 @@ def test_a_bare_size_reaches_a_product_whose_150mm_is_its_depth(session_factory,
     assert _fetched(calls) == [ids["ZZDD-D"]], (_text(r), calls)
 
 
-def test_a_bare_size_in_cm_is_read_in_mm(session_factory, seeded, stub_access, monkeypatch):
-    """The parser copied the typed "15" off "15cm": the number is normalised to the registry's mm."""
+def test_a_bare_size_in_cm_is_the_parsers_mm_pick(session_factory, seeded, stub_access, monkeypatch):
+    """The candidate line said "size 150 mm" for "15cm"; the parser picked it (150), and every
+    dimension holding 150 answers. The typed "15cm" is never re-read in code."""
     ids = _seed(session_factory, WCS)
+    _aliases(session_factory)
 
-    r, calls = _ask(session_factory, stub_access, monkeypatch, "zzwc 15cm got stock", _ent("zzwc", "category"), _spec("15cm", "size", 15))
+    r, calls = _ask(session_factory, stub_access, monkeypatch, "zzwc 15cm got stock", _ent("zzwc", "category"), _spec("15cm", "size", 150))
 
     assert _fetched(calls) == sorted([ids["ZZDA-H"], ids["ZZDA-T"]]), (_text(r), calls)
 
@@ -89,19 +109,43 @@ def test_the_candidate_line_offers_the_bare_size_when_only_height_holds_it(sessi
     assert line.startswith('- "150mm": size 150 mm (no dimension named); spec '), lines
 
 
-def test_the_candidate_line_for_a_cm_size_is_in_mm(session_factory, seeded):
+def _size_line(session_factory, message: str, word: str) -> str | None:
     from app.models.base import set_company_scope
     from app.services.chatbot.head import candidates
 
-    _seed(session_factory, WCS)
     db = session_factory()
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    lines = candidates.candidate_lines(candidates.shortlist(db, message))
+    return next((ln for ln in lines if ln.startswith(f'- "{word}"')), None)
 
-    lines = candidates.candidate_lines(candidates.shortlist(db, "zzwc 15cm got stock"))
 
-    line = next(ln for ln in lines if ln.startswith('- "15cm"'))
-    assert line.startswith('- "15cm": size 150 mm (no dimension named); spec '), lines
-    assert "spec dim_height = 150" in line, lines
+def test_the_candidate_line_for_a_cm_size_is_in_mm(session_factory, seeded):
+    _seed(session_factory, WCS)
+    _aliases(session_factory)
+
+    line = _size_line(session_factory, "zzwc 15cm got stock", "15cm")
+
+    assert line is not None and line.startswith('- "15cm": size 150 mm (no dimension named); spec '), line
+    assert "spec dim_height = 150" in line, line
+
+
+def test_a_unit_alias_is_registry_data_never_code(session_factory, seeded):
+    """With no alias on file, "15cm" is no size at all: the conversion lives in the registry."""
+    _seed(session_factory, WCS)
+    _aliases(session_factory, {})
+
+    assert _size_line(session_factory, "zzwc 15cm got stock", "15cm") is None
+
+
+def test_a_word_unit_is_offered_and_the_parser_decides(session_factory, seeded):
+    """No word list in code: "5 in" is offered as 127 mm off the registry's "in" alias, and the
+    parser (prompt + eval) decides whether "5 in stock" means a size."""
+    _seed(session_factory, WCS)
+    _aliases(session_factory)
+
+    line = _size_line(session_factory, "any 5 in stock", "5 in")
+
+    assert line is not None and line.startswith('- "5 in": size 127 mm (no dimension named)'), line
 
 
 def test_a_named_length_no_product_holds_falls_back_to_any_dimension_with_a_line(session_factory, seeded, stub_access, monkeypatch):
@@ -296,17 +340,23 @@ def _ground(session_factory, raw: str, value, unit=None):
     return ground_bare(db, entity, [entity], None, None)
 
 
-def test_the_unit_typed_beside_the_kept_number_wins_over_the_resolvers(session_factory, seeded):
-    """Reviewer S3: "15cm" with the parser's 15 is 150 mm, whatever unit came with it."""
+def test_the_unit_is_the_parsers_own_spec_unit_read_through_the_registry(session_factory, seeded):
     _seed(session_factory, WCS)
-    g = _ground(session_factory, "15cm", 15, "mm")
+    _aliases(session_factory)
+
+    g = _ground(session_factory, "15cm", 15, "cm")
 
     assert g is not None and g.value == 150 and g.unit == "mm", g
 
 
-def test_guard_a_word_after_the_number_that_is_no_unit_changes_nothing(session_factory, seeded):
-    """Reviewer round 2: "150 x 400mm" and "150 wide" stay a 150 mm size over every dimension."""
+def test_the_raw_text_is_never_read_for_a_unit(session_factory, seeded):
+    """Owner rule (crew audit of 482bc55a): understanding is the parser's. The parser's 15 with no
+    unit is 15 mm whatever the raw text says; "150 x 400mm" and "150 wide" are the parser's 150."""
     _seed(session_factory, WCS)
+    _aliases(session_factory)
+
+    g = _ground(session_factory, "15cm", 15)
+    assert g is not None and g.value == 15 and g.unit == "mm", g
     for raw in ("150 x 400mm", "150 wide"):
         g = _ground(session_factory, raw, 150)
 
