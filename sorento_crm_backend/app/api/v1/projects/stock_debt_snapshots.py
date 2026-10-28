@@ -17,7 +17,7 @@ Mounted before the stock debt router so the literal `snapshots` segment is never
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import Optional, get_args
 
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
@@ -40,6 +40,7 @@ from app.schemas.stock_debt_snapshot import (
 from app.services.error_handler import AppException, handle_internal_error
 from app.services.scm.stock_debt_snapshot_service import StockDebtSnapshotService
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.multi_value import multi_choices
 
 router = APIRouter()
 
@@ -99,16 +100,18 @@ def get_snapshot(
 def list_snapshot_rows(
     snapshot_id: str,
     query: Optional[str] = Query(None, description="Product code or name."),
-    decision: Optional[DecisionFilter] = Query(None),
+    # Several are OR-ed; `undecided` / `decided` combine with the real values (FILTER-MULTISELECT PR6).
+    decision: Optional[list[str]] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
+    decisions = multi_choices(decision, get_args(DecisionFilter), "decision")
     try:
         validate_uuid_path(snapshot_id, resource="Snapshot")
         return StockDebtSnapshotService(db).rows(
-            snapshot_id, query=query, decision=decision, page=page, limit=limit
+            snapshot_id, query=query, decision=decisions, page=page, limit=limit
         )
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))

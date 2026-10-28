@@ -434,7 +434,7 @@ function unplaceAllSearchParams(filters: UnplaceAllRequest): URLSearchParams {
   if (filters.delivery_month) params.set('delivery_month', filters.delivery_month);
   if (filters.raised_date) params.set('raised_date', filters.raised_date);
   if (filters.project_id) params.set('project_id', filters.project_id);
-  if (filters.project) params.set('project', filters.project);
+  for (const title of [filters.project ?? []].flat()) params.append('project', title);
   if (filters.supplier_id) params.set('supplier_id', filters.supplier_id);
   if (filters.raised_by) params.set('raised_by', filters.raised_by);
   return params;

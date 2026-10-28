@@ -66,13 +66,19 @@ from app.services.project_fulfilment_board_service import FulfilmentBoardService
 from app.services.project_line_split_service import display_line_nos
 from app.services.project_so_adoption_service import ProjectSOAdoptionService
 from app.services.project_so_draft_service import ProjectSODraftService
+from app.models.project_so import DECISION_ACTIVE, DECISION_CHALLENGED, DECISION_SUPERSEDED
 from app.services.project_so_reconciliation_service import (
+    REVIEW_AWAITING,
+    REVIEW_CONFIRMED,
+    REVIEW_NEEDS_CS,
+    REVIEW_NOT_STARTED,
     ProjectSOReconciliationService,
 )
 from app.services.project_supply_service import ProjectSupplyService
 from app.services.project_supply_undo_service import UndoJournal
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.multi_value import multi_choices
 
 logger = logging.getLogger(__name__)
 
@@ -158,11 +164,8 @@ def list_fulfilment_planning(
     # the state is derived, and a filter nothing can equal reads on screen as "no work
     # to do" when the truth is "that is not a state". `not_started` is the fourth value
     # (AC-FP05) and means "an outstanding core sales order nobody has planned".
-    review_state: Optional[
-        Literal[
-            "not_started", "awaiting_reconciliation", "needs_cs_review", "confirmed"
-        ]
-    ] = Query(None),
+    # Several are OR-ed (FILTER-MULTISELECT PR6): comma-joined, repeated or single; each is checked.
+    review_state: Optional[list[str]] = Query(None),
     project_id: Optional[str] = Query(None),
     sales_order_id: Optional[str] = Query(
         None, description="Narrow to one core sales order. Addressing only."
@@ -207,6 +210,11 @@ def list_fulfilment_planning(
     synchronous SQLAlchemy over a page of orders, and on the event loop it holds up every
     other request the worker is serving.
     """
+    review_states = multi_choices(
+        review_state,
+        (REVIEW_NOT_STARTED, REVIEW_AWAITING, REVIEW_NEEDS_CS, REVIEW_CONFIRMED),
+        "review_state",
+    )
     try:
         if project_id:
             validate_uuid_path(project_id, resource="Project")
@@ -214,7 +222,7 @@ def list_fulfilment_planning(
             validate_uuid_path(sales_order_id, resource="Sales order")
         return ProjectSOReconciliationService(db).list_fulfilment_planning(
             query=query,
-            review_state=review_state,
+            review_state=review_states,
             project_id=project_id,
             sales_order_id=sales_order_id,
             sort=sort,
@@ -232,8 +240,9 @@ def list_plans(
         None,
         description="Matches the sales-order number, the customer name, or the agent code.",
     ),
-    state: Optional[Literal["active", "superseded", "challenged"]] = Query(
-        None, description="Defaults to active - what is stored NOW."
+    state: Optional[list[str]] = Query(
+        None,
+        description="Defaults to active - what is stored NOW. Several (active, superseded, challenged) are OR-ed.",
     ),
     agent_code: Optional[str] = Query(None, description="One agent's code, exact match."),
     sort: Optional[
@@ -255,10 +264,11 @@ def list_plans(
     Plain ``def``, so FastAPI runs it in a threadpool: it is synchronous SQLAlchemy over a
     page of decisions.
     """
+    states = multi_choices(state, (DECISION_ACTIVE, DECISION_SUPERSEDED, DECISION_CHALLENGED), "state")
     try:
         result = ProjectSupplyService(db).list_decisions(
             query=query,
-            state=state,
+            state=states,
             agent_code=agent_code,
             sort=sort,
             dir=direction or "desc",

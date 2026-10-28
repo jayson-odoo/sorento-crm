@@ -6,7 +6,8 @@ import { Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
 import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -94,8 +95,8 @@ export function LeadsClient() {
 
   const leads = useLeads({
     query: debounced || undefined,
-    outcome: outcome ? [outcome] : undefined,
-    source: source ? [source] : undefined,
+    outcome: outcome ? splitMulti(outcome) : undefined,
+    source: source ? splitMulti(source) : undefined,
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
     sort: sorting[0]?.id ?? 'created_at',
@@ -195,9 +196,9 @@ export function LeadsClient() {
               <div className="space-y-3">
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Outcome</Label>
-                  <SearchableSelect
-                    value={outcome}
-                    onChange={setOutcome}
+                  <SearchableMultiSelect
+                    value={splitMulti(outcome)}
+                    onChange={(v) => setOutcome(joinMulti(v))}
                     clearable
                     options={OUTCOME_OPTIONS}
                     placeholder="All outcomes"
@@ -205,9 +206,9 @@ export function LeadsClient() {
                 </div>
                 <div className="space-y-1.5">
                   <Label className="text-xs text-muted-foreground">Source</Label>
-                  <SearchableSelect
-                    value={source}
-                    onChange={setSource}
+                  <SearchableMultiSelect
+                    value={splitMulti(source)}
+                    onChange={(v) => setSource(joinMulti(v))}
                     clearable
                     options={SOURCE_OPTIONS}
                     placeholder="All sources"

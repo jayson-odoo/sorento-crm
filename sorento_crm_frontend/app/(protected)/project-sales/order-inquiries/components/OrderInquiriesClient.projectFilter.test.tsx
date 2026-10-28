@@ -155,6 +155,36 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// These filters are multi-selects now (FILTER-MULTISELECT PR6); a one-value pick stands in for them here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+    id,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+    id?: string;
+  }) => (
+    <select
+      aria-label={id ?? placeholder ?? 'select'}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
+    >
+      <option value="">{placeholder ?? ''}</option>
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 import { OrderInquiriesClient } from './OrderInquiriesClient';
 
 function envelope(rows: OrderInquiryWorklistRow[]) {
@@ -227,7 +257,7 @@ describe('AC-19: the Project filter follows the column (PLAN-oi-project-label-fr
 
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ project: 'ALPHA' }),
+        expect.objectContaining({ project: ['ALPHA'] }),
       ),
     );
     const lastCall = listOrderInquiryWorklist.mock.calls.at(-1)?.[0] as Record<
@@ -276,7 +306,7 @@ describe('AC-19: the Project filter follows the column (PLAN-oi-project-label-fr
     fireEvent.change(select, { target: { value: 'ALPHA' } });
     await waitFor(() =>
       expect(listOrderInquiryWorklist).toHaveBeenCalledWith(
-        expect.objectContaining({ project: 'ALPHA' }),
+        expect.objectContaining({ project: ['ALPHA'] }),
       ),
     );
 

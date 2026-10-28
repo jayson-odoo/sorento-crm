@@ -346,7 +346,8 @@ export interface ProjectListParams {
   brand_id?: string[];
   only_critical?: boolean;
   /** Portal registrations by approval state (pending, rejected, approved). */
-  approval_state?: Exclude<ProjectApprovalState, 'draft'>;
+  /** One state, or several comma-joined (OR-ed); sent as repeated params. */
+  approval_state?: string;
   /** Pickers: staff-registered and approved projects only. */
   approved_only?: boolean;
   page?: number;

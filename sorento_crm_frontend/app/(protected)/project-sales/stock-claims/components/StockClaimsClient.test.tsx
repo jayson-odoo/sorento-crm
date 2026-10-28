@@ -78,6 +78,34 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// Outcome is a multi-select now (FILTER-MULTISELECT PR6); a one-value pick stands in for it here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+  }) => (
+    <select
+      aria-label={placeholder ?? 'select'}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
+    >
+      <option value="">{placeholder ?? ''}</option>
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 import { StockClaimsClient } from './StockClaimsClient';
 
 /** The shape Stage 1C writes: released the moment the sales order was confirmed. */
@@ -259,7 +287,7 @@ describe('StockClaimsClient', () => {
       ),
     );
 
-    fireEvent.change(filterUnder('Outcome'), { target: { value: 'all' } });
+    fireEvent.change(filterUnder('Outcome'), { target: { value: '' } });
 
     await waitFor(() =>
       expect(listAllocationClaims).toHaveBeenCalledWith(
