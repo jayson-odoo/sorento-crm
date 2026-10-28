@@ -55,6 +55,20 @@ For a user without the new permission (and not admin/superadmin):
 
 With the permission (or admin/superadmin): today's selector and figures, unchanged.
 
+## Seams (mapped 28 Oct, read-only)
+
+- `FulfilmentBoardService._stock_detail` (`project_fulfilment_board_service.py:979`) turns `group`
+  into `codes = {warehouse_id: code}` at `:1039-1047` via `_set_position` (`:1369-1397`); every later
+  read uses `target_ids = list(codes)`. No function takes a warehouse-id list today; the smallest seam
+  is a `warehouse_ids` argument building `codes` there, deciding the group-keyed branches at `:1031`,
+  `:1244`, `:1302`, `:1320`, `:1335`.
+- `stock_visibility.scope_warehouse_ids` (`:394`) returns None (all) or the explicit active ids
+  (an exclude list expanded); `warehouse_criterion` (`:364`) is the SQL form.
+- `GET /inventory/stock-status` (`app/api/v1/inventory/stock_status.py:46`) has no warehouse filter;
+  `stock_status_service.py:117-121` reads every warehouse, the natural filter point.
+- No caller applies a Stock visibility policy to a staff user today; all resolve it from a request
+  `contact_id` (e.g. `inventory_service.py:735`, `purchase_orders.py:174`).
+
 ## Open questions
 
 See the behaviour card (crew ask, 28 Oct). Answers recorded here once relayed.
