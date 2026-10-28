@@ -24,7 +24,8 @@ def test_b16_a_staff_sales_report_with_no_subject_runs_the_sales_analysis(sessio
     _seed_contact(session_factory, variables={})
     _give_access_type(session_factory, "Sorento Office")
     _res, reply, captured = _run(
-        session_factory, monkeypatch, _no_subject(), "sales report this month", mcp_response=_rendered(ROUTE_HIT)
+        session_factory, monkeypatch, _no_subject(sales_basis="invoiced"), "sales report this month",
+        mcp_response=_rendered(ROUTE_HIT),
     )
     assert _calls(captured, "crm_sales_report") == [], captured
     (args,) = _calls(captured, "crm_sales_analysis")
@@ -36,7 +37,7 @@ def test_b16_a_staff_sales_report_with_a_channel_keeps_it_on_the_analysis(sessio
     _seed_contact(session_factory, variables={})
     _give_access_type(session_factory, "Sorento Office")
     _res, _reply, captured = _run(
-        session_factory, monkeypatch, _no_subject(sales_channel="dealer"), "dealer sales this month",
+        session_factory, monkeypatch, _no_subject(sales_channel="dealer", sales_basis="invoiced"), "dealer sales this month",
         mcp_response=_rendered(ROUTE_HIT),
     )
     (args,) = _calls(captured, "crm_sales_analysis")
