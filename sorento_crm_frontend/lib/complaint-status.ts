@@ -1,3 +1,5 @@
+import { APPEALED_LABEL } from '@/lib/submission-status';
+
 /**
  * Single source of truth for complaint status presentation (label + pill colour).
  * Used by the internal system view (ComplaintDetail) and the customer portal so
@@ -28,9 +30,7 @@ export const COMPLAINT_STATUS_PILL_CLASS: Record<string, string> = {
 
 // Explicit labels where a simple title-case wouldn't read well.
 const COMPLAINT_STATUS_LABEL: Record<string, string> = {
-  // A complaint sent back after a rejection is an appeal (owner, 28 Oct 2026). The stored
-  // value stays `resubmitted`, shared with every other form; only a complaint reads it so.
-  resubmitted: 'Appealed',
+  resubmitted: APPEALED_LABEL,
   processed_by_cs: 'Processed by CS',
   fulfilled: 'Fulfilled',
   settled_on_site: 'Settled on site',
@@ -54,10 +54,3 @@ export function complaintStatusLabel(status?: string | null): string {
     .join(' ');
 }
 
-/**
- * A complaint's status line with "resubmitted" read as "appealed", case kept
- * ("status: rejected → resubmitted" -> "status: rejected → appealed").
- */
-export function complaintAppealWording(text: string): string {
-  return text.replace(/\b(r)esubmitted\b/gi, (_m, r: string) => (r === 'R' ? 'Appealed' : 'appealed'));
-}

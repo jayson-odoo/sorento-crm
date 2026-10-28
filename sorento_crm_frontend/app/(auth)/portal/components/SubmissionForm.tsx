@@ -455,8 +455,8 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
   complaint: [],
 };
 
-const VERB_DOING = { Submit: 'Submitting...', Resubmit: 'Resubmitting...', Appeal: 'Appealing...' };
-const VERB_DONE = { Submit: 'Submitted.', Resubmit: 'Resubmitted.', Appeal: 'Appealed.' };
+const VERB_DOING = { Submit: 'Submitting...', Appeal: 'Appealing...' };
+const VERB_DONE = { Submit: 'Submitted.', Appeal: 'Appealed.' };
 
 /** Same sentence the server answers with, so a client-side block and a
  *  server-side one never read differently. Required but with no character
@@ -513,9 +513,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
   const [aiExtractOpen, setAiExtractOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [detail, setDetail] = useState<PortalSubmissionDetail | null>(null);
-  const sendVerb = submitVerb(detail?.status);
-  // A rejected complaint goes back as an appeal (owner, 28 Oct 2026); other forms resubmit.
-  const verb = kind === 'complaint' && sendVerb === 'Resubmit' ? 'Appeal' : sendVerb;
+  const verb = submitVerb(detail?.status);
   // The id a create call answered with, held in STATE rather than trusted to
   // live only in the `submissionId` prop (the route param) - a retry after
   // create-succeeded-but-flushPendingFiles-failed never gets a fresh prop, so

@@ -73,7 +73,7 @@ export function revisionFileMarker(entry: FormRevisionEntry): string {
   if (kind === KIND_ORIGINAL) return 'original';
   if (kind === KIND_RESUBMISSION) {
     const version = Number(entry.version_no ?? 0);
-    return `resubmitted-v${Number.isFinite(version) ? Math.trunc(version) : 0}`;
+    return `appealed-v${Number.isFinite(version) ? Math.trunc(version) : 0}`;
   }
   return 'as-submitted';
 }

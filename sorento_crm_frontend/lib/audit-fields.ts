@@ -114,7 +114,7 @@ const CUSTOMER_ACTORS = new Set(['contact', 'integration', 'public_link']);
 const RESUBMITTED_STATUS_LIVE = Date.parse('2026-10-27T19:40:00Z');
 const at = (changedAt: string) => parseDateTimeAsUTC(changedAt).getTime();
 
-export type AuditTrailHeading = 'Resubmitted' | 'Rejected';
+export type AuditTrailHeading = 'Appealed' | 'Rejected';
 
 type TrailEntry = {
   id: string;
@@ -169,14 +169,14 @@ export function auditTrailHeadings(entries: TrailEntry[]): Map<string, AuditTrai
       if (from === to) continue;
       moved = true;
       if (to === 'rejected') heading = 'Rejected';
-      else if (from === 'rejected' && isReviewStage(key, to)) heading ??= 'Resubmitted';
+      else if (from === 'rejected' && isReviewStage(key, to)) heading ??= 'Appealed';
     }
     const summary = entry.description?.trim() ?? '';
     const engineTo = moved ? null : SUMMARY_STATUS_TO.exec(summary);
     if (engineTo) {
       moved = true;
       current.status_id = norm(engineTo[1]);
-      if (SUMMARY_RESUBMIT.test(summary)) heading = 'Resubmitted';
+      if (SUMMARY_RESUBMIT.test(summary)) heading = 'Appealed';
       else if (SUMMARY_REJECT.test(summary)) heading = 'Rejected';
     }
     if (
@@ -189,7 +189,7 @@ export function auditTrailHeadings(entries: TrailEntry[]): Map<string, AuditTrai
         ((entry.actor_type ?? 'legacy') === 'legacy' && !!entry.contact_id)) &&
       auditFieldChanges(oldV, newV).length > 0
     ) {
-      heading = 'Resubmitted';
+      heading = 'Appealed';
     }
     if (heading) headings.set(entry.id, heading);
   }

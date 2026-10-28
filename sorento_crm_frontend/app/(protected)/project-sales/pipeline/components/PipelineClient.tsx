@@ -1,5 +1,6 @@
 'use client';
 
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { ChevronDown, Filter, KanbanSquare, Table2 } from 'lucide-react';
@@ -269,7 +270,7 @@ export function PipelineClient() {
           clearable
           options={[
             { value: 'pending', label: 'Awaiting approval' },
-            { value: 'resubmitted', label: 'Resubmitted' },
+            { value: 'resubmitted', label: APPEALED_LABEL },
             { value: 'rejected', label: 'Rejected' },
           ]}
           placeholder="Any approval state"
