@@ -87,7 +87,7 @@ function ClashLine({
         }
         aria-hidden
       />
-      <p className="flex min-w-0 flex-1 items-baseline gap-1 text-sm">
+      <p className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-1 text-sm">
         <span className="shrink-0">{label}</span>{' '}
         <Link
           href={`/project-sales/${candidate.project_id}`}
@@ -95,7 +95,7 @@ function ClashLine({
         >
           {candidate.project_code}
         </Link>{' '}
-        <span className="min-w-0 truncate" title={candidate.title}>
+        <span className="min-w-0 basis-full truncate sm:basis-auto" title={candidate.title}>
           {candidate.title}
         </span>
         {candidate.outcome && candidate.outcome !== 'open' && (
