@@ -70,7 +70,7 @@ describe('D2 / D3 one line per candidate', () => {
   });
 });
 
-describe('the line shrinks at 375px: label and code keep their size, the title ends in an ellipsis', () => {
+describe('below sm the title drops to its own truncated line; label and code keep their size', () => {
   const TITLE = 'Setia Alam Phase 3B CONTOH';
   it.each([
     ['blocking', 'Project already registered:', true],
@@ -83,13 +83,16 @@ describe('the line shrinks at 375px: label and code keep their size, the title e
     const title = within(row).getByTitle(TITLE);
 
     expect(row.className).toMatch(/\bflex\b/);
-    expect(row.className).not.toMatch(/flex-wrap|flex-col/);
+    expect(row.className).toMatch(/\bflex-wrap\b/);
+    expect(row.className).not.toMatch(/\[flex-flow/);
     expect(row.className).toMatch(/\bmin-w-0\b/);
     expect(labelEl.className).toMatch(/\bshrink-0\b/);
     expect(code.className).toMatch(/\bshrink-0\b/);
     expect(title).not.toBe(code);
     expect(title.className).toMatch(/\btruncate\b/);
     expect(title.className).toMatch(/\bmin-w-0\b/);
+    expect(title.className).toMatch(/(^|\s)basis-full\b/);
+    expect(title.className).toMatch(/\bsm:basis-auto\b/);
     expect(title).toHaveAttribute('title', TITLE);
   });
 });
