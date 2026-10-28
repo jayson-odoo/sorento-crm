@@ -24,6 +24,15 @@ from app.services.user_service import UserPermissionService
 SORENTO = DEFAULT_COMPANY_ID
 
 
+class _EverySlug(frozenset):
+    """A slug set that holds every slug for ``in``: ``require_any_permission`` reads the user's slug
+    set rather than ``check_user_has_permission`` (the parties list moved onto it in #1957).
+    Iterated, copied or ``set()``-ed it is empty, as the actor's real slug set always was."""
+
+    def __contains__(self, _slug):
+        return True
+
+
 @contextmanager
 def open_client(db, monkeypatch, scope=frozenset({SORENTO})):
     actor = User(id=str(uuid.uuid4()), email=f"zzt-{uuid.uuid4().hex[:8]}@test.com", name="ZZT Actor")
@@ -44,6 +53,7 @@ def open_client(db, monkeypatch, scope=frozenset({SORENTO})):
     app.dependency_overrides[get_current_user_or_api_key] = lambda: principal
     app.dependency_overrides[apply_company_scope] = _override_scope
     monkeypatch.setattr(UserPermissionService, "check_user_has_permission", lambda self, uid, slug: True)
+    monkeypatch.setattr(UserPermissionService, "get_user_permission_slugs", lambda self, uid: _EverySlug())
     try:
         yield TestClient(app), actor
     finally:
