@@ -598,7 +598,7 @@ export function AIExtractDialog({
               ) : remainingFieldEntries.length > 0 ? (
                 <div className="rounded-md border border-border">
                   <ScrollArea>
-                    <table className="w-auto min-w-full text-sm">
+                    <table className="w-full table-fixed text-sm">
                       <tbody>
                         {remainingFieldEntries.map((f) => (
                           <tr
@@ -606,7 +606,7 @@ export function AIExtractDialog({
                             className="border-b border-border last:border-b-0"
                             data-testid={`ai-extract-field-${f.name}`}
                           >
-                            <td className="px-3 py-2 align-top text-muted-foreground w-44">
+                            <td className="px-3 py-2 align-top text-muted-foreground w-24 sm:w-44">
                               {fieldsByName[f.name]?.label ?? f.label}
                             </td>
                             <td className="px-3 py-2 align-top">
@@ -615,7 +615,7 @@ export function AIExtractDialog({
                               </span>
                             </td>
                             {renderFieldStatus && (
-                              <td className="px-3 py-2 align-top">{renderFieldStatus(f.name)}</td>
+                              <td className="px-3 py-2 align-top w-20">{renderFieldStatus(f.name)}</td>
                             )}
                             <td className="px-3 py-2 text-right align-top w-12">
                               <Button
