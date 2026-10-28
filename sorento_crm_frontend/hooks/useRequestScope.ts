@@ -8,6 +8,8 @@ const BASE: Record<string, string> = {
   complaint: 'complaint_management.complaints',
   purchase_request: 'procurement.purchase_requests',
   sponsorship_form: 'procurement.sponsorship_forms',
+  sample_request: 'projects.sample_requests',
+  sales_opportunity: 'sales.opportunities',
 };
 
 /**

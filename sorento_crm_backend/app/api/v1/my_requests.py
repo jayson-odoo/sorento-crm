@@ -18,16 +18,26 @@ Who may call it (fails closed, before the portal code runs):
   attachment by id) needs that for at least one of the four;
 - the user has a linked contact with a workspace (403 / the contact-impersonation answers);
 - a create also needs the form's ``.add``.
+
+Sample requests and opportunities (S4, S6) have their own portal routers
+(``register_sample_request_routes``, ``register_sales_opportunity_routes``), mounted here on their
+own routers ahead of the generic routes, which would otherwise answer their literal paths. Same
+gates, the kind fixed per router (``own_scope.MODULE_REQUEST_KINDS``); the write slugs differ
+(``_WRITE_SLUGS``): a sample request is created with ``.create``, an opportunity with ``.add`` and
+changed with ``.edit``.
 """
 from __future__ import annotations
 
+import dataclasses
 import uuid
-from typing import Optional
+from typing import Iterable, Optional
 
 from fastapi import APIRouter, Depends, Request, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.public.portal import register_submission_routes
+from app.api.v1.public.portal_sales_opportunity import register_sales_opportunity_routes
+from app.api.v1.public.portal_sample_request import register_sample_request_routes
 from app.api.v1.user_management.contact_impersonation import _resolve_contact_and_space
 from app.database import get_db
 from app.dependencies import get_current_user
@@ -43,12 +53,28 @@ _UPLOAD = ("POST", "/attachments")
 #: Names the per-user portal rate-limit bucket (the comment route keys it on ``token.id``).
 _TOKEN_NAMESPACE = uuid.UUID("6f1d3c2a-4b7e-4f0a-9a51-2c8e5d0b7a13")
 
+#: The write slug a route of the own-router kinds needs besides the kind's view_own.
+_WRITE_SLUGS = {
+    ("POST", "/submissions/sample_request"): "projects.sample_requests.create",
+    ("POST", "/sales-opportunities"): "sales.opportunities.add",
+    ("PATCH", "/sales-opportunities/{opportunity_id}"): "sales.opportunities.edit",
+}
+
 router = APIRouter()
+sample_request_router = APIRouter()
+sales_opportunity_router = APIRouter()
 
 
 def _add_slug(kind: str) -> str:
     """``procurement.stock_inquiries.view`` -> ``procurement.stock_inquiries.add``."""
     return own_scope.REQUEST_KINDS[kind][0].rsplit(".", 1)[0] + ".add"
+
+
+def _route(request: Request) -> tuple[str, str]:
+    """(method, path under the prefix) of the matched route."""
+    found = request.scope.get("route")
+    path_format = getattr(found, "path_format", "") or ""
+    return request.method, path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
 
 
 def _refused(message: str) -> AppException:
@@ -63,38 +89,30 @@ async def _kind_of(request: Request, route: tuple[str, str]) -> Optional[str]:
     return str(kind).strip().lower() if kind else None
 
 
-async def my_requests_token(
+def _token_for(
     request: Request,
-    current_user: dict = Depends(get_current_user),
-    db: Session = Depends(get_db),
+    db: Session,
+    current_user: dict,
+    kinds: Iterable[str],
+    write_slug: Optional[str],
 ) -> PortalToken:
-    """The CRM caller as a portal token of their own contact, or 403 / 404 (module docstring)."""
-    found = request.scope.get("route")
-    path_format = getattr(found, "path_format", "") or ""
-    route = (request.method, path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format)
-    kind = await _kind_of(request, route)
-    if kind is not None and kind not in own_scope.REQUEST_KINDS:
-        raise AppException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            message="This form is not available here.",
-            code="NOT_FOUND",
-        )
-
+    """The gates every my-requests route shares (module docstring), then the caller as a portal
+    token of their own contact. ``kinds``: any one of them held as ``"own"`` opens the route."""
     user_id = str(current_user["id"])
     service = UserPermissionService(db)
     if service.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
         raise _refused("Staff create requests from the staff pages.")
     perms = service.get_user_permission_slugs(user_id)
-    kinds = (kind,) if kind else tuple(own_scope.REQUEST_KINDS)
     if not any(own_scope.request_access(perms, k) == "own" for k in kinds):
         raise _refused("Not available with your access.")
     contact_id = own_scope.me(db, user_id).contact_id
     if not contact_id:
         raise _refused("Your account is not linked to a WhatsApp contact.")
-    if route == _CREATE and kind and _add_slug(kind) not in perms:
-        raise _refused("You cannot create this form.")
+    if write_slug and write_slug not in perms:
+        raise _refused("You cannot create this form." if request.method == "POST" else "You cannot change this form.")
 
     contact, space_id = _resolve_contact_and_space(db, contact_id)
+    _act_through(request, db, str(contact.id))
     # Transient: never added to the session. The reused routes read contact_id and space_id;
     # the comment route keys its per-token rate limit on id, so it is stable per user.
     return PortalToken(
@@ -105,4 +123,52 @@ async def my_requests_token(
     )
 
 
+def _act_through(request: Request, db: Session, contact_id: str) -> None:
+    """Name the contact on the session's audit actor, user and impersonating admin kept.
+
+    Under impersonation the stamped actor carries no contact, and a reused route that re-stamps a
+    portal contact when the actor's contact is not the token's (the opportunity router's
+    ``_require_agents``) would otherwise drop the user and the admin from the audit row."""
+    from app.audit_context import get_actor, stamp_actor
+
+    actor = get_actor(db)
+    if actor is not None and actor.contact_id != contact_id:
+        stamp_actor(dataclasses.replace(actor, contact_id=contact_id), db=db, request=request)
+
+
+async def my_requests_token(
+    request: Request,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PortalToken:
+    """The CRM caller as a portal token of their own contact, or 403 / 404 (module docstring)."""
+    route = _route(request)
+    kind = await _kind_of(request, route)
+    if kind is not None and kind not in own_scope.REQUEST_KINDS:
+        raise AppException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            message="This form is not available here.",
+            code="NOT_FOUND",
+        )
+    kinds = (kind,) if kind else tuple(own_scope.REQUEST_KINDS)
+    write_slug = _add_slug(kind) if route == _CREATE and kind else None
+    return _token_for(request, db, current_user, kinds, write_slug)
+
+
+def _kind_token(kind: str):
+    """The token dependency of a kind served by its own portal router (S4, S6)."""
+
+    async def token(
+        request: Request,
+        current_user: dict = Depends(get_current_user),
+        db: Session = Depends(get_db),
+    ) -> PortalToken:
+        return _token_for(request, db, current_user, (kind,), _WRITE_SLUGS.get(_route(request)))
+
+    token.__name__ = f"my_requests_{kind}_token"
+    return token
+
+
+register_sample_request_routes(sample_request_router, _kind_token("sample_request"))
+register_sales_opportunity_routes(sales_opportunity_router, _kind_token("sales_opportunity"))
 register_submission_routes(router, my_requests_token)

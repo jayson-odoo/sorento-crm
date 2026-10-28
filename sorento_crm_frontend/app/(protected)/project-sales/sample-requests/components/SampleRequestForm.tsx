@@ -36,6 +36,12 @@ import {
 } from '@/lib/sample-request-form';
 import { lookupCustomersForRequest } from '@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
+import { useMySampleRequestMutations } from '@/hooks/useMyRequests';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import {
+  fetchMySampleRequestCustomers,
+  searchMySampleRequestProducts,
+} from '@/services/myRequestsService';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
 import { getProject } from '../../_shared/services/projectService';
 import {
@@ -46,6 +52,9 @@ import {
 import { searchSampleRequestProducts } from '../services/sampleRequestService';
 
 const BASE_PATH = '/project-sales/sample-requests';
+
+/** What the customer picker shows: a staff lookup row, or the portal's own debtor hit. */
+type CustomerPick = Pick<CustomerLookupItem, 'customer_id' | 'customer_code' | 'debtor_name'>;
 
 function DocField({
   label,
@@ -89,7 +98,12 @@ export default function SampleRequestForm({
   projectId?: string;
 }) {
   const router = useRouter();
-  const { create, update, submit } = useSampleRequestMutations();
+  // A salesperson limited to their own sample requests writes through My Requests, the portal's
+  // own code: its debtor picker, its product search, its draft and submit (PORTAL-P4-REQUESTS S4).
+  const { limited } = useRequestScope('sample_request');
+  const staffWrites = useSampleRequestMutations();
+  const ownWrites = useMySampleRequestMutations();
+  const { create, update, submit } = limited ? ownWrites : staffWrites;
   const existing = useSampleRequestQuery(requestId ?? null);
   const { data: switches } = useSampleRequestSwitches();
   const [state, setState] = useState<FormState>({ ...EMPTY_FORM, lines: [blankLine()] });
@@ -228,7 +242,7 @@ export default function SampleRequestForm({
               className="sm:col-span-2"
               error={errors.customer_id}
             >
-              <AsyncCombobox<CustomerLookupItem>
+              <AsyncCombobox<CustomerPick>
                 id="sr-customer"
                 value={state.customer_id ? state.customer_label : state.customer_name}
                 onChange={(v, item) => {
@@ -242,7 +256,7 @@ export default function SampleRequestForm({
                     patch({ customer_id: '', customer_label: '', customer_name: v });
                   }
                 }}
-                fetchOptions={lookupCustomersForRequest}
+                fetchOptions={limited ? fetchMySampleRequestCustomers : lookupCustomersForRequest}
                 optionValue={(o) => o.debtor_name}
                 optionLabel={(o) => o.debtor_name}
                 optionMeta={(o) => o.customer_code}
@@ -349,12 +363,16 @@ export default function SampleRequestForm({
               </div>
             </DocField>
 
-            <DocField label="Consignment No">
-              <ReadValue>{record?.consignment_no}</ReadValue>
-            </DocField>
-            <DocField label="PO No">
-              <ReadValue>{record?.po_no}</ReadValue>
-            </DocField>
+            {!limited && (
+              <>
+                <DocField label="Consignment No">
+                  <ReadValue>{record?.consignment_no}</ReadValue>
+                </DocField>
+                <DocField label="PO No">
+                  <ReadValue>{record?.po_no}</ReadValue>
+                </DocField>
+              </>
+            )}
           </div>
 
           <div className="mb-3 mt-8 flex items-center justify-between gap-3">
@@ -372,7 +390,7 @@ export default function SampleRequestForm({
           <SampleRequestLines
             value={state}
             onChange={patch}
-            search={searchSampleRequestProducts}
+            search={limited ? searchMySampleRequestProducts : searchSampleRequestProducts}
             captions={{ no: 'No.', item: 'Item Code', qty: 'Qty' }}
             errors={errors}
           />

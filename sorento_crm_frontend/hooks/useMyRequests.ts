@@ -3,15 +3,20 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
+  cancelMySampleRequest,
+  createMySampleRequest,
   deleteDraftSubmission,
   fetchRevisions,
   fetchSubmission,
   reviseSubmission,
   saveDraft,
   submitDraft,
+  submitMySampleRequest,
+  updateMySampleRequest,
   type MyRequestKind,
   type ReviseSubmissionInput,
 } from '@/services/myRequestsService';
+import type { SampleRequestWrite } from '@/types/sampleRequest';
 
 /**
  * A salesperson's own request, read and written through My Requests (PORTAL-P4-REQUESTS): the
@@ -107,4 +112,43 @@ export function useDeleteMyRequestDraft(kind: MyRequestKind) {
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to delete draft.'),
   });
+}
+
+/**
+ * A salesperson's own sample request written through the portal's sample request router (S4):
+ * the staff page's create / update / submit, plus the portal's Cancel. The staff list and detail
+ * read the same rows, so their keys refresh.
+ */
+export function useMySampleRequestMutations() {
+  const queryClient = useQueryClient();
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: ['sample-requests'] });
+    void queryClient.invalidateQueries({ queryKey: ['sample-request'] });
+  };
+  const fail = (fallback: string) => (error: Error) => toast.error(error.message || fallback);
+
+  const create = useMutation({
+    mutationFn: (data: SampleRequestWrite) => createMySampleRequest(data),
+    onSuccess: refresh,
+    onError: fail('Failed to save the sample request'),
+  });
+  const update = useMutation({
+    mutationFn: ({ id, data }: { id: string; data: SampleRequestWrite }) => updateMySampleRequest(id, data),
+    onSuccess: refresh,
+    onError: fail('Failed to save the sample request'),
+  });
+  const submit = useMutation({
+    mutationFn: (id: string) => submitMySampleRequest(id),
+    onSuccess: () => {
+      refresh();
+      toast.success('Sample request submitted');
+    },
+    onError: fail('Failed to submit the sample request'),
+  });
+  const cancel = useMutation({
+    mutationFn: (id: string) => cancelMySampleRequest(id),
+    onSuccess: refresh,
+    onError: fail('Failed to cancel the sample request'),
+  });
+  return { create, update, submit, cancel };
 }

@@ -1,19 +1,9 @@
 'use client';
 
-import { useRouter } from 'next/navigation';
-import SalesOpportunityPortalForm from '@/app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalForm';
-import { portalDetailPath } from '@/app/(auth)/portal/lib/portal-paths';
-import { MySlug } from '../../MySlug';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
+import { StaffPageRedirect } from '../../StaffPageRedirect';
 
+/** A new opportunity is logged from the staff list's modal (PORTAL-P4-REQUESTS S6). */
 export default function MyRequestsSalesOpportunityNewPage() {
-  const router = useRouter();
-  return (
-    <MySlug>
-      {(slug) => (
-        <SalesOpportunityPortalForm
-          onCreated={(id) => router.push(portalDetailPath('sales_opportunity', id, slug))}
-        />
-      )}
-    </MySlug>
-  );
+  return <StaffPageRedirect to={MY_REQUEST_STAFF_PAGES.sales_opportunity.path} />;
 }

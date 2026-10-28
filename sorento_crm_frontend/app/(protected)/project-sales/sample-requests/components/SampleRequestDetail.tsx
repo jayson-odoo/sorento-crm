@@ -31,6 +31,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useMySampleRequestMutations } from '@/hooks/useMyRequests';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
@@ -233,6 +235,11 @@ export default function SampleRequestDetail({ requestId }: { requestId: string }
   const router = useRouter();
   const { data: request, isLoading, isError, error } = useSampleRequestQuery(requestId);
   const { submit, move, saveInternal } = useSampleRequestMutations();
+  // A salesperson limited to their own sample requests gets the portal's actions only, run by the
+  // portal's own code through My Requests: Submit, Edit and Cancel while Draft or Submitted
+  // (PORTAL-P4-REQUESTS S4). No delete (Cancel covers it), no internal numbers.
+  const { limited } = useRequestScope('sample_request');
+  const own = useMySampleRequestMutations();
   const canProcess = useHasPermission('projects.sample_requests.process');
   const canCreate = useHasPermission('projects.sample_requests.create');
   // The history endpoint answers only admins and `view` holders; a salesperson who holds
@@ -374,12 +381,20 @@ export default function SampleRequestDetail({ requestId }: { requestId: string }
   const r: Detail = request;
   const isDraft = r.status === 'draft';
   const isOwner = Boolean(userId) && r.salesperson_id === userId;
-  const ownerActs = isOwner && canCreate;
-  const busy = move.isPending || submit.isPending;
-  const allowed = (m: Move) => canProcess || (m.needs === 'either' && ownerActs);
+  // The server shows a limited user only their own rows, so every row here is theirs.
+  const ownerActs = limited || (isOwner && canCreate);
+  const busy = move.isPending || submit.isPending || own.submit.isPending || own.cancel.isPending;
+  const allowed = (m: Move) =>
+    limited ? m.needs === 'either' : canProcess || (m.needs === 'either' && ownerActs);
   const moves = MOVES[r.status].filter(allowed);
+  const submitRequest = () => (limited ? own.submit.mutate(r.id) : submit.mutate(r.id));
 
   const run = async (m: Move, value?: string) => {
+    if (limited) {
+      // The only move offered them is the portal's Cancel.
+      await own.cancel.mutateAsync(r.id).catch(() => undefined);
+      return;
+    }
     try {
       await move.mutateAsync({
         id: r.id,
@@ -438,24 +453,26 @@ export default function SampleRequestDetail({ requestId }: { requestId: string }
                 <Printer className="size-4" />
                 Print / Download PDF
               </DropdownMenuItem>
-              <DropdownMenuItem
-                onSelect={() => {
-                  void navigator.clipboard
-                    .writeText(window.location.href)
-                    .then(() => toast.success('Link copied'))
-                    .catch(() => toast.error('Could not copy the link'));
-                }}
-              >
-                <Link2 className="size-4" />
-                Copy link
-              </DropdownMenuItem>
-              {canProcess && r.status !== 'cancelled' && (
+              {!limited && (
+                <DropdownMenuItem
+                  onSelect={() => {
+                    void navigator.clipboard
+                      .writeText(window.location.href)
+                      .then(() => toast.success('Link copied'))
+                      .catch(() => toast.error('Could not copy the link'));
+                  }}
+                >
+                  <Link2 className="size-4" />
+                  Copy link
+                </DropdownMenuItem>
+              )}
+              {canProcess && !limited && r.status !== 'cancelled' && (
                 <DropdownMenuItem onSelect={() => setInternalOpen(true)}>
                   <Settings2 className="size-4" />
                   Set consignment / PO no
                 </DropdownMenuItem>
               )}
-              {isDraft && ownerActs && (
+              {isDraft && ownerActs && !limited && (
                 <DropdownMenuItem
                   variant="destructive"
                   disabled={deletion.isBlocked}
@@ -470,7 +487,7 @@ export default function SampleRequestDetail({ requestId }: { requestId: string }
           primary={
             <div className="flex flex-wrap items-center gap-2">
               {isDraft && ownerActs && (
-                <Button disabled={busy} onClick={() => submit.mutate(r.id)}>
+                <Button disabled={busy} onClick={submitRequest}>
                   Submit
                 </Button>
               )}
@@ -554,12 +571,16 @@ export default function SampleRequestDetail({ requestId }: { requestId: string }
                 {r.cancel_reason}
               </Field>
             )}
-            <Field label="Consignment No (internal)" empty="Not set">
-              {r.consignment_no}
-            </Field>
-            <Field label="PO No (internal)" empty="Not set">
-              {r.po_no}
-            </Field>
+            {!limited && (
+              <>
+                <Field label="Consignment No (internal)" empty="Not set">
+                  {r.consignment_no}
+                </Field>
+                <Field label="PO No (internal)" empty="Not set">
+                  {r.po_no}
+                </Field>
+              </>
+            )}
           </div>
 
           <div className="mt-8">

@@ -20,6 +20,18 @@ import type {
   PortalSubmissionDetail,
   RequestorOption,
 } from '@/app/(auth)/portal/lib/portal-client';
+import type { SampleRequestCustomerHit } from '@/app/(auth)/portal/lib/sample-request-service';
+import {
+  SampleRequestError,
+  type SampleRequestDetail,
+  type SampleRequestProductHit,
+  type SampleRequestWrite,
+} from '@/types/sampleRequest';
+import type {
+  SalesOpportunityCustomerOptionsResponse,
+  SalesOpportunityDetail,
+  SalesOpportunitySavePayload,
+} from '@/app/(protected)/sales/opportunities/types/salesOpportunity.types';
 
 const BASE = '/api/v1/my-requests';
 
@@ -257,4 +269,118 @@ export async function deleteAttachment(linkId: string): Promise<void> {
 /** Bytes of an attachment on their own request, keyed on the attachment id (as the portal's route). */
 export function myRequestsAttachmentDownloadUrl(attachmentId: string): string {
   return `${BASE}/attachments/${encodeURIComponent(attachmentId)}/download`;
+}
+
+// ---------------------------------------------------------------- Sample Request (S4)
+// The portal's own sample request router, mounted at /api/v1/my-requests (same paths, bodies and
+// answers as `app/(auth)/portal/lib/sample-request-service.ts`).
+
+const SAMPLE_REQUEST_URL = `${BASE}/submissions/sample_request`;
+
+/** A refusal that names a field arrives as `{message, code, details: {field}}`, as on the portal. */
+async function sampleRequestResult<T>(res: Response, fallback: string): Promise<T> {
+  if (res.ok) return (await res.json()) as T;
+  const spare = res.clone();
+  const message = await extractApiError(res, fallback);
+  type Body = { code?: unknown; details?: { field?: unknown } };
+  let body: Body | null = null;
+  try {
+    body = (await spare.json()) as Body;
+  } catch {
+    body = null;
+  }
+  throw new SampleRequestError(
+    message,
+    typeof body?.code === 'string' ? body.code : null,
+    typeof body?.details?.field === 'string' ? body.details.field : null,
+  );
+}
+
+const sampleRequestUrl = (id: string, action?: 'submit' | 'cancel') =>
+  `${SAMPLE_REQUEST_URL}/${encodeURIComponent(id)}${action ? `/${action}` : ''}`;
+
+/** The debtors their agent may raise a sample request for: exactly the set submit accepts. */
+export async function fetchMySampleRequestCustomers(q: string): Promise<SampleRequestCustomerHit[]> {
+  return sampleRequestResult<SampleRequestCustomerHit[]>(
+    await apiFetch(`${BASE}/sample-request/customers?q=${encodeURIComponent(q)}`),
+    'Failed to load customers',
+  );
+}
+
+export async function searchMySampleRequestProducts(q: string): Promise<SampleRequestProductHit[]> {
+  return sampleRequestResult<SampleRequestProductHit[]>(
+    await apiFetch(`${BASE}/sample-request/products?q=${encodeURIComponent(q)}`),
+    'Failed to search products',
+  );
+}
+
+export async function createMySampleRequest(data: SampleRequestWrite): Promise<SampleRequestDetail> {
+  return sampleRequestResult<SampleRequestDetail>(
+    await apiFetch(SAMPLE_REQUEST_URL, { method: 'POST', body: JSON.stringify(data) }),
+    'Failed to save the sample request',
+  );
+}
+
+export async function updateMySampleRequest(id: string, data: SampleRequestWrite): Promise<SampleRequestDetail> {
+  return sampleRequestResult<SampleRequestDetail>(
+    await apiFetch(sampleRequestUrl(id), { method: 'PUT', body: JSON.stringify(data) }),
+    'Failed to save the sample request',
+  );
+}
+
+export async function submitMySampleRequest(id: string): Promise<SampleRequestDetail> {
+  return sampleRequestResult<SampleRequestDetail>(
+    await apiFetch(sampleRequestUrl(id, 'submit'), { method: 'POST' }),
+    'Failed to submit the sample request',
+  );
+}
+
+/** Only while Draft or Submitted, as on the portal; once the coordinator is on it, staff cancel. */
+export async function cancelMySampleRequest(id: string): Promise<SampleRequestDetail> {
+  return sampleRequestResult<SampleRequestDetail>(
+    await apiFetch(sampleRequestUrl(id, 'cancel'), { method: 'POST' }),
+    'Failed to cancel the sample request',
+  );
+}
+
+// ---------------------------------------------------------------- Sales Opportunity (S6)
+// The portal's own opportunity router at /api/v1/my-requests: the agent comes from their contact
+// (a prospect gets the portal's default agent), never from the body.
+
+const OPPORTUNITY_URL = `${BASE}/sales-opportunities`;
+
+const jsonBody = (method: string, body: unknown): RequestInit => ({
+  method,
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify(body),
+});
+
+/** The portal body: no agent (their contact decides it) and no sales order link (staff only). */
+function withoutAgent(payload: SalesOpportunitySavePayload): SalesOpportunitySavePayload {
+  const body = { ...payload };
+  delete body.sales_agent_id;
+  delete body.sales_order_id;
+  return body;
+}
+
+export async function fetchMySalesOpportunityCustomerOptions(
+  q: string,
+): Promise<SalesOpportunityCustomerOptionsResponse> {
+  const usp = new URLSearchParams();
+  if (q) usp.set('q', q);
+  return unwrap(await apiFetch(`${OPPORTUNITY_URL}/customer-options?${usp.toString()}`), 'Failed to search customers');
+}
+
+export async function createMySalesOpportunity(payload: SalesOpportunitySavePayload): Promise<SalesOpportunityDetail> {
+  return unwrap(await apiFetch(OPPORTUNITY_URL, jsonBody('POST', withoutAgent(payload))), 'Failed to log opportunity');
+}
+
+export async function updateMySalesOpportunity(
+  id: string,
+  payload: SalesOpportunitySavePayload,
+): Promise<SalesOpportunityDetail> {
+  return unwrap(
+    await apiFetch(`${OPPORTUNITY_URL}/${encodeURIComponent(id)}`, jsonBody('PATCH', withoutAgent(payload))),
+    'Failed to save opportunity',
+  );
 }

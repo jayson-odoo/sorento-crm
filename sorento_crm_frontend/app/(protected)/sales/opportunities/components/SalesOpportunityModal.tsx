@@ -16,6 +16,7 @@ import { NumberInput } from '@/components/ui/number-input';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useSaveSalesOpportunity } from '../hooks/useSalesOpportunities';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { numberFieldError } from '@/lib/number-field';
 import {
   OpportunityLineRow,
@@ -28,6 +29,7 @@ import {
   BLOCKED_VALUE,
   PROSPECT_PREFIX,
   fetchCustomerOrProspectOptions,
+  fetchOwnCustomerOrProspectOptions,
   customerTriggerLabel,
 } from '../lib/customerOrProspect';
 
@@ -55,7 +57,10 @@ export default function SalesOpportunityModal({
    *  preset - the caller already has it (the customer page it was opened from). */
   presetCustomerLabel?: string;
 }) {
-  const save = useSaveSalesOpportunity();
+  // A salesperson limited to their own opportunities logs through My Requests, the portal's own
+  // code: their agent comes from their contact (PORTAL-P4-REQUESTS S6).
+  const { limited } = useRequestScope('sales_opportunity');
+  const save = useSaveSalesOpportunity({ own: limited });
 
   const [customerOrProspect, setCustomerOrProspect] = useState('');
   const [title, setTitle] = useState('');
@@ -154,7 +159,7 @@ export default function SalesOpportunityModal({
                 value={customerOrProspect}
                 onChange={setCustomerOrProspect}
                 options={customerOptions}
-                fetchOptions={fetchCustomerOrProspectOptions}
+                fetchOptions={limited ? fetchOwnCustomerOrProspectOptions : fetchCustomerOrProspectOptions}
                 renderTriggerLabel={customerTriggerLabel}
                 selectedOption={
                   presetCustomerId && presetCustomerLabel

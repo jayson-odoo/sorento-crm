@@ -44,7 +44,8 @@ import { useSampleRequestsQuery } from '../hooks/useSampleRequests';
 
 const BASE_PATH = '/project-sales/sample-requests';
 
-/** Nothing chosen is the server default, the coordinator queue (the open statuses). */
+/** Nothing chosen is the server default: the coordinator queue (the open statuses) for staff,
+ *  every status for a salesperson who sees only their own (PORTAL-P4-REQUESTS S4). */
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
@@ -143,7 +144,6 @@ export default function SampleRequestsList() {
         accessorKey: 'status',
         header: ({ column }) => <DataGridColumnHeader title="Status" column={column} />,
         size: 150,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className={`${STATUS_PILL_BASE} ${statusPillClass(row.original.status)}`}>
             {row.original.status_label}
@@ -178,7 +178,6 @@ export default function SampleRequestsList() {
         accessorKey: 'project_name',
         header: ({ column }) => <DataGridColumnHeader title="Project Title" column={column} />,
         size: 220,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.project_name ?? undefined}>
             {row.original.project_name || '-'}
@@ -190,7 +189,6 @@ export default function SampleRequestsList() {
         accessorKey: 'delivery_mode',
         header: ({ column }) => <DataGridColumnHeader title="Mode" column={column} />,
         size: 140,
-        enableSorting: false,
         cell: ({ row }) =>
           row.original.delivery_mode ? DELIVERY_MODE_LABELS[row.original.delivery_mode] : '-',
         meta: { headerTitle: 'Mode', skeleton: <Skeleton className="h-4 w-24" /> },
@@ -199,7 +197,6 @@ export default function SampleRequestsList() {
         accessorKey: 'salesperson_name',
         header: ({ column }) => <DataGridColumnHeader title="Salesperson" column={column} />,
         size: 150,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.salesperson_name ?? undefined}>
             {row.original.salesperson_name || '-'}

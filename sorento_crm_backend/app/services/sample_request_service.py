@@ -18,7 +18,7 @@ from datetime import date, datetime
 from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from dateutil.relativedelta import relativedelta
-from sqlalchemy import func, or_
+from sqlalchemy import func, or_, select
 from sqlalchemy.orm import Session
 
 from app.models.product import Brand, Product
@@ -595,6 +595,14 @@ LIST_SORTS = {
     # The debtor's name when there is one, else the typed name (set in `list_for`).
     "customer_name": None,
     "ship_to_name": SampleRequest.ship_to_name,
+    # Every column of the list sorts (PORTAL-P4-REQUESTS P4-23): each orders by what it shows.
+    "status": select(Status.sort_order).where(Status.id == SampleRequest.status_id).scalar_subquery(),
+    "project_name": func.coalesce(
+        select(Project.title).where(Project.id == SampleRequest.project_id).scalar_subquery(),
+        SampleRequest.project_title,
+    ),
+    "delivery_mode": SampleRequest.delivery_mode,
+    "salesperson_name": select(User.name).where(User.id == SampleRequest.salesperson_id).scalar_subquery(),
 }
 
 

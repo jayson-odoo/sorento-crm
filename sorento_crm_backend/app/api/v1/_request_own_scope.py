@@ -21,6 +21,10 @@ holds ``view`` for is left alone. A route without a row id (create, bulk delete,
 unlink, the customer lookup, by-number) has no kind, so it is refused to a user limited in either.
 
 ``tests/test_portal_p4_request_scope.py`` enumerates every route of the three routers.
+
+The second section guards the Sample Request and Sales Opportunity staff routers (S4, S6), whose
+reads keep their own module rule: for a limited user every write there answers 403 (or 404 on a
+row that is not theirs); they write through ``/api/v1/my-requests``.
 """
 from __future__ import annotations
 
@@ -193,3 +197,82 @@ def _guard(router: str):
 stock_inquiry_own_scope = _guard("stock_inquiry")
 purchase_request_own_scope = _guard("purchase_request")
 complaint_own_scope = _guard("complaint")
+
+
+# ------------------------------------------------------------------ Sample Request, Sales Opportunity
+
+#: The staff routers of the MY REQUESTS forms that keep their own module rule
+#: (``own_scope.MODULE_REQUEST_KINDS``, PORTAL-P4-REQUESTS S4 and S6). Their reads already narrow a
+#: limited user to their own rows (PORTAL-P2-ONLY-THEIRS); a limited user writes through
+#: ``/api/v1/my-requests`` (the portal's own code), so on the staff router every route that is not a
+#: read below answers 403. A route naming a row that is not theirs answers 404 first, as their reads
+#: do, so an id is never confirmed.
+_MODULE_PREFIX = {
+    "sample_request": "/api/v1/project-sales",
+    "sales_opportunity": "/api/v1/sales/opportunities",
+}
+_MODULE_ROW_ID = {"sample_request": "request_id", "sales_opportunity": "opportunity_id"}
+_MODULE_READS: Dict[str, Dict[Tuple[str, str], str]] = {
+    "sample_request": {
+        ("GET", "/sample-requests"): "list",
+        ("GET", "/sample-requests/products"): "list",
+        ("GET", "/projects/{project_id}/sample-requests"): "list",
+        ("GET", "/sample-requests/{request_id}"): "row",
+        ("GET", "/sample-requests/{request_id}/pdf"): "row",
+    },
+    "sales_opportunity": {
+        ("GET", ""): "list",
+        ("GET", "/meta"): "list",
+        ("GET", "/customer-options"): "list",
+        ("GET", "/{opportunity_id}"): "row",
+    },
+}
+
+
+def check_module(
+    db: Session, user_id: str, kind: str, method: str, path_format: str, path_params: dict
+) -> None:
+    """Raise unless a user limited in ``kind`` may reach this staff route; no-op for anyone else."""
+    from app.services.user_service import UserPermissionService
+
+    service = UserPermissionService(db)
+    if service.get_user_role_slugs(user_id) & {UserPermissionService.SUPERADMIN_ROLE_SLUG, "admin"}:
+        return
+    if own_scope.request_access(service.get_user_permission_slugs(user_id), kind) != "own":
+        return
+    prefix = _MODULE_PREFIX[kind]
+    path = path_format[len(prefix):] if path_format.startswith(prefix) else path_format
+    role = _MODULE_READS[kind].get((method, path.rstrip("/")))
+    row_id = path_params.get(_MODULE_ROW_ID[kind])
+    if row_id is not None and not own_scope.module_row_in_scope(
+        db, kind, str(row_id), own_scope.me(db, user_id)
+    ):
+        raise handle_not_found("Record", str(row_id))
+    if role is None:
+        raise _refused()
+
+
+def _module_guard(kind: str):
+    async def guard(
+        request: Request,
+        db: Session = Depends(get_db),
+        current_user: dict = Depends(get_current_user_or_api_key),
+    ) -> None:
+        route = request.scope.get("route")
+        path_format = getattr(route, "path_format", None) or request.url.path
+        check_module(
+            db,
+            str(current_user.get("id") or ""),
+            kind,
+            request.method,
+            path_format,
+            request.path_params,
+        )
+
+    guard.__name__ = f"{kind}_own_scope_guard"
+    return guard
+
+
+#: Mounted on the sample request and opportunity staff routers in their package ``__init__``.
+sample_request_own_scope = _module_guard("sample_request")
+sales_opportunity_own_scope = _module_guard("sales_opportunity")

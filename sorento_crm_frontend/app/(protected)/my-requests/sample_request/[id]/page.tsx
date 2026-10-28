@@ -1,14 +1,16 @@
 'use client';
 
 import { use } from 'react';
-import SampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
-import { MySlug, sanitizeId } from '../../MySlug';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
+import { sanitizeId } from '../../MySlug';
+import { StaffPageRedirect } from '../../StaffPageRedirect';
 
+/** A deep link to a salesperson's sample request opens the staff detail (PORTAL-P4-REQUESTS S4). */
 export default function MyRequestsSampleRequestDetailPage({
   params,
 }: {
   params: Promise<{ id: string }>;
 }) {
   const { id } = use(params);
-  return <MySlug>{(slug) => <SampleRequestForm requestId={sanitizeId(id)} slug={slug} />}</MySlug>;
+  return <StaffPageRedirect to={`${MY_REQUEST_STAFF_PAGES.sample_request.path}/${sanitizeId(id)}`} />;
 }

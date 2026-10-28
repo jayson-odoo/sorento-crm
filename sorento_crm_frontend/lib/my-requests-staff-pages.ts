@@ -1,5 +1,5 @@
 /**
- * PORTAL-P4-REQUESTS: the four request forms a salesperson opens from MY REQUESTS on the STAFF pages,
+ * PORTAL-P4-REQUESTS: the request forms a salesperson opens from MY REQUESTS on the STAFF pages,
  * which the server narrows to their own rows (`<form>.view_own`). The other portal kinds still render
  * the portal form inside /my-requests until their own slices. Read by the menu and by the
  * /my-requests deep-link redirects.
@@ -20,6 +20,15 @@ export const MY_REQUEST_STAFF_PAGES: Readonly<Record<string, { path: string; per
   sponsorship_form: {
     path: '/procurement-management/sponsorship-forms',
     permission: 'procurement.sponsorship_forms.view_own',
+  },
+  sample_request: {
+    path: '/project-sales/sample-requests',
+    permission: 'projects.sample_requests.view_own',
+  },
+  // No staff /new page: the Log opportunity modal opens on the list.
+  sales_opportunity: {
+    path: '/sales/opportunities',
+    permission: 'sales.opportunities.view_own',
   },
 };
 

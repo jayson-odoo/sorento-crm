@@ -6,13 +6,24 @@
  * Phase 3 fix B2), so the two never carry two copies of this rule.
  */
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
+import { fetchMySalesOpportunityCustomerOptions } from '@/services/myRequestsService';
 import { getSalesOpportunityCustomerOptions } from '../services/salesOpportunityService';
+import type { SalesOpportunityCustomerOptionsResponse } from '../types/salesOpportunity.types';
 
 export const PROSPECT_PREFIX = 'prospect:';
 export const BLOCKED_VALUE = '__blocked__';
 
 export async function fetchCustomerOrProspectOptions(query: string): Promise<SearchableSelectOption[]> {
-  const result = await getSalesOpportunityCustomerOptions(query);
+  return toOptions(await getSalesOpportunityCustomerOptions(query));
+}
+
+/** The same field for a salesperson limited to their own opportunities: their agents' customers,
+ *  read through My Requests (the portal's own route, PORTAL-P4-REQUESTS S6). */
+export async function fetchOwnCustomerOrProspectOptions(query: string): Promise<SearchableSelectOption[]> {
+  return toOptions(await fetchMySalesOpportunityCustomerOptions(query));
+}
+
+function toOptions(result: SalesOpportunityCustomerOptionsResponse): SearchableSelectOption[] {
   const options: SearchableSelectOption[] = result.items.map((item) => ({
     value: item.customer_id,
     label: `${item.customer_code} - ${item.customer_name}`,

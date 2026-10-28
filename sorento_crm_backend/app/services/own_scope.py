@@ -19,7 +19,9 @@ read asks the same question for one id:
 - conversations: contacts linked to their agents' customers (the portal Conversations rule);
 - the four request forms (PORTAL-P4-REQUESTS, ``REQUEST_KINDS``): the row's ``contact_id`` is
   their contact, the portal's own rule. A requestor named on someone else's row does not count,
-  and the space is not matched.
+  and the space is not matched;
+- sample requests and opportunities as MY REQUESTS forms (``MODULE_REQUEST_KINDS``): the module
+  rule above, so the staff page shows exactly what the portal shows them.
 """
 from __future__ import annotations
 
@@ -56,6 +58,16 @@ REQUEST_KINDS = {
         "procurement.sponsorship_forms.view",
         "procurement.sponsorship_forms.view_own",
     ),
+}
+
+
+#: The MY REQUESTS forms with a staff router of their own that a salesperson writes through that
+#: form's own portal router (PORTAL-P4-REQUESTS S4, S6): kind -> (view, view_own). Their rows are
+#: theirs by the module rule (``sample_request_clause``, ``opportunity_clause``), which already
+#: narrows the staff reads (PORTAL-P2-ONLY-THEIRS).
+MODULE_REQUEST_KINDS = {
+    "sample_request": (SAMPLE_REQUESTS_VIEW, SAMPLE_REQUESTS_VIEW_OWN),
+    "sales_opportunity": (OPPORTUNITIES_VIEW, OPPORTUNITIES_VIEW_OWN),
 }
 
 
@@ -170,8 +182,9 @@ def conversation_contact_ids(m: Me):
 
 
 def request_access(perms: Iterable[str], kind: str) -> Optional[str]:
-    """``"all"`` with the kind's ``view``, ``"own"`` with only its ``view_own``, else None."""
-    view, view_own = REQUEST_KINDS[kind]
+    """``"all"`` with the kind's ``view``, ``"own"`` with only its ``view_own``, else None.
+    ``kind`` is one of ``REQUEST_KINDS`` or ``MODULE_REQUEST_KINDS``."""
+    view, view_own = REQUEST_KINDS.get(kind) or MODULE_REQUEST_KINDS[kind]
     slugs = set(perms or ())
     if view in slugs:
         return "all"
@@ -210,6 +223,25 @@ def request_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) -> bo
     if model.__tablename__ == "purchase_requests":
         q = q.filter(model.request_type == kind)
     return q.first() is not None
+
+
+def module_row_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) -> bool:
+    """Is this row of a ``MODULE_REQUEST_KINDS`` kind theirs, by that module's rule?"""
+    import uuid
+
+    from app.models.sales import SalesOpportunity
+    from app.models.sample_request import SampleRequest
+
+    try:
+        uuid.UUID(str(row_id))
+    except (TypeError, ValueError):
+        # Never compared to the uuid column: the cast error would abort the transaction.
+        return False
+    if kind == "sample_request":
+        model, clause = SampleRequest, sample_request_clause(m)
+    else:
+        model, clause = SalesOpportunity, opportunity_clause(m)
+    return db.query(model.id).filter(model.id == str(row_id), clause).first() is not None
 
 
 # ------------------------------------------------------------------ deferred actions
