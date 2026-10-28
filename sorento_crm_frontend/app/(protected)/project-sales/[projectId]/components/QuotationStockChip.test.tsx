@@ -52,6 +52,7 @@ function answer(data: unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  window.localStorage.clear();
   answer({ locations: [...READ_ROWS, ZERO_ROW], incoming: INCOMING, available_qty: '-1988' });
   useStockDetailMock.mockReturnValue({ data: undefined, isLoading: false, isError: false });
   useStockStatusMock.mockReturnValue({ data: STATUS, isLoading: false });
