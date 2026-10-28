@@ -218,3 +218,50 @@ def test_a_split_swapped_line_prints_item_code_and_new_item_code_on_its_rows(
     assert [(row["ITEM CODE"], row["NEW ITEM CODE"]) for row in email][0] == (old, new), email
     assert [row["NEW ITEM CODE"] for row in sheet] == [new, new], sheet
     assert sheet[0]["ITEM CODE"] == old, sheet
+
+
+def test_a_swapped_line_with_a_saved_draft_reads_alike_on_board_email_and_attachment(
+    api, monkeypatch, stored,
+):
+    """SWAP-REMARK-TALLY (follow-up of #1956): with a saved draft the Confirm review prints the
+    board's `saved_remark` (`savedRemark ?? remarkGenerated`), so for a swapped line it must be
+    the email line's remark, and the attachment's REMARK the same words."""
+    _client, world = api
+    _register(world)
+    calls = _captured_dispatches(monkeypatch)
+    _drain_on_test_connection(monkeypatch, world)
+    _enabled_handover(world)
+    fx = _swap_fixture(api, acknowledged=True)
+    new = fx["new"].product_code
+    params = {"orders": fx["order"].autocount_doc_no, "granularity": "week"}
+    base = "/api/v1/project-sales/fulfilment-planning"
+
+    def on_board():
+        board = fx["client"].get(f"{base}/board", params=params)
+        assert board.status_code == 200, board.text
+        [got] = [
+            c for c in board.json()["contributions"]
+            if c.get("project_line_id") == str(fx["line"].id)
+        ]
+        return got
+
+    saved = fx["client"].put(
+        f"{base}/lines/{on_board()['key']}/draft",
+        json={"decision": {
+            "verdict": "amended", "reserve": [], "borrow": [], "buy_qty": "10",
+            "reason": "Planner choice.",
+        }},
+    )
+    assert saved.status_code == 200, saved.text
+    saved_remark = on_board()["saved_remark"]
+
+    calls.clear()
+    response = _apply(fx)
+    assert response.status_code == 200, response.text
+    world.db.commit()
+
+    lines, sheet = _handover_and_attachment(calls, stored, new)
+    assert len(lines) == 1 and len(sheet) == 1, (lines, sheet)
+    assert saved_remark == lines[0]["remark"] == sheet[0]["REMARK"], (
+        saved_remark, lines[0]["remark"], sheet[0]["REMARK"],
+    )
