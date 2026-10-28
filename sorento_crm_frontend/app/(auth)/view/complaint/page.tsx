@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Skeleton } from '@/components/ui/skeleton';
+import { complaintStatusLabel } from '@/lib/complaint-status';
 import AttachmentPreviewModal, {
   type AttachmentPreviewItem,
 } from '@/components/common/AttachmentPreviewModal';
@@ -241,7 +242,7 @@ function ViewComplaintContent() {
               </Button>
             </div>
           )}
-          <DetailRow label="Status" value={summary?.status ?? undefined} />
+          <DetailRow label="Status" value={summary?.status ? complaintStatusLabel(summary.status) : undefined} />
           <DetailRow label="Last responded at" value={summary?.last_responded_at ? formatDateTimeStr(summary.last_responded_at) : undefined} />
           <DetailRow label="Created at" value={summary?.created_at ? formatDateTimeStr(summary.created_at) : undefined} />
           {attachments.length > 0 && (

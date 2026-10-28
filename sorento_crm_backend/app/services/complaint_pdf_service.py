@@ -48,6 +48,12 @@ def _row(label: str, value) -> str:
     return f'<tr><th>{escape(label)}</th><td>{_fmt(value)}</td></tr>'
 
 
+def _status_text(status):
+    # A complaint sent back after a rejection is an appeal (owner, 28 Oct 2026); the stored
+    # value stays `resubmitted`.
+    return "Appealed" if (status or "").strip().lower() == "resubmitted" else status
+
+
 class ComplaintPDFService:
     def __init__(self, db: Session):
         self.db = db
@@ -95,7 +101,7 @@ class ComplaintPDFService:
             [
                 _row("Complaint No.", getattr(complaint, "complaint_number", None)),
                 _row("Complaint Date", getattr(complaint, "complaint_date", None)),
-                _row("Status", getattr(complaint, "status", None)),
+                _row("Status", _status_text(getattr(complaint, "status", None))),
                 _row("Delivery Order", getattr(complaint, "delivery_order_number", None)),
                 _row("Within Warranty", getattr(complaint, "within_warranty", None)),
                 _row("Complaint Type", getattr(complaint, "complaint_type", None)),

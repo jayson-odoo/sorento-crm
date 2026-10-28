@@ -336,4 +336,21 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
       'Defect description: Cracked → Cracked, resubmitted with photos',
     ]);
   });
+
+  it('an undo reason that says "resubmitted" is quoted as typed', () => {
+    mockHistory([
+      status('rejected', 'resubmitted', PORTAL),
+      entry({
+        ...STAFF,
+        description: 'Undo: customer resubmitted the wrong photos (reversed approve)',
+        old_values: { status: 'approved' },
+        new_values: { status: 'resubmitted' },
+      }),
+    ]);
+    renderTrail();
+
+    expect(rowsOldestFirst()[1].lines[0]).toBe(
+      'Undo: customer resubmitted the wrong photos (reversed approve)',
+    );
+  });
 });

@@ -455,12 +455,12 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
   complaint: [],
 };
 
-/** Same sentence the server answers with, so a client-side block and a
- *  server-side one never read differently. Required but with no character
- *  floor, by explicit decision - any non-empty reason is accepted. */
 const VERB_DOING = { Submit: 'Submitting...', Resubmit: 'Resubmitting...', Appeal: 'Appealing...' };
 const VERB_DONE = { Submit: 'Submitted.', Resubmit: 'Resubmitted.', Appeal: 'Appealed.' };
 
+/** Same sentence the server answers with, so a client-side block and a
+ *  server-side one never read differently. Required but with no character
+ *  floor, by explicit decision - any non-empty reason is accepted. */
 const REASON_REQUIRED = 'Tell us what changed and why.';
 const REASON_MAX_LEN = 2000;
 

@@ -51,7 +51,9 @@ function collectChangeLines(
   const prefix = childName ? `${childName}: ` : '';
   // A past resubmit's "rejected → submitted" reads as what it is called today.
   const resubmit = heading === 'Resubmitted' ? resubmittedSummary(summary) : summary;
-  const shown = appeal ? complaintAppealWording(resubmit) : resubmit;
+  // Only a status move is reworded: an undo row's summary quotes the reason as typed.
+  const statusMove = /^(status|approval_status|order_status):\s/i.test(summary);
+  const shown = appeal && statusMove ? complaintAppealWording(resubmit) : resubmit;
   const lines: ChangeLine[] = summary ? [{ text: `${prefix}${shown}` }] : [];
   for (const change of auditFieldChanges(entry.old_values, entry.new_values)) {
     if (summary && summaryCovers(change, entry, summary)) continue;
