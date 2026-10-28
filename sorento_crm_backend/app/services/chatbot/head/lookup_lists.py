@@ -987,7 +987,7 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
         path = _shared_path(model)
         if path is not None:
             lock_fd = _lock_shared(path)
-        loaded = 0
+        loaded = embedded = 0
         file_vectors: dict[str, Any] = {}
         try:
             with _store_lock:
@@ -998,6 +998,11 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
             if lock_fd is not None:
                 file_vectors = _read_shared(path)
                 with _store_lock:
+                    held = next((v for k, v in _cache.items() if k[0] == model), None)
+                    width = next((v.shape[-1] for v in file_vectors.values()), None)
+                    if held is not None and width is not None and held.shape[-1] != width:
+                        logger.warning("lookup shared vectors: file width %d differs from the cache, ignoring it", width)
+                        file_vectors = {}
                     for t in dict.fromkeys(texts):
                         sha = _key(t, model)[1]
                         if _key(t, model) not in _cache and sha in file_vectors:
@@ -1018,13 +1023,15 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
                             raise
                         _sleep(wait * (1 + 0.5 * _jitter()))
                 store(chunk, raw)
+                embedded += len(chunk)
         finally:
             if lock_fd is not None:
                 try:
                     with _store_lock:
                         asked = {_key(t, model)[1]: _cache[_key(t, model)] for t in texts if _key(t, model) in _cache}
                     merged = {**file_vectors, **asked}
-                    _write_shared(path, merged if len(merged) <= _CACHE_CAP else asked)
+                    if embedded or not all(sha in file_vectors for sha in asked):  # else the file already says it
+                        _write_shared(path, merged if len(merged) <= _CACHE_CAP else asked)
                 finally:
                     os.close(lock_fd)  # closing the descriptor releases the flock
         return loaded
