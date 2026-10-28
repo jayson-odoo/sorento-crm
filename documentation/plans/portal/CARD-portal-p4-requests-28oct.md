@@ -162,8 +162,12 @@ runs the same code.
 
 ## Real examples (dev copy, 15 Oct)
 
-Price tag, sample request, NPA and opportunity counts per salesperson are in the lead's notes; the hand test uses one
-salesperson with rows in each kind (chosen on the crew copy).
+1. Price tag requests: 18 rows from 3 contacts. Today a salesperson granted `.view` would see all 18. After P4 each
+   of the 3 sees only their own, and Salesperson A (from example 1 above) sees an empty list with a Create button.
+2. New product applications: 15 rows, 8 raised from the portal; Salesperson A raised 7. On the staff detail today those
+   7 show item group, base UOM and list price; after P4, as the salesperson, they do not.
+3. Sample requests: 1 row (portal). Sales opportunities: none on the 15 Oct copy. The hand test seeds one of each on
+   the crew copy through the portal first, then compares with the CRM page.
 
 ## Questions (recommendation first)
 
