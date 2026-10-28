@@ -23,7 +23,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { useIntegrationLogs, useRetryIntegrationLog } from '@/app/(protected)/integration-management/integration-logs/hooks/useIntegrationLogs';
 import type { IntegrationLog } from '@/app/(protected)/integration-management/integration-logs/types/integrationLog.types';
 import { formatDistanceToNow } from 'date-fns';
@@ -41,8 +42,8 @@ export default function SmartLinkageList() {
     debouncedValue: searchQuery,
     isSettling: searchSettling,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState<string>('all');
-  const [channelFilter, setChannelFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('');
+  const [channelFilter, setChannelFilter] = useState<string>('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   // Always filter by business_table = 'attachments'
@@ -51,8 +52,8 @@ export default function SmartLinkageList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    status: statusFilter !== 'all' ? statusFilter : undefined,
-    integration_channel: channelFilter !== 'all' ? channelFilter : undefined,
+    status: statusFilter || undefined,
+    integration_channel: channelFilter || undefined,
     business_table: 'attachments', // Always filter by attachments
   });
 
@@ -179,7 +180,7 @@ export default function SmartLinkageList() {
   });
 
   const filtersActiveCount =
-    (statusFilter !== 'all' ? 1 : 0) + (channelFilter !== 'all' ? 1 : 0);
+    (statusFilter ? 1 : 0) + (channelFilter ? 1 : 0);
 
   return (
     <DataGrid
@@ -215,11 +216,10 @@ export default function SmartLinkageList() {
                 <div className="space-y-3">
                   <div className="space-y-1.5">
                     <p className="text-xs font-medium">Status</p>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
                       options={[
-                        { value: 'all', label: 'All Status' },
                         { value: 'pending', label: 'Pending' },
                         { value: 'processing', label: 'Processing' },
                         { value: 'success', label: 'Success' },
@@ -227,19 +227,18 @@ export default function SmartLinkageList() {
                       ]}
                       placeholder="Status"
                       triggerClassName="w-full"
+                      clearable
                     />
                   </div>
                   <div className="space-y-1.5">
                     <p className="text-xs font-medium">Channel</p>
-                    <SearchableSelect
-                      value={channelFilter}
-                      onChange={setChannelFilter}
-                      options={[
-                        { value: 'all', label: 'All Channels' },
-                        { value: 'n8n', label: 'n8n' },
-                      ]}
+                    <SearchableMultiSelect
+                      value={splitMulti(channelFilter)}
+                      onChange={(v) => setChannelFilter(joinMulti(v))}
+                      options={[{ value: 'n8n', label: 'n8n' }]}
                       placeholder="Channel"
                       triggerClassName="w-full"
+                      clearable
                     />
                   </div>
                 </div>

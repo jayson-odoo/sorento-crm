@@ -330,8 +330,8 @@ def _apply_filters(
     query,
     *,
     stored_types: Optional[list[str]],
-    action: Optional[str],
-    user_id: Optional[str],
+    action: Optional[list[str] | str],
+    user_id: Optional[list[str] | str],
     date_from: Optional[date],
     date_to: Optional[date],
     q: Optional[str],
@@ -341,13 +341,17 @@ def _apply_filters(
     if stored_types:
         query = query.filter(AuditLog.entity_type.in_(stored_types))
     if action:
-        stored_actions = _STORED_ACTIONS_FOR_FE.get(action.lower())
+        fe_actions = [action] if isinstance(action, str) else action
+        stored_actions = [
+            s for a in fe_actions for s in (_STORED_ACTIONS_FOR_FE.get(a.lower()) or [])
+        ]
         if stored_actions:
             query = query.filter(AuditLog.action.in_(stored_actions))
     if include_user and user_id:
+        user_ids = [user_id] if isinstance(user_id, str) else user_id
         # Either column (plan 8.1): an admin's impersonated writes carry them as
         # real_user_id, with the target as user_id.
-        query = query.filter(or_(AuditLog.user_id == user_id, AuditLog.real_user_id == user_id))
+        query = query.filter(or_(AuditLog.user_id.in_(user_ids), AuditLog.real_user_id.in_(user_ids)))
     if date_from:
         query = query.filter(AuditLog.changed_at >= datetime.combine(date_from, datetime.min.time()))
     if date_to:
@@ -397,8 +401,8 @@ def get_activity_feed(
     db: Session,
     *,
     entity_types: Optional[list[str]] = None,
-    action: Optional[str] = None,
-    user_id: Optional[str] = None,
+    action: Optional[list[str]] = None,
+    user_id: Optional[list[str]] = None,
     date_from: Optional[str] = None,
     date_to: Optional[str] = None,
     q: Optional[str] = None,

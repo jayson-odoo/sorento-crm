@@ -116,7 +116,7 @@ class ContactService:
         """List contacts with pagination and filtering.
 
         ``access_filters`` (CONTACT-BULK-ACCESS, UAC A2.3): any of ``access_type``, ``tier``,
-        ``cost``, ``escalation``, ``packing_list``, ``stock``, ``customer_id``,
+        ``cost``, ``escalation``, ``packing_list``, ``stock``, ``customer_ids``,
         ``access_differs_from``; absent or None = no filter. See ``_apply_access_filters``.
 
         ``include_linked_users`` (S3 1.7): the caller holds `users.view`, so
@@ -167,9 +167,13 @@ class ContactService:
 
             linked_map = linked_user_map(self.db, [str(c.id) for c in contacts])
 
-        from app.services.contact_customer_service import customer_codes_by_contact
+        from app.services.contact_customer_service import (
+            customer_codes_by_contact,
+            customer_companies_by_contact,
+        )
 
         codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts], viewer_id)
+        companies_map = customer_companies_by_contact(self.db, [str(c.id) for c in contacts], viewer_id)
         cost_ids = self._cost_visible_ids([str(c.id) for c in contacts])
 
         from app.services.contact_brand_scope import brand_refs_by_contact
@@ -197,6 +201,7 @@ class ContactService:
                 data["linked_user_id"] = linked["id"] if linked else None
                 data["linked_user_name"] = linked["name"] if linked else None
                 data["customer_codes"] = codes_map.get(str(contact.id), [])
+                data["customer_companies"] = companies_map.get(str(contact.id), [])
                 data["brands"] = brands_map.get(str(contact.id), [])
                 data["tags"] = tags_map.get(str(contact.id), [])
                 data["tag_settings"] = contact_tag_settings.row_summary(tag_settings_map[str(contact.id)])
@@ -250,20 +255,25 @@ class ContactService:
             "regions": RespondContact.regions,
         }
         key = columns.get(sort_field)
-        if sort_field == "customers":
-            # The codes the Customers column shows: every granted company when the viewer is known.
+        if sort_field in ("customers", "companies"):
+            # What the Customers / Companies column shows: every granted company when the viewer
+            # is known. Core tables, not the entities: the session's auto-filter would narrow them
+            # back to the active company; the link's own company is scoped to the grants instead.
+            from app.models.company import Company
             from app.services.company_scope_resolver import grants_scope_value
 
-            # Core tables, not the entities: the session's auto-filter would narrow them back to the
-            # active company; the link's own company is scoped to the grants explicitly instead.
             scope = grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
             customers, links = Customer.__table__, RespondContactCustomer.__table__
+            companies = Company.__table__
+            shown = customers.c.customer_code if sort_field == "customers" else companies.c.name
             stmt = (
-                select(func.min(customers.c.customer_code))
+                select(func.min(shown))
                 .select_from(links)
                 .join(customers, customers.c.id == links.c.customer_id)
                 .where(links.c.contact_id == RespondContact.id)
             )
+            if sort_field == "companies":
+                stmt = stmt.join(companies, companies.c.id == customers.c.company_id)
             if scope is not None:  # None = every company; UNSET or empty fails closed
                 ids = sorted(scope) if isinstance(scope, frozenset) else []
                 # Both sides: a link's company is stamped from its customer, but nothing enforces it.
@@ -365,19 +375,23 @@ class ContactService:
             return None if not value else value == "yes"
 
         if f.get("access_type"):
+            # FILTER-MULTISELECT: a list of codes, any-of.
             q = q.filter(
                 exists().where(
                     pivot.c.contact_id == RespondContact.id,
-                    pivot.c.access_type_code == f["access_type"],
+                    pivot.c.access_type_code.in_(f["access_type"]),
                 )
             )
-        tier = f.get("tier")
-        if tier:
+        tiers = f.get("tier")
+        if tiers:
             tier_value = RespondContact.chatbot_profile["tier"].astext
-            if tier == "none":
-                q = q.filter(or_(tier_value.is_(None), tier_value == ""))
-            else:
-                q = q.filter(tier_value == tier)
+            real = [t for t in tiers if t != "none"]
+            clauses = []
+            if real:
+                clauses.append(tier_value.in_(real))
+            if "none" in tiers:  # `none` = no tier set, null or blank
+                clauses.append(or_(tier_value.is_(None), tier_value == ""))
+            q = q.filter(or_(*clauses))
         cost = yes("cost")
         if cost is not None:
             holds = exists().where(
@@ -395,8 +409,8 @@ class ContactService:
             value = yes(name)
             if value is not None:
                 q = q.filter(column.is_(value))
-        if f.get("region") in ("west", "east"):
-            q = q.filter(RespondContact.regions.contains([f["region"]]))
+        if f.get("region"):
+            q = q.filter(or_(*[RespondContact.regions.contains([r]) for r in f["region"] if r in ("west", "east")]))
         if f.get("tag_ids"):
             from app.models.access import respond_contact_tags as tag_pivot
 
@@ -410,23 +424,34 @@ class ContactService:
             from app.models.access import respond_contact_tags as tag_pivot
 
             q = q.filter(~exists().where(tag_pivot.c.contact_id == RespondContact.id))
-        if f.get("customer_id"):
-            from app.models.base import get_company_scope
-            from app.services.company_scope import build_company_predicate
-
-            link = exists().where(
-                RespondContactCustomer.contact_id == RespondContact.id,
-                RespondContactCustomer.customer_id == f["customer_id"],
+        if f.get("customer_ids"):
+            q = q.filter(
+                self._visible_link(viewer_id, RespondContactCustomer.customer_id.in_(f["customer_ids"]))
             )
-            # Only links the caller can see count: every company they are granted when the
-            # viewer is known (Internal Users is company-less), else the active scope.
-            from app.services.company_scope_resolver import grants_scope_value
+        if f.get("company_ids"):
+            # FILTER-MULTISELECT: a contact matches when any linked customer belongs to a chosen
+            # company (the Companies column's own source), any-of across the chosen ones.
+            # The core table: the session's auto-filter would narrow the entity to the active company.
+            from app.models.order import Customer
 
-            scope = grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
-            predicate = build_company_predicate(RespondContactCustomer, scope)
-            if predicate is not None:
-                link = link.where(predicate)
-            q = q.filter(link)
+            customers = Customer.__table__
+            # Both sides, as the Companies sort does: a link's company is stamped from its customer,
+            # but nothing enforces it, so the customer's own company must be in reach too.
+            scope = self._link_scope(viewer_id)
+            wanted = f["company_ids"]
+            if isinstance(scope, frozenset):
+                wanted = [c for c in wanted if c in scope]
+            elif scope is not None:  # UNSET fails closed
+                wanted = []
+            q = q.filter(
+                self._visible_link(
+                    viewer_id,
+                    exists().where(
+                        customers.c.id == RespondContactCustomer.customer_id,
+                        customers.c.company_id.in_(wanted),
+                    ),
+                )
+            )
         if f.get("access_differs_from"):
             from app.services.contact_access_copy_service import contacts_differing_from
 
@@ -447,6 +472,27 @@ class ContactService:
         if f.get("tag_settings") in ("differs", "matches"):
             q = self._filter_tag_settings(q, f)
         return q
+
+    def _visible_link(self, viewer_id: Optional[str], *criteria):
+        """EXISTS a customer link of the row's contact meeting ``criteria``. Only links the caller
+        can see count: every company they are granted when the viewer is known (Internal Users is
+        company-less), else the active scope."""
+        from app.models.access import RespondContactCustomer
+        from app.services.company_scope import build_company_predicate
+
+        link = exists().where(RespondContactCustomer.contact_id == RespondContact.id, *criteria)
+        predicate = build_company_predicate(RespondContactCustomer, self._link_scope(viewer_id))
+        if predicate is not None:
+            link = link.where(predicate)
+        return link
+
+    def _link_scope(self, viewer_id: Optional[str]):
+        """The companies a customer link must sit in to count for this viewer: every company they
+        are granted when known, else the active scope (None = every company)."""
+        from app.models.base import get_company_scope
+        from app.services.company_scope_resolver import grants_scope_value
+
+        return grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
 
     def _filter_tag_settings(self, q, f: dict):
         """Contacts whose tag settings differ / match, over the holders of a tag that sets something."""

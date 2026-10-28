@@ -28,7 +28,8 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { Eye } from 'lucide-react';
 import { useOutgoingMails } from '../hooks/useOutgoingMails';
@@ -74,7 +75,7 @@ function linkifyPlainText(text: string): ReactNode {
 
 export default function OutgoingMailsList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
-  const [status, setStatus] = useState<string>('__all__');
+  const [status, setStatus] = useState<string>('');
   const {
     value: queryInput,
     setValue: setQueryInput,
@@ -97,7 +98,7 @@ export default function OutgoingMailsList() {
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useOutgoingMails({
     pageIndex: pagination.pageIndex,
     pageSize: pagination.pageSize,
-    status: status === '__all__' ? undefined : status,
+    status: status || undefined,
     query: query || undefined,
   });
 
@@ -237,27 +238,27 @@ export default function OutgoingMailsList() {
             }
             filters={{
               kind: 'custom',
-              active: status !== '__all__',
-              activeCount: status !== '__all__' ? 1 : 0,
+              active: status !== '',
+              activeCount: status ? 1 : 0,
               content: (
                 <div className="space-y-3">
-                  <SearchableSelect
-                    value={status}
-                    onChange={setStatus}
+                  <SearchableMultiSelect
+                    value={splitMulti(status)}
+                    onChange={(v) => setStatus(joinMulti(v))}
                     options={[
-                      { value: '__all__', label: 'All statuses' },
                       { value: 'pending', label: 'Pending' },
                       { value: 'sent', label: 'Sent' },
                       { value: 'failed', label: 'Failed' },
                     ]}
                     placeholder="Status"
+                    clearable
                   />
-                  {status !== '__all__' && (
+                  {status && (
                     <Button
                       variant="ghost"
                       size="sm"
                       className="w-full"
-                      onClick={() => setStatus('__all__')}
+                      onClick={() => setStatus('')}
                     >
                       Clear filters
                     </Button>

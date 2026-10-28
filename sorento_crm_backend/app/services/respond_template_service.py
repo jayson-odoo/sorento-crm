@@ -315,7 +315,7 @@ def list_templates(
     page: int = 1,
     limit: int = 50,
     query: Optional[str] = None,
-    status: Optional[str] = None,
+    status: Optional[list[str] | str] = None,
     sort: str = "name",
     direction: str = "asc",
 ) -> Dict[str, Any]:
@@ -328,8 +328,10 @@ def list_templates(
             RespondMessageTemplate.name.ilike(like)
             | RespondMessageTemplate.body_text.ilike(like)
         )
-    if status and status != "all":
-        q = q.filter(RespondMessageTemplate.status == status)
+    statuses = [status] if isinstance(status, str) else (status or [])
+    statuses = [s for s in statuses if s != "all"]
+    if statuses:
+        q = q.filter(RespondMessageTemplate.status.in_(statuses))
 
     sort_col = {
         "name": RespondMessageTemplate.name,

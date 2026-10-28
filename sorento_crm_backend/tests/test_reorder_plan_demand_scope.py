@@ -226,8 +226,8 @@ def _add_form_row(db, project_so: dict, *, product_code: str, warehouse_code: st
 def _add_reserve_claim(db, project_so: dict, *, product_id, warehouse_id, qty,
                         required_date=None, source_type="other_location") -> None:
     """A confirmed Project BORROW claim on `project_so`'s own PSO (`so_line_allocations`,
-    `source_type='other_location'`; BOARD-NO-HOLD, 27 Oct 2026: a Reserve no longer takes
-    stock off a retail run's supply, a Borrow still does) - the seed shape `tests/scm/test_plan_horizon_review_fixes.py`'s
+    `source_type='other_location'`; BOARD-NO-HOLD / BORROW-NO-HOLD: no decision takes
+    stock off a retail run's supply) - the seed shape `tests/scm/test_plan_horizon_review_fixes.py`'s
     `_project_reserve` uses, adapted to hang off an EXISTING project SO (there via its own
     throwaway one) so the claim's SO number is `project_so`'s, which is what
     `_project_supply_reduction_map`'s own SO join (`reorder_run_service.py` ~1263) scopes on.

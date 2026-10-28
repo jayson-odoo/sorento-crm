@@ -18,6 +18,7 @@ from app.schemas.job import ImportJobResponse, ImportJobRowResponse, JobStatusRe
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
 from app.utils.http import content_disposition
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -214,10 +215,11 @@ def _resolve_owned_job(db: Session, job_id: str, current_user: dict) -> ImportJo
 def _job_rows_query(db: Session, job: ImportJob, outcome, code, query):
     """Filtered ImportJobRow query for one job."""
     q = db.query(ImportJobRow).filter(ImportJobRow.import_job_id == job.id)
-    if outcome:
-        q = q.filter(ImportJobRow.outcome == outcome)
-    if code:
-        q = q.filter(ImportJobRow.code == code)
+    outcomes, codes = multi_values(outcome), multi_values(code)
+    if outcomes:
+        q = q.filter(ImportJobRow.outcome.in_(outcomes))
+    if codes:
+        q = q.filter(ImportJobRow.code.in_(codes))
     if query:
         needle = f"%{query.strip()}%"
         q = q.filter(
@@ -233,8 +235,8 @@ def _job_rows_query(db: Session, job: ImportJob, outcome, code, query):
 @router.get("/jobs/{job_id}/rows", response_model=ListResponse[ImportJobRowResponse])
 async def list_job_rows(
     job_id: str,
-    outcome: Optional[str] = Query(None, description="created|updated|unchanged|skipped|failed"),
-    code: Optional[str] = Query(None, description="reason code from the job's breakdown"),
+    outcome: Optional[list[str]] = Query(None, description="created|updated|unchanged|skipped|failed"),
+    code: Optional[list[str]] = Query(None, description="reason code from the job's breakdown"),
     query: Optional[str] = Query(None, description="free text over detail / value / identity"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -293,8 +295,8 @@ async def list_job_rows(
 @router.get("/jobs/{job_id}/rows/export")
 async def export_job_rows(
     job_id: str,
-    outcome: Optional[str] = Query(None),
-    code: Optional[str] = Query(None),
+    outcome: Optional[list[str]] = Query(None),
+    code: Optional[list[str]] = Query(None),
     query: Optional[str] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
