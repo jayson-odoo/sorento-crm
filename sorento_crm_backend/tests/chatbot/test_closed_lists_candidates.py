@@ -256,7 +256,8 @@ def test_a_size_is_a_spec_value_never_a_code_that_contains_it(db, message, shown
 
     lines = _lines(db, message)
 
-    assert f'- "{shown}": spec dim_length = 600; spec dim_width = 600' in lines, lines
+    # DIMENSION-ANY (owner, 28 Oct 2026): a length leads with the size line, no dimension named.
+    assert f'- "{shown}": size 600 mm (no dimension named); spec dim_length = 600; spec dim_width = 600' in lines, lines
     assert not any("code ZZT" in line for line in lines), lines
 
 
@@ -397,7 +398,8 @@ def test_a_size_word_offers_only_the_keys_that_hold_that_number_most_held_first(
 
     lines = _lines(db, "do you stock s-trap closets at 300 mm?")
 
-    assert '- "300 mm": spec trap_length = 300; spec dim_length = 300' in lines, lines
+    # DIMENSION-ANY: the size line leads; the spec lines keep their data order.
+    assert '- "300 mm": size 300 mm (no dimension named); spec trap_length = 300; spec dim_length = 300' in lines, lines
 
 
 def test_guard_a_number_no_key_holds_still_offers_the_unit_keys(db):

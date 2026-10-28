@@ -558,7 +558,7 @@ def _ngram_expected(session_factory, body: str, *, numbers: bool = False) -> lis
     if numbers:
         nums = ll.number_hits(body, db, hidden_spec_keys=frozenset())
         assert nums, "the control message must carry a number the lookup understands"
-        hits["spec"] = [*nums, *hits.get("spec", [])][: ll.TOP_K["spec"]]
+        hits["spec"] = ll.with_numbers(nums, hits.get("spec", []), hits.get("category"))
     return ll.render(hits)
 
 

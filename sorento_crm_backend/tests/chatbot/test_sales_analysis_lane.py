@@ -51,6 +51,7 @@ def _rendered(payload=ROUTE_HIT) -> str:
 
 
 def _payload(*, attributes=(GRANT,), **qf):
+    qf.setdefault("sales_basis", "invoiced")  # SALES-TOTAL-ASK: a basis is named, or the total is asked it first
     return {
         "gate": {"compatible_entities": []},
         "tier_gate": None,
@@ -81,7 +82,7 @@ class TestToolPickAndArgs:
         assert args["rows"] == "month" and args["cols"] == "year"
         assert args["channel"] == "dealer"
         assert args["date_from"] == "2025-01-01" and args["date_to"] == "2026-12-31"
-        assert args["basis"] == "invoiced"  # SALES-UNIFIED: the default is invoiced (was G1 delivered)
+        assert args["basis"] == "invoiced"  # SALES-TOTAL-ASK: the named basis (no default; `test_sales_total_ask`)
         assert "contact_id" in args and "space_id" in args
         assert "reply_format" not in args and "deliver" not in args
 
@@ -130,7 +131,7 @@ class TestGate:
         _seed_contact(session_factory, variables={})
         result, captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[]),
+            qf=_qf(order_status="sales_analysis", entities=[], sales_basis="invoiced"),
             text_body="total project sales this year", msg_id="ZZT-sa-no-key-1",
             attributes=[],
         )
@@ -145,7 +146,7 @@ class TestTextAndFile:
         _seed_contact(session_factory, variables={})
         result, captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[], sales_channel="project"),
+            qf=_qf(order_status="sales_analysis", entities=[], sales_channel="project", sales_basis="invoiced"),
             text_body="total project sales this year", msg_id="ZZT-sa-hit-1",
             attributes=[GRANT], mcp_response=_rendered(),
         )
@@ -164,7 +165,7 @@ class TestTextAndFile:
         _seed_contact(session_factory, variables={})
         result, _captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[]),
+            qf=_qf(order_status="sales_analysis", entities=[], sales_basis="invoiced"),
             text_body="sales this year", msg_id="ZZT-sa-clarify-1",
             attributes=[GRANT],
             mcp_response=_rendered({"status": "clarify", "message": "Sorento or Mocha?"}),

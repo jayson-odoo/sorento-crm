@@ -1275,7 +1275,7 @@ def _lookup_lines(
             # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
             if numbers:
-                hits["spec"] = [*numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+                hits["spec"] = lookup_lists.with_numbers(numbers, hits.get("spec", []), hits.get("category"))
         event = {
             "pieces": lookup_lists.pieces(message),
             "hits": [
@@ -1492,7 +1492,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
         # Spec NUMBERS join the spec block on every path, as in `_lookup_lines`.
         number_keys = {h.row.key for h in prep.numbers}
         if prep.numbers:
-            hits["spec"] = [*prep.numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+            hits["spec"] = lookup_lists.with_numbers(prep.numbers, hits.get("spec", []), hits.get("category"))
         if not event["fallback"]:
             # Trace only: where each row of the final block came from, in render order.
             event["final_block"] = {
@@ -5741,6 +5741,7 @@ def _run_stages_body(  # noqa: PLR0915
             verdict,
             message=user_turn.own_text,
             closed_lists=parser_config.closed_lists,
+            lookup_lists=parser_config.lookup_lists,
             closed_lists_index=parser_config.closed_lists_index,
             listed_codes=listed_codes if parser_config.code_lookup else None,
             pick_info=pick_info if parser_config.code_lookup else None,
