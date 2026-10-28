@@ -46,7 +46,7 @@ describe('projectCodeLabel on a rejected registration (review round 3)', () => {
 });
 
 describe('projectCodeLabel on a resubmitted registration (RESUBMITTED-STATUS)', () => {
-  it('reads Resubmitted where the code would be', () => {
-    expect(projectCodeLabel({ project_code: null, approval_state: 'resubmitted' })).toBe('Resubmitted');
+  it('reads Appealed where the code would be', () => {
+    expect(projectCodeLabel({ project_code: null, approval_state: 'resubmitted' })).toBe('Appealed');
   });
 });

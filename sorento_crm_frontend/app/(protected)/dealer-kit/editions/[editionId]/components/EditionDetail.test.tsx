@@ -415,12 +415,12 @@ describe('EditionDetail, a resubmitted Edition (RESUBMITTED-STATUS)', () => {
     expect(headerActions()).toEqual(['Approve', 'Reject']);
   });
 
-  it('offers Resubmit for approval on a reopened Edition that still carries its reason', async () => {
+  it('offers Appeal on a reopened Edition that still carries its reason', async () => {
     mockGet.mockResolvedValue(edition('draft', { rejectionReason: 'Prices on page 4 are wrong' }));
 
     renderDetail();
     await screen.findByText('Spring 2026');
 
-    expect(headerActions()).toEqual(['Resubmit for approval']);
+    expect(headerActions()).toEqual(['Appeal']);
   });
 });

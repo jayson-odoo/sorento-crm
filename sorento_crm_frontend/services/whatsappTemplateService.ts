@@ -394,7 +394,7 @@ export const PARAM_VARIABLES: { key: ParamVariable; label: string; description: 
   { key: 'entity_number', label: 'Entity number', description: 'e.g. CMP-2606-0012 / RMA-PS2605-0017' },
   { key: 'status', label: 'Status', description: 'New status of the record (approved, rejected…)' },
   { key: 'reason', label: 'Reason', description: 'Decision reason when present' },
-  { key: 'portal_url', label: 'Portal URL', description: 'Interactive portal link - contact can act / resubmit (complaint: /portal/c/…)' },
+  { key: 'portal_url', label: 'Portal URL', description: 'Interactive portal link - contact can act / appeal (complaint: /portal/c/…)' },
   { key: 'view_url', label: 'View link', description: 'Read-only public view of the record (token link, /view/…)' },
   { key: 'message', label: 'Full update message', description: 'The composed update text, flattened to one line' },
   { key: 'otp_code', label: 'OTP code', description: 'The 6-digit portal login verification code' },

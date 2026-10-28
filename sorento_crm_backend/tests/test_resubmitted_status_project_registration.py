@@ -44,12 +44,12 @@ def test_a_resubmitted_registration_can_be_rejected_again(world):
     assert registration(world, rid).approval_state == "rejected"
 
 
-def test_resubmit_tells_the_approvers_it_was_resubmitted(world):
+def test_resubmit_tells_the_approvers_it_was_appealed(world):
     rid = _resubmitted(world)
     recipients = {user for user, _type in world.sent}
     assert recipients == {world.approver}
     titles = [kw.get("title") or "" for kw in world.sent_kw]
-    assert titles and all("resubmitted" in t.lower() for t in titles), titles
+    assert titles and all("appealed" in t.lower() and "resubmit" not in t.lower() for t in titles), titles
     assert all(str(kw.get("source_entity_id") or rid) == rid for kw in world.sent_kw)
 
 
@@ -71,12 +71,12 @@ def test_an_approver_may_edit_a_resubmitted_registration_like_a_pending_one(worl
     assert res.status_code == 200, res.text
 
 
-def test_project_label_reads_resubmitted_where_the_code_would_be():
+def test_project_label_reads_appealed_where_the_code_would_be():
     from types import SimpleNamespace
 
     from app.services.project_service import project_label
 
-    assert project_label(SimpleNamespace(project_code=None, approval_state="resubmitted")) == "Resubmitted"
+    assert project_label(SimpleNamespace(project_code=None, approval_state="resubmitted")) == "Appealed"
     assert project_label(SimpleNamespace(project_code=None, approval_state="pending")) == "Awaiting approval"
 
 

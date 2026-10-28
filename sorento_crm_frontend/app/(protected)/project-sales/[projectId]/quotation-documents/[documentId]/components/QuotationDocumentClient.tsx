@@ -1,5 +1,6 @@
 'use client';
 
+import { APPEAL_VERB } from '@/lib/submission-status';
 import * as React from 'react';
 import Link from 'next/link';
 import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
@@ -211,7 +212,7 @@ export function QuotationDocumentClient({
     (edge) => edge.to_status_id === sendTarget?.id && edge.from_status_id === draftStatus?.id,
   );
   const sendForApprovalLabel =
-    sendEdge?.label || (isResubmit ? 'Resubmit for approval' : 'Send for approval');
+    sendEdge?.label || (isResubmit ? APPEAL_VERB : 'Send for approval');
 
   /** What the next copy of a single frozen scope will be called, e.g. "v3". */
   const nextVersionLabel =

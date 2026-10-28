@@ -120,6 +120,7 @@ import {
   ProductInquiryFormLayout,
 } from '@/app/(protected)/procurement-management/stock-inquiries/components/ProductInquiryFormLayout';
 import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
+import { complaintStatusLabel } from '@/lib/complaint-status';
 
 type ProductLine = {
   item_code?: string;
@@ -453,6 +454,9 @@ const FROZEN_ON_REVISE: Record<PortalSubmissionKind, readonly string[]> = {
   project_registration: [],
   complaint: [],
 };
+
+const VERB_DOING = { Submit: 'Submitting...', Appeal: 'Appealing...' };
+const VERB_DONE = { Submit: 'Submitted.', Appeal: 'Appealed.' };
 
 /** Same sentence the server answers with, so a client-side block and a
  *  server-side one never read differently. Required but with no character
@@ -1173,7 +1177,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
       }
       await flushPendingFiles(id);
       await submitDraft(kind, id, cleanedFields, cleanedProducts);
-      toast.success(verb === 'Resubmit' ? 'Resubmitted.' : 'Submitted.');
+      toast.success(VERB_DONE[verb]);
       router.replace(portalHomePath({ type: kind }));
     } catch (e) {
       if (e instanceof PortalUnauthorizedError) {
@@ -1697,7 +1701,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
     ? { label: 'Draft', variant: 'warning' as const }
     : detail?.status
       ? {
-          label: statusLabel(detail.status),
+          label: kind === 'complaint' ? complaintStatusLabel(detail.status) : statusLabel(detail.status),
           variant:
             detail.status === 'rejected'
               ? ('destructive' as const)
@@ -2296,9 +2300,7 @@ export function SubmissionForm({ kind, submissionId, slug }: Props) {
               disabled={saving || submitting}
             >
               {submitting
-                ? verb === 'Resubmit'
-                  ? 'Resubmitting...'
-                  : 'Submitting...'
+                ? VERB_DOING[verb]
                 : `${verb} ${SUBMISSION_LABELS[kind].toLowerCase()}`}
             </Button>
           )}

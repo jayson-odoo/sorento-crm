@@ -110,6 +110,32 @@ def test_complaint_created_is_templated(db, monkeypatch, no_real_queue):
     assert view_url in row.body_text  # text part carries the link
 
 
+def test_complaint_appeal_notifies_as_an_appeal(db, monkeypatch, no_real_queue):
+    """COMPLAINT-APPEAL-WORDING (owner, 28 Oct): a rejected complaint sent back is an appeal."""
+    from app.models.complaints import Complaint
+    from app.services.complaints_service import ComplaintService
+
+    svc = ComplaintService(db)
+    user = _user(db, name="Complaint Handler")
+    monkeypatch.setattr(
+        svc, "_get_complaint_handler_user_ids", lambda *, company_id=None: [str(user.id)]
+    )
+    c = Complaint(id=str(uuid.uuid4()), complaint_number=unique_code("CN"), status="resubmitted")
+    db.add(c)
+    db.flush()
+
+    svc.notify_team_complaint_external_created(c.id, is_resubmission=True)
+
+    notif = (
+        db.query(Notification)
+        .filter(Notification.source_entity_type == "complaint", Notification.source_entity_id == c.id)
+        .one()
+    )
+    assert notif.title == "Complaint appealed"
+    assert "has been appealed" in notif.data["body_html"]
+    assert "resubmit" not in (notif.title + notif.body + notif.data["body_html"]).lower()
+
+
 # --------------------------------------------------------------------------- #
 # 2. Replacement DO delivered (complaint_do_delivered)                        #
 # --------------------------------------------------------------------------- #

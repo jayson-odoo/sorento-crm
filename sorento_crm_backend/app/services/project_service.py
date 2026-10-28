@@ -40,6 +40,7 @@ from app.services.project_clash_service import (
     find_clashes,
     normalise_project_title,
 )
+from app.services.submission_status import APPEALED_LABEL
 
 NUMBERING_DOC_TYPE = "project"
 
@@ -51,12 +52,12 @@ APPROVE_REGISTRATIONS_PERMISSION = "projects.registrations.approve"
 
 
 REJECTED_LABEL = "Rejected"
-RESUBMITTED_LABEL = "Resubmitted"
+RESUBMITTED_LABEL = APPEALED_LABEL
 
 
 def project_label(project) -> str:
     """The project's code; while it has none, "Rejected" for a refused registration,
-    "Resubmitted" for one sent back after a rejection, and "Awaiting approval" for any other."""
+    "Appealed" for one sent back after a rejection, and "Awaiting approval" for any other."""
     code = (getattr(project, "project_code", None) or "").strip()
     if code:
         return code

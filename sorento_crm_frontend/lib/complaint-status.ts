@@ -1,3 +1,5 @@
+import { APPEALED_LABEL } from '@/lib/submission-status';
+
 /**
  * Single source of truth for complaint status presentation (label + pill colour).
  * Used by the internal system view (ComplaintDetail) and the customer portal so
@@ -28,6 +30,7 @@ export const COMPLAINT_STATUS_PILL_CLASS: Record<string, string> = {
 
 // Explicit labels where a simple title-case wouldn't read well.
 const COMPLAINT_STATUS_LABEL: Record<string, string> = {
+  resubmitted: APPEALED_LABEL,
   processed_by_cs: 'Processed by CS',
   fulfilled: 'Fulfilled',
   settled_on_site: 'Settled on site',
@@ -50,3 +53,4 @@ export function complaintStatusLabel(status?: string | null): string {
     .map((w) => (w ? w.charAt(0).toUpperCase() + w.slice(1) : ''))
     .join(' ');
 }
+
