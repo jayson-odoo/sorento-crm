@@ -122,7 +122,10 @@ describe('Stock Inquiry list, limited user', () => {
   it('status filter offers Draft', async () => {
     renderList(LIMITED);
     await screen.findByText('SI-26-0184');
-    fireEvent.click(screen.getByRole('button', { name: /^Filters?/ }));
+    const trigger = screen.getByRole('button', { name: /^Filters?/ });
+    fireEvent.pointerDown(trigger, { button: 0, pointerId: 1 });
+    fireEvent.pointerUp(trigger, { button: 0, pointerId: 1 });
+    fireEvent.click(trigger);
     expect(await screen.findByRole('button', { name: 'Draft' })).toBeInTheDocument();
   });
 });

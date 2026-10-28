@@ -22,6 +22,8 @@ vi.mock('@/hooks/usePermissions', () => ({
       'sla_management.conversations.view_own',
       'sales.customer_asks.view',
       'sales.customer_asks.edit',
+      'procurement.stock_inquiries.view_own',
+      'complaint_management.complaints.view_own',
     ]),
     isLoading: false,
   }),
@@ -61,13 +63,16 @@ beforeEach(() => {
 });
 
 describe('SidebarMenu MY REQUESTS active item', () => {
-  it('type=complaint: only Complaint is active', () => {
+  it('/complaint-management/complaints: only Complaint is active', () => {
+    nav.pathname = '/complaint-management/complaints';
+    nav.search = '';
     const { container } = render(<SidebarMenu />);
     expect(activeTitles(container)).toEqual(['Complaint']);
   });
 
-  it('type=stock_inquiry: only Stock Inquiry is active', () => {
-    nav.search = 'type=stock_inquiry';
+  it('/procurement-management/stock-inquiries: only Stock Inquiry is active', () => {
+    nav.pathname = '/procurement-management/stock-inquiries';
+    nav.search = '';
     const { container } = render(<SidebarMenu />);
     expect(activeTitles(container)).toEqual(['Stock Inquiry']);
   });
@@ -85,15 +90,8 @@ describe('SidebarMenu MY REQUESTS active item', () => {
     expect(activeTitles(container)).toEqual(['Projects']);
   });
 
-  it('/my-requests/complaint/new: only Complaint is active', () => {
-    nav.pathname = '/my-requests/complaint/new';
-    nav.search = '';
-    const { container } = render(<SidebarMenu />);
-    expect(activeTitles(container)).toEqual(['Complaint']);
-  });
-
-  it('/my-requests/stock_inquiry/<id>: only Stock Inquiry is active', () => {
-    nav.pathname = '/my-requests/stock_inquiry/3f2a9c1e-0000-4000-8000-000000000001';
+  it('/procurement-management/stock-inquiries/<id>: only Stock Inquiry is active', () => {
+    nav.pathname = '/procurement-management/stock-inquiries/3f2a9c1e-0000-4000-8000-000000000001';
     nav.search = '';
     const { container } = render(<SidebarMenu />);
     expect(activeTitles(container)).toEqual(['Stock Inquiry']);

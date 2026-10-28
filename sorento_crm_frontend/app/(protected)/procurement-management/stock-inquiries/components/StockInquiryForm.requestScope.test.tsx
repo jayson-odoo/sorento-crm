@@ -9,6 +9,7 @@
  *  - staff /new: no draft buttons, purchasing response present, requestors from the staff endpoint.
  */
 import React from 'react';
+import { submitVerb } from '@/lib/submission-status';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -191,10 +192,10 @@ describe('limited user, edit', () => {
     await waitFor(() => expect(urls((c) => c.method === 'PUT' && c.url === '/api/v1/my-requests/submissions/stock_inquiry/si-5')).toHaveLength(1));
   });
 
-  it('a rejected row is editable (Submit available)', async () => {
+  it('a rejected row is editable (send-back button available)', async () => {
     sources['si-5'] = detail({ id: 'si-5', status: 'rejected', is_draft: true });
     mount(LIMITED, { inquiryId: 'si-5' });
-    expect(await screen.findByRole('button', { name: /^Submit/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: new RegExp(`^${submitVerb('rejected')}`) })).toBeInTheDocument();
   });
 
   it.each(['pending_purchasing', 'responded', 'resubmitted'])('a %s row offers no save or submit when not revising', async (status) => {
