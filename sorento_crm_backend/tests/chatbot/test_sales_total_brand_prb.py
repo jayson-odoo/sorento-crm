@@ -111,11 +111,14 @@ def test_b7_live_brand_word_not_in_resolver_matches_still_filters_the_total(sess
 
 
 def test_b7_live_near_miss_a_brand_word_matching_no_live_brand_is_said_never_dropped(session_factory, monkeypatch) -> None:
-    """REPORT-UNIFY: a brand word that matches no brand is said, never run as an unfiltered total."""
+    """REPORT-UNIFY: a brand word that matches no brand is said, never run as an unfiltered total. Owner Q4 (a),
+    27 Oct 2026: beside an applied filter (the customer this turn names) the total runs on that filter with a
+    "Not applied:" line naming the word; never a total with the brand silently dropped."""
     _live_brand(session_factory, "Sorento")
     calls, reply = _brand_turn(
         session_factory, monkeypatch, tag="nomatch",
         brand_entities=[{"raw": "Zzzunknown", "hint": "brand", "canonical_code": None, "current_message": True, "confident": True}],
     )
-    assert not calls, calls
-    assert "Zzzunknown" in reply, reply
+    assert len(calls) == 1 and not calls[0].get("brand_ids"), calls
+    assert calls[0].get("customer_ids"), calls
+    assert "Not applied:" in reply and "Zzzunknown" in reply, reply

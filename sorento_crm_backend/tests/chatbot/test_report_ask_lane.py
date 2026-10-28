@@ -915,10 +915,13 @@ def test_the_lane_takes_measure_amount_from_the_parsers_measure_key(console) -> 
 
 def test_a_ranking_noun_entity_is_not_filtered_by_the_lane_it_is_the_parsers_to_omit(console) -> None:
     """Counterpart of the removed noun-drop: the lane does not special-case "salesman"; an
-    unknown sales_agent word is the plain unknown-word line (the new prompt never emits it)."""
+    unknown sales_agent word is the plain unknown word (the new prompt never emits it). REPORT-UNIFY owner Q4 (a),
+    27 Oct 2026: beside an applied filter (the brand) it is a "Not applied:" line and the ask runs on the rest; it
+    is the "I don't know" question only when it is the sole subject."""
     text, calls = console.say(_rank(_e("salesman", "sales_agent"), _e("Sorento", "brand")), "top 3 salesman for sorento")
-    assert calls == []
-    assert text.strip() == "I don't know 'salesman' as a sales agent.", text
+    (args,) = calls
+    assert args.get("brand_ids") and not args.get("sales_agent_ids"), args
+    assert "Not applied:" in text and "salesman" in text, text
 
 
 @pytest.mark.parametrize("body", ["top 3 salesman for sorento this year", "top 3 sales agents for sorento this year", OWNER_MESSAGE])
