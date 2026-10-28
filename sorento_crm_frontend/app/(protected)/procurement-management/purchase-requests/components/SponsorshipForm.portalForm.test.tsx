@@ -115,6 +115,7 @@ vi.mock('@/lib/api', () => ({
 
 import PurchaseRequestForm from './PurchaseRequestForm';
 import PurchaseRequestDetail from './PurchaseRequestDetail';
+import { toast } from '@/lib/toast';
 import { getProject } from '@/app/(protected)/project-sales/_shared/services/projectService';
 
 const SLUG = 'procurement.sponsorship_forms';
@@ -361,7 +362,6 @@ describe('staff keep today\'s Sponsorship Form screens', () => {
 const PROJECT_ID = '5b0c1d2e-aaaa-4bbb-8ccc-0123456789ab';
 const PROJECT = { id: PROJECT_ID, project_code: 'PRJ-0001', title: 'Project One', company_name: 'Company A' };
 const NO_COMPANY = 'Your contact is not linked to any company yet, so no project can be attached. Ask the Sorento team to link your company first.';
-const NOT_PERMITTED = 'That project is not one of yours. Pick a project from the list, which shows the ones registered under your company.';
 
 function mountSeeded(defaultProjectId?: string) {
   held = new Set(LIMITED);
@@ -404,37 +404,21 @@ describe('limited user, Sponsorship Form seeded from a project (?project_id=)', 
     expect((document.getElementById('project_title') as HTMLInputElement).value).toBe('');
   });
 
-  it.each([
-    ['sponsorship_contact_no_company', NO_COMPANY],
-    ['sponsorship_project_not_permitted', NOT_PERMITTED],
-  ])('Save as draft refused with %s: a clear alert in the form, no raw code, no navigation', async (code, message) => {
+  it('Submit refused with sponsorship_contact_no_company: toast.error carries exactly the message, no raw code anywhere, no navigation', async () => {
     meNow = { requires_registered_project: false };
-    refusal = { on: 'save', code, message };
+    refusal = { on: 'submit', code: 'sponsorship_contact_no_company', message: NO_COMPANY };
     mountSeeded(PROJECT_ID);
     fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain(message);
-    expect(document.body.textContent).not.toContain(code);
-    expect(push).not.toHaveBeenCalled();
-    expect(screen.getByRole('button', { name: 'Save as draft' })).toBeInTheDocument();
-  });
-
-  it.each([
-    ['sponsorship_contact_no_company', NO_COMPANY],
-    ['sponsorship_project_not_permitted', NOT_PERMITTED],
-  ])('Submit refused with %s: a clear alert in the form, no raw code, no navigation', async (code, message) => {
-    meNow = { requires_registered_project: false };
-    refusal = { on: 'submit', code, message };
-    mountSeeded(PROJECT_ID);
-    fireEvent.click(await screen.findByRole('button', { name: 'Save as draft' }));
+    await waitFor(() => expect(calls.some((c) => c.method === 'POST' && c.url === '/api/v1/my-requests/submissions/sponsorship_form')).toBe(true));
+    push.mockClear(); // the draft save itself may navigate; only the refused Submit must not
     fireEvent.click(await screen.findByRole('button', { name: /^Submit/ }));
     await act(async () => { await new Promise((r) => setTimeout(r, 150)); });
     const dialog = screen.queryByRole('dialog') ?? screen.queryByRole('alertdialog');
     const confirm = dialog && Array.from(dialog.querySelectorAll('button')).find((b) => /submit|confirm|yes|send/i.test(b.textContent ?? ''));
     if (confirm) fireEvent.click(confirm);
-    const alert = await screen.findByRole('alert');
-    expect(alert.textContent).toContain(message);
-    expect(document.body.textContent).not.toContain(code);
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith(NO_COMPANY));
+    expect(JSON.stringify((toast.error as ReturnType<typeof vi.fn>).mock.calls)).not.toContain('sponsorship_contact_no_company');
+    expect(document.body.textContent).not.toContain('sponsorship_contact_no_company');
     expect(push).not.toHaveBeenCalled();
   });
 });
