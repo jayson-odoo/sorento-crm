@@ -368,8 +368,6 @@ def report_ask(
         from app.services.sales.invoiced_sales import require_invoiced_access
 
         require_invoiced_access(db, current_user)
-    # Unpaid invoices follow the CONTACT's Outstanding reveal like the other outstanding kinds (owner Q6, decision 28 Oct);
-    # the act-as user needs no `finance.billing_documents.view` here. The staff screen keeps that slug (security B1).
     if basis_norm == "invoiced" and (codes or group_norm == "location"):
         # A billing document line has no warehouse (SALES-UNIFIED, contract section 7).
         raise _unprocessable(
@@ -418,6 +416,14 @@ def report_ask(
         raise AppException(403, "Sales report is not enabled for your account.", code="sales_report_not_enabled")
     # The 08:40 ruling is about SALES figures. The outstanding kinds keep Q6 (the Outstanding reveal): a salesperson without
     # it stays on its own book there and never takes the agent axes.
+    # Owner 28 Oct: unpaid invoices are receivables. They need the Outstanding reveal for everyone, a salesperson with a
+    # book included (no own-book exception), AND `finance.billing_documents.view` on the act-as user.
+    if basis_norm == "unpaid":
+        if not granted:
+            raise AppException(403, "Outstanding is not enabled for your account.", code="outstanding_not_enabled")
+        from app.services.sales.invoiced_sales import require_unpaid_access
+
+        require_unpaid_access(db, current_user)
     own_book_only = outstanding_kind and not granted
     if own_book_only and (group_norm == "sales_agent" or agents or card_agents):
         raise AppException(403, _DEALER_MESSAGE, code="report_dimension_not_allowed")

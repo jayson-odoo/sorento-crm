@@ -254,6 +254,18 @@ def test_a_salesperson_without_an_agent_link_and_no_grant_is_refused(client, db,
     _refused(_ask(client, contact, group_by="customer", top_n=10, mine=mine))
 
 
+@pytest.mark.parametrize("mine", [None, False, True])
+def test_a_salesperson_without_the_outstanding_reveal_is_refused_unpaid_but_keeps_the_other_outstanding_kinds(client, db, mine):
+    """Owner 28 Oct: unpaid invoices need the Outstanding reveal, salespeople included (no own-book exception). The other
+    outstanding kinds keep the own book rule."""
+    w = _world(db)
+    contact = _salesperson(db, w, granted=False)
+    resp = _ask(client, contact, basis="unpaid", measure=None, mine=mine)
+    assert resp.status_code == 403 and resp.json()["code"] == "outstanding_not_enabled", resp.text
+    for basis in ("outstanding", "pending_delivery"):
+        assert _ask(client, contact, basis=basis, measure=None, mine=mine).status_code == 200, basis
+
+
 # ------------------------------------------------------------------ 8. security: the no-grant book needs a LIVE salesperson user
 
 
@@ -428,7 +440,8 @@ def test_a_salesperson_without_the_outstanding_reveal_stays_on_their_book_there(
 def test_a_salesperson_without_the_outstanding_reveal_may_not_use_the_agent_axis(client, db, basis, group_by):
     w = _open_world(db)
     contact = _salesperson(db, w, granted=False)
-    _refused(_outstanding(client, contact, basis=basis, group_by=group_by, top_n=10))
+    codes = ("outstanding_not_enabled",) if basis == "unpaid" else ("sales_report_not_enabled", "report_dimension_not_allowed")
+    _refused(_outstanding(client, contact, basis=basis, group_by=group_by, top_n=10), codes=codes)
 
 
 def test_a_salesperson_with_the_outstanding_reveal_sees_all_outstanding(client, db):

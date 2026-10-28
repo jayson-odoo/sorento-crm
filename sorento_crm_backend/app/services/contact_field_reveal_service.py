@@ -64,7 +64,7 @@ FIELD_REVEAL_KEYS: tuple[tuple[str, str], ...] = (
     ("purchase_orders.placed", "PO placed (on order) on stock answers"),
     ("purchase_orders.supplier", "PO supplier"),
     ("purchase_orders.cost", "Last purchase cost"),
-    ("sales_orders.outstanding", "Sales order outstanding"),
+    ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),
     # PLAN-chatbot-sales-report.md S10 (AC-1641). Like `sales_orders.outstanding`
     # above, this gates a whole TOOL rather than one field - the lane refuses the
     # ask before any fetch (`lanes/business/__init__.py::run_fetch`), with no

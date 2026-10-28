@@ -848,7 +848,7 @@ class TestSoKeyListedInFieldRevealKeysAndCatalog:
 
         from app.services.contact_field_reveal_service import FIELD_REVEAL_KEYS
 
-        pair = ("sales_orders.outstanding", "Sales order outstanding")
+        pair = ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)")
         assert pair in FIELD_REVEAL_KEYS, (
             f"FIELD_REVEAL_KEYS must carry {pair}, the key that gates AC-1140/AC-1141: "
             f"{FIELD_REVEAL_KEYS}"

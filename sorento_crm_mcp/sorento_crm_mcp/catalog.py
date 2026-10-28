@@ -670,7 +670,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         # DO-ASK-SIMPLIFY rule 2 (owner, 2 Oct 2026): the DO list's logistics fields are
         # per-contact reveals, gated by `output_structurer` off `_orders_list`'s restrict.
         restricted_fields=(
-            ("sales_orders.outstanding", "Sales order outstanding"),
+            ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),
             ("delivery_orders.status", "DO status"),
             ("delivery_orders.pickup_time", "DO pickup time"),
             ("delivery_orders.transporter", "DO transporter"),
@@ -728,7 +728,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         # `crm_order_management_orders_list` above - see its own comment. DO-ASK-SIMPLIFY
         # (owner hand test 3 Oct 2026): the DO fields this list prints are reveals too.
         restricted_fields=(
-            ("sales_orders.outstanding", "Sales order outstanding"),
+            ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),
             ("delivery_orders.order_number", "DO order number"),
             ("delivery_orders.customer", "DO customer"),
             ("delivery_orders.order_date", "DO order date"),
@@ -800,7 +800,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         domain="orders",
         related_tools=("crm_order_management_orders_list", "crm_order_management_orders_by_product_list"),
         escalation_team="sales",
-        restricted_fields=(("sales_orders.outstanding", "Sales order outstanding"),),
+        restricted_fields=(("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),),
     ),
     ToolSpec(
         "crm_sales_report",
@@ -1003,7 +1003,7 @@ CATALOG: tuple[ToolSpec, ...] = (
         escalation_team="sales",
         restricted_fields=(
             ("sales_orders.sales_report", "Sales report"),
-            ("sales_orders.outstanding", "Sales order outstanding"),
+            ("sales_orders.outstanding", "Outstanding (orders, deliveries, unpaid invoices)"),
             ("chatbot.analytics", "Chat analytics"),
         ),
     ),

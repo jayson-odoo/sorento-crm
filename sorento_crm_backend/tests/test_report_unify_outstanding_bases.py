@@ -497,21 +497,25 @@ def test_ac_ru_9a_a_linked_dealer_with_the_outstanding_reveal_sees_only_its_own_
 # ================================================================ security S1: unpaid is receivables, finance data
 
 
-def test_unpaid_on_the_report_ask_follows_the_contacts_outstanding_reveal_not_the_act_as_finance_view(db) -> None:
-    """Owner Q6 ("Unpaid invoices need the Outstanding reveal too", decision 28 Oct, replacing security S1): on the chatbot
-    route `basis=unpaid` is gated by the CONTACT's Outstanding reveal like the other outstanding kinds. The act-as user
-    needs no `finance.billing_documents.view`; the staff SCREEN keeps that slug (security B1)."""
+def test_unpaid_on_the_report_ask_needs_both_the_contacts_outstanding_reveal_and_the_act_as_finance_view(db) -> None:
+    """Owner 28 Oct: `basis=unpaid` on the chatbot route needs BOTH the contact's Outstanding reveal AND
+    `finance.billing_documents.view` on the act-as user. The other outstanding kinds need the reveal only."""
     from tests.test_sales_yearly_routes import _client, _user
 
     holder = _holder(db, "sales_orders.outstanding")
     sales_only = _holder(db, "sales_orders.sales_report")
     principal = _user(db, DEFAULT_COMPANY_ID)
-    with _client(db, principal, allow=("order_management.orders.view",)) as c:
-        for basis in ("unpaid", "outstanding", "pending_delivery"):
+    with _client(db, principal, allow=("order_management.orders.view",)) as c:  # reveal, but no finance view
+        refused = _ask(c, holder, basis="unpaid")
+        assert refused.status_code == 403 and refused.json()["code"] == "unpaid_needs_finance_view", refused.text
+        for basis in ("outstanding", "pending_delivery"):
             assert _ask(c, holder, basis=basis).status_code == 200, basis
-        refused = _ask(c, sales_only, basis="unpaid")
-        assert refused.status_code == 403 and refused.json()["code"] == "outstanding_not_enabled", refused.text
         assert c.get("/api/v1/reports/unpaid_documents").status_code == 403  # the screen still needs the finance slug
+    finance = ("order_management.orders.view", "finance.billing_documents.view")
+    with _client(db, principal, allow=finance) as c:
+        assert _ask(c, holder, basis="unpaid").status_code == 200  # both
+        no_reveal = _ask(c, sales_only, basis="unpaid")  # the slug without the contact's reveal
+        assert no_reveal.status_code == 403 and no_reveal.json()["code"] == "outstanding_not_enabled", no_reveal.text
 
 
 # ================================================================ phase 3 S6: unpaid for a brand-scoped contact
