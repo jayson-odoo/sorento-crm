@@ -5951,8 +5951,10 @@ def _run_stages_body(  # noqa: PLR0915
             _typed = bool(jsc.js_string(verdict.get("by_words") or "").strip()) or any(
                 verdict.get(k) not in (None, "") for k in ("top_n", "rank_direction", "rank_by")
             )
-            if _candidate is not verdict and not _typed:
-                verdict, _company_pick = _candidate, True
+            _declared = _candidate.get("open_question_answer")
+            if not _typed and (_candidate is not verdict or (isinstance(_declared, dict) and _declared.get("mode") == "pick")):
+                # An untyped `group_by` on the answering turn is a guess (R6): the held ask's axis stands.
+                verdict, _company_pick = {**_candidate, "group_by": None}, _candidate is not verdict
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and open_ask.get("asking") == "basis":
             verdict = report_ask.as_basis_answer(verdict, open_ask)  # reference_positions pick an offered option
         if (open_ask or {}).get("ask") == report_ask.ASK_NAME and not _company_pick and report_ask.names_its_own_ask(
