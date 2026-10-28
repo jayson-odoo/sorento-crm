@@ -1,6 +1,6 @@
 # PLAN: STOCKDEBT-NO-PLAN-REACH - the Stock Debt view walks a decided line as if it had no decision
 
-Status: Build (PR #1945; red-first 10 of 26 new tests red before the fix, green after). Track: full
+Status: Merge-ready pending CI + owner hand test (PR #1945; red-first 10 of 26 new tests red before the fix, green after; reviewer READY; browser pass PASS at 1280 + 375). Track: full
 (size M by the brief; the diff itself is small: one parameter in the view, the rest is tests). Base: main
 f64f4db1 (carries #1919 BOARD-NO-HOLD and #1935 BORROW-NO-HOLD).
 
