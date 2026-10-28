@@ -65,7 +65,8 @@ class ForkSafeWorker(Worker):
     in-process drain uses.
     """
 
-    def perform_job(self, job, queue):  # noqa: ANN001
+    # Forward everything: rq 3.0 added `execution`, and dropping it killed every job.
+    def perform_job(self, job, queue, *args, **kwargs):  # noqa: ANN001
         try:
             from app.database import engine
 
@@ -75,7 +76,7 @@ class ForkSafeWorker(Worker):
         from app.services.queue_service import job_actor_scope
 
         with job_actor_scope(job):
-            return super().perform_job(job, queue)
+            return super().perform_job(job, queue, *args, **kwargs)
 
 
 def _maybe_start_scheduler():

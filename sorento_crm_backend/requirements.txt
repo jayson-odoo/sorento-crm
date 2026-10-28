@@ -27,7 +27,7 @@ openpyxl>=3.1.2
 # weasyprint, but a transitive pin is not a contract - openpyxl's own image support needs it too.
 pillow>=10.0.0
 redis>=5.0.0
-rq>=2.0
+rq>=2.0,<3  # 3.x unverified beyond worker.py; lift with tests/test_worker_runs_a_job.py green
 pywebpush>=1.14.0
 pytest>=7.0.0
 # Parallel test execution. Powers the blocking `test-backend` CI gate, which

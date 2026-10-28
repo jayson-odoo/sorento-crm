@@ -454,7 +454,7 @@ class TestWorker:
             "from unittest.mock import patch, MagicMock\n"
             "from rq import Worker\n"
             "from app.audit_context import current_audit_context, get_actor\n"
-            "def fake(self, job, queue):\n"
+            "def fake(self, job, queue, *args, **kwargs):\n"
             "    c, a = current_audit_context(), get_actor()\n"
             "    print(a.user_id, a.actor_type, c.source, c.correlation_id)\n"
             "job = MagicMock(); job.id = 'jid-7'; job.origin = 'imports'\n"
