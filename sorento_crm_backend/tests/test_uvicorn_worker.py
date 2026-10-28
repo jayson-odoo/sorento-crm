@@ -8,6 +8,7 @@ Two gaps in uvicorn's stock shutdown, both read from the installed code:
 - gunicorn's heartbeat is sent only from uvicorn's main loop (`Server.on_tick`), so through the
   shutdown the arbiter heard nothing and aborted the worker after its `timeout` (120 s, the last
   beat up to 60 s earlier), mid-row, before the lifespan shutdown let the drains finish.
+The heartbeat stays on the event loop, so a worker whose loop is wedged is still killed.
 """
 import asyncio
 import time
@@ -39,9 +40,33 @@ def test_shutdown_stops_the_inbox_before_waiting_on_connections(monkeypatch):
     assert calls == ["inbox stops", "connection wait + lifespan shutdown"]
 
 
-def test_the_heartbeat_keeps_going_while_the_shutdown_blocks_the_loop(monkeypatch):
-    """The lifespan shutdown blocks the event loop (stop_inbox_queue waits on the drains), so
-    the heartbeat cannot be an asyncio task: it must still beat while the loop is blocked."""
+def test_the_heartbeat_keeps_going_through_the_drains_wait(monkeypatch):
+    """The lifespan shutdown waits for the inbox drains off the event loop
+    (`asyncio.to_thread(stop_inbox_queue)`, app/main.py shutdown_event), and the heartbeat
+    keeps beating all through it, then stops with the shutdown."""
+    monkeypatch.setattr(chat_turns, "begin_inbox_shutdown", lambda: None, raising=False)
+    monkeypatch.setattr(uvicorn_worker.DrainingServer, "HEARTBEAT_EVERY", 0.05, raising=False)
+    beats: list[float] = []
+    window: dict[str, float] = {}
+
+    async def stock_shutdown(self, sockets=None):
+        window["start"] = time.monotonic()
+        await asyncio.to_thread(time.sleep, 0.4)
+        window["end"] = time.monotonic()
+
+    monkeypatch.setattr(uvicorn.Server, "shutdown", stock_shutdown)
+
+    asyncio.run(_server(notify=lambda: beats.append(time.monotonic())).shutdown())
+    time.sleep(0.15)
+
+    during = [t for t in beats if window["start"] <= t <= window["end"]]
+    assert len(during) >= 4, beats
+    assert all(t <= window["end"] + 0.06 for t in beats), "the heartbeat outlived the shutdown"
+
+
+def test_a_wedged_event_loop_gets_no_heartbeat(monkeypatch):
+    """The heartbeat proves the event loop is alive: a shutdown that blocks the loop must not
+    be shielded from the arbiter's timeout, which is what kills a genuinely hung worker."""
     monkeypatch.setattr(chat_turns, "begin_inbox_shutdown", lambda: None, raising=False)
     monkeypatch.setattr(uvicorn_worker.DrainingServer, "HEARTBEAT_EVERY", 0.05, raising=False)
     beats: list[float] = []
@@ -55,11 +80,9 @@ def test_the_heartbeat_keeps_going_while_the_shutdown_blocks_the_loop(monkeypatc
     monkeypatch.setattr(uvicorn.Server, "shutdown", stock_shutdown)
 
     asyncio.run(_server(notify=lambda: beats.append(time.monotonic())).shutdown())
-    time.sleep(0.15)
 
-    during = [t for t in beats if window["start"] <= t <= window["end"]]
-    assert len(during) >= 4, beats
-    assert all(t <= window["end"] + 0.06 for t in beats), "the heartbeat outlived the shutdown"
+    wedged = [t for t in beats if window["start"] + 0.1 < t < window["end"]]
+    assert wedged == [], f"{len(wedged)} beats while the event loop was blocked"
 
 
 def test_the_heartbeat_stops_at_its_bound(monkeypatch):
@@ -70,7 +93,7 @@ def test_the_heartbeat_stops_at_its_bound(monkeypatch):
     beats: list[float] = []
 
     async def stock_shutdown(self, sockets=None):
-        time.sleep(0.6)
+        await asyncio.sleep(0.6)
 
     monkeypatch.setattr(uvicorn.Server, "shutdown", stock_shutdown)
 
@@ -82,8 +105,10 @@ def test_the_heartbeat_stops_at_its_bound(monkeypatch):
 
 
 def test_the_worker_serves_through_the_draining_server(monkeypatch, tmp_path):
-    """gunicorn's worker class builds a DrainingServer with its own heartbeat and gunicorn's
-    graceful_timeout as the bound."""
+    """gunicorn's worker class, run the way gunicorn runs it (`run()`), serves through a
+    DrainingServer with its own heartbeat and gunicorn's graceful_timeout as the bound. Driven
+    through `run()` so a rename of uvicorn's `_serve` fails here instead of silently skipping
+    the override."""
     from gunicorn.config import Config
     from gunicorn.glogging import Logger
 
@@ -98,10 +123,10 @@ def test_the_worker_serves_through_the_draining_server(monkeypatch, tmp_path):
         served.append(self)
         self.started = True
 
-    monkeypatch.setattr(uvicorn_worker.DrainingServer, "serve", serve, raising=False)
+    monkeypatch.setattr(uvicorn.Server, "serve", serve)
 
-    asyncio.run(worker._serve())
+    worker.run()
 
-    assert len(served) == 1 and isinstance(served[0], uvicorn_worker.DrainingServer)
+    assert len(served) == 1 and isinstance(served[0], uvicorn_worker.DrainingServer), served
     assert served[0]._notify == worker.notify
     assert served[0]._heartbeat_for == 150
