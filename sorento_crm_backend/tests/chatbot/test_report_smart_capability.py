@@ -73,13 +73,14 @@ def test_e1_sales_by_every_agent_is_one_question_then_the_whole_breakdown(consol
     text, calls = console.say(_ask(order_status=status, group_by="sales_agent"), body)
     assert calls == [], (text, calls)
     _no_unsupported_line(text)
-    # A breakdown of all agents is never asked "how many": only the metric and the basis.
-    assert TOPN_Q not in text and _numbered(text) == [1, 2], text
+    # A breakdown of all agents is never asked "how many" nor the measure (hand test 28 Oct: it shows qty and RM, sorted
+    # by amount): the basis is the one question.
+    assert TOPN_Q not in text and _numbered(text) == [] and "quantity" not in text.lower(), text
 
-    text, calls = console.say(_reply(measure="amount", basis="delivered"), "amount, delivered")
+    text, calls = console.say(_reply(basis="delivered"), "delivered")
     assert len(calls) == 1, (text, calls)
     args = calls[0]
-    assert args["group_by"] == "sales_agent" and args["measure"] == "amount" and args["basis"] == "delivered", args
+    assert args["group_by"] == "sales_agent" and args["basis"] == "delivered" and not args.get("measure"), args
     assert args["top_n"] >= 100, args  # every agent, not a top few
     assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
 
@@ -105,16 +106,14 @@ def test_e1_the_analysis_basis_word_fills_the_basis(console) -> None:
 # ---------------------------------------------------------------- example 2: by customer
 
 
-def test_e2_delivered_sales_by_customer_asks_only_the_metric(console) -> None:
+def test_e2_delivered_sales_by_customer_is_a_breakdown_that_runs_at_once(console) -> None:
+    """A breakdown (no ranking mark from the parser) asks no measure: it runs, both measures shown (hand test 28 Oct)."""
     text, calls = console.say(
         _ask(order_status="sales_analysis", group_by="customer", basis="delivered", **NINE_MONTHS),
         "dealer deliver sale 1/1/26-30/9/26 by dealer",
     )
-    assert calls == [], (text, calls)
     _no_unsupported_line(text)
-    assert "quantity" in text.lower() and _numbered(text) == [], text
-    text, calls = console.say(_reply(measure="amount"), "amount")
-    assert len(calls) == 1, (text, calls)
+    assert len(calls) == 1 and "quantity" not in text.lower(), (text, calls)
     assert calls[0]["group_by"] == "customer" and calls[0]["date_from"] == "2026-01-01", calls
     assert calls[0]["date_to"] == "2026-09-30", calls
 

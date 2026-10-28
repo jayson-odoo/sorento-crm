@@ -239,6 +239,7 @@ ASK_DEFINITION = reg.ReportDefinition(
     detail=reg.DetailLayout(
         title="Billing document lines",
         order_by=lambda c: [BillingDocument.doc_date.desc(), BillingDocument.doc_no.asc(), BillingDocumentLine.id.asc()],
+        cap="truncate",
     ),
     pivot=reg.PivotLayout(title="Invoiced sales"),
     default_view={

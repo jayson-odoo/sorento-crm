@@ -351,10 +351,8 @@ COMPANY_FORBIDDEN_LINE = "You do not have access to that company."
 def _company_held(extras: dict[str, Any], values: dict[str, Any], args: dict[str, Any], held: dict[str, Any]) -> dict[str, Any]:
     """`held` with the company question brought back while it is still owed: the first message found the company
     unnamed (its options ride the slot's extras) and neither an answer nor a named company has settled it."""
-    period = _dict(extras.get("held_period"))
-    if period and "period" not in values:
-        # The company is asked first, so the first message's period was never settled onto the slot: it rides the extras.
-        held = {**held, "period": rf.Resolved("ok", value=period.get("value"), label=str(period.get("label") or ""))}
+    if extras.get("breakdown") and "metric" not in values and "metric" not in held:
+        held = {**held, "metric": rf.Resolved("ok", value=None, label="")}  # a breakdown shows both measures: never asked
     options = extras.get("company_options")
     if not options or "company" in values or args.get("company"):
         return held
@@ -372,7 +370,7 @@ COMPANY = rf.FieldSpec(
 
 SALES_RANKING_ASK = rf.register(rf.AskType(
     name=ASK_NAME,
-    fields=(COMPANY, PERIOD, TOP_N, METRIC, BASIS, SALES_AGENT),  # a two-company contact is asked the company first
+    fields=(PERIOD, TOP_N, METRIC, BASIS, COMPANY, SALES_AGENT),  # the required fields first, the company last (one order)
     slot_fields=(SCOPE,),
     # REPORT-SMART-L S3-1: the parser is shown the question (owed fields + held values) and
     # its declared answer (mode fill) runs the ask, as the low stock report's.
@@ -473,6 +471,17 @@ def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
     dropped, so the held ask resumes with the picked row instead of becoming a ranking by that kind (and
     a sales total refused as "I can't break sales down by customer"). Any other axis, an "all" answer
     and every other open question are untouched. Parser fields only."""
+    answer = verdict.get("open_question_answer") if isinstance(verdict.get("open_question_answer"), dict) else {}
+    picked = answer.get("mode") == "pick" and bool(jsc.array(answer.get("picked")))
+    ranking = _dict(_dict(getattr(pending, "payload", None)).get("filters")).get("ranking")
+    if (
+        getattr(pending, "kind", None) == "top_selling_pick"
+        and _dict(ranking).get("group_by") == SO_LIST
+        and (picked or jsc.array(verdict.get("reference_positions")))
+    ):
+        # The open "Reply 1 for the sales order list" offer is answered before any axis or status check: a position
+        # under it is the pick, whatever stale report status or guessed axis the parse also carried.
+        return {**verdict, "group_by": None, "order_status": None}
     axis = _PICK_AXIS.get(getattr(pending, "kind", None) or "")
     if axis is None or jsc.js_string(verdict.get("group_by") or "").strip().lower() != axis:
         return verdict
@@ -561,6 +570,8 @@ def as_outstanding(verdict: dict[str, Any], *, subject: bool = False) -> dict[st
         **SALES_RANKING_ASK.reroute,
         "capability_from": "outstanding",
         "report_breakdown": verdict.get("rank_direction") not in ("top", "bottom"),
+        # An outstanding ask is never a refine of a held sales report: no refine path may infer its kind or its period.
+        "ranking_refine": False,
     }
     if kind:
         out["basis"] = kind
@@ -1663,6 +1674,13 @@ def _settle(
     if args.get("compare_to") and args.get("group_by") == "month":
         return None, COMPARE_BY_MONTH_LINE
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
+    breakdown = (
+        parse_output.get("report_breakdown") is True and bool(args.get("group_by"))
+        and not any(parse_output.get(k) not in (None, "") for k in ("rank_direction", "top_n", "rank_by"))  # a ranking mark
+    )
+    if breakdown and "metric" not in given:
+        # A breakdown (no ranking marker from the parser) shows both qty and RM, sorted by amount: no measure question.
+        given["metric"] = rf.Resolved("ok", value=None, label="")
     agent_pick = args.pop("sales_agent_pick", None)
     if agent_pick:
         given["sales_agent"] = rf.Resolved("ambiguous", options=tuple((i, str(n)) for i, n in agent_pick))
@@ -1690,12 +1708,18 @@ def _settle(
         # An outstanding TOTAL that named its kind shows both measures (no "by quantity or by amount?"); a ranking by an
         # axis still asks what it ranks by (phase 3, S5).
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
-    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or held_period
+    kind_ask_now = parse_output.get("capability_from") == "outstanding" or args.get("basis") in OUTSTANDING_KINDS
+    # An outstanding kind uses only a period NAMED in this message: a period carried from an earlier sales ask is dropped.
+    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or (
+        None if kind_ask_now else held_period
+    )
     if period is not None and (parse_output.get("ranking_refine") is not True or args.get("group_by")):
         # A refine with no ranking held has nothing to refine: it is a fresh ask, and a
         # period alone never runs a total (it asks). One that names its own axis (R5 row 7) keeps its period.
         given["period"] = period
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
+    if breakdown:
+        extras["breakdown"] = True
     if company_options:
         extras["company_options"] = company_options
         extras["company_codes"] = [str(c[2]) for c in own]  # the pick's aliases (`sales_company_ask.as_answer`)
@@ -1706,9 +1730,6 @@ def _settle(
     if period is None and (args.get("basis") in OUTSTANDING_KINDS or extras.get("kind_ask")):
         # An outstanding kind takes no period: none named means every date (the route's own reading).
         given["period"] = rf.Resolved("ok", value={"from": None, "to": None}, label="all dates")
-    first_period = given.get("period")
-    if company_options and isinstance(first_period, rf.Resolved) and first_period.status == "ok":
-        extras["held_period"] = {"value": first_period.value, "label": first_period.label}
     if across_all and frame.get("group_by") in AXIS_NOUNS and _drill_source(frame):
         # Owner ruling B: after a ranking, a new axis runs across all, and the header line says so.
         extras["note"] = f"Across all {AXIS_NOUNS[frame['group_by']][1]}"
@@ -1768,6 +1789,7 @@ def _refine(
         args["basis"] = parse_output["basis"]
     if metric_from(parse_output):
         args["measure"] = metric_from(parse_output)  # `measure`, else the top selling key `rank_by`
+    switched_to_kind = args.get("basis") in OUTSTANDING_KINDS and frame.get("basis") not in OUTSTANDING_KINDS
     if parse_output.get("compare_to") in COMPARE_TO:
         args["compare_to"] = parse_output["compare_to"]
     if parse_output.get("self_reference") is True:
@@ -1777,9 +1799,12 @@ def _refine(
     top_n = parse_output.get("top_n")
     if top_n is None:
         top_n = frame.get("top_n")
-    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or period_from(
-        frame.get("date_from"), frame.get("date_to")
+    # A refine that switches to an outstanding kind takes only a period named in this message (the held sales period goes).
+    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or (
+        None if switched_to_kind else period_from(frame.get("date_from"), frame.get("date_to"))
     )
+    if switched_to_kind and period is None:
+        period = rf.Resolved("ok", value={"from": None, "to": None}, label="all dates")
     # A held ranking has both choices (its args ran): a refine never asks.
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
     for name, key in (("metric", "measure"), ("basis", "basis")):

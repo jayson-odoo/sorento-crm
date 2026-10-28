@@ -94,26 +94,26 @@ def test_r1_a_contact_with_one_company_is_never_asked(bot) -> None:
 # ---------------------------------------------------------------- round 3: B1, B2, N5
 
 
-def test_b1_the_company_question_comes_first_then_the_basis(bot) -> None:
-    """Crew 28 Oct: a two-company contact is asked the company first; its pick keeps the period and asks the basis."""
+def test_b1_the_basis_comes_first_then_the_company_last(bot) -> None:
+    """Hand test 2 (28 Oct): the required fields first, the company last, just before it runs; the period rides through."""
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("sales_report", basis=None, **YEAR), "total sales 2026")
+    assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
+    text, calls = bot.say(_pick(2), "the second")  # Delivered
     assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
     text, calls = bot.say(_pick(2), mocha)
-    assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
-    text, calls = bot.say(_pick(2), "the second")
     args = _only_report_ask(calls)
     assert args["company"] == MOCHA_ID and args["basis"] == "delivered", args
     assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
-def test_b1_a_bare_outstanding_asks_the_company_first_then_the_kind(bot) -> None:
+def test_b1_a_bare_outstanding_asks_the_kind_first_then_the_company_last(bot) -> None:
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("outstanding", basis=None, **NO_DATES), "outstanding")
-    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
-    text, calls = bot.say(_pick(1), sorento)
     assert calls == [] and "Undelivered orders" in text, (text, calls)
     text, calls = bot.say(_pick(2), "the second")  # Pending delivery
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    text, calls = bot.say(_pick(1), sorento)
     args = _only_report_ask(calls)
     assert args["company"] == DEFAULT_COMPANY_ID and args["basis"] == "pending_delivery", args
     assert "date_from" not in args and "date_to" not in args, args

@@ -97,6 +97,7 @@ DEFINITION = reg.ReportDefinition(
     detail=reg.DetailLayout(
         title="Unpaid invoices",
         order_by=lambda c: [BillingDocument.doc_date.desc(), BillingDocument.doc_no.asc(), BillingDocument.id.asc()],
+        cap="truncate",
     ),
     pivot=reg.PivotLayout(title="Unpaid invoices"),
     default_view={

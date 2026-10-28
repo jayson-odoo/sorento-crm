@@ -219,6 +219,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
         detail=reg.DetailLayout(
             title="Sales order lines",
             order_by=lambda c: [SalesOrder.order_date.desc(), SalesOrder.so_number.asc(), SalesOrderLine.id.asc()],
+            cap="truncate",  # the summary is the answer: the detail is cut at the cap, never refused (crew 28 Oct)
         ),
         pivot=reg.PivotLayout(title=_TITLES[basis]),
         default_view={

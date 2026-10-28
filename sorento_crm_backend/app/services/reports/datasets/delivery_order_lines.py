@@ -344,6 +344,8 @@ PENDING_DEFINITION = dataclasses.replace(
         dataclasses.replace(p, default=reg.all_dates_period) if p.key == "period" else p for p in DEFINITION.params
     ),
     pivot=reg.PivotLayout(title="Pending delivery"),
+    # The summary is the answer: the detail is cut at the cap, never refused (crew 28 Oct).
+    detail=dataclasses.replace(DEFINITION.detail, cap="truncate"),
 )
 
 reg.validate(DEFINITION)

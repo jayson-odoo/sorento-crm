@@ -1585,7 +1585,8 @@ def test_d_a_basis_refine_to_outstanding_reruns_the_held_ranking(console) -> Non
     assert args["basis"] == "outstanding", args
     assert args["group_by"] == "sales_agent" and args["top_n"] == 3, args
     assert args["brand_ids"] == [console.cabana], args
-    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+    # Hand test 28 Oct (owner Q2 + AC-RU-8c): an outstanding kind uses only a period NAMED in this message.
+    assert "date_from" not in args and "date_to" not in args, args
     assert args["measure"] == "amount", args
 
 
