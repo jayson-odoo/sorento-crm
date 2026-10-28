@@ -72,6 +72,13 @@ Status: Agreed (owner answers 27 Oct ~19:15). Plan: `PLAN-report-unify-27oct.md`
   (Owner 28 Oct 10:15) That includes product and category rankings: REPORT-SMART R1 retires for a contact with no
   linked customer, staff or not; a linked contact stays on its customers.
 
+- **AC-RU-17c** (hand test, 28 Oct).
+  - An outstanding ask with no period reaches the route through the MCP tool.
+  - The kind question offers Undelivered orders / Pending delivery / Unpaid invoices. The parser's pick decides, and it is never `invoiced`.
+  - "Total sale for all sale agents" (group by agent, no ranking marker) lists every agent and asks no "How many?".
+  - "total sales 2026" / "sales by year" asks #1931's one 4-option basis question, then runs `crm_report_ask` (grouped by year where the parser said so).
+  - The spec header reads the registry label plus `display_spec_value` ("Trap: P trap").
+
 ## Span binding (slice 3)
 
 - **AC-RU-18.** "mch" bound by the span pass to brand MOCHA reaches the report as the MOCHA brand id (H2).
