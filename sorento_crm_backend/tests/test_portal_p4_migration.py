@@ -1,6 +1,7 @@
 """Migration `pp4_0001_request_view_own` (lane PORTAL-P4-REQUESTS): P4-7.
 
-Insert-only: 4 `view_own` slugs; role `salesperson` is granted the 4 `view_own` and the 4 `.add`.
+Insert-only: 4 `view_own` slugs + the price tag `view_own`; role `salesperson` is granted those, the 4 `.add`,
+and (v1.2) the sample request / NPA / sales opportunity / price tag create-side slugs.
 CI builds the schema with create_all + stamp head, so the data migration never runs there: the
 test executes upgrade/downgrade itself inside one rolled-back transaction (shape of
 `test_migration_pp3_0001.py`).
@@ -33,7 +34,21 @@ ADD = {
     "procurement.sponsorship_forms.add",
 }
 SUBMIT = "projects.registrations.submit"
-CREATED = VIEW_OWN | {SUBMIT}  # slugs the migration inserts
+# v1.2 (sign-off by the lead): the four extra kinds. The price tag view_own is NEW (created here);
+# every other slug below predates pp4_0001 (pp2_0001 view_own, the kinds' own create / add / edit
+# slugs, the Dealer Kit menu gate) and is only granted to the salesperson.
+PT_VIEW_OWN = "dealer_kit.price_tag_requests.view_own"
+EXTRA_GRANTED = {
+    "projects.sample_requests.view_own",
+    "projects.sample_requests.create",
+    "procurement.new_product_applications.view_own",
+    "procurement.new_product_applications.create",
+    "sales.opportunities.view_own",
+    "sales.opportunities.add",
+    "sales.opportunities.edit",
+    "dealer_kit.price_tag_requests.create",
+}
+CREATED = VIEW_OWN | {SUBMIT, PT_VIEW_OWN}  # slugs the migration inserts
 PRIOR = "sales.customer_asks.view"
 
 
@@ -105,13 +120,13 @@ def _slug_exists(conn, slug: str) -> bool:
 
 
 def _clean(conn, role_id: str) -> None:
-    """Start from a salesperson that holds none of the 8 slugs (the dev copy may already)."""
+    """Start from a salesperson that holds none of the slugs (the dev copy may already)."""
     conn.execute(
         sa.text(
             "DELETE FROM user_role_permissions WHERE role_id = :r AND permission_id IN "
             "(SELECT id FROM user_permissions WHERE slug = ANY(:s))"
         ),
-        {"r": role_id, "s": list(CREATED | ADD)},
+        {"r": role_id, "s": list(CREATED | ADD | EXTRA_GRANTED)},
     )
 
 
@@ -128,10 +143,11 @@ def test_revision_fits_alembic_version_and_sits_on_pp3_0001():
     assert ScriptDirectory.from_config(cfg).get_heads() == [NAME]
 
 
-def test_the_registry_and_the_migration_declare_the_same_five_slugs():
+def test_the_registry_and_the_migration_declare_the_same_six_slugs():
     registry = {e["slug"]: e for e in PERMISSION_REGISTRY if e["slug"] in CREATED}
     assert set(registry) == CREATED
     assert registry[SUBMIT]["name"] == "Submit project registrations"
+    assert registry[PT_VIEW_OWN]["name"] == "View Own Price Tag Requests"
     migration = {slug: (name, descr) for slug, name, descr in _load()._PERMS}
     assert set(migration) == CREATED
     for slug, (name, descr) in migration.items():
@@ -139,12 +155,12 @@ def test_the_registry_and_the_migration_declare_the_same_five_slugs():
         assert registry[slug]["description"] == descr
 
 
-def test_p4_7_creates_five_slugs_grants_salesperson_nine_and_is_rerunnable():
+def test_p4_7_creates_six_slugs_grants_salesperson_the_forms_slugs_and_is_rerunnable():
     module = _load()
     with engine.connect() as conn:
         outer = conn.begin()
         try:
-            for slug in ADD | {PRIOR}:
+            for slug in ADD | EXTRA_GRANTED | {PRIOR}:
                 _perm(conn, slug)
             sales = _role(conn, "salesperson")
             admin = _role(conn, "admin")
@@ -159,7 +175,7 @@ def test_p4_7_creates_five_slugs_grants_salesperson_nine_and_is_rerunnable():
 
             for slug in CREATED:
                 assert _slug_exists(conn, slug), slug
-            assert _held(conn, sales) == CREATED | ADD | {PRIOR}
+            assert _held(conn, sales) == CREATED | ADD | EXTRA_GRANTED | {PRIOR}
             assert _held(conn, admin) == before_admin
             assert _held(conn, other) == before_other
         finally:
@@ -171,7 +187,7 @@ def test_p4_7_downgrade_removes_the_view_own_slugs_and_the_add_grants_only():
     with engine.connect() as conn:
         outer = conn.begin()
         try:
-            for slug in ADD | {PRIOR}:
+            for slug in ADD | EXTRA_GRANTED | {PRIOR}:
                 _perm(conn, slug)
             sales = _role(conn, "salesperson")
             other = _role(conn, f"zzt_other_{uuid.uuid4().hex[:6]}")
@@ -179,15 +195,15 @@ def test_p4_7_downgrade_removes_the_view_own_slugs_and_the_add_grants_only():
             _grant(conn, sales, PRIOR)
             _grant(conn, other, "procurement.stock_inquiries.add")
             _run(conn, module.upgrade)
-            assert _held(conn, sales) >= CREATED | ADD
+            assert _held(conn, sales) >= CREATED | ADD | EXTRA_GRANTED
 
             _run(conn, module.downgrade)
 
             for slug in CREATED:
                 assert not _slug_exists(conn, slug), slug
-            assert _held(conn, sales) & (CREATED | ADD) == set()
+            assert _held(conn, sales) & (CREATED | ADD | EXTRA_GRANTED) == set()
             assert PRIOR in _held(conn, sales)
-            for slug in ADD:  # the .add slugs themselves are not ours to drop
+            for slug in ADD | EXTRA_GRANTED:  # the slugs that predate this revision are not ours to drop
                 assert _slug_exists(conn, slug), slug
             assert "procurement.stock_inquiries.add" in _held(conn, other)
         finally:

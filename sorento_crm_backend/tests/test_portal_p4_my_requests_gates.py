@@ -77,7 +77,7 @@ def test_another_kinds_slugs_do_not_open_this_kind(scene):
     s.not_a_missing_route(resp)
 
 
-@pytest.mark.parametrize("kind", ["sample_request", "price_tag_request", "no_such_kind"])
+@pytest.mark.parametrize("kind", ["customer_asks", "conversation", "project_registration", "nope"])
 def test_kinds_outside_the_four_are_404(scene, kind):
     _mounted(scene)
     c, _ = s.own_contact(scene)
