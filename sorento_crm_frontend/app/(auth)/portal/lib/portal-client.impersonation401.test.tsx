@@ -4,7 +4,7 @@
  * survive. A 401 to a normal token clears it as today.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { fetchMe, fetchMeWithGrace, fetchPortalAttachmentBytes, PortalUnauthorizedError } from './portal-client';
+import { fetchMe, fetchMeWithGrace, fetchPortalAttachmentBytes, PortalUnauthorizedError, uploadAttachment } from './portal-client';
 
 const TOKEN_KEY = 'sorento.portalToken';
 const SLUG_KEY = 'sorento.portalSlug';
@@ -37,6 +37,15 @@ describe('portal 401 with an impersonation token (T2)', () => {
   it('attachment bytes fetch: same', async () => {
     impersonationTab();
     await expect(fetchPortalAttachmentBytes('/api/v1/x/download')).rejects.toBeInstanceOf(PortalUnauthorizedError);
+    expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
+    expect(window.localStorage.getItem(SLUG_KEY)).toBe('ADMINSLUG01');
+  });
+
+  it('multipart upload: same', async () => {
+    impersonationTab();
+    const file = new File(['x'], 'a.txt', { type: 'text/plain' });
+    await expect(uploadAttachment('stock_inquiry', 'sub-1', file)).rejects.toBeInstanceOf(PortalUnauthorizedError);
     expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
     expect(window.localStorage.getItem(SLUG_KEY)).toBe('ADMINSLUG01');

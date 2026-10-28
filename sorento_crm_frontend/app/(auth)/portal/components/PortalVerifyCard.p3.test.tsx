@@ -193,3 +193,24 @@ describe('PortalVerifyCard under a CRM impersonation (round 7, T4)', () => {
     expect(window.localStorage.getItem('sorento.portalSlug')).toBeNull();
   });
 });
+
+describe('PortalVerifyCard "Not your number?" (round 8, S2)', () => {
+  afterEach(() => impersonationStore.setSession(null));
+
+  it('under a CRM impersonation: the control is not rendered', async () => {
+    impersonationStore.setSession({
+      sessionId: 's1',
+      startedAt: '2026-10-28T00:00:00Z',
+      targetUser: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+    });
+    render(<PortalVerifyCard slug="SLUG123456" />);
+    await screen.findByLabelText(/verification code/i);
+    expect(screen.queryByTestId('not-your-number')).toBeNull();
+  });
+
+  it('outside impersonation: the control is there', async () => {
+    render(<PortalVerifyCard slug="SLUG123456" />);
+    await screen.findByLabelText(/verification code/i);
+    expect(screen.getByTestId('not-your-number')).toBeInTheDocument();
+  });
+});
