@@ -65,6 +65,29 @@ does not see it).
   No MY REQUESTS > Project Registration item (v1.1 Q7): a salesperson registers from MY WORK > Projects (lane
   PROJECT-REGISTER-V2); P4 ships only `projects.registrations.submit` granted to the salesperson role.
 
+## Form parity (owner hand test 1 FAIL, 28 Oct ~22:50-23:10; crew answers Q1-Q5 all (a))
+
+Supersedes P4-24 and P4-25 for the salesperson's form and view. Parity table: #1953 crew-note 6472424819.
+
+- PAR-1 A salesperson's create, edit and VIEW of every kind render the PORTAL's own form component
+  (`app/(auth)/portal/components/SubmissionForm.tsx` and the per-kind portal components) inside the CRM page,
+  through the injected client on `/api/v1/my-requests` (`components/common/MyRequestPortalForm.tsx`). Same fields,
+  same order, same pickers (product, customer, DO, lookup sets, requestor, registered project), attachments inside
+  the form, the same view (greyed form, "not editable" banner, Comments and Revisions tabs). No CRM-only field on
+  their form.
+- PAR-2 The portal itself is unchanged (no portal landing, token or routing in the CRM).
+- PAR-3 Staff list, detail and every staff action button are unchanged. A portal field the staff detail lacks is
+  added to the staff detail READ-ONLY (Purchase Request / Sponsorship "External reference"; each kind checked).
+- PAR-4 Complaint: staff edit of root cause, resolution and technical response stays as it is and never creates a
+  salesperson-side revision diff.
+- PAR-5 The CRM keeps D7 deferred deletes for the salesperson (`my_request.delete` 10s,
+  `my_request_attachment.unlink` 5s); the portal stays immediate.
+- PAR-6 Stored data is identical from both sides; the portal is canonical (price tag customer
+  `debtor_code ?? customer_code`, `print_by='self'`; opportunity amount, qty and unit price as the portal form sends
+  them). Pinned by a BE parity test per kind.
+- PAR-7 Every lookup the portal form calls answers the same on `/api/v1/my-requests` as on the portal, and refuses
+  staff (`.view` holders), no session and no linked contact like the other my-requests routes.
+
 ## Proof
 
 - API-level pytest per form driving flows 1-4 of the card (red first), asserting records, never sending.
