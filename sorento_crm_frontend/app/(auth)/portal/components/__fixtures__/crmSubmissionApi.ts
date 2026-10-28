@@ -19,7 +19,11 @@ export const ME = {
   expires_at: '2030-01-01T00:00:00Z',
 };
 
-export function createCrmApi(kind: 'stock_inquiry' | 'complaint', detail: () => Record<string, unknown>) {
+export function createCrmApi(
+  kind: 'stock_inquiry' | 'complaint' | 'purchase_request' | 'sponsorship_form',
+  detail: () => Record<string, unknown>,
+  meOver: () => Record<string, unknown> = () => ({}),
+) {
   const calls: ApiCall[] = [];
   const handler = async (url: string, init?: RequestInit): Promise<Response> => {
     const method = (init?.method ?? 'GET').toUpperCase();
@@ -33,11 +37,13 @@ export function createCrmApi(kind: 'stock_inquiry' | 'complaint', detail: () => 
     }
     calls.push({ url, method, body });
     const path = url.split('?')[0];
-    if (path === '/api/v1/my-requests/me') return json({ ...ME });
+    if (path === '/api/v1/my-requests/me') return json({ ...ME, ...meOver() });
     if (path === '/api/v1/my-requests/lookups/products')
       return json([{ product_code: 'PRD-1', product_name: 'Product One', category_id: null }]);
     if (path === '/api/v1/my-requests/lookups/debtors')
       return json([{ customer_id: 'd1', debtor_name: 'Debtor One', customer_code: 'D-1', sales_type: null }]);
+    if (path === '/api/v1/my-requests/lookups/projects')
+      return json([{ id: 'prj-1', project_code: 'PRJ-0001', title: 'Project One', company_name: 'Company A' }]);
     if (path === '/api/v1/my-requests/lookups/delivery-orders')
       return json([
         {
@@ -106,5 +112,43 @@ export const CMP_DETAIL = (over: Record<string, unknown> = {}) => ({
   attachments: [],
   products: [{ product_code: 'PRD-1', product_type: 'x', quantity: '1' }],
   revision: { enabled: true, allowed: false, used: 0, max: 3, remaining: 3, blocked_reason: null },
+  ...over,
+});
+
+export const PR_DETAIL = (over: Record<string, unknown> = {}) => ({
+  id: 'pr-5',
+  kind: 'purchase_request',
+  title: 'Purchase request',
+  reference: 'PR26-0005',
+  status: 'draft',
+  is_draft: true,
+  is_editable: true,
+  created_at: '2026-07-20T00:00:00Z',
+  revision_no: 0,
+  customer_name: 'Debtor One',
+  pic: 'Contact A 0123',
+  project_title: 'Proj',
+  purpose: 'why',
+  sales_type: 'opt-a',
+  expected_delivery_date: '2026-12-01',
+  expected_po_date: '2026-11-01',
+  requested_by_contact_id: 'c1',
+  external_reference: 'EXT-9',
+  products: [{ item_code: 'PRD-1', quantity: '2' }],
+  attachments: [],
+  revision: { enabled: true, allowed: false, used: 0, max: 3, remaining: 3, blocked_reason: null },
+  ...over,
+});
+
+export const SF_DETAIL = (over: Record<string, unknown> = {}) => ({
+  ...PR_DETAIL(),
+  id: 'sf-5',
+  kind: 'sponsorship_form',
+  title: 'Sponsorship form',
+  reference: 'SF26-0005',
+  delivery_address: 'Address A',
+  total_project_value: '1000.00',
+  sponsor_subject: 'opt-a',
+  products: [{ item_code: 'PRD-1', quantity: '2', unit_price: '5.00' }],
   ...over,
 });
