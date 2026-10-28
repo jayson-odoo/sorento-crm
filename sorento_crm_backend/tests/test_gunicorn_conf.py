@@ -217,3 +217,17 @@ def test_pre_fork_freezes_the_preloaded_heap():
         assert gc.get_freeze_count() > 0
     finally:
         gc.unfreeze()
+
+
+def test_default_jitter_spreads_retirements_over_half_the_limit(monkeypatch):
+    """BACKEND-MEMORY: a retiring worker stops accepting while it drains (up to 100 s with a
+    staff event stream open), and gunicorn forks its replacement only once it has exited. The
+    workers start together after a deploy and take requests at the same rate, so only the
+    jitter separates their retirements: with all of them draining at once nothing accepts
+    (measured locally 28 Oct, 2 workers: 86 s, 2 requests timed out). A jitter of half the
+    limit makes four workers within 100 s of each other rare (about 0.008% of rounds at
+    10,000 requests an hour, against 0.9% at a tenth)."""
+    monkeypatch.delenv("GUNICORN_MAX_REQUESTS", raising=False)
+    monkeypatch.delenv("GUNICORN_MAX_REQUESTS_JITTER", raising=False)
+    module = _load_conf_module()
+    assert module.max_requests_jitter * 2 >= module.max_requests
