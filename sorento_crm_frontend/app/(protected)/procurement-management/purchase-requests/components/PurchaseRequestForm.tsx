@@ -81,6 +81,8 @@ interface PurchaseRequestFormProps {
   expectedRequestType?: "purchase_request" | "sponsorship_form";
   /** URL to redirect to after successful create/update (serializable; use this from Server Component pages). */
   successRedirectUrl?: string;
+  /** Create mode only: seeds the project link (e.g. from a project's Sponsorship stage action). */
+  defaultProjectId?: string;
 }
 
 export default function PurchaseRequestForm({
@@ -88,6 +90,7 @@ export default function PurchaseRequestForm({
   defaultRequestType = "purchase_request",
   expectedRequestType,
   successRedirectUrl,
+  defaultProjectId,
 }: PurchaseRequestFormProps) {
   const router = useRouter();
   const isEditMode = !!requestId;
@@ -130,7 +133,7 @@ export default function PurchaseRequestForm({
       customer_id: null,
       pic: null,
       project_title: null,
-      project_id: null,
+      project_id: defaultProjectId ?? null,
       purpose: null,
       delivery_address: null,
       total_project_value: null,
