@@ -13,7 +13,8 @@ BE = `sorento_crm_backend/app`.
 - A2 Section "Salesperson and customer" holds Salesperson and "Customer *". Lead is in Details, labelled
   "Lead (optional)", and keeps its "Create lead '<text>'" row.
 - A3 Customer is an async search over `GET /api/v1/order-management/customers/select?query=&limit=`; options read
-  "CODE  NAME". There is NO create row: a query with no match shows "No customers found" only.
+  the customer NAME only (no debtor code). There is NO create row: a query with no match shows "No customers found"
+  only.
 - A4 Create mode: Register is disabled until the title and Customer are set (Lead no longer required). Edit mode:
   Customer is optional (older projects save without one).
 - A5 API: `POST /api/v1/project-sales/projects/` without `customer_id` -> 422 code `project_customer_required`;
@@ -33,8 +34,10 @@ BE = `sorento_crm_backend/app`.
 
 ## C. AI extract (text and photo)
 
-- C1 An "AI extract" button sits next to the title; an "Add photo" button beside it. Extract runs on the title text,
-  the added photo(s), or both.
+- C1 Under the title, "Check" and "AI extract" sit side by side. AI extract opens the existing
+  `AIExtractDialog` (lifted from `app/(auth)/portal/components/` to a shared place, portal behaviour unchanged): the
+  title text is pre-staged as pasted text and photos are added in its upload stage. Extract runs on the text, the
+  photo(s), or both.
 - C2 `POST /api/v1/project-sales/projects/ai-extract` (multipart: `text`, `files[]`) needs `projects.projects.edit`
   (403 otherwise). It calls `AIExtractService.extract` with form key `portal.project_registration`; the text is
   passed as a `.txt` file. Max 12 files; png, jpg, jpeg, webp, pdf, txt only (others 422).
@@ -46,17 +49,24 @@ BE = `sorento_crm_backend/app`.
 - C4 The endpoint writes nothing except the AI usage-log row: no project, party or customer row is created.
 - C5 Per-user rate limit: the 11th call in 10 minutes -> 429.
 - C6 Provider failure -> 502 with a plain message; the form keeps what the user typed.
-- C7 FE review dialog lists each proposal with a Match / New / Not found pill and a checkbox (Not found unticked).
-  "Apply ticked" fills only ticked fields; a non-empty title is never overwritten; a New party row offers
-  "Create <type>" (B2 rules) and is only set after that click. Nothing is saved until Register.
-- C8 Tests never call a real provider (patch `AIExtractService._resolve_provider` / stub `extract`).
+- C7 The dialog's existing review table lists only proposals with status match or new; its one new extension is a
+  status cell per field (pill "Match" or "New", no button). The existing per-field x removes a row. Not-found values
+  are not listed and stay blank on the form.
+- C8 Apply: first creates every listed New developer / architect / main contractor through the B2 create (B4 dedupe
+  applies), then fills the form with all listed values; a non-empty title is never overwritten. A user without
+  `projects.parties.edit` sees New party rows but Apply skips them (field left blank). A customer is only filled on
+  match and is never created. Nothing else is saved until Register.
+- C9 Tests never call a real provider (patch `AIExtractService._resolve_provider` / stub `extract`).
 
 ## D. Duplicate found: Register interest instead of Register
 
 - D1 The duplicate basis is unchanged (`BE/services/project_clash_service.py`).
-- D2 When the Check returns a blocking candidate, the footer button reads "Register interest in <code>" (top blocking
-  candidate) and is enabled; the text "Blocked by an existing project" no longer appears.
-- D3 Each candidate row offers "Ask to join" and "Register interest" (the "Dispute" label is gone everywhere).
+- D2 When the Check returns a blocking candidate, the warning is ONE line "Project already registered: <code>
+  <title>" (code links to the project, title clamped to one line); no owner, stage, similarity or row buttons. The
+  footer keeps Cancel and its ONE primary reads "Register interest in <code>" (top blocking candidate), enabled; the
+  text "Blocked by an existing project" no longer appears.
+- D3 A non-blocking similar candidate shows as one line "Similar project: <code> <title>" with no action, and the
+  button stays "Register project". The label "Dispute" is gone everywhere ("Register interest" in the Access card).
 - D4 "Register interest" opens a dialog titled "Register interest in <code>" with a required textarea "How and when
   did you find this project?"; submit creates the existing takeover request with `kind = "dispute"`; success
   navigates to the project.
@@ -113,3 +123,12 @@ BE = `sorento_crm_backend/app`.
 
 - I1 The Create lead wizard's Buyer select is search-only over existing customers; there is no "new customer" path,
   and the lead create API refuses `new_customer` with 422.
+
+## J. Salesperson submit for approval (only if the owner answers card Q7 = a)
+
+- J1 A user holding the submit slug (name per the Q7 ruling, defined by PORTAL-P4) but not `projects.projects.edit`
+  can open `/project-sales/new`; the primary reads "Submit for approval".
+- J2 Their submit creates the project with `approval_state = 'pending'`, no project code, owner = themselves, and
+  sends the existing "submitted" notification; it appears in their Projects list / pipeline as Awaiting approval.
+- J3 The existing approve / reject run unchanged on it; a rejected one shows its reason and resubmits via Edit.
+- J4 A user with neither slug: page access denied and `POST /projects/` -> 403.
