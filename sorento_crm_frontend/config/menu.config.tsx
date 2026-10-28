@@ -60,9 +60,46 @@ import {
   Zap,
 } from 'lucide-react';
 import { type MenuConfig } from './types';
+import { LANDING_KINDS, LANDING_LABELS } from '@/lib/portal-form-kinds';
+
+// MY REQUESTS: one item per portal form kind, in portal order. Customer asks and Conversation are
+// MY WORK entries instead (their own CRM pages), so they are not request kinds.
+const MY_REQUEST_ITEMS: MenuConfig = LANDING_KINDS.filter(
+  (k) => k !== 'customer_asks' && k !== 'conversation',
+).map((kind) => ({
+  title: LANDING_LABELS[kind],
+  path: `/my-requests?type=${kind}`,
+  audience: 'salesperson' as const,
+  portalKind: kind,
+}));
 
 
 export const MENU_SIDEBAR: MenuConfig = [
+  { heading: 'MY WORK', audience: 'salesperson' },
+  {
+    title: 'Projects',
+    icon: Briefcase,
+    path: '/project-sales/pipeline',
+    permission: 'projects.projects.view_own',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Conversations',
+    icon: MessageSquare,
+    path: '/sla-management/conversations',
+    permission: 'sla_management.conversations.view_own',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Customer asks',
+    icon: Star,
+    path: '/sales/customer-asks',
+    permission: 'sales.customer_asks.view',
+    audience: 'salesperson',
+  },
+  { heading: 'MY REQUESTS', audience: 'salesperson' },
+  ...MY_REQUEST_ITEMS,
+
   { heading: 'OVERVIEW' },
   {
     // The home page is the My pending widget (/conversation-sla-tracking/my-pending) over
@@ -75,6 +112,7 @@ export const MENU_SIDEBAR: MenuConfig = [
   {
     title: 'Ideas',
     icon: Lightbulb,
+    audience: 'staff',
     children: [
       {
         title: 'All ideas',
@@ -116,6 +154,7 @@ export const MENU_SIDEBAR: MenuConfig = [
         path: '/sales/customer-asks',
         permission: 'sales.customer_asks.view',
         moduleKey: 'sales',
+        audience: 'staff',
       },
       {
         title: 'Sales Teams',

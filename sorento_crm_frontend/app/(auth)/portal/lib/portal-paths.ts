@@ -28,6 +28,17 @@ export function clearPortalSlug(): void {
   window.localStorage.removeItem(SLUG_KEY);
 }
 
+/** The CRM tree a salesperson uses the portal forms in (PORTAL-P3-ROLE-MENU). */
+const MY_REQUESTS_BASE = '/my-requests';
+
+function isInMyRequests(): boolean {
+  if (typeof window === 'undefined') return false;
+  const prefix = process.env.NEXT_PUBLIC_BASE_PATH ?? '';
+  let path = window.location.pathname;
+  if (prefix && path.startsWith(prefix)) path = path.slice(prefix.length);
+  return path === MY_REQUESTS_BASE || path.startsWith(`${MY_REQUESTS_BASE}/`);
+}
+
 /**
  * Base path for the active tree: `/portal/c/{slug}` or legacy `/portal`.
  *
@@ -39,6 +50,7 @@ export function clearPortalSlug(): void {
  *   slug, or the verify page would show the wrong contact's identity.
  */
 export function portalBase(slug?: string | null): string {
+  if (isInMyRequests()) return MY_REQUESTS_BASE;
   const s = slug === undefined ? readPortalSlug() : slug;
   return s ? `/portal/c/${encodeURIComponent(s)}` : '/portal';
 }

@@ -8,9 +8,11 @@ export const metadata: Metadata = {
   description: 'Registered project pursuits, their stage, and who owns each one.',
 };
 
+const PROJECT_VIEW_PERMISSIONS = ['projects.projects.view', 'projects.projects.view_own'];
+
 export default function ProjectPipelinePage() {
   return (
-    <RequireAccess permission="projects.projects.view">
+    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6">
         <PipelineClient />
       </Container>

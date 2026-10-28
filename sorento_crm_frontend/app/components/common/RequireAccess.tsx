@@ -11,7 +11,7 @@ type RequireAccessProps = {
   children: ReactNode;
 } & (
   | { superadmin: true; permission?: never }
-  | { permission: string; superadmin?: never }
+  | { permission: string | readonly string[]; superadmin?: never }
 );
 
 /**
@@ -24,7 +24,7 @@ type RequireAccessProps = {
  * - <RequireAccess superadmin> - allowed only for superadmin/admin roles, judged on the
  *    EFFECTIVE user: an admin viewing as a non-admin is denied (MENU-PERM-GATE).
  * - <RequireAccess permission="slug"> - allowed only when the user's
- *    permission set includes `slug`.
+ *    permission set includes `slug`; given a list, when it includes any one of them.
  */
 export default function RequireAccess(props: RequireAccessProps) {
   if (props.superadmin) {
@@ -44,7 +44,7 @@ function PermissionGate({
   permission,
   children,
 }: {
-  permission: string;
+  permission: string | readonly string[];
   children: ReactNode;
 }) {
   const { permissionSet, isLoading, isError, isFetching, refetch } = usePermissions();
@@ -52,7 +52,8 @@ function PermissionGate({
   // The check itself failed: say so, with Retry. An empty set from a failed read
   // is not "denied" (NEVER-STUCK-UI S3, lever L6).
   if (isError) return <PermissionsLoadError onRetry={() => void refetch()} retrying={isFetching} />;
-  if (!permissionSet.has(permission)) return <AccessDenied />;
+  const slugs = typeof permission === 'string' ? [permission] : permission;
+  if (!slugs.some((slug) => permissionSet.has(slug))) return <AccessDenied />;
   return <>{children}</>;
 }
 

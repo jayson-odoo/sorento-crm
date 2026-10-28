@@ -14,6 +14,10 @@ import type {
 } from '../services/conversationsInboxService';
 
 export const CONVERSATIONS_VIEW_PERMISSION = 'sla_management.conversations.view';
+export const CONVERSATIONS_VIEW_PERMISSIONS = [
+  CONVERSATIONS_VIEW_PERMISSION,
+  'sla_management.conversations.view_own',
+];
 export const CONVERSATIONS_REPLY_PERMISSION = 'sla_management.conversations.reply';
 
 /**

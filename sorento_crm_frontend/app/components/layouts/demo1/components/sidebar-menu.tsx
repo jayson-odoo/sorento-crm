@@ -14,6 +14,7 @@ import { collectMenuPaths, matchesMenuPath } from '@/lib/menu-path-match';
 import { usePermissions, useHasAnyPermission } from '@/hooks/usePermissions';
 import { WORKFLOW_PUBLISHED_FOR_SUBMISSION_PERMISSIONS } from '@/config/workflow-forms-dynamic-menu';
 import { useTenantModules } from '@/hooks/useTenantModules';
+import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { usePrefetchOnce } from '@/hooks/usePrefetchOnce';
 import {
   AccordionMenu,
@@ -38,6 +39,12 @@ export function SidebarMenu() {
   const isSuperadmin = useEffectiveIsSuperadmin();
   const { permissionSet, isLoading } = usePermissions();
   const { enabledModuleKeys, isLoading: modulesLoading } = useTenantModules();
+  const { salesperson: salespersonProfile } = useAccountProfileForHeader();
+  const portalKinds = salespersonProfile?.portalKinds;
+  const salesperson = useMemo(
+    () => (portalKinds ? { portalKinds } : null),
+    [portalKinds],
+  );
   // A viewport prefetch of ~100 sidebar links is why every menu item carried
   // `prefetch={false}`; hover is the middle ground (M4 list latency).
   const prefetchOnce = usePrefetchOnce();
@@ -62,6 +69,7 @@ export function SidebarMenu() {
       isLoading,
       enabledModuleKeys,
       modulesLoading,
+      salesperson,
     });
   }, [
     permissionSet,
@@ -70,6 +78,7 @@ export function SidebarMenu() {
     modulesLoading,
     menuWithPublishedForms,
     isSuperadmin,
+    salesperson,
   ]);
 
   // Every path the visible menu can highlight, so a match can be tested against its rivals.

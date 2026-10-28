@@ -62,7 +62,7 @@ describe('MENU_SIDEBAR for a salesperson', () => {
       { heading: 'MY WORK' },
       { title: 'Projects', path: '/project-sales/pipeline' },
       { title: 'Conversations', path: '/sla-management/conversations' },
-      { title: 'Customer Asks', path: '/sales/customer-asks' },
+      { title: 'Customer asks', path: '/sales/customer-asks' },
       { heading: 'MY REQUESTS' },
       ...REQUEST_KINDS.map((k) => ({
         title: LANDING_LABELS[k as keyof typeof LANDING_LABELS],

@@ -16,6 +16,7 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
+import { getSession } from 'next-auth/react';
 import { AlertCircle, MessageCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
@@ -40,6 +41,17 @@ import {
   waMeUrl,
   writePortalSlug,
 } from '../lib/portal-paths';
+
+/** The CRM home the fresh session names when it is a salesperson's (`/my-requests`), else null. */
+async function salespersonHomePath(): Promise<string | null> {
+  try {
+    const session = await getSession();
+    const home = (session?.user as { homePath?: unknown } | undefined)?.homePath;
+    return typeof home === 'string' && home.startsWith('/my-requests') ? home : null;
+  } catch {
+    return null;
+  }
+}
 
 const SENT_KEY_PREFIX = 'sorento.portal.otpSent.';
 const RESEND_COOLDOWN_S = 60;
@@ -240,7 +252,10 @@ export function PortalVerifyCard({ slug }: Props) {
       if (slug) writePortalSlug(slug);
       // A contact with a CRM user also gets a CRM session (PORTAL-P1-SESSION-LINK).
       // Before navigating, so the NextAuth cookie is set when the page is left.
-      if (result.portal_link_secret) await openCrmSession(result.portal_link_secret);
+      let crmHome: string | null = null;
+      if (result.portal_link_secret && (await openCrmSession(result.portal_link_secret))) {
+        crmHome = await salespersonHomePath();
+      }
       if (typeof window !== 'undefined') {
         window.sessionStorage.setItem('sorento.portalTokenWrittenAt', String(Date.now()));
         Object.keys(window.sessionStorage)
@@ -253,10 +268,12 @@ export function PortalVerifyCard({ slug }: Props) {
       // Deep link → land back on that exact form. Otherwise the type index /
       // portal home. Slug tree keeps the stable URL; legacy /portal resolves the
       // slug and redirects, keeping the address bar bookmarkable.
+      // A salesperson lands in the CRM shell instead (PORTAL-P3-ROLE-MENU).
       const target =
-        desiredId && desiredType && isSubmissionKind(desiredType)
+        crmHome ??
+        (desiredId && desiredType && isSubmissionKind(desiredType)
           ? portalDetailPath(desiredType, desiredId, slug ?? null)
-          : portalHomePath({ slug: slug ?? null, type: desiredType });
+          : portalHomePath({ slug: slug ?? null, type: desiredType }));
       // Hard-navigate so the fresh storage values are guaranteed visible.
       if (typeof window !== 'undefined') {
         window.location.assign(target);

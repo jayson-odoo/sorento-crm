@@ -23,6 +23,7 @@ export function useAccountProfileForHeader() {
         avatar?: string | null;
         name?: string | null;
         email?: string | null;
+        salesperson?: { portal_kinds: string[]; portal_slug: string } | null;
       }>;
     },
     enabled: status === 'authenticated',
@@ -36,7 +37,12 @@ export function useAccountProfileForHeader() {
     profile?.avatar ?? session?.user?.avatar,
   );
 
+  const salesperson = profile?.salesperson
+    ? { portalKinds: profile.salesperson.portal_kinds, portalSlug: profile.salesperson.portal_slug }
+    : null;
+
   return {
+    salesperson,
     avatarSrc,
     displayName: profile?.name ?? session?.user?.name ?? '',
     displayEmail: profile?.email ?? session?.user?.email ?? '',

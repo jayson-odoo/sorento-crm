@@ -234,7 +234,7 @@ function newKindLabel(kind: PortalLandingKind): string {
   return /^New\b/.test(label) ? label : `New ${label}`;
 }
 
-export function PortalLanding({ slug }: { slug?: string }) {
+export function PortalLanding({ slug, embedded = false }: { slug?: string; embedded?: boolean }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [contact, setContact] = useState<PortalContact | null>(null);
@@ -567,22 +567,24 @@ export function PortalLanding({ slug }: { slug?: string }) {
 
   return (
     <div className="w-full max-w-3xl mx-auto px-3 pt-3 pb-4 space-y-3">
-      {/* Header - Welcome centered, Log out anchored to top-right. */}
-      <div className="relative flex items-center justify-center min-h-[2.75rem]">
-        <h1 className="text-lg font-semibold text-center break-words px-12">
-          Welcome{contact?.name ? `, ${contact.name}` : ''}
-        </h1>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={handleLogout}
-          className="absolute right-0 top-1/2 -translate-y-1/2 h-9 px-2.5"
-          aria-label="Log out"
-          title="Log out"
-        >
-          <LogOut className="h-4 w-4" />
-        </Button>
-      </div>
+      {/* Header - Welcome centered, Log out anchored to top-right. Not shown inside the CRM shell. */}
+      {!embedded && (
+        <div className="relative flex items-center justify-center min-h-[2.75rem]">
+          <h1 className="text-lg font-semibold text-center break-words px-12">
+            Welcome{contact?.name ? `, ${contact.name}` : ''}
+          </h1>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleLogout}
+            className="absolute right-0 top-1/2 -translate-y-1/2 h-9 px-2.5"
+            aria-label="Log out"
+            title="Log out"
+          >
+            <LogOut className="h-4 w-4" />
+          </Button>
+        </div>
+      )}
 
       {landingKinds.length === 0 ? (
         // AC-L3/AC-L5: no picker, toolbar, list or search box - just the one

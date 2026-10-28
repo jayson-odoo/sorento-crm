@@ -3,7 +3,7 @@ import { Container } from '@/components/common/container';
 import { PageHeader } from '@/components/common/PageHeader';
 import RequireAccess from '@/app/components/common/RequireAccess';
 import ConversationsInbox, {
-  CONVERSATIONS_VIEW_PERMISSION,
+  CONVERSATIONS_VIEW_PERMISSIONS,
 } from './components/ConversationsInbox';
 
 export const metadata: Metadata = {
@@ -21,7 +21,7 @@ export default async function ConversationsPage() {
       <Container>
         {/* The sidebar entry is permission-gated, but a deep link is not: without
             the guard a denied user would land on an inbox whose every call 403s. */}
-        <RequireAccess permission={CONVERSATIONS_VIEW_PERMISSION}>
+        <RequireAccess permission={CONVERSATIONS_VIEW_PERMISSIONS}>
           <ConversationsInbox />
         </RequireAccess>
       </Container>
