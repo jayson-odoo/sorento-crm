@@ -20,7 +20,6 @@ Run:
 """
 from __future__ import annotations
 
-import asyncio
 import json
 import uuid
 from datetime import datetime, timedelta
@@ -176,10 +175,8 @@ def test_the_operator_retry_route_carries_the_shared_secret(db, sent):
 
     log = _make_log(db, status="failed")
 
-    asyncio.run(
-        retry_integration_log(
-            str(log.id), current_user={"id": str(uuid.uuid4())}, db=db
-        )
+    retry_integration_log(
+        str(log.id), current_user={"id": str(uuid.uuid4())}, db=db
     )
 
     assert len(sent) == 1

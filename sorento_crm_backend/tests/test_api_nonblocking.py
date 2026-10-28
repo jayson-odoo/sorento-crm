@@ -127,9 +127,20 @@ CASES = [
         None,
     ),
     ("app.api.v1.procurement.stock_inquiries", "export_stock_inquiry_pdf", None, {}, {}, None),
-    # The activity timeline: with no date filter it counts and DISTINCTs all of audit_logs.
+    # Slowest on prod (owner, 28 Oct 14:35 MYT): the audit log listing (36.7 s, a COUNT over
+    # all of audit_logs) and the activity timeline (the same table, COUNT plus two DISTINCTs).
+    ("app.api.v1.audit.audit_logs", "get_audit_logs", None, {}, {}, None),
     ("app.api.v1.audit.activity", "get_activity", None, {}, {}, None),
-    # AN-2: uploads that awaited the file, then parsed and wrote on the loop.
+    # AN-2: uploads that awaited the file, then parsed and wrote on the loop. Order tracking
+    # was 77.1 s on prod: validate_only runs the whole tracking import in the request.
+    (
+        "app.api.v1.order_management.orders",
+        "import_order_tracking",
+        "validate_only=true",
+        _upload(),
+        {},
+        ("app.api.v1.order_management.orders", "OrderService"),
+    ),
     ("app.api.v1.order_management.customers", "import_customers", None, _upload(), {}, None),
     ("app.api.v1.procurement.grn", "import_grn_lines", None, _upload(), {}, None),
     (

@@ -26,7 +26,6 @@ parts are a combo fact on a product line and a set line never grows any.
 """
 from __future__ import annotations
 
-import asyncio
 import uuid
 from datetime import date, timedelta
 from decimal import Decimal
@@ -318,7 +317,7 @@ def test_settings_guarded_classes_round_trip(db: Session):
         "Shower",
     ]
 
-    payload = asyncio.run(get_settings(current_user={"id": _uid()}, db=db))
+    payload = get_settings(current_user={"id": _uid()}, db=db)
     assert payload["settings"]["price_tag_guarded_classes"] == ["Kitchen Sink", "Shower"], (
         "a new settings column reaches the FE only if it is on the manual GET dict"
     )

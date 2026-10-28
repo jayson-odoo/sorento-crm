@@ -172,9 +172,9 @@ def test_staff_signature_records_the_proxied_client_ip(monkeypatch):
     monkeypatch.setattr(route.svc, "sign_as_sorento", _sign)
     payload = type("P", (), {"model_dump": lambda self, **k: {}})()
     with pytest.raises(_Stop):
-        asyncio.run(route.sign_quotation_document(
+        route.sign_quotation_document(
             "p", "d", payload, _req(PROXY, "6.6.6.6, 203.0.113.7"), {"id": "u"}, _Db(),
-        ))
+        )
     assert seen["ip_address"] == "203.0.113.7"
 
 
@@ -193,7 +193,7 @@ def test_customer_acceptance_records_the_proxied_client_ip(monkeypatch):
     monkeypatch.setattr(route.svc, "accept_issue", _accept)
     payload = type("P", (), {"signer_name": "S", "mode": "typed", "image_data_uri": None, "gps_lat": None, "gps_lng": None})()
     with pytest.raises(_Stop):
-        asyncio.run(route.accept_quotation("t", payload, _req(PROXY, "6.6.6.6, 203.0.113.7"), _Db()))
+        route.accept_quotation("t", payload, _req(PROXY, "6.6.6.6, 203.0.113.7"), _Db())
     assert seen["ip_address"] == "203.0.113.7"
 
 
