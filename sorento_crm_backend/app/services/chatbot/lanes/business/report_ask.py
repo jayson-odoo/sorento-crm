@@ -479,7 +479,8 @@ def without_pick_axis(verdict: dict[str, Any], pending: Any) -> dict[str, Any]:
     ):
         # The open "Reply 1 for the sales order list" offer is answered before any axis or status check: a position
         # under it is the pick, whatever stale report status or guessed axis the parse also carried.
-        return {**verdict, "group_by": None, "order_status": None}
+        # The offer's own status carries the held ranking frame (it rides only on `sales_ranking`).
+        return {**verdict, "group_by": None, "order_status": _dict(getattr(pending, "payload", None)).get("status")}
     axis = _PICK_AXIS.get(getattr(pending, "kind", None) or "")
     if axis is None or jsc.js_string(verdict.get("group_by") or "").strip().lower() != axis:
         return verdict
@@ -509,7 +510,12 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool 
         (answer.get("mode") == "pick" and jsc.array(answer.get("picked"))) or jsc.array(verdict.get("reference_positions"))
     ):
         return verdict  # a pick of a position on an open roster answers it, whatever report type the parser also read
-    if seam and jsc.array(verdict.get("document")):
+    named_word = any(  # a sales report naming an agent / brand / category word is the report ask's even beside a document
+        isinstance(e, dict) and e.get("current_message") is not False
+        and jsc.js_string(e.get("hint") or "").strip().lower() in WORD_HINTS
+        for e in jsc.array(verdict.get("entities"))
+    )
+    if seam and jsc.array(verdict.get("document")) and not (status in SALES_STATUSES and named_word):
         # The parser read an order DOCUMENT (an SO / DO list ask): the so_status seams decide it from the words; an
         # outstanding or sales report status it carried with it is converted later, at `run_fetch` (`seam=False`),
         # if it stands.
@@ -842,6 +848,11 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
         picked = {p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= len(options)}
         if answer.get("mode") == "fill" and verdict.get("basis") in OUTSTANDING_KINDS and verdict.get("basis") in offered:
             kind = verdict.get("basis")  # a fill naming an offered kind: the kind, so a subject bound beside it is kept
+        elif answer.get("mode") not in ("pick", "cancel") and (
+            verdict.get("capability_from") or verdict.get("order_status") or _binds_subject(verdict)
+        ):
+            # A declared fill that names no offered kind but an ask of its own is that new ask, not the answer.
+            return {k: v for k, v in verdict.items() if k != "open_question_answer"}
         elif answer.get("mode") != "pick" or len(picked) != 1:
             return verdict
         else:
