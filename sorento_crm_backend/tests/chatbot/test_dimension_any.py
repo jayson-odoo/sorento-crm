@@ -50,11 +50,6 @@ def test_a_bare_150mm_wc_matches_every_dimension_that_holds_150(session_factory,
     r, calls = _ask(session_factory, stub_access, monkeypatch, "zzwc with 150mm got stock", _ent("zzwc", "category"), _spec("150mm", "size", 150))
 
     assert _fetched(calls) == sorted([ids["ZZDA-H"], ids["ZZDA-T"]]), (_text(r), calls)
-    said = _text(r).lower()
-    assert "150 mm" in said, said
-    # No dimension is invented: the customer named none.
-    for word in ("height", "length", "width", "trap", "depth", "size 150"):
-        assert word not in said, said
 
 
 def test_a_bare_size_reaches_a_product_whose_150mm_is_its_depth(session_factory, seeded, stub_access, monkeypatch):
@@ -76,15 +71,15 @@ def test_a_bare_size_in_cm_is_read_in_mm(session_factory, seeded, stub_access, m
     r, calls = _ask(session_factory, stub_access, monkeypatch, "zzwc 15cm got stock", _ent("zzwc", "category"), _spec("15cm", "size", 15))
 
     assert _fetched(calls) == sorted([ids["ZZDA-H"], ids["ZZDA-T"]]), (_text(r), calls)
-    assert "150 mm" in _text(r), _text(r)
 
 
 def test_the_candidate_line_offers_the_bare_size_when_only_height_holds_it(session_factory, seeded):
-    """The prod miss: no width or length held 150, so the parser saw only "spec dim_height = 150"."""
+    """The prod miss: no width or length held 150 (nor a class-scoped key), so the parser saw only
+    "spec dim_height = 150" and picked height."""
     from app.models.base import set_company_scope
     from app.services.chatbot.head import candidates
 
-    _seed(session_factory, WCS)
+    _seed(session_factory, (("ZZDA-H", WC, {"dim_height": 150, "dim_width": 400}),))
     db = session_factory()
     set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
 
@@ -118,7 +113,6 @@ def test_a_named_length_no_product_holds_falls_back_to_any_dimension_with_a_line
     )
 
     assert _fetched(calls) == sorted([ids["ZZDA-H"], ids["ZZDA-T"]]), (_text(r), calls)
-    assert "None with length 150 mm; these have 150 mm in another dimension:" in _text(r), _text(r)
 
 
 def test_guard_a_named_length_a_product_holds_stays_strict_with_no_fallback_line(session_factory, seeded, stub_access, monkeypatch):
@@ -144,3 +138,87 @@ def test_guard_a_named_length_no_dimension_holds_stays_an_honest_miss(session_fa
     assert _fetched(calls) == [], (_text(r), calls)
     assert "another dimension" not in _text(r), _text(r)
     assert "999 mm" in _text(r), _text(r)
+
+
+
+# --- The words: the resolver's set and the header the reply opens with -------------------------------
+
+
+def _resolve(session_factory, *specs: dict) -> dict:
+    from app.models.base import set_company_scope
+    from app.services.product_predicate_service import resolve_product_set
+
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    return resolve_product_set(db, require={}, specs=list(specs), scope_terms=["zzwc"])
+
+
+def _header(outcome: dict) -> str:
+    from app.services.chatbot.lanes.business.answer import build_set_header, set_noun_for
+
+    total = outcome["qualifying_total"]
+    return build_set_header(
+        total, total, set_noun_for(outcome.get("class_labels") or []), {"stock": True},
+        description=outcome.get("description"), dimension_fallback=outcome.get("dimension_fallback"),
+    )
+
+
+def test_a_bare_size_set_is_said_with_no_dimension_name(session_factory, seeded):
+    _seed(session_factory, WCS)
+
+    outcome = _resolve(session_factory, {
+        "key": "size", "value": 150, "grounded": True, "any_keys": ["dim_height", "dim_length", "dim_width", "trap_length"],
+    })
+
+    header = _header(outcome)
+    assert outcome["qualifying_total"] == 2, outcome
+    assert header == "Here's what you want: zz water closets with 150 mm with stock (2)", header
+    assert "dimension_fallback" not in outcome
+
+
+def test_a_named_length_nothing_holds_comes_back_under_any_dimension_with_the_line(session_factory, seeded):
+    _seed(session_factory, WCS)
+
+    outcome = _resolve(session_factory, {"key": "dim_length", "value": 150, "grounded": True})
+
+    assert outcome["qualifying_total"] == 2, outcome
+    assert outcome["dimension_fallback"] == {"label": "Length", "value": "150 mm"}, outcome
+    assert _header(outcome).split("\n") == [
+        "None with length 150 mm; these have 150 mm in another dimension:",
+        "Here's what you want: zz water closets with 150 mm with stock (2)",
+    ], _header(outcome)
+
+
+def test_guard_the_fallback_line_is_on_the_first_page_only():
+    from app.services.chatbot.lanes.business.answer import build_set_header
+
+    named = {"label": "Length", "value": "150 mm"}
+    first = build_set_header(60, 50, "water closets", {"stock": True}, dimension_fallback=named)
+    later = build_set_header(60, 10, "water closets", {"stock": True}, dimension_fallback=named, offset=50)
+
+    assert first.startswith("None with length 150 mm; these have 150 mm in another dimension:\n"), first
+    assert "another dimension" not in later, later
+
+
+def test_guard_a_named_length_a_product_holds_carries_no_fallback(session_factory, seeded):
+    _seed(session_factory, (*WCS, ("ZZDA-L", WC, {"dim_length": 150})))
+
+    outcome = _resolve(session_factory, {"key": "dim_length", "value": 150, "grounded": True})
+
+    assert outcome["qualifying_total"] == 1, outcome
+    assert "dimension_fallback" not in outcome
+    assert "length 150 mm" in _header(outcome), _header(outcome)
+
+
+def test_guard_two_named_dimensions_are_never_widened(session_factory, seeded):
+    """One named dimension is the owner's case; a turn naming two keeps its honest miss."""
+    _seed(session_factory, WCS)
+
+    outcome = _resolve(
+        session_factory,
+        {"key": "dim_length", "value": 150, "grounded": True},
+        {"key": "dim_width", "value": 400, "grounded": True},
+    )
+
+    assert outcome["qualifying_total"] == 0, outcome
+    assert "dimension_fallback" not in outcome

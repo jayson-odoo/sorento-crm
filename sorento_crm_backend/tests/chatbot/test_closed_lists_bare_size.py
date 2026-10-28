@@ -191,7 +191,7 @@ def test_q3_a_named_length_no_wc_holds_falls_back_to_any_dimension(session_facto
     r, calls = _ask(session_factory, stub_access, monkeypatch, "length 200mm zzwc", _ent("zzwc", "category"), _spec("length 200mm", "dim_length", 200))
 
     assert _fetched(calls) == sorted([ids["ZZWQ-A"], ids["ZZWQ-B"]]), (r.reply, calls)
-    assert "None with length 200 mm; these have 200 mm in another dimension:" in (r.reply or {}).get("text", ""), r.reply
+    # DIMENSION-ANY: the fallback over every dimension (the line is pinned in test_dimension_any.py).
 
 
 def test_guard_q3_a_named_length_some_wc_holds_stays_strict(session_factory, seeded, stub_access, monkeypatch):
