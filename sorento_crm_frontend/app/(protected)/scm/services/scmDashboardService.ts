@@ -63,7 +63,8 @@
  *   } | null                            // null when the supplier was never scored.
  *
  * Filters `abcClass` / `xyzClass` are sent as `abc` / `xyz` query params
- * ('A'|'B'|'C'|'unknown' / 'X'|'Y'|'Z'|'unknown') on the product grid + drill-down;
+ * ('A'|'B'|'C'|'unknown' / 'X'|'Y'|'Z'|'unknown', several comma-joined and OR-ed) on the
+ * product grid + drill-down;
  * the backend filters + paginates authoritatively. The FE relabels the classes to
  * plain language for DISPLAY ONLY (abc_class → "Value": High/Med/Low; xyz_class →
  * "Demand": Steady/Variable/Erratic - see `lib/health` display maps); the wire
@@ -101,9 +102,9 @@ export interface ScmFilters {
   supplier: string | null;
   /** Health-status filter set by the interactive legend chips + drill-downs. */
   healthStatus: HealthState | null;
-  /** M2 ABC class filter (client-side in Phase 1). `unknown` = unclassified. */
+  /** M2 ABC class filter; several comma-joined (OR-ed), filtered server-side. `unknown` = unclassified. */
   abcClass: string | null;
-  /** M2 XYZ class filter (client-side in Phase 1). `unknown` = unclassified. */
+  /** M2 XYZ class filter; several comma-joined (OR-ed), filtered server-side. `unknown` = unclassified. */
   xyzClass: string | null;
   /** Free-text product search (SKU / name). */
   productSearch: string;

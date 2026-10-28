@@ -368,7 +368,7 @@ export function PlanExceptionsView({ runId = null, onBack }: PlanExceptionsViewP
             onChange={(v) => setStatusFilter(joinMulti(v))}
             options={STATUS_OPTIONS}
             placeholder="Open"
-            className="w-40"
+            triggerClassName="w-40"
             id="exception-status-filter"
           />
         </div>
