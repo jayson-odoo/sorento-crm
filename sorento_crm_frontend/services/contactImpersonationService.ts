@@ -4,6 +4,7 @@
  * contact for debugging / support.
  */
 import { apiFetch } from '@/lib/api';
+import { impersonationStore } from '@/lib/impersonation-store';
 import { extractApiError } from '@/lib/api-client';
 
 const BASE = '/api/user-management/contact-impersonation';
@@ -75,6 +76,9 @@ export async function fetchCurrentContactImpersonation(): Promise<ContactImperso
 export async function fetchImpersonatedUserContactId(): Promise<string | null> {
   const response = await apiFetch('/api/v1/user-management/users/me');
   if (!response.ok) return null;
-  const body = (await response.json()) as { respond_contact_id?: string | null };
+  const body = (await response.json()) as { id?: string; respond_contact_id?: string | null };
+  // The header only applies while the view-as row is live: an answer as anyone else (the admin,
+  // after the view-as ended) is not the target's contact.
+  if (!body.id || body.id !== impersonationStore.getState()?.targetUser.id) return null;
   return body.respond_contact_id ?? null;
 }

@@ -23,6 +23,28 @@ import {
   startContactImpersonation,
 } from '@/services/contactImpersonationService';
 
+let contactViewStart: Promise<string> | null = null;
+
+/** One contact impersonation start per visit: a StrictMode double effect shares this promise. */
+function startContactViewOnce(): Promise<string> {
+  if (!contactViewStart) {
+    contactViewStart = (async () => {
+      const contactId = await fetchImpersonatedUserContactId();
+      if (!contactId) throw new Error('no linked contact');
+      const started = await startContactImpersonation(contactId);
+      const token = new URL(
+        started.portalUrl,
+        window.location.origin,
+      ).searchParams.get('token');
+      if (!token) throw new Error('no portal token');
+      return token;
+    })().finally(() => {
+      contactViewStart = null;
+    });
+  }
+  return contactViewStart;
+}
+
 /**
  * The CRM-side shell of the portal forms (PORTAL-P3-ROLE-MENU): hands the signed-in salesperson's
  * portal slug (from /users/me) to the same portal components the `/portal/c/{slug}` tree renders.
@@ -91,11 +113,9 @@ export function MySlug({
     if (viewingAs && !isImpersonationToken()) {
       void (async () => {
         try {
-          const contactId = await fetchImpersonatedUserContactId();
-          if (!contactId) throw new Error('no linked contact');
-          const started = await startContactImpersonation(contactId);
-          const token = new URL(started.portalUrl, window.location.origin).searchParams.get('token');
-          if (!token) throw new Error('no portal token');
+          const token = await startContactViewOnce();
+          // A run that was cancelled while the start was in flight writes nothing.
+          if (cancelled) return;
           writePortalToken(token, { impersonation: true });
         } catch {
           if (!cancelled) toVerify();
