@@ -40,6 +40,14 @@ step search-only) pending.
 - Brands: code removal only; `projects.brands` table and rows untouched (no migration).
 - Customer required on register: enforced in the register route / `register_project`, not only the FE.
 
+## Cross-lane: PORTAL-P4-REQUESTS (agreed with that lane 28 Oct, pending owner Q7)
+
+MY REQUESTS > Project Registration links to `/project-sales/new`; submitted registrations show in the Projects
+list / pipeline under view_own. P4 defines the submit slug (name per the Q7 ruling) in `permission_registry.py`
+and grants it to the salesperson role in its `pp4_0001` migration; this lane only references the string (page gate
+and register API accept `projects.projects.edit` OR it). A salesperson's submit uses the direct path (pending
+project + existing approve / reject / notify), not P4's portal-token adapter (that stores typed names).
+
 ## Slices (one lane, one PR; commits on this branch)
 
 - S1 BE: brands removal (G), customer required (A5), management slug + notifications (F), activity line (E6),
