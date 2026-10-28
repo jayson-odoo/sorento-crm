@@ -104,3 +104,23 @@ Closed for limited users only (item 3).
 ## Acceptance criteria
 
 `portal-p4-requests-acceptance-criteria.md` (written after the owner answers).
+
+## Review round (28 Oct, head c001fdfd1b)
+
+Reviewer NOT READY (2 major, 5 minor), security-reviewer FINDINGS (2 should-fix, 2 nits); crew-notes on #1953.
+Fix round, red first:
+- Hidden for a salesperson: SLA Tracking tab, complaint Fulfilment DOs tab (both 403 for view_own).
+- D7 (crew answer a85478781 = (a)): salesperson "Delete draft" and "remove my attachment" become server-deferred
+  actions `my_request.delete` (10s) / `my_request_attachment.unlink` (5s), DeferredActionButton, running the portal's
+  own delete under the salesperson's identity. Portal and staff paths unchanged.
+- Security: upload gate reads the form `kind` (query/form mismatch 422); impersonated comments record the admin;
+  each my-requests kind gated on its own module; write-route enumeration test.
+- Minor: portal link sales_opportunity/new -> list; attachment downloads via apiFetch + saveBlobAs (impersonation);
+  usePermissions try/catch reverted, tests get a SessionProvider.
+
+## Release notes (for the PR body)
+
+- Complaint revision goes live in the PORTAL on deploy wherever the complaint `portal_revision_configs` row is ON
+  with allowed statuses (dev copy: ON). Confirm the production row with the owner before the release dispatch.
+- `projects.registrations.submit` is granted to salespeople but enforced only once PROJECT-REGISTER-V2 lands.
+- Merging #1953 ships #1944 (P3) with it: #1944's head 9d6372f976 is contained.
