@@ -1,7 +1,7 @@
 """GEMINI-EXPLICIT-CACHE: price row for gemini-3.5-flash-lite in llm_model_prices
 
 Revision ID: gemprice_0001_gemini_prices
-Revises: dimany_0001_unit_aliases
+Revises: appeal_0001_appeal_labels
 Create Date: 2026-10-28 00:00:00.000000
 
 Data only, additive, idempotent. Prod watch (28 Oct 2026) found no `llm_model_prices` row for
@@ -23,7 +23,7 @@ from alembic import op
 from app.services.analytics_connector import prices
 
 revision = "gemprice_0001_gemini_prices"
-down_revision = "dimany_0001_unit_aliases"
+down_revision = "appeal_0001_appeal_labels"
 branch_labels = None
 depends_on = None
 
