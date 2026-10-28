@@ -743,6 +743,7 @@ export function PortalLanding({ slug, embedded = false }: { slug?: string; embed
             slug={slug}
             search={search}
             onClearSearch={() => setSearch('')}
+            embedded={embedded}
           />
           )}
         </>
@@ -763,6 +764,7 @@ function SubmissionList({
   slug,
   search,
   onClearSearch,
+  embedded = false,
 }: {
   kind: PortalLandingKind;
   items: PortalSubmissionSummary[];
@@ -779,6 +781,8 @@ function SubmissionList({
    *  empty state has to know about it too, not just `filters`. */
   search?: string;
   onClearSearch?: () => void;
+  /** Inside the CRM shell: the New label shows in full at every width (the row wraps instead). */
+  embedded?: boolean;
 }) {
   const fields = useMemo(() => landingFieldsFor(kind), [kind]);
   const filtered = useMemo(
@@ -820,7 +824,13 @@ function SubmissionList({
                 around a bare "New" here reads as a second, stray "New" next
                 to a submission card's own status badge of the same word
                 (`PortalLanding.priceTag.test.tsx`). */}
-            <span className="block max-w-[31px] overflow-hidden whitespace-nowrap sm:max-w-none sm:inline">
+            <span
+              className={
+                embedded
+                  ? 'whitespace-nowrap'
+                  : 'block max-w-[31px] overflow-hidden whitespace-nowrap sm:max-w-none sm:inline'
+              }
+            >
               {newKindLabel(kind)}
             </span>
           </Link>

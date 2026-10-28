@@ -10,6 +10,8 @@ import { clearImpersonationToken, isImpersonationToken } from '@/app/(auth)/port
 import { stopContactImpersonation } from '@/services/contactImpersonationService';
 
 const BANNER_HEIGHT = 40;
+// Below `sm` the text wraps to two lines, so the page offset is taller.
+const BANNER_HEIGHT_NARROW = 64;
 const COLLAPSE_KEY = 'sorento.impersonationBannerCollapsed';
 
 export function ImpersonationBanner() {
@@ -28,8 +30,9 @@ export function ImpersonationBanner() {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
     if (session && !collapsed) {
-      root.style.setProperty('--impersonation-banner-height', `${BANNER_HEIGHT}px`);
-      document.body.style.paddingTop = `${BANNER_HEIGHT}px`;
+      const height = window.innerWidth < 640 ? BANNER_HEIGHT_NARROW : BANNER_HEIGHT;
+      root.style.setProperty('--impersonation-banner-height', `${height}px`);
+      document.body.style.paddingTop = `${height}px`;
     } else {
       root.style.removeProperty('--impersonation-banner-height');
       document.body.style.paddingTop = '';
@@ -87,7 +90,7 @@ export function ImpersonationBanner() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <UserCog className="size-4 shrink-0" aria-hidden />
-          <span className="truncate">
+          <span className="sm:truncate">
             You are currently impersonating{' '}
             <Link
               href={`/user-management/users/${session.targetUser.id}`}
