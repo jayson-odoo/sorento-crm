@@ -89,6 +89,13 @@ touches the two shared files minimally (one search param, one prop, one prefill)
 #1953 first, then this lane rebases onto main and resolves; if the owner wants this lane first, #1953's worker
 gets a crew-note naming the exact lines.
 
+#1953's worker replied (28 Oct): route and `project_id` / `project_title` fields stay; no `?project_id=`
+prefill planned there. After #1953 the default export of `PurchaseRequestForm` is a wrapper: a LIMITED user
+(`procurement.sponsorship_forms.view_own` without `.view`) gets `LimitedPurchaseRequestForm` (the only
+`useSearchParams` caller, reads `?from=` / `?revise=1`, saves via `/api/v1/my-requests`), staff get the original
+form. So on rebase `defaultProjectId` must reach BOTH branches (a salesperson starts a sponsorship from their own
+project page), with a vitest for the limited branch too.
+
 ## Tests (tester writes red first, from the UAC)
 
 - pytest `tests/test_project_stages_ladder.py` (new): migration adds the 12 edges on a prod-shaped graph, runs
