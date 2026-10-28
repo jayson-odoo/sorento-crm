@@ -36,6 +36,9 @@ def _meta_allowed_ops(meta: Any) -> list[str]:
 def _coerce_value(value: Any, data_type: str) -> Any:
     if value is None:
         return None
+    if isinstance(value, (list, tuple)):
+        # "In list" carries several values; each is coerced on its own (a uuid list must stay a list).
+        return [_coerce_value(v, data_type) for v in value]
     if data_type == "number":
         return Decimal(str(value))
     if data_type == "boolean":
