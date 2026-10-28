@@ -104,9 +104,11 @@ transferred to SPO, and 12 months of SO lines summing 3,408 (avg 284) with an 85
 
 ## Performance
 
-Every request computes every item, then filters, sorts and pages in Python. Sandbox, synthetic supplier of 3,000 items
-(27 Oct, head 9c9c88e9): 2.6 s from the sidebar click to rows, API 0.8 to 2.4 s. No prod-copy measurement yet. Trigger for moving the work into SQL: a page load over ~2 s on
-the live item count, which the hand test will show.
+Every request computes every item, then filters, sorts and pages in Python. On-hand, dealer SO and PO are
+summed in SQL per (product, warehouse) with ids as text (28 Oct: fetching one row per line was ~80% of the
+time). Sandbox, synthetic supplier of 3,000 items + 36,000 SO lines, head after that change: build_rows
+0.4 to 1.7 s. No prod-copy measurement yet. Trigger for moving the rest into SQL: a page load over ~2 s
+on the live item count, which the hand test shows.
 
 ## Built (27 Oct)
 

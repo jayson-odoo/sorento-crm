@@ -32,7 +32,7 @@ from datetime import date
 from io import BytesIO
 from typing import Any, Optional
 
-from sqlalchemy import func, or_
+from sqlalchemy import Text, cast, func, or_
 from sqlalchemy.orm import Session
 
 from app.models.base import get_company_scope
@@ -97,12 +97,16 @@ def _monthly_sales(db: Session, as_of: Optional[date]) -> dict[str, dict]:
     return {pid: _series(buckets, months) for pid, months in by_product.items()}
 
 
-def _grouped(query) -> dict[tuple[str, str], float]:
-    """(product id, warehouse id) -> quantity, off a query selecting exactly those three."""
-    out: dict[tuple[str, str], float] = defaultdict(float)
-    for pid, wid, qty in query.all():
-        out[(str(pid), str(wid))] += _num(qty)
-    return out
+def _grouped(db: Session, product_col, warehouse_col, qty_expr, *joins_and_filters) -> dict[tuple[str, str], float]:
+    """(product id, warehouse id) -> summed quantity, summed in SQL (one row per pair, ids as
+    text) rather than one row per line: the live books hold tens of thousands of lines."""
+    q = db.query(
+        cast(product_col, Text), cast(warehouse_col, Text), func.sum(qty_expr)
+    )
+    for step in joins_and_filters:
+        q = step(q)
+    q = q.group_by(product_col, warehouse_col)
+    return {(pid, wid): _num(qty) for pid, wid, qty in q.all()}
 
 
 def build_rows(db: Session, *, as_of: Optional[date] = None) -> dict:
@@ -116,27 +120,21 @@ def build_rows(db: Session, *, as_of: Optional[date] = None) -> dict:
     }
     columns_wh = {wid for wid, w in warehouses.items() if w.is_active and is_site_pool(w.segment)}
 
-    on_hand = _grouped(db.query(Stock.product_id, Stock.warehouse_id, Stock.quantity_on_hand))
+    on_hand = _grouped(db, Stock.product_id, Stock.warehouse_id, Stock.quantity_on_hand)
     dealer = _grouped(
-        db.query(
-            SalesOrderLine.product_id,
-            SalesOrderLine.warehouse_id,
-            SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered,
-        )
-        .join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id)
-        .filter(
+        db, SalesOrderLine.product_id, SalesOrderLine.warehouse_id,
+        SalesOrderLine.qty_ordered - SalesOrderLine.qty_delivered,
+        lambda q: q.join(SalesOrder, SalesOrder.id == SalesOrderLine.sales_order_id),
+        lambda q: q.filter(
             *so_outstanding_clauses(),
             or_(SalesOrder.demand_class.is_(None), SalesOrder.demand_class != PROJECT_SEGMENT),
-        )
+        ),
     )
     po = _grouped(
-        db.query(
-            PurchaseOrderLine.product_id,
-            PurchaseOrderLine.warehouse_id,
-            PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received,
-        )
-        .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-        .filter(*po_outstanding_clauses())
+        db, PurchaseOrderLine.product_id, PurchaseOrderLine.warehouse_id,
+        PurchaseOrderLine.qty_ordered - PurchaseOrderLine.qty_received,
+        lambda q: q.join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id),
+        lambda q: q.filter(*po_outstanding_clauses()),
     )
     spos = [r for r in _spo_rows(db, None, False) if r["warehouse_id"] in warehouses]
     packing = {
