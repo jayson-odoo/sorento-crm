@@ -1,5 +1,96 @@
-# PLAN: API-NONBLOCKING - stop async-def handlers blocking the worker event loop
+# PLAN: API-NONBLOCKING - blocking route handlers run in the threadpool, not on the event loop
 
-Status: Plan (track: standard, backend only, no behaviour change, no migration)
+Status: Build (track: standard, backend only, no behaviour change, no migration). PR #1951.
+Lane: API-NONBLOCKING. UAC: `api-nonblocking-acceptance-criteria.md`.
 
-Lane: API-NONBLOCKING. Plan body follows in the next commit.
+## Why
+
+Prod runs gunicorn with uvicorn workers (`sorento_crm_backend/gunicorn.conf.py:44`, `WORKERS`
+env, prod has 8). The owner approved going to 4 (28 Oct; each worker about 0.9 GB, see
+`documentation/plans/deploy/PLAN-backend-memory-28oct.md` on PR #1950). FastAPI runs an
+`async def` handler ON the worker's event loop and a plain `def` handler in anyio's threadpool.
+An `async def` handler that never awaits holds the loop for its whole run: every other request
+on that worker, `/health` included, waits behind it. With 4 workers, 4 slow reports at once
+stall the API, and a handler holding the loop past gunicorn's `timeout` (120 s,
+`gunicorn.conf.py:52`; uvicorn heartbeats from its main loop) gets the worker SIGABRTed
+(`WORKER TIMEOUT`).
+
+## Measured on main (30a40cf0, AST over `app/`, nested defs excluded)
+
+| route handlers | count |
+|---|---|
+| plain `def` (threadpool) | 972 |
+| `async def` that awaits | 63 |
+| `async def` that never awaits | **943**, in 128 files |
+
+`LESSONS-LEARNT.md:63` says "~40 remain": wrong, it is 943.
+
+Heavy handlers named in the brief, all still `async def` with no await on main:
+`order_management/orders.py:1822` (sales report), `:1578` (outstanding report),
+`projects/quotation_documents.py:705` (xlsx), `projects/sales_orders.py:949` (xlsx),
+`system/jobs.py:296` (CSV export), `system/modules_runtime.py:394` (zip export),
+`complaints/complaints.py:1504`, `marketing/promotions.py:372`,
+`procurement/stock_inquiries.py:320` (PDF export enqueue: DB + Redis).
+
+A second class the "no await" rule cannot see: `async def` handlers that `await file.read()`
+(or `request.form()`) and then run the whole Excel parse and DB import synchronously on the
+loop, e.g. `order_management/customers.py:56`, `orders.py:1403`, `:1474`,
+`procurement/grn.py:95`, `:154`, `packing_lists.py:141`, `spo_allocations.py:273`,
+`projects/quotations.py:1085`, `projects/schedules.py:143`. And `/health` itself
+(`app/main.py:643`) runs its DB check synchronously before its one await.
+
+Already safe and untouched: Stock Debt `stock_debt.py:45/144/213`, chat turn
+`external/chat.py:172`, ingest `ingest.py:994` (plain `def`).
+
+The August attempt (`origin/fix/api-blocking-event-loop`, bb5cf8e904, never merged) removed
+`async` from every no-await handler, made the pool env-tunable (8+7) and set the anyio limiter
+to pool capacity. Reused: the mechanical approach and its test-helper fix for tests that call a
+handler under `asyncio.run`. Not reused: the branch is 3 months stale (918 routes then, 2007
+now), and the pool / limiter change rests on a premise checked below.
+
+## Decisions
+
+1. **One PR, two phases as separate commits.** Phase 1 = the heavy handlers above plus the
+   upload-then-import class plus `/health`. Phase 2 = the remaining no-await handlers, swept
+   mechanically per domain. One PR because the CI guard (3) needs a clean baseline; a ratchet
+   list of 900 entries would be noise. Phase 2 commits can be dropped from the PR if the owner
+   prefers a follow-up.
+2. **How each handler is converted.** No await -> drop `async` (FastAPI runs it in the
+   threadpool; nothing else changes). Awaits `file.read()` / `request.form()` and then does sync
+   work -> keep the awaits on the loop and move the sync remainder into one
+   `await run_in_threadpool(...)`. Handlers whose only work is building an async stream
+   (`sla/conversation_events.py:138`) stay `async` and go on the allow-list.
+3. **Guard:** `tests/test_no_blocking_async_routes.py` walks every mounted route
+   (`app.routes`) and fails when an endpoint is a coroutine function whose body (nested defs
+   excluded) has no `await` / `async for` / `async with`, unless it is on an allow-list in that
+   file with a reason. Runs in the normal backend suite, so CI fails a new offender.
+4. **Why the conversion is safe (thread semantics).** 972 routes already run in the threadpool.
+   The auth dependencies stay `async def` (`app/dependencies.py:280`, `:652`, AC-12) so the audit
+   actor is stamped on the request's own context; a `def` handler runs in a copy of that context
+   (anyio copies contextvars), so it still sees the actor, and the per-request `AuditContext` is
+   one mutable object shared by reference (`app/audit_context.py:246`). No converted handler
+   calls `asyncio.get_running_loop` / `create_task` (AST scan; `projects/tasks.py:91`'s
+   `create_task` is a service method).
+5. **Threadpool / DB pool:** see "Sizing" below (filled in from a local measurement).
+
+## Proof
+
+- Red-first: `tests/test_api_nonblocking.py`, one case per heavy handler: the real route on one
+  event loop, database stand-in blocks 1.5 s on first touch, `/health` on the same loop must
+  answer within 0.75 s of the slow part starting. Red on main for all 9 (1.51-3.01 s).
+- Kill test: re-add `async` to one converted handler -> its case goes red.
+- Response equality: Phase 1 report/export handlers called before/after on the same seeded data,
+  bytes (xlsx/CSV/zip) or parsed JSON compared.
+- Phase 2: an AST check that every Phase 2 change is exactly `async def` -> `def` (no other
+  token changed), plus the route table (path, methods, response model, dependencies) identical
+  before/after.
+- Full backend suite + SCM suite; failures compared name-for-name with main.
+
+## Sizing (threadpool / DB pool at 4 workers)
+
+Pending the local measurement; filled in before review.
+
+## Coordination
+
+PR #1950 (BACKEND-MEMORY) changes `gunicorn.conf.py`, `app/uvicorn_worker.py`,
+`lookup_lists.fill()`. This lane does not touch those files.
