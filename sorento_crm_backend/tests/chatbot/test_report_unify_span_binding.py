@@ -367,6 +367,18 @@ def test_h4_total_sale_gives_the_same_pick_and_the_same_args_as_h3(bot) -> None:
     )
 
 
+def test_h4_with_a_document_the_parser_read_still_asks_which_sales_agent_never_which_customer(bot) -> None:
+    """AC-RU-19, live step 14: the parse also carries `document: ["SO"]`, `group_by` sales_agent, replace_combine and
+    no canonical codes. "yu" stays the sales agent: the agent question (or an agent-scoped run), never a customer pick."""
+    parse = _status(
+        "sales_report", _ent("yu", "sales_agent"), _ent(PRODUCT, "product"), basis=None, group_by="sales_agent",
+        document=["SO"], entity_op="replace_combine", **YEAR,
+    )
+    text, calls = bot.say(parse, "sales agent yu total sale for SRTSP231 in 2026", spans=_agent_spans())
+    assert "Which one do you mean?" not in text and CUSTOMER_WITH_YU not in text, (calls, text)
+    assert not [a for _n, a in calls if a.get("customer_ids")], (calls, text)
+
+
 def test_ac_ru_19_a_single_agent_match_runs_at_once_with_the_agent_filter_and_no_customer(bot) -> None:
     """AC-RU-19: when the span pass finds exactly one agent the ask runs, headed by that agent; the word
     "yu" is never put to the customer resolver (G-YU TRADING SDN BHD is not a filter)."""
@@ -506,3 +518,30 @@ def test_ac_ru_22_each_candidate_line_carries_the_row_id_the_parser_binds_by(bot
     assert bot.ids["sink"] in block, block
     for agent_id in bot.ids["agents"].values():
         assert agent_id in block, block
+
+
+_DOC_PARSE = {
+    "order_status": "sales_report", "status": "sales_report", "group_by": "sales_agent", "document": ["SO"],
+    "entity_op": "replace_combine", "date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31",
+    "entities": [
+        {"raw": PRODUCT, "hint": "product", "current_message": True},
+        {"raw": "yu", "hint": "sales_agent", "current_message": True},
+    ],
+}
+
+
+def test_by_capability_makes_a_document_carrying_sales_report_naming_an_agent_word_the_report_ask() -> None:
+    """Step 14 seam: the `document` guard returned the parse unchanged, so "yu" never became a report word and the
+    generic reconcile re-typed it to a customer. A current-message sales agent word makes it the report ask's."""
+    from app.services.chatbot.lanes.business import report_ask
+
+    out = report_ask.by_capability(dict(_DOC_PARSE))
+    assert out["order_status"] == "sales_ranking" and out.get("capability_from") == "sales_report", out
+    assert "yu" in [e["raw"] for e in out["entities"] if e["hint"] == "sales_agent"], out
+
+
+def test_by_capability_still_leaves_a_document_parse_with_no_agent_brand_or_category_word_to_the_so_status_seams() -> None:
+    from app.services.chatbot.lanes.business import report_ask
+
+    verdict = {**_DOC_PARSE, "entities": [{"raw": PRODUCT, "hint": "product", "current_message": True}]}
+    assert report_ask.by_capability(dict(verdict)) == verdict

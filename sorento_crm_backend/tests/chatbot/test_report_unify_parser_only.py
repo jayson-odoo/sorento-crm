@@ -553,6 +553,21 @@ def test_b2a_a_fresh_sales_ask_naming_basis_and_period_under_the_kind_question_r
     assert args["basis"] == "invoiced" and args.get("date_from") == YEAR["date_filter_start"], args
 
 
+def test_b2a_live_a_declared_fill_with_a_fresh_invoiced_sales_ask_under_the_kind_question_runs_that_ask(bot) -> None:
+    """Step 20 live parse: declared `fill`, basis and sales_basis invoiced, `sales_analysis`, 2026, domain order."""
+    bot.say(_bare_outstanding(), "outstanding")
+    reply = _status(
+        "sales_analysis", group_by=None, measure=None, basis="invoiced", sales_basis="invoiced", sales_company=None,
+        domain_in_message=True, entity_op="reuse", by_words=None,
+        open_question_answer={"mode": "fill", "items": [], "picked": [], "qty_for_all": None}, **YEAR,
+    )
+    text, calls = bot.say(reply, "invoiced sales this year")
+    _no_kind_question_or_basis_refusal(text)
+    if calls:
+        args = _only_report_ask(calls)
+        assert args["basis"] == "invoiced" and args.get("date_from") == YEAR["date_filter_start"], args
+
+
 def test_b2b_a_fresh_delivered_sales_report_under_the_kind_question_is_not_the_kind_question_again(bot) -> None:
     """B2b: a sales-report ask with basis delivered runs, or asks only what it is missing; never the kind question."""
     bot.say(_bare_outstanding(), "outstanding")

@@ -7,6 +7,7 @@ from typing import Any
 import pytest
 
 from tests.chatbot import test_report_ask_lane as lane_tests
+from tests.chatbot.test_report_ask_lane import _e
 from tests.chatbot.test_engine import _parser_output, stub_access  # noqa: F401
 from tests.chatbot.test_report_ask_lane import TOOL, _say_all, console  # noqa: F401
 from tests.chatbot.test_report_smart_step7 import KEEP, _state_on
@@ -98,3 +99,47 @@ def test_a_one_the_live_parser_reads_with_a_stale_so_status_still_opens_the_list
     ran = _ran(log)
     assert len(ran) == 1 and ran[0]["group_by"] == "sales_order", (text, log)
     assert "ZZT-SO-1001" in text, text
+
+
+def test_a_one_the_live_parser_reads_as_a_did_you_mean_pick_still_opens_the_list(console, monkeypatch) -> None:
+    """28 Oct 2026 hand test (parser v189): "1" under the outstanding summary parsed `reference_target: dym`,
+    `so_outstanding`, the SO document, `entity_op: reuse`, a declared pick AND position 1, no self_reference."""
+    _state_on(console)
+    first = _outstanding("outstanding")
+    first.update(order_status="so_outstanding", document=["SO"], entity_op="replace_combine", basis=None, entities=[{**_e("Sorento", "brand"), "hint_confident": True}])
+    t0, l0 = _say_all(console, monkeypatch, first, "any outstanding mocha item in sales order")
+    assert len(_ran(l0)) == 1 and OFFER in t0, (t0, l0)
+    live = _parser_output(
+        message_type="business_query", domain_hint="order", intent_hint="check_order", order_status="so_outstanding",
+        document=["SO"], self_reference=False, entities=[], entity_op="reuse", reference_positions=[1],
+        reference_target="dym", domain_in_message=False, user_goal="trying to view the sales order list",
+        open_question_answer={"mode": "pick", "items": [], "picked": [1], "qty_for_all": None},
+    )
+    text, log = _say_all(console, monkeypatch, live, "1")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "sales_order", (text, log)
+    assert "ZZT-SO-1001" in text, text
+
+
+def test_without_pick_axis_keeps_the_offers_own_status_so_the_held_frame_rides_under_the_so_list_offer() -> None:
+    """Live cause (28 Oct): the seam returned `order_status: None` for the SO-list pick, but the held ranking frame rides
+    only on a verdict whose `order_status == "sales_ranking"`; the pick must carry the offer's own status."""
+    from app.services.chatbot.lanes.business import report_ask
+    from app.services.chatbot.turn.pending import ask as pending_ask
+
+    pending = pending_ask(
+        "top_selling_pick", [{"position": 1, "label": "Sales order list", "code": "sales_order_list"}],
+        team=None, asked_at_turn=1,
+        payload={
+            "domain": "sales", "status": "sales_ranking",
+            "filters": {"tool": "crm_report_ask", "ranking": {"group_by": "sales_order_list"}},
+        },
+    )
+    verdict = {
+        "order_status": "so_outstanding", "status": "so_outstanding", "document": ["SO"], "entity_op": "reuse",
+        "domain_hint": "order", "intent_hint": "check_order", "message_type": "business_query",
+        "reference_target": "dym", "reference_positions": [1],
+        "open_question_answer": {"mode": "pick", "items": [], "picked": [1], "qty_for_all": None},
+    }
+    out = report_ask.without_pick_axis(verdict, pending)
+    assert out["order_status"] == "sales_ranking" and out.get("group_by") is None, out
