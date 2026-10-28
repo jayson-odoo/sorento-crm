@@ -2253,7 +2253,10 @@ def run_fetch(
         location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
         if location_line:
             return _fixed_reply(location_line)
-        unapplied = report_ask.unapplied_words(parse_output, semantic_input["report_ask_args"])
+        unapplied = [
+            *report_ask.unapplied_words(parse_output, semantic_input["report_ask_args"]),
+            *[str(w) for w in settled.extras.get("not_applied") or []],  # a brand / category / agent word that bound to nothing
+        ]
         if unapplied:
             sole = report_ask.sole_unapplied_question(unapplied, semantic_input["report_ask_args"])
             if sole:

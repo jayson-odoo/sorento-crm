@@ -1027,11 +1027,20 @@ def _bound_by_id(db: Any, hint: str, word: str) -> tuple[list[str], list[str]] |
 
 def _word_filters(
     db: Any, parse_output: dict[str, Any], pairs: tuple[tuple[str, str], ...] = _WORD_PARAMS, *,
-    agent_filter: bool = True,
+    agent_filter: bool = True, lenient: bool = False,
 ) -> tuple[dict[str, Any] | None, str | None]:
     """The brand / sales agent / category ids the verdict's `report_ask_words` resolve to, or
-    the one line to say instead. Shared by a fresh ask and a ranking refine."""
+    the one line to say instead. Shared by a fresh ask and a ranking refine.
+
+    `lenient` (a fresh ask, owner Q4 a): a word that binds to nothing is not the end of the ask. It rides on
+    `out["_unbound"]` as `(Not applied text, the line to say)`, and the caller says the line only when the word was the
+    sole subject. An id the parser echoed (H2) and an ambiguous word are never lenient."""
     out: dict[str, Any] = {}
+    unbound: list[tuple[str, str]] = []
+
+    def not_bound(hint: str, word: str) -> tuple[str, str]:
+        noun = WORD_HINTS[hint]
+        return f"{noun.capitalize()} {word} (no such {noun})", f"I don't know '{word}' as a {noun}."
     words = _dict(parse_output.get("report_ask_words"))
     for hint, param in pairs:
         ids: list[str] = []
@@ -1055,6 +1064,9 @@ def _word_filters(
                 )
                 if unknown or (not found and not ambiguous):
                     # A word that matched nothing is said, never dropped from the filter.
+                    if lenient:
+                        unbound.append(not_bound(hint, word))
+                        continue
                     return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
                 if ambiguous:
                     listed = ", ".join(sorted(set(ambiguous)))
@@ -1065,6 +1077,9 @@ def _word_filters(
                 continue  # the channel word the verdict already set (`sales_channel`), not a person
             found, names = _resolve_word(db, hint, word)
             if not found:
+                if lenient:
+                    unbound.append(not_bound(hint, word))
+                    continue
                 return None, f"I don't know '{word}' as a {WORD_HINTS[hint]}."
             distinct = {" ".join(n.split()).casefold(): " ".join(n.split()) for n in reversed(names)}
             if hint == "sales_agent" and len({business_services._code_stem(n) for n in names}) > 1:
@@ -1083,6 +1098,8 @@ def _word_filters(
             ids.extend(i for i in found if i not in ids)
         if ids:
             out[param] = ids
+    if unbound:
+        out["_unbound"] = unbound
     return out, None
 
 
@@ -1160,9 +1177,10 @@ def _fresh_args(
     if parse_output.get("self_reference") is True:
         args["mine"] = True
 
-    filters, line = _word_filters(db, parse_output, agent_filter=agent_filter)
+    filters, line = _word_filters(db, parse_output, agent_filter=agent_filter, lenient=True)
     if filters is None:
         return None, line
+    unbound = filters.pop("_unbound", [])
     args.update(filters)
 
     # The gate's resolved rows, of the kinds THIS message named (a carried subject from an
@@ -1207,6 +1225,10 @@ def _fresh_args(
         codes.extend(c for c in found if c not in codes)
     if codes:
         args["warehouse_codes"] = codes
+    if unbound:
+        if not set(args) - _NON_FILTER_ARGS - {"date_from", "date_to", "top_n"}:
+            return None, unbound[0][1]  # the word was the only subject: said, and the ask
+        args["_unbound"] = [text for text, _line in unbound]  # popped by `settle`; never a route param
     return args, None
 
 
@@ -1499,6 +1521,7 @@ def _settle(
     args, line = _fresh_args(db, parse_output, entities, dealer=dealer, agent_filter=agent_filter)
     if args is None:
         return None, line
+    not_applied = args.pop("_unbound", [])
     named = {
         jsc.js_string(e.get("hint") or "").strip().lower()
         for e in jsc.array(parse_output.get("entities"))
@@ -1570,6 +1593,8 @@ def _settle(
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
     if company_options:
         extras["company_options"] = company_options
+    if not_applied:
+        extras["not_applied"] = not_applied
     if parse_output.get("capability_from") == "outstanding":
         extras["kind_ask"] = True  # the basis question is the three kinds (Q2)
     if period is None and (args.get("basis") in OUTSTANDING_KINDS or extras.get("kind_ask")):
