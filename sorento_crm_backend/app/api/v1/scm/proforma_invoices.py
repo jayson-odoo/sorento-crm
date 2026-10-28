@@ -313,8 +313,8 @@ def bulk_delete_proforma_invoices(
 
 @router.get("/proforma-invoices")
 def list_proforma_invoices(
-    supplier_id: Optional[str] = Query(None, description="Whose invoices to show"),
-    placement: Optional[str] = Query(
+    supplier_id: Optional[list[str]] = Query(None, description="Whose invoices to show"),
+    placement: Optional[list[str]] = Query(
         None,
         description="not_converted / converted / split - where the goods have got to (AC-F6).",
     ),
