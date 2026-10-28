@@ -81,11 +81,12 @@ Frontend (per-form slices after S0; one coder each, parallel worktrees, folded b
 | S0-A2 | staff comments: limited user reads only (POST/PATCH 403); pp3 head test -> ancestry | 59935edb0f | 80cf000466 | green |
 | S0-B | `/api/v1/my-requests` = portal routes from the CRM session (`public/portal.py:1281` register_submission_routes, `api/v1/my_requests.py:66` token adapter); fixture fixes 534f3a7b6e | 24a7e991c8 | 80cf000466 | green 86/87 (1 = S2 red); kill-proof posted |
 | S-FE0 + S1 | shared FE (menu, redirects, myRequestsService, useRequestScope, comments) + Stock Inquiry FE + SI sort keys; test fixes 2c08f90e06, 137a2d6ca2 | 7413655e9f | c7f61dfa08 | green 75 FE + 16 BE; kill-proof posted |
-| S2 | Complaint FE + complaint revision code (owner Q6 a: adapter number_attr complaint_number, frozen contact_id/space_id, restart submitted, migration pp4_0002 complaints.revision_no/last_revised_at) | bee982f9f3 | - | red 46 FE + 23 BE |
+| S2 | Complaint FE + complaint revision (adapter `portal_revision_service.py:624-700`, migration pp4_0002, staff revisions route, Revisions tab); test fixes bc3b12df8f | bee982f9f3 | cabc107a41 | green 58 FE + 43 BE; kill-proof posted |
 | S3 | Purchase Request + Sponsorship FE + PR/SF sort keys; + own comment delete via my-requests (red 137a2d6ca2) | 8afda83c66 | 567f545163 | green 93 FE + 48 BE; kill-proof posted |
-| S4 + S6 | Sample Request + Sales Opportunity (staff scope, my-requests via their own portal routers, sort keys) + pp4_0001 grants for all 4 extra kinds (no dealer_kit.page.view) | c26c787622 | - | red 26 FE + 30 BE |
-| S5 / S7 | New Product Application (L) / Price Tag (L: staff request page edit mode, portal route bodies to a service, `dealer_kit.price_tag_requests.view_own`) | - | - | todo, testers not briefed |
-| S-ATT | salesperson attachments from the CRM forms (portal upload path; owner P4-16), all kinds | - | - | todo |
+| S4 + S6 | Sample Request + Sales Opportunity (staff scope, my-requests via their own portal routers, sort keys) + pp4_0001 grants for all 4 extra kinds (no dealer_kit.page.view) | c26c787622 | coder (Opus) running | red 26 FE + 30 BE |
+| S5 | New Product Application | 88facc513f | - | red 19 FE + 24 BE |
+| S7 | Price Tag (request page edit mode, card v1.2 rec a; owner answer pending) | tester running | - | - |
+| S-ATT | salesperson attachments from the CRM pages (BE my-requests mirror green guards) | 2d07b537be | - | red 16 FE |
 | S8 | remove embedded portal pages from the CRM (`/my-requests/*`), redirects for deep links, landing | - | - | todo |
 
 Dropped: Project Registration (owner v1.1 Q7: one Projects page, lane PROJECT-REGISTER-V2; P4 ships only
