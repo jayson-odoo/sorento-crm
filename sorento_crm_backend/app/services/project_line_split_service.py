@@ -426,6 +426,9 @@ class LinePlan:
     extra_qty: Optional[Decimal]
     remark_generated: str
     rows: List[PlanRow] = field(default_factory=list)
+    #: PRODUCT-CHANGE-TALLY: the product AutoCount swapped the line FROM (the change shown),
+    #: `None` when it did not: the email's ITEM CODE, beside NEW ITEM CODE = `item_code`.
+    was_item_code: Optional[str] = None
 
 
 def line_plans(
@@ -475,6 +478,11 @@ def line_plans(
         )
         extra = f.now_qty - on_line if involved and not in_full else _ZERO
         shown_from = (f.pending_from if f.pending else f.applied_from) or {}
+        was_item_code = (
+            shown_from.get("item_code")
+            if shown_from.get("item_code") and shown_from.get("item_code") != f.item_code
+            else None
+        )
         generated = remark_for_row(
             qty=f.now_qty,
             delivery_date=new_date or base_date,
@@ -484,11 +492,7 @@ def line_plans(
             # AutoCount cancelled the line: the email's CANCEL ALL.
             cancelled=f.core is not None
             and (f.core.line_status or "open") in ("closed", "cancelled"),
-            was_item_code=(
-                shown_from.get("item_code")
-                if shown_from.get("item_code") and shown_from.get("item_code") != f.item_code
-                else None
-            ),
+            was_item_code=was_item_code,
         )
         plan = LinePlan(
             facts=f,
@@ -499,6 +503,7 @@ def line_plans(
             involved=involved,
             extra_qty=extra if extra > _ZERO else None,
             remark_generated=generated,
+            was_item_code=was_item_code,
         )
         if own:
             for split in own:
@@ -861,6 +866,9 @@ class LineSplitService:
                     "line_id": f.line_id,
                     "line_no": f.line_no,
                     "item_code": f.item_code,
+                    # PRODUCT-CHANGE-TALLY: the email's ITEM CODE when AutoCount swapped the
+                    # product (`item_code` is then its NEW ITEM CODE); null otherwise.
+                    "was_item_code": plan.was_item_code,
                     "location": f.location,
                     "base_qty": float(plan.base_qty),
                     "base_date": plan.base_date,
