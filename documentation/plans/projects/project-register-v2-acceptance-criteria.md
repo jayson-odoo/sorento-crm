@@ -35,9 +35,10 @@ BE = `sorento_crm_backend/app`.
 ## C. AI extract (text and photo)
 
 - C1 Under the title, "Check" and "AI extract" sit side by side. AI extract opens the existing
-  `AIExtractDialog` (lifted from `app/(auth)/portal/components/` to a shared place, portal behaviour unchanged): the
-  title text is pre-staged as pasted text and photos are added in its upload stage. Extract runs on the text, the
-  photo(s), or both.
+  `AIExtractDialog` (lifted from `app/(auth)/portal/components/` to a shared place, portal behaviour unchanged). Its
+  upload stage gains one source: "Project title" (checked by default when the title has text, shown read-only and
+  clamped to 2 lines); the user never pastes the text again. Photos are optional, added in the existing drop area.
+  Extract runs on the title, the photo(s), or both; AI Extract is disabled when neither is chosen.
 - C2 `POST /api/v1/project-sales/projects/ai-extract` (multipart: `text`, `files[]`) needs `projects.projects.edit`
   (403 otherwise). It calls `AIExtractService.extract` with form key `portal.project_registration`; the text is
   passed as a `.txt` file. Max 12 files; png, jpg, jpeg, webp, pdf, txt only (others 422).
@@ -124,11 +125,24 @@ BE = `sorento_crm_backend/app`.
 - I1 The Create lead wizard's Buyer select is search-only over existing customers; there is no "new customer" path,
   and the lead create API refuses `new_customer` with 422.
 
-## J. Salesperson submit for approval (only if the owner answers card Q7 = a)
+## J. Salesperson: Save draft and Submit for approval (owner Q7 = b)
 
-- J1 A user holding the submit slug (name per the Q7 ruling, defined by PORTAL-P4) but not `projects.projects.edit`
-  can open `/project-sales/new`; the primary reads "Submit for approval".
-- J2 Their submit creates the project with `approval_state = 'pending'`, no project code, owner = themselves, and
-  sends the existing "submitted" notification; it appears in their Projects list / pipeline as Awaiting approval.
-- J3 The existing approve / reject run unchanged on it; a rejected one shows its reason and resubmits via Edit.
-- J4 A user with neither slug: page access denied and `POST /projects/` -> 403.
+- J1 A user holding `projects.registrations.submit` but not `projects.projects.edit` can open `/project-sales/new`;
+  the footer shows Cancel, "Save draft" and the primary "Submit for approval". A user with neither: page denied and
+  `POST /projects/` -> 403.
+- J2 Save draft: the project is stored with `approval_state = 'draft'`, no code, owner = the user,
+  `sales_profile.contact_id` = the user's `respond_contact_id`; NO notification of any kind is created. Required
+  fields are not enforced on a draft (title only).
+- J3 The draft is visible (list with a "Draft" pill, detail, edit) to its owner only; another salesperson and staff
+  lists do not show it; `GET /projects/<id>` by anyone else -> 404.
+- J4 Submit (new or from a draft): `approval_state = 'pending'`, `submitted_at` set, decided_* and reject_reason
+  cleared; required fields enforced (A5); exactly the portal's "submitted" notice: an in-app notification of type
+  `project_registration_submitted` to every active holder of `projects.registrations.approve` in the company except
+  the submitter, with no email delivery row and no WhatsApp.
+- J5 Resubmit a rejected one (Edit then Submit for approval): state `resubmitted`, notice type
+  `project_registration_resubmitted` to the same recipients, in-app only.
+- J6 Approve / reject of a CRM-submitted project: an in-app notification AND an email `notification_deliveries` row
+  to the salesperson (resolved through the contact; when the user has no linked contact, through the owner).
+- J7 Parity: for the same project data, the notifications created through the CRM path equal the portal path's
+  (type, title, link, recipients, channels).
+- J8 The portal path's notifications are unchanged (existing tests stay green).

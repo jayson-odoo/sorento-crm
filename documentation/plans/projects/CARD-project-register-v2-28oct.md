@@ -1,4 +1,47 @@
-# CARD: Register a project v2 (PROJECT-REGISTER-V2), v1.2, 28 Oct
+# CARD: Register a project v2 (PROJECT-REGISTER-V2), v1.3, 28 Oct
+
+## v1.3: Q7 = (b), salesperson Save draft + Submit for approval; communications unchanged
+
+Owner 28 Oct: a salesperson without `projects.projects.edit` (holds `projects.registrations.submit`, defined and
+granted to the salesperson role by PORTAL-P4's `pp4_0001`) gets the same form with "Save draft" and "Submit for
+approval"; submit = pending project, existing approve / reject. "Make sure existing communications in terms of email
+and Respond notifications are still intact."
+
+What the portal registration sends today (`BE` = `sorento_crm_backend/app`), all from ONE function,
+`project_registration_service.notify` (`BE/services/project_registration_service.py:713-767`), one
+`NotificationService.create_with_channel_preferences` per recipient (`:746`), type `project_registration_<event>`,
+link `/project-sales/<id>`, dedup `<id>:<event>:<decided_at or submitted_at>` (`:743,754`):
+
+| Event | Trigger today | Recipients | Channels |
+|---|---|---|---|
+| submitted | `portal_submit` `:683` | active holders of `projects.registrations.approve` in the company, minus the applicant (`_holders` `:705-710`) | in-app only (`send_email=False`, `send_whatsapp=False`, `:756-760`) |
+| resubmitted | `portal_submit` when it was rejected (`:671`) | same | in-app only |
+| approved | approve route (`BE/api/v1/projects/projects.py:411`) | the applicant's linked CRM user (`:729`) | in-app + email (`:758`) |
+| rejected | reject route (`projects.py:444`) | same | in-app + email |
+
+- Email = a `notification_deliveries` row (channel email) turned into an `email_outbox` row by
+  `send_notification_deliveries` with template `notification_generic` (`BE/tasks/notification_tasks.py:262-280,
+  363-378`). Web push follows any push subscription (`BE/services/notification_service.py:281-292`).
+- NOT used by this flow today: Respond.io / WhatsApp (`send_whatsapp=False`), the Respond outbox, n8n. Save draft
+  sends nothing (`portal_save` `:591-631`). The generic portal "submission received" notice returns early for this
+  kind (`BE/services/portal_service.py:1097-1100`). No reminder covers pending registrations (the staleness sweep
+  reads approved projects only, `BE/services/project_staleness_service.py:232-235`).
+- Nothing is tied to the portal path: the CRM path sends the same four by calling the same `notify` after the same
+  state change as `portal_submit` `:671-679` (approval_state via `status_on_submit`, `submitted_at`, clear decided_* and
+  reject_reason, owner set).
+
+CRM salesperson rules:
+- The applicant is resolved from `sales_profile.contact_id` -> `users.respond_contact_id` (`:638-643,699-702`), so the
+  CRM path stores the salesperson's `respond_contact_id` there (and `sales_agent_id` from that contact's first active
+  agent when it has one, as `portal_save` `:600,616` does). If the salesperson has no linked contact, approve /
+  reject fall back to the project owner (= the salesperson) so the email still reaches them.
+- Save draft: stored as `approval_state = 'draft'`, owner = the salesperson. Drafts are hidden from staff today
+  (`BE/services/project_service.py:973-978,1073-1076`); a draft is visible and editable to its OWNER only, with a
+  "Draft" pill in the Projects list (the same rule PORTAL-P4 applies to every MY REQUESTS kind).
+- Submit from a draft or a rejected one -> pending / resubmitted; approve / reject unchanged.
+- Because the row carries the salesperson's contact, it also shows in that person's portal list (`_own_query`
+  `:345-355`), as any registration of theirs does.
+- Tests assert the notification and `notification_deliveries` (email) rows per event, never a real send.
 
 ## Owner answers (28 Oct ~14:3x) and what changed in v1.2
 
