@@ -65,6 +65,8 @@ def log_product_file_link(
         **(extra or {}),
     }
     name = filename or (extra or {}).get("certificate_number") or "a file"
+    # A filename is user input: a newline in it would fake a second line in a text export.
+    name = "".join(ch for ch in str(name) if ch.isprintable())
     verb = "linked" if action == LINK else "unlinked"
     description = f"File {verb}: {name}" + (f" ({type_name})" if type_name else "")
     company_id = db.query(Product.company_id).filter(Product.id == str(product_id)).scalar()
