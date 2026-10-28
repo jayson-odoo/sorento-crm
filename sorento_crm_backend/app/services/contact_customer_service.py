@@ -271,6 +271,28 @@ def customer_codes_by_contact(
     return {k: sorted(v) for k, v in out.items()}
 
 
+def customer_companies_by_contact(
+    db: Session, contact_ids: Sequence[str], viewer_id: str | None = None
+) -> dict[str, list[str]]:
+    """The distinct company names of each contact's linked customers (sorted asc), ONE query for
+    the page. Same reach as ``customer_codes_by_contact``: the viewer's granted companies."""
+    if not contact_ids:
+        return {}
+    with grants_scope(db, viewer_id) if viewer_id else nullcontext(db):
+        rows = (
+            db.query(RespondContactCustomer.contact_id, Company.name)
+            .join(Customer, Customer.id == RespondContactCustomer.customer_id)
+            .join(Company, Company.id == Customer.company_id)
+            .filter(RespondContactCustomer.contact_id.in_(list(contact_ids)))
+            .distinct()
+            .all()
+        )
+    out: dict[str, list[str]] = {}
+    for contact_id, name in rows:
+        out.setdefault(str(contact_id), []).append(name)
+    return {k: sorted(v) for k, v in out.items()}
+
+
 def get_link(db: Session, contact_id: str, customer_id: str) -> RespondContactCustomer | None:
     return (
         db.query(RespondContactCustomer)
