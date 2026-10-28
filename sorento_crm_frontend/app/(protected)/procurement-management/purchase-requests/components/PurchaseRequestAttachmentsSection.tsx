@@ -213,7 +213,7 @@ export default function PurchaseRequestAttachmentsSection({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [attachments, deleteMutation.isPending, readOnly, requestKind, refreshKeys, downloadUrl],
+    [attachments, deleteMutation.isPending, readOnly, own, requestKind, refreshKeys, downloadUrl],
   );
 
   return (

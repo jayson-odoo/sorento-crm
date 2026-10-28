@@ -223,7 +223,7 @@ export default function StockInquiryAttachmentsSection({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [attachments, unlinkPending, readOnly, requestKind, refreshKeys, downloadUrl],
+    [attachments, unlinkPending, readOnly, own, requestKind, refreshKeys, downloadUrl],
   );
 
   return (

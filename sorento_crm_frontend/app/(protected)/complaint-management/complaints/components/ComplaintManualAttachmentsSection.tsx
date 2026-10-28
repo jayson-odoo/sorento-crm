@@ -220,7 +220,7 @@ export default function ComplaintManualAttachmentsSection({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [attachments, unlinkPending, readOnly, requestKind, refreshKeys, downloadUrl],
+    [attachments, unlinkPending, readOnly, own, requestKind, refreshKeys, downloadUrl],
   );
 
   return (
