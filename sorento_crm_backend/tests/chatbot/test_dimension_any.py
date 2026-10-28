@@ -362,3 +362,25 @@ def test_the_raw_text_is_never_read_for_a_unit(session_factory, seeded):
 
         assert g is not None and g.value == 150 and g.unit == "mm", (raw, g)
         assert sorted(g.any_keys or []) == ["dim_height", "dim_length", "dim_width", "trap_length"], (raw, g)
+
+
+def test_guard_an_alias_of_a_hidden_unit_offers_no_size_and_never_crashes(session_factory, seeded):
+    """Reviewer round 4: every mm key hidden for the contact, one visible litre key. The aliases of the
+    hidden mm keys are never read, so "15cm" offers no size and the candidate block still builds."""
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head import candidates
+
+    _seed(session_factory, WCS)
+    _aliases(session_factory)
+    db = session_factory()
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key="zz_capacity", label="Capacity", data_type="numeric", unit="l",
+        synonyms={"_self": ["capacity"]}, applies_when={},
+    ))
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    hidden = frozenset({"dim_height", "dim_length", "dim_width", "trap_length"})
+
+    lines = candidates.candidate_lines(candidates.shortlist(db, "zzwc 15cm got stock", hidden=hidden))
+
+    assert not any(ln.startswith('- "15cm"') for ln in lines), lines

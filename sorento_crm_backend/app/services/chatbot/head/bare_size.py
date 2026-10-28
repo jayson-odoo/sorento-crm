@@ -112,10 +112,12 @@ def ground_bare(
     dims = dimension_keys(rows)
     dim_rows = [r for r in rows if r.spec_key in dims]
     base = str(dim_rows[0].unit).casefold() if dim_rows else ""
-    aliases = {str(k).casefold(): v for r in dim_rows for k, v in (getattr(r, "unit_aliases", None) or {}).items()}
+    from app.services.chatbot.head.candidates import _unit_aliases
+
+    aliases = {alias: factor for alias, (unit, factor) in _unit_aliases(db, hidden_keys).items() if unit == base}
     if dims and (not unit_said or unit_said == base or unit_said in aliases):
-        if unit_said in aliases and unit_said != base:
-            number = round(number * float(aliases[unit_said]), 3)
+        if unit_said in aliases:
+            number = round(number * aliases[unit_said], 3)
         return Grounded(RESERVED_KEY, "Size", said, _plain(number), str(dim_rows[0].unit), any_keys=dims)
     # Another unit (litres, ounces): R6-1, over the keys of that unit.
     rows = [r for r in rows if length_factor(r.unit) is None]

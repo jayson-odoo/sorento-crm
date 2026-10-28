@@ -483,7 +483,7 @@ def _unit_aliases(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[s
             continue
         for alias, factor in (getattr(row, "unit_aliases", None) or {}).items():
             word = str(alias).strip().casefold()
-            if word and word != unit and isinstance(factor, (int, float)) and factor > 0:
+            if word and word != unit and isinstance(factor, (int, float)) and not isinstance(factor, bool) and factor > 0:
                 out.setdefault(word, (unit, float(factor)))
     return out
 
@@ -563,6 +563,8 @@ def _size_candidates(
             unit_name, factor = aliases[unit_name]
             converted = round(float(number) * factor, 3)
             number = str(int(converted)) if converted.is_integer() else f"{converted:g}"
+        if unit_name not in units:
+            continue  # an alias of a unit no visible key carries
         keys, bare = units[unit_name]
         out.append(WordCandidates(gram=shown, position=position, size=(number, unit_name, keys, bare)))
         spanned |= span
