@@ -91,3 +91,25 @@ Backend log (owner or crew with log access): one INFO line per worker
 - Span model: `chatbot_span_extractor` production label > back to v1 / previous model.
 Order when rolling back both: embedder first only if the parser stays on spans; otherwise parser first (the n-gram
 path reads OpenAI vectors only, `lookup_lists.py:307`).
+
+## Owner steps (DRAFT, assumes the card's recommended answers)
+
+Before: run the read-only check (prod):
+```sql
+SELECT l.name, v.version, l.provider, l.model, md5(v.template) FROM ai_prompt_labels l
+JOIN ai_prompt_versions v ON v.id = l.version_id
+WHERE l.label = 'production' AND l.name IN ('chatbot_semantic_parser', 'chatbot_span_extractor', 'chatbot_lookup_embedder');
+```
+Expect parser v69 md5 8c77b4eb, span extractor v1, embedder row with provider/model empty.
+
+Step 1 (spans on, OpenAI vectors; no deploy):
+1. AI Assistant > Prompts > `chatbot_span_extractor` > production label: provider gemini, model gemini-3.5-flash-lite.
+2. `chatbot_semantic_parser` > new version: paste `crew/state/eval/span-pass-prod/v69-spans.txt` (md5 57d7d412) > save.
+3. Move the production label to that version (keep provider/model as v69's label had them).
+4. Tell crew the time; crew runs the verification recipe. Rollback = label back to v69.
+
+Step 2 (Gemini vectors; after the Q2 warm fix is deployed):
+1. `chatbot_lookup_embedder` > production label: provider gemini, model `gemini-embedding-001` (exactly).
+2. `chatbot_span_extractor` > move production label to v2 (the "meaning" version from eem_0003), same model.
+3. Watch the backend log for `lookup lists warm: N texts cached on gemini-embedding-001` (one per worker).
+4. Tell crew the time; crew re-runs the verification. Rollback = clear embedder provider/model; span label back to v1.
