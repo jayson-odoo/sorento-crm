@@ -190,3 +190,45 @@ class TestAQuestionTheBotIsWaitingOn:
             r.get("stage") or r.get("kind") for r in _turn_trace(session_factory, result.turn_id)
         ]
 
+
+
+class TestGreetGreetOkThenEta:
+    """Crew hand test step 5 (copy :8107): "Hi", "Hi", "Hello boss", "ok 👍", then "eta?".
+    Whatever the guard did to the small-talk turns (left them, or dropped a slipped ask on
+    "ok"), "eta?" whose parse carries the remembered product is answered for it, opening
+    with the carried line. The guard holds nothing that "eta?" needs."""
+
+    @pytest.mark.parametrize("ok_parse", ["casual", "slipped"])
+    def test_eta_after_small_talk_still_carries_the_usual_product(
+        self, session_factory, stub_access, lane, monkeypatch, ok_parse
+    ) -> None:
+        from app.services.chatbot import engine as engine_mod
+        from tests.chatbot.test_outstanding_lane import _resolve_services
+
+        match = {"uuid": str(uuid.uuid4()), "entity_type": "product", "canonical_code": USUAL_CODE}
+        monkeypatch.setattr(
+            engine_mod.business_services,
+            "production_services",
+            lambda db, *, space_id=None: _resolve_services({USUAL_CODE: match}),
+        )
+        _seed_contact(session_factory, {"profile_facts": USUAL}, level="full")
+        casual = {"message_type": "casual"}
+        turns = [
+            ("Hi", casual),
+            ("Hi", casual),
+            ("Hello boss", casual),
+            ("ok 👍", casual if ok_parse == "casual" else SLIPPED_STOCK_ASK),
+        ]
+        for n, (text, parsed) in enumerate(turns):
+            result, _ = _run_turn(session_factory, stub_access, message=text, verdict_overrides=parsed, n=n, console=False)
+            assert result.branch_kind == "low_signal", (text, result.branch_kind)
+        dropped = [r.get("kind") for r in _turn_trace(session_factory, result.turn_id)].count("context_ask_dropped")
+        assert dropped == (1 if ok_parse == "slipped" else 0)
+
+        result, prompt = _run_turn(
+            session_factory, stub_access, message="eta?",
+            verdict_overrides={**SLIPPED_STOCK_ASK, "intent_hint": "check_incoming"}, n=4, console=False,
+        )
+        assert USUAL_CODE in prompt, "the remembered product reaches the eta? parse"
+        assert result.branch_kind == "business_query", result.branch_kind
+        assert "Your usual: " + USUAL_CODE in sent_text(result), sent_text(result)
