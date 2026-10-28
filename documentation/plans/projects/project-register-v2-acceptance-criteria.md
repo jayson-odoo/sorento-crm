@@ -39,8 +39,8 @@ BE = `sorento_crm_backend/app`.
   upload stage gains one source: "Project title" (checked by default when the title has text, shown read-only and
   clamped to 2 lines); the user never pastes the text again. Photos are optional, added in the existing drop area.
   Extract runs on the title, the photo(s), or both; AI Extract is disabled when neither is chosen.
-- C2 `POST /api/v1/project-sales/projects/ai-extract` (multipart: `text`, `files[]`) needs `projects.projects.edit`
-  (403 otherwise). It calls `AIExtractService.extract` with form key `portal.project_registration`; the text is
+- C2 `POST /api/v1/project-sales/projects/ai-extract` (multipart: `text`, `files[]`) needs `projects.projects.edit` or
+  `projects.registrations.submit` (403 otherwise). It calls `AIExtractService.extract` with form key `portal.project_registration`; the text is
   passed as a `.txt` file. Max 12 files; png, jpg, jpeg, webp, pdf, txt only (others 422).
 - C3 Response = one proposal per field: `developer`, `architect`, `main_contractor` (exact name match, case and
   spacing ignored, among parties of that type -> `{status: "match", id, name}`; else `{status: "new", name}`),
