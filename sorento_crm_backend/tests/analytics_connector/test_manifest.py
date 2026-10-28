@@ -92,10 +92,11 @@ def _tools(manifest) -> dict:
     return {t["name"]: t for t in manifest["tools"]}
 
 
-def test_manifest_lists_exactly_the_34_reused_and_5_chat_tools(manifest):
+def test_manifest_lists_exactly_the_33_reused_and_5_chat_tools(manifest):
+    # REPORT-UNIFY: crm_top_selling_report left REUSED_TOOLS (owner Q1), so 33 + 5 = 38.
     assert len(REUSED_TOOLS) == 33 and len(CHAT_TOOLS) == 5
     names = [t["name"] for t in manifest["tools"]]
-    assert len(names) == len(set(names)) == 39
+    assert len(names) == len(set(names)) == 38
     assert set(names) == REUSED_TOOLS | CHAT_TOOLS
 
 
