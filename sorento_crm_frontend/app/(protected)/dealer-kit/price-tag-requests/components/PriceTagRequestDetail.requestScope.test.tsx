@@ -166,9 +166,9 @@ describe('Price Tag Request page, limited user, view', () => {
 
   it('proof ready: Approve proof POSTs .../approve, Request changes is offered, the designer is not', async () => {
     await mountDetail(LIMITED, { portal_draft_at: null, status: 'proof_ready' });
-    fireEvent.click(await screen.findByText('Approve proof'));
+    fireEvent.click((await screen.findAllByRole('button', { name: /^Approve/ }))[0]);
     await waitFor(() => expect(posted('approve')).toHaveLength(1));
-    expect(screen.getAllByText('Request changes').length).toBeGreaterThan(0);
+    expect(screen.getByLabelText(/Anything else \(optional\)/)).toBeTruthy();
     expect(screen.queryByText('View design')).toBeNull();
     expect(screen.queryByText('Design tags')).toBeNull();
     expect(calls.filter(STAFF_WRITE)).toHaveLength(0);

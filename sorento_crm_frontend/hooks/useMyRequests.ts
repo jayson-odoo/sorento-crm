@@ -39,6 +39,7 @@ import {
 } from '@/services/myRequestsService';
 import type { SampleRequestWrite } from '@/types/sampleRequest';
 import type { NewProductApplicationWrite } from '@/types/newProductApplication';
+import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
 
 /**
  * A salesperson's own request, read and written through My Requests (PORTAL-P4-REQUESTS): the
@@ -315,8 +316,9 @@ export function useMyPriceTagMutations() {
     ...move('Failed to approve the proof', 'Proof approved'),
   });
   const requestChanges = useMutation({
-    mutationFn: ({ id, note }: { id: string; note: string }) => requestMyPriceTagChanges(id, note),
-    ...move('Failed to send the change request', 'Change request sent'),
+    mutationFn: ({ id, payload }: { id: string; payload: ChangeRequestPayload }) =>
+      requestMyPriceTagChanges(id, payload),
+    ...move('Failed to send the change requests', 'Change requests sent'),
   });
   const collect = useMutation({
     mutationFn: (id: string) => collectMyPriceTagRequest(id),

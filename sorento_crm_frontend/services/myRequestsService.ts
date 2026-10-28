@@ -41,6 +41,18 @@ import type {
   SalesOpportunitySavePayload,
 } from '@/app/(protected)/sales/opportunities/types/salesOpportunity.types';
 import type { PriceTagRequestDetail } from '@/app/(protected)/dealer-kit/services/priceTagRequestService';
+import type {
+  PriceMode,
+  PriceTagRequestLineInput,
+  ProductCombosLookup,
+} from '@/app/(auth)/portal/lib/price-tag-request-service';
+import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
+import type { ChangeRequestPayload, ReviewComment } from '@/lib/dealer-kit/review-comments';
+import {
+  designPayloadFromResponse,
+  type TagSheetDesignPayload,
+  type TagSheetDesignResponse,
+} from '@/lib/dealer-kit/design-payload';
 
 const BASE = '/api/v1/my-requests';
 
@@ -506,20 +518,16 @@ export async function searchMyNewProductApplicationBrands(q: string): Promise<Se
 
 const PRICE_TAG_URL = `${BASE}/submissions/price_tag_request`;
 
-/** One line as the portal writes it: a product or a set, and how many tags. */
-export interface MyPriceTagLineWrite {
-  line_type: 'product' | 'product_set';
-  product_id?: string | null;
-  product_set_id?: string | null;
-  quantity: number;
-  remarks?: string | null;
-}
+/** One line as the portal writes it (S7b): the item, how many tags, its package and parts, and its own
+ *  promotion or typed price - the shared line editor's payload (`draftLinesPayload`). */
+export type MyPriceTagLineWrite = PriceTagRequestLineInput;
 
 export interface MyPriceTagWrite {
   debtor_code?: string | null;
   debtor_name?: string | null;
   needed_by_date?: string | null;
   notes?: string | null;
+  price_mode?: PriceMode;
   print_by?: 'office' | 'self' | null;
   lines?: MyPriceTagLineWrite[];
 }
@@ -547,7 +555,10 @@ export interface MyPriceTagItem {
   name: string;
 }
 
-const priceTagUrl = (id: string, action?: 'submit' | 'approve' | 'request-changes' | 'collect' | 'revise') =>
+const priceTagUrl = (
+  id: string,
+  action?: 'submit' | 'approve' | 'request-changes' | 'review-comments' | 'design' | 'collect' | 'revise',
+) =>
   `${PRICE_TAG_URL}/${encodeURIComponent(id)}${action ? `/${action}` : ''}`;
 
 export async function fetchMyPriceTagRequest(id: string): Promise<MyPriceTagRequestDetail> {
@@ -580,11 +591,24 @@ export async function approveMyPriceTagRequest(id: string): Promise<void> {
   await ensureOk(await apiFetch(priceTagUrl(id, 'approve'), { method: 'POST' }), 'Failed to approve the proof');
 }
 
-export async function requestMyPriceTagChanges(id: string, note: string): Promise<void> {
+/** The round's pinned change requests and general note, in one call (the portal's `requestChanges`). */
+export async function requestMyPriceTagChanges(id: string, payload: ChangeRequestPayload): Promise<void> {
   await ensureOk(
-    await apiFetch(priceTagUrl(id, 'request-changes'), jsonBody('POST', { note })),
-    'Failed to send the change request',
+    await apiFetch(priceTagUrl(id, 'request-changes'), jsonBody('POST', payload)),
+    'Failed to send the change requests',
   );
+}
+
+/** Every change request sent on this design, all rounds. */
+export async function fetchMyPriceTagReviewComments(id: string): Promise<ReviewComment[]> {
+  return unwrap(await apiFetch(priceTagUrl(id, 'review-comments')), 'Failed to load the change requests');
+}
+
+/** The proof marketing sent, or null while there is none (the portal's `getPriceTagDesign`). */
+export async function fetchMyPriceTagDesign(id: string): Promise<TagSheetDesignPayload | null> {
+  const res = await apiFetch(priceTagUrl(id, 'design'));
+  if (res.status === 404) return null;
+  return designPayloadFromResponse(await unwrap<TagSheetDesignResponse>(res, 'Failed to load the design.'));
 }
 
 /** The salesperson has the printed tags in hand. */
@@ -619,4 +643,22 @@ export async function searchMyPriceTagItems(q: string): Promise<MyPriceTagItem[]
     await apiFetch(`${BASE}/lookups/price-tag-items?q=${encodeURIComponent(q)}`),
     'Failed to search products',
   );
+}
+
+/** The catalogue packages a picked product is sold as, and whether its class is guarded. An answer
+ *  without a `combos` list reads as a product with no package, never as a broken line. */
+export async function lookupMyProductCombos(productId: string): Promise<ProductCombosLookup> {
+  const body = await unwrap<Partial<ProductCombosLookup> | null>(
+    await apiFetch(`${BASE}/lookups/product-combos/${encodeURIComponent(productId)}`),
+    'Failed to load the packages for this product',
+  );
+  return { host_guarded: Boolean(body?.host_guarded), combos: Array.isArray(body?.combos) ? body.combos : [] };
+}
+
+/** One pricing call for every line, priced for this salesperson (`price_mode` is not sent, as on the portal). */
+export async function lookupMyLinePricing(
+  _priceMode: PriceMode,
+  lines: LinePricingLineInput[],
+): Promise<LinePricingResult[]> {
+  return unwrap(await apiFetch(`${BASE}/lookups/line-pricing`, jsonBody('POST', { lines })), 'Failed to price these lines');
 }

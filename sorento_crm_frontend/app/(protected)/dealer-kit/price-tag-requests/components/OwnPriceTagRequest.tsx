@@ -7,21 +7,16 @@
  * with the fields as inputs in place. Every read and write runs the portal's own routes through
  * My Requests, so the drafts, submit, proof review, collection and revision rules are the
  * portal's. Marketing's tools (claim, designer, void, export, line prices) are not here.
+ *
+ * S7b (crew a81067665 (a)): the lines editor (Item, package, parts, the line's promotion) and the
+ * proof review (pins, Send, Approve) are the portal's own components, fed My Requests' reads.
  */
 
-import { useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type SetStateAction } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { CheckCircle2, FileText, HandCoins, ListOrdered, MessageSquare, Paperclip, Save, Send, Trash2 } from 'lucide-react';
+import { FileText, HandCoins, ListOrdered, Paperclip, Plus, Save, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -33,14 +28,24 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { MyRequestActions } from '@/components/common/MyRequestActions';
 import { OwnAttachmentDelete, OwnAttachmentUpload } from '@/components/common/OwnRequestAttachmentActions';
 import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
+import { PriceTagDesignReview } from '@/components/dealer-kit/PriceTagDesignReview';
+import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
+import { useIsMobile } from '@/hooks/use-mobile';
+import { usePriceTagLineEditor, type PriceTagLineLookups } from '@/hooks/usePriceTagLineEditor';
+import { draftLinesPayload, lineToDraft, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
+import { numberFieldError } from '@/lib/number-field';
+import type { PriceMode } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import { priceTagStatusLabel, priceTagStatusPillClass } from '@/lib/price-tag-status';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { printByLabel, type PrintBy } from '@/lib/dealer-kit/print-collection';
 import { codeWithName } from '@/lib/product-display';
 import { useMyPriceTagDebtors, useMyPriceTagMutations, useMyPriceTagRequest } from '@/hooks/useMyRequests';
 import {
+  fetchMyPriceTagDesign,
+  fetchMyPriceTagReviewComments,
+  lookupMyLinePricing,
+  lookupMyProductCombos,
   searchMyPriceTagItems,
-  type MyPriceTagLineWrite,
   type MyPriceTagRequestDetail,
   type MyPriceTagWrite,
 } from '@/services/myRequestsService';
@@ -48,10 +53,17 @@ import {
 const LIST_PATH = '/dealer-kit/price-tag-requests';
 const STATUS_PILL_BASE = 'inline-flex items-center rounded-full px-2 py-0.5 text-xs font-semibold';
 
-type Tab = 'request' | 'lines' | 'attachments';
+/** The portal's line editor, reading the catalogue through My Requests. */
+const MY_LINE_LOOKUPS: PriceTagLineLookups = {
+  lookupTagItems: (query) => searchMyPriceTagItems(query ?? ''),
+  lookupProductCombos: (productId) => lookupMyProductCombos(productId),
+  lookupLinePricing: (mode, lines) => lookupMyLinePricing(mode, lines),
+};
 
-/** A line being edited: what is written back, plus what a reader sees for it. */
-type EditLine = MyPriceTagLineWrite & { key: string; label: string };
+/** The statuses the portal shows the design at; pins and Approve only while it is `proof_ready`. */
+const DESIGN_STATUSES = new Set(['proof_ready', 'changes_requested', 'approved', 'ready_for_collection', 'collected']);
+
+type Tab = 'request' | 'lines' | 'attachments';
 
 interface Draft {
   debtor_code: string;
@@ -59,12 +71,22 @@ interface Draft {
   needed_by_date: string;
   notes: string;
   print_by: PrintBy | null;
-  lines: EditLine[];
+  price_mode: PriceMode;
+  lines: DraftLine[];
 }
 
-const EMPTY: Draft = { debtor_code: '', debtor_name: '', needed_by_date: '', notes: '', print_by: null, lines: [] };
+const EMPTY: Draft = {
+  debtor_code: '',
+  debtor_name: '',
+  needed_by_date: '',
+  notes: '',
+  print_by: null,
+  price_mode: 'list',
+  lines: [],
+};
 
-function draftFrom(row: MyPriceTagRequestDetail | undefined): Draft {
+/** The form's state off a saved request. A duplicate's lines are new rows, so they get keys of their own. */
+function draftFrom(row: MyPriceTagRequestDetail | undefined, duplicate = false): Draft {
   if (!row) return EMPTY;
   return {
     debtor_code: row.debtor_code ?? '',
@@ -72,15 +94,10 @@ function draftFrom(row: MyPriceTagRequestDetail | undefined): Draft {
     needed_by_date: row.needed_by_date ?? '',
     notes: row.notes ?? '',
     print_by: (row.print_by as PrintBy | null) ?? null,
-    lines: (row.lines ?? []).map((line, i) => ({
-      key: line.id || `line-${i}`,
-      label: codeWithName(line.code, line.name) || line.name || line.code || 'Item',
-      line_type: line.line_type,
-      product_id: line.product_id ?? null,
-      product_set_id: line.product_set_id ?? null,
-      quantity: line.quantity || 1,
-      remarks: line.remarks ?? null,
-    })),
+    price_mode: row.price_mode ?? 'list',
+    lines: (row.lines ?? []).map((line) =>
+      duplicate ? { ...lineToDraft(line), key: `dup-${Math.random().toString(36).slice(2, 10)}` } : lineToDraft(line),
+    ),
   };
 }
 
@@ -90,14 +107,9 @@ function body(draft: Draft): MyPriceTagWrite {
     debtor_name: draft.debtor_name || null,
     needed_by_date: draft.needed_by_date || null,
     notes: draft.notes || null,
+    price_mode: draft.price_mode,
     print_by: draft.print_by,
-    lines: draft.lines.map(({ line_type, product_id, product_set_id, quantity, remarks }) => ({
-      line_type,
-      product_id,
-      product_set_id,
-      quantity,
-      remarks,
-    })),
+    lines: draftLinesPayload(draft.lines),
   };
 }
 
@@ -116,12 +128,23 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
   const [draft, setDraft] = useState<Draft>(EMPTY);
   const [tab, setTab] = useState<Tab>('request');
   const [reason, setReason] = useState('');
-  const [changesOpen, setChangesOpen] = useState(false);
-  const [changeNote, setChangeNote] = useState('');
+  // Set by a Save / Submit that found a bad quantity or price; rows then show their sentence live.
+  const [showNumberErrors, setShowNumberErrors] = useState(false);
+  const isMobile = useIsMobile();
 
   useEffect(() => {
-    if (editing) setDraft(draftFrom(row));
-  }, [editing, row]);
+    if (editing) setDraft(draftFrom(row, creating));
+  }, [editing, row, creating]);
+
+  const setLines = useCallback((next: SetStateAction<DraftLine[]>) => {
+    setDraft((prev) => ({ ...prev, lines: typeof next === 'function' ? next(prev.lines) : next }));
+  }, []);
+  const lineEditor = usePriceTagLineEditor({
+    lines: draft.lines,
+    setLines,
+    priceMode: draft.price_mode,
+    lookups: MY_LINE_LOOKUPS,
+  });
 
   const busy =
     m.create.isPending ||
@@ -146,6 +169,20 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
   const set = (patch: Partial<Draft>) => setDraft((prev) => ({ ...prev, ...patch }));
   const view = (id: string) => router.push(`${LIST_PATH}/${encodeURIComponent(id)}`);
 
+  /** A blank or invalid quantity / manual price stops the send; the rows say which (as on the portal). */
+  const numbersInvalid = () => {
+    const bad = draft.lines.some(
+      (l) =>
+        numberFieldError(l.quantity, { min: 1, integer: true }) !== undefined ||
+        numberFieldError(l.manual_sell_price, { min: 0.01, optional: true }) !== undefined,
+    );
+    if (bad) {
+      setShowNumberErrors(true);
+      setTab('lines');
+    }
+    return bad;
+  };
+
   /** Save the draft (create or update) and answer its id. */
   const save = async (): Promise<string> => {
     if (creating) return (await m.create.mutateAsync(body(draft))).id;
@@ -154,6 +191,7 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
   };
 
   const saveAsDraft = async () => {
+    if (numbersInvalid()) return;
     try {
       const id = await save();
       if (creating) router.replace(`${LIST_PATH}/${encodeURIComponent(id)}`);
@@ -164,6 +202,7 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
   };
 
   const saveAndSubmit = async () => {
+    if (numbersInvalid()) return;
     try {
       const id = await save();
       await m.submit.mutateAsync(id);
@@ -175,7 +214,7 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
   };
 
   const sendRevision = async () => {
-    if (!requestId || !row) return;
+    if (!requestId || !row || numbersInvalid()) return;
     const { lines, ...fields } = body(draft);
     try {
       await m.revise.mutateAsync({
@@ -242,18 +281,6 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
 
   const viewActions = row ? (
     <div className="flex flex-wrap items-center gap-2">
-      {row.status === 'proof_ready' && !isDraft && (
-        <>
-          <Button variant="outline" size="sm" onClick={() => setChangesOpen(true)} disabled={busy}>
-            <MessageSquare className="size-4" />
-            Request changes
-          </Button>
-          <Button variant="primary" size="sm" onClick={() => m.approve.mutate(row.id)} disabled={busy}>
-            <CheckCircle2 className="size-4" />
-            Approve proof
-          </Button>
-        </>
-      )}
       {row.status === 'ready_for_collection' && !isDraft && (
         <Button variant="primary" size="sm" onClick={() => m.collect.mutate(row.id)} disabled={busy}>
           <HandCoins className="size-4" />
@@ -273,7 +300,8 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
     </div>
   ) : null;
 
-  const lines = editing ? draft.lines : draftFrom(row).lines;
+  const lineCount = editing ? draft.lines.length : (row?.lines ?? []).length;
+  const showDesign = !editing && !!row && !isDraft && DESIGN_STATUSES.has(row.status);
   const attachments = row?.attachments ?? [];
   const refreshKeys = [['my-request', 'price_tag_request']];
 
@@ -307,6 +335,19 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
           </div>
         </CardHeader>
       </Card>
+
+      {/* The design comes first once there is a proof, as on the portal: Approve sits with it, and a
+          change request is pins on it plus an optional note, sent as one round. */}
+      {showDesign && row && (
+        <PriceTagDesignReview
+          request={row}
+          reviewable={row.status === 'proof_ready'}
+          onApprove={() => m.approve.mutate(row.id)}
+          onSend={(payload) => m.requestChanges.mutateAsync({ id: row.id, payload })}
+          loadDesign={fetchMyPriceTagDesign}
+          loadReviewComments={fetchMyPriceTagReviewComments}
+        />
+      )}
 
       <Tabs value={tab} onValueChange={(v) => setTab(v as Tab)} className="w-full">
         <TabsList variant="line" className="mb-4 w-full justify-start">
@@ -415,80 +456,59 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
         <TabsContent value="lines" className="mt-0 space-y-4 focus-visible:outline-none">
           <Card>
             <CardHeader className="px-4 py-3">
-              <CardTitle className="text-base">Lines ({lines.length})</CardTitle>
+              <CardTitle className="text-base">Lines ({lineCount})</CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 px-4 pb-4">
-              {lines.length === 0 && (
+              {lineCount === 0 && (
                 <div className="py-6 text-center">
                   <div className="text-sm font-semibold">No lines yet</div>
                   <p className="text-sm text-muted-foreground">Add the products to print tags for.</p>
                 </div>
               )}
-              {lines.map((line, index) => (
-                <div key={line.key} className="flex flex-wrap items-center gap-3 border-b pb-3 last:border-b-0">
-                  <span className="min-w-0 flex-1 truncate text-sm font-medium" title={line.label}>
-                    {line.label}
-                  </span>
-                  {editing ? (
-                    <>
-                      <Input
-                        type="number"
-                        min={1}
-                        aria-label={`Quantity for ${line.label}`}
-                        value={line.quantity}
-                        onChange={(e) => {
-                          const quantity = Math.max(1, Number(e.target.value) || 1);
-                          set({ lines: draft.lines.map((l, i) => (i === index ? { ...l, quantity } : l)) });
-                        }}
-                        className="w-24"
-                      />
-                      <Button
-                        mode="icon"
-                        variant="ghost"
-                        aria-label={`Remove ${line.label}`}
-                        title={`Remove ${line.label}`}
-                        onClick={() => set({ lines: draft.lines.filter((_, i) => i !== index) })}
-                      >
-                        <Trash2 className="size-4" />
-                      </Button>
-                    </>
-                  ) : (
-                    <span className="text-sm text-muted-foreground">Qty {line.quantity}</span>
+              {editing ? (
+                <>
+                  {draft.lines.length > 0 && (
+                    <PriceTagLinesTable
+                      lines={draft.lines}
+                      priceMode={draft.price_mode}
+                      isMobile={isMobile}
+                      editor={lineEditor}
+                      showNumberErrors={showNumberErrors}
+                    />
                   )}
-                </div>
-              ))}
-              {editing && (
-                <SearchableSelect
-                  value=""
-                  onChange={() => undefined}
-                  fetchOptions={async (q) =>
-                    (await searchMyPriceTagItems(q)).map((item) => ({
-                      value: `${item.kind}:${item.id}`,
-                      label: codeWithName(item.code, item.name) || item.name,
-                      code: item.code,
-                    }))
-                  }
-                  onOptionChange={(option) => {
-                    if (!option) return;
-                    const [kind, id] = option.value.split(':');
-                    const lineType = kind === 'product_set' ? 'product_set' : 'product';
-                    set({
-                      lines: [
-                        ...draft.lines,
-                        {
-                          key: `new-${Date.now()}`,
-                          label: option.label,
-                          line_type: lineType,
-                          product_id: lineType === 'product' ? id : null,
-                          product_set_id: lineType === 'product_set' ? id : null,
-                          quantity: 1,
-                          remarks: null,
-                        },
-                      ],
-                    });
-                  }}
-                  placeholder="Add a product or set"
-                />
+                  <Button variant="outline" size="sm" onClick={lineEditor.addLine}>
+                    <Plus className="size-4" />
+                    Add line
+                  </Button>
+                </>
+              ) : (
+                (row?.lines ?? []).map((line) => {
+                  const label = codeWithName(line.code, line.name) || line.name || line.code || 'Item';
+                  return (
+                    <div key={line.id} className="space-y-1 border-b pb-3 last:border-b-0">
+                      <div className="flex flex-wrap items-center gap-3">
+                        <span className="min-w-0 flex-1 truncate text-sm font-medium" title={label}>
+                          {label}
+                        </span>
+                        <span className="text-sm text-muted-foreground">Qty {line.quantity}</span>
+                      </div>
+                      {(line.parts ?? []).map((part) => {
+                        const partLabel = part.product_id
+                          ? `${codeWithName(part.code, part.name) || part.code || part.name || ''}${part.role ? ` (${part.role})` : ''}`
+                          : `${part.role ? `${part.role}: ` : ''}${part.candidates.map((c) => c.code).join(' / ')}`;
+                        return (
+                          <p
+                            key={part.id}
+                            className="truncate border-l-2 border-border pl-3 text-xs text-muted-foreground"
+                            title={partLabel}
+                          >
+                            {partLabel}
+                          </p>
+                        );
+                      })}
+                    </div>
+                  );
+                })
               )}
             </CardContent>
           </Card>
@@ -522,39 +542,6 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
           </TabsContent>
         )}
       </Tabs>
-
-      <Dialog open={changesOpen} onOpenChange={setChangesOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Request changes</DialogTitle>
-            <DialogDescription>What should marketing change on the design?</DialogDescription>
-          </DialogHeader>
-          <Textarea aria-label="Changes" value={changeNote} onChange={(e) => setChangeNote(e.target.value)} />
-          <DialogFooter>
-            <Button variant="outline" onClick={() => setChangesOpen(false)}>
-              Cancel
-            </Button>
-            <Button
-              variant="primary"
-              disabled={busy || !changeNote.trim() || !row}
-              onClick={() =>
-                row &&
-                m.requestChanges.mutate(
-                  { id: row.id, note: changeNote.trim() },
-                  {
-                    onSuccess: () => {
-                      setChangesOpen(false);
-                      setChangeNote('');
-                    },
-                  },
-                )
-              }
-            >
-              Send
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </div>
   );
 }
