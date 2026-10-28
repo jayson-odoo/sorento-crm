@@ -825,3 +825,71 @@ class TagSizePreset(Base, CompanyScopedMixin):
     created_by = Column(String, nullable=True)
     created_at = _created_at()
     updated_at = _updated_at()
+
+
+class Walkthrough(Base, CompanyScopedMixin):
+    """A showroom walkthrough: panoramic stops a customer moves through in order.
+
+    PLAN-showroom-walkthrough-28oct.md. Each stop is one spot in the showroom,
+    built on the worker from a turn-on-the-spot video or overlapping photos
+    (``app.services.dealer_kit.panorama``).
+    """
+
+    __tablename__ = "walkthrough"
+    __table_args__ = (
+        Index("ix_dealer_kit_walkthrough_company_created", "company_id", "created_at"),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    name = Column(String(200), nullable=False)
+    created_by = Column(UUID(as_uuid=False), nullable=True)
+    created_at = _created_at()
+    updated_at = _updated_at()
+
+    stops = relationship(
+        "WalkthroughStop",
+        back_populates="walkthrough",
+        cascade="all, delete-orphan",
+        order_by="WalkthroughStop.position",
+    )
+
+
+class WalkthroughStop(Base):
+    """One panorama in a walkthrough. Reached only through its scoped parent.
+
+    The row exists from the moment the upload is accepted (``processing``), and
+    the worker writes ``done`` with the panorama, or ``failed`` with the reason.
+    """
+
+    __tablename__ = "walkthrough_stop"
+    __audit_skip__ = "walkthrough build job state"
+    __table_args__ = (
+        Index("ix_dealer_kit_walkthrough_stop_walkthrough", "walkthrough_id", "position"),
+        CheckConstraint(
+            "status IN ('processing', 'done', 'failed')",
+            name="ck_dealer_kit_walkthrough_stop_status",
+        ),
+        {"schema": SCHEMA},
+    )
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=_uuid_str)
+    walkthrough_id = Column(
+        UUID(as_uuid=False),
+        ForeignKey(f"{SCHEMA}.walkthrough.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    position = Column(Integer, nullable=False)
+    title = Column(String(200), nullable=False)
+    status = Column(String(16), nullable=False, default="processing")
+    error_message = Column(Text, nullable=True)
+    storage_provider = Column(String(16), nullable=True)
+    panorama_key = Column(String(512), nullable=True)
+    # The angle the panorama covers; 360 x 180 is a full sphere.
+    h_fov_deg = Column(Numeric(6, 2), nullable=True)
+    v_fov_deg = Column(Numeric(6, 2), nullable=True)
+    job_id = Column(String(64), nullable=True)
+    created_at = _created_at()
+    finished_at = Column(DateTime(timezone=False), nullable=True)
+
+    walkthrough = relationship("Walkthrough", back_populates="stops")

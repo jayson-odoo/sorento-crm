@@ -173,7 +173,7 @@ def test_notifications_is_drained_by_default():
 @pytest.mark.parametrize(
     "queue",
     ["imports", "respond_io", "catalogue_render", "media", "project_docs", "flyer_read",
-     "notifications", "chat"],
+     "notifications", "chat", "walkthrough"],
 )
 def test_every_known_queue_is_drained_by_default(queue):
     """Each queue the codebase enqueues to, named individually so a drop is legible.
@@ -263,6 +263,7 @@ def test_queues_for_role_batch(monkeypatch):
         "catalogue_render",
         "project_docs",
         "flyer_read",
+        "walkthrough",
         "analytics",
     ]
 

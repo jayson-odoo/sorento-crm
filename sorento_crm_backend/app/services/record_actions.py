@@ -1571,7 +1571,7 @@ register(
 
 # ----- Dealer kit -----------------------------------------------------------------------
 #
-# One slug for all five, `dealer_kit.page.edit`, because that is the single grant every
+# One slug for all of these, `dealer_kit.page.edit`, because that is the single grant every
 # one of these DELETE routes is behind today.
 
 
@@ -1599,6 +1599,18 @@ def _delete_dk_flyer_reading(db: Session, payload: dict):
     return flyer_reading_service.delete_reading(db, _entity_id(payload))
 
 
+def _delete_dk_walkthrough(db: Session, payload: dict):
+    from app.services.dealer_kit import walkthrough_service
+
+    return walkthrough_service.delete_walkthrough(db, _entity_id(payload))
+
+
+def _delete_dk_walkthrough_stop(db: Session, payload: dict):
+    from app.services.dealer_kit import walkthrough_service
+
+    return walkthrough_service.delete_stop(db, _entity_id(payload))
+
+
 def _delete_dk_tile_template(db: Session, payload: dict):
     from app.services.dealer_kit import tile_template_service
 
@@ -1620,6 +1632,13 @@ for _key, _entity, _fn, _label in (
         "dk_tile_design",
         _delete_dk_tile_template,
         "Delete tile design",
+    ),
+    ("dk_walkthrough.delete", "dk_walkthrough", _delete_dk_walkthrough, "Delete walkthrough"),
+    (
+        "dk_walkthrough_stop.delete",
+        "dk_walkthrough_stop",
+        _delete_dk_walkthrough_stop,
+        "Delete walkthrough stop",
     ),
 ):
     register(

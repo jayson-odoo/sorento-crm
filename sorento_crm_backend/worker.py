@@ -134,6 +134,9 @@ QUEUES = (
     ('chat', 'fast'),
     ('project_docs', 'batch'),
     ('flyer_read', 'batch'),
+    # `walkthrough`: one showroom stop's panorama stitch, tens of CPU seconds
+    # nobody waits on (PLAN-showroom-walkthrough-28oct.md).
+    ('walkthrough', 'batch'),
     # `analytics` (chat analytics CA-2): the nightly topic labeller, queued by the
     # scheduler at 02:15 Malaysia. Minutes of model calls nobody waits on: batch.
     ('analytics', 'batch'),

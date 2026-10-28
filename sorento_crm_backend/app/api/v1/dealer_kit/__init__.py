@@ -17,6 +17,7 @@ from app.api.v1.dealer_kit import (
     tag_data,
     tag_sizes,
     tag_templates,
+    walkthroughs,
 )
 
 router = APIRouter()
@@ -36,3 +37,4 @@ router.include_router(price_tag_requests.router)
 router.include_router(tag_templates.router)
 router.include_router(tag_sizes.router)
 router.include_router(tag_data.router)
+router.include_router(walkthroughs.router)

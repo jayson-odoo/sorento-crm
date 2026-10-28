@@ -1167,3 +1167,48 @@ class FlyerSpecApplyOut(BaseModel):
 
     applied: list[AppliedFlyerSpecOut] = Field(default_factory=list)
     refused: list[RefusedFlyerSpecOut] = Field(default_factory=list)
+
+
+# --------------------------------------------------------------------------- #
+# Showroom walkthroughs (PLAN-showroom-walkthrough-28oct.md)
+# --------------------------------------------------------------------------- #
+class WalkthroughIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+
+    @field_validator("name")
+    @classmethod
+    def _not_blank(cls, v: str) -> str:
+        if not v.strip():
+            raise ValueError("Give the walkthrough a name")
+        return v.strip()
+
+
+class WalkthroughStopOut(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    position: int
+    title: str
+    # ``processing`` / ``done`` / ``failed``.
+    status: str
+    error_message: Optional[str] = Field(default=None, serialization_alias="errorMessage")
+    # The angle the panorama covers; null until the stop is done.
+    h_fov_deg: Optional[float] = Field(default=None, serialization_alias="hFovDeg")
+    v_fov_deg: Optional[float] = Field(default=None, serialization_alias="vFovDeg")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    finished_at: Optional[datetime] = Field(default=None, serialization_alias="finishedAt")
+
+
+class WalkthroughSummary(BaseModel):
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str
+    stop_count: int = Field(serialization_alias="stopCount")
+    processing_count: int = Field(serialization_alias="processingCount")
+    created_at: datetime = Field(serialization_alias="createdAt")
+    updated_at: datetime = Field(serialization_alias="updatedAt")
+
+
+class WalkthroughOut(WalkthroughSummary):
+    stops: list[WalkthroughStopOut] = Field(default_factory=list)

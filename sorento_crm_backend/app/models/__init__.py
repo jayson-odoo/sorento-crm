@@ -144,6 +144,8 @@ from app.models.dealer_kit import (
     Edition,
     ExportRequest,
     TagTemplate,
+    Walkthrough,
+    WalkthroughStop,
 )
 from app.models.price_tag import (
     ContactPortalFormOverride,
@@ -430,6 +432,8 @@ __all__ = [
     "Edition",
     "ExportRequest",
     "TagTemplate",
+    "Walkthrough",
+    "WalkthroughStop",
     # Price Tag Request
     "ContactPortalFormOverride",
     "PriceTagRequest",

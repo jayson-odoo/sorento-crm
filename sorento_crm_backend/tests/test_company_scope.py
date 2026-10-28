@@ -628,7 +628,9 @@ def test_every_company_id_table_is_registered():
     #   month (`sales.agent_classes` has no company: its agent master is shared) = 171.
     # + 1 (CATALOG-IMAGES): `catalogue_photo_readings`, one company's catalogue upload; its
     #   `catalogue_photos` rows carry no company_id and are reached only through the reading = 172.
-    expected_owned = 172
+    # + 1 (SHOWROOM-WALKTHROUGH): `dealer_kit.walkthrough`, one company's own showroom tour;
+    #   its `walkthrough_stop` rows are reached only through it = 173.
+    expected_owned = 173
     assert len(owned) == expected_owned, (
         f"expected {expected_owned} owned tables, found {len(owned)}: {sorted(owned)}"
     )
