@@ -18,6 +18,8 @@ from typing import Optional
 
 from sqlalchemy.orm import Session
 
+from app.services.submission_status import APPEALED_LABEL
+
 logger = logging.getLogger(__name__)
 
 
@@ -155,7 +157,7 @@ def notify_undo(db: Session, record, *, actor_id: Optional[str], reason: str) ->
 _STATUS_LABELS = {
     "draft": "Draft",
     "submitted": "Submitted",
-    "resubmitted": "Resubmitted",
+    "resubmitted": APPEALED_LABEL,
     "pending_approval": "Pending Approval",
     "approved": "Approved",
     "rejected": "Rejected",
@@ -169,14 +171,6 @@ _STATUS_LABELS = {
 def _status_label(value) -> str:
     code = (str(value or "")).strip().lower()
     return _STATUS_LABELS.get(code) or code.replace("_", " ").title() or "its previous state"
-
-
-def _complaint_status_label(value) -> str:
-    """A complaint sent back after a rejection is an appeal (owner, 28 Oct 2026); the stored
-    value stays `resubmitted`, which every other form reads as "Resubmitted"."""
-    if (str(value or "")).strip().lower() == "resubmitted":
-        return "Appealed"
-    return _status_label(value)
 
 
 def _pr_display_status(header) -> str:
@@ -297,7 +291,7 @@ def _notify_contact(db: Session, record, *, number: str, reason: str) -> None:
             ) or resolve_send_identifier(db, getattr(complaint, "contact_id", None))
             if not identifier:
                 return
-            restored = _complaint_status_label(getattr(complaint, "status", None))
+            restored = _status_label(getattr(complaint, "status", None))
             text = _correction_text(number, restored, reason_part)
             service._enqueue_respond_message_for_complaint(
                 complaint_id=entity_id,

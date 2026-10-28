@@ -27,6 +27,7 @@ from app.models.projects import (
     QUOTATION_LOSS_REASON_SET_KEY,
 )
 from app.services.project_reference_service import DEFAULT_TEMPLATE_ROLES
+from app.services.submission_status import APPEALED_LABEL, APPEAL_VERB
 
 logger = logging.getLogger(__name__)
 
@@ -191,7 +192,7 @@ DEFAULT_QUOTATION_STATUSES = (
     ("draft", "Draft", True, False),
     ("rejected", "Rejected", False, False),
     ("pending_approval", "Pending Approval", False, False),
-    ("resubmitted", "Resubmitted", False, False),
+    ("resubmitted", APPEALED_LABEL, False, False),
     ("approved", "Approved", False, False),
     ("issued", "Issued", False, False),
 )
@@ -214,7 +215,7 @@ DEFAULT_QUOTATION_EDGES = (
     ("approved", "issued", "Issued to the customer", 0),
     ("issued", "pending_approval", "Send for approval", 0),
     # RESUBMITTED-STATUS: a rejected quotation asked again, decided exactly like pending.
-    ("draft", "resubmitted", "Resubmit for approval", 1),
+    ("draft", "resubmitted", APPEAL_VERB, 1),
     ("resubmitted", "approved", "Approve", 0),
     ("resubmitted", "rejected", "Reject", 1),
 )

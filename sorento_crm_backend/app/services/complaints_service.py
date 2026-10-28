@@ -1208,7 +1208,7 @@ class ComplaintService:
             rejected_at = getattr(row, "rejected_at", None)
             cycle_key = rejected_at.isoformat() if rejected_at else "resubmit"
             event_type = f"external_resubmitted:{cycle_key}"
-            # A complaint sent back after a rejection is an appeal (owner, 28 Oct 2026).
+            # A send-back after a rejection is an appeal (owner, 28 Oct 2026).
             title = "Complaint appealed"
             sentence = "A previously rejected complaint has been appealed and requires your review."
         else:

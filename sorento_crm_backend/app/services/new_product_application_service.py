@@ -58,7 +58,7 @@ CANCELLED = "cancelled"
 STATUS_LABELS = {
     DRAFT: "Draft",
     SUBMITTED: "Submitted",
-    RESUBMITTED: "Resubmitted",
+    RESUBMITTED: submission_status.APPEALED_LABEL,
     APPROVED: "Approved",
     REJECTED: "Rejected",
     COMPLETED: "Completed",
@@ -1041,7 +1041,7 @@ def _holders(db: Session, slug: str, company_id: str, exclude: Iterable[Any] = (
 
 _EVENTS = {
     "submitted": ("waits for your approval", "approvers"),
-    "resubmitted": ("was resubmitted and waits for your approval", "approvers"),
+    "resubmitted": ("was appealed and waits for your approval", "approvers"),
     "withdrawn": ("was taken back for changes", "approvers"),
     "approved": ("is approved: codes to open", "purchasing"),
     "rejected": ("was rejected", "applicant"),

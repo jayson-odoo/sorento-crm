@@ -26,6 +26,7 @@ from app.services.pdf_render import (
     photos_section_html,
     render_html,
 )
+from app.services.submission_status import APPEALED_LABEL, RESUBMITTED
 
 logger = logging.getLogger(__name__)
 
@@ -49,9 +50,9 @@ def _row(label: str, value) -> str:
 
 
 def _status_text(status):
-    # A complaint sent back after a rejection is an appeal (owner, 28 Oct 2026); the stored
-    # value stays `resubmitted`.
-    return "Appealed" if (status or "").strip().lower() == "resubmitted" else status
+    # A send-back after a rejection is an appeal (owner, 28 Oct 2026); the stored value
+    # stays `resubmitted`.
+    return APPEALED_LABEL if (status or "").strip().lower() == RESUBMITTED else status
 
 
 class ComplaintPDFService:

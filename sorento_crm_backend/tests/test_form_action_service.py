@@ -855,14 +855,13 @@ def test_contact_correction_names_the_restored_status_and_reason():
     assert _status_label(None) == "its previous state"
 
 
-def test_contact_correction_calls_a_complaint_resubmission_an_appeal():
-    """COMPLAINT-APPEAL-WORDING (owner, 28 Oct): a complaint back at `resubmitted` reads
-    "Appealed" to its contact; every other form keeps "Resubmitted"."""
-    from app.services.form_action_notify import _complaint_status_label, _status_label
+def test_contact_correction_calls_a_resubmission_an_appeal():
+    """COMPLAINT-APPEAL-WORDING (owner, 28 Oct): a form back at `resubmitted` reads
+    "Appealed" to its contact, on every form."""
+    from app.services.form_action_notify import _status_label
 
-    assert _complaint_status_label("resubmitted") == "Appealed"
-    assert _complaint_status_label("rejected") == "Rejected"
-    assert _status_label("resubmitted") == "Resubmitted"
+    assert _status_label("resubmitted") == "Appealed"
+    assert _status_label("rejected") == "Rejected"
 
 
 def test_complaint_correction_message_tells_the_contact_appealed(db, monkeypatch):

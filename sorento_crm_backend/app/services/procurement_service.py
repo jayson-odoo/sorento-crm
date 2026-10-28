@@ -8807,9 +8807,9 @@ class PurchaseRequestService:
                 "purchase_request": "purchase request",
                 "sponsorship_form": "sponsorship form",
             }.get(rt, "request")
-            title = f"{noun[0].upper()}{noun[1:]} resubmitted"
+            title = f"{noun[0].upper()}{noun[1:]} appealed"
             kind_sentence = (
-                f"A previously rejected {noun} has been resubmitted and requires your review."
+                f"A previously rejected {noun} has been appealed and requires your review."
             )
         base_url = (base_url_override or "").strip().rstrip("/")
         if not base_url:
