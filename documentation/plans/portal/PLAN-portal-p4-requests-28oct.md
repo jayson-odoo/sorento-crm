@@ -129,7 +129,8 @@ Fix round, red first:
 
 Done 29 Oct in merge 3653b8a8d2: both form paths get `defaultProjectId`. R2 replaces `LimitedPurchaseRequestForm` with the
 portal form, so R2 owns the limited-branch case: a salesperson opening `/sponsorship-forms/new?project_id=<own project>`
-(the project Sponsorship stage action) must land on the portal form with that project seeded, or the gap is asked to crew.
+(the project Sponsorship stage action) lands on the portal form with that project seeded (owner (a), 29 Oct; see
+"R3 architecture" below).
 
 On the next main merge, `sponsorship-forms/new/page.tsx` and `PurchaseRequestForm.tsx` conflict. Resolution agreed with
 that lane (PR #1953 crew-note 6470523547): keep #1961's async page (`searchParams.project_id`) inside the P4 Suspense
@@ -185,8 +186,14 @@ callers and every `vi.mock` of those names unchanged), and the component reads t
 BE: one parity test per R3 kind pinning PAR-6 (price tag customer `debtor_code ?? customer_code`, `print_by='self'`;
 opportunity amount / qty / unit price as the portal sends them): the same body POSTed to the portal and to
 my-requests stores the same row.
-Open with R2: `?project_id=` on a salesperson's Sample Request (`ProjectDetailClient.tsx:119`) follows the crew
-answer on the Sponsorship case.
+Owner ruling 29 Oct (answer to a26432800 = (a), Sponsorship AND Sample Request): a salesperson's stage action
+(`ProjectDetailClient.tsx:117-121`, `?project_id=`) seeds project_id + project title into the PORTAL form on the CRM
+page; portal unchanged, same payload shape, server gate unchanged. A 422 from the gate
+(`sponsorship_contact_no_company` / `sponsorship_project_not_permitted`, `sponsorship_link_service.py:110-132`;
+Sample Request `SAMPLE_REQUEST_PROJECT_NOT_ALLOWED`, `sample_request_service.py:273-276`) shows as a clear message on
+the form, never a raw error. Red-first: Sponsorship in R2, Sample Request in R3; both in the R4 side-by-side pass.
+Count (read-only, `sorento_cagent_stack` 15 Oct copy, `p4-salesperson-no-company-count.sql`): 31 salesperson
+contacts, 0 with no linked company, 0 flagged (crew-note 6482381218).
 
 Known unrelated: `PageHeader.inventory.test.ts` S5-05 flags main's `StockPositionGrid.tsx` (RELEASE5-FIX 8e56966136).
 Dead after R1, delete in a cleanup slice: own-request mode of the SI / Complaint attachment sections; limited complaint branch in `FormRevisionsTab`.
