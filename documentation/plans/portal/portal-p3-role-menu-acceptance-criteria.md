@@ -1,57 +1,67 @@
-# UAC: PORTAL-P3-ROLE-MENU (28 Oct 2026)
+# UAC: PORTAL-P3-ROLE-MENU (28 Oct 2026, v2 on owner answers)
 
-Plan: `PLAN-portal-p3-role-menu-28oct.md`. Built on the behaviour-card recommendations (Q1 a, Q2 a,
-Q3 a, Q4 a, Q5 a); any differing owner answer revises the affected rows before code.
+Plan: `PLAN-portal-p3-role-menu-28oct.md` (design v2, slices 1-3).
 
-"Salesperson" = ACTIVE user, role `salesperson`, linked WhatsApp contact that is an active sales agent.
-"Staff" = any user holding no `salesperson` role.
+"Salesperson" = ACTIVE, not trashed, holds role `salesperson`, every role in {salesperson, portal_user},
+linked WhatsApp contact (`users.respond_contact_id`). "Staff" = everyone else, including a user who
+holds `salesperson` plus any other role ("mixed").
 
-## Grant
+## Slice 1: grant, landing, sidebar, forms in the CRM
 
-- P3-01 After the migration, role `salesperson` holds exactly its previous slugs plus
-  `projects.projects.view_own`, `sales.opportunities.view_own`, `projects.sample_requests.view_own`,
-  `procurement.new_product_applications.view_own`, `sla_management.conversations.view_own`.
-- P3-02 The migration grants nothing to any other role; running it twice adds no row; downgrade removes
-  exactly those five pairs and nothing else.
+### Grant
+- P3-01 After the migration, role `salesperson` holds its previous slugs plus exactly
+  `projects.projects.view_own` and `sla_management.conversations.view_own`.
+- P3-02 No other role changes; running the upgrade twice adds no row; downgrade removes exactly
+  those two pairs.
 
-## Landing
+### Who / me
+- P3-03 `GET /user-management/users/me` for a salesperson carries
+  `salesperson: {portal_kinds: [...], portal_slug: "<slug>"}`; `portal_kinds` equals the contact's
+  `visible_form_types` from `/public/portal/me` (same service), in portal order.
+- P3-04 Same field is `null` for staff, admin, superadmin, mixed users, users without a linked
+  contact, and users whose roles are only `portal_user`.
 
-- P3-03 Salesperson password or phone sign-in with no callbackUrl: `home_path` = `/project-sales/pipeline`.
-- P3-04 Staff (any non-salesperson, incl. admin, superadmin, agent-linked staff): `home_path` unchanged.
-- P3-05 User linked to a contact without the role (e.g. `portal_user` only): `home_path` unchanged (portal).
-- P3-06 Portal verify card, plain link, contact linked to a salesperson: after the code the browser
-  opens `/project-sales/pipeline` in the CRM shell.
-- P3-07 Portal verify card, contact without a CRM user: same requests and same destination as today.
-- P3-08 Portal verify card, linked user without the role, or the CRM session fails (inactive, trashed,
-  exchange 401): lands on the portal exactly as today.
-- P3-09 Deep link to one request (portal-paths.ts:41-51): opens that portal page as today, salesperson or not.
+### Landing
+- P3-05 Salesperson sign-in (password or phone, no callbackUrl): `home_path` = `/my-requests`.
+- P3-06 Staff, admin, superadmin, mixed, `portal_user`-only: `home_path` unchanged from today.
+- P3-07 Portal verify card, plain link, contact linked to a salesperson: after the code the browser
+  opens `/my-requests` in the CRM shell.
+- P3-08 Portal verify card for a contact without a CRM user, or whose user is not a salesperson, or
+  whose CRM session fails (inactive, trashed, 401): same requests and same destination as today.
+- P3-09 `/my-requests` with no `?type=` opens the starred default tab for that contact
+  (localStorage `sorento.portalDefaultTab.<contact_id>`) when it is visible, else Stock Inquiry.
 
-## Sidebar
+### Sidebar
+- P3-10 Salesperson sidebar: MY WORK (Projects, Conversations, Customer Asks) then MY REQUESTS with one
+  item per kind in `portal_kinds` except `customer_asks` and `conversation`, in portal order, labels
+  from `lib/portal-form-kinds.ts`. No other heading or item.
+- P3-11 A kind missing from `portal_kinds` has no item; a heading with no item does not render.
+- P3-12 Staff, admin, superadmin and mixed users: sidebar identical to today (no MY WORK / MY
+  REQUESTS, every existing item kept under the same gate).
+- P3-13 Usable, not clipped, at 375 px (mobile header menu) and 1280 px.
 
-- P3-10 Salesperson sees headings MY WORK (Projects, Opportunities, Conversations) and MY REQUESTS
-  (Customer Asks, Sample Requests, New Product Applications, Request forms), in that order, and no other
-  item except those already shown to them today by an existing grant.
-- P3-11 Request forms opens the salesperson's own portal page.
-- P3-12 Staff sidebar is identical to today for every staff fixture (admin, superadmin, a role with
-  `projects.projects.view`, a role without it): no MY WORK / MY REQUESTS heading.
-- P3-13 Mixed user (salesperson role + a staff role holding `sales.opportunities.view` only): Opportunities
-  shows in its staff group, not under MY WORK; Projects shows under MY WORK.
-- P3-14 A heading with no visible item under it does not render.
-- P3-15 Usable, not clipped, at 375 px (mobile header menu) and 1280 px.
+### Pages
+- P3-14 Salesperson opens Projects and Conversations from the sidebar: page renders (no
+  AccessDenied), lists only their own rows (P2), no create/edit/delete/reply buttons appear that the
+  portal does not offer.
+- P3-15 Each MY REQUESTS item renders the existing portal list for that kind inside the CRM shell;
+  New, open detail, edit, submit, revise, duplicate, attachments and comments behave as in the portal
+  and every link they produce stays under `/my-requests`.
+- P3-16 The embedded landing shows no portal header or portal log-out; the CRM user menu is the only
+  log-out.
+- P3-17 Staff holding `.view` see the Projects and Conversations pages exactly as today.
+- P3-18 The portal at `/portal/...` is unchanged for every visitor (links, landing, verify, log-out).
 
-## Pages
+## Slice 2: deep links (Q5 b)
+- P3-19 Salesperson opening a WhatsApp deep link `/portal/c/{slug}/{kind}/{id}` (after the code, or
+  with a token already on the device) lands on `/my-requests/{kind}/{id}`; `?type=X` lands on
+  `/my-requests?type=X`.
+- P3-20 Anyone else opening the same link: today's portal page.
 
-- P3-16 Salesperson opens Projects, Sample Requests, Conversations: the page renders (no AccessDenied)
-  and lists only their own rows (P2 rules).
-- P3-17 Salesperson sees no Add / Create / Edit / Approve / Delete / Reply button on any of the six pages.
-- P3-18 Staff holding `.view` see the same pages and buttons as today.
+## Slice 3: CRM sign-in without a portal token on the device
+- P3-21 Salesperson signed in at `/signin` with no portal token: a MY REQUESTS page asks for the
+  WhatsApp code once (existing verify card, inside the CRM), then shows the requested kind.
+- P3-22 No new route mints a portal token from a CRM session.
 
-## Server refuses what is hidden (slice 2)
-
-- P3-19 Salesperson-only user (every role in {salesperson, portal_user}): every registered `/api/v1`
-  route outside the allowlist answers 403, including stock inquiries, purchase requests, customers,
-  suppliers, incoming stock, GRN, stock and every staff module list.
-- P3-20 Every route the six pages and the shell call (auth, me, permissions, modules, notifications,
-  column config, the pages' own lists, details and pickers) answers as today for that user.
-- P3-21 Staff, admin, API-key callers and mixed users are never touched by the guard.
-- P3-22 A route added later is refused for salesperson-only users until added to the allowlist (sweep test).
+## Known, accepted (owner 28 Oct)
+- Sign-in-only GETs readable by any CRM session (plan "Owner answers" Q4). Not tested here.
