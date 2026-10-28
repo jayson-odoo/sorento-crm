@@ -119,10 +119,11 @@ on the live item count, which the hand test shows.
   shared sales calculation, `invoiced_sales.quantity_by_product_month` (#1916).
 - Shared helpers: `stock_status_service._spo_rows` / `incoming_pl_by_product` take a product-id list (None =
   every product) and `po_outstanding_clauses` was extracted, so the single-item panel calls the same code
-  with one id. `container_request_service.history_window` / `ordered_qty_by_month` were pulled out of the
+  with one id. `container_request_service.history_window` (the 12-full-month window) was pulled out of the
   loading plan's `history`.
 - FE: Inventory > Stock position (`app/(protected)/inventory-management/stock-position/`), a DataGrid with
-  the item code pinned and a row link to Stock status. Filters: supplier, brand, warehouse, sales basis.
+  the item code pinned and a row link to Stock status. Filters: supplier, brand, warehouse
+  (Q3 removed the sales-basis switch); the Columns chooser picks the warehouse columns (Q5).
   Export to Excel comes from the server workbook.
 - Warehouse filter: offers the report's own warehouse columns; keeps the items holding stock there; the
   columns stay whole. A value that is not an id matches nothing. An unknown `wh:<code>` sort is 422.

@@ -543,3 +543,23 @@ def test_export_with_every_warehouse_hidden_writes_no_warehouse_column(scm_app):
     assert r.status_code == 200, r.text
     header = next(load_workbook(io.BytesIO(r.content)).active.iter_rows(values_only=True))
     assert header[:4] == ("Item code", "Supplier", "Brand", "Incoming BRW")
+
+
+def test_monthly_sales_of_an_unresolved_scope_read_nothing(scm_app, monkeypatch):
+    """UNSET (no principal resolved) fails closed: the shared function is never asked, and no
+    company set is named for it."""
+    from app.models.base import UNSET, set_company_scope
+    from app.services import stock_position_service
+    from app.services.sales import invoiced_sales
+
+    app, db, w = _setup(scm_app)
+    asked = []
+    monkeypatch.setattr(invoiced_sales, "quantity_by_product_month",
+                        lambda *a, **k: asked.append(k) or [])
+    mine = db.info.get("company_scope")
+    set_company_scope(db, UNSET)
+    try:
+        assert stock_position_service._monthly_sales(db, None) == {}
+    finally:
+        set_company_scope(db, mine)
+    assert asked == []
