@@ -231,3 +231,9 @@ def test_default_jitter_spreads_retirements_over_half_the_limit(monkeypatch):
     monkeypatch.delenv("GUNICORN_MAX_REQUESTS_JITTER", raising=False)
     module = _load_conf_module()
     assert module.max_requests_jitter * 2 >= module.max_requests
+
+    # The limit is re-sized from the owner's request rate; the jitter follows it unless set.
+    for limit in (2000, 20000):
+        monkeypatch.setenv("GUNICORN_MAX_REQUESTS", str(limit))
+        module = _load_conf_module()
+        assert module.max_requests_jitter == limit // 2, (limit, module.max_requests_jitter)
