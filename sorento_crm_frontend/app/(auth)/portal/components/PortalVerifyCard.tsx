@@ -19,6 +19,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { getSession } from 'next-auth/react';
 import { AlertCircle, MessageCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
+import { impersonationStore } from '@/lib/impersonation-store';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -251,12 +252,19 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
     setPending(true);
     try {
       const result = await verifyOtp(contactId, spaceId, code.trim());
-      writePortalToken(result.token);
-      if (slug) writePortalSlug(slug);
+      // An admin viewing as the salesperson (CRM impersonation): the token is this tab's only, the
+      // device's stored token and slug and the admin's CRM session are never replaced.
+      const viewingAs = impersonationStore.getState() !== null;
+      writePortalToken(result.token, { impersonation: viewingAs });
+      if (slug && !viewingAs) writePortalSlug(slug);
       // A contact with a CRM user also gets a CRM session (PORTAL-P1-SESSION-LINK).
       // Before navigating, so the NextAuth cookie is set when the page is left.
-      let crmHome: string | null = null;
-      if (result.portal_link_secret && (await openCrmSession(result.portal_link_secret))) {
+      let crmHome: string | null = viewingAs ? '/my-requests' : null;
+      if (
+        !viewingAs &&
+        result.portal_link_secret &&
+        (await openCrmSession(result.portal_link_secret))
+      ) {
         crmHome = await salespersonHomePath();
       }
       if (typeof window !== 'undefined') {
