@@ -163,6 +163,12 @@ def _definition(basis: str) -> reg.ReportDefinition:
         reg.Column(
             "channel", "Channel", "text", "dimension", lambda c: channel_label(SalesOrder.demand_class), size=120
         ),
+        # Owner 28 Oct 09:30: the open sales orders behind an undelivered-orders figure. Outstanding only, so the
+        # list is the figure's own population by construction.
+        *(
+            (reg.Column("sales_order", "Sales order", "text", "dimension", lambda c: SalesOrder.so_number, size=140),)
+            if basis == "outstanding" else ()
+        ),
         reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(_bucket_expr(), "YYYY-MM"), size=110),
         reg.Column("all", "All", "text", "dimension", lambda c: sa.cast(sa.literal("all"), sa.Text), size=80),
         reg.Column("amount", "RM", "money", "measure", lambda c: amount_expr, size=130),

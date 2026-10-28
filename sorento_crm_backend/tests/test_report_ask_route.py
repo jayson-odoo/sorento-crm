@@ -1359,3 +1359,25 @@ def test_a_ranking_over_more_than_5000_groups_is_not_truncated(client, db):
     assert money(body["total"]["amount"]) == D("500.00") + D(BULK_PRODUCTS), body["total"]
     assert body["total"]["qty"] == 5 + BULK_PRODUCTS, body["total"]
     assert top["product_code"] == "ZZZ-TOP"
+
+
+# ================================================================ owner 28 Oct 09:30: the open sales orders behind an undelivered figure
+
+
+def test_outstanding_group_by_sales_order_lists_the_open_orders_and_sums_to_the_figure(client, db):
+    _outstanding_world(db)
+    whole = _ok(client, _full(db), basis="outstanding")
+    body = _ok(client, _full(db), group_by="sales_order", top_n=50, basis="outstanding")
+    assert body["group_label"] == "Sales order", body
+    assert body["total_count"] == 4, body["rows"]  # O1 (two SOs), O7 and O8 are open with a quantity owed
+    assert all("-SO-" in r["name"] for r in body["rows"]), body["rows"]
+    assert sum(r["qty"] for r in body["rows"]) == whole["total"]["qty"] == 32, body
+    assert sum(money(r["amount"]) for r in body["rows"]) == money(whole["total"]["amount"]) == D("860.00"), body
+
+
+@pytest.mark.parametrize("basis", ["delivered", "ordered"])
+def test_group_by_sales_order_is_refused_on_the_other_order_bases(client, db, basis):
+    _outstanding_world(db)
+    resp = client.get(ROUTE, params={**PERIOD, "basis": basis, "group_by": "sales_order", "top_n": 5,
+                                     **_as_contact(_full(db))}, headers=KEY)
+    assert resp.status_code == 422 and resp.json()["code"] == "unknown_group_by", resp.text

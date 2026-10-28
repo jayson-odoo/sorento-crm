@@ -62,7 +62,7 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
             basis: {
                 "definition": sales_order_lines_ask.DEFINITIONS[basis],
                 "label": label,
-                "dimensions": DIMENSIONS,
+                "dimensions": (*DIMENSIONS, "sales_order") if basis == "outstanding" else DIMENSIONS,
                 "filters": FILTERS,
             }
             for basis, label in (
@@ -104,7 +104,7 @@ PER_DOCUMENT_FILTERS = ("product", "brand", "category", "spec", "location", "cha
 SPEC_GROUP = "spec:"
 
 #: What a customer-scoped contact (a dealer) may group or filter by (PLAN section 0, Q1/Q2).
-DEALER_KEYS = frozenset({"product", "brand", "category", "month"})
+DEALER_KEYS = frozenset({"product", "brand", "category", "month", "sales_order"})
 CHAT_DEALER_KEYS = frozenset({"topic", "subject", "product", "month"})
 
 GROUP_LABELS = {
@@ -116,6 +116,7 @@ GROUP_LABELS = {
     "location": "Location",
     "channel": "Channel",
     "month": "Month",
+    "sales_order": "Sales order",
 }
 
 CHAT_GROUP_LABELS = {
