@@ -22,8 +22,8 @@ from app.services.chatbot.lanes.business import ranking_ask
 
 ASK_NAME = "sales_basis"
 CANCELLED = "Sales report cancelled."
-GIVE_UP = "I still can't tell which basis '{word}' is. Ask for the sales report again with the basis."
-GIVE_UP_BLANK = "I still can't tell which basis you mean. Ask for the sales report again with the basis."
+#: A miss carries no word (only the parser's answer is read), so the give-up line names none.
+GIVE_UP = "I still can't tell which basis you mean. Ask for the sales report again with the basis."
 
 #: The answers, in the order the question lists them.
 BASES = ("invoiced", "delivered", "ordered", "outstanding")
@@ -55,7 +55,6 @@ SALES_BASIS_ASK = rf.register(rf.AskType(
     },
     cancelled=CANCELLED,
     give_up=GIVE_UP,
-    give_up_blank=GIVE_UP_BLANK,
     # Owner rule (28 Oct): only the parser's declared answer answers it; a reply it declared none for drops the
     # question (`required_fields.reply_verdict`), and the typed text is never read here.
     answered_by_parser=True,
@@ -72,17 +71,16 @@ def named_basis(parse_output: dict[str, Any]) -> str | None:
 
 
 def _reply(parse_output: dict[str, Any]) -> rf.Resolved:
-    """An answering turn's basis, from the parser's declared answer only: the basis it filled (`sales_basis` /
-    `basis`), else the one offered option it picked. Anything else is a miss, asked again."""
-    basis = named_basis(parse_output)
-    if basis:
-        return rf.Resolved("ok", value=basis, label=basis)
+    """An answering turn's basis, from the parser's declared answer only: the one offered option it picked,
+    else the basis it filled (`sales_basis` / `basis`). Anything else is a miss, asked again."""
     answer = parse_output.get("required_ask_answer") if isinstance(parse_output.get("required_ask_answer"), dict) else {}
-    picked = [p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool)]
-    if len(picked) == 1 and 1 <= picked[0] <= len(BASES):
-        basis = BASES[picked[0] - 1]
-        return rf.Resolved("ok", value=basis, label=basis)
-    return rf.Resolved("unknown", label="")
+    if answer.get("mode") == "pick":
+        picked = [p for p in jsc.array(answer.get("picked")) if isinstance(p, int) and not isinstance(p, bool)]
+        if len(picked) == 1 and 1 <= picked[0] <= len(BASES):
+            return rf.Resolved("ok", value=BASES[picked[0] - 1], label=BASES[picked[0] - 1])
+        return rf.Resolved("unknown", label="")
+    basis = named_basis(parse_output)
+    return rf.Resolved("ok", value=basis, label=basis) if basis else rf.Resolved("unknown", label="")
 
 
 def settle(db: Any, parse_output: dict[str, Any]) -> rf.Outcome | None:
@@ -121,10 +119,16 @@ def as_report_ask(parse_output: dict[str, Any]) -> dict[str, Any]:
     """An outstanding answer: the report ask's outstanding orders laid out as the analysis lays its total out,
     one line per channel (or the months, for a month split), in RM, over the first message's channel and period,
     read by `report_ask.settle` like any breakdown (`report_breakdown`). Not an axis-less total: the report ask
-    totals only a filtered ask (`CATALOGUE_LINE`)."""
+    totals only a filtered ask (`CATALOGUE_LINE`). No period said reads this calendar year to today, as the
+    analysis does (`fetch.py`, the `crm_sales_analysis` builder), never a second question."""
     from app.services.chatbot.lanes.business import report_ask
+    from app.services.reports.registry import today_malaysia
 
     group_by = "month" if parse_output.get("group_by") == "month" else "channel"
+    period = {}
+    if not parse_output.get("date_filter_start") and not parse_output.get("date_filter_end"):
+        today = today_malaysia()
+        period = {"date_filter_start": f"{today.year}-01-01", "date_filter_end": today.isoformat()}
     return report_ask.take_words(
         {
             **{k: v for k, v in parse_output.items() if k not in ("required_ask", "required_ask_answer", "required_ask_reply", "sales_basis")},
@@ -135,6 +139,7 @@ def as_report_ask(parse_output: dict[str, Any]) -> dict[str, Any]:
             "report_breakdown": True,
             "capability_from": "sales_analysis",
             "entities": [],
+            **period,
         },
         "",
     )
