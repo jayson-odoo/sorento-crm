@@ -351,8 +351,6 @@ COMPANY_FORBIDDEN_LINE = "You do not have access to that company."
 def _company_held(extras: dict[str, Any], values: dict[str, Any], args: dict[str, Any], held: dict[str, Any]) -> dict[str, Any]:
     """`held` with the company question brought back while it is still owed: the first message found the company
     unnamed (its options ride the slot's extras) and neither an answer nor a named company has settled it."""
-    if extras.get("breakdown") and "metric" not in values and "metric" not in held:
-        held = {**held, "metric": rf.Resolved("ok", value=None, label="")}  # a breakdown shows both measures: never asked
     options = extras.get("company_options")
     if not options or "company" in values or args.get("company"):
         return held
@@ -1652,7 +1650,11 @@ def _settle(
         args.setdefault(key, value)  # the message's own values win
     if holding:
         # S6c: the measure and the basis on screen stay too (the message's own win).
+        # An outstanding ask the parser named no kind for never inherits a SALES basis (the kind is asked, as `_refine` does).
+        asks_kind = parse_output.get("capability_from") == "outstanding" and parse_output.get("basis") not in OUTSTANDING_KINDS
         for key in ("measure", "basis"):
+            if key == "basis" and asks_kind and source.get("basis") not in OUTSTANDING_KINDS:
+                continue
             if not args.get(key) and source.get(key):
                 args[key] = source[key]
     if (
@@ -1708,8 +1710,11 @@ def _settle(
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
     kind_ask_now = parse_output.get("capability_from") == "outstanding" or args.get("basis") in OUTSTANDING_KINDS
     # An outstanding kind uses only a period NAMED in this message: a period carried from an earlier sales ask is dropped.
+    # AC-RU-16: a "by X" over a frame already on an outstanding kind keeps the period on screen; only a switch from a
+    # sales basis to an outstanding kind drops it.
+    switched = kind_ask_now and source.get("basis") not in OUTSTANDING_KINDS
     period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or (
-        None if kind_ask_now else held_period
+        None if switched else held_period
     )
     if period is not None and (parse_output.get("ranking_refine") is not True or args.get("group_by")):
         # A refine with no ranking held has nothing to refine: it is a fresh ask, and a

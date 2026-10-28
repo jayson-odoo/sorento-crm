@@ -428,3 +428,47 @@ def test_reply_one_under_the_sales_order_list_offer_opens_the_list(bot, shape) -
     text, calls = bot.say(reply, "1")
     args = _only_report_ask(calls)
     assert args["group_by"] == "sales_order" and args["basis"] == "outstanding", args
+
+
+# ---------------------------------------------------------------- reviewer 71da74ae: a switch to an outstanding axis keeps no sales basis
+
+
+def _product_ranking(**over: Any) -> dict[str, Any]:
+    return _status(
+        "sales_ranking",
+        **{"group_by": "product", "rank_direction": "top", "top_n": 5, "measure": "amount", "basis": "delivered", **YEAR, **over},
+    )
+
+
+def test_p1_a_new_outstanding_axis_after_a_delivered_ranking_asks_the_kind_and_runs_nothing_on_delivered(bot) -> None:
+    """P1: the S6c carry must not copy the held DELIVERED basis onto an outstanding ask the parser named no kind for."""
+    text, calls = bot.say(_product_ranking(), "top 5 products 2026")
+    assert [n for n, _a in calls] == ["crm_report_ask"], (text, calls)
+    text, calls = bot.say(_bare_outstanding(group_by="customer"), "outstanding by customer")
+    assert calls == [] and "Undelivered orders" in text, (text, calls)
+    text, calls = bot.say(_answer(1), "the first one")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "outstanding" and args["group_by"] == "customer", args
+    assert "date_from" not in args and "date_to" not in args, args  # a switch from a sales basis drops the held period
+
+
+def test_p2_a_by_x_over_an_outstanding_ranking_keeps_the_held_period(bot) -> None:
+    """P2 (AC-RU-16): the source frame already an outstanding kind: a new axis keeps the 2026 on screen."""
+    text, calls = bot.say(_bare_outstanding(basis="outstanding", group_by="product", rank_direction="top", top_n=5, measure="amount", **YEAR), "outstanding products 2026")
+    assert [n for n, _a in calls] == ["crm_report_ask"], (text, calls)
+    text, calls = bot.say(_bare_outstanding(basis="outstanding", group_by="customer", rank_direction="top", top_n=5, measure="amount"), "outstanding by customer")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "outstanding" and args["group_by"] == "customer", args
+    assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+
+
+def test_held_total_path_does_not_lend_a_sales_total_period_to_an_outstanding_kind(bot) -> None:
+    """The HELD_KEY path (a held sales TOTAL, no ranking): a new outstanding axis the parser named the kind for drops the
+    sales period (kills M7: always use the held period)."""
+    bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    text, calls = bot.say(
+        _bare_outstanding(basis="outstanding", group_by="customer", rank_direction="top", top_n=5, measure="amount", entity_op="reuse"),
+        "outstanding by customer",
+    )
+    args = _only_report_ask(calls)
+    assert args["basis"] == "outstanding" and "date_from" not in args, args

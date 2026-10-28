@@ -353,6 +353,10 @@ def test_b5_a_refine_changes_only_the_channel_whatever_report_type_the_parser_pi
     text, calls = console.say(
         _refine(order_status=order_status, sales_channel="project"), "only the project channel"
     )
+    if order_status == "outstanding":
+        # Owner Q2 (round 4): a flagged refine to the outstanding type never infers the kind from the held delivered basis.
+        assert calls == [] and "Undelivered orders" in text, (text, calls)
+        return
     assert len(calls) == 1, (text, calls)
     args = calls[0]
     assert args["channel"] == "project", args
