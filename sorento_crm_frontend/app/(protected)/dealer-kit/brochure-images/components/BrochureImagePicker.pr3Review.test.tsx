@@ -93,3 +93,15 @@ describe('Brochure images - the Promotion filter pages', () => {
     expect(vi.mocked(listBrochureImagePromotionOptions)).toHaveBeenCalledWith('', 1);
   });
 });
+
+// Browser pass 28 Oct: with two long promotion names picked, the trigger grew to its chips' width and
+// pushed the Product box under the "Only products still without an image" switch. The multi control
+// sizes its trigger through `triggerClassName`; its `className` styles the popover.
+describe('Brochure images - the Promotion trigger keeps its width', () => {
+  it('passes the w-full / sm:w-72 width to the trigger, not the popover', async () => {
+    renderIt();
+    await waitFor(() => expect(multi.props).not.toBeNull());
+    expect(String(multi.props!.triggerClassName ?? '')).toContain('sm:w-72');
+    expect(String(multi.props!.className ?? '')).not.toContain('sm:w-72');
+  });
+});
