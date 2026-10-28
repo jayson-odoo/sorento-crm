@@ -8,6 +8,7 @@ import {
   Clock,
   FileText,
   Flame,
+  FolderInput,
   HandCoins,
   History,
   Info,
@@ -76,6 +77,7 @@ import { ReassignProjectDialog } from './ReassignProjectDialog';
 import { PurchaseOrdersPanel } from './PurchaseOrdersPanel';
 import { SalesOrdersPanel } from './SalesOrdersPanel';
 import { QuotationsPanel } from './QuotationsPanel';
+import { FormsPanel } from './FormsPanel';
 import { SampleRequestsPanel } from './SampleRequestsPanel';
 import { SamplesPanel } from './SamplesPanel';
 import { SponsorshipsPanel } from './SponsorshipsPanel';
@@ -100,6 +102,7 @@ export const TABS = [
   { id: 'sample-requests', label: 'Sample requests', icon: ClipboardList },
   { id: 'samples', label: 'Samples', icon: Package },
   { id: 'sponsorships', label: 'Sponsorships', icon: HandCoins },
+  { id: 'forms', label: 'Forms', icon: FolderInput },
   // PM-SIMPLIFY AC-O1: one Orders tab where POs, Delivery schedules and Sales orders were.
   // A PO's schedule and sales orders live on the PO's own page.
   { id: 'orders', label: 'Orders', icon: ShoppingCart },
@@ -491,6 +494,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
         </TabsContent>
         <TabsContent value="sponsorships">
           <SponsorshipsPanel project={project} />
+        </TabsContent>
+        <TabsContent value="forms">
+          <FormsPanel project={project} />
         </TabsContent>
         <TabsContent value="orders" className="space-y-4">
           <PurchaseOrdersPanel project={project} />

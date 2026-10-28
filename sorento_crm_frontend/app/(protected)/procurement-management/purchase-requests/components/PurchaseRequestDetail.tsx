@@ -89,6 +89,7 @@ import PurchaseRequestAttachmentsSection from './PurchaseRequestAttachmentsSecti
 import PurchaseRequestConversationPanel from './PurchaseRequestConversationPanel';
 import { PurchaseRequestSignoffFooter } from './PurchaseRequestSignoffFooter';
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet';
+import { ProjectLinkValue } from '@/components/common/ProjectLinkValue';
 import { numberFieldError } from '@/lib/number-field';
 import { QUANTITY_RULES } from '../forms/purchase-request-schema';
 import { usePublicViewLinksEnabled } from '@/hooks/usePublicViewLinksEnabled';
@@ -1275,6 +1276,15 @@ export default function PurchaseRequestDetail({
                     <p className="font-medium">{request.project_title || ' - '}</p>
                   </div>
                   <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Project</p>
+                    <p className="font-medium">
+                      <ProjectLinkValue
+                        projectId={request.project_id}
+                        projectLabel={request.project_label}
+                      />
+                    </p>
+                  </div>
+                  <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Purpose</p>
                     <p className="font-medium">{request.purpose || ' - '}</p>
                   </div>
@@ -1420,6 +1430,15 @@ export default function PurchaseRequestDetail({
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Project Title</p>
                     <p className="font-medium">{request.project_title || ' - '}</p>
+                  </div>
+                  <div className="sm:col-span-2">
+                    <p className="text-sm text-muted-foreground">Project</p>
+                    <p className="font-medium">
+                      <ProjectLinkValue
+                        projectId={request.project_id}
+                        projectLabel={request.project_label}
+                      />
+                    </p>
                   </div>
                   <div className="sm:col-span-2">
                     <p className="text-sm text-muted-foreground">Total Project Value</p>

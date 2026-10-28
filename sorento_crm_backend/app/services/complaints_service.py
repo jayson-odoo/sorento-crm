@@ -23,6 +23,7 @@ from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.contact_brand_scope import complaint_in_scope_clauses, in_scope_product_codes
 from app.services import submission_status
 from app.services.error_handler import handle_not_found
+from app.services.project_link import apply_project_link, project_label
 from app.services.response_gate import (
     ALLOWED_RESPONSE_STATUSES,
     assert_response_write_allowed,
@@ -349,6 +350,7 @@ class ComplaintService:
             if project:
                 data["project_code"] = project[0]
                 data["project_name"] = project[1]
+        data["project_label"] = project_label(data["project_code"], data["project_name"])
         data["view_url"] = (
             view_url_override
             if view_url_override is not None
@@ -427,6 +429,7 @@ class ComplaintService:
         root_cause_ids: Optional[List[str]] = None,
         resolution_ids: Optional[List[str]] = None,
         customer_names: Optional[List[str]] = None,
+        project_id: Optional[str] = None,
     ):
         """Build the filtered + sorted complaints query shared by ``list_complaints``
         and ``neighbours`` so the two can never drift.
@@ -488,6 +491,8 @@ class ComplaintService:
         res_ids = [str(i).strip() for i in (resolution_ids or []) if str(i).strip()]
         if res_ids:
             q = q.filter(Complaint.resolution_id.in_(res_ids))
+        if project_id:
+            q = q.filter(Complaint.project_id == str(project_id))
         # A customer-scoped contact (PLAN-chatbot-customer-scope-29sep.md D5, AC-CS-47):
         # complaints carry the customer's NAME and no id, so the rows are those whose trimmed,
         # lower-cased name is one of the linked customers'. `None` = not scoped; an empty
@@ -722,6 +727,7 @@ class ComplaintService:
         root_cause_ids: Optional[List[str]] = None,
         resolution_ids: Optional[List[str]] = None,
         customer_names: Optional[List[str]] = None,
+        project_id: Optional[str] = None,
     ):
         """List complaints. assigned_to filters by respond_user_id (assignee). status filters by complaint status.
 
@@ -740,6 +746,7 @@ class ComplaintService:
             root_cause_ids=root_cause_ids,
             resolution_ids=resolution_ids,
             customer_names=customer_names,
+            project_id=project_id,
         )
 
         from sqlalchemy.orm import joinedload
@@ -1691,19 +1698,11 @@ class ComplaintService:
             )
             order += 1
 
-    def _assert_linkable_project(self, project_id, current=None) -> None:
-        """A complaint links to a PROJECT, never a portal registration still waiting for
-        approval (PROJECT-REG-PORTAL R4). Re-saving the link it already has is not a change."""
-        from app.services.project_service import assert_linkable_project
-
-        assert_linkable_project(self.db, project_id, current, code="complaint_project_not_approved")
-
     def create_complaint(self, complaint_data: ComplaintCreate):
         """Create a new complaint with attachments (generic entity_attachment_links)."""
         complaint_dict = complaint_data.model_dump(
             exclude={"attachments", "product_lines", "assigned_to_name", "last_responded_by_name"}
         )
-        self._assert_linkable_project(complaint_dict.get("project_id"))
         if complaint_dict.get("technical_team_response"):
             complaint_dict["technical_team_response"] = self._normalize_complaint_reply_body_for_storage(
                 str(complaint_dict["technical_team_response"])
@@ -1713,6 +1712,9 @@ class ComplaintService:
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
         if respond_inbox_url is not None:
             complaint_dict["respond_inbox_url"] = respond_inbox_url
+        # Visible to the editor, and never a portal registration still waiting for approval
+        # (PROJECT-REG-PORTAL R4); re-saving the link it already has is not a change.
+        apply_project_link(self.db, complaint_dict, not_approved_code="complaint_project_not_approved")
         complaint = Complaint(**complaint_dict)
         self.db.add(complaint)
         self.db.flush()
@@ -1788,9 +1790,10 @@ class ComplaintService:
         complaint = self.get_complaint(complaint_id)
 
         update_data = complaint_data.model_dump(exclude_unset=True)
-        if "project_id" in update_data:
-            self._assert_linkable_project(update_data["project_id"], complaint.project_id)
         explicit_lines = update_data.pop("product_lines", None)
+        apply_project_link(
+            self.db, update_data, current=complaint.project_id, not_approved_code="complaint_project_not_approved"
+        )
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)
@@ -1900,14 +1903,15 @@ class ComplaintService:
         # so refuse it outside the response stage rather than gating one field.
         assert_response_write_allowed("complaint", complaint.status)
         update_data = complaint_data.model_dump(exclude_unset=True)
-        if "project_id" in update_data:
-            self._assert_linkable_project(update_data["project_id"], complaint.project_id)
         # Same handling as update_complaint: `product_lines` dumps to a list of plain
         # dicts, and the setattr loop below would assign them straight onto the ORM
         # relationship ("'dict' object has no attribute '_sa_instance_state'"). The
         # edit page posts the whole complaint, lines included, so Update & Reply 500'd
         # there for any complaint with a product row.
         explicit_lines = update_data.pop("product_lines", None)
+        apply_project_link(
+            self.db, update_data, current=complaint.project_id, not_approved_code="complaint_project_not_approved"
+        )
         contact_id = update_data.get("contact_id") if "contact_id" in update_data else complaint.contact_id
         space_id = update_data.get("space_id") if "space_id" in update_data else complaint.space_id
         respond_inbox_url = self._build_respond_inbox_url(contact_id, space_id)

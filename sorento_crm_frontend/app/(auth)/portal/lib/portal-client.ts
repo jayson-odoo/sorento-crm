@@ -115,6 +115,8 @@ export interface PortalSubmissionSummary {
   project_id?: string | null;
   /** Human-readable reference for that project, because a UUID is never the answer. */
   project_code?: string | null;
+  /** `CODE - Title`, ready to display. */
+  project_label?: string | null;
   project_name?: string | null;
   project_customer?: string | null;
   customer_name?: string | null;

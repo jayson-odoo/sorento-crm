@@ -57,6 +57,7 @@ from app.schemas.procurement import (
     refuse_missing_sponsorship_unit_prices,
 )
 from app.services import submission_status
+from app.services.project_link import apply_project_link, attach_project_display
 from app.services.error_handler import (
     AppException,
     handle_not_found,
@@ -5545,6 +5546,7 @@ class StockInquiryService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
+        project_id: Optional[str] = None,
     ):
         """Build the filtered + sorted stock-inquiry query shared by ``list_inquiries``
         and ``neighbours`` so the two can never drift.
@@ -5560,6 +5562,8 @@ class StockInquiryService:
             q = q.filter(StockInquiry.space_id == str(space_id).strip())
         if statuses:
             q = q.filter(StockInquiry.status.in_(statuses))
+        if project_id:
+            q = q.filter(StockInquiry.project_id == str(project_id))
 
         if query:
             q = q.filter(
@@ -5622,6 +5626,7 @@ class StockInquiryService:
         space_id: Optional[str] = None,
         statuses: Optional[List[str]] = None,
         viewer_user_id: Optional[str] = None,
+        project_id: Optional[str] = None,
     ):
         """List stock inquiries.
 
@@ -5636,11 +5641,13 @@ class StockInquiryService:
             contact_id=contact_id,
             space_id=space_id,
             statuses=statuses,
+            project_id=project_id,
         )
 
         total = q.count()
         offset = (page - 1) * limit
         inquiries = q.offset(offset).limit(limit).all()
+        attach_project_display(self.db, inquiries)
         self._attach_sla_handlers(inquiries)
         self._attach_print_counts(inquiries, viewer_user_id)
 
@@ -5785,6 +5792,7 @@ class StockInquiryService:
         data = {attr.key: getattr(inquiry, attr.key) for attr in inspect(inquiry).mapper.column_attrs}
         data["system_id"] = str(inquiry.id)
         data["form_type"] = "stock_inquiry"
+        attach_project_display(self.db, [data])
         data["view_url"] = self._build_stock_inquiry_view_url(str(inquiry.id))
         # `column_attrs` skips python properties, so the derived requestor name
         # has to be copied in explicitly or the response returns null.
@@ -6182,6 +6190,7 @@ class StockInquiryService:
         column_keys = {a.key for a in inspect(inquiry).mapper.column_attrs}
         immutable = {"id", "created_at", "inquiry_number", "updated_at"}
         requestor_value = data.pop("salesperson_contact_id", _UNSET_REQUESTOR)
+        apply_project_link(self.db, data, current=inquiry.project_id)
         for key, value in list(data.items()):
             if key in immutable or key not in column_keys:
                 continue
@@ -6328,6 +6337,7 @@ class StockInquiryService:
         # Filter the splat: a derived/display field that is not a column would
         # raise TypeError and 500 the whole create route (mirrors create_request).
         requestor_value = data.pop("salesperson_contact_id", None)
+        apply_project_link(self.db, data)
         inquiry = StockInquiry(**{k: v for k, v in data.items() if hasattr(StockInquiry, k)})
         if requestor_value:
             _apply_requestor_contact(
@@ -6663,6 +6673,7 @@ class StockInquiryService:
         # document / PDF / approval page print the TEXT label, so stamping the FK
         # alone leaves them reading "-" (PLAN-requested-by-contact-routing D6/D9).
         requestor_value = update_data.pop("salesperson_contact_id", _UNSET_REQUESTOR)
+        apply_project_link(self.db, update_data, current=inquiry.project_id)
 
         # Status is only changed via workflow actions (submit/approve/reject/reopen) and update_and_reply
         for key, value in update_data.items():
@@ -6806,6 +6817,7 @@ class StockInquiryService:
             raise handle_validation_error("purchasing_response is required to reply.")
         # Do not persist the reply payload (often includes view link) into purchasing_response
         update_data.pop("purchasing_response", None)
+        apply_project_link(self.db, update_data, current=inquiry.project_id)
 
         for key, value in update_data.items():
             setattr(inquiry, key, value)
@@ -9116,6 +9128,7 @@ class PurchaseRequestService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         assigned_to: Optional[str] = None,
+        project_id: Optional[str] = None,
     ):
         """Build the filtered + sorted PR/SF query shared by ``list_requests`` and
         ``neighbours`` so the two can never drift.
@@ -9128,6 +9141,8 @@ class PurchaseRequestService:
         q = self.db.query(PurchaseRequestHeader)
         if contact_id is not None:
             q = q.filter(PurchaseRequestHeader.contact_id == str(contact_id).strip())
+        if project_id:
+            q = q.filter(PurchaseRequestHeader.project_id == str(project_id))
         if assigned_to is not None and str(assigned_to).strip():
             # Filter by the latest unresolved form-SLA assignee (project-sales
             # before approval, customer-service after) - mirrors complaint.
@@ -9231,6 +9246,7 @@ class PurchaseRequestService:
         contact_id: Optional[str] = None,
         space_id: Optional[str] = None,
         assigned_to: Optional[str] = None,
+        project_id: Optional[str] = None,
     ):
         """List purchase requests / sponsorship forms with pagination."""
         q = self._build_request_list_query(
@@ -9242,11 +9258,13 @@ class PurchaseRequestService:
             contact_id=contact_id,
             space_id=space_id,
             assigned_to=assigned_to,
+            project_id=project_id,
         )
 
         total = q.count()
         offset = (page - 1) * limit
         items = q.offset(offset).limit(limit).all()
+        attach_project_display(self.db, items)
         self._attach_sla_assignees(items)
         return {
             "data": items,
@@ -9336,28 +9354,18 @@ class PurchaseRequestService:
         return header
 
     def _attach_project_display(self, header) -> None:
-        """Stamp the linked project's CODE onto the row for serialization (AC-L3).
+        """Stamp the linked project's CODE and `CODE - Title` label onto the row for
+        serialization (AC-L3, FORMS-PROJECT).
 
-        The response model reads attributes off the ORM object, so setting one here is what
-        gets `project_code` to the office-side detail page -- the portal already resolves it
-        for contacts, and the two surfaces showing different things (one a code, one nothing)
-        is how a link starts looking broken. `project_title` remains the fallback for the
-        thousands of rows that have no link.
+        The response model reads attributes off the ORM object, so setting them here is what
+        gets them to the office-side detail page. `project_title` remains the fallback for
+        the rows that have no link.
         """
-        if not getattr(header, "project_id", None):
-            header.project_code = None
-            return
         try:
-            from app.models.projects import Project
-
-            row = (
-                self.db.query(Project.project_code)
-                .filter(Project.id == str(header.project_id))
-                .first()
-            )
-            header.project_code = row[0] if row else None
+            attach_project_display(self.db, [header])
         except Exception:  # noqa: BLE001 -- display sugar must never break a read
             header.project_code = None
+            header.project_label = None
 
     def get_neighbour_ids(
         self, request_id: str, request_type: Optional[str] = None
@@ -9397,6 +9405,17 @@ class PurchaseRequestService:
         if linked_name:
             payload["customer_name"] = linked_name
 
+    def _apply_project_link(self, header, payload: dict) -> None:
+        """#1689: a staff pick reaches the row only if the editor can see that project, and
+        never a portal registration waiting for approval (R4). Only a CHANGED link is
+        checked, so an older one keeps saving."""
+        apply_project_link(
+            self.db,
+            payload,
+            current=getattr(header, "project_id", None),
+            not_approved_code="purchase_request_project_not_approved",
+        )
+
     def create_request(self, data: PurchaseRequestHeaderCreate):
         """Create purchase request header + lines (internal API)."""
         dump = data.model_dump(exclude={"products"})
@@ -9424,11 +9443,12 @@ class PurchaseRequestService:
         if respond_inbox_url is not None:
             dump["respond_inbox_url"] = respond_inbox_url
         requestor_value = dump.pop("requested_by_contact_id", None)
-        from app.services.project_service import assert_linkable_project
+        from app.services.project_link import apply_project_link
 
-        # Never a portal registration waiting for approval (PROJECT-REG-PORTAL R4).
-        assert_linkable_project(
-            self.db, dump.get("project_id"), code="purchase_request_project_not_approved"
+        # Visible to the editor, and never a portal registration waiting for approval
+        # (PROJECT-REG-PORTAL R4).
+        apply_project_link(
+            self.db, dump, not_approved_code="purchase_request_project_not_approved"
         )
         if "customer_id" in dump:
             from app.services.debtor_type import link_customer
@@ -9507,18 +9527,9 @@ class PurchaseRequestService:
         elif contact_id is None and space_id is None:
             payload["respond_inbox_url"] = None
         self._apply_sponsor_subject_to_payload(payload, header)
-        if "project_id" in payload:
-            from app.services.project_service import assert_linkable_project
-
-            # Only a CHANGED link is checked, so an older one keeps saving (R4).
-            assert_linkable_project(
-                self.db,
-                payload["project_id"],
-                header.project_id,
-                code="purchase_request_project_not_approved",
-            )
         requestor_value = payload.pop("requested_by_contact_id", _UNSET_REQUESTOR)
         self._apply_customer_link(header, payload)
+        self._apply_project_link(header, payload)
         for key, value in payload.items():
             if hasattr(header, key):
                 setattr(header, key, value)
@@ -9604,6 +9615,7 @@ class PurchaseRequestService:
 
         self._apply_sponsor_subject_to_payload(payload, header)
         self._apply_customer_link(header, payload)
+        self._apply_project_link(header, payload)
         for key, value in payload.items():
             if hasattr(header, key):
                 setattr(header, key, value)

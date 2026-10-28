@@ -10,7 +10,6 @@ import type {
   DataGridApiFetchParams,
   DataGridApiResponse,
 } from '@/components/ui/data-grid';
-import { projectCodeLabel } from '@/app/(protected)/project-sales/_shared/lib/projectCode';
 
 export type ComplaintsListParams = DataGridApiFetchParams & {
   assigned_to?: string;
@@ -20,6 +19,8 @@ export type ComplaintsListParams = DataGridApiFetchParams & {
   root_cause_ids?: string[];
   /** Same, for resolutions. */
   resolution_ids?: string[];
+  /** Only this project's complaints (the project page's Forms tab). */
+  project_id?: string;
 };
 
 
@@ -35,6 +36,7 @@ export function complaintListExtraParams(params: ComplaintsListParams) {
     resolution_ids: params.resolution_ids?.length
       ? params.resolution_ids.join(',')
       : undefined,
+    project_id: params.project_id,
   };
 }
 
@@ -457,43 +459,4 @@ export function displayComplaintTechnicalResponse(text: string | null | undefine
   return s.slice(idx + 2).trim();
 }
 
-/**
- * Projects for the complaint form's project picker (AC-L3).
- *
- * Server-searched rather than pre-loaded: there will be hundreds of pursuits, and a static
- * list silently caps at whatever the first page held. The label is the project CODE plus the
- * title, because the code is what people quote to each other and the title is what they
- * recognise -- and the UUID never reaches the screen.
- */
-export async function searchProjectsForLink(
-  query: string,
-  page = 1,
-): Promise<{ value: string; label: string; description?: string }[]> {
-  const params = new URLSearchParams({
-    page: String(page),
-    limit: '25',
-    sort: 'updated_at',
-    dir: 'desc',
-    // A registration waiting for approval is not a project to link yet (PROJECT-REG-PORTAL R4).
-    approved_only: 'true',
-  });
-  if (query.trim()) params.set('query', query.trim());
-  const response = await apiFetch(`/api/v1/project-sales/projects/?${params.toString()}`);
-  if (!response.ok) {
-    throw new Error(await extractApiError(response, 'Failed to load projects'));
-  }
-  const body = await response.json();
-  return (body.data ?? []).map(
-    (row: {
-      id: string;
-      project_code: string | null;
-      title: string;
-      developer_name?: string | null;
-      status_label?: string | null;
-    }) => ({
-      value: row.id,
-      label: `${projectCodeLabel(row)} - ${row.title}`,
-      description: [row.developer_name, row.status_label].filter(Boolean).join(' - ') || undefined,
-    }),
-  );
-}
+export { searchProjectsForLink } from '@/services/projectLinkService';
