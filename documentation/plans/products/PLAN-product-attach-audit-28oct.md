@@ -28,9 +28,11 @@ decision), so a link or unlink leaves no trace. And `DELETE /master-data/product
 
 ## Do
 
-1. `DELETE /master-data/product-attachments/{id}` requires `master_data.product_attachments.edit`
-   (red-first: a signed-in user without it gets 403). Create/update gating is put to the owner
-   (crew-ask) because it may lock out people who link files today.
+1. POST, PUT and DELETE `/master-data/product-attachments` require
+   `master_data.product_attachments.edit` (red-first: a signed-in user without it gets 403).
+   Owner ruling 28 Oct (crew answer (b)): gate all three alike; the external / integration link
+   routes keep their own auth. Before merge, the roles holding the slug are compared with the
+   people who linked files recently (read-only SQL posted on the PR).
 2. One explicit audit row per staff link / unlink (`log_audit`, no listener change, the
    `__audit_skip__` stays): action `LINK` / `UNLINK`, `root_entity_type="product"`, root id = the
    product, old/new values = attachment id, filename, attachment type (+ certificate number for
