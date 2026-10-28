@@ -42,7 +42,7 @@ regex or word lists. Eval gate before any prod prompt publish.
 - n-gram path: `_meaning` drops any non-3-small embedder (`lookup_lists.py:307`). With spans on it runs only as the span
   FALLBACK (`engine.py:1428,1484-1491`: span call failed / unreadable / resolver error). Dev traces: 2 of 21 span turns
   (`sorento_prod_1020`), 2 of 91 (`sorento_explore1020`, call_error).
-- Warm-up: per process, no shared store (`lookup_lists.py:856`); `WORKERS` default 4 per colour (`gunicorn.conf.py:44`),
+- Warm-up: per process, no shared store (`lookup_lists.py:856`); `WORKERS` default 4 per colour (`gunicorn.conf.py:54`),
   but prod runs 8 (BACKEND-MEMORY #1950, prod measurement 28 Oct; 8 -> 4 is an open owner decision); startup event per
   worker (`main.py:329,415`), lazy warm per turn too (`engine.py:1270,1335`). ~4,652 texts on dev, ~7,035 on prod (#1950)
   / 100 per Gemini request = 47-71 requests per process. Measured 27 Oct on ONE process: 429 part-way at ~1.5k texts/min
@@ -139,10 +139,12 @@ Rollback: parser label back to v69 (and span extractor label back to v1).
 Step 2, any night after the #1959 release is live (Gemini vectors):
 1. `chatbot_lookup_embedder`: production label provider gemini, model `gemini-embedding-001` (exactly this name; any
    other name switches meaning off, `list_resolver.py:59-75`).
-2. Wait 60 s, then send the same Console turn twice, a minute apart. The first turn may read `spelling only` (that
-   worker is warming); the backend log shows ONE worker `... cached on gemini-embedding-001 in ~1-5 min (0 from the
-   shared file)` and the other workers, on their first turn, `(N from the shared file)` in under a second. The second
-   Console turn's drawer reads `gemini-embedding-001`.
+2. Send the Console turn, wait 5 minutes, send it again, a few times. A label flip restarts nothing: each worker starts
+   its Gemini warm on the first turn it serves, and that turn reads `spelling only`. The backend log shows ONE line
+   `... cached on gemini-embedding-001 in S s (0 from the shared file)` (S: about 1-5 min, the one worker that
+   embeds) and, for every other worker that has served a turn, `(N from the shared file)`. Its S counts the wait for
+   that first worker, so it can also read minutes; a worker that starts after the file exists logs about 1 s. Once
+   a turn's drawer reads `gemini-embedding-001`, that worker is warm.
 3. A `lookup lists warm failed` WARNING with 429 = the burst is still too big: roll back (below) and tell crew.
 4. Tell crew the time (T2). Crew re-runs the verification recipe.
 Rollback: clear the embedder label's provider and model (= OpenAI 3-small, already cached in every worker).

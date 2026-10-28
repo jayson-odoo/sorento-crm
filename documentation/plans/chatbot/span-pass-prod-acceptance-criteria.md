@@ -3,7 +3,7 @@
 Plan: `PLAN-span-pass-prod-28oct.md`. Owner ruling 28 Oct ~15:4x (via crew): Q2 (a) container-shared vector file +
 lock. Paths under `sorento_crm_backend/`.
 
-Why: each gunicorn worker (default 4 per colour, `gunicorn.conf.py:44`; prod runs 8 per #1950) warms its own per-process cache
+Why: each gunicorn worker (default 4 per colour, `gunicorn.conf.py:54`; prod runs 8 per #1950) warms its own per-process cache
 (`head/lookup_lists.py:856`) at start-up (`main.py:415`) and on the first turns (`engine.py:1270,1335`), so a start or a
 `chatbot_lookup_embedder` label flip sends ~workers x 4,652 (dev) or 7,035 (prod) texts to the embedding provider at once; one process alone hit
 Gemini 429 at ~1.5k texts/min (entity-extract-match AC-S3-13).
