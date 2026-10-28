@@ -690,6 +690,7 @@ def saved_draft_remark(
     withdraws_raised: bool = False,
     before: Optional[Mapping[str, Any]] = None,
     held_rows: Sequence[Tuple[str, Decimal]] = (),
+    settle_words: Optional[str] = None,
 ) -> Optional[str]:
     """OI-SPLIT-GUIDE (UAC F3, F11): what the purchasing email will say for a line whose
     decision is SAVED but not confirmed yet, in the email's own words (`saved_line_remark`,
@@ -710,7 +711,12 @@ def saved_draft_remark(
     purchasing's parts only (`purchasing_remark`), so a stock-only line (Use own location, Use
     BRW, incoming, LOCAL BUY) has none. `before` is the line's confirmed snapshot: a Buy it held
     that the draft moves to another kind of decision reads `CHANGED: <before> -> <draft>`, as the
-    email tells it."""
+    email tells it.
+
+    SWAP-REMARK-TALLY (follow-up of #1956): `settle_words` are what the email's settle line says
+    for a held line whose product AutoCount swapped (`NEW ITEM CODE`, the split read's own
+    `remark_generated`). A draft that keeps what purchasing holds (no CHANGED) sends no saved
+    line, only that settle line, so those are its words."""
     if not decision:
         return None
     verdict = decision.get("verdict")
@@ -733,6 +739,8 @@ def saved_draft_remark(
         changed = held_change_remark(held, now) if _shrinks(held, now) else None
         if changed:
             return changed
+        if settle_words:
+            return settle_words
     return purchasing_remark(now) or None
 
 

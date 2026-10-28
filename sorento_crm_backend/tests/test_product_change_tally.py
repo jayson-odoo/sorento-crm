@@ -17,10 +17,13 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import openpyxl
+import pytest
 
 from .scm.test_line_splits_api import _put, _sp, _url
 from .test_oi_handover_excel import _drain_on_test_connection, _enabled_handover, stored  # noqa: F401
 from .test_oi_product_follow_apply import _apply, _swap_fixture
+from .test_planning_change_apply_on_board import _confirm
+from .test_planning_changes import _line_payload
 from .test_oi_saved_line_email import _migration, _rows
 from .test_order_inquiry_handover_automation import (
     _captured_dispatches,
@@ -220,8 +223,17 @@ def test_a_split_swapped_line_prints_item_code_and_new_item_code_on_its_rows(
     assert sheet[0]["ITEM CODE"] == old, sheet
 
 
+@pytest.mark.parametrize(
+    ("own", "buy", "words"),
+    [
+        # The draft keeps the held Buy: the email sends only the swap's settle line.
+        (None, "10", "NEW ITEM CODE"),
+        # The draft takes the Buy back: the email tells the change, and no NEW ITEM CODE.
+        ("10", "0", "CHANGED: ORDER 10 -> USE {own} 10"),
+    ],
+)
 def test_a_swapped_line_with_a_saved_draft_reads_alike_on_board_email_and_attachment(
-    api, monkeypatch, stored,
+    api, monkeypatch, stored, own, buy, words,
 ):
     """SWAP-REMARK-TALLY (follow-up of #1956): with a saved draft the Confirm review prints the
     board's `saved_remark` (`savedRemark ?? remarkGenerated`), so for a swapped line it must be
@@ -245,10 +257,14 @@ def test_a_swapped_line_with_a_saved_draft_reads_alike_on_board_email_and_attach
         ]
         return got
 
+    wh = world.own_wh
+    reserve = (
+        [{"warehouse_id": str(wh.id), "location": wh.warehouse_code, "qty": own}] if own else []
+    )
     saved = fx["client"].put(
         f"{base}/lines/{on_board()['key']}/draft",
         json={"decision": {
-            "verdict": "amended", "reserve": [], "borrow": [], "buy_qty": "10",
+            "verdict": "amended", "reserve": reserve, "borrow": [], "buy_qty": buy,
             "reason": "Planner choice.",
         }},
     )
@@ -256,12 +272,17 @@ def test_a_swapped_line_with_a_saved_draft_reads_alike_on_board_email_and_attach
     saved_remark = on_board()["saved_remark"]
 
     calls.clear()
-    response = _apply(fx)
+    response = _confirm(
+        fx["client"], fx["order"].id,
+        [_line_payload(fx["line"].id, reserve=reserve, buy_qty=buy)],
+        batch_id=str(fx["batch"].id),
+    )
     assert response.status_code == 200, response.text
     world.db.commit()
 
     lines, sheet = _handover_and_attachment(calls, stored, new)
     assert len(lines) == 1 and len(sheet) == 1, (lines, sheet)
+    assert saved_remark == words.format(own=wh.warehouse_code), saved_remark
     assert saved_remark == lines[0]["remark"] == sheet[0]["REMARK"], (
         saved_remark, lines[0]["remark"], sheet[0]["REMARK"],
     )
