@@ -131,6 +131,8 @@ CASES = [
     # all of audit_logs) and the activity timeline (the same table, COUNT plus two DISTINCTs).
     ("app.api.v1.audit.audit_logs", "get_audit_logs", None, {}, {}, None),
     ("app.api.v1.audit.activity", "get_activity", None, {}, {}, None),
+    # Crew's prod trace: the order-inquiry read walks the goods chain (an spo_allocations UNION).
+    ("app.api.v1.projects.order_inquiries", "get_sales_order_inquiry", None, {}, {}, None),
     # AN-2: uploads that awaited the file, then parsed and wrote on the loop. Order tracking
     # was 77.1 s on prod: validate_only runs the whole tracking import in the request.
     (
