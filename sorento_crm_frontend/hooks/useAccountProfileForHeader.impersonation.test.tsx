@@ -53,6 +53,7 @@ describe('useAccountProfileForHeader under CRM impersonation (F2)', () => {
     expect(result.current.salesperson).toEqual({
       portalKinds: ['stock_inquiry'],
       portalSlug: 'TARGETSLUG',
+      contactId: null,
     });
   });
 

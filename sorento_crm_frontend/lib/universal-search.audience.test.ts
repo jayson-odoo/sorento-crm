@@ -5,6 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { MENU_SIDEBAR } from '@/config/menu.config';
+import { MY_REQUEST_STAFF_PAGES } from '@/lib/my-requests-staff-pages';
 import { createMenuSearchProvider } from '@/lib/universal-search';
 
 type Ctx = Parameters<ReturnType<typeof createMenuSearchProvider>['search']>[1];
@@ -33,14 +34,16 @@ describe('universal search audience', () => {
     expect(out.filter((r) => r.path === '/sales/customer-asks')).toHaveLength(1);
   });
 
-  it('salesperson: MY REQUESTS results only for the kinds in portalKinds', async () => {
-    const out = await search('my-requests', {
-      permissionSet: ALL,
+  it('salesperson: MY REQUESTS results only for the kinds in portalKinds, on the staff pages', async () => {
+    const perms = new Set([...ALL, ...Object.values(MY_REQUEST_STAFF_PAGES).map((p) => p.permission)]);
+    const staffPaths = new Set(Object.values(MY_REQUEST_STAFF_PAGES).map((p) => p.path));
+    const out = await search('', {
+      permissionSet: perms,
       salesperson: { portalKinds: ['stock_inquiry', 'complaint'] },
     });
-    expect(out.map((r) => r.path).sort()).toEqual([
-      '/my-requests?type=complaint',
-      '/my-requests?type=stock_inquiry',
+    expect(out.map((r) => r.path).filter((x) => staffPaths.has(x)).sort()).toEqual([
+      '/complaint-management/complaints',
+      '/procurement-management/stock-inquiries',
     ]);
   });
 

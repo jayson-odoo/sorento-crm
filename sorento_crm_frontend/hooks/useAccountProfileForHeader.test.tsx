@@ -72,6 +72,7 @@ describe('useAccountProfileForHeader states', () => {
     expect(result.current.salesperson).toEqual({
       portalKinds: ['stock_inquiry', 'complaint'],
       portalSlug: 'NT8D6BFC45',
+      contactId: null,
     });
   });
 
