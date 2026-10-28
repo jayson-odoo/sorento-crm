@@ -35,7 +35,10 @@ CACHE_TTL_SECONDS = 3600
 # one that expires mid-flight. A call that does anyway is retried uncached by the provider.
 EXPIRY_MARGIN_SECONDS = 120
 FAILURE_BACKOFF_SECONDS = 900
-_FAILED = "-"
+# A create is a nice-to-have on a customer's turn: a slow one is abandoned, not waited out.
+CREATE_TIMEOUT_SECONDS = 5.0
+# What `lookup` returns while a refused create or entry is being backed off.
+FAILED = "-"
 _KEY_PREFIX = "gemini_cache"
 
 _lock = threading.Lock()
@@ -100,7 +103,8 @@ def _decode(raw: Any) -> Optional[str]:
     return raw.decode() if isinstance(raw, bytes) else str(raw)
 
 
-def _lookup_raw(key: str) -> Optional[str]:
+def lookup(key: str) -> Optional[str]:
+    """The entry's name, `FAILED` while a refusal is backed off, or None (create one)."""
     held = _local_get(key)
     if held is not None:
         return held
@@ -117,16 +121,6 @@ def _lookup_raw(key: str) -> Optional[str]:
     return shared
 
 
-def lookup(key: str) -> Optional[str]:
-    """The entry's name, or None when there is none to use (missing, or recently refused)."""
-    held = _lookup_raw(key)
-    return None if held in (None, _FAILED) else held
-
-
-def recently_failed(key: str) -> bool:
-    return _lookup_raw(key) == _FAILED
-
-
 def claim(key: str, name: str) -> str:
     """Store `name` unless another worker stored one first; the name to use either way."""
     seconds = CACHE_TTL_SECONDS - EXPIRY_MARGIN_SECONDS
@@ -135,7 +129,7 @@ def claim(key: str, name: str) -> str:
         client = _redis()
         if client is not None and not client.set(_redis_key(key), name, ex=seconds, nx=True):
             existing = _decode(client.get(_redis_key(key)))
-            if existing and existing != _FAILED:
+            if existing and existing != FAILED:
                 winner = existing
             else:
                 client.set(_redis_key(key), name, ex=seconds)
@@ -146,16 +140,23 @@ def claim(key: str, name: str) -> str:
 
 
 def mark_failed(key: str) -> None:
-    _store(key, _FAILED, FAILURE_BACKOFF_SECONDS)
+    _store(key, FAILED, FAILURE_BACKOFF_SECONDS)
 
 
-def forget(key: str) -> None:
-    """The entry is gone (expired or deleted at Google): the next call creates a new one."""
+def forget(key: str, name: str) -> None:
+    """Entry `name` is gone at Google: the next call creates a new one.
+
+    Redis is cleared only while it still holds `name`. Another worker that found the entry
+    gone first may already have stored a fresh one, and deleting that would make every
+    worker create yet another. (GET then DEL is not atomic; the window is one round trip
+    and the worst case is one extra entry, which expires on its own.)
+    """
     with _lock:
-        _local.pop(key, None)
+        if _local.get(key, ("",))[0] == name:
+            _local.pop(key, None)
     try:
         client = _redis()
-        if client is not None:
+        if client is not None and _decode(client.get(_redis_key(key))) == name:
             client.delete(_redis_key(key))
     except Exception:  # noqa: BLE001
         logger.warning("gemini cache: redis delete failed", exc_info=True)

@@ -76,6 +76,8 @@ class _Google:
         self.created = 0
         self.create_status = 200
         self.generate_failures: list[int] = []  # statuses to answer cached generates with, in order
+        self.always_refuse_cached: int | None = None
+        self.uncached_failures: list[int] = []
 
     def __call__(self, method: str, url: str, **kwargs: Any) -> _Resp:
         self.calls.append({"method": method, "url": url, **kwargs})
@@ -88,9 +90,11 @@ class _Google:
         if method == "DELETE":
             return _Resp({})
         if ":generateContent" in url:
-            if body.get("cachedContent") and self.generate_failures:
-                status = self.generate_failures.pop(0)
+            if body.get("cachedContent") and (self.generate_failures or self.always_refuse_cached):
+                status = self.generate_failures.pop(0) if self.generate_failures else self.always_refuse_cached
                 return _Resp({"error": {"message": "CachedContent not found"}}, status)
+            if not body.get("cachedContent") and self.uncached_failures:
+                return _Resp({"error": {"message": "bad request"}}, self.uncached_failures.pop(0))
             return _Resp(_answer(cached=1100 if body.get("cachedContent") else 0))
         raise AssertionError(f"unexpected call {method} {url}")
 
@@ -332,3 +336,81 @@ def test_two_workers_share_one_entry_through_real_redis(google, monkeypatch) -> 
         assert 0 < client.ttl(gemini_context_cache._redis_key(key)) <= gemini_context_cache.CACHE_TTL_SECONDS
     finally:
         client.delete(gemini_context_cache._redis_key(key))
+
+
+# Review round 1 (B1): the cache steps spend from the caller's budget, never add to it.
+def test_the_create_is_bounded_and_the_call_keeps_inside_the_callers_timeout(google) -> None:
+    _chat(timeout=20.0)
+
+    create = google.creates()[0]
+    assert create["timeout"] <= gemini_context_cache.CREATE_TIMEOUT_SECONDS
+    assert google.generates()[0]["timeout"] <= 20.0
+
+    _chat(GeminiProvider("key-1", default_model="gemini-3.5-flash"), timeout=2.0)
+    assert google.creates()[1]["timeout"] <= 2.0
+
+
+def test_a_slow_create_is_abandoned_and_the_call_answers_uncached(google, monkeypatch) -> None:
+    import httpx
+
+    real = google.__call__
+
+    def _slow_create(method, url, **kwargs):
+        if url.endswith("/cachedContents"):
+            raise httpx.ReadTimeout("slow")
+        return real(method, url, **kwargs)
+
+    monkeypatch.setattr("httpx.request", _slow_create)
+    result = _chat(timeout=20.0)
+
+    assert result.content == '{"ok": true}'
+    assert "cachedContent" not in google.generates()[0]["json"]
+
+
+# Review round 1 (S1): an entry Google refuses as soon as it is made is not remade every turn.
+def test_an_entry_refused_right_after_create_is_backed_off(google) -> None:
+    google.always_refuse_cached = 400
+
+    for _ in range(3):
+        assert _chat().content == '{"ok": true}'
+
+    assert len(google.creates()) == 1
+    cached_calls = [g for g in google.generates() if g["json"].get("cachedContent")]
+    assert len(cached_calls) == 1
+
+
+# Review round 1 (S2): a 400 the request itself earns does not throw the cache away.
+def test_a_400_the_uncached_call_also_gets_is_raised_and_the_cache_kept(google) -> None:
+    from app.services.llm_provider import GeminiHTTPError
+
+    _chat()
+    google.generate_failures = [400]
+    google.uncached_failures = [400]
+
+    with pytest.raises(GeminiHTTPError):
+        _chat()
+
+    _chat()
+    assert len(google.creates()) == 1
+    assert google.generates()[-1]["json"]["cachedContent"] == "cachedContents/c1"
+
+
+# Review round 1 (S3): a stale name failing does not delete the fresh one another worker stored.
+def test_forget_leaves_a_newer_name_from_another_worker(shared_store) -> None:
+    key = "k"
+    shared_store.set(gemini_context_cache._redis_key(key), "cachedContents/fresh")
+
+    gemini_context_cache.forget(key, "cachedContents/stale")
+
+    assert shared_store.get(gemini_context_cache._redis_key(key)) == b"cachedContents/fresh"
+
+    gemini_context_cache.forget(key, "cachedContents/fresh")
+    assert shared_store.get(gemini_context_cache._redis_key(key)) is None
+
+
+def test_a_create_that_lands_after_another_workers_failure_marker_is_used(shared_store) -> None:
+    key = "k"
+    shared_store.set(gemini_context_cache._redis_key(key), gemini_context_cache.FAILED)
+
+    assert gemini_context_cache.claim(key, "cachedContents/ours") == "cachedContents/ours"
+    assert shared_store.get(gemini_context_cache._redis_key(key)) == b"cachedContents/ours"

@@ -1488,35 +1488,66 @@ class GeminiProvider:
         refuses `systemInstruction` / `tools` beside `cachedContent`, so they leave the
         request; `generationConfig` (the response schema included) stays on it.
 
-        Every cache problem answers the call uncached: a refused create, an unreachable
-        Redis, or an entry Google no longer has (400/403/404 on the cached call, which
-        also forgets the name so the next call creates a new one). A 429 or 5xx is the
-        provider's, not the cache's, and is raised for `llm_call` to wait out.
+        Every cache problem answers the call uncached: a refused or slow create, an
+        unreachable Redis, or a cached call refused with 400/403/404 (retried uncached; if
+        THAT answers, the cache was the problem and is dropped, see `_blame_cache`). A 429 or
+        5xx is the provider's, not the cache's, and is raised for `llm_call` to wait out.
+        The whole thing stays inside the caller's `timeout`, which is `llm_call`'s per-attempt
+        budget: the cache steps spend from it, they do not add to it.
         """
-        path = f"models/{model_name}:generateContent"
-        cached_name = self._cached_content(model_name, payload) if cache else None
-        if cached_name is None:
-            return self._request("POST", path, json_body=payload, timeout=timeout)
+        started = time.monotonic()
 
-        from app.services import gemini_context_cache
+        def remaining() -> Optional[float]:
+            if timeout is None:
+                return None
+            return max(timeout - (time.monotonic() - started), 1.0)
+
+        path = f"models/{model_name}:generateContent"
+        found = self._cached_content(model_name, payload, timeout) if cache else None
+        if found is None:
+            return self._request("POST", path, json_body=payload, timeout=remaining())
+        cached_name, created_now = found
 
         cached_payload = {k: v for k, v in payload.items() if k not in ("systemInstruction", "tools")}
         cached_payload["cachedContent"] = cached_name
         try:
-            return self._request("POST", path, json_body=cached_payload, timeout=timeout)
+            return self._request("POST", path, json_body=cached_payload, timeout=remaining())
         except GeminiHTTPError as exc:
             if exc.status_code not in (400, 403, 404):
                 raise
             logger.warning("gemini cache: %s refused (%s); answering uncached", cached_name, exc)
-            gemini_context_cache.forget(
-                gemini_context_cache.cache_key(
-                    self.api_key, model_name, payload.get("systemInstruction"), payload.get("tools")
-                )
-            )
-            return self._request("POST", path, json_body=payload, timeout=timeout)
+            refusal = exc
+        # Raises as an uncached call always did when the request itself is what is wrong.
+        body = self._request("POST", path, json_body=payload, timeout=remaining())
+        self._blame_cache(model_name, payload, cached_name, created_now, refusal)
+        return body
 
-    def _cached_content(self, model_name: str, payload: dict) -> Optional[str]:
-        """The `cachedContents/...` name holding this payload's system prompt, or None."""
+    def _blame_cache(
+        self, model_name: str, payload: dict, name: str, created_now: bool, refusal: Exception
+    ) -> None:
+        """The uncached call answered where the cached one was refused: the cache is the fault.
+
+        An entry this very call created and Google already refuses will be refused again
+        (a model or config that cannot use it): remembered as a failure for the backoff
+        window, so no turn pays a create plus a refused call plus storage. An older entry
+        (expired, deleted) is forgotten, but only if Redis still holds THAT name: another
+        worker may already have stored a fresh one.
+        """
+        from app.services import gemini_context_cache
+
+        key = gemini_context_cache.cache_key(
+            self.api_key, model_name, payload.get("systemInstruction"), payload.get("tools")
+        )
+        if created_now:
+            logger.warning("gemini cache: new entry %s refused (%s); not caching for a while", name, refusal)
+            gemini_context_cache.mark_failed(key)
+        else:
+            gemini_context_cache.forget(key, name)
+
+    def _cached_content(
+        self, model_name: str, payload: dict, timeout: Optional[float]
+    ) -> Optional[tuple[str, bool]]:
+        """(`cachedContents/...` name, created by this call) for this payload's system prompt, or None."""
         from app.services import gemini_context_cache
 
         system = payload.get("systemInstruction")
@@ -1524,11 +1555,11 @@ class GeminiProvider:
             return None
         tools = payload.get("tools")
         key = gemini_context_cache.cache_key(self.api_key, model_name, system, tools)
-        name = gemini_context_cache.lookup(key)
-        if name is not None:
-            return name
-        if gemini_context_cache.recently_failed(key):
+        held = gemini_context_cache.lookup(key)
+        if held == gemini_context_cache.FAILED:
             return None
+        if held is not None:
+            return held, False
         entry: dict[str, Any] = {
             "model": f"models/{model_name}",
             "systemInstruction": system,
@@ -1536,8 +1567,11 @@ class GeminiProvider:
         }
         if tools:
             entry["tools"] = tools
+        create_timeout = gemini_context_cache.CREATE_TIMEOUT_SECONDS
+        if timeout is not None:
+            create_timeout = min(create_timeout, timeout)
         try:
-            created = self._request("POST", "cachedContents", json_body=entry)
+            created = self._request("POST", "cachedContents", json_body=entry, timeout=create_timeout)
             name = str(created.get("name") or "")
             if not name:
                 raise RuntimeError("Gemini cachedContents create returned no name.")
@@ -1549,10 +1583,11 @@ class GeminiProvider:
         if winner != name:
             # Another worker created one first: use theirs, and stop paying storage for ours.
             try:
-                self._request("DELETE", name)
+                self._request("DELETE", name, timeout=create_timeout)
             except Exception:  # noqa: BLE001 - it expires on its own
                 logger.warning("gemini cache: delete of duplicate %s failed", name, exc_info=True)
-        return winner
+            return winner, False
+        return name, True
 
     def chat(
         self,
