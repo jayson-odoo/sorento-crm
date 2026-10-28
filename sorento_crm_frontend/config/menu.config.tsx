@@ -647,6 +647,11 @@ export const MENU_SIDEBAR: MenuConfig = [
             permission: 'dealer_kit.page.view',
           },
           {
+            title: 'Showroom Walkthroughs',
+            path: '/dealer-kit/walkthroughs',
+            permission: 'dealer_kit.page.view',
+          },
+          {
             title: 'Price Tag Requests',
             path: '/dealer-kit/price-tag-requests',
             permission: 'dealer_kit.page.view',

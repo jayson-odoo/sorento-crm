@@ -91,6 +91,7 @@ const OLD_PATHS: string[] = [
   '/dealer-kit/bundles',
   '/dealer-kit/design',
   '/dealer-kit/design/summary',
+  '/dealer-kit/walkthroughs',
   '/order-management/orders',
   '/order-management/order-statuses',
   '/order-management/customers',
