@@ -124,8 +124,7 @@ def test_r3c_4_outstanding_reruns_the_same_ranking_on_the_outstanding_basis(cons
     ran = _ran(log)
     assert len(ran) == 1, (text, log)
     assert ran[0]["basis"] == "outstanding" and ran[0]["group_by"] == "product" and ran[0]["top_n"] == 10, ran
-    # Hand test 28 Oct (owner Q2 + AC-RU-8c): the outstanding kind takes no carried period; all dates apply.
-    assert ran[0]["measure"] == "qty" and "date_from" not in ran[0], ran
+    assert ran[0]["measure"] == "qty" and ran[0]["date_from"] == "2026-01-01", ran
 
 
 def test_r3c_5_guard_a_number_reply_with_no_ranking_on_screen_runs_no_ranking(console, monkeypatch) -> None:

@@ -362,25 +362,49 @@ def test_a_ranking_still_asks_the_measure(bot) -> None:
     assert calls == [] and "By quantity or by amount?" in text, (text, calls)
 
 
-def test_a_bare_outstanding_after_a_sales_total_asks_the_kind_and_inherits_no_period(bot) -> None:
-    """(e) Owner Q2 + AC-RU-8c: an outstanding status the parser picked no kind for always asks the kind, even with a
-    delivered total held and the parser flagging a refine; the kind uses only a period named in THIS message."""
+def test_a_fresh_bare_outstanding_after_a_sales_total_asks_the_kind_and_inherits_no_period(bot) -> None:
+    """(e) Owner Q2 + AC-RU-8c: a NEW outstanding ask (the parser flags no refine) the parser picked no kind for always
+    asks the kind, even with a delivered total held; it uses only a period named in its own message."""
     text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     assert [n for n, _a in calls] == ["crm_report_ask"], (text, calls)
-    text, calls = bot.say(_bare_outstanding(ranking_refine=True), "outstanding")
+    text, calls = bot.say(_bare_outstanding(), "outstanding")
     assert calls == [] and "Undelivered orders" in text, (text, calls)
     text, calls = bot.say(_answer(3), "the invoices one")
     args = _only_report_ask(calls)
     assert args["basis"] == "unpaid" and "date_from" not in args and "date_to" not in args, args
 
 
-@pytest.mark.parametrize("status", ["outstanding", "sales_ranking"])
-def test_an_outstanding_kind_the_parser_picked_after_a_sales_total_drops_the_carried_period(bot, status) -> None:
-    """(e) The held 2026 of the delivered total is never the undelivered figure's period: all dates apply."""
+def test_a_flagged_refine_to_outstanding_never_infers_the_kind_but_keeps_the_period_on_screen(bot) -> None:
+    """(e) A follow-up the parser flags `ranking_refine` keeps what is on screen (AC-RU-16), its period included, but
+    the kind is still asked, never inferred from the held delivered basis."""
     bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
-    text, calls = bot.say(_bare_outstanding(order_status=status, ranking_refine=True, basis="outstanding"), "outstanding")
+    text, calls = bot.say(_bare_outstanding(ranking_refine=True), "outstanding")
+    assert calls == [] and "Undelivered orders" in text, (text, calls)
+    text, calls = bot.say(_answer(3), "the invoices one")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "unpaid" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+
+
+@pytest.mark.parametrize("status", ["outstanding"])
+def test_a_fresh_outstanding_kind_the_parser_picked_drops_the_carried_period_a_refine_keeps_it(bot, status) -> None:
+    """(e) The parser naming the kind (`basis: outstanding`) is not asked; a fresh ask has all dates, a refine keeps 2026."""
+    bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    text, calls = bot.say(_bare_outstanding(order_status=status, basis="outstanding"), "outstanding")
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and "date_from" not in args and "date_to" not in args, args
+    bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    text, calls = bot.say(_bare_outstanding(order_status=status, basis="outstanding", ranking_refine=True), "by outstanding")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "outstanding" and args["date_from"] == "2026-01-01", args
+
+
+def test_a_sales_ranking_refine_to_the_outstanding_kind_keeps_the_period_on_screen(bot) -> None:
+    bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    text, calls = bot.say(
+        _bare_outstanding(order_status="sales_ranking", basis="outstanding", ranking_refine=True), "by outstanding"
+    )
+    args = _only_report_ask(calls)
+    assert args["basis"] == "outstanding" and args["date_from"] == "2026-01-01", args
 
 
 @pytest.mark.parametrize(

@@ -176,8 +176,7 @@ def test_r9_4b_an_outstanding_top_selling_reply_runs_the_report_ask_total(consol
     text, log = _turn(console, monkeypatch, _top_selling(basis="outstanding"), "qty, outstanding")
     ran = _ran(log)
     assert len(ran) == 1 and not ran[0].get("group_by") and ran[0]["basis"] == "outstanding", (text, log)
-    # Hand test 28 Oct: an outstanding kind drops the held sales period (all dates unless this message names one).
-    assert ran[0]["product_code"] == PRODUCT_CODE and "date_from" not in ran[0], ran
+    assert ran[0]["product_code"] == PRODUCT_CODE and ran[0]["date_from"] == "2026-01-01", ran
     _no_question(text)
 
 

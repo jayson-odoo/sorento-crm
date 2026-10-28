@@ -570,8 +570,6 @@ def as_outstanding(verdict: dict[str, Any], *, subject: bool = False) -> dict[st
         **SALES_RANKING_ASK.reroute,
         "capability_from": "outstanding",
         "report_breakdown": verdict.get("rank_direction") not in ("top", "bottom"),
-        # An outstanding ask is never a refine of a held sales report: no refine path may infer its kind or its period.
-        "ranking_refine": False,
     }
     if kind:
         out["basis"] = kind
@@ -1789,7 +1787,11 @@ def _refine(
         args["basis"] = parse_output["basis"]
     if metric_from(parse_output):
         args["measure"] = metric_from(parse_output)  # `measure`, else the top selling key `rank_by`
-    switched_to_kind = args.get("basis") in OUTSTANDING_KINDS and frame.get("basis") not in OUTSTANDING_KINDS
+    # An outstanding refine never infers its kind: unless the parser picked or declared one, the held sales basis is not
+    # carried and the kind is asked (the held period stays: a "by X" follow-up keeps what is on screen, AC-RU-16).
+    asks_kind = parse_output.get("capability_from") == "outstanding" and parse_output.get("basis") not in OUTSTANDING_KINDS
+    if asks_kind:
+        args.pop("basis", None)
     if parse_output.get("compare_to") in COMPARE_TO:
         args["compare_to"] = parse_output["compare_to"]
     if parse_output.get("self_reference") is True:
@@ -1799,20 +1801,20 @@ def _refine(
     top_n = parse_output.get("top_n")
     if top_n is None:
         top_n = frame.get("top_n")
-    # A refine that switches to an outstanding kind takes only a period named in this message (the held sales period goes).
-    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or (
-        None if switched_to_kind else period_from(frame.get("date_from"), frame.get("date_to"))
+    period = period_from(parse_output.get("date_filter_start"), parse_output.get("date_filter_end")) or period_from(
+        frame.get("date_from"), frame.get("date_to")
     )
-    if switched_to_kind and period is None:
-        period = rf.Resolved("ok", value={"from": None, "to": None}, label="all dates")
     # A held ranking has both choices (its args ran): a refine never asks.
     given = {**_given_choices(args), **_given_top_n(args, top_n)}
     for name, key in (("metric", "measure"), ("basis", "basis")):
-        if name not in given:
+        if name not in given and not (asks_kind and name == "basis"):
             given[name] = rf.Resolved("ok", value=args.get(key), label=args.get(key) or "")
+    if asks_kind:
+        given.pop("basis", None)
     if period is not None:
         given["period"] = period
-    return rf.collect(db, SALES_RANKING_ASK, given=given, extras={"args": args, "top_n": top_n}), None
+    extras = {"args": args, "top_n": top_n, **({"kind_ask": True} if asks_kind else {})}
+    return rf.collect(db, SALES_RANKING_ASK, given=given, extras=extras), None
 
 
 def _named_words(parse_output: dict[str, Any], axis: str) -> list[str]:
