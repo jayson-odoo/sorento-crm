@@ -284,3 +284,31 @@ def test_the_route_hands_the_fallback_to_the_reply(session_factory, seeded):
     predicate = payload.get("predicate") or {}
     assert predicate.get("qualifying_total") == 2, payload
     assert predicate.get("dimension_fallback") == {"label": "Length", "value": "150 mm"}, predicate
+
+
+def _ground(session_factory, raw: str, value, unit=None):
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head.bare_size import ground_bare
+
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    entity = {"raw": raw, "hint": "specification", "spec_key": "size", "spec_value": value, "spec_unit": unit}
+    return ground_bare(db, entity, [entity], None, None)
+
+
+def test_the_unit_typed_beside_the_kept_number_wins_over_the_resolvers(session_factory, seeded):
+    """Reviewer S3: "15cm" with the parser's 15 is 150 mm, whatever unit came with it."""
+    _seed(session_factory, WCS)
+    g = _ground(session_factory, "15cm", 15, "mm")
+
+    assert g is not None and g.value == 150 and g.unit == "mm", g
+
+
+def test_guard_a_word_after_the_number_that_is_no_unit_changes_nothing(session_factory, seeded):
+    """Reviewer round 2: "150 x 400mm" and "150 wide" stay a 150 mm size over every dimension."""
+    _seed(session_factory, WCS)
+    for raw in ("150 x 400mm", "150 wide"):
+        g = _ground(session_factory, raw, 150)
+
+        assert g is not None and g.value == 150 and g.unit == "mm", (raw, g)
+        assert sorted(g.any_keys or []) == ["dim_height", "dim_length", "dim_width", "trap_length"], (raw, g)

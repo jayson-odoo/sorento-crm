@@ -109,9 +109,13 @@ def ground_bare(
     ]
     typed = _SAID.search(said)
     # The unit typed beside the number when the parser kept that number ("15cm", 15), else the
-    # resolver's own `spec_unit`.
-    beside = typed.group(2) if typed and _number(typed.group(1)) == number else ""
-    unit_said = str(beside or entity.get("spec_unit") or (typed.group(2) if typed else "") or "").strip().casefold()
+    # resolver's own `spec_unit`. A word after the number that is no unit ("150 x 400mm", "150
+    # wide") says nothing about one.
+    units = {str(r.unit).casefold() for r in rows}
+    word = (typed.group(2) if typed else "").casefold()
+    word = word if length_factor(word) is not None or word in units else ""
+    beside = word if typed and _number(typed.group(1)) == number else ""
+    unit_said = str(beside or entity.get("spec_unit") or word or "").strip().casefold()
     dims = dimension_keys(rows)
     if dims and (not unit_said or length_factor(unit_said) is not None):
         # The parser copied the typed number off "15cm": read it in millimetres. A number the
