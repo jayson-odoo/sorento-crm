@@ -280,7 +280,7 @@ export default function PurchaseRequestDetail({
     // the stage changes, the banner must clear without a manual refresh.
     queryKey: ['form-sla-trackers', requestTypeForNav, requestId, request?.updated_at],
     queryFn: () => getFormSLATrackers(requestTypeForNav, requestId),
-    enabled: !!isValidId,
+    enabled: !!isValidId && !limited,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
   // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
@@ -290,6 +290,7 @@ export default function PurchaseRequestDetail({
     sourceEntityType: requestTypeForNav,
     sourceEntityId: isValidId ? requestId : null,
     entityKey: request?.updated_at,
+    enabled: !limited,
   });
   // A voided form is fully read-only - every business CTA is suppressed. Folding
   // it into businessCtasEnabled kills all the handling-gated CTAs at once; the
@@ -1620,9 +1621,11 @@ export default function PurchaseRequestDetail({
 
         {/* Direct child of the 2-col grid - without the span it renders half-width while
             every sibling block above it is full-width. */}
-        <div className="lg:col-span-2 w-full">
-          <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
-        </div>
+        {!limited && (
+          <div className="lg:col-span-2 w-full">
+            <AuditTrail entityType="purchase_request" entityId={requestId} title="Audit Trail" />
+          </div>
+        )}
 
         <AlertDialog open={rejectDialogOpen} onOpenChange={setRejectDialogOpen}>
           <AlertDialogContent>

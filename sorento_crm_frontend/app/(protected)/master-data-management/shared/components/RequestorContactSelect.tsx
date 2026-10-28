@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { getRequestorSelectOptions } from '../services/requestorSelectService';
 
@@ -39,10 +39,32 @@ export function RequestorContactSelect({
   disabled,
   loadOptions,
 }: RequestorContactSelectProps) {
+  // A preselected value with no saved name (a limited user's own contact on a new form) is named
+  // from the option list on load, so the combobox never shows the placeholder for it.
+  const needsName = Boolean(loadOptions && value && !savedContactId);
+  const loadRef = useRef(loadOptions);
+  loadRef.current = loadOptions;
+  const [preselected, setPreselected] = useState<{ id: string; name: string } | null>(null);
+  useEffect(() => {
+    if (!needsName || !value) return;
+    let live = true;
+    loadRef.current?.('')
+      .then((items) => {
+        const hit = items.find((i) => i.id === value);
+        if (live && hit) setPreselected(hit);
+      })
+      .catch(() => {});
+    return () => {
+      live = false;
+    };
+  }, [needsName, value]);
   const selectedOption = useMemo(() => {
-    if (!savedContactId) return undefined;
-    return { value: savedContactId, label: savedContactName?.trim() || 'Selected contact' };
-  }, [savedContactId, savedContactName]);
+    if (savedContactId) {
+      return { value: savedContactId, label: savedContactName?.trim() || 'Selected contact' };
+    }
+    if (needsName && value && preselected?.id === value) return { value, label: preselected.name };
+    return undefined;
+  }, [savedContactId, savedContactName, needsName, value, preselected]);
 
   return (
     <SearchableSelect

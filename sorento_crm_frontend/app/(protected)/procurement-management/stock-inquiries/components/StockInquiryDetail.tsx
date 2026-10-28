@@ -141,7 +141,7 @@ export default function StockInquiryDetail({
     // Key on updated_at so the escalation banner clears on resolve without a refresh.
     queryKey: ['form-sla-trackers', 'stock_inquiry', inquiryId, inquiry?.updated_at],
     queryFn: () => getFormSLATrackers('stock_inquiry', inquiryId),
-    enabled: !!isValidId,
+    enabled: !!isValidId && !limited,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
   // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
@@ -149,6 +149,7 @@ export default function StockInquiryDetail({
     sourceEntityType: 'stock_inquiry',
     sourceEntityId: isValidId ? inquiryId : null,
     entityKey: inquiry?.updated_at,
+    enabled: !limited,
   });
   // A voided stock inquiry is fully read-only - suppress every business CTA.
   const isVoided = (inquiry?.status ?? '').trim().toLowerCase() === 'voided';
@@ -1359,7 +1360,7 @@ export default function StockInquiryDetail({
           form meant scrolling past everything to read it. The query stays here
           because the revise banner above quotes the newest entry. */}
 
-      <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
+      {!limited && <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />}
     </div>
   );
 }

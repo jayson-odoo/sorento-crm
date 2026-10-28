@@ -161,7 +161,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     // Key on status so the escalation banner clears on resolve without a refresh.
     queryKey: ['form-sla-trackers', 'complaint', complaintId, complaint?.status],
     queryFn: () => getFormSLATrackers('complaint', complaintId),
-    enabled: !!isValidId,
+    enabled: !!isValidId && !limited,
   });
   const activeTracker = (slaTrackers ?? []).find((t) => !t.is_resolved) ?? null;
   // Handling-lock ("I'm handling this") - live off the form-SLA handling tracker query.
@@ -169,6 +169,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     sourceEntityType: 'complaint',
     sourceEntityId: isValidId ? complaintId : null,
     entityKey: complaint?.status,
+    enabled: !limited,
   });
   // A voided complaint is fully read-only - suppress every business CTA.
   const isVoided = (complaint?.status ?? '').trim().toLowerCase() === 'voided';
@@ -1426,7 +1427,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         requestKind={limited ? 'complaint' : undefined}
       />
 
-      <AuditTrail entityType="complaint" entityId={complaintId} title="Audit Trail" />
+      {!limited && <AuditTrail entityType="complaint" entityId={complaintId} title="Audit Trail" />}
 
       {canUseRespondChat && (
         <Sheet
