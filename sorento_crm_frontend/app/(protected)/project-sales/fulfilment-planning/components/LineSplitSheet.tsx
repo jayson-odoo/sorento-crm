@@ -145,6 +145,20 @@ const withoutColumns = (dropped: ReadonlySet<string>) =>
 const READ_ONLY_COLUMNS = withoutColumns(READ_ONLY_DROPPED);
 /** OI-SPLIT-CONFIRM-POLISH: the edit sheet with no drag (the guided Confirm): no grip column. */
 const NO_DRAG_COLUMNS = withoutColumns(new Set(['grip']));
+/**
+ * PRODUCT-CHANGE-TALLY (owner, 28 Oct 2026): as the Order Inquiry email and its Excel print a
+ * product AutoCount swapped, ITEM CODE the old code and NEW ITEM CODE the new one beside it,
+ * the column there only when a line on the sheet was swapped.
+ */
+const withNewItemCode = (columns: typeof COLUMNS) =>
+  columns.flatMap((column) =>
+    column.key === 'item'
+      ? [column, { key: 'newItem', label: 'New item code', width: 112 }]
+      : [column],
+  );
+const COLUMNS_NEW_ITEM = withNewItemCode(COLUMNS);
+const READ_ONLY_COLUMNS_NEW_ITEM = withNewItemCode(READ_ONLY_COLUMNS);
+const NO_DRAG_COLUMNS_NEW_ITEM = withNewItemCode(NO_DRAG_COLUMNS);
 
 /**
  * Never resized: the grip and remove buttons, and REMARK, which takes whatever width the other
@@ -450,6 +464,8 @@ interface LineBlockProps {
   soDate: string;
   /** More than one location on the SO: the phone shows it under the item code. */
   multiLocation: boolean;
+  /** A line on the sheet was swapped to another product: the New item code column shows. */
+  newItemColumn: boolean;
   open: boolean;
   itemTop: boolean;
   flash: boolean;
@@ -469,6 +485,7 @@ const LineBlock = React.memo(function LineBlock({
   soNumber,
   soDate,
   multiLocation,
+  newItemColumn,
   open,
   itemTop,
   flash,
@@ -526,7 +543,9 @@ const LineBlock = React.memo(function LineBlock({
           'max-md:z-[1]',
         )}
       >
-        <span className="font-semibold">{line.itemCode}</span>
+        <span className="font-semibold" data-testid={`item-code-${no}`}>
+          {line.wasItemCode || line.itemCode}
+        </span>
         {mockup ? (
           <Badge
             variant="warning"
@@ -544,6 +563,15 @@ const LineBlock = React.memo(function LineBlock({
           </span>
         ) : null}
       </TableCell>
+      {newItemColumn ? (
+        <TableCell
+          rowSpan={span}
+          data-testid={`new-item-code-${no}`}
+          className={cn(baseCell, 'font-semibold')}
+        >
+          {line.wasItemCode ? line.itemCode : ''}
+        </TableCell>
+      ) : null}
       <TableCell rowSpan={span} className={cn(baseCell, DESKTOP_ONLY)}>
         {line.location}
       </TableCell>
@@ -1198,7 +1226,21 @@ export function LineSplitSheet({
     () => new Set(allLines.map((line) => line.location)).size > 1,
     [allLines],
   );
-  const columns = readOnly ? READ_ONLY_COLUMNS : canDrag ? COLUMNS : NO_DRAG_COLUMNS;
+  const newItemColumn = React.useMemo(
+    () => allLines.some((line) => Boolean(line.wasItemCode)),
+    [allLines],
+  );
+  const columns = newItemColumn
+    ? readOnly
+      ? READ_ONLY_COLUMNS_NEW_ITEM
+      : canDrag
+        ? COLUMNS_NEW_ITEM
+        : NO_DRAG_COLUMNS_NEW_ITEM
+    : readOnly
+      ? READ_ONLY_COLUMNS
+      : canDrag
+        ? COLUMNS
+        : NO_DRAG_COLUMNS;
   // OI-SPLIT-CONFIRM-POLISH: columns resize by dragging a header's edge, through TanStack's
   // column sizing and the DataGrid's own handle (`components/ui/data-grid-table.tsx`
   // `DataGridTableHeadRowCellResize`, the pattern every list page uses). Only widths are
@@ -1307,6 +1349,7 @@ export function LineSplitSheet({
               soNumber={soNumber}
               soDate={soDate}
               multiLocation={multiLocation}
+              newItemColumn={newItemColumn}
               open={openLineIds.has(line.lineId)}
               itemTop={!prev || prev.itemCode !== line.itemCode}
               flash={flashLineId === line.lineId}

@@ -24,6 +24,11 @@ export interface LineSplitLine {
   line_id: string;
   line_no: number | null;
   item_code: string;
+  /**
+   * PRODUCT-CHANGE-TALLY: the product AutoCount swapped the line from (the email's ITEM CODE;
+   * `item_code` is then its NEW ITEM CODE). Null when the product did not change.
+   */
+  was_item_code?: string | null;
   location: string;
   base_qty: number;
   base_date: string | null;

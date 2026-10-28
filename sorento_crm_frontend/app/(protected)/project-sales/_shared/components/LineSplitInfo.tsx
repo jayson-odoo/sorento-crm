@@ -450,6 +450,8 @@ export function coveredSheetLines(
       lineId: line.lineId ?? `board:${line.key}`,
       lineNo: line.lineNo,
       itemCode: line.itemCode,
+      // PRODUCT-CHANGE-TALLY: the product AutoCount swapped the line from, off the read.
+      wasItemCode: (line.lineId ? byId.get(line.lineId)?.wasItemCode : null) ?? null,
       location: line.location,
       baseQty: line.qty,
       baseDate: line.date,
@@ -458,6 +460,8 @@ export function coveredSheetLines(
       pendingChange: false,
       splits: [],
       savedRemark: line.savedRemark,
+      // The read's own words for the line's row (the email's REMARK), muted under none saved.
+      remarkGenerated: (line.lineId ? byId.get(line.lineId)?.remarkGenerated : undefined) ?? '',
     }));
   const builtIds = new Set(built.map((line) => line.lineId));
   return {

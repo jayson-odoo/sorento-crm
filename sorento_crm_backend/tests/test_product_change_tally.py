@@ -154,6 +154,18 @@ def test_a_real_swap_reads_alike_in_preview_email_and_attachment(api, monkeypatc
     [preview] = [line for line in read["lines"] if line["line_id"] == str(fx["line"].id)]
     assert (preview["was_item_code"], preview["item_code"]) == (old, new), preview
 
+    # The preview's REMARK: the board's saved words, else the read's own (`remark_generated`).
+    # A swap with no saved draft has none, so the preview prints the read's words.
+    board = fx["client"].get(
+        "/api/v1/project-sales/fulfilment-planning/board",
+        params={"orders": fx["order"].autocount_doc_no, "granularity": "week"},
+    )
+    assert board.status_code == 200, board.text
+    [on_board] = [
+        c for c in board.json()["contributions"] if c.get("project_line_id") == str(fx["line"].id)
+    ]
+    assert on_board["saved_remark"] is None, on_board["saved_remark"]
+
     calls.clear()
     response = _apply(fx)
     assert response.status_code == 200, response.text
