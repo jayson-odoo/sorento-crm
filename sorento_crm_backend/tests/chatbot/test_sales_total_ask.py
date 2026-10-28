@@ -19,6 +19,8 @@ access, resolver and MCP faked). Figures and customers are fake.
 """
 from __future__ import annotations
 
+import os
+import re
 from typing import Any
 
 import pytest
@@ -251,3 +253,63 @@ def test_t11_a_bare_basis_word_with_a_stray_axis_is_still_the_answer(one):
         "invoiced",
     )
     _ran(captured, "invoiced")
+
+
+# --------------------------------------------------------------------------- #
+# Prod parser (v68 text, no PARSER TEMPLATE block): the replies it may give
+# --------------------------------------------------------------------------- #
+
+
+def test_t12_a_bare_number_read_as_a_count_is_still_the_option(one):
+    """A prompt with no line for this question may read "1" as `top_n` 1 and declare nothing: the option's
+    number, never a new ranking ask."""
+    _ask(one)
+    _result, captured = one.say(_answer(top_n=1), "1")
+    _ran(captured, "invoiced")
+
+
+def test_t13_a_bare_basis_word_marked_as_a_domain_word_is_still_the_answer(one):
+    """"invoiced" read with `domain_in_message` true and nothing else of its own answers the question."""
+    _ask(one)
+    _result, captured = one.say(_answer(basis="invoiced", domain_in_message=True), "invoiced")
+    _ran(captured, "invoiced")
+
+
+def test_t14_another_domains_ask_while_the_question_is_open_is_its_own(one):
+    """"stock for SRTWC286" names no basis and carries its own domain word: never read as a basis miss."""
+    _ask(one)
+    result, captured = one.say(
+        _parser_output(message_type="business_query", domain_hint="inventory", intent_hint="check_stock",
+                       entities=[], domain_in_message=True),
+        "stock for SRTWC286",
+    )
+    assert _calls(captured, ANALYSIS) == [], captured
+    assert "which basis" not in _reply(result) and _reply(result).strip() != BASIS_QUESTION, _reply(result)
+
+
+#: The live parser text (prod v69 = dev v188 = crew's v68.txt). Not in this public repository; crew runs
+#: T15 with `SALES_TOTAL_ASK_PROMPT_FILE=<path to v68.txt>`.
+PROMPT_FILE = os.environ.get("SALES_TOTAL_ASK_PROMPT_FILE")
+
+
+@pytest.mark.skipif(not PROMPT_FILE, reason="needs the live parser text (SALES_TOTAL_ASK_PROMPT_FILE)")
+def test_t15_the_live_parser_text_needs_no_edit(one):
+    """How the change reaches prod: in the lane, not the prompt. On the live text (no PARSER TEMPLATE block)
+    the parser config is not the template's, the text's own sales basis rule reads "total sales" as no basis
+    (null, which the lane now asks), and the next turn's parser is shown the question with its four options,
+    Invoiced first, whatever the prompt says about it."""
+    from app.services.chatbot.head.parser_template import MARKER
+
+    with open(PROMPT_FILE, encoding="utf-8") as fh:
+        text = fh.read()
+    assert MARKER not in text, "the live text carries no PARSER TEMPLATE block"
+    # PROMPT-RULES-DIET wrote it as one line, "...; none said -> null." (`chatbot_prompt_diet_edits`).
+    rule = re.search(r"SALES_BASIS[^\n]*\n(?:[^\n]*\n){0,6}?[^\n]*none said -> null", text, re.IGNORECASE)
+    assert rule, "the live text's sales basis rule maps no basis word to null (it never picks one itself)"
+    _ask(one)
+    shown: list[str] = []
+    one.say(_answer(open_question_answer=_pick(1)), "1", capture_user_block=shown)
+    block = "\n".join(shown)
+    assert "Open question" in block and BASIS_QUESTION in block, block[-2000:]
+    positions = [block.find(word) for word in ("Invoiced", "Delivered", "Ordered", "Outstanding")]
+    assert -1 not in positions and positions == sorted(positions), block[-2000:]
