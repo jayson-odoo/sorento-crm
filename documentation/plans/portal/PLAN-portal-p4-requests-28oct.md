@@ -127,6 +127,10 @@ Fix round, red first:
 
 ## Merge note: #1961 (PROJECT-STAGES-SAMPLE) merges BEFORE #1953
 
+Done 29 Oct in merge 3653b8a8d2: both form paths get `defaultProjectId`. R2 replaces `LimitedPurchaseRequestForm` with the
+portal form, so R2 owns the limited-branch case: a salesperson opening `/sponsorship-forms/new?project_id=<own project>`
+(the project Sponsorship stage action) must land on the portal form with that project seeded, or the gap is asked to crew.
+
 On the next main merge, `sponsorship-forms/new/page.tsx` and `PurchaseRequestForm.tsx` conflict. Resolution agreed with
 that lane (PR #1953 crew-note 6470523547): keep #1961's async page (`searchParams.project_id`) inside the P4 Suspense
 wrapper; the PurchaseRequestForm default-export wrapper passes `defaultProjectId` to BOTH the staff form (#1961 effect,
@@ -157,7 +161,7 @@ opportunity amount as the portal form sends it): identical by construction once 
 
 | Slice | Red | Fix | State |
 | --- | --- | --- | --- |
-| R1 shared SubmissionClient + SI + Complaint (salesperson renders the portal form; BE `register_profile_routes` /me + 5 lookups and ai-extract on my-requests) | a3943deeba | 97801a93d3 | FE 49/49 new green, portal suite green; BE 5 red = test gaps (complaints_* lookup sets not seeded in parity test; WRITE_ROUTES lacks POST /ai-extract) being fixed by a tester; kill-proof + push owed |
+| R1 shared SubmissionClient + SI + Complaint (salesperson renders the portal form; BE `register_profile_routes` /me + 5 lookups and ai-extract on my-requests) | a3943deeba | 97801a93d3 (+ test fixes e4b8c3df1c, 16b23b3589) | green (FE 3417, BE 1667 over portal / my-requests files); kill-proof posted 6482225526 (FE 38 red, BE 35 red); main merged 3653b8a8d2 (#1961, #1951); pushed 16b23b3589 |
 | R2 PR + Sponsorship + staff detail read-only portal fields | - | - | todo |
 | R3 Price Tag / NPA / Sample Request / Opportunity portal components | - | - | todo |
 | R4 side-by-side browser pass (portal vs CRM + staff buttons), crew re-files hand test | - | - | todo |
