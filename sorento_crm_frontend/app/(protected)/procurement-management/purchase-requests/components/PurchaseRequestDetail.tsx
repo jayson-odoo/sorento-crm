@@ -3,9 +3,16 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAction } from '@/lib/useAction';
 import { apiFetch } from '@/lib/api';
-import { isAwaitingReview } from '@/lib/submission-status';
+import { isAwaitingReview, submitVerb } from '@/lib/submission-status';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import type { MyRequestKind } from '@/services/myRequestsService';
+import {
+  useDeleteMyRequestDraft,
+  useMyRequestSubmission,
+  useSubmitMyRequest,
+} from '@/hooks/useMyRequests';
 import { useRouter } from 'next/navigation';
-import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
+import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle, RotateCcw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useBackToListHref } from '@/components/common/BackToList';
 import { Badge } from '@/components/ui/badge';
@@ -262,6 +269,14 @@ export default function PurchaseRequestDetail({
   const requestTypeForNav = basePath.includes('sponsorship-forms')
     ? 'sponsorship_form'
     : 'purchase_request';
+  // A salesperson limited to their own rows (PORTAL-P4-REQUESTS, owner Q2 a) gets the portal's
+  // action set only, run through My Requests; the revision policy is the server's answer there.
+  const scopeKind: MyRequestKind =
+    request?.request_type === 'sponsorship_form' ? 'sponsorship_form' : requestTypeForNav;
+  const { limited } = useRequestScope(scopeKind);
+  const { data: mine } = useMyRequestSubmission(scopeKind, limited && isValidId ? requestId : null);
+  const deleteMine = useDeleteMyRequestDraft(scopeKind);
+  const submitMine = useSubmitMyRequest(scopeKind);
   // Active form-SLA stage tracker for this form - enables the in-form Escalate button.
   const { data: slaTrackers } = useQuery({
     // Key on the request's updated_at so the active tracker (and the escalation
@@ -631,6 +646,7 @@ export default function PurchaseRequestDetail({
             ariaLabel: requestTypeLabelLower(request.request_type),
           }}
           gear={
+            limited ? undefined : (
             <DetailActionsMenu ariaLabel="Request actions">
               {/* The download history is an action, so it sits in the gear with the rest.
                   Edit is the record's primary button and Delete is the last item here; the
@@ -837,8 +853,23 @@ export default function PurchaseRequestDetail({
                 </DropdownMenuItem>
               )}
             </DetailActionsMenu>
+            )
           }
           primary={
+            limited ? (
+              <MyRequestActions
+                status={isRejected ? 'rejected' : lifecycleStatusNorm}
+                revisable={mine?.revision?.allowed === true}
+                busy={deleteMine.isPending || submitMine.isPending}
+                onEdit={() => router.push(`${basePath}/${requestId}/edit`)}
+                onRevise={() => router.push(`${basePath}/${requestId}/edit?revise=1`)}
+                onDuplicate={() => router.push(`${basePath}/new?from=${requestId}`)}
+                onDelete={() =>
+                  deleteMine.mutate(requestId, { onSuccess: () => router.push(backHref) })
+                }
+                onSubmit={() => submitMine.mutate({ id: requestId })}
+              />
+            ) : (
             <>
             {/* Business CTAs HIDE (not disable) while the handling lock is held by
                 someone else / unclaimed - keeps the header uncluttered. When the lock
@@ -943,8 +974,10 @@ export default function PurchaseRequestDetail({
                 </Button>
               )}
             </>
+            )
           }
           dialogs={
+            limited ? undefined : (
             <EntityDownloadsButton
               entityType="purchase_request"
               entityId={requestId}
@@ -952,6 +985,7 @@ export default function PurchaseRequestDetail({
               open={downloadsOpen}
               onOpenChange={setDownloadsOpen}
             />
+            )
           }
         />
       </div>
@@ -963,12 +997,14 @@ export default function PurchaseRequestDetail({
         onConfirm={handleExportConfirmed}
       />
 
-      <HandlingLockBanner
-        state={handlingLock.state}
-        tracker={handlingLock.tracker}
-        onClaim={handlingLock.claim}
-        onTakeOver={handlingLock.takeOver}
-      />
+      {!limited && (
+        <HandlingLockBanner
+          state={handlingLock.state}
+          tracker={handlingLock.tracker}
+          onClaim={handlingLock.claim}
+          onTakeOver={handlingLock.takeOver}
+        />
+      )}
 
       <FormActionBanner
         view={formAction.view}
@@ -1314,7 +1350,7 @@ export default function PurchaseRequestDetail({
                       </p>
                     </div>
                   )}
-                  {request.respond_inbox_url && (
+                  {!limited && request.respond_inbox_url && (
                     <div className="sm:col-span-2">
                       <p className="text-sm text-muted-foreground">Respond conversation</p>
                       <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
@@ -1475,7 +1511,7 @@ export default function PurchaseRequestDetail({
                       </p>
                     </div>
                   )}
-                  {request.respond_inbox_url && (
+                  {!limited && request.respond_inbox_url && (
                     <div className="sm:col-span-2">
                       <p className="text-sm text-muted-foreground">Respond conversation</p>
                       <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
@@ -1535,6 +1571,7 @@ export default function PurchaseRequestDetail({
           <PurchaseRequestAttachmentsSection
             requestId={requestId}
             attachments={request.attachments}
+            readOnly={limited}
           />
         </div>
 
@@ -1543,7 +1580,7 @@ export default function PurchaseRequestDetail({
             form meant scrolling past everything to read it. The query stays here
             because the revise banner above quotes the newest entry. */}
 
-        {request?.respond_inbox_url && (
+        {!limited && request?.respond_inbox_url && (
           <Sheet
             open={conversationSheetOpen}
             onOpenChange={(open) => {
@@ -1895,5 +1932,72 @@ export default function PurchaseRequestDetail({
         </AlertDialog>
       </div>
     </div>
+  );
+}
+
+/**
+ * The portal's action set on their own request (owner Q2 a): Edit and Submit while it is a
+ * draft or rejected, Delete while it is a draft, Revise when the server allows it, Duplicate
+ * always. A request rejected at approval reads "rejected" here, as the portal reports it, so the
+ * send label follows the shared rule.
+ */
+function MyRequestActions({
+  status,
+  revisable,
+  busy,
+  onEdit,
+  onRevise,
+  onDuplicate,
+  onDelete,
+  onSubmit,
+}: {
+  status: string;
+  revisable: boolean;
+  busy: boolean;
+  onEdit: () => void;
+  onRevise: () => void;
+  onDuplicate: () => void;
+  onDelete: () => void;
+  onSubmit: () => void;
+}) {
+  const draft = status === 'draft';
+  const open = draft || status === 'rejected';
+  return (
+    <>
+      {open && (
+        <Button variant="outline" size="sm" onClick={onEdit} disabled={busy}>
+          <Edit className="size-4" />
+          Edit
+        </Button>
+      )}
+      {draft && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={onDelete}
+          disabled={busy}
+          className="text-destructive border-destructive/40 hover:bg-destructive/10"
+        >
+          <Trash2 className="size-4" />
+          Delete
+        </Button>
+      )}
+      {revisable && (
+        <Button variant="outline" size="sm" onClick={onRevise} disabled={busy}>
+          <RotateCcw className="size-4" />
+          Revise
+        </Button>
+      )}
+      <Button variant="outline" size="sm" onClick={onDuplicate} disabled={busy}>
+        <Copy className="size-4" />
+        Duplicate
+      </Button>
+      {open && (
+        <Button variant="primary" size="sm" onClick={onSubmit} disabled={busy}>
+          <Send className="size-4" />
+          {submitVerb(status)}
+        </Button>
+      )}
+    </>
   );
 }

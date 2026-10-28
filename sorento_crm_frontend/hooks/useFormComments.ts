@@ -9,6 +9,7 @@ import {
   listFormComments,
 } from '@/services/formCommentsService';
 import {
+  deleteSubmissionComment,
   editSubmissionComment,
   fetchSubmissionComments,
   postSubmissionComment,
@@ -91,5 +92,21 @@ export function useEditFormComment(kind: FormCommentKind, id: string) {
     },
     onError: (error: Error) =>
       toast.error(error.message || 'Failed to save the comment'),
+  });
+}
+
+/**
+ * A limited user's own comment goes at once, through My Requests (the portal's own delete). The
+ * staff delete is a server-deferred countdown (`FormCommentDelete`) and stays with staff.
+ */
+export function useDeleteMyComment(kind: FormCommentKind, id: string) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (commentId: string) => deleteSubmissionComment(kind as MyRequestKind, id, commentId),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: [FORM_COMMENTS_KEY, kind, id] });
+      toast.success('Comment deleted');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to delete the comment'),
   });
 }

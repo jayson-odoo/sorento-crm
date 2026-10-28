@@ -33,6 +33,7 @@ import { Skeleton } from '@/components/ui/skeleton';
 import LookupBoundLabel from '@/components/common/LookupBoundLabel';
 import { useQuery } from '@tanstack/react-query';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { usePurchaseRequests } from '../hooks/usePurchaseRequests';
 import { getUserLookup } from '@/services/userSelectService';
 import type { PurchaseRequest } from '../types/purchaseRequest.types';
@@ -185,7 +186,15 @@ export default function PurchaseRequestsList({
     staleTime: 5 * 60_000,
   });
   const [bulkDeleteOpen, setBulkDeleteOpen] = useState(false);
-  const canViewReport = useHasPermission(reportPermission ?? '') && Boolean(reportPermission);
+  // A salesperson sees only their own rows (PORTAL-P4-REQUESTS): Create needs `.add`, there is no
+  // bulk Delete or Report; a draft is deleted on its own page. Limited is per kind.
+  const scopeKind = requestType ?? 'purchase_request';
+  const { limited } = useRequestScope(scopeKind);
+  const canAdd = useHasPermission(
+    scopeKind === 'sponsorship_form' ? 'procurement.sponsorship_forms.add' : 'procurement.purchase_requests.add',
+  );
+  const canViewReport =
+    useHasPermission(reportPermission ?? '') && Boolean(reportPermission) && !limited;
 
   const effectiveRequestType =
     requestType ?? (requestTypeFilter || undefined);
@@ -283,7 +292,6 @@ export default function PurchaseRequestsList({
         accessorKey: 'revision_no',
         header: ({ column }) => <DataGridColumnHeader title="Rev" column={column} />,
         size: 80,
-        enableSorting: false,
         // Denormalized on the row - no per-row query (UAC H4).
         cell: ({ row }) => {
           const label = revisionBadgeLabel(row.original.revision_no);
@@ -394,7 +402,6 @@ export default function PurchaseRequestsList({
           <DataGridColumnHeader title="Assigned To" column={column} />
         ),
         size: 140,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.assigned_to_name ?? undefined}>
             {row.original.assigned_to_name ?? '-'}
@@ -408,7 +415,6 @@ export default function PurchaseRequestsList({
           <DataGridColumnHeader title="Handled By" column={column} />
         ),
         size: 140,
-        enableSorting: false,
         cell: ({ row }) => (
           <span className="truncate" title={row.original.handled_by_name ?? undefined}>
             {row.original.handled_by_name ?? '-'}
@@ -450,12 +456,13 @@ export default function PurchaseRequestsList({
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction = (
-    <Button onClick={() => router.push(`${basePath}/new`)}>
-      <Plus />
-      Create
-    </Button>
-  );
+  const listPrimaryAction =
+    limited && !canAdd ? undefined : (
+      <Button onClick={() => router.push(`${basePath}/new`)}>
+        <Plus />
+        Create
+      </Button>
+    );
 
   return (
     <DataGrid
@@ -561,7 +568,7 @@ export default function PurchaseRequestsList({
                 </div>
               ),
             }}
-            exportConfig={{ filename: 'purchase_requests_export.xlsx' }}
+            exportConfig={limited ? false : { filename: 'purchase_requests_export.xlsx' }}
             secondaryActions={
               canViewReport
                 ? [
@@ -577,15 +584,19 @@ export default function PurchaseRequestsList({
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
-            bulkActions={[
-              {
-                key: 'delete',
-                label: 'Delete',
-                icon: Trash2,
-                destructive: true,
-                onClick: () => setBulkDeleteOpen(true),
-              },
-            ]}
+            bulkActions={
+              limited
+                ? []
+                : [
+                    {
+                      key: 'delete',
+                      label: 'Delete',
+                      icon: Trash2,
+                      destructive: true,
+                      onClick: () => setBulkDeleteOpen(true),
+                    },
+                  ]
+            }
           />
         </CardHeader>
         <CardTable>

@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { zodResolver } from "@hookform/resolvers/zod";
 import { useForm, useFieldArray } from "react-hook-form";
 import type { FieldArrayWithId } from "react-hook-form";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   LoaderCircleIcon,
   Save,
@@ -64,6 +64,16 @@ import { purchaseRequestNumberFieldLabel, purchaseRequestNumberReplyPhrase } fro
 import LookupBoundField from '@/components/common/LookupBoundField';
 import { RequestorContactSelect } from '@/app/(protected)/master-data-management/shared/components/RequestorContactSelect';
 import { cn } from '@/lib/utils';
+import { submitVerb } from '@/lib/submission-status';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import {
+  useMyRequestSubmission,
+  useReviseMyRequest,
+  useSaveMyRequestDraft,
+  useSubmitMyRequest,
+} from '@/hooks/useMyRequests';
+import { fetchRequestorOptions } from '@/services/myRequestsService';
+import type { PurchaseRequest } from '../types/purchaseRequest.types';
 
 const PURCHASE_REQUESTS_EDIT = "/procurement-management/purchase-requests";
 const SPONSORSHIP_FORMS_EDIT = "/procurement-management/sponsorship-forms";
@@ -83,17 +93,65 @@ interface PurchaseRequestFormProps {
   successRedirectUrl?: string;
 }
 
-export default function PurchaseRequestForm({
+/**
+ * A salesperson limited to their own rows (PORTAL-P4-REQUESTS) writes through My Requests: the
+ * portal's drafts, submit and revise, over the same form. `?from=<id>` starts a new draft from
+ * one of theirs, `?revise=1` sends a revision when the server allows it. Only that user reads the
+ * query string; everyone else gets the staff form, unchanged.
+ */
+export default function PurchaseRequestForm(props: PurchaseRequestFormProps) {
+  const { limited } = useRequestScope(props.expectedRequestType ?? props.defaultRequestType ?? "purchase_request");
+  if (limited) return <LimitedPurchaseRequestForm {...props} />;
+  return <PurchaseRequestFormBody {...props} limited={false} />;
+}
+
+function LimitedPurchaseRequestForm(props: PurchaseRequestFormProps) {
+  const searchParams = useSearchParams();
+  return (
+    <PurchaseRequestFormBody
+      {...props}
+      limited
+      fromId={!props.requestId ? searchParams?.get("from") || null : null}
+      revise={Boolean(props.requestId) && searchParams?.get("revise") === "1"}
+    />
+  );
+}
+
+function PurchaseRequestFormBody({
   requestId,
   defaultRequestType = "purchase_request",
   expectedRequestType,
   successRedirectUrl,
-}: PurchaseRequestFormProps) {
+  limited,
+  fromId = null,
+  revise: revising = false,
+}: PurchaseRequestFormProps & { limited: boolean; fromId?: string | null; revise?: boolean }) {
   const router = useRouter();
   const isEditMode = !!requestId;
-  const { data: request, isLoading: isLoadingRequest } = usePurchaseRequest(
-    requestId || null,
+  const kind = expectedRequestType ?? defaultRequestType;
+  const { data: staffRequest, isLoading: isLoadingStaff } = usePurchaseRequest(
+    limited ? null : requestId || null,
   );
+  const { data: mine, isLoading: isLoadingMine } = useMyRequestSubmission(
+    kind,
+    limited ? (requestId ?? fromId) : null,
+  );
+  const saveMine = useSaveMyRequestDraft(kind);
+  const submitMine = useSubmitMyRequest(kind);
+  const reviseMine = useReviseMyRequest(kind);
+  const [savedId, setSavedId] = useState<string | undefined>(requestId);
+  const [revisionReason, setRevisionReason] = useState("");
+  // The portal answers with `products` (and `document_number`); the staff shape says `lines`.
+  const request = useMemo<PurchaseRequest | undefined>(() => {
+    if (!limited) return staffRequest;
+    if (!mine) return undefined;
+    return {
+      ...mine,
+      request_number: mine.request_number ?? mine.document_number,
+      lines: mine.products ?? mine.lines,
+    } as unknown as PurchaseRequest;
+  }, [limited, staffRequest, mine]);
+  const isLoadingRequest = limited ? isLoadingMine : isLoadingStaff;
   const createMutation = useCreatePurchaseRequest();
   const updateMutation = useUpdatePurchaseRequest();
   const updateAndReplyMutation = useUpdatePurchaseRequestAndReply();
@@ -402,7 +460,7 @@ export default function PurchaseRequestForm({
   const [formInitialized, setFormInitialized] = useState(false);
 
   useEffect(() => {
-    if (request && isEditMode && !formInitialized) {
+    if (request && (isEditMode || fromId) && !formInitialized) {
       const products =
         (request.lines?.length ?? 0) > 0
           ? request.lines!.map((l) => ({
@@ -425,7 +483,8 @@ export default function PurchaseRequestForm({
         request_type: (request.request_type ?? "purchase_request") as
           | "purchase_request"
           | "sponsorship_form",
-        request_number: request.request_number ?? null,
+        // A copy gets its own number when it is submitted.
+        request_number: fromId ? null : (request.request_number ?? null),
         request_date: request.request_date
           ? new Date(request.request_date).toISOString().split("T")[0]
           : null,
@@ -466,7 +525,7 @@ export default function PurchaseRequestForm({
         .map((i) => `products.${i}.quantity` as const);
       if (blank.length) void form.trigger(blank);
     }
-  }, [request, isEditMode, form, formInitialized]);
+  }, [request, isEditMode, fromId, form, formInitialized]);
 
   useEffect(() => {
     setFormInitialized(false);
@@ -550,7 +609,7 @@ export default function PurchaseRequestForm({
     }
   };
 
-  if (isEditMode && isLoadingRequest) {
+  if ((isEditMode || fromId) && isLoadingRequest) {
     return (
       <div className="flex items-center justify-center p-8">
         <LoaderCircleIcon className="size-6 animate-spin" />
@@ -558,11 +617,81 @@ export default function PurchaseRequestForm({
     );
   }
 
-  const isLoading = createMutation.isPending || updateMutation.isPending;
+  const isLoading =
+    createMutation.isPending ||
+    updateMutation.isPending ||
+    saveMine.isPending ||
+    submitMine.isPending ||
+    reviseMine.isPending;
+
+  // What the portal takes: the header allowlist and the lines. The number is assigned by the
+  // server and the requestor's name is resolved from the contact, so neither travels.
+  const mineBody = () => {
+    const data = buildFormData(form.getValues());
+    const {
+      request_type: _type,
+      request_number: _number,
+      request_date: _date,
+      requested_by: _by,
+      requested_at: _at,
+      expected_po_date_text: _text,
+      products,
+      ...fields
+    } = data;
+    void [_type, _number, _date, _by, _at, _text];
+    return { fields: fields as Record<string, unknown>, products: products as Record<string, unknown>[] };
+  };
+  const base = kind === "sponsorship_form" ? SPONSORSHIP_FORMS_EDIT : PURCHASE_REQUESTS_EDIT;
+  const openRecord = (id: unknown) => router.push(`${base}/${String(id)}`);
+  const requestorLoadOptions = limited
+    ? async (q: string) => (await fetchRequestorOptions(q)).items
+    : undefined;
+  const mineStatus = isEditMode
+    ? String(mine?.approval_status === "rejected" ? "rejected" : (mine?.status ?? ""))
+    : "draft";
+  const mineEditable = !isEditMode || mine?.is_editable === true;
+  const canRevise = revising && mine?.revision?.allowed === true;
+  const locked = limited && !mineEditable && !canRevise;
+
+  const onSaveMineDraft = async () => {
+    try {
+      const saved = await saveMine.mutateAsync({ ...mineBody(), id: savedId });
+      setSavedId(String(saved.id));
+      openRecord(saved.id);
+    } catch {
+      // toast from the mutation
+    }
+  };
+  const onSubmitMine = async () => {
+    try {
+      const done = await submitMine.mutateAsync({ ...mineBody(), id: savedId });
+      openRecord(done.id ?? savedId);
+    } catch {
+      // toast from the mutation
+    }
+  };
+  const onSendRevision = async () => {
+    if (!requestId) return;
+    try {
+      await reviseMine.mutateAsync({
+        id: requestId,
+        input: {
+          reason: revisionReason.trim(),
+          expectedRevisionNo: Number(mine?.revision?.used ?? mine?.revision_no ?? 0),
+          ...mineBody(),
+        },
+      });
+      openRecord(requestId);
+    } catch {
+      // toast from the mutation
+    }
+  };
 
   return (
     <Form {...form}>
       <form onSubmit={form.handleSubmit(onSubmit)} className="space-y-6">
+        {/* A request already sent is read-only here unless it is being revised. */}
+        <fieldset disabled={locked} className="m-0 min-w-0 space-y-6 border-0 p-0">
         {isEditMode && request ? (
           <PurchaseRequestDocumentEditCard
             form={form}
@@ -573,6 +702,8 @@ export default function PurchaseRequestForm({
             append={append}
             remove={remove}
             sponsorshipLineGrandTotal={sponsorshipLineGrandTotal}
+            requestorLoadOptions={requestorLoadOptions}
+            requestorDisabled={revising}
           />
         ) : (
           <div className="space-y-6">
@@ -587,6 +718,7 @@ export default function PurchaseRequestForm({
                 )}
               </CardHeader>
               <CardContent className="space-y-4">
+                {!limited && (
                 <FormField
                   control={form.control}
                   name="request_number"
@@ -609,7 +741,8 @@ export default function PurchaseRequestForm({
                     </FormItem>
                   )}
                 />
-                {defaultRequestType !== "sponsorship_form" && (
+                )}
+                {!limited && defaultRequestType !== "sponsorship_form" && (
                   <FormField
                     control={form.control}
                     name="request_type"
@@ -930,6 +1063,7 @@ export default function PurchaseRequestForm({
                           savedContactId={request?.requested_by_contact_id}
                           savedContactName={request?.requested_by_contact_name ?? request?.requested_by}
                           placeholder="Select requestor"
+                          loadOptions={requestorLoadOptions}
                         />
                       </FormControl>
                       <FormMessage />
@@ -987,7 +1121,22 @@ export default function PurchaseRequestForm({
           <PurchaseRequestAttachmentsSection
             requestId={requestId}
             attachments={request?.attachments}
+            readOnly={limited}
           />
+        )}
+        </fieldset>
+
+        {canRevise && (
+          <div className="space-y-2">
+            <Label htmlFor="revision_reason">Reason for revision</Label>
+            <Textarea
+              id="revision_reason"
+              value={revisionReason}
+              onChange={(e) => setRevisionReason(e.target.value)}
+              rows={3}
+              className="min-h-[4.5rem] resize-y"
+            />
+          </div>
         )}
 
         <div className="flex justify-end gap-4">
@@ -999,7 +1148,7 @@ export default function PurchaseRequestForm({
           >
             Cancel
           </Button>
-          {isEditMode && (
+          {!limited && isEditMode && (
             <Button
               type="button"
               variant="secondary"
@@ -1054,6 +1203,29 @@ export default function PurchaseRequestForm({
               )}
             </Button>
           )}
+          {limited ? (
+            canRevise ? (
+              <Button type="button" onClick={onSendRevision} disabled={isLoading || !revisionReason.trim()}>
+                <Send className="size-4" />
+                {reviseMine.isPending ? "Sending..." : "Send revision"}
+              </Button>
+            ) : (
+              mineEditable && (
+                <>
+                  {(!isEditMode || mineStatus === "draft") && (
+                    <Button type="button" variant="outline" onClick={onSaveMineDraft} disabled={isLoading}>
+                      <Save className="size-4" />
+                      Save as draft
+                    </Button>
+                  )}
+                  <Button type="button" onClick={onSubmitMine} disabled={isLoading}>
+                    <Send className="size-4" />
+                    {submitMine.isPending ? "Submitting..." : submitVerb(mineStatus)}
+                  </Button>
+                </>
+              )
+            )
+          ) : (
           <Button type="submit" disabled={isLoading}>
             {isLoading ? (
               <>
@@ -1067,6 +1239,7 @@ export default function PurchaseRequestForm({
               </>
             )}
           </Button>
+          )}
         </div>
       </form>
 
