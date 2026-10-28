@@ -293,7 +293,7 @@ async def list_job_rows(
 
 
 @router.get("/jobs/{job_id}/rows/export")
-async def export_job_rows(
+def export_job_rows(
     job_id: str,
     outcome: Optional[list[str]] = Query(None),
     code: Optional[list[str]] = Query(None),

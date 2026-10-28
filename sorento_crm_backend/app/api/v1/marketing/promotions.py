@@ -371,7 +371,7 @@ async def update_promotion(
 
 
 @router.post("/export/pdf", status_code=status.HTTP_202_ACCEPTED)
-async def export_promotions_pdf(
+def export_promotions_pdf(
     body: CompilePromotionsPdfRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

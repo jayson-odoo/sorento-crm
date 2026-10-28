@@ -1575,7 +1575,7 @@ outstanding_report_router = APIRouter()
 
 
 @outstanding_report_router.get("/outstanding-report", response_model=OutstandingReportResponse)
-async def get_outstanding_report(
+def get_outstanding_report(
     product_code: Optional[str] = Query(
         None,
         description=(
@@ -1819,7 +1819,7 @@ sales_report_router = APIRouter()
 
 
 @sales_report_router.get("/sales-report", response_model=SalesReportResponse)
-async def get_sales_report(
+def get_sales_report(
     product_code: Optional[str] = Query(
         None,
         description=(

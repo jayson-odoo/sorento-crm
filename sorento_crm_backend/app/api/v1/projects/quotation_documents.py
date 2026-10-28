@@ -702,7 +702,7 @@ async def download_quotation_issue_pdf(
 @router.get(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/xlsx",
 )
-async def download_quotation_issue_xlsx(
+def download_quotation_issue_xlsx(
     project_id: str,
     document_id: str,
     issue_id: str,

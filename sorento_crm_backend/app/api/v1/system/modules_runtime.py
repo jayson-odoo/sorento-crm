@@ -391,7 +391,7 @@ async def remove_module(
 # ---------------------------------------------------------------------------
 
 @router.get("/{module_key}/export")
-async def export_module(
+def export_module(
     module_key: str,
     current_user: dict = Depends(require_permission("system.modules.manage")),
 ):

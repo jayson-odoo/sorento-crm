@@ -1501,7 +1501,7 @@ async def void_complaint(
 
 
 @router.post("/{complaint_id}/export/pdf")
-async def export_complaint_pdf(
+def export_complaint_pdf(
     complaint_id: str,
     current_user: dict = Depends(require_permission("complaint_management.complaints.view")),
     db: Session = Depends(get_db),

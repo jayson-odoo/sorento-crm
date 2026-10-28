@@ -317,7 +317,7 @@ async def get_or_create_stock_inquiry_view_link(
 
 
 @router.post("/{inquiry_id}/export/pdf")
-async def export_stock_inquiry_pdf(
+def export_stock_inquiry_pdf(
     inquiry_id: str,
     options: Optional[PdfExportOptions] = Body(None),
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.view")),

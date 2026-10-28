@@ -946,7 +946,7 @@ async def get_autocount_change_list(
 
 
 @router.get("/amendments/{amendment_id}/autocount-change-list.xlsx")
-async def export_autocount_change_list(
+def export_autocount_change_list(
     amendment_id: str,
     _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),
