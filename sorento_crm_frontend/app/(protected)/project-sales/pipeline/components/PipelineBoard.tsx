@@ -309,16 +309,6 @@ function ProjectCard({
                 {stale.label}
               </Badge>
             )}
-            {project.brands.slice(0, 2).map((brand) => (
-              <Badge key={brand} variant="outline" className="text-[11px]">
-                {brand}
-              </Badge>
-            ))}
-            {project.brands.length > 2 && (
-              <Badge variant="outline" className="text-[11px]">
-                +{project.brands.length - 2}
-              </Badge>
-            )}
           </div>
 
           {nextAction && (

@@ -6,9 +6,10 @@ someone else's project.
 """
 from __future__ import annotations
 
-from typing import List, Optional
+import logging
+from typing import Annotated, List, Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Query, UploadFile, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
@@ -34,11 +35,12 @@ from app.schemas.projects import (
 )
 from app.services import project_reference_service as refs
 from app.services import project_service as svc
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 # The MCP server presents X-API-Key with an act-as user, never a JWT, so the routes its
 # read-only tools call use `require_permission_with_api_key` (AC-K1/AC-K4). The permission is
@@ -54,6 +56,9 @@ EDIT = "projects.projects.edit"
 DELETE = "projects.projects.delete"
 MANAGE = "projects.projects.manage"
 APPROVE = svc.APPROVE_REGISTRATIONS_PERMISSION
+#: A salesperson who may only save a draft and submit it for approval (PROJECT-REGISTER-V2 J).
+#: The slug is defined with the portal-requests lane; this module only references it.
+SUBMIT = "projects.registrations.submit"
 _APPROVAL_FILTERS = ("pending", "resubmitted", "rejected", "approved", "draft")
 #: The AI read tools (MCP over X-API-Key, the analytics connector) see approved projects only
 #: (PROJECT-REG-PORTAL R4): a registration waiting for approval is not a project to answer
@@ -75,13 +80,34 @@ _PROFILE_KEYS = (
     "type_id",
     "template_id",
     "admin_ref",
+    "customer_id",
 )
 
 
-@router.post("/clash-preview", response_model=ClashPreviewResponse)
+def _submit_only(permissions) -> bool:
+    """Holds the submit grant but not edit: such a user saves drafts and submits their own."""
+    return SUBMIT in permissions and EDIT not in permissions
+
+
+def _assert_own_unsubmitted(project, user_id: str) -> None:
+    """A submit-only user edits only their own draft or rejected registration."""
+    from app.models.projects import APPROVAL_DRAFT, APPROVAL_REJECTED
+    from app.services.error_handler import AppException
+
+    if project.approval_state not in (APPROVAL_DRAFT, APPROVAL_REJECTED) or str(
+        project.owner_user_id or ""
+    ) != str(user_id):
+        raise AppException(
+            status_code=403,
+            message="You can edit only your own draft or rejected registration.",
+            code="project_not_editable",
+        )
+
+
+@router.post("/clash-preview", response_model=ClashPreviewResponse, response_model_exclude_unset=True)
 async def preview_clashes(
     payload: ClashPreviewRequest,
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission([VIEW, SUBMIT])),
     db: Session = Depends(get_db),
 ):
     """Check a title BEFORE the user fills the rest of the form.
@@ -101,12 +127,112 @@ async def preview_clashes(
             # extra rows come back as context and can never block.
             include_other_developers=True,
         )
+        rows = svc.serialize_clash_candidates(db, candidates)
+        if VIEW not in permission_slugs(db, _user["id"]):
+            # A salesperson with the submit grant only learns that a project exists (D8).
+            rows = [
+                {k: row.get(k) for k in ("project_id", "project_code", "title", "blocks")}
+                for row in rows
+            ]
         return {
-            "candidates": svc.serialize_clash_candidates(db, candidates),
+            "candidates": rows,
             "would_block": any(c.blocks for c in candidates),
         }
     except Exception as exc:
         raise handle_internal_error(str(exc))
+
+
+_AI_MAX_FILES = 12
+_MAX_TOTAL_BYTES = 150 * 1024 * 1024  # 150 MB, as the portal route
+_AI_ALLOWED_EXTS = frozenset({"png", "jpg", "jpeg", "webp", "pdf", "txt"})
+
+
+def _upload_ext(filename: Optional[str], mime: Optional[str]) -> str:
+    if filename and "." in filename:
+        return filename.rsplit(".", 1)[-1].lower().strip()
+    if mime and "/" in mime:
+        return mime.split("/", 1)[1].split(";", 1)[0].strip().lower()
+    return ""
+
+
+@router.post("/ai-extract")
+def ai_extract_project(
+    text: Annotated[Optional[str], Form()] = None,
+    files: Annotated[Optional[List[UploadFile]], File()] = None,
+    current_user: dict = Depends(require_any_permission([EDIT, SUBMIT])),
+    db: Session = Depends(get_db),
+):
+    """Read the project title and/or photos into one proposal per register-form field
+    (PROJECT-REGISTER-V2 C2-C6). Proposes only: it writes nothing but the AI usage log.
+
+    Plain ``def`` so the PDF render and the provider round trip run in a thread, not on the
+    event loop (same as the portal's extract route)."""
+    from app.services import portal_rate_limit, project_ai_extract_service
+    from app.services.ai_extract.extract_service import AIExtractService, ExtractFile
+    from app.services.error_handler import AppException, handle_unprocessable
+
+    try:
+        portal_rate_limit.project_registration_extract_staff(str(current_user["id"]))
+        uploads = list(files or [])
+        if len(uploads) > _AI_MAX_FILES:
+            raise handle_unprocessable(
+                f"Too many files; maximum is {_AI_MAX_FILES} per extract request."
+            )
+        payload: list[ExtractFile] = []
+        total = 0
+        too_big = "Combined file size exceeds 150 MB. Remove a file and try again."
+        for upload in uploads:
+            ext = _upload_ext(upload.filename, upload.content_type)
+            if ext not in _AI_ALLOWED_EXTS:
+                raise handle_unprocessable(
+                    f"Unsupported file type: {upload.filename}. Allowed: "
+                    f"{', '.join(sorted(_AI_ALLOWED_EXTS))}."
+                )
+            if upload.size is not None and total + upload.size > _MAX_TOTAL_BYTES:
+                raise handle_unprocessable(too_big)
+            data = upload.file.read()
+            total += len(data)
+            if total > _MAX_TOTAL_BYTES:
+                raise handle_unprocessable(too_big)
+            payload.append(
+                ExtractFile(
+                    filename=upload.filename or f"upload.{ext or 'bin'}",
+                    mime=(upload.content_type or "").lower(),
+                    data=data,
+                )
+            )
+        if (text or "").strip():
+            payload.append(
+                ExtractFile(filename="title.txt", mime="text/plain", data=text.strip().encode("utf-8"))
+            )
+        if not payload:
+            raise handle_unprocessable("Add the project title or a photo to read.")
+        try:
+            result = AIExtractService(db).extract(
+                "portal.project_registration", payload, user_id=str(current_user["id"])
+            )
+        except AppException as exc:
+            if exc.status_code == 502:
+                # The provider's own error text can carry keys and traces: never echo it.
+                raise AppException(
+                    status_code=502,
+                    message="The AI reader could not be reached. Fill the form in by hand.",
+                    code="ai_extract_provider_failed",
+                ) from exc
+            raise
+        return project_ai_extract_service.propose(
+            db, company_id=acting_company_id(db), values=result.values
+        )
+    except Exception as exc:
+        if hasattr(exc, "status_code"):
+            raise exc
+        # Never the exception text: it can carry provider keys, paths or SQL.
+        logger.exception("project ai-extract failed")
+        raise AppException(
+            status_code=500,
+            message="The AI reader failed. Fill the form in by hand.",
+            code="ai_extract_failed",
+        )
 
 
 def _merge(*groups: Optional[List[str]]) -> Optional[List[str]]:
@@ -141,7 +267,6 @@ async def list_projects(
     owner_user_id: Optional[List[str]] = Query(None),
     developer_party_id: Optional[List[str]] = Query(None),
     type_id: Optional[List[str]] = Query(None),
-    brand_id: Optional[List[str]] = Query(None),
     only_critical: bool = Query(False),
     # UUID-first filters for the MCP / AI surface (AC-K1). Named `<entity>_ids` and parsed
     # with the shared `parse_uuid_list`, so they accept CSV, a JSON array or repeated params
@@ -222,12 +347,12 @@ async def list_projects(
             ),
             project_ids=parse_uuid_list(project_ids, param_name="project_ids"),
             type_ids=type_id,
-            brand_ids=brand_id,
             only_critical=only_critical,
             approval_states=states or None,
             approved_only=approved_only
             or current_user.get("auth_method") in _MACHINE_AUTH_METHODS,
             visible_to=_visible_to(db, current_user),
+            viewer_user_id=current_user["id"],
             page=page,
             limit=limit,
             sort=sort,
@@ -255,12 +380,36 @@ async def list_projects(
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
 async def register_project(
     payload: ProjectRegisterRequest,
-    current_user: dict = Depends(require_permission(EDIT)),
+    current_user: dict = Depends(require_any_permission([EDIT, SUBMIT])),
     db: Session = Depends(get_db),
 ):
     try:
         company_id = acting_company_id(db)
         permissions = permission_slugs(db, current_user["id"])
+
+        if _submit_only(permissions):
+            from app.services import project_registration_service as registrations
+
+            body = payload.model_dump(exclude_unset=True)
+            project = registrations.crm_register(
+                db,
+                company_id=company_id,
+                user_id=current_user["id"],
+                payload=body,
+                submit=payload.submit,
+            )
+            db.commit()
+            db.refresh(project)
+            if payload.submit:
+                registrations.notify(db, project, "submitted")
+            return svc.serialize_project(
+                db, project, actor_user_id=current_user["id"], permissions=permissions
+            )
+
+        from app.services import project_registration_service as registrations
+
+        registrations.require_customer(payload.customer_id)
+        svc.check_company_refs(db, company_id, {"customer_id": payload.customer_id})
 
         owner = payload.owner_user_id
         if owner and owner != current_user["id"] and MANAGE not in permissions:
@@ -285,7 +434,6 @@ async def register_project(
             template_id=payload.template_id,
             owner_user_id=owner,
             details=details,
-            brand_ids=payload.brand_ids,
         )
         if payload.lead_id:
             # Same transaction as the registration: a refused link rolls the project
@@ -317,7 +465,7 @@ async def get_project(
 ):
     try:
         validate_uuid_path(project_id, resource="Project")
-        project = svc.get_project_or_404(db, project_id)
+        project = svc.get_project_or_404(db, project_id, viewer_user_id=current_user["id"])
         # The AI read tools answer about approved projects only (S1): "not found", the same
         # as the list. (A draft is already not found for everyone: get_project_or_404.)
         if (
@@ -362,13 +510,15 @@ async def get_project(
 async def update_project(
     project_id: str,
     payload: ProjectUpdateRequest,
-    current_user: dict = Depends(require_permission(EDIT)),
+    current_user: dict = Depends(require_any_permission([EDIT, SUBMIT])),
     db: Session = Depends(get_db),
 ):
     try:
         validate_uuid_path(project_id, resource="Project")
-        project = svc.get_project_or_404(db, project_id)
+        project = svc.get_project_or_404(db, project_id, viewer_user_id=current_user["id"])
         permissions = permission_slugs(db, current_user["id"])
+        if _submit_only(permissions):
+            _assert_own_unsubmitted(project, current_user["id"])
         svc.update_project(
             db,
             project,
@@ -378,6 +528,39 @@ async def update_project(
         )
         db.commit()
         db.refresh(project)
+        return svc.serialize_project(
+            db, project, actor_user_id=current_user["id"], permissions=permissions
+        )
+    except Exception as exc:
+        db.rollback()
+        raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
+
+
+@router.post("/{project_id}/submit", response_model=ProjectResponse)
+async def submit_project(
+    project_id: str,
+    payload: Optional[ProjectUpdateRequest] = None,
+    current_user: dict = Depends(require_any_permission([EDIT, SUBMIT])),
+    db: Session = Depends(get_db),
+):
+    """Submit the caller's own draft or rejected registration for approval (a rejected one
+    becomes `resubmitted`). Approvers are told in-app, after the move commits."""
+    from app.services import project_registration_service as registrations
+
+    try:
+        validate_uuid_path(project_id, resource="Project")
+        project = svc.get_project_or_404(db, project_id, viewer_user_id=current_user["id"])
+        permissions = permission_slugs(db, current_user["id"])
+        resubmitted = registrations.crm_submit(
+            db,
+            project,
+            user_id=current_user["id"],
+            payload=payload.model_dump(exclude_unset=True) if payload else {},
+            permissions=permissions,
+        )
+        db.commit()
+        db.refresh(project)
+        registrations.notify(db, project, "resubmitted" if resubmitted else "submitted")
         return svc.serialize_project(
             db, project, actor_user_id=current_user["id"], permissions=permissions
         )
@@ -746,16 +929,47 @@ async def create_takeover_request(
     try:
         validate_uuid_path(project_id, resource="Project")
         project = svc.get_project_or_404(db, project_id)
-        request = svc.create_takeover_request(
-            db,
-            project=project,
-            requester_user_id=current_user["id"],
-            kind=payload.kind,
-            reason=payload.reason,
-        )
+        from app.services import own_scope
+
+        me = _visible_to(db, current_user)
+        foreign = me is not None and not own_scope.project_in_scope(db, me, project_id)
+        if foreign and payload.kind != svc.TAKEOVER_DISPUTE:
+            # Someone limited to their own projects registers interest only (D8).
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        if foreign and (
+            SUBMIT not in permission_slugs(db, current_user["id"]) or not svc.is_approved(project)
+        ):
+            # Out of scope: only a submitter, and only on an approved project, may reach it.
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        try:
+            request = svc.create_takeover_request(
+                db,
+                project=project,
+                requester_user_id=current_user["id"],
+                kind=payload.kind,
+                reason=payload.reason,
+            )
+        except AppException as exc:
+            if foreign and getattr(exc, "code", None) == "project_takeover_already_open":
+                raise AppException(
+                    status_code=409,
+                    message="You already have a request open. Wait for it to be decided.",
+                    code="project_takeover_already_open",
+                )
+            raise
         db.commit()
         db.refresh(request)
-        return _takeover_payload(db, [request])[0]
+        if request.kind == svc.TAKEOVER_DISPUTE:
+            from app.services import project_notify_service as notify
+
+            notify.notify_interest_registered(
+                db, project=project, request=request, requester_user_id=current_user["id"]
+            )
+        out = _takeover_payload(db, [request])[0]
+        if foreign:
+            out["project_code"] = None
+            out["project_title"] = None
+        return out
     except Exception as exc:
         db.rollback()
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
@@ -778,7 +992,7 @@ async def decide_takeover_request(
     try:
         validate_uuid_path(project_id, resource="Project")
         validate_uuid_path(request_id, resource="Request")
-        from app.models.projects import ProjectTakeoverRequest
+        from app.models.projects import Project, ProjectTakeoverRequest
         from app.services.error_handler import AppException
 
         request = (
@@ -795,6 +1009,7 @@ async def decide_takeover_request(
                 message="Request not found on this project.",
                 code="project_takeover_not_found",
             )
+        previous_owner = db.query(Project.owner_user_id).filter(Project.id == project_id).scalar()
         svc.decide_takeover_request(
             db,
             request=request,
@@ -805,6 +1020,16 @@ async def decide_takeover_request(
         )
         db.commit()
         db.refresh(request)
+        if request.kind == svc.TAKEOVER_DISPUTE and request.status == svc.TAKEOVER_APPROVED:
+            from app.services import project_notify_service as notify
+
+            notify.notify_reassigned(
+                db,
+                project=db.get(Project, project_id),
+                request=request,
+                previous_owner_id=previous_owner,
+                new_owner_id=request.requester_user_id,
+            )
         return _takeover_payload(db, [request])[0]
     except Exception as exc:
         db.rollback()

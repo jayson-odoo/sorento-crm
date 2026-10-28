@@ -5,6 +5,7 @@ import { APPEALED_LABEL, isAwaitingReview } from '@/lib/submission-status';
 import type { ProjectApprovalState } from '../types/project.types';
 
 const LABEL: Partial<Record<ProjectApprovalState, string>> = {
+  draft: 'Draft',
   pending: 'Awaiting approval',
   resubmitted: APPEALED_LABEL,
   rejected: 'Rejected',

@@ -8,7 +8,7 @@ import { EditProjectClient } from './components/EditProjectClient';
 
 export const metadata: Metadata = {
   title: 'Edit project',
-  description: 'Change what was registered - salesperson, lead, brands and every other field.',
+  description: 'Change what was registered - salesperson, lead and every other field.',
 };
 
 export default async function EditProjectPage({
@@ -18,7 +18,7 @@ export default async function EditProjectPage({
 }) {
   const { projectId } = await params;
   return (
-    <RequireAccess permission="projects.projects.edit">
+    <RequireAccess anyPermission={['projects.projects.edit', 'projects.registrations.submit']}>
       <Container className="space-y-6">
         {/* Crumbs left, one Back right (D6, S3-01); no subtitle under the title. */}
         <PageHeader

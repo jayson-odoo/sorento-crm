@@ -150,6 +150,9 @@ _ID_LESS = frozenset(
     {
         ("GET", "/projects/"),
         ("POST", "/projects/"),
+        ("POST", "/projects/ai-extract"),
+        ("POST", "/projects/clash-preview"),
+        ("GET", "/parties/"),
         ("GET", "/sample-requests"),
         ("POST", "/sample-requests"),
         ("GET", "/sample-requests/products"),
@@ -208,7 +211,9 @@ def classify(method: str, path_format: str):
     return resolver
 
 
-def check(db: Session, user_id: str, method: str, path_format: str, path_params: dict) -> None:
+def check(
+    db: Session, user_id: str, method: str, path_format: str, path_params: dict, interest: bool = False
+) -> None:
     """Raise unless a limited user may reach this route with these ids; no-op otherwise."""
     if not own_scope.user_is_limited(
         db, user_id, own_scope.PROJECTS_VIEW, own_scope.PROJECTS_VIEW_OWN
@@ -217,6 +222,10 @@ def check(db: Session, user_id: str, method: str, path_format: str, path_params:
     resolver = classify(method, path_format)
     if resolver is None:
         raise _refused()
+    if interest and method == "POST" and path_format.endswith("/projects/{project_id}/takeover-requests"):
+        # Registering interest (kind "dispute") in a project that is not theirs: the route
+        # answers without project facts (PROJECT-REGISTER-V2 D8).
+        return
     if resolver == "open" or resolver is _MODULE_RULE:
         return
     path = path_format[len(PREFIX):] if path_format.startswith(PREFIX) else path_format
@@ -246,5 +255,18 @@ async def project_own_scope_guard(
 ) -> None:
     route = request.scope.get("route")
     path_format = getattr(route, "path_format", None) or request.url.path
-    check(db, str(current_user.get("id") or ""), request.method, path_format, request.path_params)
+    interest = False
+    if request.method == "POST" and path_format.endswith("/projects/{project_id}/takeover-requests"):
+        try:
+            interest = (await request.json()).get("kind") == "dispute"
+        except Exception:  # noqa: BLE001 -- an unreadable body is not an interest
+            interest = False
+    check(
+        db,
+        str(current_user.get("id") or ""),
+        request.method,
+        path_format,
+        request.path_params,
+        interest,
+    )
 

@@ -105,6 +105,32 @@ describe('AIExtractDialog', () => {
     );
   });
 
+  it('keeps the field review table inside a phone-width dialog (PROJECT-REGISTER-V2, 375 px)', async () => {
+    (aiExtractFromFiles as ReturnType<typeof vi.fn>).mockResolvedValue(mockExtractResult);
+    renderDialog(vi.fn());
+
+    const input = screen.getByTestId('ai-extract-file-input') as HTMLInputElement;
+    Object.defineProperty(input, 'files', {
+      value: [makeFile('do.png')],
+      writable: false,
+    });
+    fireEvent.change(input);
+    fireEvent.click(screen.getByTestId('ai-extract-run'));
+    await waitFor(() => screen.getByTestId('ai-extract-review'));
+
+    // A 176 px label column (w-44) plus value, status and the drop button overflowed a
+    // 343 px dialog at 375 px and cut the drop buttons off: the table is laid out to the
+    // dialog's width and the label column only widens from sm up.
+    const row = screen.getByTestId('ai-extract-field-customer_name');
+    const table = row.closest('table') as HTMLTableElement;
+    expect(table.className).toMatch(/\btable-fixed\b/);
+    expect(table.className).toMatch(/\bw-full\b/);
+    const labelCell = row.querySelector('td') as HTMLTableCellElement;
+    expect(labelCell.className).toMatch(/\bw-24\b/);
+    expect(labelCell.className).toMatch(/\bsm:w-44\b/);
+    expect(labelCell.className).not.toMatch(/(^|\s)w-44\b/);
+  });
+
   it('drops a field when × is clicked and excludes it on confirm', async () => {
     (aiExtractFromFiles as ReturnType<typeof vi.fn>).mockResolvedValue(mockExtractResult);
     const onApply = vi.fn();

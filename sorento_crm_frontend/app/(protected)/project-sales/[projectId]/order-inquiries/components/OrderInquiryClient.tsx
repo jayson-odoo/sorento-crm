@@ -443,7 +443,10 @@ export function OrderInquiryClient({ projectId }: { projectId: string }) {
             </InfoHint>
           </div>
           {project.data && (
-            <p className="mt-0.5 text-sm text-muted-foreground break-words">
+            <p
+              className="mt-0.5 line-clamp-2 text-sm text-muted-foreground break-words"
+              title={project.data.title}
+            >
               {project.data.title}
             </p>
           )}

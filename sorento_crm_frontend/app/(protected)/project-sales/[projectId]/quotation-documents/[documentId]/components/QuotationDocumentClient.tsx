@@ -3,6 +3,7 @@
 import { APPEAL_VERB } from '@/lib/submission-status';
 import * as React from 'react';
 import Link from 'next/link';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { useRouter } from 'next/navigation';
 import { PenLine } from 'lucide-react';
 import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
@@ -302,8 +303,8 @@ export function QuotationDocumentClient({
               {standing.label}
             </span>
           </div>
-          <h2 className="mt-1 break-words text-xl font-semibold">
-            {record.subject_title ?? '-'}
+          <h2 className="mt-1 text-xl font-semibold">
+            <TruncatedTextCell text={record.subject_title} lines={2} dialogTitle="Title" />
           </h2>
           <p className="break-words text-sm text-muted-foreground">
             {record.recipient_name_snapshot ?? '-'}
