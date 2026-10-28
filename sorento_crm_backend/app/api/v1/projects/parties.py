@@ -18,6 +18,7 @@ from app.schemas.projects import (
 from app.services import project_reference_service as refs
 from app.services.error_handler import handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -27,7 +28,7 @@ EDIT = "projects.parties.edit"
 
 @router.get("/", response_model=ListResponse[ProjectPartyResponse])
 def list_parties(
-    party_type: Optional[str] = Query(None),
+    party_type: Optional[list[str]] = Query(None),
     query: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
     page: int = Query(1, ge=1),
@@ -40,7 +41,7 @@ def list_parties(
         rows, total = refs.list_parties(
             db,
             company_id=company_id,
-            party_type=party_type,
+            party_type=multi_values(party_type),
             search=query,
             include_inactive=include_inactive,
             page=page,

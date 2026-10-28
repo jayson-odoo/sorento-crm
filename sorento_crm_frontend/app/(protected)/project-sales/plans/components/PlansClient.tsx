@@ -21,7 +21,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { STATUS_PILL_BASE } from '@/lib/status-pill';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { usePlans } from '../../_shared/hooks/useFulfilmentPlanning';
@@ -70,7 +71,7 @@ export function PlansClient() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const [planState, setPlanState] = React.useState<PlanState>('active');
+  const [planState, setPlanState] = React.useState('active');
   const [agentCode, setAgentCode] = React.useState('');
   const {
     value: search,
@@ -356,9 +357,10 @@ export function PlansClient() {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <p className="text-sm font-medium">State</p>
-                      <SearchableSelect
-                        value={planState}
-                        onChange={(value) => setPlanState(value as PlanState)}
+                      <SearchableMultiSelect
+                        value={splitMulti(planState)}
+                        // State is required: the last one picked cannot be unticked.
+                        onChange={(value) => value.length && setPlanState(joinMulti(value))}
                         options={STATE_OPTIONS}
                       />
                     </div>

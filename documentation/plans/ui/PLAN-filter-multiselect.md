@@ -1,9 +1,9 @@
 # PLAN: every dropdown filter is multi-select (FILTER-MULTISELECT)
 
 Status: Review. Scan done (27 Oct); owner answered the card (28 Oct, section 0). PR1 #1930, PR2
-#1928, PR3 #1937 and PR4 #1938 MERGED to main (241a45d8, 61758cc4, 1ad7572f, 8e534691), each
-owner hand-tested. PR5 #1939 (SCM) retargeted to main 28 Oct with PR4 and main merged in; browser
-pass and hand test next. PR6 #1940 and PR7 #1941 reviewer READY, follow one at a time.
+#1928, PR3 #1937, PR4 #1938 and PR5 #1939 MERGED to main (241a45d8, 61758cc4, 1ad7572f, 8e534691,
+549a6842), each owner hand-tested. PR6 #1940 (project sales / resources) retargeted to main 28 Oct
+with PR5 and main merged in; browser pass and hand test next. PR7 #1941 reviewer READY, follows.
 Track: full lane, stacked PRs (diff well over 300 lines; no migration, no auth change).
 
 Owner standing rule (27 Oct 2026): "do a scan through the filter in our system, all dropdown
