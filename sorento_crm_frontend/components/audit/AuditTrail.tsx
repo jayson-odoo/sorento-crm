@@ -9,8 +9,10 @@ import {
   auditFieldChanges,
   auditFieldLabel,
   formatAuditValue,
-  isAuditResubmit,
+  auditTrailHeadings,
+  resubmittedSummary,
   type AuditFieldChange,
+  type AuditTrailHeading,
 } from '@/lib/audit-fields';
 import type { AuditLogEntry } from '@/types/audit.types';
 
@@ -34,13 +36,19 @@ type ChangeLine = { text: string } | { label: string; before: string; after: str
  * nothing a reader can see (only bookkeeping fields), and the row is not shown.
  * `childName` is set for a child row (a product line on its complaint's trail).
  */
-function collectChangeLines(entry: AuditLogEntry, childName: string | null): ChangeLine[] {
+function collectChangeLines(
+  entry: AuditLogEntry,
+  childName: string | null,
+  heading: AuditTrailHeading | undefined,
+): ChangeLine[] {
   if (entry.action === 'INSERT') return [{ text: childName ? `${childName} added` : 'Record created' }];
   if (entry.action === 'DELETE') return [{ text: childName ? `${childName} removed` : 'Record deleted' }];
   const summary = entry.description?.trim() || '';
   if (entry.action !== 'UPDATE') return [{ text: summary || entry.action }];
   const prefix = childName ? `${childName}: ` : '';
-  const lines: ChangeLine[] = summary ? [{ text: `${prefix}${summary}` }] : [];
+  // A past resubmit's "rejected → submitted" reads as what it is called today.
+  const shown = heading === 'Resubmitted' ? resubmittedSummary(summary) : summary;
+  const lines: ChangeLine[] = summary ? [{ text: `${prefix}${shown}` }] : [];
   for (const change of auditFieldChanges(entry.old_values, entry.new_values)) {
     if (summary && summaryCovers(change, entry, summary)) continue;
     lines.push(
@@ -77,11 +85,16 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
     );
   }
 
-  const rows = (data?.data ?? [])
+  const entries = data?.data ?? [];
+  const isChild = (entry: AuditLogEntry) =>
+    entry.entity_type !== entityType || entry.entity_id !== entityId;
+  // Rejected / Resubmitted come from the record's own history, never a child row's status.
+  const headings = auditTrailHeadings(entries.filter((entry) => !isChild(entry)));
+  const rows = entries
     .map((entry) => {
-      const isChild = entry.entity_type !== entityType || entry.entity_id !== entityId;
-      const childName = isChild ? entry.entity_label || auditFieldLabel(entry.entity_type) : null;
-      return { entry, lines: collectChangeLines(entry, childName) };
+      const childName = isChild(entry) ? entry.entity_label || auditFieldLabel(entry.entity_type) : null;
+      const heading = headings.get(entry.id);
+      return { entry, heading, lines: collectChangeLines(entry, childName, heading) };
     })
     .filter((row) => row.lines.length > 0);
   const empty = data?.empty ?? true;
@@ -98,7 +111,7 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
           <p className="text-sm text-muted-foreground">No field changes to show.</p>
         ) : (
           <ul className="space-y-4">
-            {rows.map(({ entry, lines }) => (
+            {rows.map(({ entry, heading, lines }) => (
               <li
                 key={entry.id}
                 data-audit-entry="1"
@@ -106,7 +119,7 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
               >
                 <div className="flex flex-wrap items-baseline gap-2 text-sm">
                   <span data-testid="audit-action" className="font-medium capitalize">
-                    {isAuditResubmit(entry) ? 'Resubmitted' : entry.action.toLowerCase()}
+                    {heading ?? entry.action.toLowerCase()}
                   </span>
                   <span className="text-muted-foreground">
                     {formatDateTimeInMalaysia(entry.changed_at)}

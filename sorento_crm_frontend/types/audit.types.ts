@@ -5,6 +5,8 @@ export interface AuditLogEntry {
   action: string;
   user_id: string | null;
   user_display_name?: string | null;
+  /** Acting contact for a portal / public write (legacy rows carry no actor_type). */
+  contact_id?: string | null;
   /** user | contact | integration | worker | scheduler | public_link | system | legacy */
   actor_type?: string | null;
   /** password | phone_otp | portal_link | portal_token | api_key | impersonation | dev_login */
