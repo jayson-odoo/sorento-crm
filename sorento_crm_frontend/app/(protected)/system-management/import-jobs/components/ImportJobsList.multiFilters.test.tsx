@@ -109,4 +109,31 @@ describe('Import jobs - multi Type and Status', () => {
     await user.selectOptions(el, firstTwo(el));
     await waitFor(() => expect(setOf(last().status)).toEqual(firstTwo(el).sort()));
   });
+
+  // Browser pass 28 Oct: the Type dropdown replaced a free text box, so every job type the backend
+  // writes must be offered or its jobs can no longer be filtered. These are the types missing from
+  // the label map at the time (job_type literals in sorento_crm_backend/app, autocount_pull_service.py:48,70).
+  it('offers every job type the backend creates', async () => {
+    open();
+    const el = await multiAt(0);
+    const offered = Array.from(el.options).map((o) => o.value);
+    for (const type of [
+      'attachment_bulk_download',
+      'catalogue_photo_read',
+      'container_status_import',
+      'delivery_order_detail_import',
+      'project_series_import',
+      'warehouse_import',
+      'autocount_products_pull',
+      'autocount_products_apply',
+      'autocount_stock_pull',
+      'autocount_stock_apply',
+      'autocount_delivery_orders_pull',
+      'autocount_delivery_orders_apply',
+      'autocount_grn_pull',
+      'autocount_grn_apply',
+    ]) {
+      expect(offered).toContain(type);
+    }
+  });
 });

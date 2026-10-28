@@ -108,3 +108,31 @@ def test_rejects_unsupported_resource():
     fg = FilterGroup(op="and", children=[FilterCondition(field_key="order_number", op="eq", value="x")])
     with pytest.raises(ValueError, match="Unsupported resource"):
         compile_filter("unknown_resource", fg, meta)
+
+
+# FILTER-MULTISELECT PR7 browser pass: the Advanced filter's multi pick list sends a LIST for
+# "In list"; on a uuid field (Delivery Orders Order status, Products Category) the value adapter
+# turned that list into one string and the compiler refused it ("in operator requires non-empty
+# list value"). Each element is coerced on its own.
+def test_compile_uuid_in_takes_a_list_of_ids():
+    ids = ["550e8400-e29b-41d4-a716-446655440000", "650e8400-e29b-41d4-a716-446655440001"]
+    fg = FilterGroup(
+        op="and",
+        children=[FilterCondition(field_key="line_product_id", op="in", value=ids)],
+    )
+    meta = {
+        "line_product_id": _field("line_product_id", "line.product_id", "uuid", ["eq", "ne", "in"]),
+    }
+    expr = compile_filter("orders", fg, meta)
+    assert expr is not None
+    assert " IN " in str(expr).upper()
+
+
+def test_coerce_value_coerces_each_element_of_a_list():
+    from decimal import Decimal
+
+    from app.services.query.filter_compiler_adapters import _coerce_value
+
+    ids = ["550e8400-e29b-41d4-a716-446655440000", "650e8400-e29b-41d4-a716-446655440001"]
+    assert _coerce_value(ids, "uuid") == ids
+    assert _coerce_value(["1", "2.5"], "number") == [Decimal("1"), Decimal("2.5")]
