@@ -13,7 +13,7 @@ router = APIRouter()
 
 
 @router.get("/", response_model=ListResponse[PickingLineResponse])
-async def get_picking_lines(
+def get_picking_lines(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, description="Search by SPO allocation or product"),

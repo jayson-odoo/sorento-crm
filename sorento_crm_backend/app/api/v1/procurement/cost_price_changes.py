@@ -68,7 +68,7 @@ def upload_price_list(
 
 
 @router.get("")
-async def list_change_sets(
+def list_change_sets(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=200),
     sort: Optional[str] = Query("created_at"),
@@ -86,7 +86,7 @@ async def list_change_sets(
 
 
 @router.get("/{id}")
-async def get_change_set(
+def get_change_set(
     id: str,
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),
@@ -96,7 +96,7 @@ async def get_change_set(
 
 
 @router.get("/{id}/lines")
-async def get_change_set_lines(
+def get_change_set_lines(
     id: str,
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),
@@ -105,7 +105,7 @@ async def get_change_set_lines(
 
 
 @router.patch("/{id}/lines/{line_id}")
-async def patch_change_set_line(
+def patch_change_set_line(
     id: str,
     line_id: str,
     body: dict,
@@ -117,7 +117,7 @@ async def patch_change_set_line(
 
 
 @router.post("/{id}/submit")
-async def submit_change_set(
+def submit_change_set(
     id: str,
     request: Request,
     current_user: dict = Depends(require_permission(UPLOAD_PERM)),
@@ -127,7 +127,7 @@ async def submit_change_set(
 
 
 @router.patch("/{id}/lines/{line_id}/decision")
-async def decide_change_set_line(
+def decide_change_set_line(
     id: str,
     line_id: str,
     body: dict,
@@ -142,7 +142,7 @@ async def decide_change_set_line(
 
 
 @router.post("/{id}/decide-all")
-async def decide_all_change_set_lines(
+def decide_all_change_set_lines(
     id: str,
     body: dict,
     request: Request,
@@ -153,7 +153,7 @@ async def decide_all_change_set_lines(
 
 
 @router.post("/{id}/return")
-async def return_change_set(
+def return_change_set(
     id: str,
     body: dict,
     request: Request,
@@ -164,7 +164,7 @@ async def return_change_set(
 
 
 @router.post("/{id}/refresh-prices")
-async def refresh_change_set_prices(
+def refresh_change_set_prices(
     id: str,
     request: Request,
     current_user: dict = Depends(require_permission(UPLOAD_PERM)),
@@ -174,7 +174,7 @@ async def refresh_change_set_prices(
 
 
 @router.post("/{id}/apply")
-async def apply_change_set(
+def apply_change_set(
     id: str,
     request: Request,
     # Which slug actually applies depends on the SET's status (`upload` for a Draft
@@ -188,7 +188,7 @@ async def apply_change_set(
 
 
 @router.delete("/{id}")
-async def discard_change_set(
+def discard_change_set(
     id: str,
     current_user: dict = Depends(require_permission(UPLOAD_PERM)),
     db: Session = Depends(get_db),
@@ -198,7 +198,7 @@ async def discard_change_set(
 
 
 @router.get("/{id}/source-file")
-async def download_source_file(
+def download_source_file(
     id: str,
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),
@@ -212,7 +212,7 @@ async def download_source_file(
 
 
 @router.get("/{id}/history")
-async def get_change_set_history(
+def get_change_set_history(
     id: str,
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),

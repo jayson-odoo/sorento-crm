@@ -53,7 +53,7 @@ def _respond_user_id_from_current_user(current_user: dict) -> str:
 
 
 @router.get("/", response_model=ListResponse[StockInquiryResponse])
-async def get_stock_inquiries(
+def get_stock_inquiries(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -91,7 +91,7 @@ async def get_stock_inquiries(
 
 
 @router.get("/{inquiry_id}", response_model=StockInquiryResponse)
-async def get_stock_inquiry(
+def get_stock_inquiry(
     inquiry_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -112,7 +112,7 @@ async def get_stock_inquiry(
 
 
 @router.get("/{inquiry_id}/revisions")
-async def get_stock_inquiry_revisions(
+def get_stock_inquiry_revisions(
     inquiry_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -139,7 +139,7 @@ async def get_stock_inquiry_revisions(
 
 
 @router.get("/{inquiry_id}/conversation")
-async def get_stock_inquiry_conversation(
+def get_stock_inquiry_conversation(
     inquiry_id: str,
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     cursor: Optional[str] = Query(None),
@@ -191,7 +191,7 @@ async def get_stock_inquiry_conversation(
 
 
 @router.delete("/attachments/{link_id}", status_code=status.HTTP_200_OK)
-async def delete_stock_inquiry_attachment(
+def delete_stock_inquiry_attachment(
     link_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -212,7 +212,7 @@ async def delete_stock_inquiry_attachment(
     status_code=status.HTTP_201_CREATED,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def link_attachment_to_stock_inquiry(
+def link_attachment_to_stock_inquiry(
     inquiry_id: str,
     body: StockInquiryAttachmentLinkRequest,
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -273,7 +273,7 @@ def upload_stock_inquiry_response_attachment(
 
 
 @router.delete("/response-attachments/{link_id}", status_code=status.HTTP_200_OK)
-async def delete_stock_inquiry_response_attachment(
+def delete_stock_inquiry_response_attachment(
     link_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
@@ -294,7 +294,7 @@ async def delete_stock_inquiry_response_attachment(
     response_model=ViewLinkResponse,
     dependencies=[Depends(require_public_view_links_enabled())],
 )
-async def get_or_create_stock_inquiry_view_link(
+def get_or_create_stock_inquiry_view_link(
     inquiry_id: str,
     data: Optional[ViewLinkRequest] = Body(None),
     current_user: dict = Depends(get_current_user),
@@ -404,7 +404,7 @@ def export_stock_inquiry_pdf(
 
 
 @router.post("/", response_model=StockInquiryResponse, status_code=status.HTTP_201_CREATED)
-async def create_stock_inquiry(
+def create_stock_inquiry(
     inquiry_data: StockInquiryCreate,
     request: Request,
     response: Response,
@@ -459,7 +459,7 @@ async def create_stock_inquiry(
     response_model=StockInquiryResponse,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def update_stock_inquiry(
+def update_stock_inquiry(
     inquiry_id: str,
     inquiry_data: StockInquiryUpdate,
     request: Request,
@@ -484,7 +484,7 @@ async def update_stock_inquiry(
     response_model=StockInquiryResponse,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def update_stock_inquiry_and_reply(
+def update_stock_inquiry_and_reply(
     inquiry_id: str,
     inquiry_data: StockInquiryUpdate,
     request: Request,
@@ -537,7 +537,7 @@ async def update_stock_inquiry_and_reply(
     response_model=StockInquiryResponse,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def submit_stock_inquiry_for_project_sales(
+def submit_stock_inquiry_for_project_sales(
     inquiry_id: str,
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.submit_for_project_sales")),
     db: Session = Depends(get_db),
@@ -560,7 +560,7 @@ async def submit_stock_inquiry_for_project_sales(
     response_model=StockInquiryResponse,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def project_sales_approve_stock_inquiry(
+def project_sales_approve_stock_inquiry(
     inquiry_id: str,
     request: Request,
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.project_sales_approve")),
@@ -608,7 +608,7 @@ async def project_sales_approve_stock_inquiry(
     response_model=StockInquiryResponse,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def project_sales_reject_stock_inquiry(
+def project_sales_reject_stock_inquiry(
     inquiry_id: str,
     request: Request,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
@@ -659,7 +659,7 @@ async def project_sales_reject_stock_inquiry(
     response_model=StockInquiryResponse,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def purchasing_reject_stock_inquiry(
+def purchasing_reject_stock_inquiry(
     inquiry_id: str,
     request: Request,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
@@ -710,7 +710,7 @@ async def purchasing_reject_stock_inquiry(
     response_model=StockInquiryResponse,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def reopen_stock_inquiry(
+def reopen_stock_inquiry(
     inquiry_id: str,
     body: Optional[StockInquiryRejectReopenRequest] = Body(None),
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.reopen")),
@@ -736,7 +736,7 @@ async def reopen_stock_inquiry(
     response_model=StockInquiryResponse,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def void_stock_inquiry(
+def void_stock_inquiry(
     inquiry_id: str,
     payload: FormVoidRequest,
     current_user: dict = Depends(require_permission("procurement.stock_inquiries.void")),
@@ -767,7 +767,7 @@ async def void_stock_inquiry(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_stock_inquiries(
+def bulk_delete_stock_inquiries(
     body: BulkDeleteStockInquiriesRequest = Body(...),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -787,7 +787,7 @@ async def bulk_delete_stock_inquiries(
     status_code=status.HTTP_200_OK,
     dependencies=[Depends(require_current_revision("stock_inquiry", "inquiry_id"))],
 )
-async def delete_stock_inquiry(
+def delete_stock_inquiry(
     inquiry_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)

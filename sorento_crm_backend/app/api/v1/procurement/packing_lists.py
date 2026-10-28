@@ -31,7 +31,7 @@ class BulkDeletePackingListsRequest(BaseModel):
 
 
 @router.get("/clearance-checkpoints")
-async def list_clearance_checkpoints(
+def list_clearance_checkpoints(
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
 ):
@@ -81,7 +81,7 @@ async def list_clearance_checkpoints(
 
 
 @router.get("/container-status/latest")
-async def download_latest_container_status(
+def download_latest_container_status(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -223,7 +223,7 @@ def import_container_status(
 
 
 @router.get("/", response_model=ListResponse[InboundShipmentListItemResponse])
-async def get_packing_lists(
+def get_packing_lists(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -257,7 +257,7 @@ async def get_packing_lists(
 
 
 @router.get("/{shipment_id}", response_model=InboundShipmentResponse)
-async def get_packing_list(
+def get_packing_list(
     shipment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -406,7 +406,7 @@ async def get_packing_list(
 
 
 @router.post("/", response_model=InboundShipmentResponse, status_code=status.HTTP_201_CREATED)
-async def create_packing_list(
+def create_packing_list(
     shipment_data: InboundShipmentCreate,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -428,7 +428,7 @@ async def create_packing_list(
 
 
 @router.put("/{shipment_id}", response_model=InboundShipmentResponse)
-async def update_packing_list(
+def update_packing_list(
     shipment_id: str,
     shipment_data: InboundShipmentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -446,7 +446,7 @@ async def update_packing_list(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_packing_lists(
+def bulk_delete_packing_lists(
     body: BulkDeletePackingListsRequest = Body(...),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -462,7 +462,7 @@ async def bulk_delete_packing_lists(
 
 
 @router.delete("/{shipment_id}", status_code=status.HTTP_200_OK)
-async def delete_packing_list(
+def delete_packing_list(
     shipment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
