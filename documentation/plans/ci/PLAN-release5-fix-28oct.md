@@ -1,6 +1,6 @@
 # PLAN: RELEASE5-FIX (28 Oct 2026)
 
-Status: in progress, small fix track (test-only diff, no migration, no auth/RBAC, no new ingest).
+Status: PR #1963 ready for CI, small fix track (tests + workflow TZ + 3 stock-position FE files, no migration, no auth/RBAC, no new ingest).
 
 ## Problem
 
@@ -34,3 +34,19 @@ on the #1958 PR.
 Run the chatbot suite and the tests #1957 / #1958 / #1959 added on a throwaway DB, and read
 the other release shards' failures once they finish, so the re-dispatch does not fail on a
 third test.
+
+## Outcome (rounds 2-6: every failed job of run 40680704839)
+
+| Test | Cause | Fix |
+| --- | --- | --- |
+| chatbot/test_llm_call_timeout `test_gemini_passes_the_timeout_to_its_request` | #1958 spends the cache steps from the caller's timeout | assert approx 9 s and never more |
+| chatbot/test_import_boundary | #1958 cache test imported the chatbot package from core tests | clarifier test moved to tests/chatbot/test_llm_cost_parser.py |
+| test_project_customer_from_lead x4 | #1957: register helper always picks a customer; picked wins over the lead's buyer | tests pick the lead's buyer; pin picked-wins + older-project fallback |
+| test_project_quotation_approval_notify b4 | #1952 verb "resubmitted" -> "appealed" | assert "appealed" |
+| test_chat_local_first fresh push | +08 runner: naive `utcnow().timestamp()` read as local | aware UTC epoch |
+| test_respond_webhook_ingest x2 (found by +08 sweep) | same, `.timestamp()` on stored naive UTC | `.replace(tzinfo=utc)` |
+| analytics_connector/test_review_round [401/409/410/413] | #1957 added `viewer_user_id` to get_project_or_404 | stand-in absorbs keywords |
+| test_filter_multiselect_pr6_lists parties x2 | #1957 parties list on require_any_permission (slug set) | test client answers every slug |
+| vitest options.inventory M4-01 | #1913 useStockPosition own placeholderData | spread LIST_QUERY_OPTIONS |
+| vitest loading-inventory M5-01, PageHeader S5-05 (found locally) | #1913 no loading.tsx; `c.id.slice(3)` | loading.tsx; named prefix |
+| systemic | sorento-mac VM is Asia/Kuala_Lumpur, prod is UTC (no TZ anywhere in images/compose/deploy) | workflow `env: TZ: UTC`, pinned by test_ci_runner_routing |
