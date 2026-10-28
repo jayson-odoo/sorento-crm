@@ -233,7 +233,7 @@ describe('5. view-mode Lines tab shows the portal price columns and parts', () =
     expect(await screen.findByRole('columnheader', { name: 'List price' })).toBeTruthy();
     expect(screen.queryByRole('columnheader', { name: 'Promotion' })).toBeNull();
     expect(screen.queryByRole('columnheader', { name: 'Selling price' })).toBeNull();
-    expect(screen.getByText(MIRROR.code)).toBeTruthy();
+    expect(screen.getByText(/SRTMR502-BL/)).toBeTruthy();
   });
 
   it('selling mode: List price, Promotion and Selling price columns with the line promotion name', async () => {

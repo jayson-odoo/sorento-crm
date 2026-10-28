@@ -69,6 +69,7 @@ const apiFetch = vi.fn(async (url: string, init?: RequestInit) => {
   if (path.includes('/lookups/debtors-for-agent') || path.endsWith('/debtors')) {
     return json([{ customer_id: 'c-1', customer_code: 'D-001', customer_name: 'ZZT Dealer', debtor_code: 'D-001', debtor_name: 'ZZT Dealer', source: 'customer' }]);
   }
+  if (path.includes('/lookups/product-combos/')) return json({ host_guarded: false, combos: [] });
   return json([]);
 });
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: [string, RequestInit?]) => apiFetch(...a) }));
