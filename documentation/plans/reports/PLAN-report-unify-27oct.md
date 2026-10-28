@@ -1,6 +1,6 @@
 # PLAN: REPORT-UNIFY (finish `crm_report_ask` for every sales and outstanding ask)
 
-Status: Review, round 6 done by the LOCAL worker (lane REPORT-UNIFY-LOCAL) on 29 Oct: reviewer READY and security CLEAN on 1724cd3cfd, the hand-test script re-run on the crew copy (section 7). Waiting on CI and the owner's hand test.
+Status: Review, round 6 done by the LOCAL worker (lane REPORT-UNIFY-LOCAL) on 29 Oct: reviewer READY and security CLEAN on 2839b6581c, the hand-test script re-run on the crew copy on the final code (section 7). Waiting on CI and the owner's hand test.
 Track: full (size L). Three stacked slices on one lane branch, one PR (#1922).
 UAC: `report-unify-27oct-acceptance-criteria.md`.
 
@@ -316,9 +316,10 @@ scratch worktree (each mutant red, restored green).
 | Copy step 13: the document/status projection replaced the seam's sales_ranking | 10f6ba507b | 14b2f8bc3d |
 | B6: the step-14 exception dropped a brand from a plain SO list | 64312877cd | 8075f21128 |
 | B7: the live parse sends by_words null beside group_by | 5587f5fc50 | 1724cd3cfd |
+| Copy step 8 on the final code: a company answer's guessed group_by (no by_words) replaced the held axis | 408c88d00b | 2839b6581c |
 
 Copy run (crew copy :3104 on sorento_prod_1020, parser v189 on Gemini flash-lite, console route with the session
-carried turn to turn): steps 1-8, 10-20 PASS; 11 and 17 partly ENV (the billing tables are empty, so unpaid and
+carried turn to turn; steps 1-13 re-run on the final code): steps 1-8, 10-20 PASS; 11 and 17 partly ENV (the billing tables are empty, so unpaid and
 invoiced read RM 0.00). Step 9 in sequence (bare "outstanding" right after a delivered total) runs Undelivered orders
 for the held company and year: the parser itself emits `basis: outstanding`, `ranking_refine: true` and the year's
 dates for that message, and no parser field says whether the basis or the dates were read off this message, so the
@@ -329,6 +330,8 @@ The 14 `test_replay.py` full-corpus failures are pre-existing: the same 14 fail 
 `CHATBOT_FIXTURES_DIR` points at the n8n corpus (gate text drift, `gate.py:1051`); CI has no corpus and skips them.
 
 Open after this round:
+- reviewer note (not blocking): the company seam drops a `group_by` when the answer carries no `by_words`; a
+  parser that omits `by_words` on "Mocha, by month" would lose the month split there.
 - reviewer should-fix (not blocking): the step-14 exception reads the parser's raw `group_by`; a guessed
   `group_by: brand` on a plain "my sales orders for <brand>" would drop the brand again. No live parse shows it.
 - the parser prompt line for step 9 (bare "outstanding" after a sales total) and for a named agent sent as `group_by`;
