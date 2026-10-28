@@ -457,3 +457,21 @@ def test_slice4_unpaid_cannot_group_by_product(client, db) -> None:
     """Slice 4 / AC-RU-8b on screen: a document has no product, so a product pivot row is 422."""
     _world(db)
     assert _run(client, KEYS["unpaid"], rows="product").status_code == 422
+
+
+# ================================================================ the 5,000-row detail cap truncates, never refuses (crew 28 Oct)
+
+
+@pytest.mark.parametrize("basis", list(KEYS))
+def test_a_detail_over_the_cap_is_truncated_and_the_summary_still_answers(client, db, basis, monkeypatch) -> None:
+    """The six ask definitions truncate the detail like the Yearly comparison does: the run is 200, the detail is cut and
+    flagged, and the summary's grand total is the whole set's (summed in SQL), equal to the report ask's."""
+    from app.services.reports import engine
+
+    _world(db)
+    monkeypatch.setattr(engine, "DETAIL_ROW_CAP", 2)
+    resp = _run(client, KEYS[basis])
+    assert resp.status_code == 200, resp.text
+    layouts = resp.json()["layouts"]
+    assert layouts["detail"]["truncated"] is True and len(layouts["detail"]["rows"]) == 2, layouts["detail"]
+    assert _grand(resp) == _ask_total(client, db, basis), (basis, resp.text)

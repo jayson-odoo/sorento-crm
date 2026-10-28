@@ -326,3 +326,72 @@ def test_the_two_shapes_the_company_pick_skip_exists_for_are_the_pick(bot, shape
     text, calls = bot.say(reply, sorento)
     args = _only_report_ask(calls)
     assert args["company"] and args["company"] != MOCHA_ID and not args.get("group_by"), args
+
+
+# ---------------------------------------------------------------- hand test 2 (c858f429)
+
+
+def test_a_breakdown_asks_the_basis_then_the_company_never_the_measure_and_runs_every_row(bot) -> None:
+    """(a) "Total sale for all sale agents on September 2026": the required field first (the basis only: a breakdown
+    shows both measures), the company last, then it runs by amount over every row."""
+    from app.services.company_scope import DEFAULT_COMPANY_ID
+
+    sorento, mocha = _two_companies(bot)
+    sep = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
+    breakdown = _status(
+        "sales_ranking", group_by="sales_agent", rank_direction=None, top_n=None, rank_by=None, measure=None,
+        basis=None, **sep,
+    )
+    text, calls = bot.say(breakdown, "Total sale for all sale agents on September 2026")
+    assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
+    text, calls = bot.say(_answer(2), "the middle one")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    text, calls = bot.say(_answer(1), "the first company")
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "sales_agent" and args["basis"] == "delivered", args
+    assert args["company"] == DEFAULT_COMPANY_ID and args["top_n"] == 100 and not args.get("measure"), args
+    assert args["date_from"] == "2026-09-01" and args["date_to"] == "2026-09-30", args
+
+
+def test_a_ranking_still_asks_the_measure(bot) -> None:
+    sep = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
+    ranking = _status(
+        "sales_ranking", group_by="sales_agent", rank_direction="top", top_n=5, rank_by=None, measure=None, basis=None, **sep
+    )
+    text, calls = bot.say(ranking, "top 5 sales agents on September 2026")
+    assert calls == [] and "By quantity or by amount?" in text, (text, calls)
+
+
+def test_a_bare_outstanding_after_a_sales_total_asks_the_kind_and_inherits_no_period(bot) -> None:
+    """(e) Owner Q2 + AC-RU-8c: an outstanding status the parser picked no kind for always asks the kind, even with a
+    delivered total held; the kind uses only a period named in THIS message, so all dates apply."""
+    text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    assert [n for n, _a in calls] == ["crm_report_ask"], (text, calls)
+    text, calls = bot.say(_bare_outstanding(), "outstanding")
+    assert calls == [] and "Undelivered orders" in text, (text, calls)
+    text, calls = bot.say(_answer(3), "the invoices one")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "unpaid" and "date_from" not in args and "date_to" not in args, args
+
+
+@pytest.mark.parametrize(
+    "shape",
+    [
+        dict(order_status="sales_ranking", group_by="customer"),
+        dict(order_status="outstanding", group_by="customer"),
+        dict(order_status=None, group_by=None),
+    ],
+    ids=["stray-ranking-axis", "stale-outstanding-axis", "bare"],
+)
+def test_reply_one_under_the_sales_order_list_offer_opens_the_list(bot, shape) -> None:
+    """(b) The open offer is answered before any axis check: a parser position 1 opens the list whatever status or
+    axis the real parse also carried."""
+    text, calls = bot.say(_status("outstanding", basis="outstanding", **NO_DATES), "undelivered orders")
+    assert "Reply 1 for the sales order list." in text, (text, calls)
+    reply = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[], reference_positions=[1],
+        by_words=None, **shape,
+    )
+    text, calls = bot.say(reply, "1")
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "sales_order" and args["basis"] == "outstanding", args

@@ -497,22 +497,21 @@ def test_ac_ru_9a_a_linked_dealer_with_the_outstanding_reveal_sees_only_its_own_
 # ================================================================ security S1: unpaid is receivables, finance data
 
 
-def test_s1_unpaid_needs_the_finance_view_slug_on_the_act_as_user_besides_the_contact_reveal(db) -> None:
-    """Security review S1: `basis=unpaid` is AR, behind `finance.billing_documents.view` everywhere else. A contact holding
-    the Outstanding reveal is still refused (403 `unpaid_needs_finance_view`) when the act-as user lacks the slug; the other
-    outstanding kinds need no such slug."""
+def test_unpaid_on_the_report_ask_follows_the_contacts_outstanding_reveal_not_the_act_as_finance_view(db) -> None:
+    """Owner Q6 ("Unpaid invoices need the Outstanding reveal too", decision 28 Oct, replacing security S1): on the chatbot
+    route `basis=unpaid` is gated by the CONTACT's Outstanding reveal like the other outstanding kinds. The act-as user
+    needs no `finance.billing_documents.view`; the staff SCREEN keeps that slug (security B1)."""
     from tests.test_sales_yearly_routes import _client, _user
 
-    contact = _staff(db)
+    holder = _holder(db, "sales_orders.outstanding")
+    sales_only = _holder(db, "sales_orders.sales_report")
     principal = _user(db, DEFAULT_COMPANY_ID)
     with _client(db, principal, allow=("order_management.orders.view",)) as c:
-        refused = _ask(c, contact, basis="unpaid")
-        assert refused.status_code == 403, refused.text
-        assert refused.json()["code"] == "unpaid_needs_finance_view", refused.text
-        for kind in ("outstanding", "pending_delivery"):
-            assert _ask(c, contact, basis=kind).status_code == 200, kind
-    with _client(db, principal, allow=("order_management.orders.view", "finance.billing_documents.view")) as c:
-        assert _ask(c, contact, basis="unpaid").status_code == 200
+        for basis in ("unpaid", "outstanding", "pending_delivery"):
+            assert _ask(c, holder, basis=basis).status_code == 200, basis
+        refused = _ask(c, sales_only, basis="unpaid")
+        assert refused.status_code == 403 and refused.json()["code"] == "outstanding_not_enabled", refused.text
+        assert c.get("/api/v1/reports/unpaid_documents").status_code == 403  # the screen still needs the finance slug
 
 
 # ================================================================ phase 3 S6: unpaid for a brand-scoped contact
