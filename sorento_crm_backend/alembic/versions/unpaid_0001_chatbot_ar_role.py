@@ -4,7 +4,8 @@ Owner ruling 28 Oct 2026: `basis=unpaid` on the chatbot report ask needs BOTH th
 Outstanding reveal AND `finance.billing_documents.view` on the act-as user (unpaid invoices are
 receivables, finance data). The chatbot reaches the route as the act-as user of the `n8n`
 integration (the shared env key lives there) or of `sorento-mcp`, so those two users, and only
-those, get a dedicated role holding that one slug. Found by integration name through
+those, get a dedicated role (only when the act-as user really is a live integration user: a human
+staff user an integration points at gains nothing) holding that one slug. Found by integration name through
 `integrations.act_as_user_id`, never by a hard-coded id or email. Additive and idempotent; a no-op
 when an integration or its act-as user is absent. Downgrade removes the assignments and the role
 (the permission row may predate this migration and stays).
@@ -64,7 +65,7 @@ def upgrade() -> None:
             "INSERT INTO user_role_assignments (id, user_id, role_id, assigned_at) "
             "SELECT gen_random_uuid()::text, u.id, r.id, now() FROM user_roles r "
             "JOIN users u ON u.id IN (SELECT i.act_as_user_id FROM integrations i WHERE i.name IN :names) "
-            "WHERE r.slug = :rslug AND NOT EXISTS ("
+            "WHERE r.slug = :rslug AND u.is_integration = true AND u.is_trashed = false AND NOT EXISTS ("
             "SELECT 1 FROM user_role_assignments a WHERE a.user_id = u.id AND a.role_id = r.id)"
         ).bindparams(sa.bindparam("names", expanding=True)),
         {"rslug": ROLE_SLUG, "names": list(INTEGRATIONS)},

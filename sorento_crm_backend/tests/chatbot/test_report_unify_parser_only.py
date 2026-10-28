@@ -12,7 +12,9 @@ import pytest
 
 from tests.chatbot.test_report_unify_company_lane import _two_companies
 from tests.chatbot.test_report_unify_routing import (  # noqa: F401  (bot / console are fixtures)
+    CUSTOMER_NAME,
     YEAR,
+    _e,
     _only_report_ask,
     _reply,
     _status,
@@ -266,7 +268,7 @@ def test_the_kind_question_is_not_answered_by_a_basis_outside_the_offered_kinds(
     text, calls = bot.say(
         _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis=basis), basis
     )
-    assert not [a for n, a in calls if a.get("basis") == basis], (calls, text)
+    assert calls == [] and "Undelivered orders" in text, (calls, text)  # the kind is asked again
 
 
 def test_the_kind_question_with_a_null_basis_and_no_declared_answer_runs_nothing(bot) -> None:
@@ -519,3 +521,16 @@ def test_held_sales_total_then_an_outstanding_ask_drops_the_period_and_asks_the_
     text, calls = bot.say(_answer(1), "the first one")
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding" and "date_from" not in args, args
+
+
+def test_a_kind_answer_that_also_binds_a_customer_runs_for_that_customer_never_the_whole_scope(bot) -> None:
+    """Under the kind question, a parse with `basis: unpaid` AND a customer entity bound this turn keeps that customer:
+    the run carries the filter (or is a fresh ask that applies it), never the contact's whole scope."""
+    bot.say(_bare_outstanding(), "outstanding")
+    reply = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, basis="unpaid",
+        entities=[_e(CUSTOMER_NAME, "customer")],
+    )
+    text, calls = bot.say(reply, "unpaid for that customer")
+    args = _only_report_ask(calls)
+    assert args["basis"] == "unpaid" and args.get("customer_ids") == [bot.ids["customer"]], args

@@ -1,6 +1,6 @@
 # PLAN: REPORT-UNIFY (finish `crm_report_ask` for every sales and outstanding ask)
 
-Status: Build. Slice 1 (engine) green at 362d1d4e+; slice 2 (chatbot routing) red tests in. The owner answered the card on 27 Oct ~19:15 (section 0).
+Status: Build, handed off to a LOCAL worker on 28 Oct (owner decision). All four slices are built; round 6 is a WIP checkpoint. Exact next steps: section 6.
 Track: full (size L). Three stacked slices on one lane branch, one PR (#1922).
 UAC: `report-unify-27oct-acceptance-criteria.md`.
 
@@ -22,6 +22,7 @@ pick up `invoiced` on rebase.
 | Q9 item and category rankings (28 Oct 10:15) | no linked customer sees everything | REPORT-SMART R1 (item / category rankings staff-only, the 403 `customer_not_permitted`) retires for a contact with no linked customer that may ask at all (a reveal, or a live salesperson), staff or not. A linked contact stays on its customers (`enforce_customer_scope`); a contact with neither reveal nor salesperson status stays refused. S1 (outstanding kinds keep Q6) stands. |
 | Q10 parser only (28 Oct, owner rule restated) | semantic parser reads | The Yearly basis, company and sales agent questions are answered ONLY by the parser's declared pick of an offered option (`required_fields.picked_option`); no typed label, digit or reply length is read in code. Pre-existing rule-based reads that remain: the report ask's period, count, measure and basis fields keep the `shape_fallback` capture, and the ideation and chat report asks keep their shape capture. |
 | Q11 hand test (28 Oct, crew copy on prod parser text) | trace-proven fixes | The MCP no longer requires a period for `crm_report_ask`; the route decides per basis. The outstanding kind question carries its 3 options, the kind comes only from the parser's pick, and the parser `basis` enum gains `pending_delivery` / `unpaid`. A group_by without a parser ranking marker (`rank_direction` / `top_n` / `rank_by`) is a breakdown: all rows, never "How many?". Spec values echo through `product_spec_registry.display_spec_value`. One basis question: #1931's `sales_basis_ask` 4-option question for totals and the Yearly comparison, then `crm_report_ask`. A `year` dimension on every ask definition, on each definition's own date (billing doc date, SO line bucket date, DO date, document date). `year` is also offered on unpaid and to dealers (a dealer already sees its own months, so nothing new is exposed). Totals have one layout on every basis: the report ask total. Known parser-side gaps (not lane code): a named agent sent as `group_by` ("sales agent yu total sale ..."), which needs a prompt line plus eval; "mch" needs a parser version with the span pass on. |
+| Q13 owner answers (28 Oct) | owner | Supersedes Q12 on unpaid. 1(a): the chat route needs BOTH the contact's Outstanding reveal AND `finance.billing_documents.view` on the act-as user, granted by the additive migration `unpaid_0001_chatbot_ar_role` (a dedicated role, only the act-as users of `n8n` / `sorento-mcp`, only when that user is a live integration user). 2(b): unpaid is refused to anyone without the Outstanding reveal, salespeople included; undelivered orders and pending delivery keep the salesperson's own book. 3(a): the reveal is labelled "Outstanding (orders, deliveries, unpaid invoices)"; the field key `sales_orders.outstanding` is unchanged. Captain rulings in round 5: a parser `basis` among the offered kinds answers the kind question; "by X" over an outstanding frame keeps the period, a switch from a sales basis to outstanding drops it. |
 | Q12 hand test 2 (28 Oct, crew copy :3107) | captain decisions, flagged to crew | The unpaid basis on the chatbot route is gated by the asking contact's Outstanding reveal, per Q6 (a) ("Unpaid invoices need the Outstanding reveal too"). The act-as finance check (security S1) is removed from the chat route. No grant for the integration user. The staff screen keeps `finance.billing_documents.view` on unpaid (B1). Question order everywhere: the required fields (basis, and the measure for a ranking) first, the company question last. A breakdown asks no measure, because every row shows qty and RM. An outstanding kind is never inferred from a held frame and uses only a period named in its own message. The six screen definitions truncate the detail at 5,000 rows (`cap="truncate"`) so the SQL summary always renders. |
 | Q8 retired behaviours (28 Oct 09:30) | keep 1, retire 2 and 3 | Item 1: under an undelivered-orders answer (basis `outstanding`), the offer "Reply 1 for the sales order list" lists the open SOs behind the figure. It re-runs the SAME ask grouped by a new `sales_order` dimension on the outstanding definition, so the list is the figure's population by construction. Items 2 (sales-report drill offers) and 3 (SF-2 carried offer) retire. |
 | Q5 screen | (a) | One "Sales & outstanding" report screen over the same ask definitions |
@@ -192,3 +193,109 @@ The same ask definitions, shown on screen, so staff can check the bot's number. 
 - AR (unpaid invoices).
 - `crm_order_analytics` (off the chatbot).
 - SCM analytics.
+
+## 6. Handoff to the local worker (28 Oct)
+
+Owner decision: the lane moves to a local worker that can run its own chat and screen checks on the copy. The last
+pushed head before the handoff checkpoint is `cb882117` (round 5 plus a clean merge of main 8e569661). The handoff
+commit on top is a round 6 WIP with `[skip ci]`.
+
+### State of each item
+
+- **Owner answers 1(a), 2(b), 3(a): done on `cb882117`** (section 0, Q13). Route gate:
+  `app/api/v1/order_management/report_ask.py` (~412-426) plus `require_unpaid_access` in
+  `app/services/sales/invoiced_sales.py`. Migration: `alembic/versions/unpaid_0001_chatbot_ar_role.py`. Tests:
+  `tests/test_report_unify_outstanding_bases.py`, `tests/test_report_ask_my_sales_route.py`,
+  `tests/test_migration_unpaid_0001_chatbot_ar_role.py`, the label pin in `tests/chatbot/test_outstanding_lane.py`.
+- **Reviewer on `cb882117`: NOT READY, one blocker (B1).** K3 (i) in `tests/chatbot/test_report_unify_parser_only.py`
+  (`test_the_kind_question_is_not_answered_by_a_basis_outside_the_offered_kinds`) only asserted that no call ran with
+  that basis. Mutant M6 survived: any parser basis answered the kind question, and one not offered mapped to
+  option 1, so invoiced / delivered / ordered silently ran `basis=outstanding`.
+- **Security on `cb882117`: no blockers; S1 should-fix.** The migration gave the role to whatever user an
+  integration acts as, so a human staff user pointed at by `n8n` would gain finance view. Note for the PR body: the
+  grant also opens, for the n8n / sorento-mcp keys, the external `billing_documents` / `ar_outstanding` reads, the
+  billing-document list-query and document relations. That follows from owner answer 1(a). Security N5: on a DB where
+  `integration_seed` and `fin_0001` ran, those users very likely hold the slug already, so the contact's reveal is
+  the gate that really separates users.
+- **Round 6 WIP (the handoff commit). Only the two touched files were run (62 passed). The full selection, the kill
+  tests and a reviewer pass are NOT done.**
+  1. B1: K3 (i) now asserts `calls == []` and that the kind is asked again. Still to do: kill-test it against M6 in
+     a scratch worktree.
+  2. Security S1: the assignment insert requires `u.is_integration = true AND u.is_trashed = false`. Two new
+     migration tests: a human act-as user and a trashed one gain nothing.
+  3. Security N7: under the kind question, a parse with a kind basis AND a subject bound this turn
+     (`entities[].hint` in `_FILTER_HINTS`, `current_message` not false) becomes a fresh outstanding ask that keeps
+     the subject, not a bare pick that drops it (`as_basis_answer` in
+     `app/services/chatbot/lanes/business/report_ask.py`). Test:
+     `test_a_kind_answer_that_also_binds_a_customer_runs_for_that_customer_never_the_whole_scope`. Check that
+     `current_message` / `hint` are the right entity fields against the parser schema (`head/parser.py`).
+  4. Reviewer N1: a sales basis (invoiced / delivered / ordered) under the kind question now picks nothing, so the
+     kind is asked again instead of the generic "I can rank sales by ..." reply.
+
+### Migration SQL for the dev DB (plain psql, no binds; idempotent; never touches `alembic_version`)
+
+The crew-migration comment `6473935190` on #1922 is out of date: its assignment insert lacks the round 6 live
+integration user filter. Post this version:
+
+```sql
+INSERT INTO user_permissions (id, slug, name, created_at)
+SELECT gen_random_uuid()::text, 'finance.billing_documents.view', 'finance.billing_documents.view', now()
+WHERE NOT EXISTS (SELECT 1 FROM user_permissions WHERE slug = 'finance.billing_documents.view');
+
+INSERT INTO user_roles (id, slug, name, description, is_trashed, is_protected, is_default, created_at)
+SELECT gen_random_uuid()::text, 'chatbot_integration_unpaid_read', 'Chatbot integration: unpaid invoices read',
+       'Lets the chatbot integration read unpaid invoices (finance.billing_documents.view) and nothing else.',
+       false, false, false, now()
+WHERE NOT EXISTS (SELECT 1 FROM user_roles WHERE slug = 'chatbot_integration_unpaid_read');
+
+INSERT INTO user_role_permissions (id, role_id, permission_id, assigned_at)
+SELECT gen_random_uuid()::text, r.id, p.id, now()
+FROM user_roles r, user_permissions p
+WHERE r.slug = 'chatbot_integration_unpaid_read' AND p.slug = 'finance.billing_documents.view'
+  AND NOT EXISTS (SELECT 1 FROM user_role_permissions x WHERE x.role_id = r.id AND x.permission_id = p.id);
+
+INSERT INTO user_role_assignments (id, user_id, role_id, assigned_at)
+SELECT gen_random_uuid()::text, u.id, r.id, now()
+FROM user_roles r
+JOIN users u ON u.id IN (SELECT i.act_as_user_id FROM integrations i WHERE i.name IN ('n8n', 'sorento-mcp'))
+WHERE r.slug = 'chatbot_integration_unpaid_read'
+  AND u.is_integration = true AND u.is_trashed = false
+  AND NOT EXISTS (SELECT 1 FROM user_role_assignments a WHERE a.user_id = u.id AND a.role_id = r.id);
+```
+
+Without the `is_integration` / `is_trashed` line, this SQL ran twice cleanly under `psql -v ON_ERROR_STOP=1` in a
+throwaway DB with stand-in tables. Re-check it with that line added.
+
+### The 9 failing steps of crew hand test 2 (on `c858f429`)
+
+Crew's hand-test report on #1922 has the step-by-step list. The fixes landed in rounds 4 and 5 by root cause, and
+none has been re-run on a copy yet:
+
+- (a) Question order: the required fields first, the company last; a breakdown asks no measure.
+- (b) Reply "1" under "Reply 1 for the sales order list" opens the list (`without_pick_axis`, SO_LIST). This was
+  inferred, because crew's exact parse of that turn was requested but never received.
+- (c) The unpaid gate: superseded by owner answers 1(a) and 2(b).
+- (d) The screen summaries stop at the 5,000-row cap: the six definitions now use `cap="truncate"`.
+- (e) A fresh outstanding ask asks the kind and uses only its own period. A parser-flagged refine keeps the period on
+  screen and never infers the kind. Round 5 narrowed this: "by X" over an outstanding frame keeps the period, and a
+  switch from a sales basis drops it.
+
+### Next steps, in order
+
+1. Run the full selection on the WIP tree, every group: route / screen / kernel / yearly / migration,
+   `tests/chatbot/test_picker_*.py`, chatbot report / sales / ranking / ledger / so_list / doc_scope /
+   required_fields / outstanding / reveals, replay / ideation / low-stock, and MCP with `PYTHONPATH`. Kill-test items
+   1-3 above, with mutations only in a scratch worktree.
+2. Commit the result without `[skip ci]`, with the pre-push hook running normally (no `SKIP_PREPUSH`).
+3. Post the corrected crew-migration block above. Crew re-applies it.
+4. Reviewer plus security re-check on that head. Then merge main if it moved and run `./scripts/alembic-reparent.sh`
+   (single head `unpaid_0001_chatbot_ar_role`). Then post `ci-ready head <sha>`.
+5. On the local copy, with the migration SQL applied: re-run the 18-step crew hand-test script (the latest
+   `crew-handtest` comment on #1922), plus the 9 steps that failed in hand test 2. Do the browser pass for the
+   "Sales & outstanding" screen at 375px and 1280px.
+6. Still open with crew / owner:
+   - the parser prompt line for "sales agent yu total sale ..." (crew-ask 6461889733; needs a Gemini eval);
+   - the exact parse of the sales-order-list "1" turn;
+   - the reveal holder list for the owner (query in crew-note 6471441550; results go to the owner, not the PR).
+7. Before ready: add to the PR body the extra reads the grant opens for the n8n / sorento-mcp keys (security note
+   above), and that the chatbot path is parser-only.

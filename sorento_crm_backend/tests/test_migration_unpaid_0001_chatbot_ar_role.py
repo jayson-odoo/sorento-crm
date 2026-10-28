@@ -38,8 +38,8 @@ def _run(db, fn: str) -> None:
         getattr(module, fn)()
 
 
-def _user(db, label: str) -> str:
-    row = User(id=str(uuid.uuid4()), email=f"zzt-{label}-{uuid.uuid4().hex[:8]}@integrations.local", name=f"ZZT {label}", is_integration=True)
+def _user(db, label: str, *, integration: bool = True, trashed: bool = False) -> str:
+    row = User(id=str(uuid.uuid4()), email=f"zzt-{label}-{uuid.uuid4().hex[:8]}@integrations.local", name=f"ZZT {label}", is_integration=integration, is_trashed=trashed)
     db.add(row)
     db.flush()
     return row.id
@@ -84,6 +84,27 @@ def test_the_chatbot_act_as_users_hold_the_slug_after_upgrade_and_nobody_else_ga
     _run(db, "upgrade")
     assert _holders(db) - before == {n8n, mcp}
     assert other not in _holders(db)
+
+
+def test_a_human_act_as_user_does_not_gain_the_slug():
+    """Security S1: an integration whose act-as user is a human staff user (is_integration false) gives that human nothing."""
+    with blank_session() as db:
+        db.execute(text("DELETE FROM integrations"))
+        human = _user(db, "human", integration=False)
+        _integration(db, "n8n", human)
+        db.flush()
+        _run(db, "upgrade")
+        assert human not in _holders(db)
+
+
+def test_a_trashed_integration_user_does_not_gain_the_slug():
+    with blank_session() as db:
+        db.execute(text("DELETE FROM integrations"))
+        gone = _user(db, "trashed", trashed=True)
+        _integration(db, "sorento-mcp", gone)
+        db.flush()
+        _run(db, "upgrade")
+        assert gone not in _holders(db)
 
 
 def test_the_role_holds_only_the_one_slug(seeded):

@@ -825,8 +825,20 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
         # the offered options, AC-RU-17c), whatever domain or intent hint it also carried.
         offered = [o[0] for o in (slot.get("options") or []) if isinstance(o, (list, tuple)) and o]
         basis = verdict.get("basis")
-        if not (_dict(slot.get("extras")).get("kind_ask") and basis in OUTSTANDING_KINDS and basis in offered):
+        if not _dict(slot.get("extras")).get("kind_ask"):
             return verdict
+        if basis not in OUTSTANDING_KINDS or basis not in offered:
+            if basis in BASES:  # a sales basis is no kind: an answer that picks nothing, so the kind is asked again
+                return {**verdict, "open_question_answer": {"mode": "pick", "picked": [], "items": [], "qty_for_all": None}}
+            return verdict
+        if any(
+            isinstance(e, dict) and e.get("current_message") is not False
+            and jsc.js_string(e.get("hint") or "").strip().lower() in _FILTER_HINTS
+            for e in jsc.array(verdict.get("entities"))
+        ):
+            # A subject bound this turn makes it a fresh outstanding ask that names its kind and applies the subject,
+            # never a bare pick that drops it.
+            return {**verdict, "order_status": "outstanding"}
         positions = {offered.index(basis) + 1}
     return {**verdict, "open_question_answer": {"mode": "pick", "picked": sorted(positions), "items": [], "qty_for_all": None}}
 
