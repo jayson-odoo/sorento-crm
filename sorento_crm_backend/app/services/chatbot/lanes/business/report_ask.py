@@ -1678,6 +1678,7 @@ def _settle(
     extras: dict[str, Any] = {"args": args, "top_n": top_n}
     if company_options:
         extras["company_options"] = company_options
+        extras["company_codes"] = [str(c[2]) for c in own]  # the pick's aliases (`sales_company_ask.as_answer`)
     if not_applied:
         extras["not_applied"] = not_applied
     if parse_output.get("capability_from") == "outstanding":

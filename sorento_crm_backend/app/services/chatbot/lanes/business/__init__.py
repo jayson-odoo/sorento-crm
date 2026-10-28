@@ -2148,12 +2148,13 @@ def run_fetch(
                 return _fixed_reply(settled.reply or "", required_ask=settled.slot)
             answered = sales_basis_ask.run_input(settled)
             parse_output = {
-                **parse_output, **answered, "required_ask": None, "order_status": "sales_analysis",
+                **{k: v for k, v in parse_output.items() if k != "by_words"},
+                # The carried axis was validated on the asking turn: the reply's own `by_words` (null on a bare answer)
+                # must not drop it (`report_ask.typed_group_by`).
+                **answered, "required_ask": None, "order_status": "sales_analysis",
                 "basis": answered.get("sales_basis"),  # the declared answer wins over a stray `basis` key
             }
-        if sales_basis_ask.named_basis(parse_output) == "outstanding":
-            parse_output = sales_basis_ask.as_report_ask(parse_output)
-        elif parse_output.get("order_status") == "sales_analysis":
+        if parse_output.get("order_status") == "sales_analysis":
             parse_output = report_ask.take_words(report_ask.by_capability(parse_output, seam=False), "")
         order_status_raw = report_ask.ASK_NAME
     if order_status_raw == contracts.SALES_TARGET_STATUS and domain in contracts.ORDER_OR_SALES_DOMAINS:

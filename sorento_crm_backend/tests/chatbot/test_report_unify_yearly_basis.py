@@ -16,7 +16,7 @@ QUESTION = "Invoiced, delivered, ordered or outstanding?"
 
 
 def _yearly(**over):
-    fields = {"group_by": "year", "sales_basis": None, "basis": None, **YEAR, **over}
+    fields = {"group_by": "year", "by_words": "yearly", "sales_basis": None, "basis": None, **YEAR, **over}
     return _status("sales_analysis", **fields)
 
 
@@ -33,7 +33,7 @@ def test_r3_the_answer_runs_the_yearly_comparison_with_that_basis(bot, position,
     text, calls = bot.say(
         _reply(
             message_type="business_query", domain_hint=None, intent_hint=None, entities=[], sales_basis=basis,
-            open_question_answer={"mode": "pick", "picked": [position], "items": [], "qty_for_all": None},
+            by_words=None, open_question_answer={"mode": "pick", "picked": [position], "items": [], "qty_for_all": None},
         ),
         basis,
     )

@@ -25,7 +25,7 @@ from tests._mc_lookup_seed import MOCHA_ID
 def _answer(position: int, **over: Any) -> dict[str, Any]:
     """The parser's reading of a reply it declares an answer to the open question: a pick of one offered option."""
     return _reply(
-        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[], by_words=None,
         open_question_answer={"mode": "pick", "picked": [position], "items": [], "qty_for_all": None}, **over,
     )
 
@@ -230,3 +230,54 @@ def test_a_group_by_with_no_count_direction_or_rank_by_is_a_breakdown_never_aske
         k for k, v in args.items() if v is None
     }, args
     assert "How many" not in text, text
+
+
+# ---------------------------------------------------------------- reviewer 9ef34d6b
+
+
+@pytest.mark.parametrize("mode", ["pick", "fill"])
+def test_the_yearly_axis_survives_the_basis_answer_when_the_reply_carries_by_words_null(bot, mode) -> None:
+    """The live prompt defines `by_words`, so a bare answer comes back with it null while `group_by: year` rides the
+    carry: the axis must not be dropped (the ask must not run as one total)."""
+    two_years = {"date_filter_start": "2025-01-01", "date_filter_end": "2026-12-31"}
+    text, calls = bot.say(
+        _status("sales_analysis", group_by="year", by_words="yearly", sales_basis=None, basis=None, **two_years),
+        "yearly sales 2025 to 2026",
+    )
+    assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
+    if mode == "pick":
+        reply = _answer(1)
+    else:
+        reply = _reply(
+            message_type="business_query", domain_hint=None, intent_hint=None, entities=[], by_words=None,
+            basis="invoiced", open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None},
+        )
+    text, calls = bot.say(reply, "invoiced")
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "year" and args["basis"] == "invoiced", args
+
+
+def test_the_kind_question_is_never_answered_by_a_basis_the_parser_did_not_declare_an_answer_for(bot) -> None:
+    """K3: `basis: "unpaid"` with NO declared answer under the kind question is not taken by shape."""
+    bot.say(_bare_outstanding(), "outstanding")
+    text, calls = bot.say(
+        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="unpaid"),
+        "unpaid invoices",
+    )
+    assert not [a for n, a in calls if a.get("basis") == "unpaid"], (calls, text)
+
+
+def test_the_live_v63_company_reply_is_the_pick(bot) -> None:
+    """"Sorento" under the company question, as the live parser read it: `sales_company` and `reference_positions`,
+    NO declared answer, a stray `group_by: "date"`. Parser output only: it is the pick of the offered company."""
+    sorento, mocha = _two_companies(bot)
+    text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    live = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[],
+        sales_company=sorento, reference_positions=[1], group_by="date",
+    )
+    text, calls = bot.say(live, sorento)
+    args = _only_report_ask(calls)
+    assert args["company"] != MOCHA_ID and args["company"], args
+    assert not args.get("group_by"), args
