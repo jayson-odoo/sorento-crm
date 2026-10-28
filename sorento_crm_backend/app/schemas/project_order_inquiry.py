@@ -1233,12 +1233,12 @@ class UnplaceAllRequest(BaseModel):
     query: Optional[str] = None
     delivery_month: Optional[str] = None
     raised_date: Optional[str] = None
-    project_id: Optional[str] = None
+    project_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     #: S5 (`PLAN-oi-project-label-from-so.md` section 5): text, exact match on the
     #: Project column - separate from `project_id`, unchanged. No length bound:
     #: `projects.title` is TEXT with none.
     project: Optional[str | List[str]] = None
-    supplier_id: Optional[str] = None
+    supplier_id: Optional[str] = Field(None, pattern=MULTI_UUID_PATTERN)
     #: The user whose inquiries the list is narrowed to, so the action can never reach
     #: further than what the person pressing it can see.
     raised_by: Optional[str] = None

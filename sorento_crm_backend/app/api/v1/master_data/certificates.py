@@ -34,6 +34,7 @@ from app.schemas.certificate import (
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.certificate_query_service import CertificateQueryService
 from app.services.certificate_service import CertificateService
+from app.services import product_link_audit
 from app.services.error_handler import handle_internal_error, handle_not_found
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.uuid_path_param import validate_uuid_path
@@ -299,6 +300,24 @@ def merge_certificate_into(
         raise handle_internal_error(str(e))
 
 
+def _coverage_rows(db: Session, certificate) -> list:
+    return db.query(CertificateProduct).filter(CertificateProduct.certificate_id == certificate.id).all()
+
+
+def _log_coverage(db: Session, service: CertificateService, certificate, coverage, action: str, user_id) -> None:
+    """A person covered or uncovered a product: one row on that product's Audit Trail, naming
+    the certificate's current file (PRODUCT-ATTACH-AUDIT). Reconcile and ingest stay silent."""
+    revision = service.get_current_revision(certificate)
+    product_link_audit.log_product_file_link(
+        db, action,
+        product_id=str(coverage.product_id),
+        attachment_id=str(revision.attachment_id) if revision and revision.attachment_id else None,
+        entity_type="certificate_products", entity_id=str(coverage.id),
+        user_id=user_id,
+        extra={"certificate_id": str(certificate.id), "certificate_number": certificate.certificate_number},
+    )
+
+
 @router.post(
     "/{certificate_id}/products",
     response_model=CertificateResponse,
@@ -314,12 +333,20 @@ def add_certificate_product(
     row for the current revision's attachment is written with it (COV-3)."""
     try:
         validate_uuid_path(certificate_id, resource="Certificate")
-        CertificateService(db).add_coverage(
+        service = CertificateService(db)
+        user_id = str(current_user.get("id") or "") or None
+        before = {str(row.id) for row in _coverage_rows(db, service.get_certificate(certificate_id))}
+        service.add_coverage(
             certificate_id,
             [payload.product_id],
             source=CERTIFICATE_SOURCE_MANUAL,
-            created_by=str(current_user.get("id") or "") or None,
+            created_by=user_id,
         )
+        certificate = service.get_certificate(certificate_id)
+        for row in _coverage_rows(db, certificate):
+            if str(row.id) not in before:
+                _log_coverage(db, service, certificate, row, product_link_audit.LINK, user_id)
+        db.commit()
         return CertificateQueryService(db).get_detail(certificate_id)
     except HTTPException:
         raise
@@ -353,6 +380,11 @@ def remove_certificate_product(
         )
         if coverage is None:
             raise handle_not_found("Certificate coverage", coverage_id)
+        # Flushed here, committed by remove_coverage, so a failed removal leaves no row.
+        _log_coverage(
+            db, service, certificate, coverage, product_link_audit.UNLINK,
+            str(current_user.get("id") or "") or None,
+        )
         service.remove_coverage(certificate_id, [str(coverage.product_id)])
         return {"message": "Covered product removed successfully"}
     except HTTPException:

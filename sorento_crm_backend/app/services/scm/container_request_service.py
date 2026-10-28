@@ -1758,6 +1758,19 @@ def _series(buckets: list[str], qty_by_month: dict[str, float]) -> dict:
     }
 
 
+def history_window(as_of: Optional[date] = None) -> tuple[date, date, list[str]]:
+    """The twelve FULL months before `as_of`'s own month: (since, until exclusive, buckets).
+    Read by `history` and the stock position report's monthly sales."""
+    # `month_shift(d, 0)` is the first of d's own month - the floor, and the same
+    # arithmetic `trajectory_service` and `purchase_trend_service` already share.
+    until = month_shift(as_of or date.today(), 0)
+    since = month_shift(until, -_HISTORY_MONTHS)
+    buckets = [
+        _month_label(month_shift(since, i)) for i in range(_HISTORY_MONTHS)
+    ]
+    return since, until, buckets
+
+
 def history(
     db: Session,
     *,
@@ -1789,13 +1802,7 @@ def history(
     orders in 12 months" rather than sit on a spinner waiting for a row that is never coming.
     """
     _supplier(db, supplier_id)
-    # `month_shift(d, 0)` is the first of d's own month - the floor, and the same
-    # arithmetic `trajectory_service` and `purchase_trend_service` already share.
-    until = month_shift(as_of or date.today(), 0)
-    since = month_shift(until, -_HISTORY_MONTHS)
-    buckets = [
-        _month_label(month_shift(since, i)) for i in range(_HISTORY_MONTHS)
-    ]
+    since, until, buckets = history_window(as_of)
     result = {
         "from_month": buckets[0],
         "to_month": buckets[-1],

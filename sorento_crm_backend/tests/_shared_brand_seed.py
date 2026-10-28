@@ -57,6 +57,22 @@ def grant(db, *, user_id: str, company_id: str) -> UserCompany:
     return row
 
 
+def grant_permission(db, *, user_id: str, slug: str) -> None:
+    """A role holding ``slug`` alone, assigned to the user (blank schema: no seeded slugs)."""
+    from app.models.user import UserPermission, UserRole, UserRoleAssignment, UserRolePermission
+
+    permission = db.query(UserPermission).filter(UserPermission.slug == slug).one_or_none()
+    if permission is None:
+        permission = UserPermission(id=str(uuid.uuid4()), slug=slug, name=slug)
+        db.add(permission)
+    role = UserRole(id=str(uuid.uuid4()), slug=unique_code("zzt_perm").lower(), name=f"ZZT {slug}")
+    db.add(role)
+    db.flush()
+    db.add(UserRoleAssignment(user_id=user_id, role_id=role.id))
+    db.add(UserRolePermission(role_id=role.id, permission_id=permission.id))
+    db.flush()
+
+
 def category(db, *, company_id: str) -> ProductCategory:
     row = ProductCategory(
         id=str(uuid.uuid4()),

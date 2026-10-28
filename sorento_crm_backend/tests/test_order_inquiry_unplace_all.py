@@ -651,8 +651,8 @@ def test_a_malformed_supplier_id_on_post_fails_clean_and_does_not_poison_the_tra
 
     response = client.post(UNPLACE_ALL, json={"supplier_id": "not-a-uuid"})
 
-    assert response.status_code == 404
-    assert response.json()["code"] == "NOT_FOUND"
+    # A malformed id is refused by the body pattern (FILTER-MULTISELECT PR7), before any SQL.
+    assert response.status_code == 422
 
     follow_up = client.post(UNPLACE_ALL, json={"project_id": world["project1"].id})
     assert follow_up.status_code == 200, follow_up.text

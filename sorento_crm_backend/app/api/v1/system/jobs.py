@@ -25,33 +25,34 @@ router = APIRouter()
 
 @router.get("/jobs", response_model=ListResponse[ImportJobResponse])
 def list_jobs(
-    job_type: Optional[str] = Query(None),
-    status_filter: Optional[str] = Query(None, alias="status"),
+    job_type: Optional[list[str]] = Query(None),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
 ):
-    """List import jobs."""
+    """List import jobs. Type and Status take several values (OR-ed within each)."""
     try:
         from app.models.job import JobStatus
-        
+
         job_service = JobService(db)
-        job_status = None
-        if status_filter:
+        job_types = multi_values(job_type)
+        job_status = []
+        for value in multi_values(status_filter) or []:
             try:
-                job_status = JobStatus(status_filter)
+                job_status.append(JobStatus(value))
             except ValueError:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=f"Invalid status: {status_filter}"
+                    detail=f"Invalid status: {value}"
                 )
         
         offset = (page - 1) * limit
         jobs = job_service.list_jobs(
             user_id=current_user["id"],
-            job_type=job_type,
-            status=job_status,
+            job_type=job_types,
+            status=job_status or None,
             limit=limit,
             offset=offset
         )
@@ -62,10 +63,10 @@ def list_jobs(
         
         # Get actual total count
         count_query = job_service.db.query(ImportJob).filter(ImportJob.user_id == current_user["id"])
-        if job_type:
-            count_query = count_query.filter(ImportJob.job_type == job_type)
+        if job_types:
+            count_query = count_query.filter(ImportJob.job_type.in_(job_types))
         if job_status:
-            count_query = count_query.filter(ImportJob.status == job_status.value)
+            count_query = count_query.filter(ImportJob.status.in_([s.value for s in job_status]))
         count_scope_filter = admin_listing_company_filter(db, ImportJob.company_id)
         if count_scope_filter is not None:
             count_query = count_query.filter(count_scope_filter)

@@ -3,6 +3,7 @@ from fastapi import APIRouter
 from app.api.v1.inventory import (
     warehouses,
     stock,
+    stock_position,
     stock_status,
     stock_visibility,
     storage_zones,
@@ -16,6 +17,7 @@ router = APIRouter()
 router.include_router(warehouses.router, prefix="/warehouses", tags=["warehouses"])
 router.include_router(stock.router, prefix="/stock", tags=["stock"])
 router.include_router(stock_status.router, prefix="/stock-status", tags=["stock"])
+router.include_router(stock_position.router, prefix="/stock-position", tags=["stock"])
 router.include_router(
     stock_visibility.router, prefix="/stock-visibility", tags=["stock-visibility"]
 )

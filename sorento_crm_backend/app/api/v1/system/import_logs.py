@@ -8,6 +8,7 @@ from app.services.import_log_service import ImportLogService
 from app.schemas.import_log import ImportLogResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -16,14 +17,14 @@ router = APIRouter()
 def list_import_logs(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    entity_type: Optional[str] = Query(None),
+    entity_type: Optional[list[str]] = Query(None),
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
     """List import logs (optional filter by entity_type)."""
     try:
         service = ImportLogService(db)
-        return service.list_import_logs(page=page, limit=limit, entity_type=entity_type)
+        return service.list_import_logs(page=page, limit=limit, entity_type=multi_values(entity_type))
     except HTTPException:
         raise
     except Exception as exc:
