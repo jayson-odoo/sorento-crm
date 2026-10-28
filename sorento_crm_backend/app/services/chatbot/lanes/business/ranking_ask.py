@@ -8,8 +8,9 @@ No imports.
 from __future__ import annotations
 
 METRIC_LINE = "By quantity or by amount?"
-#: The sales ranking (`crm_report_ask`) has all three bases.
-RANKING_BASIS_LINE = "Delivered, ordered or outstanding?"
+#: The sales ranking (`crm_report_ask`) has all four bases, Invoiced first (owner ruling (b),
+#: SALES-UNIFIED 27 Oct 2026: the basis is still asked, never defaulted).
+RANKING_BASIS_LINE = "Invoiced, delivered, ordered or outstanding?"
 
 
 def next_question(*, metric_settled: bool, basis_settled: bool, basis_line: str) -> tuple[str, str] | None:

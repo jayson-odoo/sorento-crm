@@ -16,8 +16,11 @@ from app.database import get_db
 from app.dependencies import require_permission
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.services import document_relations as relations
+from app.services.document_relations import RELATED_SORT_PATTERN
 from app.services.finance import billing_document_query_service as svc
 from app.services.uuid_path_param import UUID_PATTERN
+from app.utils.multi_value import multi_uuids
 
 router = APIRouter()
 customers_router = APIRouter()
@@ -41,13 +44,14 @@ def list_billing_documents(
     query: Optional[str] = Query(None),
     # Repeated (`document_type=a&document_type=b`) or comma separated (`a,b`).
     document_type: Optional[list[str]] = Query(None),
-    status: Optional[str] = Query(None),
-    customer_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
-    agent_code: Optional[str] = Query(None),
+    status: Optional[list[str]] = Query(None),
+    customer_id: Optional[list[str]] = Query(None),
+    agent_code: Optional[list[str]] = Query(None),
     date_from: Optional[DateType] = Query(None),
     date_to: Optional[DateType] = Query(None),
     open_only: bool = Query(False),
     sales_order_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
+    delivery_order_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query(svc.DEFAULT_SORT),
@@ -55,18 +59,20 @@ def list_billing_documents(
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
+    customer_ids = multi_uuids(customer_id, "Customer")
     try:
         rows, total = svc.list_documents(
             db,
             query=query,
             document_types=document_type,
             status=status,
-            customer_id=customer_id,
+            customer_id=customer_ids,
             agent_code=agent_code,
             date_from=date_from,
             date_to=date_to,
             open_only=open_only,
             sales_order_id=sales_order_id,
+            delivery_order_id=delivery_order_id,
             page=page,
             limit=limit,
             sort=sort,
@@ -101,11 +107,30 @@ def agent_options(
 @router.get("/{document_id}")
 def get_billing_document(
     document_id: str,
-    _user: dict = Depends(require_permission(VIEW)),
+    user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
     try:
-        return svc.document_detail(db, svc.get_document_or_404(db, document_id))
+        return svc.document_detail(db, svc.get_document_or_404(db, document_id), user["id"])
+    except Exception as exc:
+        _reraise(db, exc)
+
+
+@router.get("/{document_id}/related")
+def get_billing_document_related(
+    document_id: str,
+    sort: str = Query("doc_date", pattern=RELATED_SORT_PATTERN),
+    dir: str = Query("asc", pattern="^(asc|desc)$"),
+    user: dict = Depends(require_permission(VIEW)),
+    db: Session = Depends(get_db),
+):
+    """DOC-RELATIONS: the sales orders, delivery orders and billing documents this one belongs
+    with, each kind null without its view slug, plus the visible ones as one sorted table."""
+    try:
+        doc = svc.get_document_or_404(db, document_id)
+        return relations.related_response(
+            db, user["id"], relations.relations_for_billing_document(db, doc), sort=sort, dir=dir
+        )
     except Exception as exc:
         _reraise(db, exc)
 

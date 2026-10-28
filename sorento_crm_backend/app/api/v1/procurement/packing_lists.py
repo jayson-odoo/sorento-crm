@@ -20,7 +20,8 @@ from app.schemas.procurement import (
     InboundShipmentResponse,
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import handle_internal_error, handle_unprocessable
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -228,13 +229,16 @@ async def get_packing_lists(
     query: Optional[str] = Query(None),
     supplier_id: Optional[str] = Query(None),
     shipment_status: Optional[str] = Query(None),
-    region: Optional[str] = Query(None, pattern="^(west|east)$"),
+    region: Optional[list[str]] = Query(None),
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("asc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
     """Get packing lists (inbound shipments) with pagination, filtering, and sorting."""
+    regions = multi_values(region)
+    if regions and any(r not in ("west", "east") for r in regions):
+        raise handle_unprocessable("Region: expected one of west, east")
     try:
         service = InboundShipmentService(db)
         result = service.list_shipments(
@@ -245,7 +249,7 @@ async def get_packing_lists(
             shipment_status=shipment_status,
             sort_field=sort or "created_at",
             sort_dir=dir or "asc",
-            region=region,
+            region=regions,
         )
         return result
     except Exception as e:

@@ -123,10 +123,14 @@ def test_upgrade_then_downgrade():
             }
             assert {"id", "company_id", "opportunity_id", "product_id", "qty", "sort_order"} <= line_cols
 
+            # The four slugs this migration owns, not every `sales.opportunities.%` row: the
+            # suite runs on a database built at head, where later migrations add more under
+            # that prefix (pp2_0001_view_own_perms seeds `sales.opportunities.view_own`).
+            own_slugs = [slug for slug, *_ in module._PERMS]
+            assert len(own_slugs) == 4
             granted = raw.execute(
-                sa.text(
-                    "SELECT count(*) FROM user_permissions WHERE slug LIKE 'sales.opportunities.%'"
-                )
+                sa.text("SELECT count(*) FROM user_permissions WHERE slug = ANY(:slugs)"),
+                {"slugs": own_slugs},
             ).scalar()
             assert granted == 4
 
@@ -176,9 +180,8 @@ def test_upgrade_then_downgrade():
             ).scalar()
             assert still_rule == 1
             still_granted = raw.execute(
-                sa.text(
-                    "SELECT count(*) FROM user_permissions WHERE slug LIKE 'sales.opportunities.%'"
-                )
+                sa.text("SELECT count(*) FROM user_permissions WHERE slug = ANY(:slugs)"),
+                {"slugs": own_slugs},
             ).scalar()
             assert still_granted == 4
         finally:

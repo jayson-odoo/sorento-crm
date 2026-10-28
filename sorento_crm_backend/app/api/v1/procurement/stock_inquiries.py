@@ -418,7 +418,7 @@ async def create_stock_inquiry(
         if outcome == "resubmitted":
             response.status_code = status.HTTP_200_OK
         db.commit()
-        if getattr(inquiry, "status", None) in ("new", "pending_project_sales"):
+        if getattr(inquiry, "status", None) in ("new", "pending_project_sales", "resubmitted"):
             try:
                 if outcome == "resubmitted":
                     service._notify_team_stock_inquiry(

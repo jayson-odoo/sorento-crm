@@ -74,6 +74,10 @@ class ProductSpecRegistry(Base):
     # A size given alone (no dimension named) matches the numeric keys flagged here, as an OR
     # (width or length); a key scoped to a class by `applies_when` is read for that class only.
     matches_bare_size = Column(Boolean, nullable=False, server_default=text("false"), default=False)
+    # DIMENSION-ANY: the other units a customer writes this key's quantity in, each as how many of
+    # `unit` it holds ({"cm": 10, "in": 25.4} on a millimetre key). Data, never a list in code: the
+    # candidate block offers "15cm" as "size 150 mm" off it, and the parser decides what was meant.
+    unit_aliases = Column(JSONB, nullable=False, server_default=text("'{}'::jsonb"))
     # Multiplier on this key's contribution to the match score. Hand-tuned against the
     # eval baseline, so the seed must never overwrite it.
     rank_weight = Column(Numeric(6, 3), nullable=False, server_default=text("1.0"))

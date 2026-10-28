@@ -9,7 +9,7 @@ See ``documentation/plans/PLAN-multi-company-isolation.md`` §16 / §4.
 """
 from __future__ import annotations
 
-from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
+from sqlalchemy import Boolean, CheckConstraint, Column, DateTime, ForeignKey, Index, String, Text, UniqueConstraint
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
@@ -36,10 +36,19 @@ class Company(Base):
     # saw the last BULK_IMPORT. NULL = never pushed.
     stock_push_confirmed_at = Column(DateTime(timezone=False), nullable=True)
     logo_url = Column(String(500), nullable=True)
+    # Whose sale an invoice is (SALES-UNIFIED 2.2): `document` = the billing document's own
+    # sales agent (Sorento's AutoCount reports), `customer` = the debtor's current agent (Mocha's).
+    sales_agent_source = Column(
+        String(10), nullable=False, default="document", server_default="document"
+    )
     created_at = Column(DateTime(timezone=False), server_default=func.now(), nullable=False)
 
     __table_args__ = (
         Index("ix_companies_is_active", "is_active"),
+        CheckConstraint(
+            "sales_agent_source IN ('document', 'customer')",
+            name="ck_companies_sales_agent_source",
+        ),
     )
 
 

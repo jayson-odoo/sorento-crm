@@ -38,6 +38,7 @@ from app.models.projects import (
     ProjectSalesProfile,
     ProjectType,
 )
+from app.services import submission_status
 from app.services.error_handler import AppException, handle_not_found
 
 logger = logging.getLogger(__name__)
@@ -256,7 +257,7 @@ def duplicates_for_project(
     """The possible duplicates of a portal registration. Only one still waiting for a decision
     is checked: that is when it matters. The CRM detail and the portal detail embed the SAME
     text, so the second read of a row is a cache hit wherever it comes from."""
-    if project.approval_state != APPROVAL_PENDING or not _clean(project.title):
+    if not _awaiting_decision(project) or not _clean(project.title):
         return []
     if profile is None:
         profile = db.get(ProjectSalesProfile, project.id)
@@ -667,7 +668,10 @@ def portal_submit(
             )
         if payload:
             _apply(db, project, profile, _cleaned(db, project.company_id, token.contact_id, payload))
-        project.approval_state = APPROVAL_PENDING
+        resubmitted = project.approval_state == APPROVAL_REJECTED
+        project.approval_state = submission_status.status_on_submit(
+            was_rejected=resubmitted, stage=APPROVAL_PENDING
+        )
         project.submitted_at = _now()
         project.reject_reason = None
         project.decided_at = None
@@ -676,7 +680,7 @@ def portal_submit(
         db.commit()
         db.refresh(project)
         db.refresh(profile)
-        notify(db, project, "submitted")
+        notify(db, project, "resubmitted" if resubmitted else "submitted")
         return _portal_detail(db, project, profile, with_duplicates=False)
 
 
@@ -716,6 +720,9 @@ def notify(db: Session, project: Project, event: str) -> int:
         if event == "submitted":
             recipients = _holders(db, project, exclude=[applicant])
             title = f"Project registration waits for your approval: {title_text}"
+        elif event == "resubmitted":
+            recipients = _holders(db, project, exclude=[applicant])
+            title = f"Project registration resubmitted, waits for your approval: {title_text}"
         else:
             from app.services.project_service import project_label
 
@@ -748,7 +755,7 @@ def notify(db: Session, project: Project, event: str) -> int:
                 event_type=f"project_registration_{event}",
                 send_in_app=True,
                 # The approvers hear in-app only; the applicant is told by email as well.
-                send_email=event != "submitted",
+                send_email=event not in ("submitted", "resubmitted"),
                 send_whatsapp=False,
                 send_web_push=False,
             )
@@ -778,6 +785,11 @@ def lock_project(db: Session, project_id: str) -> Project:
     if project is None:
         raise AppException(status_code=404, message="Project not found.", code="project_not_found")
     return project
+
+
+def _awaiting_decision(project: Project) -> bool:
+    """Pending, or resubmitted after a rejection (RESUBMITTED-STATUS)."""
+    return submission_status.is_awaiting_review(project.approval_state, APPROVAL_PENDING)
 
 
 def _not_pending() -> AppException:
@@ -913,7 +925,7 @@ def approve(
     from app.services import project_service
     from app.services.project_clash_service import normalise_project_title
 
-    if project.approval_state != APPROVAL_PENDING:
+    if not _awaiting_decision(project):
         raise _not_pending()
     developer_party_id = payload.get("developer_party_id") or project.developer_party_id
     if not developer_party_id:
@@ -967,7 +979,7 @@ def reject(db: Session, project: Project, reason: Optional[str], *, actor_user_i
         raise AppException(
             status_code=422, message="Give the reason for rejecting.", code="project_registration_reason_required"
         )
-    if project.approval_state != APPROVAL_PENDING:
+    if not _awaiting_decision(project):
         raise _not_pending()
     project.approval_state = APPROVAL_REJECTED
     project.reject_reason = text

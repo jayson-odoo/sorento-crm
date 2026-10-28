@@ -18,6 +18,8 @@ from sqlalchemy import exists, false, func, or_, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, joinedload
 
+from app.utils.multi_value import multi_values as _as_list
+
 from app.models.access import MarketSegment
 from app.models.inventory import Stock, Warehouse
 from app.models.lookup import LookupOption
@@ -1358,12 +1360,13 @@ class SalesOrderService:
         )[0]
 
     def list(self, page: int, limit: int, sort: Optional[str], direction: str,
-             query: Optional[str], status: Optional[str], priority: Optional[str],
-             source: Optional[str] = None, *,
+             query: Optional[str], status: Optional[list[str] | str],
+             priority: Optional[list[str] | str],
+             source: Optional[list[str] | str] = None, *,
              date_from: Optional[date] = None, date_to: Optional[date] = None,
-             customer_code: Optional[str] = None, outstanding: bool = False,
-             sales_agent_id: Optional[str] = None,
-             demand_class: Optional[str] = None,
+             customer_code: Optional[list[str] | str] = None, outstanding: bool = False,
+             sales_agent_id: Optional[list[str] | str] = None,
+             demand_class: Optional[list[str] | str] = None,
              transferable: Optional[str] = None,
              doc_type: str = "sales_order") -> dict:
         q = self.db.query(SalesOrder).options(
@@ -1376,24 +1379,26 @@ class SalesOrderService:
         # disagreeing about the same order.
         # AC-CONSIGN-CRM: a consignment has its own page; this list is one kind at a time.
         q = q.filter(SalesOrder.doc_type == doc_type)
-        if source:
-            if source == "manual":
-                # Everything neither feed wrote: keyed in, or from a system we have no name
-                # for. NULL has to be spelled out because `NOT IN` never matches it.
-                known = [v for vs in _SOURCE_SYSTEMS.values() for v in vs]
-                q = q.filter(
-                    (SalesOrder.source_system.is_(None))
-                    | (~SalesOrder.source_system.in_(known))
+        # Several values of one filter are OR-ed (FILTER-MULTISELECT); a lone string is one value.
+        sources, statuses, priorities = _as_list(source), _as_list(status), _as_list(priority)
+        if sources:
+            # `manual` is a pseudo-value: everything neither feed wrote (keyed in, or from a
+            # system we have no name for). NULL has to be spelled out because `NOT IN` never
+            # matches it. An unrecognised value matches NOTHING rather than being ignored: a
+            # filter that quietly drops the value it did not understand shows the whole book
+            # under a heading claiming it is narrowed - the worst of the three options.
+            known = [v for vs in _SOURCE_SYSTEMS.values() for v in vs]
+            real = [sys for s in sources if s != "manual" for sys in _SOURCE_SYSTEMS.get(s, ())]
+            clauses = [SalesOrder.source_system.in_(real)] if real else []
+            if "manual" in sources:
+                clauses.append(
+                    (SalesOrder.source_system.is_(None)) | (~SalesOrder.source_system.in_(known))
                 )
-            else:
-                # An unrecognised value matches NOTHING rather than being ignored. A filter
-                # that quietly drops the value it did not understand shows the whole book
-                # under a heading claiming it is narrowed - the worst of the three options.
-                q = q.filter(SalesOrder.source_system.in_(_SOURCE_SYSTEMS.get(source, ())))
-        if status:
-            q = q.filter(SalesOrder.status == status)
-        if priority:
-            q = q.filter(SalesOrder.priority == priority)
+            q = q.filter(or_(*clauses) if clauses else text("false"))
+        if statuses:
+            q = q.filter(SalesOrder.status.in_(statuses))
+        if priorities:
+            q = q.filter(SalesOrder.priority.in_(priorities))
         # Inclusive of both ends, because a person asking for "March" means the 1st and the
         # 31st. An undated order is excluded from a range rather than swept into one: absorbed
         # rows can arrive with no date, and putting one in January states a fact we do not have.
@@ -1401,30 +1406,35 @@ class SalesOrderService:
             q = q.filter(SalesOrder.order_date >= date_from)
         if date_to:
             q = q.filter(SalesOrder.order_date <= date_to)
-        if customer_code:
+        customer_codes = _as_list(customer_code)
+        if customer_codes:
             # By CODE, not id. `customer_code` is not unique in this dataset - several legal
             # entities share a debtor code - so a person picking "Acme" from the dropdown
             # means every one of them, and filtering by a single id would show part of their
             # book. Trimmed and case-folded to match `_customer`.
             q = q.filter(
                 SalesOrder.customer.has(
-                    func.lower(func.btrim(Customer.customer_code))
-                    == customer_code.strip().lower()
+                    func.lower(func.btrim(Customer.customer_code)).in_(
+                        [c.strip().lower() for c in customer_codes]
+                    )
                 )
             )
-        if sales_agent_id:
-            q = q.filter(SalesOrder.sales_agent_id == sales_agent_id)
+        agent_ids = _as_list(sales_agent_id)
+        if agent_ids:
+            q = q.filter(SalesOrder.sales_agent_id.in_(agent_ids))
         # Same "matches nothing" rule as `source`/`status` above - a demand_class the
         # vocabulary does not know is never silently ignored. `unclassified` reads the
         # column as NULL rather than as a third stored value: the whole point of the closed
         # vocabulary (`app.services.scm.demand_class`) is that "nobody said" is not a class.
-        if demand_class:
-            if demand_class == "unclassified":
-                q = q.filter(SalesOrder.demand_class.is_(None))
-            elif demand_class in DEMAND_CLASSES:
-                q = q.filter(SalesOrder.demand_class == demand_class)
-            else:
-                q = q.filter(text("false"))
+        demand_classes = _as_list(demand_class)
+        if demand_classes:
+            clauses = []
+            if "unclassified" in demand_classes:
+                clauses.append(SalesOrder.demand_class.is_(None))
+            real = [d for d in demand_classes if d in DEMAND_CLASSES]
+            if real:
+                clauses.append(SalesOrder.demand_class.in_(real))
+            q = q.filter(or_(*clauses) if clauses else text("false"))
         # AutoCount's Transferable flag (SO-TRANSFERABLE), same "matches nothing" rule.
         # `unknown` is the NULL the source never stated, kept apart from `yes`.
         if transferable:

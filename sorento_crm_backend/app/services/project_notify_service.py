@@ -297,11 +297,13 @@ def notify_quotation_approval_requested(
     below: int,
     requester_id: Optional[str],
     requester_name: str,
+    resubmitted: bool = False,
 ) -> int:
     """A quotation was sent for approval: tell every approver but the sender. One per press."""
     lines = f"{below} line{'' if below == 1 else 's'} below the price floor"
+    verb = "resubmitted" if resubmitted else "sent"
     text = (
-        f"{requester_name} sent quotation {document.document_no} ({project_label(project)}) "
+        f"{requester_name} {verb} quotation {document.document_no} ({project_label(project)}) "
         f"for approval: {lines}."
     )
     return _send(

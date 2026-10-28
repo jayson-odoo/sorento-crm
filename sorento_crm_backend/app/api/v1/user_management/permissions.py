@@ -9,6 +9,7 @@ from app.services.user_service import UserPermissionService
 from app.schemas.user import UserPermissionCreate, UserPermissionUpdate, UserPermissionResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_uuids
 
 router = APIRouter()
 
@@ -32,13 +33,15 @@ async def get_permissions_select(
 async def get_permissions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
+    roleId: Optional[list[str]] = Query(None),
     current_user: dict = Depends(require_permission("user_management.permissions.view")),
     db: Session = Depends(get_db)
 ):
     """Get user permissions with pagination."""
+    role_ids = multi_uuids(roleId, "Role")
     try:
         service = UserPermissionService(db)
-        result = service.list_permissions(page=page, limit=limit)
+        result = service.list_permissions(page=page, limit=limit, role_ids=role_ids)
         return result
     except Exception as e:
         raise handle_internal_error(str(e))

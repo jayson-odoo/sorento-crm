@@ -215,7 +215,7 @@ def _apply_filters(
     date_from: Optional[datetime],
     date_to: Optional[datetime],
     contact_id: Optional[str] | Optional[list[str]],
-    direction: Optional[str],
+    direction: Optional[str] | Optional[list[str]],
     search: Optional[str],
 ):
     if date_from is not None:
@@ -242,8 +242,10 @@ def _apply_filters(
         q = q.filter(ChatHistory.contact_id == contact_ids[0])
     elif contact_ids:
         q = q.filter(ChatHistory.contact_id.in_(contact_ids))
-    if direction in ("incoming", "outgoing"):
-        q = q.filter(ChatHistory.type == direction)
+    directions = [direction] if isinstance(direction, str) else (direction or [])
+    directions = [d for d in directions if d in ("incoming", "outgoing")]
+    if directions:
+        q = q.filter(ChatHistory.type.in_(directions))
     if search:
         like = f"%{search.strip()}%"
         q = q.filter(

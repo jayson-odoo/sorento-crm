@@ -7,6 +7,7 @@ import { extractApiError } from '@/lib/api-client';
 import { useHasPermission } from '@/hooks/usePermissions';
 
 import {
+  Column,
   ColumnDef,
   PaginationState,
   RowSelectionState,
@@ -39,6 +40,7 @@ import { apiFetch } from '@/lib/api';
 import type { RespondContact } from '../types/contact.types';
 import { formatDate } from '@/lib/helpers';
 import { toast } from '@/lib/toast';
+import { generateExcelFile, type ColumnOption } from '@/lib/excel-utils';
 import BulkLinkCustomersDialog from './BulkLinkCustomersDialog';
 import ContactCreateDialog from './ContactCreateDialog';
 import ContactDeleteDialog from './ContactDeleteDialog';
@@ -63,6 +65,7 @@ import { useRespondContactOutboundMutations } from '@/hooks/useRespondContactOut
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import {
   contactAccessFiltersFromUrl,
+  contactCompanyFilterFromUrl,
   contactTagFiltersFromUrl,
   contactTagSettingsFilterFromUrl,
   type TagSettingsFilter,
@@ -100,7 +103,6 @@ function yesNoColumn(
       <DataGridColumnHeader title={title} column={column} />
     ),
     size: 110,
-    enableSorting: false,
     cell: ({ row }) =>
       isOn(row.original) ? (
         <Badge variant="success" appearance="light">
@@ -152,6 +154,8 @@ export default function ContactsList() {
   const [tagSettings, setTagSettings] = useState<TagSettingsFilter | null>(
     null,
   );
+  // FILTER-MULTISELECT: the companies of the contact's linked customers, any-of.
+  const [companyIds, setCompanyIds] = useState<string[]>([]);
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -166,6 +170,7 @@ export default function ContactsList() {
     setTagIds(tagState.tagIds);
     setNoTags(tagState.noTags);
     setTagSettings(contactTagSettingsFilterFromUrl(state.filters));
+    setCompanyIds(contactCompanyFilterFromUrl(state.filters));
   });
 
   // Page one when a filter CHANGES, never on mount - the mount run used to stamp
@@ -178,6 +183,7 @@ export default function ContactsList() {
     customersNone,
     accessFiltersKey,
     tagFiltersKey,
+    companyIds.join(','),
   ]);
   const [createDialogOpen, setCreateDialogOpen] = useState(false);
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
@@ -210,6 +216,7 @@ export default function ContactsList() {
         tagIds,
         noTags,
         tagSettings,
+        companyIds,
       }),
     }),
     [
@@ -222,6 +229,7 @@ export default function ContactsList() {
       tagIds,
       noTags,
       tagSettings,
+      companyIds,
     ],
   );
 
@@ -261,9 +269,24 @@ export default function ContactsList() {
     () => Object.keys(rowSelection),
     [rowSelection],
   );
+  // "Select first 1,000 of N" (Odoo pattern): every contact matching the list, capped at the
+  // list endpoint's max page. While set, bulk actions act on these rather than the page.
+  const [matching, setMatching] = useState<RespondContact[] | null>(null);
+  // Bumped whenever the selection moves on, so a 1,000-row fetch that lands late is dropped.
+  const matchingSeq = useRef(0);
+  const matchingPendingSeq = useRef<number | null>(null);
+  // Mirror of the ref above, for the toolbar link to read "Selecting..." while it runs.
+  const [matchingPending, setMatchingPending] = useState(false);
+  // The selection moved on: a fetch still out is dropped, and "Selecting..." ends now rather
+  // than when the dropped request settles.
+  const leaveSelectAllFetch = () => {
+    matchingSeq.current += 1;
+    matchingPendingSeq.current = null;
+    setMatchingPending(false);
+  };
   const selectedContacts = useMemo(
-    () => pageContacts.filter((c) => rowSelection[c.id]),
-    [pageContacts, rowSelection],
+    () => matching ?? pageContacts.filter((c) => rowSelection[c.id]),
+    [matching, pageContacts, rowSelection],
   );
 
   // One row here is one contact, so the outbound switch is 1:1 with the row and
@@ -440,7 +463,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Customers" column={column} />
         ),
         size: 200,
-        enableSorting: false,
         cell: ({ row }) => {
           const label = (row.original.customer_codes ?? []).join(', ');
           return label ? (
@@ -456,6 +478,29 @@ export default function ContactsList() {
           skeleton: <Skeleton className="h-4 w-28" />,
         },
       },
+      // FILTER-MULTISELECT (owner 27 Oct): the companies of the linked customers, by name.
+      {
+        id: 'companies',
+        accessorFn: (row) => row.customer_companies?.join(', ') ?? '',
+        header: ({ column }) => (
+          <DataGridColumnHeader title="Companies" column={column} />
+        ),
+        size: 160,
+        cell: ({ row }) => {
+          const label = (row.original.customer_companies ?? []).join(', ');
+          return label ? (
+            <span className="block truncate" title={label}>
+              {label}
+            </span>
+          ) : (
+            <span className="text-muted-foreground"> - </span>
+          );
+        },
+        meta: {
+          headerTitle: 'Companies',
+          skeleton: <Skeleton className="h-4 w-24" />,
+        },
+      },
       {
         id: 'access_types',
         accessorFn: (row) => row.access_type_codes?.join(',') ?? '',
@@ -463,7 +508,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Access types" column={column} />
         ),
         size: 220,
-        enableSorting: false,
         cell: ({ row }) => {
           const types = row.original.access_types ?? [];
           if (types.length === 0) {
@@ -492,7 +536,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Tags" column={column} />
         ),
         size: 200,
-        enableSorting: false,
         cell: ({ row }) => <ContactTagsCell contact={row.original} />,
         meta: {
           headerTitle: 'Tags',
@@ -506,7 +549,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Tag settings" column={column} />
         ),
         size: 140,
-        enableSorting: false,
         cell: ({ row }) => <ContactTagSettingsCell contact={row.original} />,
         meta: {
           headerTitle: 'Tag settings',
@@ -521,7 +563,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Brands" column={column} />
         ),
         size: 180,
-        enableSorting: false,
         cell: ({ row }) => {
           const label = (row.original.brands ?? [])
             .map((b) => b.brand_name)
@@ -547,7 +588,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Tier" column={column} />
         ),
         size: 100,
-        enableSorting: false,
         cell: ({ row }) =>
           row.original.chatbot_tier ? (
             <span
@@ -604,7 +644,6 @@ export default function ContactsList() {
           <DataGridColumnHeader title="Regions" column={column} />
         ),
         size: 200,
-        enableSorting: false,
         cell: ({ row }) => {
           const text = (row.original.regions ?? ['west'])
             .map(regionLabel)
@@ -638,9 +677,11 @@ export default function ContactsList() {
         ? [
             {
               id: 'linked_user',
-              header: 'User',
+              accessorFn: (row: RespondContact) => row.linked_user_name ?? '',
+              header: ({ column }: { column: Column<RespondContact> }) => (
+                <DataGridColumnHeader title="User" column={column} />
+              ),
               size: 180,
-              enableSorting: false,
               cell: ({ row }: { row: { original: RespondContact } }) =>
                 row.original.linked_user_id ? (
                   <Link
@@ -666,7 +707,6 @@ export default function ContactsList() {
         header: ({ column }) => (
           <DataGridColumnHeader title="Outbound" column={column} />
         ),
-        enableSorting: false,
         cell: ({ row }) => (
           <ContactOutboundCell
             enabled={row.original.outbound_enabled}
@@ -768,7 +808,16 @@ export default function ContactsList() {
     state: { pagination, sorting, rowSelection },
     onPaginationChange: setPagination,
     onSortingChange: setSorting,
-    onRowSelectionChange: setRowSelection,
+    onRowSelectionChange: (updater) => {
+      // A tick change leaves the all-matching mode and keeps only this page's ticks. Always
+      // trimmed, not only on the first change: a drag writes back the snapshot it took at
+      // pointerdown, which still holds every id of the mode.
+      const pageIds = new Set(pageContacts.map((c) => c.id));
+      const base = typeof updater === 'function' ? updater(rowSelection) : updater;
+      leaveSelectAllFetch();
+      setMatching(null);
+      setRowSelection(Object.fromEntries(Object.entries(base).filter(([id]) => pageIds.has(id))));
+    },
     getCoreRowModel: getCoreRowModel(),
     manualPagination: true,
     manualSorting: true,
@@ -776,21 +825,74 @@ export default function ContactsList() {
     enableRowSelection: true,
   });
 
-  const clearSelection = () => setRowSelection({});
+  const clearSelection = () => {
+    leaveSelectAllFetch();
+    setMatching(null);
+    setRowSelection({});
+  };
+
+  // Export under "Select all": the page's rows are not the selection, so build the file from
+  // `matching`, reading each chosen column the way the toolbar's own page export does.
+  const exportMatching = async (chosen: string[]) => {
+    const rows = matching ?? [];
+    const data = rows.map((contact, i) => {
+      const out: Record<string, unknown> = {};
+      for (const id of chosen) out[id] = table.getColumn(id)?.accessorFn?.(contact, i);
+      return out;
+    });
+    const cols: ColumnOption[] = chosen.map((id) => {
+      const def = table.getColumn(id)?.columnDef;
+      const title = def?.meta?.headerTitle;
+      return {
+        key: id,
+        label: title ?? (typeof def?.header === 'string' ? def.header : id),
+        selected: true,
+      };
+    });
+    await generateExcelFile(data, cols, 'contacts_export.xlsx');
+    toast.success(`Exported ${rows.length} row(s)`);
+  };
+
+  const selectAllMatchingRows = async () => {
+    const mine = matchingSeq.current;
+    // A second click while this fetch is in flight does nothing.
+    if (matchingPendingSeq.current === mine) return;
+    matchingPendingSeq.current = mine;
+    setMatchingPending(true);
+    try {
+      const res = await fetchContactsPage({ ...listParams, pageIndex: 0, pageSize: 1000 });
+      // Filters, sort, a tick or Clear moved on while it ran: this result is stale.
+      if (matchingSeq.current !== mine) return;
+      setRowSelection(Object.fromEntries(res.data.map((c) => [c.id, true])));
+      setMatching(res.data);
+    } catch (err) {
+      if (matchingSeq.current !== mine) return;
+      toast.error(err instanceof Error ? err.message : 'Could not select all matching contacts');
+    } finally {
+      if (matchingPendingSeq.current === mine) {
+        matchingPendingSeq.current = null;
+        setMatchingPending(false);
+      }
+    }
+  };
 
   // Every filter except Tag and Tag settings lives in the toolbar Filters popover.
   const filtersToolbar = useContactFiltersToolbar({
     accessFilters,
     customersNone,
     noTags,
+    companyIds,
     setAccessFilters,
     setCustomersNone,
     setNoTags,
+    setCompanyIds,
   });
 
   // Reset selection whenever the result set changes.
   useEffect(() => {
     setRowSelection({});
+    setMatching(null);
+    leaveSelectAllFetch();
   }, [
     searchQuery,
     chatbotMemoryLevel,
@@ -851,7 +953,19 @@ export default function ContactsList() {
                 className="w-64"
               />
             }
-            exportConfig={{ filename: 'contacts_export.xlsx' }}
+            exportConfig={{
+              filename: 'contacts_export.xlsx',
+              allRecords: { onExport: exportMatching },
+            }}
+            selectAllMatching={{
+              total: data?.pagination?.total ?? 0,
+              loadedCount: pageContacts.length,
+              active: matching !== null,
+              pending: matchingPending,
+              limit: 1000,
+              onSelectAll: () => void selectAllMatchingRows(),
+              onClear: () => setMatching(null),
+            }}
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
@@ -924,13 +1038,18 @@ export default function ContactsList() {
         open={bulkLinkOpen}
         onOpenChange={setBulkLinkOpen}
         contacts={selectedContacts}
-        onLinked={(okIds) =>
+        onLinked={(okIds) => {
+          // In the all-matching mode any outcome leaves it (the dialog's toast has the count).
+          if (matching || okIds.length === selectedContacts.length) {
+            clearSelection();
+            return;
+          }
           setRowSelection((prev) => {
             const next = { ...prev };
             okIds.forEach((id) => delete next[id]);
             return next;
-          })
-        }
+          });
+        }}
       />
 
       <ContactCreateDialog

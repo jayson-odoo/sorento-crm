@@ -21,7 +21,8 @@ import { toast } from '@/lib/toast';
 import { getLatestContainerStatusDocument } from '../services/packingListService';
 import { Button } from '@/components/ui/button';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { PACKING_LIST_REGION_OPTIONS, regionLabel } from '@/lib/packing-list-regions';
 import { Badge } from '@/components/ui/badge';
 import { Card, CardFooter, CardHeader, CardTable } from '@/components/ui/card';
@@ -456,10 +457,10 @@ export default function PackingListsList() {
                 <div className="space-y-4">
                   <div>
                     <Label htmlFor="packing-list-region-filter">Region</Label>
-                    <SearchableSelect
+                    <SearchableMultiSelect
                       id="packing-list-region-filter"
-                      value={regionFilter}
-                      onChange={setRegionFilter}
+                      value={splitMulti(regionFilter)}
+                      onChange={(v) => setRegionFilter(joinMulti(v))}
                       options={PACKING_LIST_REGION_OPTIONS}
                       placeholder="All regions"
                       triggerClassName="mt-1"

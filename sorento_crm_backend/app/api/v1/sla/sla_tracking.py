@@ -38,6 +38,7 @@ from app.schemas.sla import (
 from app.schemas.integration import IntegrationLogCreate
 from app.schemas.ticket_comment import TicketCommentCreate, TicketCommentResponse
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
+from app.utils.multi_value import multi_uuids, multi_values
 from app.services.error_handler import (
     AppException,
     handle_internal_error,
@@ -491,8 +492,8 @@ async def get_takeover_state(
 
 @router.get("/team-pending")
 async def get_team_pending_sla_tracking(
-    assignee: Optional[str] = Query(None),
-    team: Optional[str] = Query(None),
+    assignee: Optional[list[str]] = Query(None),
+    team: Optional[list[str]] = Query(None),
     query: Optional[str] = Query(None),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -502,12 +503,14 @@ async def get_team_pending_sla_tracking(
     """Unresolved SLA tasks of teammates in the current user's visible teams
     (peers + recursive child/grandchild teams), excluding the user's own.
     ``query`` free-text search over entity number / contact name / assignee / team."""
+    assignee_ids = multi_uuids(assignee, "Assignee")
+    team_ids = multi_uuids(team, "Team")
     try:
         service = ConversationSLATrackingService(db)
         result = service.list_team_pending(
             current_user["id"],
-            assignee=assignee,
-            team=team,
+            assignee=assignee_ids,
+            team=team_ids,
             page=page,
             limit=limit,
             query=query,
@@ -862,7 +865,7 @@ async def get_sla_tracking(
     ),
     sort: Optional[str] = Query(None),
     dir: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
+    assigned_to: Optional[list[str]] = Query(None),
     contact: Optional[str] = Query(
         None,
         description=(
@@ -895,7 +898,7 @@ async def get_sla_tracking(
             tracking_ids=parse_uuid_list(tracking_ids, param_name="tracking_ids"),
             sort_field=sort or "created_at",
             sort_dir=dir or "desc",
-            assigned_to=assigned_to,
+            assigned_to=multi_values(assigned_to),
             scope="form" if scope == "form" else "conversation",
             contact=contact,
             is_resolved=is_resolved,
@@ -2193,9 +2196,9 @@ async def get_event_logs(
     sort: Optional[str] = Query("event_at"),
     dir: Optional[str] = Query("desc"),
     tracking_id: Optional[str] = Query(None),
-    event_type: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
-    assigned_to_id: Optional[str] = Query(None, description="Filter by user id (assigned_to_id)"),
+    event_type: Optional[list[str]] = Query(None),
+    assigned_to: Optional[list[str]] = Query(None),
+    assigned_to_id: Optional[list[str]] = Query(None, description="Filter by user id (assigned_to_id)"),
     date_from: Optional[str] = Query(None, description="Filter event_at >= date (ISO date or datetime)"),
     date_to: Optional[str] = Query(None, description="Filter event_at <= date (ISO date or datetime, end of day)"),
     current_user: dict = Depends(get_current_user_or_api_key),
@@ -2203,6 +2206,7 @@ async def get_event_logs(
 ):
     """Get SLA event logs with pagination and filtering."""
     _require_event_log_reader(db, current_user, _tracking_or_404(db, tracking_id) if tracking_id else None)
+    assignee_ids = multi_uuids(assigned_to_id, "Assignee")
     try:
         service = ConversationSLATrackingService(db)
         result = service.list_event_logs(
@@ -2211,9 +2215,9 @@ async def get_event_logs(
             sort_field=sort,
             sort_dir=dir,
             tracking_id=tracking_id,
-            event_type=event_type,
-            assigned_to=assigned_to,
-            assigned_to_id=assigned_to_id,
+            event_type=multi_values(event_type),
+            assigned_to=multi_values(assigned_to),
+            assigned_to_id=assignee_ids,
             date_from=date_from,
             date_to=date_to,
         )

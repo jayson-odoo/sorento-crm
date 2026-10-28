@@ -650,17 +650,17 @@ def test_ac_f4_confirmed_reserve_decision_reduces_bought_qty_on_a_project_run(sc
 
 
 # =============================================================================
-# Review round 3 nit (reviewer, 23 Sep 2026, READY) - `retail_net` must CLAMP the
-# reduction to the row's own project need, not subtract an oversized Reserve unclamped.
+# Review round 3 nit (reviewer, 23 Sep 2026) clamped `retail_net`'s reduction to the row's own
+# need; since BORROW-NO-HOLD (28 Oct 2026) no claim lowers `retail_net` at all, so there is
+# nothing left to clamp.
 # =============================================================================
 
-def test_retail_net_clamps_an_oversized_reserve_to_the_rows_own_need(scm_app):
-    """A Reserve of 100 against a confirmed need of just 20: `retail_net` must land back
-    on exactly `net` (80 = 100 on hand - 20 committed) - the reserve fully absorbs the row's
-    own 20-unit need and Retail is unaffected - not `net - 80` (the unclamped reading,
-    which read Retail as 80 units worse off than the no-project baseline for no reason).
-    The project part is unaffected by the clamp (`max(need - reduction, 0)` already floors
-    at 0): the reserve fully covers the confirmed 20, so nothing is bought at all.
+def test_retail_net_is_not_lowered_by_an_oversized_reserve(scm_app):
+    """A Reserve of 100 against a confirmed need of just 20: `retail_net` stays at `net` with
+    the project 20 stripped back out (100 = 100 on hand), however big the claim is: a
+    decision is a plan, so no claim lowers Retail's figure. The project part
+    (`max(need - reduction, 0)`) floors at 0: the reserve fully covers the confirmed 20,
+    so nothing is bought at all.
     """
     _, db, _, _ = scm_app
     u = _seed_single_member(db, on_hand=100)
@@ -675,10 +675,52 @@ def test_retail_net_clamps_an_oversized_reserve_to_the_rows_own_need(scm_app):
     recs = _recs_for(db, run_id, u["pid"])
     assert len(recs) == 1, recs
     row = recs[0]
-    assert float(row["inputs"]["retail_net"]) == 80.0, (
-        f"expected retail_net to land back on `net` (80), not net - 80 (0) from an "
-        f"unclamped reduction: {row}"
+    assert float(row["inputs"]["retail_net"]) == 100.0, (
+        f"expected retail_net unlowered by the claim (100), not 20 (net less the 80 "
+        f"that was left over): {row}"
     )
     assert row["rec_type"] == "covered", (
         f"expected no buy - the reserve fully covers the confirmed need: {row}"
     )
+
+
+# =============================================================================
+# BOARD-NO-HOLD review S3 (owner pending, lead's recommendation): a confirmed RESERVE
+# no longer takes stock off RETAIL's figure, but still lowers the PROJECT half's own Buy
+# (captain's Lane F). BORROW-NO-HOLD (28 Oct 2026): a BORROW is the same, both are plans.
+# =============================================================================
+
+def _reduction_world(db, source_type):
+    u = _seed_single_member(db, on_hand=100)
+    so = _project_so_with_lines(db, lines=[
+        {"product_id": u["pid"], "warehouse_id": u["wid"], "qty": 20,
+         "delivery_date": date(2026, 10, 1), "ack_state": ACK_ACKNOWLEDGED},
+    ])
+    _add_reserve_claim(
+        db, so, product_id=u["pid"], warehouse_id=u["wid"], qty=15, source_type=source_type,
+    )
+    run_id = _run_all(db, so_numbers=[so["so_number"]])
+    recs = _recs_for(db, run_id, u["pid"])
+    assert len(recs) == 1, recs
+    return run_id, u, recs[0]
+
+
+def test_a_confirmed_reserve_lowers_the_project_buy_but_not_retail_net(scm_app):
+    """ORDER row 20 + confirmed Reserve 15 on the same line: the project part is
+    20 - 15 = 5, while retail_net is `net` (80) with the project 20 stripped back out =
+    100 - it is NOT reduced by the 15."""
+    _, db, _, _ = scm_app
+    run_id, u, row = _reduction_world(db, "own")
+
+    assert _total_buy(db, run_id, u["pid"]) == 5.0, _recs_for(db, run_id, u["pid"])
+    assert float(row["inputs"]["retail_net"]) == 100.0, row["inputs"]
+
+
+def test_a_confirmed_borrow_lowers_the_project_buy_but_not_retail_net(scm_app):
+    """AC-BNH-10: the same shape with a Borrow of 15 lowers the project part to 5 and, like
+    a Reserve, leaves retail_net at 100."""
+    _, db, _, _ = scm_app
+    run_id, u, row = _reduction_world(db, "other_location")
+
+    assert _total_buy(db, run_id, u["pid"]) == 5.0, _recs_for(db, run_id, u["pid"])
+    assert float(row["inputs"]["retail_net"]) == 100.0, row["inputs"]

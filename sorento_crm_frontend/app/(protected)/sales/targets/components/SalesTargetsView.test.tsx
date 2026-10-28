@@ -10,6 +10,7 @@
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 
 class ResizeObserverStub {
   observe() {}
@@ -62,6 +63,41 @@ vi.mock('@/components/common/SearchableSelect', () => ({
       ))}
     </select>
   ),
+}));
+
+// The filters are multi-selects now (FILTER-MULTISELECT PR3): the same native stand-in, a multiple <select>.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: (props: {
+    id?: string;
+    'aria-label'?: string;
+    value: string[];
+    onChange: (v: string[]) => void;
+    options?: { value: string; label: string }[];
+    fetchOptions?: (q: string) => Promise<{ value: string; label: string }[]>;
+    placeholder?: string;
+  }) => {
+    const [options, setOptions] = React.useState(props.options ?? []);
+    React.useEffect(() => {
+      if (props.fetchOptions) props.fetchOptions('').then(setOptions);
+      // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+    const shown = props.fetchOptions ? options : (props.options ?? []);
+    return (
+      <select
+        multiple
+        id={props.id}
+        aria-label={props['aria-label'] ?? props.id ?? 'select'}
+        value={props.value}
+        onChange={(e) => props.onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
+      >
+        {shown.map((o) => (
+          <option key={o.value} value={o.value}>
+            {o.label}
+          </option>
+        ))}
+      </select>
+    );
+  },
 }));
 
 const perms = vi.hoisted(() => ({ granted: new Set<string>() }));
@@ -182,7 +218,7 @@ describe('SalesTargetsView', () => {
     expect(screen.queryByRole('button', { name: /set target/i })).toBeNull();
   });
 
-  it('Agents lists agent targets with an Agent and a Team column, and a Team filter in Filters', () => {
+  it('Agents lists agent targets with an Agent and a Team column, and a Team filter in Filters', async () => {
     withRows([
       row({
         target_id: 'ta1', target_no: 'TGT-000002', name: 'Ali Oct', subject_kind: 'agent',
@@ -199,7 +235,7 @@ describe('SalesTargetsView', () => {
     fireEvent.keyDown(screen.getByRole('button', { name: /filters/i }), { key: 'Enter' });
     const team = screen.getByLabelText('Team') as HTMLSelectElement;
     expect(Array.from(team.options).map((o) => o.textContent)).toContain('No team');
-    fireEvent.change(team, { target: { value: 'none' } });
+    await userEvent.setup().selectOptions(team, ['none']);
     expect(hooks.useSalesTargets).toHaveBeenCalledWith({ all: true, subject: 'agent', salesTeamId: 'none' });
   });
 

@@ -13,6 +13,8 @@ offered (their exact path runs after the parser).
 from __future__ import annotations
 
 import hashlib
+import logging
+import random
 import re
 import threading
 import time
@@ -21,6 +23,8 @@ from typing import TYPE_CHECKING, Any, Callable
 
 from app.services.chatbot.head import candidates
 from app.services.chatbot_lookup_edits import MARKER, SPAN_MARKER
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from sqlalchemy.orm import Session
@@ -76,6 +80,8 @@ PROMPT_SYNONYMS: dict[str, dict[str, tuple[str, ...]]] = {
 }
 
 EMBED_MODEL = "text-embedding-3-small"
+#: The prompt-registry key whose production label (provider, model) picks the lookup embedder.
+EMBEDDER_PROMPT_KEY = "chatbot_lookup_embedder"
 #: One request's timeout, and the whole embed step's budget, in seconds.
 EMBED_TIMEOUT = 3.0
 EMBED_CHUNK = 500
@@ -119,6 +125,11 @@ class LookupRow:
     label: str
     #: The strings matched (name, code, synonyms, class label).
     texts: tuple[str, ...]
+    #: EEM-CATEGORY-PICK: a category row's class (`product_class_signal.category_class`); a "type:" row is its own.
+    group: str | None = None
+    #: DIMENSION-ANY: a number line offered for a dimension no product holds at that value is kept only beside a
+    #: Category row whose products carry the key (these are those rows' keys); None is always kept.
+    scope: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -287,12 +298,14 @@ def _unit_rows(mat):
     return (mat / norms).astype(np.float32)
 
 
-def _meaning(embed: Embedder | None, usable: list[str], texts: list[str]):
+def _meaning(embed: Embedder | None, usable: list[str], texts: list[str], *, any_model: bool = False):
     """(piece index, text index, S) with S[p, t] the cosine of piece p and row text t, or None when there
     is no embedder or it fails (spelling only). The provider embedder hands over its cached row matrix
     (built once per row set) and embeds only the message pieces; any other embedder is called once."""
     if embed is None or not texts:
         return None
+    if not any_model and getattr(embed, "model", EMBED_MODEL) != EMBED_MODEL:
+        return None  # the n-gram floors are calibrated on OpenAI vectors: any other model reads spelling only
     try:
         if hasattr(embed, "matrix"):
             m = embed.matrix(texts)  # type: ignore[attr-defined]
@@ -400,10 +413,35 @@ def _one_line(label: str) -> str:
     return text[:MAX_LABEL_CHARS]
 
 
-def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER) -> list[str]:
-    """One block per list with hits: the header, then `- <label>` once per label."""
+def _grouped_category_lines(hits: list[Hit]) -> list[str]:
+    """EEM-CATEGORY-PICK: one line per class, "- <class>: <label>, <label>" (the class row's own label is the line's
+    head, not an item; a class matched only by its own row prints bare); a row with no class prints "- <label>"."""
+    groups: dict[str, list[Any]] = {}  # folded class -> [printed spelling, items, spelling came from a member row]
+    for h in hits:
+        label = _one_line(h.row.label)
+        if not label:
+            continue
+        head = _one_line(h.row.group or "") or label
+        entry = groups.setdefault(head.casefold(), [head, [], False])
+        if label.casefold() != head.casefold():
+            if label not in entry[1]:
+                entry[1].append(label)
+            if not entry[2]:  # the class's own spelling is the one its member rows carry
+                entry[0], entry[2] = head, True
+    return [f"- {head}: {', '.join(items)}" if items else f"- {head}" for head, items, _m in groups.values()]
+
+
+def render(hits: dict[str, list[Hit]], order: tuple[str, ...] = DEFAULT_ORDER, *, group_categories: bool = False) -> list[str]:
+    """One block per list with hits: the header, then `- <label>` once per label (a category block one line per
+    class when `group_categories`)."""
     lines: list[str] = []
     for name in order:
+        if group_categories and name == "category":
+            grouped = _grouped_category_lines(hits.get(name) or [])
+            if grouped:
+                lines.append(header(name))
+                lines.extend(grouped)
+            continue
         labels: list[str] = []
         for h in hits.get(name) or []:
             label = _one_line(h.row.label)
@@ -567,9 +605,11 @@ def _customer_rows(db: "Session", only_ids: frozenset[str] | None) -> list[Looku
 def load_rows(
     db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset(), include_salespeople: bool = False,
     include_customers: bool = False, customer_ids: frozenset[str] | None = None, brands: list[dict] | None = None,
+    group_categories: bool = False,
 ) -> list[LookupRow]:
     """Categories (searchable and active, company-scoped by the session), class labels, product types,
-    spec word values, file types and the sales channels."""
+    spec word values, file types and the sales channels. `group_categories` (EEM-CATEGORY-PICK) reads the class
+    vocabulary to set each category row's `group`; off, it is never read."""
     from app.models.product import ProductCategory
     from app.services.chatbot import turn_runtime
     from app.services.reports.ask import SALES_CHANNELS
@@ -582,16 +622,23 @@ def load_rows(
         .order_by(ProductCategory.category_name)
         .all()
     )
+    from app.services.product_class_signal import ClassVocabulary, category_class
+
+    vocab = ClassVocabulary(db) if group_categories and any(not (c.class_label or "").strip() for c in cats) else None
     for c in cats:
         texts = tuple(dict.fromkeys(str(t) for t in [c.category_name, c.category_code, c.class_label, *(c.search_synonyms or [])] if t and str(t).strip()))
-        out.append(LookupRow("category", str(c.id), c.category_name, _with_synonyms("category", c.category_name, texts)))
+        group = (
+            category_class(db, code=c.category_code, name=c.category_name, class_label=c.class_label, vocab=vocab)
+            if group_categories else None
+        )
+        out.append(LookupRow("category", str(c.id), c.category_name, _with_synonyms("category", c.category_name, texts), group))
         seen_labels.add(_fold(c.category_name))
     # Class labels and product types, as the parser's old `Product types:` line named them.
     for name in turn_runtime.product_type_names(db):
         key = _fold(name)
         if key and key not in seen_labels:
             seen_labels.add(key)
-            out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,))))
+            out.append(LookupRow("category", "type:" + key, name, _with_synonyms("category", name, (name,)), name if group_categories else None))
     out.extend(_spec_rows(db, hidden_spec_keys))
     out.extend(_file_type_rows(db))
     out.extend(_brand_rows(db, brands))
@@ -610,10 +657,6 @@ def load_rows(
 #: A length in the message: not glued to a letter or digit before it (a code), a unit after it.
 _LENGTH_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
 _SIZE_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
-#: Any quantity a numeric spec key stores: lengths, litres, horsepower, ounces.
-_QUANTITY_RE = re.compile(
-    r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(litres?|liters?|ounces?|mm|cm|hp|oz|l|m)(?![a-z0-9])"
-)
 _TO_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0}
 #: A unit word (as said or as the registry stores it) -> (unit class, factor to the class's base unit).
 _UNITS = {
@@ -638,15 +681,64 @@ def normalise_number(text: str) -> str | None:
     return f"{_mm(one.group(1), one.group(2))}mm" if one else None
 
 
+def _unit_words(rows: list[Any]) -> dict[str, tuple[str, float]]:
+    """`_UNITS` plus every alias the registry lists for a numeric key (`unit_aliases`, DIMENSION-ANY): "inch" ->
+    ("len", 25.4) off a mm key's `{"inch": 25.4}`. Unit words beyond the shipped ones are data, never code."""
+    units = dict(_UNITS)
+    for row in rows:
+        base = _UNITS.get((row.unit or "").strip().lower())
+        if base is None:
+            continue
+        for alias, factor in (getattr(row, "unit_aliases", None) or {}).items():
+            word = str(alias).strip().casefold()
+            if word and isinstance(factor, (int, float)) and not isinstance(factor, bool) and factor > 0:
+                units.setdefault(word, (base[0], base[1] * float(factor)))
+    return units
+
+
+def _quantity_re(words: Any) -> re.Pattern[str]:
+    """A quantity in the message: a number not glued to a letter or digit before it (a code), one of these unit
+    words after it, the longest first."""
+    alternatives = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+    return re.compile(rf"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*({alternatives})(?![a-z0-9])")
+
+
+def _plain(value: float) -> str:
+    """A number as a person writes it: no exponent, no trailing zeros ("1000000", "152.4")."""
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
+#: DIMENSION-ANY: the bracket key of the line that offers a length with no dimension named; the parser emits it as
+#: spec_key and grounding reads it as every dimension (`head/bare_size.py`).
+SIZE_KEY = "size"
+
+
 def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset()) -> list[Hit]:
-    """Every numeric spec key whose stored values hold a quantity the message says (mm / cm / m, litres, hp,
-    oz), in the key's own unit, the line ending in the bare number the parser reads ("trap length 200mm
-    (trap_length: 200)"). At most `MAX_NUMBER_ASKS` distinct quantities per message. No meaning score;
-    nothing is offered for a number no key holds. A code that merely contains digits is never a quantity."""
+    """Every numeric spec key whose stored values hold a quantity the message says (mm / cm / m, litres, hp, oz,
+    and the registry's own unit aliases), in the key's own unit, the line ending in the bare number the parser
+    reads ("trap length 200mm (trap_length: 200)"). At most `MAX_NUMBER_ASKS` distinct quantities per message. No
+    meaning score. A code that merely contains digits is never a quantity.
+
+    DIMENSION-ANY (owner, 28 Oct 2026): a length leads with "Size 150mm, any dimension (size: 150)", the line a
+    size said with no dimension named is emitted from, then the keys that hold it, then every other dimension's own
+    line, so a NAMED dimension is always nameable (a miss is said back as named, and a named dimension nothing holds
+    falls back to any dimension). Any other quantity no key holds offers nothing."""
+    from sqlalchemy import case, func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_spec import ProductSpecifications
+    from app.services.product_spec_registry import active_registry
+    from app.services.product_spec_search import dimension_keys, membership_clause
+
+    rows = [
+        row for row in active_registry(db)
+        if (row.data_type or "").lower() == "numeric" and row.spec_key not in hidden_spec_keys
+    ]
+    units = _unit_words(rows)
     folded = str(message or "").casefold()
     asks: list[tuple[str, float, str]] = []  # (unit class, value in its base unit, piece)
-    for m in _QUANTITY_RE.finditer(folded):
-        cls, factor = _UNITS[m.group(2)]
+    for m in _quantity_re(units).finditer(folded):
+        cls, factor = units[m.group(2)]
         ask = (cls, round(float(m.group(1)) * factor, 6), m.group(0))
         if not any(a[:2] == ask[:2] for a in asks):
             asks.append(ask)
@@ -654,23 +746,17 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
             break
     if not asks:
         return []
-    from sqlalchemy import case, func
-
-    from app.models.product import Product, chat_searchable_products
-    from app.models.product_spec import ProductSpecifications
-    from app.services.product_spec_registry import active_registry
-    from app.services.product_spec_search import membership_clause
-
+    dims = set(dimension_keys(rows))
     wanted: list[tuple[Any, str, float, str]] = []  # (registry row, shown, value in the key's unit, piece)
-    for row in active_registry(db):
+    for row in rows:
         unit = (row.unit or "").strip()
-        if (row.data_type or "").lower() != "numeric" or unit.lower() not in _UNITS or row.spec_key in hidden_spec_keys:
+        if unit.lower() not in _UNITS:
             continue
         cls, factor = _UNITS[unit.lower()]
         for ask_cls, base, piece in asks:
             if ask_cls == cls:
                 value = round(base / factor, 6)
-                wanted.append((row, f"{value:g}{unit}", value, piece))
+                wanted.append((row, f"{_plain(value)}{unit}", value, piece))
     if not wanted:
         return []
     columns = [
@@ -684,12 +770,71 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
         .filter(chat_searchable_products())
         .one()
     )
-    out: list[Hit] = []
-    for (row, shown, value, piece), held in zip(wanted, counts):
-        if int(held) > 0:
-            label = f"{row.label} {shown} ({row.spec_key}: {value:g})"
-            out.append(Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0))
-    return sorted(out, key=lambda h: h.row.label)
+    held = {(row.spec_key, shown) for (row, shown, _v, _p), n in zip(wanted, counts) if int(n) > 0}
+    scopes = _carried_by(db, sorted({row.spec_key for row, shown, _v, _p in wanted if row.spec_key in dims and (row.spec_key, shown) not in held}))
+    sizes: dict[str, Hit] = {}
+    holding: list[Hit] = []
+    named: list[Hit] = []
+    for row, shown, value, piece in wanted:
+        is_dim = row.spec_key in dims
+        if is_dim and shown not in sizes:
+            label = f"Size {shown}, any dimension ({SIZE_KEY}: {_plain(value)})"
+            sizes[shown] = Hit(LookupRow("spec", f"{SIZE_KEY}={shown}", label, (label,)), _fold(piece), 1.0, 0.0)
+        if (row.spec_key, shown) in held or is_dim:
+            label = f"{row.label} {shown} ({row.spec_key}: {_plain(value)})"
+            holds = (row.spec_key, shown) in held
+            scope = None if holds else scopes.get(row.spec_key, frozenset())
+            hit = Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,), scope=scope), _fold(piece), 1.0, 0.0)
+            (holding if holds else named).append(hit)
+    by_label = lambda h: h.row.label  # noqa: E731
+    return [*sizes.values(), *sorted(holding, key=by_label), *sorted(named, key=by_label)]
+
+
+def _carried_by(db: "Session", keys: list[str]) -> dict[str, frozenset[str]]:
+    """Per spec key, the Category row keys (`load_rows`: a category's id, "type:<class or product type>") whose
+    chat-searchable products carry the key at all. One grouped query."""
+    if not keys:
+        return {}
+    from sqlalchemy import func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_spec import ProductSpecifications
+
+    values = ProductSpecifications.values
+    kinds = (values["class"]["value"].astext, values["product_type"]["value"].astext)
+    rows = (
+        db.query(Product.category_id, *kinds, *[func.bool_or(values.has_key(k)) for k in keys])
+        .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+        .filter(chat_searchable_products())
+        .group_by(Product.category_id, *kinds)
+        .all()
+    )
+    from app.services.product_spec_registry import active_registry, display_spec_value
+
+    # A "type:" row is named by the product type's display label (`turn_runtime.product_type_names`), which can
+    # differ in words from the stored value: both are folded.
+    type_row = next((r for r in active_registry(db) if r.spec_key == "product_type"), None)
+    type_labels = dict(getattr(type_row, "value_labels", None) or {})
+    out: dict[str, set[str]] = {k: set() for k in keys}
+    for category_id, klass, product_type, *carries in rows:
+        shown = display_spec_value(product_type, type_labels) if product_type else None
+        names = {str(category_id)} | {"type:" + _fold(n) for n in (klass, product_type, shown) if n}
+        for key, carried in zip(keys, carries):
+            if carried:
+                out[key] |= names
+    return {k: frozenset(v) for k, v in out.items()}
+
+
+def with_numbers(numbers: list[Hit], spec: list[Hit], categories: list[Hit] | None = None) -> list[Hit]:
+    """The Spec block: the number lines first, then the word lines at their own cap (a length's dimension lines
+    never push a word the message also said out of the block).
+
+    DIMENSION-ANY (crew gate round 2, dealer "hose 2m" shown 10 dimension lines): a dimension no product holds at
+    the asked value is offered only when a Category row of this block carries it (hoses carry a hose length, not a
+    trap outlet length); with no Category row, every dimension stays nameable."""
+    named = {h.row.key for h in categories or []}
+    kept = [h for h in numbers if h.row.scope is None or not named or h.row.scope & named]
+    return [*kept, *spec[: TOP_K["spec"]]]
 
 
 def brand_words(db: "Session", brands: list[dict] | None = None) -> frozenset[str]:
@@ -717,64 +862,80 @@ _pieces: dict[str, Any] = {}
 _PIECES_CAP = 512
 
 
-def _key(text: str) -> tuple[str, str]:
-    return (EMBED_MODEL, hashlib.sha1(text.encode()).hexdigest())
+def _key(text: str, model: str = EMBED_MODEL) -> tuple[str, str]:
+    return (model, hashlib.sha1(text.encode()).hexdigest())
 
 
-def provider_embedder(api_key: str) -> Embedder:
-    """OpenAI `text-embedding-3-small`: row vectors cached per process by (model, sha1 of text) as unit
-    float32, the uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget. `matrix` is the
-    row matrix of a row set (built once); `pieces` embeds a message's pieces without storing them as rows."""
-    from app.services.llm_provider import OpenAIProvider
+#: Gemini's batchEmbedContents takes at most 100 texts per request.
+GEMINI_EMBED_CHUNK = 100
+#: The vector size the meaning floors were calibrated on (native is 3072; `GeminiProvider.embed` also sizes down).
+GEMINI_EMBED_DIMENSIONS = 1536
 
-    def client():
-        return OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
 
-    def store(chunk: list[str], resp) -> None:
-        vectors = _unit_rows([item.embedding for item in resp.data])
+#: Waits (seconds) before each retry of a warm chunk the provider rate-limited; a per-minute burst limit clears in
+#: one. Each wait is stretched by up to 50% jitter so the workers of a container do not retry in lockstep.
+WARM_RETRY_WAITS = (15, 30, 60)
+_sleep = time.sleep
+_jitter = random.random
+
+
+def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
+    """A row-vector embedder over `request` (texts -> raw vectors): vectors cached per process by (model, sha1 of
+    text) as unit float32, the uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget. `matrix`
+    is the row matrix of a row set (built once); `pieces` embeds a message's pieces without storing them as rows.
+    The model is part of the cache key, so a model switch never mixes vector spaces."""
+
+    def store(chunk: list[str], raw: list[Any]) -> None:
+        vectors = _unit_rows(raw)
         with _store_lock:
             for t, vec in zip(chunk, vectors):
-                _cache[_key(t)] = vec
+                _cache[_key(t, model)] = vec
 
     def embed(texts: list[str]) -> list[Any]:
         deadline = time.monotonic() + EMBED_TIMEOUT
         with _store_lock:
-            todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
+            todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
             if len(_cache) + len(todo) > _CACHE_CAP:
                 _cache.clear()
                 _matrices.clear()
                 todo = list(dict.fromkeys(texts))
-        if todo:
-            api = client()
-            for i in range(0, len(todo), EMBED_CHUNK):
-                if time.monotonic() > deadline:
-                    raise TimeoutError("lookup list embedding budget spent")
-                chunk = todo[i : i + EMBED_CHUNK]
-                store(chunk, api.embeddings.create(model=EMBED_MODEL, input=chunk))
+        for i in range(0, len(todo), chunk_size):
+            if time.monotonic() > deadline:
+                raise TimeoutError("lookup list embedding budget spent")
+            chunk = todo[i : i + chunk_size]
+            store(chunk, request(chunk))
         with _store_lock:
-            return [_cache[_key(t)] for t in texts]
+            return [_cache[_key(t, model)] for t in texts]
 
     def fill(texts: list[str]) -> None:
         """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
-        total deadline; chunks are kept as they complete."""
+        total deadline; chunks are kept as they complete. A rate-limited chunk is waited out (`WARM_RETRY_WAITS`),
+        then the error is re-raised; a large warm is back-to-back requests and trips the per-minute limit."""
         with _store_lock:
-            todo = [t for t in dict.fromkeys(texts) if _key(t) not in _cache]
-        if not todo:
-            return
-        api = client()
-        for i in range(0, len(todo), EMBED_CHUNK):
-            chunk = todo[i : i + EMBED_CHUNK]
-            store(chunk, api.embeddings.create(model=EMBED_MODEL, input=chunk))
+            todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+        for i in range(0, len(todo), chunk_size):
+            chunk = todo[i : i + chunk_size]
+            for wait in (*WARM_RETRY_WAITS, None):
+                try:
+                    raw = request(chunk)
+                    break
+                except Exception as exc:  # noqa: BLE001
+                    from app.services.chatbot import llm_call
+
+                    if wait is None or not llm_call.is_rate_limited(exc) or llm_call._quota_exhausted(exc):
+                        raise
+                    _sleep(wait * (1 + 0.5 * _jitter()))
+            store(chunk, raw)
 
     def matrix(texts: list[str]):
         import numpy as np
 
         embed(texts)
-        key = hashlib.sha1("\0".join(texts).encode()).hexdigest()
+        key = hashlib.sha1((model + "\0" + "\0".join(texts)).encode()).hexdigest()
         with _store_lock:
             built = _matrices.get(key)
             if built is None:
-                built = np.stack([_cache[_key(t)] for t in texts])
+                built = np.stack([_cache[_key(t, model)] for t in texts])
                 while len(_matrices) >= _MATRIX_SETS:
                     _matrices.pop(next(iter(_matrices)))
                 _matrices[key] = built
@@ -786,15 +947,14 @@ def provider_embedder(api_key: str) -> Embedder:
         # The message's own vectors are read before the cache evicts: a cached piece at the front of the cache is
         # still this message's piece (CHAT-V66-REGRESSIONS: it raised KeyError and the turn lost its meaning scores).
         with _store_lock:
-            got = {t: _pieces[t] for t in texts if t in _pieces}
+            got = {t: _pieces[(model, t)] for t in texts if (model, t) in _pieces}
         todo = [t for t in dict.fromkeys(texts) if t not in got]
         if todo:
-            resp = client().embeddings.create(model=EMBED_MODEL, input=todo)
-            vectors = _unit_rows([item.embedding for item in resp.data])
+            vectors = _unit_rows(request(todo))
             got.update(zip(todo, vectors))
             with _store_lock:
                 for t, vec in zip(todo, vectors):
-                    _pieces[t] = vec
+                    _pieces[(model, t)] = vec
                 while len(_pieces) > _PIECES_CAP:
                     _pieces.pop(next(iter(_pieces)))
         return np.stack([got[t] for t in texts])
@@ -803,8 +963,48 @@ def provider_embedder(api_key: str) -> Embedder:
     embed.matrix = matrix  # type: ignore[attr-defined]
     embed.pieces = pieces_matrix  # type: ignore[attr-defined]
     embed.needs_warm = True  # type: ignore[attr-defined]
-    embed.is_cached = lambda texts: all(_key(t) in _cache for t in list(texts))  # type: ignore[attr-defined]
+    embed.model = model  # type: ignore[attr-defined]
+    embed.is_cached = lambda texts: all(_key(t, model) in _cache for t in list(texts))  # type: ignore[attr-defined]
     return embed
+
+
+def provider_embedder(api_key: str) -> Embedder:
+    """OpenAI `text-embedding-3-small` (see `_vector_embedder`)."""
+    from app.services.llm_provider import OpenAIProvider
+
+    def request(chunk: list[str]) -> list[Any]:
+        client = OpenAIProvider(api_key)._client(timeout=EMBED_TIMEOUT, max_retries=0)
+        return [item.embedding for item in client.embeddings.create(model=EMBED_MODEL, input=chunk).data]
+
+    return _vector_embedder(EMBED_MODEL, request, EMBED_CHUNK)
+
+
+def gemini_embedder(api_key: str, model: str) -> Embedder:
+    """Gemini `batchEmbedContents` on `model` (see `_vector_embedder`), one request per batch of texts."""
+    from app.services.llm_provider import GeminiProvider
+
+    def request(chunk: list[str]) -> list[Any]:
+        body = GeminiProvider(api_key)._request(
+            "POST",
+            f"models/{model}:batchEmbedContents",
+            json_body={
+                "requests": [
+                    {
+                        "model": f"models/{model}",
+                        "content": {"parts": [{"text": t}]},
+                        "outputDimensionality": GEMINI_EMBED_DIMENSIONS,
+                    }
+                    for t in chunk
+                ]
+            },
+            timeout=EMBED_TIMEOUT,
+        )
+        vectors = [e.get("values") or [] for e in body.get("embeddings") or []]
+        if len(vectors) != len(chunk) or not all(vectors):
+            raise RuntimeError("Gemini batchEmbedContents returned the wrong number of vectors.")
+        return vectors
+
+    return _vector_embedder(model, request, GEMINI_EMBED_CHUNK)
 
 
 _warm_lock = threading.Lock()
@@ -827,7 +1027,7 @@ def prefetch(message: str, embed: Embedder | None) -> Callable[[], bool]:
     says whether the pieces arrived; when they did not (late or failed) the turn reads spelling only rather than send
     the request a second time. Only the provider embedder (`pieces`) is prefetched; anything else is ready at once."""
     usable = [p for p in pieces(message) if not _code_like(p)]
-    if embed is None or not hasattr(embed, "pieces") or not usable:
+    if embed is None or not hasattr(embed, "pieces") or not usable or getattr(embed, "model", EMBED_MODEL) != EMBED_MODEL:
         return lambda: True
     arrived: list[bool] = []
 
@@ -856,15 +1056,26 @@ def row_texts(rows: list[LookupRow]) -> list[str]:
 def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
     """Embed every row text on a background thread so a cold cache never blocks a turn. One warm-up
     at a time; a failure is swallowed (the next turn tries again, the turn itself is spelling only)."""
-    if embed is None or not rows or not _warm_lock.acquire(blocking=False):
+    if embed is None or not rows:
         return
     texts = row_texts(rows)
+    # A full cache has nothing to fetch: no thread, no lock, no log line per turn.
+    is_cached = getattr(embed, "is_cached", None)
+    if is_cached is not None and is_cached(texts):
+        return
+    if not _warm_lock.acquire(blocking=False):
+        return
 
     def run() -> None:
+        started = time.monotonic()
         try:
             getattr(embed, "fill", embed)(texts)
+            logger.info(
+                "lookup lists warm: %d texts cached on %s in %.1f s",
+                len(texts), getattr(embed, "model", "?"), time.monotonic() - started,
+            )
         except Exception:  # noqa: BLE001 - advisory
-            pass
+            logger.warning("lookup lists warm failed", exc_info=True)
         finally:
             _warm_lock.release()
 
@@ -881,12 +1092,19 @@ def usable_embedder(rows: list[LookupRow], embed: Embedder | None) -> Embedder |
 
 
 def embedder(db: "Session") -> Embedder | None:
-    """`EMBED` as the engine uses it: a set value (a callable or None) wins; the default builds the
-    provider embedder from the assistant config's OpenAI key, or None (spelling only) with no key."""
+    """`EMBED` as the engine uses it: a set value (a callable or None) wins; the default follows the production
+    label of prompt key `chatbot_lookup_embedder`: provider gemini plus a model -> a Gemini embedder with the AI
+    config's Gemini key; otherwise the OpenAI embedder with its key. No key for the chosen provider -> None
+    (spelling only)."""
     if EMBED is not USE_PROVIDER:
         return EMBED
-    from app.services import llm_provider
+    from app.services import ai_prompt_registry, llm_provider
     from app.services.ai_assistant_service import AIAssistantConfigService
 
-    key = llm_provider.resolve_api_key(AIAssistantConfigService(db).get(), "openai")
+    config = AIAssistantConfigService(db).get()
+    provider, model = ai_prompt_registry.agent_model(db, EMBEDDER_PROMPT_KEY)
+    if provider == "gemini" and model:
+        key = llm_provider.resolve_api_key(config, "gemini")
+        return gemini_embedder(key, model) if key else None
+    key = llm_provider.resolve_api_key(config, "openai")
     return provider_embedder(key) if key else None

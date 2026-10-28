@@ -30,7 +30,8 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { DatePicker } from '@/components/ui/date-picker';
 import { Label } from '@/components/ui/label';
 import { toast } from '@/lib/toast';
@@ -112,10 +113,10 @@ interface EventLogTableProps {
 export default function EventLogTable({ trackingId, agentCode, teamSetCode }: EventLogTableProps) {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'event_at', desc: true }]);
-  const [eventTypeFilter, setEventTypeFilter] = useState('__all__');
+  const [eventTypeFilter, setEventTypeFilter] = useState('');
   const [dateFrom, setDateFrom] = useState<Date | undefined>(undefined);
   const [dateTo, setDateTo] = useState<Date | undefined>(undefined);
-  const [assignedToFilter, setAssignedToFilter] = useState('__all__');
+  const [assignedToFilter, setAssignedToFilter] = useState('');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [logToDelete, setLogToDelete] = useState<ConversationSLAEventLog | null>(null);
   const [rowSelection, setRowSelection] = useState<Record<string, boolean>>({});
@@ -132,10 +133,10 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
     limit: pagination.pageSize,
     sort: sorting?.[0]?.id || 'event_at',
     dir: sorting?.[0]?.desc ? 'desc' : 'asc',
-    event_type: eventTypeFilter && eventTypeFilter !== '__all__' ? eventTypeFilter : undefined,
+    event_type: eventTypeFilter || undefined,
     date_from: dateFrom ? toYYYYMMDD(dateFrom) : undefined,
     date_to: dateTo ? toYYYYMMDD(dateTo) : undefined,
-    assigned_to_id: assignedToFilter && assignedToFilter !== '__all__' ? assignedToFilter : undefined,
+    assigned_to_id: assignedToFilter || undefined,
   });
 
   const eventLogs = eventLogsResponse?.data ?? [];
@@ -171,17 +172,14 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
   const isAdmin = currentUser?.role === 'admin';
 
   const hasActiveFilters = Boolean(
-    (eventTypeFilter && eventTypeFilter !== '__all__') ||
-    dateFrom != null ||
-    dateTo != null ||
-    (assignedToFilter && assignedToFilter !== '__all__'),
+    eventTypeFilter || dateFrom != null || dateTo != null || assignedToFilter,
   );
 
   const handleClearFilters = () => {
-    setEventTypeFilter('__all__');
+    setEventTypeFilter('');
     setDateFrom(undefined);
     setDateTo(undefined);
-    setAssignedToFilter('__all__');
+    setAssignedToFilter('');
     setPagination((prev) => ({ ...prev, pageIndex: 0 }));
   };
 
@@ -356,18 +354,16 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                     <h4 className="text-sm font-medium">Advanced filters</h4>
                     <div className="space-y-2">
                       <Label className="text-xs">Event Type</Label>
-                      <SearchableSelect
-                        value={eventTypeFilter}
-                        onChange={(v) => {
-                          setEventTypeFilter(v);
+                      <SearchableMultiSelect
+                        value={splitMulti(eventTypeFilter)}
+                        onChange={(values) => {
+                          setEventTypeFilter(joinMulti(values));
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
-                        options={EVENT_TYPE_OPTIONS.map((opt) => ({
-                          value: opt.value,
-                          label: opt.label,
-                        }))}
+                        options={EVENT_TYPE_OPTIONS.filter((opt) => opt.value !== '__all__')}
                         placeholder="All"
                         triggerClassName="w-full"
+                        clearable
                       />
                     </div>
                     <div className="space-y-2">
@@ -399,23 +395,21 @@ export default function EventLogTable({ trackingId, agentCode, teamSetCode }: Ev
                     </div>
                     <div className="space-y-2">
                       <Label className="text-xs">Assigned To</Label>
-                      <SearchableSelect
-                        value={assignedToFilter}
-                        onChange={(v) => {
-                          setAssignedToFilter(v);
+                      <SearchableMultiSelect
+                        value={splitMulti(assignedToFilter)}
+                        onChange={(values) => {
+                          setAssignedToFilter(joinMulti(values));
                           setPagination((prev) => ({ ...prev, pageIndex: 0 }));
                         }}
                         loadError={respondUsersError}
                         onRetry={() => void refetchRespondUsers()}
-                        options={[
-                          { value: '__all__', label: 'All' },
-                          ...users.map((u) => ({
-                            value: u.id,
-                            label: u.name || 'Unnamed user',
-                          })),
-                        ]}
+                        options={users.map((u) => ({
+                          value: u.id,
+                          label: u.name || 'Unnamed user',
+                        }))}
                         placeholder="All"
                         triggerClassName="w-full"
+                        clearable
                       />
                     </div>
                     {hasActiveFilters && (

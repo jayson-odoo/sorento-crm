@@ -16,6 +16,7 @@ import {
   CalendarRange,
   Columns3,
   FileText,
+  Link2,
   ListOrdered,
   LoaderCircleIcon,
   Move,
@@ -128,7 +129,8 @@ import { PLAN_PERMISSION } from '../../lib/planActions';
 import { SOURCE_LABELS as LINE_SOURCE_LABELS } from '../../lib/sourceLabels';
 import { cancelSourcesTitle, isPartlyCancelled, PARTLY_CANCELLED } from '@/app/(protected)/scm/lib/autocountCancel';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { SalesOrderInvoices } from '@/app/(protected)/finance/billing-documents/components/SalesOrderInvoices';
+import { OrderInvoices } from '@/app/(protected)/finance/billing-documents/components/OrderInvoices';
+import { RelatedDocumentsPanel } from '@/app/(protected)/order-management/shared/related/RelatedDocumentsPanel';
 import { BILLING_VIEW_SLUG } from '@/app/(protected)/finance/billing-documents/lib/permissions';
 import { distinctName } from '@/lib/product-display';
 
@@ -1876,6 +1878,10 @@ export function SalesOrderDetail({
             <Move />
             <span>Transfers</span>
           </TabsTrigger>
+          <TabsTrigger value="related">
+            <Link2 />
+            <span>Related</span>
+          </TabsTrigger>
         </TabsList>
 
         <TabsContent value="general" className="mt-0 space-y-4 focus-visible:outline-none">
@@ -2301,6 +2307,11 @@ export function SalesOrderDetail({
                 <CardTitle>Delivery</CardTitle>
               </CardHeading>
             </CardHeader>
+            {/* DOC-RELATIONS bug 5 (owner, mock v2): the sentence reads the order lines'
+                `qty_delivered` while the table below reads the DO lines, so a stale line said
+                "Nothing delivered yet" over a full table. With DO rows the table is the answer
+                and no sentence is shown; the sentences stay for an order with none. */}
+            {deliveryRows.length > 0 || deliveries.isLoading ? null : (
             <div className="p-4">
               {so.total_qty > 0 && so.committed_qty === 0 ? (
                 <div className="flex items-center gap-2 text-sm">
@@ -2322,6 +2333,7 @@ export function SalesOrderDetail({
                 </p>
               )}
             </div>
+            )}
             {/* DO-SO-LINK-SURFACE R3: every DO line under this SO, the truck lightbox's own
                 rows and columns plus SKU. Nothing (not an empty table) when there is none. */}
             {deliveries.isError && !deliveries.data ? (
@@ -2346,7 +2358,7 @@ export function SalesOrderDetail({
         {/* PLAN-finance-billing-documents S3-1: billing documents pointing at this order's lines. */}
         {canSeeInvoices ? (
           <TabsContent value="invoices" className="mt-0 focus-visible:outline-none">
-            <SalesOrderInvoices salesOrderId={so.id} />
+            <OrderInvoices salesOrderId={so.id} />
           </TabsContent>
         ) : null}
 
@@ -2359,6 +2371,11 @@ export function SalesOrderDetail({
             listingKey="scm.sales_orders.view::stock-transfers"
             showFilters={false}
           />
+        </TabsContent>
+
+        {/* DOC-RELATIONS: the delivery orders and billing documents of this order, one table. */}
+        <TabsContent value="related" className="mt-0 focus-visible:outline-none">
+          <RelatedDocumentsPanel kind="sales_order" id={so.id} />
         </TabsContent>
       </Tabs>
 

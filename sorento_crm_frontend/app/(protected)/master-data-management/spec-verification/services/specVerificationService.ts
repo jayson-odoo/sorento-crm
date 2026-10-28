@@ -121,7 +121,7 @@ export async function getSpecVerificationWorklist(
 ): Promise<SpecVerificationWorklistResponse> {
   const search = buildDataGridParams(params, {
     state: params.state || undefined,
-    class_label: params.class_label || undefined,
+    class_label: params.class_label?.length ? params.class_label : undefined,
     include_discontinued: params.include_discontinued ? 'true' : undefined,
   });
   const response = await apiFetch(`${BASE}/worklist?${search.toString()}`);

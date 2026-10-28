@@ -33,6 +33,9 @@ from app.schemas.stock_transfer import (
     StockTransferOut,
 )
 from app.services.error_handler import AppException, handle_internal_error
+from app.utils.multi_value import multi_uuids, multi_values
+
+_TRANSFER_KINDS = ("own_group", "pool", "borrow")
 from app.services.stock_transfer_service import StockTransferService
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -83,10 +86,10 @@ def list_stock_transfers(
             "`proposed,approved` - everything that has not moved yet - as one question."
         ),
     ),
-    kind: Optional[Literal["own_group", "pool", "borrow"]] = Query(None),
-    from_warehouse_id: Optional[str] = Query(None),
-    to_warehouse_id: Optional[str] = Query(None),
-    product_id: Optional[str] = Query(None),
+    kind: Optional[list[str]] = Query(None, description="own_group | pool | borrow; several = any of them."),
+    from_warehouse_id: Optional[list[str]] = Query(None),
+    to_warehouse_id: Optional[list[str]] = Query(None),
+    product_id: Optional[list[str]] = Query(None),
     sales_order_id: Optional[str] = Query(
         None, description="The CORE sales order, for the SO detail page's Transfers tab."
     ),
@@ -127,10 +130,17 @@ def list_stock_transfers(
                 code="stock_transfer_bad_state",
             )
         numbers = [value.strip() for value in (so_numbers or "").split(",") if value.strip()]
+        kinds = multi_values(kind)
+        if kinds and any(k not in _TRANSFER_KINDS for k in kinds):
+            raise AppException(
+                status_code=422,
+                message=f"Source: expected one of {', '.join(_TRANSFER_KINDS)}.",
+                code="stock_transfer_bad_kind",
+            )
+        from_ids = multi_uuids(from_warehouse_id, "Warehouse")
+        to_ids = multi_uuids(to_warehouse_id, "Warehouse")
+        product_ids = multi_uuids(product_id, "Product")
         for value, resource in (
-            (from_warehouse_id, "Warehouse"),
-            (to_warehouse_id, "Warehouse"),
-            (product_id, "Product"),
             (sales_order_id, "Sales order"),
             (project_sales_order_id, "Sales order"),
             (sales_agent_id, "Sales agent"),
@@ -145,10 +155,10 @@ def list_stock_transfers(
             query=query,
             state=states or None,
             so_numbers=numbers or None,
-            kind=kind,
-            from_warehouse_id=from_warehouse_id,
-            to_warehouse_id=to_warehouse_id,
-            product_id=product_id,
+            kind=kinds,
+            from_warehouse_id=from_ids,
+            to_warehouse_id=to_ids,
+            product_id=product_ids,
             sales_order_id=sales_order_id,
             project_sales_order_id=project_sales_order_id,
             sales_agent_id=sales_agent_id,

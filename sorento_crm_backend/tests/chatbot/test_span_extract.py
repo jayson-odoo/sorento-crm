@@ -558,7 +558,7 @@ def _ngram_expected(session_factory, body: str, *, numbers: bool = False) -> lis
     if numbers:
         nums = ll.number_hits(body, db, hidden_spec_keys=frozenset())
         assert nums, "the control message must carry a number the lookup understands"
-        hits["spec"] = [*nums, *hits.get("spec", [])][: ll.TOP_K["spec"]]
+        hits["spec"] = ll.with_numbers(nums, hits.get("spec", []), hits.get("category"))
     return ll.render(hits)
 
 
@@ -696,7 +696,7 @@ class E:
     def pieces(self, texts): return [[0.0]] * len(texts)
     def fill(self, texts): return None
     def __call__(self, texts): return [[0.0]] * len(texts)
-    def is_cached(self, texts): return True
+    def is_cached(self, texts): return False
 rows = [ll.LookupRow('brand', 'b1', 'ZZBRAND', ('ZZBRAND',))]
 ll.prefetch('zz basin price', E())()
 ll.warm(rows, E())

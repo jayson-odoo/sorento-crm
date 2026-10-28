@@ -11,7 +11,7 @@ from datetime import datetime
 from decimal import Decimal
 from typing import Dict, Iterable, List, Optional, Union
 
-from sqlalchemy import or_
+from sqlalchemy import or_, select
 from sqlalchemy.orm import Session
 
 from app.models.access import RespondContact
@@ -572,9 +572,9 @@ def list_opportunities(
     db: Session,
     *,
     query: Optional[str] = None,
-    status_id: Optional[str] = None,
+    status_id: Optional[list[str] | str] = None,
     sales_agent_id: Optional[AgentIds] = None,
-    customer_id: Optional[str] = None,
+    customer_id: Optional[list[str] | str] = None,
     close_from=None,
     close_to=None,
     outcome: Optional[str] = None,
@@ -603,7 +603,7 @@ def list_opportunities(
             )
         )
     if status_id:
-        q = q.filter(SalesOpportunity.status_id == status_id)
+        q = q.filter(SalesOpportunity.status_id.in_([status_id] if isinstance(status_id, str) else status_id))
     if isinstance(sales_agent_id, str):
         if sales_agent_id:
             q = q.filter(SalesOpportunity.sales_agent_id == sales_agent_id)
@@ -611,7 +611,7 @@ def list_opportunities(
         # A list (the portal's linked agents) filters even when empty: it matches nothing.
         q = q.filter(SalesOpportunity.sales_agent_id.in_(list(sales_agent_id)))
     if customer_id:
-        q = q.filter(SalesOpportunity.customer_id == customer_id)
+        q = q.filter(SalesOpportunity.customer_id.in_([customer_id] if isinstance(customer_id, str) else customer_id))
     if close_from:
         q = q.filter(SalesOpportunity.expected_close_date >= close_from)
     if close_to:
@@ -662,10 +662,19 @@ def meta(db: Session) -> dict:
     return {"stages": stages, "lost_reasons": lost_reasons}
 
 
-def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Optional[str] = None) -> List[dict]:
+def sales_order_options(
+    db: Session,
+    opportunity: SalesOpportunity,
+    *,
+    q: Optional[str] = None,
+    agent_ids: Optional[AgentIds] = None,
+) -> List[dict]:
     """That customer's non-cancelled sales orders, newest first, `q` narrowing by order
     number the same as the prospect branch below narrows by number or customer name
-    (Phase 3 fix2 nit: the customer-backed branch used to ignore `q` outright)."""
+    (Phase 3 fix2 nit: the customer-backed branch used to ignore `q` outright).
+
+    `agent_ids` keeps both branches to those agents' own customers, for a user who may
+    see only their own opportunities (PORTAL-P2-ONLY-THEIRS)."""
     if opportunity.customer_id:
         order_query = db.query(SalesOrder).filter(
             SalesOrder.customer_id == opportunity.customer_id,
@@ -673,6 +682,8 @@ def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Option
         )
         if q:
             order_query = order_query.filter(SalesOrder.so_number.ilike(f"%{q}%"))
+        if agent_ids is not None:
+            order_query = order_query.filter(_own_customers(agent_ids))
         orders = order_query.order_by(SalesOrder.order_date.desc().nullslast()).limit(50).all()
     else:
         order_query = (
@@ -685,6 +696,8 @@ def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Option
             order_query = order_query.filter(
                 or_(SalesOrder.so_number.ilike(like), Customer.customer_name.ilike(like))
             )
+        if agent_ids is not None:
+            order_query = order_query.filter(_own_customers(agent_ids))
         orders = order_query.order_by(SalesOrder.order_date.desc().nullslast()).limit(50).all()
 
     customer_names: Dict[str, str] = {}
@@ -704,6 +717,12 @@ def sales_order_options(db: Session, opportunity: SalesOpportunity, *, q: Option
         }
         for o in orders
     ]
+
+
+def _own_customers(agent_ids: AgentIds):
+    return SalesOrder.customer_id.in_(
+        select(Customer.id).where(Customer.sales_agent_id.in_(_agent_id_list(agent_ids)))
+    )
 
 
 def agent_options(db: Session, *, company_id: str) -> List[dict]:

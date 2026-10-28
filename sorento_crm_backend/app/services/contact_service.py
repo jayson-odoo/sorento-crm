@@ -111,16 +111,20 @@ class ContactService:
         no_customers_only: bool = False,
         access_filters: Optional[dict] = None,
         redact_sections: frozenset = frozenset(),
+        viewer_id: Optional[str] = None,
     ):
         """List contacts with pagination and filtering.
 
         ``access_filters`` (CONTACT-BULK-ACCESS, UAC A2.3): any of ``access_type``, ``tier``,
-        ``cost``, ``escalation``, ``packing_list``, ``stock``, ``customer_id``,
+        ``cost``, ``escalation``, ``packing_list``, ``stock``, ``customer_ids``,
         ``access_differs_from``; absent or None = no filter. See ``_apply_access_filters``.
 
         ``include_linked_users`` (S3 1.7): the caller holds `users.view`, so
         each row's `linked_user_id`/`linked_user_name` are filled from ONE
         batched query for the whole page - never one query per row.
+
+        ``viewer_id`` (ACCESS-SHEET-FIXES): the list belongs to no one company, so the
+        Customers column and the ``customer_id`` filter read every company that user is granted.
         """
         q = self.db.query(RespondContact)
         if own_memory_level_only:
@@ -150,26 +154,12 @@ class ContactService:
                 )
             )
         if access_filters:
-            q = self._apply_access_filters(q, access_filters)
+            q = self._apply_access_filters(q, access_filters, viewer_id)
         
         total = q.count()
         
-        # Handle sorting
-        sort_map = {
-            "phone_number": RespondContact.phone_number,
-            "name": RespondContact.name,
-            "first_name": RespondContact.first_name,
-            "last_name": RespondContact.last_name,
-            "created_at": RespondContact.created_at,
-            "updated_at": RespondContact.updated_at,
-        }
-        sort_attr = sort_map.get(sort_field, RespondContact.created_at)
-        if sort_dir == "desc":
-            sort_attr = sort_attr.desc()
-        else:
-            sort_attr = sort_attr.asc()
-        
-        contacts = q.order_by(sort_attr).offset((page - 1) * limit).limit(limit).all()
+        order = self._order_by(q, sort_field, sort_dir == "desc", viewer_id, include_linked_users)
+        contacts = q.order_by(*order).offset((page - 1) * limit).limit(limit).all()
 
         linked_map: dict[str, dict] = {}
         if include_linked_users and contacts:
@@ -177,9 +167,13 @@ class ContactService:
 
             linked_map = linked_user_map(self.db, [str(c.id) for c in contacts])
 
-        from app.services.contact_customer_service import customer_codes_by_contact
+        from app.services.contact_customer_service import (
+            customer_codes_by_contact,
+            customer_companies_by_contact,
+        )
 
-        codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts])
+        codes_map = customer_codes_by_contact(self.db, [str(c.id) for c in contacts], viewer_id)
+        companies_map = customer_companies_by_contact(self.db, [str(c.id) for c in contacts], viewer_id)
         cost_ids = self._cost_visible_ids([str(c.id) for c in contacts])
 
         from app.services.contact_brand_scope import brand_refs_by_contact
@@ -207,6 +201,7 @@ class ContactService:
                 data["linked_user_id"] = linked["id"] if linked else None
                 data["linked_user_name"] = linked["name"] if linked else None
                 data["customer_codes"] = codes_map.get(str(contact.id), [])
+                data["customer_companies"] = companies_map.get(str(contact.id), [])
                 data["brands"] = brands_map.get(str(contact.id), [])
                 data["tags"] = tags_map.get(str(contact.id), [])
                 data["tag_settings"] = contact_tag_settings.row_summary(tag_settings_map[str(contact.id)])
@@ -224,6 +219,134 @@ class ContactService:
     
     COST_REVEAL_KEY = "purchase_orders.cost"
 
+    def _order_by(self, q, sort_field: str, desc: bool, viewer_id: Optional[str], include_linked_users: bool) -> list:
+        """ORDER BY for the list: every grid column sorts on the server (ACCESS-SHEET-FIXES, owner
+        27 Oct). A multi-value cell sorts by the first value it shows; an empty cell sorts last both
+        ways; name then id break ties so pages never repeat or skip a row."""
+        from sqlalchemy import case, literal, select, any_
+
+        from app.models.access import (
+            ContactAccessType,
+            ContactFieldReveal,
+            ContactTag,
+            RespondContactCustomer,
+            respond_contact_access_types as type_pivot,
+            respond_contact_tags as tag_pivot,
+        )
+        from app.models.base import get_company_scope
+        from app.models.order import Customer
+        from app.models.product import Brand
+        def first(stmt):
+            return stmt.correlate(RespondContact).scalar_subquery()
+
+        columns = {
+            "phone_number": RespondContact.phone_number,
+            "name": RespondContact.name,
+            "first_name": RespondContact.first_name,
+            "last_name": RespondContact.last_name,
+            "created_at": RespondContact.created_at,
+            "updated_at": RespondContact.updated_at,
+            "chatbot_tier": RespondContact.chatbot_profile["tier"].astext,
+            "chatbot_allowed": RespondContact.chatbot_allowed,
+            "escalation_allowed": RespondContact.escalation_allowed,
+            "packing_list_allowed": RespondContact.packing_list_allowed,
+            "chatbot_stock_allowed": RespondContact.chatbot_stock_allowed,
+            "outbound_enabled": RespondContact.outbound_enabled,
+            "regions": RespondContact.regions,
+        }
+        key = columns.get(sort_field)
+        if sort_field in ("customers", "companies"):
+            # What the Customers / Companies column shows: every granted company when the viewer
+            # is known. Core tables, not the entities: the session's auto-filter would narrow them
+            # back to the active company; the link's own company is scoped to the grants instead.
+            from app.models.company import Company
+            from app.services.company_scope_resolver import grants_scope_value
+
+            scope = grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
+            customers, links = Customer.__table__, RespondContactCustomer.__table__
+            companies = Company.__table__
+            shown = customers.c.customer_code if sort_field == "customers" else companies.c.name
+            stmt = (
+                select(func.min(shown))
+                .select_from(links)
+                .join(customers, customers.c.id == links.c.customer_id)
+                .where(links.c.contact_id == RespondContact.id)
+            )
+            if sort_field == "companies":
+                stmt = stmt.join(companies, companies.c.id == customers.c.company_id)
+            if scope is not None:  # None = every company; UNSET or empty fails closed
+                ids = sorted(scope) if isinstance(scope, frozenset) else []
+                # Both sides: a link's company is stamped from its customer, but nothing enforces it.
+                stmt = stmt.where(
+                    links.c.company_id.in_(ids) & customers.c.company_id.in_(ids) if ids else literal(False)
+                )
+            key = first(stmt)
+        elif sort_field == "access_types":
+            key = first(
+                select(func.min(ContactAccessType.name))
+                .select_from(type_pivot)
+                .join(ContactAccessType, ContactAccessType.code == type_pivot.c.access_type_code)
+                .where(type_pivot.c.contact_id == RespondContact.id)
+            )
+        elif sort_field == "tags":
+            key = first(
+                select(func.min(ContactTag.name))
+                .select_from(tag_pivot)
+                .join(ContactTag, ContactTag.id == tag_pivot.c.tag_id)
+                .where(tag_pivot.c.contact_id == RespondContact.id)
+            )
+        elif sort_field == "brands":
+            # "All" (no brand list) is its own group, ahead of every brand name.
+            key = case(
+                (func.coalesce(func.cardinality(RespondContact.brand_ids), 0) == 0, literal("")),
+                else_=first(select(func.min(Brand.brand_name)).where(Brand.id == any_(RespondContact.brand_ids))),
+            )
+        elif sort_field == "cost_visible":
+            key = exists().where(
+                ContactFieldReveal.respond_contact_id == RespondContact.id,
+                ContactFieldReveal.field_key == self.COST_REVEAL_KEY,
+                ContactFieldReveal.granted.is_(True),
+            )
+        elif sort_field == "tag_settings":
+            key = self._tag_settings_rank(q)
+        elif sort_field == "linked_user" and include_linked_users:
+            from app.models.user import User
+
+            key = first(select(func.min(User.name)).where(User.respond_contact_id == RespondContact.id))
+        if key is None:
+            key = RespondContact.created_at
+        key = (key.desc() if desc else key.asc()).nulls_last()
+        return [key, RespondContact.name.asc().nulls_last(), RespondContact.id.asc()]
+
+    #: Contacts a tag-settings sort evaluates per request. Above it the sort groups holders of a
+    #: settings tag first without telling Differs from Matches; a filter or search narrows it back.
+    TAG_SETTINGS_SORT_CAP = 1000
+
+    def _tag_settings_rank(self, q):
+        """Differs, then Matches, then no settings: the status is computed, so it is evaluated here
+        over the filtered contacts holding a tag that sets something."""
+        from sqlalchemy import case
+
+        from app.models.access import ContactTag, respond_contact_tags as pivot
+        from app.services import contact_tag_settings
+        setting_tags = [
+            tid for tid, st in self.db.query(ContactTag.id, ContactTag.settings) if contact_tag_settings.leaves_of(st)
+        ]
+        if not setting_tags:
+            return None
+        holds = exists().where(pivot.c.contact_id == RespondContact.id, pivot.c.tag_id.in_(setting_tags))
+        holders = q.filter(holds)
+        if holders.count() > self.TAG_SETTINGS_SORT_CAP:
+            # Too many to evaluate per request: holders of a settings tag still group together.
+            return case((holds, 0), else_=None)
+        rank = {"differs": 0, "matches": 1}
+        ranked = {
+            cid: rank[r["status"]]
+            for cid, r in contact_tag_settings.evaluate(self.db, holders.all()).items()
+            if r["status"] in rank
+        }
+        return case(ranked, value=RespondContact.id, else_=None) if ranked else None
+
     def _cost_visible_ids(self, contact_ids: list[str]) -> set[str]:
         """The contacts among ``contact_ids`` holding the cost reveal, in one query."""
         if not contact_ids:
@@ -239,7 +362,7 @@ class ContactService:
             )
         }
 
-    def _apply_access_filters(self, q, f: dict):
+    def _apply_access_filters(self, q, f: dict, viewer_id: Optional[str] = None):
         """UAC A2.3-A2.6: each filter narrows; together they AND. `yes|no` for the switches."""
         from app.models.access import (
             ContactFieldReveal,
@@ -252,19 +375,23 @@ class ContactService:
             return None if not value else value == "yes"
 
         if f.get("access_type"):
+            # FILTER-MULTISELECT: a list of codes, any-of.
             q = q.filter(
                 exists().where(
                     pivot.c.contact_id == RespondContact.id,
-                    pivot.c.access_type_code == f["access_type"],
+                    pivot.c.access_type_code.in_(f["access_type"]),
                 )
             )
-        tier = f.get("tier")
-        if tier:
+        tiers = f.get("tier")
+        if tiers:
             tier_value = RespondContact.chatbot_profile["tier"].astext
-            if tier == "none":
-                q = q.filter(or_(tier_value.is_(None), tier_value == ""))
-            else:
-                q = q.filter(tier_value == tier)
+            real = [t for t in tiers if t != "none"]
+            clauses = []
+            if real:
+                clauses.append(tier_value.in_(real))
+            if "none" in tiers:  # `none` = no tier set, null or blank
+                clauses.append(or_(tier_value.is_(None), tier_value == ""))
+            q = q.filter(or_(*clauses))
         cost = yes("cost")
         if cost is not None:
             holds = exists().where(
@@ -282,8 +409,8 @@ class ContactService:
             value = yes(name)
             if value is not None:
                 q = q.filter(column.is_(value))
-        if f.get("region") in ("west", "east"):
-            q = q.filter(RespondContact.regions.contains([f["region"]]))
+        if f.get("region"):
+            q = q.filter(or_(*[RespondContact.regions.contains([r]) for r in f["region"] if r in ("west", "east")]))
         if f.get("tag_ids"):
             from app.models.access import respond_contact_tags as tag_pivot
 
@@ -297,19 +424,34 @@ class ContactService:
             from app.models.access import respond_contact_tags as tag_pivot
 
             q = q.filter(~exists().where(tag_pivot.c.contact_id == RespondContact.id))
-        if f.get("customer_id"):
-            from app.models.base import get_company_scope
-            from app.services.company_scope import build_company_predicate
-
-            link = exists().where(
-                RespondContactCustomer.contact_id == RespondContact.id,
-                RespondContactCustomer.customer_id == f["customer_id"],
+        if f.get("customer_ids"):
+            q = q.filter(
+                self._visible_link(viewer_id, RespondContactCustomer.customer_id.in_(f["customer_ids"]))
             )
-            # Same rule as `customers=none`: only links the caller can see count.
-            predicate = build_company_predicate(RespondContactCustomer, get_company_scope(self.db))
-            if predicate is not None:
-                link = link.where(predicate)
-            q = q.filter(link)
+        if f.get("company_ids"):
+            # FILTER-MULTISELECT: a contact matches when any linked customer belongs to a chosen
+            # company (the Companies column's own source), any-of across the chosen ones.
+            # The core table: the session's auto-filter would narrow the entity to the active company.
+            from app.models.order import Customer
+
+            customers = Customer.__table__
+            # Both sides, as the Companies sort does: a link's company is stamped from its customer,
+            # but nothing enforces it, so the customer's own company must be in reach too.
+            scope = self._link_scope(viewer_id)
+            wanted = f["company_ids"]
+            if isinstance(scope, frozenset):
+                wanted = [c for c in wanted if c in scope]
+            elif scope is not None:  # UNSET fails closed
+                wanted = []
+            q = q.filter(
+                self._visible_link(
+                    viewer_id,
+                    exists().where(
+                        customers.c.id == RespondContactCustomer.customer_id,
+                        customers.c.company_id.in_(wanted),
+                    ),
+                )
+            )
         if f.get("access_differs_from"):
             from app.services.contact_access_copy_service import contacts_differing_from
 
@@ -330,6 +472,27 @@ class ContactService:
         if f.get("tag_settings") in ("differs", "matches"):
             q = self._filter_tag_settings(q, f)
         return q
+
+    def _visible_link(self, viewer_id: Optional[str], *criteria):
+        """EXISTS a customer link of the row's contact meeting ``criteria``. Only links the caller
+        can see count: every company they are granted when the viewer is known (Internal Users is
+        company-less), else the active scope."""
+        from app.models.access import RespondContactCustomer
+        from app.services.company_scope import build_company_predicate
+
+        link = exists().where(RespondContactCustomer.contact_id == RespondContact.id, *criteria)
+        predicate = build_company_predicate(RespondContactCustomer, self._link_scope(viewer_id))
+        if predicate is not None:
+            link = link.where(predicate)
+        return link
+
+    def _link_scope(self, viewer_id: Optional[str]):
+        """The companies a customer link must sit in to count for this viewer: every company they
+        are granted when known, else the active scope (None = every company)."""
+        from app.models.base import get_company_scope
+        from app.services.company_scope_resolver import grants_scope_value
+
+        return grants_scope_value(self.db, viewer_id) if viewer_id else get_company_scope(self.db)
 
     def _filter_tag_settings(self, q, f: dict):
         """Contacts whose tag settings differ / match, over the holders of a tag that sets something."""
@@ -502,15 +665,41 @@ class ContactService:
         )
         return count == 1
 
-    def delete_contact(self, contact_id: str) -> None:
-        """Delete a respond contact and all contact - agent linkages. Related contact_agent_access rows are deleted; conversation_sla_tracking.respond_contact_id is SET NULL."""
+    # Business history a contact may not take with it. Assignment / link rows
+    # (agents, tags, companies, access settings) cascade or are removed below;
+    # these are records whose loss nobody asked for. `price_tag_requests` has no
+    # ON DELETE (contact_id is NOT NULL, ptag_0001), so it used to crash the delete
+    # with a raw ForeignKeyViolation; `conversation_ticket_comments` CASCADEs, and
+    # is the only copy of those notes (Respond.io has no read-back). Same refusal
+    # shape as the schedule delete (`project_schedule_service`): name what blocks.
+    _DELETE_BLOCKERS = (
+        ("price_tag_requests", "contact_id", "price tag request"),
+        ("conversation_ticket_comments", "respond_contact_id", "ticket comment"),
+    )
+
+    def _delete_blocker(self, contact_id: str) -> Optional[str]:
+        """The refusal message when linked history keeps this contact, else None."""
+        from sqlalchemy import text
+
+        linked = []
+        for table, column, noun in self._DELETE_BLOCKERS:
+            count = self.db.execute(
+                text(f"SELECT count(*) FROM {table} WHERE {column} = :c"), {"c": contact_id}
+            ).scalar()
+            if count:
+                linked.append(f"{count} {noun}{'' if count == 1 else 's'}")
+        if not linked:
+            return None
+        return f"This contact has {' and '.join(linked)}; it cannot be deleted."
+
+    def _remove_contact(self, contact: RespondContact) -> None:
+        """Delete the contact and its contact - agent linkages (not committed).
+        conversation_sla_tracking.respond_contact_id and the other history FKs are SET NULL."""
         from app.models.access import ContactAgentAccess
         from app.models.conversation_frame import ConversationFrame
 
-        contact = self.get_contact(contact_id)
-        # Delete contact - agent access linkages first so the contact can be removed
         self.db.query(ContactAgentAccess).filter(
-            ContactAgentAccess.respond_contact_id == contact_id
+            ContactAgentAccess.respond_contact_id == contact.id
         ).delete(synchronize_session=False)
         # Chatbot memory lane A (contract section 3): a deleted contact's episodes go
         # with it. Keyed by `respond_io_id` - the episode store's own contact key,
@@ -527,43 +716,53 @@ class ContactService:
                     "chatbot: respond_io_id %s is shared by more than one contact; "
                     "skipping conversation_frame delete for contact %s",
                     contact.respond_io_id,
-                    contact_id,
+                    contact.id,
                 )
         self.db.delete(contact)
+
+    def delete_contact(self, contact_id: str) -> None:
+        """Delete a respond contact and all contact - agent linkages. Refused (409) while
+        linked history (`_DELETE_BLOCKERS`) still references it."""
+        contact = self.get_contact(contact_id)
+        blocker = self._delete_blocker(contact_id)
+        if blocker:
+            raise handle_conflict(blocker)
+        self._remove_contact(contact)
         self.db.commit()
 
     def bulk_delete_contacts(self, contact_ids: list[str]) -> dict:
-        """Delete multiple contacts by id. Returns deleted_count and message."""
+        """Delete every contact that can be deleted; report the rest per contact in
+        `blocked` ({id, name, phone_number, reason}) instead of failing the batch."""
         if not contact_ids:
-            return {"deleted_count": 0, "message": "No contacts to delete."}
-        from app.models.access import ContactAgentAccess
-        from app.models.conversation_frame import ConversationFrame
+            return {"deleted_count": 0, "blocked": [], "message": "No contacts to delete."}
         deleted = 0
+        blocked = []
         for contact_id in contact_ids:
             contact = self.db.query(RespondContact).filter(RespondContact.id == contact_id).first()
-            if contact:
-                self.db.query(ContactAgentAccess).filter(
-                    ContactAgentAccess.respond_contact_id == contact_id
-                ).delete(synchronize_session=False)
-                # Security review 26 Sep 2026 (B1): same refusal as `delete_contact`
-                # - never touch frames by a `respond_io_id` a namesake also holds.
-                if contact.respond_io_id:
-                    if self._respond_id_belongs_uniquely_to(contact):
-                        self.db.query(ConversationFrame).filter(
-                            ConversationFrame.contact_respond_id == contact.respond_io_id
-                        ).delete(synchronize_session=False)
-                    else:
-                        logger.warning(
-                            "chatbot: respond_io_id %s is shared by more than one "
-                            "contact; skipping conversation_frame delete for "
-                            "contact %s",
-                            contact.respond_io_id,
-                            contact_id,
-                        )
-                self.db.delete(contact)
-                deleted += 1
+            if not contact:
+                continue
+            blocker = self._delete_blocker(contact_id)
+            if blocker:
+                blocked.append(
+                    {
+                        "id": contact.id,
+                        "name": contact.name,
+                        "phone_number": contact.phone_number,
+                        "reason": blocker,
+                    }
+                )
+                continue
+            self._remove_contact(contact)
+            deleted += 1
         self.db.commit()
-        return {"deleted_count": deleted, "message": f"Deleted {deleted} contact(s)."}
+        message = f"Deleted {deleted} contact{'' if deleted == 1 else 's'}."
+        if blocked:
+            n = len(blocked)
+            message += (
+                f" {n} contact{' was' if n == 1 else 's were'} not deleted because "
+                f"{'it has' if n == 1 else 'they have'} linked records."
+            )
+        return {"deleted_count": deleted, "blocked": blocked, "message": message}
 
     # --------------------------------------------------------------------- #
     # Chatbot memory lane A (contract section 5) - the contact's memory/facts

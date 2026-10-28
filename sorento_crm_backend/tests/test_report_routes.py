@@ -178,6 +178,7 @@ def test_meta_declares_every_field_the_screen_reads(api):
         "rows": "agent",
         "cols": "month",
         "measures": ["amount", "fee"],
+        "sort": None,  # SALES-UNIFIED (#1916): the pivot's server-side sort, unset by default
     }
 
 

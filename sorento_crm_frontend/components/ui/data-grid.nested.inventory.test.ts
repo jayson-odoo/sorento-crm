@@ -151,8 +151,8 @@ const IN_GRID_SUBTREE_SITES = new Map<string, string>([
     'NESTED GRID: PlanRowDialog opens inside the plan grid and holds DrillTable/OnHandTable/StockDocumentsPanel. Every one already passes scrollerMaxHeight={false}; the context default now agrees with them',
   ],
   [
-    'app/(protected)/master-data-management/products/components/ProductsList.tsx:1092',
-    'NESTED GRID: BarcodeImportDialog (#1811, BARCODE-IMPORT) is rendered inside the products DataGrid and its preview step holds a DataGrid of the parsed rows. It names scrollerMaxHeight: \'20rem\', so the nested default leaves it alone and it keeps its sticky header inside that window, like the ComplaintFulfilmentOrdersSection items popover',
+    'app/(protected)/master-data-management/products/components/ProductsList.tsx:1106',
+    'NESTED GRID: BarcodeImportDialog (#1811, BARCODE-IMPORT) is rendered inside the products DataGrid and its preview step holds a DataGrid of the parsed rows. It names scrollerMaxHeight: \'20rem\', so the nested default leaves it alone and it keeps its sticky header inside that window, like the ComplaintFulfilmentOrdersSection items popover. (Line moved 1092 -> 1106 when #1923 CATALOG-IMAGES added the Extract photos from catalogue menu entry above it; the CatalogueUploadDialog it added on the next line renders no grid, so it is not a new site)',
   ],
 ]);
 

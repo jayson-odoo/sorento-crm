@@ -35,7 +35,7 @@ from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import chat_report
 from app.services.chatbot.lanes.business import report_ask
-from app.services.chatbot.lanes.business import sales_company_ask
+from app.services.chatbot.lanes.business import sales_basis_ask, sales_company_ask
 from app.services.chatbot.lanes.business import ranking_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
@@ -512,6 +512,11 @@ def _top_selling_category_ids(
             found, labels = business_services.resolve_category_class(db, token)
             if not found and len(labels) > 1:
                 return [], True, labels, []
+            if len(labels) == 1:
+                found = business_services.class_member_ids(db, labels)
+        elif found and not code and business_services.unclassed_ids(db, found):
+            # EEM-CATEGORY-PICK: a generic code no class owns ("wc") means the one class the shared rule gives it.
+            found = [*found, *business_services.classless_hit_class(db, matched)]
         if not found:
             unknown.append(token)
         for category_id in found:
@@ -2149,6 +2154,42 @@ def run_fetch(
             {**parse_output, "order_status": report_ask.ASK_NAME, "group_by": None}, ""
         )
         order_status_raw = report_ask.ASK_NAME
+    sales_analysis_ask = (order_status_raw == "sales_analysis" and not has_own_accounts) or (
+        # Chat fix PR-B S10 (AC-B16, R03/R23): a staff sales report naming no product, no
+        # customer and no brand has no subject for `crm_sales_report` (422
+        # `subject_required`, "I could not fetch sales"): it is the company's sales for
+        # the period, the sales analysis. A customer-scoped contact keeps its links, and
+        # only an OFFICE STAFF contact is rerouted (security review: never on "no links").
+        order_status_raw == "sales_report"
+        and domain in contracts.ORDER_OR_SALES_DOMAINS
+        and not has_own_accounts
+        and not (has_product or has_customer or has_brand or carried_subject or typed_brand_words(parse_output))
+        and _office_staff(db, contact_id, space_id)
+    )
+    slot_open = parse_output.get("required_ask") if isinstance(parse_output.get("required_ask"), dict) else {}
+    axis_drawn = jsc.js_string(parse_output.get("group_by") or "") in fetch_mod.SALES_ANALYSIS_GROUP_BY
+    answering_basis = slot_open.get("ask") == sales_basis_ask.ASK_NAME
+    if sales_analysis_ask and slot_open.get("ask") != sales_company_ask.ASK_NAME and (axis_drawn or answering_basis):
+        # SALES-TOTAL-ASK (owner ruling 27 Oct 2026, "total sales should ask"): a sales total naming no basis
+        # is asked the ranking's own line, Invoiced first, before anything runs; never defaulted. The answer
+        # runs the first message's own ask; outstanding, which the analysis has not, is the report ask's total.
+        # An axis the analysis cannot draw is said first (below), never asked a basis it would not use.
+        settled = sales_basis_ask.settle(db, parse_output)
+        if settled is not None:
+            if trace is not None:
+                trace.add("required_ask", {"ask": sales_basis_ask.ASK_NAME, "done": settled.done,
+                                           "values": settled.values})
+            if not settled.done:
+                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
+            answered = sales_basis_ask.run_input(settled)
+            parse_output = {**parse_output, **answered, "required_ask": None, "order_status": "sales_analysis"}
+            semantic_input.update(answered)
+        else:
+            semantic_input["sales_basis"] = sales_basis_ask.named_basis(parse_output)
+        if semantic_input.get("sales_basis") == "outstanding":
+            parse_output, order_status_raw, sales_analysis_ask = (
+                sales_basis_ask.as_report_ask(parse_output), report_ask.ASK_NAME, False
+            )
     if (
         domain == "order"
         and not (has_product or has_customer or has_brand or carried_subject)
@@ -2217,18 +2258,7 @@ def run_fetch(
         # The injected scope links are not a named customer: only one the person named goes.
         entities = [e for e in entities if not (isinstance(e, dict) and e.get("scope"))]
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_target_override"}}
-    elif (order_status_raw == "sales_analysis" and not has_own_accounts) or (
-        # Chat fix PR-B S10 (AC-B16, R03/R23): a staff sales report naming no product, no
-        # customer and no brand has no subject for `crm_sales_report` (422
-        # `subject_required`, "I could not fetch sales"): it is the company's sales for
-        # the period, the sales analysis. A customer-scoped contact keeps its links, and
-        # only an OFFICE STAFF contact is rerouted (security review: never on "no links").
-        order_status_raw == "sales_report"
-        and domain in contracts.ORDER_OR_SALES_DOMAINS
-        and not has_own_accounts
-        and not (has_product or has_customer or has_brand or carried_subject or typed_brand_words(parse_output))
-        and _office_staff(db, contact_id, space_id)
-    ):
+    elif sales_analysis_ask:
         # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS (a company's sales by
         # month, by year, by channel) is the reports kernel's own query, answered as the
         # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
@@ -2385,6 +2415,9 @@ def run_fetch(
         if not settled.done:
             return _fixed_reply(settled.reply or "", required_ask=settled.slot)
         semantic_input["report_ask_args"] = report_ask.route_args(settled)
+        location_line = report_ask.invoiced_location_line(semantic_input["report_ask_args"])
+        if location_line:
+            return _fixed_reply(location_line)
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
         if settled.extras.get("detail"):

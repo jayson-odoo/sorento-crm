@@ -67,12 +67,25 @@ router = APIRouter()
 _GATE = require_permission_with_api_key("sales.reports.view")
 
 REPORT_KEY = "sales_yearly"
+#: An ask by agent or debtor type runs the Sales by debtor type report (SALES-UNIFIED AC-30):
+#: the chatbot's figure IS that report's figure for the same filter.
+DEBTOR_TYPE_REPORT_KEY = "sales_by_debtor_type"
 GRANT = "sales_orders.sales_report"
 REFUSAL = "Sorry, I can only share sales figures for your own account."
 MIME_XLSX = "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 
 #: The ask's axis words -> the dataset's dimensions.
-AXES = {"month": "month_of_year", "year": "year", "channel": "channel"}
+AXES = {
+    "month": "month_of_year",
+    "year": "year",
+    "channel": "channel",
+    "agent": "sales_agent",
+    "debtor_type": "debtor_type",
+}
+#: Axes only the invoiced basis has (the billing documents carry the agent and the debtor type).
+INVOICED_AXES = frozenset({"agent", "debtor_type"})
+#: No basis named = sales, the one definition (SALES-UNIFIED).
+DEFAULT_BASIS = "invoiced"
 _MAX_N = 100
 _RATE_LIMIT = 10
 _RATE_WINDOW_SECONDS = 600
@@ -82,7 +95,7 @@ def _unprocessable(message: str, code: str) -> AppException:
     return AppException(status_code=422, message=message, code=code)
 
 
-def _validate(rows: str, cols: str, basis: Optional[str], date_from, date_to, n) -> None:
+def _validate(rows: str, cols: str, basis: str, date_from, date_to, n) -> None:
     if rows not in AXES or cols not in AXES:
         raise _unprocessable(
             f"Unknown axis; use one of {', '.join(sorted(AXES))}", "unknown_axis"
@@ -93,6 +106,11 @@ def _validate(rows: str, cols: str, basis: Optional[str], date_from, date_to, n)
 
     if basis not in BASIS_WORDS:
         raise _unprocessable("Basis is ordered, delivered or invoiced", "basis_required")
+    if basis != "invoiced" and ({rows, cols} & INVOICED_AXES):
+        raise _unprocessable(
+            "Sales by agent or debtor type are invoiced sales; leave the basis out or say invoiced",
+            "axis_needs_invoiced",
+        )
     if date_from and date_to and date_from > date_to:
         raise _unprocessable("date_from is after date_to", "date_range_inverted")
     if n is not None and not 1 <= n <= _MAX_N:
@@ -146,7 +164,8 @@ def _answer(result, *, by_month, period_start: date, as_at: date, company_name: 
     date against the same months last year, a missing month read as 0, so a month this
     year sold nothing in counts. It is read off `by_month` (the same rows, by month of the
     period), because a year column alone cannot say which months it holds."""
-    from app.services.reports.datasets.sales_order_lines import BASIS_WORDS, CHANNELS
+    from app.services.reports.datasets.sales_order_lines import BASIS_WORDS
+    from app.services.sales.invoiced_sales import SALES_TYPE_LABELS
     from app.services.reports.engine import variance_months
 
     pivot = result.layouts.summary
@@ -197,7 +216,7 @@ def _answer(result, *, by_month, period_start: date, as_at: date, company_name: 
     if difference:
         # Every row's, not only the top n: the total line is the whole set's (AC-S1-7).
         totals.append(_money(sum(diffs, Decimal(0))) if diffs else None)
-    channel_words = dict(CHANNELS)
+    channel_words = SALES_TYPE_LABELS
     return {
         "status": "ready",
         "report": "Sales",
@@ -245,9 +264,17 @@ def _prepare(
     from app.services.reports import engine, registry as reg
     from app.tasks.report_export_tasks import generate_report_xlsx
 
+    basis = basis or DEFAULT_BASIS
     _validate(rows, cols, basis, date_from, date_to, n)
-    if channel is not None and channel not in ("dealer", "project"):
-        raise _unprocessable("Channel is dealer or project", "unknown_channel")
+    from app.services.sales import invoiced_sales as inv
+
+    if channel is not None and channel not in inv.SALES_TYPE_LABELS and channel not in inv.CHANNEL_ALIASES:
+        raise _unprocessable(
+            f"Channel is one of {', '.join(inv.SALES_TYPE_LABELS)}", "unknown_channel"
+        )
+    if channel is not None:
+        channel = inv.CHANNEL_ALIASES.get(channel, channel)
+    report_key = DEBTOR_TYPE_REPORT_KEY if {rows, cols} & INVOICED_AXES else REPORT_KEY
 
     resolved = resolve_contact_with_null_workspace_fallback(
         db, contact_id=contact_id, space_id=space_id
@@ -308,7 +335,7 @@ def _prepare(
     else:
         return {"status": "error", "message": "Could not run the sales report right now."}
 
-    definition = reg.get(REPORT_KEY)
+    definition = reg.get(report_key)
     today = reg.today_malaysia()
     start = date_from or date(today.year, 1, 1)
     # "2025 vs 2026" asks through 31 December; the figures stop today, and the file's
@@ -321,8 +348,9 @@ def _prepare(
         "period": {"kind": "custom", "from": start.isoformat(), "to": end.isoformat()},
         "company": [company_id],
         "channel": [channel] if channel else [],
-        "basis": [basis],
     }
+    if report_key == REPORT_KEY:
+        params["basis"] = [basis]
     view = ReportViewConfig.model_validate({
         "params": params,
         "detail": {"columns": [], "order": []},
@@ -381,7 +409,7 @@ def _prepare(
         queue_service.enqueue_job(
             generate_report_xlsx,
             download_id,
-            REPORT_KEY,
+            report_key,
             params,
             file_view.model_dump(mode="json"),
             owner_user_id,

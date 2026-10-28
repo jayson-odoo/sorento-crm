@@ -244,8 +244,8 @@ async def get_complaints(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
-    assigned_to: Optional[str] = Query(None),
-    status: Optional[str] = Query(None),
+    assigned_to: Optional[list[str]] = Query(None),
+    status: Optional[list[str]] = Query(None),
     root_cause_ids: Optional[str] = Query(
         None, description="Comma-separated root cause ids; matches complaints with ANY of them"
     ),
@@ -1101,7 +1101,7 @@ async def create_complaint(
             update_payload = ComplaintUpdate.model_validate(
                 complaint_data.model_dump(exclude_none=True, exclude={"attachments"})
             )
-            service.update_complaint(str(existing.id), update_payload)
+            service.resubmit_rejected_complaint(str(existing.id), update_payload)
             db.commit()
             return service.get_complaint_with_attachments(str(existing.id))
 

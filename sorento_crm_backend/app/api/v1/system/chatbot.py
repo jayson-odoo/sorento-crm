@@ -72,6 +72,7 @@ from app.services.chatbot.analytics import topic_audit
 from app.services.chatbot.contracts import TURN_STAGES
 from app.services.chatbot.trace_detail import compose_trace_detail
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 from app.services.integration_service import IntegrationLogService
 from app.services.outbound_url_guard import OutboundUrlRejected
 from app.services.chatbot.dispatch import (
@@ -978,12 +979,12 @@ def prompt_blocks_status(
 def get_topic_audit(
     version: int | None = Query(None),
     show: str = Query("to_review", pattern="^(to_review|reviewed|all)$"),
-    subject: str | None = Query(None),
+    subject: list[str] | None = Query(None),
     _view: dict = Depends(require_permission(VIEW)),
     _analytics: dict = Depends(require_permission(ANALYTICS)),
     db: Session = Depends(get_db),
 ):
-    return topic_audit.listing(db, version=version, show=show, subject=subject)
+    return topic_audit.listing(db, version=version, show=show, subject=multi_values(subject))
 
 
 @router.post("/topic-audit/sample", response_model=DrawResponse, status_code=status.HTTP_201_CREATED)

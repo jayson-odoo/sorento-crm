@@ -29,11 +29,30 @@ from app.schemas.contact_customer import (
 )
 from app.services import contact_customer_service
 from app.services.company_scope_resolver import company_name_map, grants_scope, widen_if_requested
-from app.services.error_handler import handle_internal_error, handle_not_found
+from app.services.error_handler import handle_internal_error, handle_not_found, handle_unprocessable
+from app.utils.multi_value import multi_uuids, multi_values
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+_TIERS = ("dealer", "office", "end_user", "none")
+
+
+def _tiers(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """The Tier filter's values; an unknown one is a 422, as the old Literal param was."""
+    values = multi_values(raw)
+    if values and any(v not in _TIERS for v in values):
+        raise handle_unprocessable(f"Tier: expected one of {', '.join(_TIERS)}")
+    return values
+
+
+def _regions(raw: Optional[list[str]]) -> Optional[list[str]]:
+    """The Region filter's values; an unknown one is a 422, as the old Literal param was."""
+    values = multi_values(raw)
+    if values and any(v not in ("west", "east") for v in values):
+        raise handle_unprocessable("Region: expected one of west, east")
+    return values
 
 
 class ContactCompaniesUpdateRequest(BaseModel):
@@ -100,15 +119,19 @@ async def get_contacts(
     # `none` lists the contacts with no linked customer (bulk Link customers worklist).
     customers: Optional[Literal["none"]] = Query(None),
     # CONTACT-BULK-ACCESS (UAC A2.3): access filters, each optional.
-    access_type: Optional[str] = Query(None),
-    tier: Optional[Literal["dealer", "office", "end_user", "none"]] = Query(None),
+    # FILTER-MULTISELECT: access_type, tier and customer_id take several values (repeat or comma-join).
+    access_type: Optional[list[str]] = Query(None),
+    tier: Optional[list[str]] = Query(None),
     cost: Optional[Literal["yes", "no"]] = Query(None),
     ai: Optional[Literal["yes", "no"]] = Query(None),
     escalation: Optional[Literal["yes", "no"]] = Query(None),
     packing_list: Optional[Literal["yes", "no"]] = Query(None),
     stock: Optional[Literal["yes", "no"]] = Query(None),
-    region: Optional[Literal["west", "east"]] = Query(None),
-    customer_id: Optional[uuid.UUID] = Query(None),
+    region: Optional[list[str]] = Query(None),
+    customer_id: Optional[list[str]] = Query(None),
+    # FILTER-MULTISELECT: the companies of the contact's linked customers, any-of; the ids
+    # repeat or comma-join (app/utils/multi_value.py).
+    company: Optional[list[str]] = Query(None),
     # CONTACT-TAGS: `tag` repeats (any-of); `tags=none` lists contacts holding no tag.
     tag: Optional[list[uuid.UUID]] = Query(None),
     tags: Optional[Literal["none"]] = Query(None),
@@ -138,16 +161,18 @@ async def get_contacts(
             own_memory_level_only=chatbot_memory_level == "own",
             include_linked_users=can_view_users,
             no_customers_only=customers == "none",
+            viewer_id=current_user["id"],
             access_filters={
-                "access_type": access_type,
-                "tier": tier,
+                "access_type": multi_values(access_type),
+                "tier": _tiers(tier),
                 "cost": cost,
                 "ai": ai,
                 "escalation": escalation,
                 "packing_list": packing_list,
                 "stock": stock,
-                "region": region,
-                "customer_id": str(customer_id) if customer_id else None,
+                "region": _regions(region),
+                "customer_ids": multi_uuids(customer_id, "Customer"),
+                "company_ids": multi_uuids(company, "Company"),
                 "tag_ids": [str(t) for t in tag] if tag else None,
                 "no_tags": tags == "none",
                 "tag_settings": tag_settings,
@@ -315,7 +340,7 @@ async def bulk_delete_contacts(
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db),
 ):
-    """Bulk delete contacts by ID. Related access records are removed."""
+    """Bulk delete contacts by ID. Related access records are removed; contacts with linked history are skipped and listed in `blocked`."""
     try:
         service = ContactService(db)
         result = service.bulk_delete_contacts(body.ids)
@@ -660,7 +685,7 @@ async def delete_contact(
     current_user: dict = Depends(require_permission("user_management.contacts.edit")),
     db: Session = Depends(get_db)
 ):
-    """Delete a respond contact. Related access records are cascade-deleted; SLA tracking references are set to null."""
+    """Delete a respond contact. Related access records are removed; SLA tracking references are set to null. 409 while linked history (price tag requests, ticket comments) references it."""
     try:
         service = ContactService(db)
         service.delete_contact(contact_id)

@@ -2,7 +2,7 @@
 
 import * as React from 'react';
 import { ShieldAlert, ShieldCheck } from 'lucide-react';
-import { isBlockedByApproval } from '../../../../_shared/lib/quotationDecision';
+import { isBlockedByApproval, isWithManager } from '../../../../_shared/lib/quotationDecision';
 import type { QuotationDocument } from '../../../../_shared/services/quotationDocumentService';
 
 /** The grant a manager needs to decide a below-floor quotation. */
@@ -25,6 +25,7 @@ function BlockLine({ children }: { children: React.ReactNode }) {
  */
 export function QuotationApprovalPanel({ document }: { document: QuotationDocument }) {
   const statusKey = document.approval_status_key ?? null;
+  const withManager = isWithManager(document);
   const belowFloor = document.below_floor_line_count ?? 0;
   const blocked = isBlockedByApproval(document);
 
@@ -48,7 +49,7 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
           <ShieldCheck className="mt-0.5 size-4 shrink-0 text-emerald-600" aria-hidden />
         )}
         <div className="min-w-0 space-y-1">
-          {statusKey === 'pending_approval' && (
+          {withManager && (
             <BlockLine>
               {`${priced}, so this quotation is with a manager for approval. It cannot be sent to the customer until they decide.`}
             </BlockLine>
@@ -70,7 +71,7 @@ export function QuotationApprovalPanel({ document }: { document: QuotationDocume
               {`${priced}, and a manager has approved it. It can be sent to the customer.`}
             </BlockLine>
           )}
-          {blocked && statusKey !== 'pending_approval' && statusKey !== 'rejected' && (
+          {blocked && !withManager && statusKey !== 'rejected' && (
             <BlockLine>
               {`${priced}, so this quotation needs a manager's approval before it can be sent to the customer.`}
             </BlockLine>

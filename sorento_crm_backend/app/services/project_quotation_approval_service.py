@@ -45,7 +45,7 @@ from app.models.projects import (
     ProjectQuotationVersion,
 )
 from app.models.status import Status
-from app.services import status_service
+from app.services import status_service, submission_status
 from app.services.error_handler import AppException
 
 logger = logging.getLogger(__name__)
@@ -54,6 +54,8 @@ ENTITY_TYPE = "quotation"
 
 STATUS_DRAFT = "draft"
 STATUS_PENDING = "pending_approval"
+# A rejected quotation asked again (RESUBMITTED-STATUS): decided exactly like pending.
+STATUS_RESUBMITTED = submission_status.RESUBMITTED
 STATUS_APPROVED = "approved"
 STATUS_REJECTED = "rejected"
 STATUS_ISSUED = "issued"
@@ -67,8 +69,11 @@ APPROVE_PERMISSION = "projects.quotations.approve"
 # its own act.
 SELF_SERVE_KEYS = frozenset({STATUS_PENDING})
 
+# The rungs a manager decides from.
+AWAITING_KEYS = frozenset(submission_status.awaiting_review_statuses(STATUS_PENDING))
+
 # While the document stands on one of these rungs, nobody edits it (D1, D2). Revise is the way out.
-LOCKED_KEYS = frozenset({STATUS_PENDING, STATUS_APPROVED})
+LOCKED_KEYS = frozenset({*AWAITING_KEYS, STATUS_APPROVED})
 
 
 # ------------------------------------------------------------------ the floor
@@ -400,12 +405,18 @@ def move(
             db, ENTITY_TYPE, from_id, draft.id, scope_id=None
         )
         from_id = draft.id
+        # ...and land on Resubmitted (RESUBMITTED-STATUS), unless an admin deleted that rung,
+        # in which case the press still works and lands on pending as it always did.
+        resubmitted = graph(db).by_key(STATUS_RESUBMITTED)
+        if resubmitted is not None:
+            target = resubmitted
+            to_status_id = resubmitted.id
     status_service.assert_transition_allowed(
         db, ENTITY_TYPE, from_id, to_status_id, scope_id=None
     )
     _set_status(db, document, target)
 
-    if target.key == STATUS_PENDING:
+    if target.key in AWAITING_KEYS:
         below = below_floor_line_count(db, document)
         _record(
             db,
@@ -580,6 +591,7 @@ def notify_requested(
             db,
             project=project,
             document=document,
+            resubmitted=current_key(db, document) == STATUS_RESUBMITTED,
             press=str(_press_count(db, document)),
             below=below_floor_line_count(db, document),
             requester_id=actor_user_id,

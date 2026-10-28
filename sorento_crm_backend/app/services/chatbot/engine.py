@@ -25,7 +25,9 @@ import copy
 import hashlib
 import json
 import logging
+import os
 import re
+import threading
 import time
 import uuid
 from contextlib import contextmanager
@@ -1253,6 +1255,7 @@ def _lookup_lines(
     leaves the blocks out, in a savepoint so the session stays usable, and the turn goes on. The contact is
     resolved once; the salesperson and customer visibility checks each run in their own savepoint, so a
     database error in one drops only that block (fail closed)."""
+    group = bool(getattr(config, "category_pick", False))
     try:
         # CHAT-V66-REGRESSIONS: the pieces' embedding round trip starts now and overlaps the checks and loads below.
         embed = _guarded(db, lambda: lookup_lists.embedder(db), None)
@@ -1261,7 +1264,7 @@ def _lookup_lines(
         with db.begin_nested():
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
-                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group,
             )
             brand_words = lookup_lists.brand_words(db, brands)
             lookup_lists.warm(rows, embed)
@@ -1272,7 +1275,7 @@ def _lookup_lines(
             # Spec NUMBERS: every key holding the quantity the message says joins the spec block.
             numbers = lookup_lists.number_hits(message, db, hidden_spec_keys=hidden)
             if numbers:
-                hits["spec"] = [*numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+                hits["spec"] = lookup_lists.with_numbers(numbers, hits.get("spec", []), hits.get("category"))
         event = {
             "pieces": lookup_lists.pieces(message),
             "hits": [
@@ -1281,7 +1284,7 @@ def _lookup_lines(
                 for h in hits[name]
             ],
         }
-        return lookup_lists.render(hits), event
+        return lookup_lists.render(hits, group_categories=group), event
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: lookup lists failed; parsing without them", exc_info=True)
         return [], {"pieces": [], "hits": [], "failed": True}
@@ -1299,11 +1302,14 @@ class _SpanPrep:
     held: dict[str, tuple[str, ...]]
     embed: Any
     config: span_extract.SpanConfig | None
+    # EEM-CATEGORY-PICK: the parser prompt asks for a category pick, so the Category block is grouped by class.
+    group_categories: bool = False
 
 
 def _span_prep(
     db: Session, message: str, hidden: frozenset[str], contact_respond_id: str, space_id: Any,
     brands: list[dict[str, Any]] | None, held: dict[str, tuple[str, ...]] | None, llm_choice: Any,
+    group_categories: bool = False,
 ) -> _SpanPrep | None:
     """ENTITY-EXTRACT-MATCH S2: the rows the contact may see (the same visibility as `_lookup_lines`), the spec-name
     rows, the number hits and the span call's config, read inside the session. None when the loader itself fails."""
@@ -1315,7 +1321,7 @@ def _span_prep(
 
             rows = lookup_lists.load_rows(
                 db, hidden_spec_keys=hidden, include_salespeople=include_salespeople,
-                include_customers=include_customers, customer_ids=customer_ids, brands=brands,
+                include_customers=include_customers, customer_ids=customer_ids, brands=brands, group_categories=group_categories,
             )
             spec_keys = [r for r in list_resolver.spec_key_rows(active_registry(db)) if r.key not in hidden]
             brand_words = lookup_lists.brand_words(db, brands)
@@ -1327,10 +1333,52 @@ def _span_prep(
         except Exception:  # noqa: BLE001 - no key or no registry: the n-gram lines take over
             logger.warning("chatbot: span config failed; using the n-gram lookup", exc_info=True)
         lookup_lists.warm([*rows, *spec_keys], embed)
-        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config)
+        return _SpanPrep(message, rows, spec_keys, brand_words, numbers, held or {}, embed, config, group_categories)
     except Exception:  # noqa: BLE001 - advisory block, never a failed turn
         logger.warning("chatbot: span prep failed; parsing without lookup lists", exc_info=True)
         return None
+
+
+def start_lookup_warm(session_factory: Any = None) -> threading.Thread | None:
+    """ENTITY-EXTRACT-MATCH S3: warm the lookup vectors (widest visibility plus the spec names) on a daemon thread at
+    API start-up, so the first turn finds them cached. Process start had a no-meaning window of more than 70 s on
+    Gemini until the first turn's lazy warm filled the cache. Off with `CHATBOT_LOOKUP_WARM_ENABLED` (the test suite
+    turns it off). Advisory: every failure is logged and swallowed. Returns the thread, or None when off."""
+    if os.getenv("CHATBOT_LOOKUP_WARM_ENABLED", "1").strip().lower() in ("0", "false", "off", "no"):
+        return None
+    if session_factory is None:
+        from app.database import SessionLocal as session_factory
+
+    def _run() -> None:
+        db = None
+        try:
+            db = session_factory()
+            set_company_scope(db, None)
+            embed = lookup_lists.embedder(db)
+            if embed is None:
+                return
+            from app.services import product_spec_registry
+
+            rows = lookup_lists.load_rows(
+                db, include_salespeople=True, include_customers=True, customer_ids=None, group_categories=False,
+            )
+            spec_keys = list_resolver.spec_key_rows(product_spec_registry.active_registry(db))
+            db.rollback()
+            db.close()
+            db = None
+            lookup_lists.warm([*rows, *spec_keys], embed)
+        except Exception:  # noqa: BLE001 - advisory, the first turn's lazy warm takes over
+            logger.warning("chatbot: start-up lookup warm failed", exc_info=True)
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:  # noqa: BLE001
+                    pass
+
+    thread = threading.Thread(target=_run, name="lookup-lists-startup-warm", daemon=True)
+    thread.start()
+    return thread
 
 
 def _candidates_of(res: list_resolver.Resolution) -> list[dict[str, Any]]:
@@ -1364,7 +1412,8 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
     event: dict[str, Any] = {
         "spans": [], "rows_rendered": 0, "ms": answer.ms if answer else 0,
         "provider": config.provider if config else None, "model": config.model if config else None,
-        "model_source": config.model_source if config else None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
+        "model_source": config.model_source if config else None,
+        "embedding_model": None, "fallback": False, "fallback_reason": None, "near_exact_rows": 0,
         "tokens": {k: answer.usage.get(k) or 0 for k in ("prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens")} if answer else {},
     }
     if answer is not None and answer.usage and not dry_run:
@@ -1383,13 +1432,14 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
             try:
                 all_rows = [*prep.rows, *prep.spec_key_rows]
                 embed = lookup_lists.usable_embedder(all_rows, prep.embed)
+                event["embedding_model"] = getattr(embed, "model", None) if embed is not None else None
                 resolutions = list_resolver.resolve(answer.spans, all_rows, embed=embed)
                 # A merged mention ("zzsean zzsorento") resolves to one row; the words that row did not match are
                 # resolved as their own untyped span, one level only.
                 rest = [
                     list_resolver.Span(left)
                     for r in resolutions
-                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code"
+                    if r.status in ("resolved", "ambiguous") and r.span.type != "product_code" and r.matched_by == "text"
                     for left in [list_resolver.unmatched_words(r.span.text, r.candidates[0].row, all_rows)]
                     if left
                 ]
@@ -1421,11 +1471,11 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 hits = {name: hs[: lookup_lists.TOP_K.get(name, 10)] for name, hs in hits.items()}
                 event["spans"] = [
                     {"text": r.span.text, "type": r.span.type, "status": r.status, "close": len(r.candidates),
-                     "candidates": _candidates_of(r)}
+                     "candidates": _candidates_of(r), "meaning": r.span.meaning, "matched_by": r.matched_by}
                     for r in resolutions
                 ] + [
                     {"text": r.span.text, "type": None, "status": r.status, "close": len(r.candidates), "residual": True,
-                     "candidates": _candidates_of(r)}
+                     "candidates": _candidates_of(r), "meaning": None, "matched_by": "text"}
                     for r in extra
                 ]
                 lookup_event: dict[str, Any] = {"spans": [r.span.text for r in [*resolutions, *extra]]}
@@ -1442,7 +1492,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
         # Spec NUMBERS join the spec block on every path, as in `_lookup_lines`.
         number_keys = {h.row.key for h in prep.numbers}
         if prep.numbers:
-            hits["spec"] = [*prep.numbers, *hits.get("spec", [])][: lookup_lists.TOP_K["spec"]]
+            hits["spec"] = lookup_lists.with_numbers(prep.numbers, hits.get("spec", []), hits.get("category"))
         if not event["fallback"]:
             # Trace only: where each row of the final block came from, in render order.
             event["final_block"] = {
@@ -1454,7 +1504,7 @@ def _span_lookup(prep: _SpanPrep, *, session_factory: SessionFactory, contact_re
                 ]
                 for name, hs in hits.items()
             }
-        lines = lookup_lists.render(hits)
+        lines = lookup_lists.render(hits, group_categories=prep.group_categories)
         event["rows_rendered"] = sum(1 for ln in lines if ln.startswith("- "))
         lookup_event["hits"] = [
             {"label": h.row.label, "piece": h.piece, "spelling": round(h.spelling, 3), "meaning": round(h.meaning, 3)}
@@ -3101,6 +3151,37 @@ def _recent_turn_count(db: Session, *, contact_respond_id: str, branch_kind: str
     )
 
 
+def _card_accepted_before(db: Session, *, contact_respond_id: str) -> bool:
+    """Has a live turn of this contact ever accepted a contact card (whatever the link did,
+    whatever branch the turn closed on)?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"card": "accepted"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
+def _recent_link_failure(db: Session, *, contact_respond_id: str) -> bool:
+    """Did a live turn of this contact hand a failed link to staff in the window?"""
+    return (
+        db.query(ChatbotTurn.id)
+        .filter(
+            ChatbotTurn.contact_respond_id == contact_respond_id,
+            ChatbotTurn.is_test.is_(False),
+            ChatbotTurn.branch_kind == "phone_handoff",
+            ChatbotTurn.created_at >= _now() - PHONE_WINDOW,
+            ChatbotTurn.trace.contains([{"stage": "received", "facts": {"link": "failed"}}]),
+        )
+        .first()
+        is not None
+    )
+
+
 def _phone_turn(
     envelope: Envelope,
     *,
@@ -3249,9 +3330,14 @@ def _phone_unknown_decision(
     handoffs = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_handoff")
     # Only a card that arrived through the CRM's own HMAC-signed webhook counts as proof (WU22):
     # every other ingress can carry a body its caller wrote.
-    phone = (
-        wa_phone_link.accepted_card_phone(envelope.message) if envelope.ingress == DIRECT_INGRESS else None
-    )
+    is_card = wa_phone_link.is_contact_card(envelope.message)
+    if not is_card:
+        refusal: str | None = "not_a_card"
+    elif envelope.ingress != DIRECT_INGRESS:
+        refusal = "not_signed"
+    else:
+        refusal = wa_phone_link.card_refusal(envelope.message)
+    phone = wa_phone_link.accepted_card_phone(envelope.message) if refusal is None else None
     if phone:
         facts["card"] = "accepted"
         if dry_run:
@@ -3261,7 +3347,9 @@ def _phone_unknown_decision(
         facts["link"] = outcome.status
         if outcome.status == "failed":
             facts["reason"] = outcome.reason
-            if handoffs:
+            # WU21: one link-failure comment per 24 h. An earlier hand-off for another reason (the
+            # ask cap) told staff nothing about this phone, so it does not count.
+            if _recent_link_failure(db, contact_respond_id=contact_respond_id):
                 return "phone_ignored", "Phone link failed; staff already told in the last 24 hours"
             # After a merge the turn's own id may no longer exist: the survivor gets the comment (WU26).
             comment(
@@ -3275,12 +3363,23 @@ def _phone_unknown_decision(
         if outcome.chatbot_allowed:
             wa_phone_link.send_verified(db, client, identifier=survivor, turn_id=turn_id)
         else:
+            # WA-PHONE-SHARE-LOOP: told once, on this turn; the contact now has a CRM row, so every
+            # later message closes silently at the AI-allowed gate.
+            wa_phone_link.send_verified(
+                db, client, identifier=survivor, turn_id=turn_id, line=wa_phone_link.NO_ACCESS_LINE
+            )
             comment(client, survivor, "phone verified, AI off for this contact")
         return "phone_linked", "Phone linked to the contact that holds its access"
 
-    facts["card"] = "none" if not wa_phone_link.is_contact_card(envelope.message) else "not_accepted"
+    facts["card"] = "none" if not is_card else "not_accepted"
+    if is_card:
+        facts["card_refusal"] = refusal
     if handoffs:
         return "phone_ignored", "Already handed to staff in the last 24 hours; sent nothing"
+    if _card_accepted_before(db, contact_respond_id=contact_respond_id):
+        # WA-PHONE-SHARE-LOOP: the contact already answered with a tap whose link failed and staff
+        # were told; asking again would loop. Only another tap retries the link (WU21).
+        return "phone_ignored", "Contact card already accepted and handed to staff; sent nothing"
     asks = _recent_turn_count(db, contact_respond_id=contact_respond_id, branch_kind="phone_ask")
     facts["asks_in_window"] = asks
     if dry_run:
@@ -4411,6 +4510,7 @@ def _close_the_episode(
 def _reset_turn(
     envelope: Envelope,
     *,
+    parsed_language: Any = language_mod.NOT_PARSED,
     verdict: dict[str, Any],
     parser_raw: Any,
     state_in: Any,
@@ -4461,7 +4561,7 @@ def _reset_turn(
         )
         from app.services.chatbot import copy as copy_mod
 
-        reply_language = _turn_language(user_turn, remembered_before, profile)
+        reply_language = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
         ack = copy_mod.resolve(db).render_in("reset_ack", reply_language)
         # Round 8: a reset closes the topic it ended, exactly as the routed reset did. A cancel or
         # a new subject naming nothing is a topic reset too (the chat_state mirror rule).
@@ -5109,6 +5209,7 @@ def _run_stages_body(  # noqa: PLR0915
             span_prep = _span_prep(
                 db, user_turn.own_text, hidden_spec, str(contact_respond_id), default_space_id(db), brands,
                 lookup_lists.held_values(chat_state._subject(state_in.focus)), getattr(profile, "llm_choice", None) or None,
+                group_categories=parser_config.category_pick,
             )
             lookup_lines, lookup_event = ([], {"pieces": [], "hits": [], "failed": True}) if span_prep is None else (None, None)
         elif parser_config.lookup_lists:
@@ -5397,10 +5498,15 @@ def _run_stages_body(  # noqa: PLR0915
     # stage (AC-105/R5/H44's own "no routing" shape).
     turn_trace.add("context", context_report)
 
+    # EEM-CATEGORY-PICK: the parser's own reading of the message language, only for a prompt that asks for it.
+    parsed_language = (
+        verdict.get("message_language") if parser_config.message_language and not parser_bypassed else language_mod.NOT_PARSED
+    )
     # Release gate #1829, round 7: the ONE reset seam, before the state applier, apply, routing
     # and every lane (`_reset_turn`).
     reset_result = _reset_turn(
         envelope,
+        parsed_language=parsed_language,
         verdict=verdict,
         parser_raw=parser_raw,
         state_in=state_in,
@@ -5635,6 +5741,7 @@ def _run_stages_body(  # noqa: PLR0915
             verdict,
             message=user_turn.own_text,
             closed_lists=parser_config.closed_lists,
+            lookup_lists=parser_config.lookup_lists,
             closed_lists_index=parser_config.closed_lists_index,
             listed_codes=listed_codes if parser_config.code_lookup else None,
             pick_info=pick_info if parser_config.code_lookup else None,
@@ -5805,6 +5912,7 @@ def _run_stages_body(  # noqa: PLR0915
         ):
             return _run_opportunity_arm(
                 db,
+                parsed_language=parsed_language,
                 turn_id=turn_id,
                 envelope=envelope,
                 verdict=verdict,
@@ -6886,7 +6994,7 @@ def _run_stages_body(  # noqa: PLR0915
         # CHAT-LANGUAGE: this turn's reply language, from the message's own words first. Pure,
         # so every arm has it (`run_tail` carries `item["reply_language"]` to the next turn);
         # the business lane below recomputes it once its codes and names are known.
-        item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
+        item["reply_language"] = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
 
         # Owner ruling, hand pass 10 (21 Sep 2026, `test_rearch_r10_handpass10_
         # replay.py::TestHandPass10PromotionAskRepeatsAfterATierPick`): a fresh
@@ -7114,6 +7222,7 @@ def _run_stages_body(  # noqa: PLR0915
                     user_turn,
                     remembered_before,
                     state_out.profile,
+                    parsed=parsed_language,
                     strip=[
                         str(e[k])
                         for e in verdict.get("entities") or []
@@ -7172,6 +7281,7 @@ def _run_stages_body(  # noqa: PLR0915
                 user_turn,
                 remembered_before,
                 state_out.profile,
+                parsed=parsed_language,
                 strip=[
                     str(e[k])
                     for e in verdict.get("entities") or []
@@ -7516,6 +7626,7 @@ def _run_stages_body(  # noqa: PLR0915
                 user_turn,
                 remembered_before,
                 state_out.profile,
+                parsed=parsed_language,
                 strip=[
                     str(e[k])
                     for e in compatible_entities
@@ -8602,6 +8713,7 @@ def _run_stages_body(  # noqa: PLR0915
             fallback=fallback_ctx,
             chat_console=_chat_console(envelope),
             user_turn=user_turn,
+            parsed_language=parsed_language,
         )
 
     return TurnResult(
@@ -9194,6 +9306,7 @@ def _dropped_reason(db: Session, key: str, value: Any) -> str:
 def _run_opportunity_arm(
     db: Session,
     *,
+    parsed_language: Any = language_mod.NOT_PARSED,
     turn_id: str,
     envelope: Envelope,
     verdict: dict[str, Any],
@@ -9223,7 +9336,7 @@ def _run_opportunity_arm(
     space_id = default_space_id(db)
     salesperson = opportunity_lane.is_salesperson(db, contact_respond_id, space_id)
     item = _stamp_item(access, branch_kind, {})
-    item["reply_language"] = _turn_language(user_turn, remembered_before, profile)
+    item["reply_language"] = _turn_language(user_turn, remembered_before, profile, parsed=parsed_language)
     turn_trace.record(
         "routed",
         summary=f"Routed to {trace_mod.lane_words(branch_kind, verdict.get('domain_hint'))}.",
@@ -9989,6 +10102,7 @@ def _run_casual_lane(
     fallback: Any = None,
     chat_console: bool = False,
     user_turn: Any,
+    parsed_language: Any = language_mod.NOT_PARSED,
 ) -> TurnResult:
     """The `low_signal` lane, from the model call to the closed turn (AC-401, AC-403).
 
@@ -10047,7 +10161,7 @@ def _run_casual_lane(
             answer_shape = said.shape
             text = said.text
             if fallback is not None and (said.shape == "ack" or fallback.kind == "history"):
-                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language)
+                reply_language = _fallback_language(user_turn, fallback, remembered_before, said.language, parsed_language)
                 ack = said.text.strip()
                 # AC-MEM081: an ack stating a figure, code, price or date its own
                 # input never had is replaced by the canned one for the language.
@@ -10088,7 +10202,7 @@ def _run_casual_lane(
             logger.warning("chatbot turn %s: clarifier usage log failed", turn_id, exc_info=True)
     if failed is not None and fallback is not None and fallback.kind == "history" and fallback.copy is not None:
         # The history list needs no model: behind the canned ack it still answers.
-        reply_language = _fallback_language(user_turn, fallback, remembered_before, None)
+        reply_language = _fallback_language(user_turn, fallback, remembered_before, None, parsed_language)
         text = fallback_mod.compose(
             fallback.copy.render_in("fallback_ack", reply_language), fallback, fallback.copy, reply_language
         )
@@ -11038,12 +11152,17 @@ def _ask_localizer(ask: Any, db: Session, item: Mapping[str, Any], *, dry_run: b
 
 
 def _fallback_language(
-    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None
+    user_turn: Any, fallback: Any, remembered_before: Mapping[str, Any] | None, said_language: str | None,
+    parsed: Any = language_mod.NOT_PARSED,
 ) -> str:
-    """The fallback reply's language: one the contact STATED this turn, then the message's own
-    words (`UserTurn.typed_line`, what they typed), the clarifier's reading, the conversation's
-    last language, the saved fact."""
+    """The fallback reply's language: one the contact STATED this turn, then (a parsed turn) the parser's own
+    reading of the message and the saved fact, else the message's own words (`UserTurn.typed_line`, what they
+    typed), the clarifier's reading, the conversation's last language, the saved fact."""
     stated = next((s.get("value") for s in fallback.noted if s.get("key") == "language"), None)
+    if parsed is not language_mod.NOT_PARSED:
+        return fallback_mod.pick_language(
+            stated, parsed, fallback.saved_language, (remembered_before or {}).get("reply_language"),
+        )
     return fallback_mod.pick_language(
         stated,
         language_mod.detect(user_turn.typed_line),
@@ -11059,12 +11178,13 @@ def _turn_language(
     profile: Any,
     *,
     strip: Any = (),
+    parsed: Any = language_mod.NOT_PARSED,
 ) -> str:
     """`language.for_turn` on the customer's own line (`UserTurn.own_text`: the quoted
     `reply to:` line is not their words), against a copy so `remembered_before` stays the
     state the turn started with."""
     carried = {"reply_language": remembered_before.get("reply_language")}
-    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip)
+    return language_mod.for_turn(user_turn.own_text, carried, getattr(profile, "language", None), strip=strip, parsed=parsed)
 
 
 def _ctx_message_text(ctx: Any) -> str:

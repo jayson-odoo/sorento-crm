@@ -24,6 +24,7 @@ from app.api.v1.master_data import (
     product_combos,
     product_compatibility,
     sales_agents,
+    catalogue_photo_readings,
 )
 
 router = APIRouter()
@@ -59,6 +60,11 @@ router.include_router(
 router.include_router(product_combos.router, tags=["product-combos"])
 # NO prefix either: `/products/{id}/compatibility` and `/product-compatibility/...`.
 router.include_router(product_compatibility.router, tags=["product-compatibility"])
+router.include_router(
+    catalogue_photo_readings.router,
+    prefix="/catalogue-photo-readings",
+    tags=["catalogue-photo-readings"],
+)
 router.include_router(sales_agents.router, prefix="/sales-agents", tags=["sales-agents"])
 router.include_router(lookup_sets.router, prefix="/lookup-sets", tags=["lookup-sets"])
 router.include_router(lookup_eligibility.router, prefix="/lookup-eligibility", tags=["lookup-eligibility"])

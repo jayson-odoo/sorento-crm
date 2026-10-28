@@ -5,7 +5,9 @@
   AC-V2-2   no stored order_type, payload order_type classifies -> order_type is
             filled AND demand_class is derived from it
   AC-V2-3   neither order_type -> the linked agent's demand_class is written
-  AC-V2-4   none of those -> the linked customer's market segment decides it
+  AC-V2-4   RE-RULED by SALES-UNIFIED (#1916, PLAN-sales-unified-27oct round 3 Q8 (a)): a
+            sales order's class is its stated order type, else its agent's class on the SO
+            date, else not set; the customer's market segment never classifies a sales order
   AC-V2-5   nothing classifies -> record still lands, demand_class stays NULL,
             verdict warnings carries "unclassified_demand"
   AC-V2-6   a stored demand_class is never downgraded or blanked by a later push
@@ -13,9 +15,9 @@
   AC-V2-7   `demand_class` is not an accepted payload key (extra="forbid")
 
 PLAN-demand-class-agent-arrival.md's UAC AC-1..AC-12 (the agent arriving on a LATER push):
-  AC-1   no agent, retail segment lands retail; a second push naming a project agent
-         takes over
-  AC-2   mirror of AC-1: project segment, arriving retail agent takes over
+  AC-1   no agent, retail segment lands unclassified (Q8 (a): no segment rung); a second
+         push naming a project agent classifies it project
+  AC-2   mirror of AC-1: project segment, arriving retail agent classifies it retail
   AC-3   stored class AND a stored agent, a later push names a DIFFERENT agent: the
          class is unchanged (AC-12: the stored agent id still moves A -> B)
   AC-4   stored class, no stored agent, the arriving agent has no class: unchanged
@@ -190,8 +192,11 @@ class TestAgentDemandClassIsThirdRung:
 
 
 # ================================================================== AC-V2-4
-class TestCustomerSegmentIsFourthRung:
-    def test_project_shaped_segment_classifies_project(self, env):
+class TestCustomerSegmentNeverClassifiesASalesOrder:
+    """SALES-UNIFIED Q8 (a): "SO class = stated order type, else the agent's class on the SO
+    date, else not set (never the customer segment)"."""
+
+    def test_project_shaped_segment_leaves_the_order_unclassified(self, env):
         segment = _market_segment(env, stem="PROJECT")
         customer_ref = _linked_customer_ref(env, segment_code=segment.code)
         record = _so_record(env, customer_ref=customer_ref)
@@ -200,10 +205,11 @@ class TestCustomerSegmentIsFourthRung:
 
         entry = res.json()["records"][0]
         assert entry["outcome"] == "created", res.text
+        assert "unclassified_demand" in entry.get("warnings", []), entry
         header = env.header("sales_orders", record["source_ref"])
-        assert header["demand_class"] == "project"
+        assert header["demand_class"] is None
 
-    def test_retail_shaped_segment_classifies_retail(self, env):
+    def test_retail_shaped_segment_leaves_the_order_unclassified(self, env):
         segment = _market_segment(env, stem="RETAIL")
         customer_ref = _linked_customer_ref(env, segment_code=segment.code)
         record = _so_record(env, customer_ref=customer_ref)
@@ -212,8 +218,9 @@ class TestCustomerSegmentIsFourthRung:
 
         entry = res.json()["records"][0]
         assert entry["outcome"] == "created", res.text
+        assert "unclassified_demand" in entry.get("warnings", []), entry
         header = env.header("sales_orders", record["source_ref"])
-        assert header["demand_class"] == "retail"
+        assert header["demand_class"] is None
 
 
 # ================================================================== AC-V2-5
@@ -270,10 +277,10 @@ class TestDemandClassIsNeverAPayloadField:
 
 
 # ==================================================== agent-arrival AC-1 / AC-2
-class TestAgentArrivingOnALaterPushTakesOverFromTheSegment:
-    def test_agent_project_takes_over_from_a_retail_segment(self, env):
-        """AC-1: no agent, retail segment lands retail; a classed agent on the
-        second push ends project."""
+class TestAgentArrivingOnALaterPushClassifiesDespiteTheSegment:
+    def test_agent_project_classifies_an_order_a_retail_segment_left_unset(self, env):
+        """AC-1 (as re-ruled by SALES-UNIFIED Q8 (a)): no agent, a retail segment leaves it
+        unset; a classed agent on the second push ends project."""
         segment = _market_segment(env, stem="RETAIL")
         customer_ref = _linked_customer_ref(env, segment_code=segment.code)
         record = _so_record(env, customer_ref=customer_ref)
@@ -282,7 +289,7 @@ class TestAgentArrivingOnALaterPushTakesOverFromTheSegment:
         entry = res.json()["records"][0]
         assert entry["outcome"] == "created", res.text
         first = env.header("sales_orders", record["source_ref"])
-        assert first["demand_class"] == "retail"
+        assert first["demand_class"] is None
         assert first["sales_agent_id"] is None
 
         agent_ref = _linked_agent_ref(env, demand_class="project")
@@ -300,8 +307,8 @@ class TestAgentArrivingOnALaterPushTakesOverFromTheSegment:
         assert stored["demand_class"] == "project"
         assert stored["sales_agent_id"] is not None
 
-    def test_agent_retail_takes_over_from_a_project_segment(self, env):
-        """AC-2: mirror of AC-1, a retail agent takes over from a project segment."""
+    def test_agent_retail_classifies_an_order_a_project_segment_left_unset(self, env):
+        """AC-2: mirror of AC-1, a retail agent classifies it despite a project segment."""
         segment = _market_segment(env, stem="PROJECT")
         customer_ref = _linked_customer_ref(env, segment_code=segment.code)
         record = _so_record(env, customer_ref=customer_ref)
@@ -310,7 +317,7 @@ class TestAgentArrivingOnALaterPushTakesOverFromTheSegment:
         entry = res.json()["records"][0]
         assert entry["outcome"] == "created", res.text
         first = env.header("sales_orders", record["source_ref"])
-        assert first["demand_class"] == "project"
+        assert first["demand_class"] is None
 
         agent_ref = _linked_agent_ref(env, demand_class="retail")
         record2 = _so_record(

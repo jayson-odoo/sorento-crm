@@ -32,6 +32,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getStatusBadgeVariant, formatStatusLabel } from '@/lib/status-badge';
 import { cn } from '@/lib/utils';
@@ -1236,7 +1237,8 @@ interface PickerFilterField {
 interface PickerFilterCondition {
   id: string;
   field: string;
-  value: string;
+  /** Every value ticked (OR-ed). A list, not a joined string: names can contain commas. */
+  value: string[];
 }
 
 /**
@@ -1280,7 +1282,7 @@ function PickerFilterConditions({
   onClear: () => void;
 }) {
   const addCondition = () =>
-    onChange([...conditions, { id: crypto.randomUUID(), field: fields[0]?.id ?? '', value: '' }]);
+    onChange([...conditions, { id: crypto.randomUUID(), field: fields[0]?.id ?? '', value: [] }]);
   const updateCondition = (id: string, patch: Partial<PickerFilterCondition>) =>
     onChange(conditions.map((c) => (c.id === id ? { ...c, ...patch } : c)));
   const removeCondition = (id: string) => onChange(conditions.filter((c) => c.id !== id));
@@ -1295,10 +1297,10 @@ function PickerFilterConditions({
             <div key={cond.id} className="grid grid-cols-[1fr_1fr_auto] gap-2">
               <SearchableSelect
                 value={cond.field}
-                onChange={(v) => updateCondition(cond.id, { field: v, value: '' })}
+                onChange={(v) => updateCondition(cond.id, { field: v, value: [] })}
                 options={fields.map((f) => ({ value: f.id, label: f.label }))}
               />
-              <SearchableSelect
+              <SearchableMultiSelect
                 value={cond.value}
                 onChange={(v) => updateCondition(cond.id, { value: v })}
                 options={field?.options ?? []}
@@ -1420,14 +1422,16 @@ export function PoTakesPicker({
       );
     }
     for (const cond of appliedConditions) {
-      if (!cond.value) continue;
-      if (cond.field === 'po_number') out = out.filter((t) => t.po_number === cond.value);
-      if (cond.field === 'supplier_name') out = out.filter((t) => t.supplier_name === cond.value);
+      if (!cond.value.length) continue;
+      // A condition's value is a list (names stay whole, never comma-split): a row matches any of them.
+      const wanted = cond.value;
+      if (cond.field === 'po_number') out = out.filter((t) => wanted.includes(t.po_number ?? ''));
+      if (cond.field === 'supplier_name') out = out.filter((t) => wanted.includes(t.supplier_name ?? ''));
     }
     return out;
   }, [takes, appliedSearch, appliedConditions]);
 
-  const activeCount = appliedConditions.filter((c) => c.value).length;
+  const activeCount = appliedConditions.filter((c) => c.value.length).length;
   const isFiltered = Boolean(appliedSearch.trim()) || activeCount > 0;
   // F5 (review round): the footer's denominator is how many POs can actually be TICKED,
   // not every row the grid draws - a taken row is greyed and its checkbox is disabled, so
@@ -1620,7 +1624,7 @@ export interface SoCoverageRow {
   /** `sales_orders.demand_class` as stored - what the SO ITSELF is classified as, distinct
    *  from `kind` (which family the row came from). A project row is always `'project'`; a
    *  book line carries whatever its own sales order was stamped, including `null` (R3). */
-  demand_class: 'project' | 'retail' | null;
+  demand_class: 'project' | 'retail' | 'other' | null;
   /** LINKAGE-UNIFY U4 (the SPO document's read-only "SO covered" list): the PO number a
    *  placement reached this SPO through, printed "via PO <number>" beside its order. */
   via_po?: string | null;
@@ -1745,15 +1749,16 @@ export function SoCoveragePicker({
       );
     }
     for (const cond of appliedConditions) {
-      if (!cond.value) continue;
-      if (cond.field === 'document') out = out.filter((c) => c.document === cond.value);
-      if (cond.field === 'customer_name') out = out.filter((c) => c.customer_name === cond.value);
-      if (cond.field === 'warehouse_code') out = out.filter((c) => c.warehouse_code === cond.value);
+      if (!cond.value.length) continue;
+      const wanted = cond.value;
+      if (cond.field === 'document') out = out.filter((c) => wanted.includes(c.document ?? ''));
+      if (cond.field === 'customer_name') out = out.filter((c) => wanted.includes(c.customer_name ?? ''));
+      if (cond.field === 'warehouse_code') out = out.filter((c) => wanted.includes(c.warehouse_code ?? ''));
     }
     return out;
   }, [coverage, appliedSearch, appliedConditions]);
 
-  const activeCount = appliedConditions.filter((c) => c.value).length;
+  const activeCount = appliedConditions.filter((c) => c.value.length).length;
   const isFiltered = Boolean(appliedSearch.trim()) || activeCount > 0;
 
   // R18: partitioned by `kind` (which family the row came from - project rows are always

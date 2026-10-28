@@ -20,10 +20,13 @@ export interface WizardStep {
 export function WizardSteps({
   steps,
   currentId,
+  allDone = false,
   className,
 }: {
   steps: readonly WizardStep[];
   currentId: string;
+  /** Every step finished: all read as done and none is current. */
+  allDone?: boolean;
   className?: string;
 }) {
   const currentIndex = Math.max(
@@ -35,8 +38,8 @@ export function WizardSteps({
     <div className={cn('space-y-2', className)}>
       <ol aria-label="Steps" className="flex items-center">
         {steps.map((step, index) => {
-          const done = index < currentIndex;
-          const active = index === currentIndex;
+          const done = allDone || index < currentIndex;
+          const active = !allDone && index === currentIndex;
           return (
             <li
               key={step.id}

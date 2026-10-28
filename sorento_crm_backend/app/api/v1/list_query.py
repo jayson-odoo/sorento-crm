@@ -105,7 +105,15 @@ def _can_view_listing_key(
     if not perm_exists:
         return not fail_closed
 
-    return UserPermissionService(db).check_user_has_permission(user_id, perm_slug)
+    service = UserPermissionService(db)
+    if service.check_user_has_permission(user_id, perm_slug):
+        return True
+    # A holder of only `<module>.view_own` sees the same listing, narrowed to their own rows
+    # on the server (PORTAL-P2-ONLY-THEIRS), so their own column layout is theirs too. Not
+    # for the fail-closed (shared saved views) callers: those stay on the plain slug.
+    if not fail_closed and perm_slug.endswith(".view"):
+        return service.check_user_has_permission(user_id, perm_slug + "_own")
+    return False
 
 
 @router.get("/resources", response_model=List[ListQueryResourceResponse])
@@ -207,6 +215,9 @@ def advanced_search(
         result = ListQuerySearchService(db).search(body)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except AppException:
+        # A deliberate refusal (e.g. an unknown filter value) keeps its own status.
+        raise
     except Exception as e:
         raise handle_internal_error(str(e))
     _t2 = time.perf_counter() if _profile else 0.0
@@ -256,6 +267,8 @@ def export_rows(
         rows = ListQueryExportService(db).export_rows(body)
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except AppException:
+        raise
     except Exception:
         # Logged, never echoed: a database error's text carries the SQL and the schema.
         logger.exception("list_query.export_failed resource=%s", body.resource)

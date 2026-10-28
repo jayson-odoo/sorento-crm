@@ -11,6 +11,7 @@ import secrets
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import or_, inspect, func
+from app.utils.multi_value import multi_values
 from typing import List, Optional, Iterable
 from app.config import settings
 from app.models.complaints import Complaint
@@ -21,6 +22,7 @@ from app.models.sla import ConversationSLATracking
 from app.services.sla_scope import open_tracker_scope
 from app.schemas.complaints import ComplaintCreate, ComplaintUpdate
 from app.services.contact_brand_scope import complaint_in_scope_clauses, in_scope_product_codes
+from app.services import submission_status
 from app.services.error_handler import handle_not_found
 from app.services.response_gate import (
     ALLOWED_RESPONSE_STATUSES,
@@ -417,8 +419,8 @@ class ComplaintService:
     def _build_list_query(
         self,
         query: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-        status: Optional[str] = None,
+        assigned_to: Optional[list[str] | str] = None,
+        status: Optional[list[str] | str] = None,
         sort_field: str = "complaint_date",
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
@@ -463,15 +465,19 @@ class ComplaintService:
                     Complaint.assigned_to.ilike(like),
                 )
             )
-        if assigned_to is not None and str(assigned_to).strip():
-            if str(assigned_to).strip().lower() == "__unassigned__":
-                q = q.filter(
-                    (Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == "")
-                )
-            else:
-                q = q.filter(Complaint.assigned_to == assigned_to.strip())
-        if status and str(status).strip():
-            q = q.filter(Complaint.status == status.strip())
+        assignees = multi_values(assigned_to)
+        if assignees:
+            # `__unassigned__` is a pseudo-value that ORs with real assignees.
+            clauses = []
+            if any(a.lower() == "__unassigned__" for a in assignees):
+                clauses.append((Complaint.assigned_to.is_(None)) | (Complaint.assigned_to == ""))
+            real = [a for a in assignees if a.lower() != "__unassigned__"]
+            if real:
+                clauses.append(Complaint.assigned_to.in_(real))
+            q = q.filter(or_(*clauses))
+        statuses = multi_values(status)
+        if statuses:
+            q = q.filter(Complaint.status.in_(statuses))
         contact_filter = (contact_id or "").strip()
         if contact_filter:
             q = q.filter(Complaint.contact_id == contact_filter)
@@ -711,8 +717,8 @@ class ComplaintService:
         page: int = 1,
         limit: int = 50,
         query: Optional[str] = None,
-        assigned_to: Optional[str] = None,
-        status: Optional[str] = None,
+        assigned_to: Optional[list[str] | str] = None,
+        status: Optional[list[str] | str] = None,
         sort_field: str = "complaint_date",
         sort_dir: str = "asc",
         contact_id: Optional[str] = None,
@@ -1769,6 +1775,18 @@ class ComplaintService:
     # written without a status move. It lives in response_gate so the gate and
     # the status flip can never disagree about what the response stage is.
     _RESPONSE_STAGE_STATUSES: tuple[str, ...] = ALLOWED_RESPONSE_STATUSES["complaint"]
+
+    def resubmit_rejected_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
+        """Edit-via-submit of a rejected complaint (chatbot / integration path).
+
+        The caller has already checked the complaint is ``rejected``. The edit is a
+        submission answering that rejection, so it lands on ``resubmitted`` whatever
+        status the payload carried.
+        """
+        update = complaint_data.model_copy(
+            update={"status": submission_status.status_on_submit(was_rejected=True)}
+        )
+        return self.update_complaint(complaint_id, update)
 
     def update_complaint(self, complaint_id: str, complaint_data: ComplaintUpdate):
         """Update a complaint."""

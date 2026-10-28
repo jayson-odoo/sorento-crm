@@ -24,8 +24,8 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -61,8 +61,8 @@ export default function ComplaintsList() {
     isSettling: searchSettling,
     reset: resetSearchQuery,
   } = useDebouncedSearch();
-  const [assignedToFilter, setAssignedToFilter] = useState<string>('__all__');
-  const [statusFilter, setStatusFilter] = useState<string>('__all__');
+  const [assignedToFilter, setAssignedToFilter] = useState<string>('');
+  const [statusFilter, setStatusFilter] = useState<string>('');
   const [rootCauseFilter, setRootCauseFilter] = useState<string[]>([]);
   const [resolutionFilter, setResolutionFilter] = useState<string[]>([]);
 
@@ -72,8 +72,8 @@ export default function ComplaintsList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearchQuery(state.searchQuery);
-    setAssignedToFilter(state.filters.assigned_to ?? '__all__');
-    setStatusFilter(state.filters.status ?? '__all__');
+    setAssignedToFilter(state.filters.assigned_to ?? '');
+    setStatusFilter(state.filters.status ?? '');
     setRootCauseFilter(state.filters.root_cause_ids ? state.filters.root_cause_ids.split(',') : []);
     setResolutionFilter(state.filters.resolution_ids ? state.filters.resolution_ids.split(',') : []);
   });
@@ -98,12 +98,8 @@ export default function ComplaintsList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    assigned_to:
-      assignedToFilter && assignedToFilter !== '__all__'
-        ? assignedToFilter
-        : undefined,
-    status:
-      statusFilter && statusFilter !== '__all__' ? statusFilter : undefined,
+    assigned_to: assignedToFilter || undefined,
+    status: statusFilter || undefined,
     root_cause_ids: rootCauseFilter.length ? rootCauseFilter : undefined,
     resolution_ids: resolutionFilter.length ? resolutionFilter : undefined,
   });
@@ -131,8 +127,8 @@ export default function ComplaintsList() {
   } = useComplaintResolutionsSelect();
 
   const filtersActiveCount =
-    (assignedToFilter !== '__all__' ? 1 : 0) +
-    (statusFilter !== '__all__' ? 1 : 0) +
+    (assignedToFilter ? 1 : 0) +
+    (statusFilter ? 1 : 0) +
     (rootCauseFilter.length ? 1 : 0) +
     (resolutionFilter.length ? 1 : 0);
 
@@ -147,12 +143,8 @@ export default function ComplaintsList() {
         searchQuery,
       },
       {
-        assigned_to:
-          assignedToFilter && assignedToFilter !== '__all__'
-            ? assignedToFilter
-            : undefined,
-        status:
-          statusFilter && statusFilter !== '__all__' ? statusFilter : undefined,
+        assigned_to: assignedToFilter || undefined,
+        status: statusFilter || undefined,
         root_cause_ids: rootCauseFilter.length
           ? rootCauseFilter.join(',')
           : undefined,
@@ -436,13 +428,12 @@ export default function ComplaintsList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Assigned to</Label>
-                    <SearchableSelect
-                      value={assignedToFilter}
-                      onChange={setAssignedToFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(assignedToFilter)}
+                      onChange={(v) => setAssignedToFilter(joinMulti(v))}
                       loadError={respondSyncedUsersError}
                       onRetry={() => void refetchRespondSyncedUsers()}
                       options={[
-                        { value: '__all__', label: 'All assignees' },
                         { value: '__unassigned__', label: 'Unassigned' },
                         ...assigneeOptions.map((u) => ({
                           value: u.respond_user_id!,
@@ -451,16 +442,25 @@ export default function ComplaintsList() {
                       ]}
                       placeholder="All assignees"
                       triggerClassName="mt-1"
+                      clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Assigned to', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Assigned to: any</span>
+                        )
+                      }
                     />
                   </div>
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
                       options={[
-                        { value: '__all__', label: 'All statuses' },
                         { value: 'new', label: 'New' },
+                        { value: 'submitted', label: 'Submitted' },
+                        { value: 'resubmitted', label: 'Resubmitted' },
                         { value: 'updated', label: 'Updated' },
                         { value: 'responded', label: 'Responded' },
                         { value: 'approved', label: 'Approved' },
@@ -469,6 +469,7 @@ export default function ComplaintsList() {
                       ]}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
+                      clearable
                     />
                   </div>
                   <div>
@@ -507,8 +508,8 @@ export default function ComplaintsList() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setAssignedToFilter('__all__');
-                          setStatusFilter('__all__');
+                          setAssignedToFilter('');
+                          setStatusFilter('');
                           setRootCauseFilter([]);
                           setResolutionFilter([]);
                         }}

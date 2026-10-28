@@ -37,7 +37,7 @@ from tests.chatbot.test_report_ask_lane import (  # noqa: F401 - fixtures + help
 )
 
 METRIC_Q = "By quantity or by amount?"
-BASIS_Q = "Delivered, ordered or outstanding?"
+BASIS_Q = "Invoiced, delivered, ordered or outstanding?"
 THIS_YEAR = {"date_filter_start": "2026-01-01", "date_filter_end": "2026-12-31"}
 _NUMBERED = re.compile(r"^\s*([1-9])[.)]", re.M)
 

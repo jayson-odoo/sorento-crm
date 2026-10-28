@@ -10,6 +10,7 @@ import { cn } from '@/lib/utils';
 import type { Status } from '@/app/(protected)/system-management/status-graphs/types/statusGraph.types';
 import type { Project } from '../../_shared/types/project.types';
 import { projectCodeLabel } from '../../_shared/lib/projectCode';
+import { isAwaitingDecision } from '../../_shared/components/ApprovalStatePill';
 
 /**
  * Portal registrations waiting for a decision (PROJECT-REG-PORTAL R6). They have no stage by
@@ -22,7 +23,12 @@ const WAITING_LANES = [
 ] as const;
 
 function isWaiting(project: Project): boolean {
-  return project.approval_state === 'pending' || project.approval_state === 'rejected';
+  return isAwaitingDecision(project.approval_state);
+}
+
+/** A resubmitted registration waits with the pending ones (RESUBMITTED-STATUS). */
+function waitingLane(project: Project): string {
+  return project.approval_state === 'rejected' ? 'rejected' : 'pending';
 }
 
 /**
@@ -57,7 +63,7 @@ export function PipelineBoard({
     const unplaced: Project[] = [];
     projects.forEach((project) => {
       if (isWaiting(project)) {
-        waiting.get(project.approval_state as string)!.push(project);
+        waiting.get(waitingLane(project))!.push(project);
         waitingIds.add(project.id);
       } else if (project.status_id && grouped.has(project.status_id)) {
         grouped.get(project.status_id)!.push(project);
