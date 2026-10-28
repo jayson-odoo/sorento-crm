@@ -79,7 +79,6 @@ import { apiFetch } from '@/lib/api';
 import { buildDataGridParams, extractApiError } from '@/lib/api-client';
 import type { DataGridApiResponse } from '@/components/ui/data-grid';
 import type {
-  AbcFilterValue,
   ActiveStatusFilter,
   DemandExplain,
   DemandSeries,
@@ -90,7 +89,6 @@ import type {
   ScmRollups,
   SupplierGroup,
   WarehouseHealth,
-  XyzFilterValue,
 } from '../types/scm.types';
 
 const BASE = '/api/v1/scm/dashboard';
