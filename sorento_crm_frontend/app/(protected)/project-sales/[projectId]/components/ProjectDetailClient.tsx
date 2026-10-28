@@ -44,6 +44,7 @@ import { ConfirmDeleteDialog } from '@/components/common/ConfirmDeleteDialog';
 import { DetailActionsMenu } from '@/components/common/DetailActionsMenu';
 import { useHasPermission } from '@/hooks/usePermissions';
 import DetailActions from '@/components/common/DetailActions';
+import { TruncatedTextCell } from '@/components/common/TruncatedTextCell';
 import { useProjectStatusGraph } from '@/app/(protected)/project-sales/_shared/hooks/useProjectStatusGraph';
 import type { Project, ProjectPossibleDuplicate } from '../../_shared/types/project.types';
 import {
@@ -268,7 +269,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
             )}
             {!project.can_edit && <Badge variant="outline">Read only</Badge>}
           </div>
-          <h2 className="mt-1 text-xl font-semibold">{project.title}</h2>
+          <h2 className="mt-1 text-xl font-semibold">
+            <TruncatedTextCell text={project.title} lines={2} dialogTitle="Project title" />
+          </h2>
         </div>
 
         {/* Pager, gear, primary (D6). One primary action, and everything else behind
@@ -362,14 +365,20 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {project.registration && <RegistrationFacts project={project} />}
 
       {existingProject && (
-        <p className="text-sm text-destructive" role="alert">
-          Already registered as{' '}
-          <Link
-            href={`/project-sales/${existingProject.project_id}`}
-            className="font-medium underline"
-          >
-            {projectCodeLabel(existingProject)} {existingProject.title}
-          </Link>
+        <p className="flex min-w-0 items-baseline gap-1 text-sm text-destructive" role="alert">
+          <span className="shrink-0">Already registered as</span>{' '}
+          <TruncatedTextCell
+            text={`${projectCodeLabel(existingProject)} ${existingProject.title}`}
+            dialogTitle="Project title"
+            renderLabel={(label) => (
+              <Link
+                href={`/project-sales/${existingProject.project_id}`}
+                className="block font-medium underline"
+              >
+                {label}
+              </Link>
+            )}
+          />
         </p>
       )}
 
@@ -453,10 +462,6 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                         .join(' - ')
                     : null
                 }
-              />
-              <Fact
-                label="Brands"
-                value={project.brands.length ? project.brands.join(', ') : null}
               />
             </Section>
 
@@ -553,20 +558,25 @@ function RegistrationFacts({ project }: { project: Project }) {
         <Fact label="Your ref" value={info.your_ref} />
       </dl>
       {duplicates.length > 0 && (
-        <p className="text-sm">
-          <span className="text-muted-foreground">Possible duplicate: </span>
-          {duplicates.map((duplicate, index) => (
-            <React.Fragment key={duplicate.project_id}>
-              {index > 0 && ', '}
-              <Link
-                href={`/project-sales/${duplicate.project_id}`}
-                className="text-primary hover:underline"
-              >
-                {projectCodeLabel(duplicate)} {duplicate.title}
-              </Link>
-            </React.Fragment>
+        <div className="flex min-w-0 flex-col gap-1 text-sm sm:flex-row sm:items-baseline">
+          <span className="shrink-0 text-muted-foreground">Possible duplicate: </span>
+          {duplicates.map((duplicate) => (
+            <div key={duplicate.project_id} className="min-w-0">
+              <TruncatedTextCell
+                text={`${projectCodeLabel(duplicate)} ${duplicate.title}`}
+                dialogTitle="Project title"
+                renderLabel={(label) => (
+                  <Link
+                    href={`/project-sales/${duplicate.project_id}`}
+                    className="block text-primary hover:underline"
+                  >
+                    {label}
+                  </Link>
+                )}
+              />
+            </div>
           ))}
-        </p>
+        </div>
       )}
       {project.approval_state === 'rejected' && project.reject_reason && (
         <div className="text-sm">

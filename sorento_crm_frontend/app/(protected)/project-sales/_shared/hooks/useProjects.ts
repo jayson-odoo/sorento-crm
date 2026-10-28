@@ -10,7 +10,10 @@ import { projectCodeLabel } from '../lib/projectCode';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
   addStakeholder,
+  aiExtractProject,
   approveProject,
+  listCustomerOptions,
+  submitProject,
   rejectProject,
   changeProjectStatus,
   changeTaskStatus,
@@ -310,7 +313,22 @@ export function useRegisterProject() {
     mutationFn: (body: ProjectRegisterBody) => registerProject(body),
     onSuccess: (project) => {
       invalidate();
-      toast.success(`${project.project_code} registered`);
+      if (project.approval_state === 'draft') toast.success('Draft saved');
+      else if (project.approval_state === 'pending') toast.success('Submitted for approval');
+      else toast.success(`${project.project_code} registered`);
+    },
+    onError: (error: Error) => toast.error(error.message),
+  });
+}
+
+/** Submits an own draft or rejected registration for approval (J1, J5). */
+export function useSubmitProject(projectId: string) {
+  const invalidate = useInvalidateProjects();
+  return useMutation({
+    mutationFn: () => submitProject(projectId),
+    onSuccess: () => {
+      invalidate(projectId);
+      toast.success('Submitted for approval');
     },
     onError: (error: Error) => toast.error(error.message),
   });
@@ -477,7 +495,7 @@ export function useTakeoverMutations(projectId: string) {
       toast.success(
         created.kind === 'join'
           ? 'Request sent to the project owner'
-          : 'Dispute raised with the sales manager',
+          : 'Interest registered',
       );
     },
     onError: (error: Error) => toast.error(error.message),
@@ -774,6 +792,37 @@ export function useFetchLeadOptions() {
       description: lead.lead_code,
     }));
   }, []);
+}
+
+/**
+ * Async options for the Developer / Architect / Main contractor pickers: a server-side search
+ * of one party type (PROJECT-REGISTER-V2 B1), so a party past the first page is found by name.
+ */
+export function useFetchPartyOptions(partyType: 'developer' | 'architect' | 'main_contractor') {
+  return React.useCallback(
+    async (query: string) => {
+      const result = await listParties({ party_type: partyType, query: query || undefined, limit: 20 });
+      return result.data.map((party) => ({
+        value: party.id,
+        label: party.name,
+        description: party.registration_no ?? undefined,
+      }));
+    },
+    [partyType],
+  );
+}
+
+/** Async options for the register form's Customer picker (name only). */
+export function useFetchCustomerOptions() {
+  return React.useCallback((query: string) => listCustomerOptions(query), []);
+}
+
+/** The register form's AI extract call, handed to the shared dialog. */
+export function useProjectAiExtract() {
+  return React.useCallback(
+    (text: string | null, files: File[]) => aiExtractProject(text, files),
+    [],
+  );
 }
 
 /** The leads list a detail URL describes, in the shape `LeadsClient` passes. */

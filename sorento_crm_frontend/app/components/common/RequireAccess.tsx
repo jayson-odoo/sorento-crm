@@ -10,8 +10,9 @@ import LoadErrorState from '@/components/common/LoadErrorState';
 type RequireAccessProps = {
   children: ReactNode;
 } & (
-  | { superadmin: true; permission?: never }
-  | { permission: string; superadmin?: never }
+  | { superadmin: true; permission?: never; anyPermission?: never }
+  | { permission: string; superadmin?: never; anyPermission?: never }
+  | { anyPermission: string[]; permission?: never; superadmin?: never }
 );
 
 /**
@@ -25,12 +26,17 @@ type RequireAccessProps = {
  *    EFFECTIVE user: an admin viewing as a non-admin is denied (MENU-PERM-GATE).
  * - <RequireAccess permission="slug"> - allowed only when the user's
  *    permission set includes `slug`.
+ * - <RequireAccess anyPermission={[...]}> - allowed when the set includes any of them.
  */
 export default function RequireAccess(props: RequireAccessProps) {
   if (props.superadmin) {
     return <SuperadminGate>{props.children}</SuperadminGate>;
   }
-  return <PermissionGate permission={props.permission}>{props.children}</PermissionGate>;
+  return (
+    <PermissionGate permissions={props.anyPermission ?? [props.permission as string]}>
+      {props.children}
+    </PermissionGate>
+  );
 }
 
 function SuperadminGate({ children }: { children: ReactNode }) {
@@ -41,10 +47,10 @@ function SuperadminGate({ children }: { children: ReactNode }) {
 }
 
 function PermissionGate({
-  permission,
+  permissions,
   children,
 }: {
-  permission: string;
+  permissions: string[];
   children: ReactNode;
 }) {
   const { permissionSet, isLoading, isError, isFetching, refetch } = usePermissions();
@@ -52,7 +58,7 @@ function PermissionGate({
   // The check itself failed: say so, with Retry. An empty set from a failed read
   // is not "denied" (NEVER-STUCK-UI S3, lever L6).
   if (isError) return <PermissionsLoadError onRetry={() => void refetch()} retrying={isFetching} />;
-  if (!permissionSet.has(permission)) return <AccessDenied />;
+  if (!permissions.some((slug) => permissionSet.has(slug))) return <AccessDenied />;
   return <>{children}</>;
 }
 

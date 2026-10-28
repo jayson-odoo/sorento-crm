@@ -22,8 +22,8 @@ export type TruncatedTextCellProps = {
   dialogTitle?: string;
   /** Override className on the truncated label span. */
   className?: string;
-  /** Hide eye icon if text is short enough - defaults to ``80`` chars. */
-  expandThreshold?: number;
+  /** Visible lines before the text clamps: 1 (default) or 2. */
+  lines?: 1 | 2;
 };
 
 export function TruncatedTextCell({
@@ -31,16 +31,37 @@ export function TruncatedTextCell({
   renderLabel,
   dialogTitle = 'Full text',
   className,
-  expandThreshold = 80,
+  lines = 1,
 }: TruncatedTextCellProps) {
   const [open, setOpen] = React.useState(false);
+  const [clamped, setClamped] = React.useState(false);
+  const labelRef = React.useRef<HTMLSpanElement | null>(null);
   const value = (text ?? '').toString();
-  if (!value.trim()) return <span className="text-muted-foreground"> - </span>;
-  const showExpand = value.length > expandThreshold;
+  const hasValue = value.trim().length > 0;
+
+  React.useLayoutEffect(() => {
+    const el = labelRef.current;
+    if (!el) return;
+    const measure = () =>
+      setClamped(el.scrollHeight > el.clientHeight + 1 || el.scrollWidth > el.clientWidth + 1);
+    measure();
+    if (typeof ResizeObserver === 'undefined') return;
+    const observer = new ResizeObserver(measure);
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [value, lines, hasValue]);
+
+  if (!hasValue) return <span className="text-muted-foreground"> - </span>;
+  const showExpand = clamped;
 
   const truncated = (
     <span
-      className={cn('block max-w-full truncate align-middle', className)}
+      ref={labelRef}
+      className={cn(
+        'block max-w-full align-middle',
+        lines === 2 ? 'line-clamp-2 break-words' : 'truncate',
+        className,
+      )}
       title={value}
     >
       {value}
@@ -57,7 +78,7 @@ export function TruncatedTextCell({
           type="button"
           variant="ghost"
           size="icon"
-          aria-label="View full text"
+          aria-label="Show full title"
           className="size-7 shrink-0 text-muted-foreground hover:text-foreground"
           onClick={(e) => {
             e.stopPropagation();

@@ -228,9 +228,14 @@ export function POIntakeConfirmClient({
       />
       {extractionSettled && (
         <p className="text-sm text-muted-foreground">
-          {project.data?.project_code
-            ? `${project.data.title} (${project.data.project_code})`
-            : project.data?.title}
+          <span
+            className="inline-block max-w-full truncate align-bottom"
+            title={project.data?.title ?? undefined}
+          >
+            {project.data?.project_code
+              ? `${project.data.title} (${project.data.project_code})`
+              : project.data?.title}
+          </span>
           {` · ${version.lines.length} line${version.lines.length === 1 ? '' : 's'}`}
           <TotalsMetaLine version={version} onJumpToProblem={jumpToProblem} />
         </p>

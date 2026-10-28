@@ -111,6 +111,7 @@ export function POIntakeUploadDialog({
                   onChange={setPickedProjectId}
                   clearable
                   fetchOptions={listEditableProjectOptions}
+                  truncateTriggerLabel
                   placeholder="Search a project"
                   emptyMessage="No projects match"
                 />
