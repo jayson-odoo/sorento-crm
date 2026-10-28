@@ -79,7 +79,7 @@ _PROFILE_KEYS = (
 
 
 @router.post("/clash-preview", response_model=ClashPreviewResponse)
-async def preview_clashes(
+def preview_clashes(
     payload: ClashPreviewRequest,
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -134,7 +134,7 @@ def _visible_to(db: Session, current_user: dict):
 
 
 @router.get("/", response_model=ListResponse[ProjectResponse])
-async def list_projects(
+def list_projects(
     query: Optional[str] = Query(None, description="Matches title or project code"),
     status_id: Optional[List[str]] = Query(None),
     outcome: Optional[List[str]] = Query(None),
@@ -252,7 +252,7 @@ async def list_projects(
 
 
 @router.post("/", response_model=ProjectResponse, status_code=status.HTTP_201_CREATED)
-async def register_project(
+def register_project(
     payload: ProjectRegisterRequest,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -309,7 +309,7 @@ async def register_project(
 
 
 @router.get("/{project_id}", response_model=ProjectResponse)
-async def get_project(
+def get_project(
     project_id: str,
     current_user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
@@ -358,7 +358,7 @@ async def get_project(
 
 
 @router.put("/{project_id}", response_model=ProjectResponse)
-async def update_project(
+def update_project(
     project_id: str,
     payload: ProjectUpdateRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -386,7 +386,7 @@ async def update_project(
 
 
 @router.post("/{project_id}/approve", response_model=ProjectResponse)
-async def approve_project(
+def approve_project(
     project_id: str,
     payload: Optional[ProjectApproveRequest] = None,
     current_user: dict = Depends(require_permission(APPROVE)),
@@ -422,7 +422,7 @@ async def approve_project(
 
 
 @router.post("/{project_id}/reject", response_model=ProjectResponse)
-async def reject_project(
+def reject_project(
     project_id: str,
     payload: ProjectRejectRequest,
     current_user: dict = Depends(require_permission(APPROVE)),
@@ -456,7 +456,7 @@ async def reject_project(
 
 
 @router.post("/{project_id}/status", response_model=ProjectResponse)
-async def change_project_status(
+def change_project_status(
     project_id: str,
     payload: ProjectStatusChangeRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -485,7 +485,7 @@ async def change_project_status(
 
 
 @router.delete("/{project_id}", status_code=status.HTTP_200_OK)
-async def delete_project(
+def delete_project(
     project_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -514,7 +514,7 @@ async def delete_project(
     "/{project_id}/stakeholders",
     response_model=ListResponse[ProjectStakeholderResponse],
 )
-async def list_stakeholders(
+def list_stakeholders(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -538,7 +538,7 @@ async def list_stakeholders(
     response_model=ProjectStakeholderResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_stakeholder(
+def add_stakeholder(
     project_id: str,
     payload: ProjectStakeholderCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -568,7 +568,7 @@ async def add_stakeholder(
     "/{project_id}/stakeholders/{stakeholder_id}",
     response_model=ProjectStakeholderResponse,
 )
-async def update_stakeholder(
+def update_stakeholder(
     project_id: str,
     stakeholder_id: str,
     payload: ProjectStakeholderUpdate,
@@ -595,7 +595,7 @@ async def update_stakeholder(
 
 
 @router.delete("/{project_id}/stakeholders/{stakeholder_id}")
-async def remove_stakeholder(
+def remove_stakeholder(
     project_id: str,
     stakeholder_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -625,7 +625,7 @@ async def remove_stakeholder(
     "/{project_id}/collaborators",
     response_model=ListResponse[ProjectCollaboratorResponse],
 )
-async def list_collaborators(
+def list_collaborators(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -700,7 +700,7 @@ def _takeover_payload(db: Session, requests) -> List[dict]:
     "/{project_id}/takeover-requests",
     response_model=ListResponse[TakeoverRequestResponse],
 )
-async def list_takeover_requests(
+def list_takeover_requests(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -731,7 +731,7 @@ async def list_takeover_requests(
     response_model=TakeoverRequestResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_takeover_request(
+def create_takeover_request(
     project_id: str,
     payload: TakeoverRequestCreate,
     current_user: dict = Depends(require_any_permission(READ)),
@@ -764,7 +764,7 @@ async def create_takeover_request(
     "/{project_id}/takeover-requests/{request_id}/decide",
     response_model=TakeoverRequestResponse,
 )
-async def decide_takeover_request(
+def decide_takeover_request(
     project_id: str,
     request_id: str,
     payload: TakeoverRequestDecision,

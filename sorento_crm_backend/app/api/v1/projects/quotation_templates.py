@@ -50,7 +50,7 @@ def _envelope(data: list):
     "/quotation-templates/merge-fields",
     response_model=ListResponse[QuotationMergeFieldResponse],
 )
-async def list_merge_fields(
+def list_merge_fields(
     _user: dict = Depends(require_permission(VIEW)),
 ):
     """The picker's vocabulary, from the one declared registry.
@@ -63,7 +63,7 @@ async def list_merge_fields(
 
 
 @router.get("/quotation-templates", response_model=ListResponse[QuotationTemplateResponse])
-async def list_quotation_templates(
+def list_quotation_templates(
     kind: Optional[str] = Query(None, description="cover_letter | terms"),
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -78,7 +78,7 @@ async def list_quotation_templates(
 @router.get(
     "/quotation-templates/{template_id}", response_model=QuotationTemplateResponse
 )
-async def get_quotation_template(
+def get_quotation_template(
     template_id: str,
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -95,7 +95,7 @@ async def get_quotation_template(
     response_model=QuotationTemplateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_quotation_template(
+def create_quotation_template(
     payload: QuotationTemplateCreate,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -118,7 +118,7 @@ async def create_quotation_template(
 @router.put(
     "/quotation-templates/{template_id}", response_model=QuotationTemplateResponse
 )
-async def update_quotation_template(
+def update_quotation_template(
     template_id: str,
     payload: QuotationTemplateUpdate,
     _user: dict = Depends(require_permission(EDIT)),
@@ -143,7 +143,7 @@ async def update_quotation_template(
 @router.post(
     "/quotation-templates/{template_id}/activate", response_model=QuotationTemplateResponse
 )
-async def activate_quotation_template(
+def activate_quotation_template(
     template_id: str,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -163,7 +163,7 @@ async def activate_quotation_template(
 
 
 @router.delete("/quotation-templates/{template_id}")
-async def delete_quotation_template(
+def delete_quotation_template(
     template_id: str,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),

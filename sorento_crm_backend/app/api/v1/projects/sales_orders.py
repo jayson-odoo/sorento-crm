@@ -127,7 +127,7 @@ def _order_for_edit(db: Session, pso_id: str, current_user: dict):
     "/purchase-orders/{po_id}/delivery-schedule-versions",
     response_model=ListResponse[ScheduleVersionOption],
 )
-async def list_schedule_versions(
+def list_schedule_versions(
     po_id: str,
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
@@ -154,7 +154,7 @@ async def list_schedule_versions(
     response_model=BuildSalesOrdersResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def build_sales_orders(
+def build_sales_orders(
     po_id: str,
     payload: BuildSalesOrdersRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -199,7 +199,7 @@ async def build_sales_orders(
     "/purchase-orders/{po_id}/schedule-findings",
     response_model=List[SODraftFindingRow],
 )
-async def list_schedule_findings(
+def list_schedule_findings(
     po_id: str,
     schedule_version_id: str = Query(...),
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
@@ -219,7 +219,7 @@ async def list_schedule_findings(
     "/purchase-orders/{po_id}/schedule-findings/{finding_id}/acknowledge",
     response_model=SODraftFindingRow,
 )
-async def acknowledge_schedule_finding(
+def acknowledge_schedule_finding(
     po_id: str,
     finding_id: str,
     payload: AcknowledgeFindingRequest,
@@ -271,7 +271,7 @@ async def acknowledge_schedule_finding(
     "/projects/{project_id}/sales-orders",
     response_model=ListResponse[ProjectSalesOrderRow],
 )
-async def list_project_sales_orders(
+def list_project_sales_orders(
     project_id: str,
     query: Optional[str] = Query(None, description="Matches provisional ref, doc no or area"),
     so_status: Optional[List[str]] = Query(None, alias="status"),
@@ -316,7 +316,7 @@ async def list_project_sales_orders(
 
 
 @router.get("/sales-orders/{pso_id}", response_model=ProjectSalesOrderDetail)
-async def get_sales_order(
+def get_sales_order(
     pso_id: str,
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
@@ -338,7 +338,7 @@ async def get_sales_order(
 
 
 @router.put("/sales-orders/{pso_id}", response_model=ProjectSalesOrderDetail)
-async def save_sales_order(
+def save_sales_order(
     pso_id: str,
     payload: SalesOrderDocumentSave,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -383,7 +383,7 @@ async def save_sales_order(
 
 
 @router.delete("/sales-orders/{pso_id}", response_model=SalesOrderDeleteResponse)
-async def delete_sales_order(
+def delete_sales_order(
     pso_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -415,7 +415,7 @@ async def delete_sales_order(
 
 
 @router.post("/sales-orders/bulk-delete", response_model=SalesOrderBulkDeleteResponse)
-async def bulk_delete_sales_orders(
+def bulk_delete_sales_orders(
     payload: SalesOrderBulkDeleteRequest,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -493,7 +493,7 @@ async def bulk_delete_sales_orders(
     "/sales-orders/{pso_id}/findings/{finding_id}/acknowledge",
     response_model=SODraftFindingRow,
 )
-async def acknowledge_finding(
+def acknowledge_finding(
     pso_id: str,
     finding_id: str,
     payload: AcknowledgeFindingRequest,
@@ -534,7 +534,7 @@ async def acknowledge_finding(
 
 
 @router.put("/sales-orders/{pso_id}/lines/order", response_model=RenumberLinesResponse)
-async def reorder_sales_order_lines(
+def reorder_sales_order_lines(
     pso_id: str,
     payload: ReorderLinesRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -562,7 +562,7 @@ async def reorder_sales_order_lines(
 @router.put(
     "/sales-orders/{pso_id}/lines/{line_id}", response_model=ProjectSalesOrderLineRow
 )
-async def update_sales_order_line(
+def update_sales_order_line(
     pso_id: str,
     line_id: str,
     payload: SalesOrderLineUpdate,
@@ -592,7 +592,7 @@ async def update_sales_order_line(
 @router.post(
     "/sales-orders/{pso_id}/regroup", response_model=List[ProjectSalesOrderRow]
 )
-async def regroup_sales_order(
+def regroup_sales_order(
     pso_id: str,
     payload: RegroupRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -616,7 +616,7 @@ async def regroup_sales_order(
 @router.post(
     "/sales-orders/{pso_id}/renumber-lines", response_model=RenumberLinesResponse
 )
-async def renumber_sales_order_lines(
+def renumber_sales_order_lines(
     pso_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -641,7 +641,7 @@ async def renumber_sales_order_lines(
 
 
 @router.post("/sales-orders/{pso_id}/publish", response_model=PublishResponse)
-async def publish_sales_order(
+def publish_sales_order(
     pso_id: str,
     payload: Optional[PublishRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -670,7 +670,7 @@ async def publish_sales_order(
 
 
 @router.post("/sales-orders/{pso_id}/unpublish", response_model=UnpublishResponse)
-async def unpublish_sales_order(
+def unpublish_sales_order(
     pso_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -698,7 +698,7 @@ async def unpublish_sales_order(
     "/sponsorship-forms/{form_id}/build-sales-order",
     response_model=ProjectSalesOrderDetail,
 )
-async def build_sponsorship_sales_order(
+def build_sponsorship_sales_order(
     form_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -731,7 +731,7 @@ async def build_sponsorship_sales_order(
 @router.post(
     "/sales-orders/{pso_id}/confirm-costing", response_model=ProjectSalesOrderDetail
 )
-async def confirm_sales_order_costing(
+def confirm_sales_order_costing(
     pso_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -811,7 +811,7 @@ def sales_order_import_file(
 @router.post(
     "/sales-orders/{pso_id}/amendments/preview", response_model=AmendmentPreviewResponse
 )
-async def preview_amendment(
+def preview_amendment(
     pso_id: str,
     payload: AmendmentPreviewRequest,
     _user: dict = Depends(require_any_permission(READ)),
@@ -834,7 +834,7 @@ async def preview_amendment(
     response_model=AmendmentCreateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_amendment(
+def create_amendment(
     pso_id: str,
     payload: AmendmentCreateRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -858,7 +858,7 @@ async def create_amendment(
 
 
 @router.get("/amendments/{amendment_id}", response_model=AmendmentDetail)
-async def get_amendment(
+def get_amendment(
     amendment_id: str,
     _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),
@@ -873,7 +873,7 @@ async def get_amendment(
 @router.post(
     "/amendments/{amendment_id}/publish", response_model=AmendmentPublishResponse
 )
-async def publish_amendment(
+def publish_amendment(
     amendment_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -899,7 +899,7 @@ async def publish_amendment(
 
 
 @router.put("/amendments/{amendment_id}/rows", response_model=AmendmentDetail)
-async def update_amendment_row_decisions(
+def update_amendment_row_decisions(
     amendment_id: str,
     payload: AmendmentRowDecisionsRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -932,7 +932,7 @@ async def update_amendment_row_decisions(
     "/amendments/{amendment_id}/autocount-change-list",
     response_model=AutocountChangeListResponse,
 )
-async def get_autocount_change_list(
+def get_autocount_change_list(
     amendment_id: str,
     _user: dict = Depends(require_any_permission_with_api_key([VIEW])),
     db: Session = Depends(get_db),

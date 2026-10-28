@@ -102,7 +102,7 @@ def _version_for_edit(db: Session, version_id: str, current_user: dict):
     "/projects/{project_id}/delivery-schedules",
     response_model=ListResponse[DeliveryScheduleListRow],
 )
-async def list_project_delivery_schedules(
+def list_project_delivery_schedules(
     project_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -121,7 +121,7 @@ async def list_project_delivery_schedules(
     "/delivery-schedules/{schedule_id}/versions",
     response_model=ListResponse[DeliveryScheduleVersionListRow],
 )
-async def list_delivery_schedule_versions(
+def list_delivery_schedule_versions(
     schedule_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -240,7 +240,7 @@ def _page_count(content: bytes, mime: str) -> Optional[int]:
     "/delivery-schedule-versions/{version_id}",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def get_delivery_schedule_version(
+def get_delivery_schedule_version(
     version_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -259,7 +259,7 @@ async def get_delivery_schedule_version(
     "/delivery-schedule-versions/{version_id}/retry-extraction",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def retry_delivery_schedule_extraction(
+def retry_delivery_schedule_extraction(
     version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -284,7 +284,7 @@ async def retry_delivery_schedule_extraction(
     "/delivery-schedule-versions/{version_id}/cells",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def update_delivery_schedule_cells(
+def update_delivery_schedule_cells(
     version_id: str,
     payload: ScheduleCellsUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -309,7 +309,7 @@ async def update_delivery_schedule_cells(
     "/delivery-schedule-versions/{version_id}/products/{product_index}",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def resolve_delivery_schedule_product(
+def resolve_delivery_schedule_product(
     version_id: str,
     product_index: int,
     payload: ScheduleProductResolve,
@@ -338,7 +338,7 @@ async def resolve_delivery_schedule_product(
     "/delivery-schedule-versions/{version_id}/columns/{column_index}/dismissal",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def dismiss_delivery_schedule_column(
+def dismiss_delivery_schedule_column(
     version_id: str,
     column_index: int,
     payload: ScheduleColumnDismiss,
@@ -372,7 +372,7 @@ async def dismiss_delivery_schedule_column(
     "/delivery-schedule-versions/{version_id}/confirm",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def confirm_delivery_schedule_version(
+def confirm_delivery_schedule_version(
     version_id: str,
     payload: Optional[ScheduleConfirmRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -405,7 +405,7 @@ async def confirm_delivery_schedule_version(
     "/delivery-schedule-versions/{version_id}/revision-proposals/{index}/accept",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def accept_revision_proposal(
+def accept_revision_proposal(
     version_id: str,
     index: int,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -430,7 +430,7 @@ async def accept_revision_proposal(
     "/delivery-schedule-versions/{version_id}/revision-proposals/{index}/reject",
     response_model=DeliveryScheduleVersionResponse,
 )
-async def reject_revision_proposal(
+def reject_revision_proposal(
     version_id: str,
     index: int,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -455,7 +455,7 @@ async def reject_revision_proposal(
     "/delivery-schedules/{schedule_id}",
     response_model=DeliveryScheduleDeleteResponse,
 )
-async def delete_delivery_schedule(
+def delete_delivery_schedule(
     schedule_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -483,7 +483,7 @@ async def delete_delivery_schedule(
     "/delivery-schedule-versions/{version_id}",
     response_model=DeliveryScheduleDeleteResponse,
 )
-async def delete_delivery_schedule_version(
+def delete_delivery_schedule_version(
     version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -512,7 +512,7 @@ async def delete_delivery_schedule_version(
     "/purchase-orders/{po_id}/progress",
     response_model=POProgressResponse,
 )
-async def get_purchase_order_progress(
+def get_purchase_order_progress(
     po_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -532,7 +532,7 @@ async def get_purchase_order_progress(
     "/delivery-phases/{phase_id}/date",
     response_model=AreaDateChangeResponse,
 )
-async def change_delivery_area_date(
+def change_delivery_area_date(
     phase_id: str,
     payload: AreaDateChange,
     current_user: dict = Depends(require_permission(EDIT)),

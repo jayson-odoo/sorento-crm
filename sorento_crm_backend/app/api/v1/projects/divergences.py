@@ -92,7 +92,7 @@ def _assert_can_resolve(db: Session, divergence_id: str, current_user: dict):
 
 
 @router.post("/sales-orders/ingest", response_model=IngestResponse)
-async def ingest_sales_order(
+def ingest_sales_order(
     payload: IngestDocumentPayload,
     current_user: dict = Depends(require_permission_with_api_key(EDIT)),
     db: Session = Depends(get_db),
@@ -149,7 +149,7 @@ def ingest_sales_order_file(
 
 
 @router.get("/divergences", response_model=ListResponse[DivergenceRowSummary])
-async def list_divergences(
+def list_divergences(
     status: Optional[str] = Query(default="open"),
     project_id: Optional[str] = Query(default=None),
     page: int = Query(default=1, ge=1),
@@ -169,7 +169,7 @@ async def list_divergences(
 
 
 @router.get("/divergences/{divergence_id}", response_model=DivergenceDetail)
-async def get_divergence(
+def get_divergence(
     divergence_id: str,
     _user: dict = Depends(require_permission_with_api_key(VIEW)),
     db: Session = Depends(get_db),
@@ -189,7 +189,7 @@ async def get_divergence(
 @router.post(
     "/divergences/{divergence_id}/rows/{row_id}/resolve", response_model=DivergenceDetail
 )
-async def resolve_divergence_row(
+def resolve_divergence_row(
     divergence_id: str,
     row_id: str,
     payload: ResolveRowRequest,
@@ -215,7 +215,7 @@ async def resolve_divergence_row(
 
 
 @router.get("/divergences/{divergence_id}/corrective-import-file")
-async def corrective_import_file(
+def corrective_import_file(
     divergence_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),

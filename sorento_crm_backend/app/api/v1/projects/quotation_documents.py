@@ -103,7 +103,7 @@ def _editable_project(db: Session, project_id: str, current_user: dict, *, write
     "/projects/{project_id}/quotation-documents",
     response_model=ListResponse[ProjectQuotationDocumentResponse],
 )
-async def list_quotation_documents(
+def list_quotation_documents(
     project_id: str,
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
@@ -121,7 +121,7 @@ async def list_quotation_documents(
     response_model=ProjectQuotationDocumentResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_quotation_document(
+def create_quotation_document(
     project_id: str,
     payload: ProjectQuotationDocumentCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -149,7 +149,7 @@ async def create_quotation_document(
 
 
 @router.get("/projects/{project_id}/quotation-documents/letter-templates")
-async def get_quotation_letter_templates(
+def get_quotation_letter_templates(
     project_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -167,7 +167,7 @@ async def get_quotation_letter_templates(
     "/projects/{project_id}/quotation-documents/{document_id}",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def get_quotation_document(
+def get_quotation_document(
     project_id: str,
     document_id: str,
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
@@ -189,7 +189,7 @@ async def get_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def update_quotation_document(
+def update_quotation_document(
     project_id: str,
     document_id: str,
     payload: ProjectQuotationDocumentUpdate,
@@ -252,7 +252,7 @@ async def update_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}",
     status_code=status.HTTP_204_NO_CONTENT,
 )
-async def delete_quotation_document(
+def delete_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
@@ -279,7 +279,7 @@ async def delete_quotation_document(
     response_model=ProjectQuotationScopeSummary,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_quotation_scope(
+def add_quotation_scope(
     project_id: str,
     document_id: str,
     payload: ProjectQuotationScopeCreate,
@@ -311,7 +311,7 @@ async def add_quotation_scope(
     "/projects/{project_id}/quotation-documents/{document_id}/scopes/{quotation_id}",
     response_model=ProjectQuotationScopeSummary,
 )
-async def update_quotation_scope(
+def update_quotation_scope(
     project_id: str,
     document_id: str,
     quotation_id: str,
@@ -341,7 +341,7 @@ async def update_quotation_scope(
     "/projects/{project_id}/quotation-documents/{document_id}/issues",
     response_model=ListResponse[ProjectQuotationIssueResponse],
 )
-async def list_quotation_issues(
+def list_quotation_issues(
     project_id: str,
     document_id: str,
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
@@ -363,7 +363,7 @@ async def list_quotation_issues(
     response_model=ProjectQuotationIssueResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def issue_quotation_document(
+def issue_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -392,7 +392,7 @@ async def issue_quotation_document(
 
 
 @router.get("/quotation-approval-graph", response_model=StatusGraphResponse)
-async def get_quotation_approval_graph(
+def get_quotation_approval_graph(
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
     db: Session = Depends(get_db),
 ):
@@ -425,7 +425,7 @@ async def get_quotation_approval_graph(
     "/projects/{project_id}/quotation-documents/{document_id}/approval-status",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def move_quotation_approval(
+def move_quotation_approval(
     project_id: str,
     document_id: str,
     payload: QuotationApprovalMoveRequest,
@@ -464,7 +464,7 @@ async def move_quotation_approval(
     "/projects/{project_id}/quotation-documents/{document_id}/approve",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def approve_quotation_document(
+def approve_quotation_document(
     project_id: str,
     document_id: str,
     current_user: dict = Depends(require_permission(APPROVE)),
@@ -501,7 +501,7 @@ async def approve_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}/reject",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def reject_quotation_document(
+def reject_quotation_document(
     project_id: str,
     document_id: str,
     payload: QuotationRejectRequest,
@@ -541,7 +541,7 @@ async def reject_quotation_document(
     "/projects/{project_id}/quotation-documents/{document_id}/approval-revise",
     response_model=ProjectQuotationDocumentResponse,
 )
-async def revise_quotation_approval(
+def revise_quotation_approval(
     project_id: str,
     document_id: str,
     payload: QuotationReviseRequest,
@@ -574,7 +574,7 @@ async def revise_quotation_approval(
     response_model=QuotationSignatureResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def sign_quotation_document(
+def sign_quotation_document(
     project_id: str,
     document_id: str,
     payload: QuotationSignatureRequest,
@@ -609,7 +609,7 @@ async def sign_quotation_document(
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/sign-link",
 )
-async def create_quotation_sign_link(
+def create_quotation_sign_link(
     project_id: str,
     document_id: str,
     issue_id: str,
@@ -645,7 +645,7 @@ async def create_quotation_sign_link(
 @router.get(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/pdf",
 )
-async def download_quotation_issue_pdf(
+def download_quotation_issue_pdf(
     project_id: str,
     document_id: str,
     issue_id: str,
@@ -811,7 +811,7 @@ def _queue_issue_export(
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/pdf",
 )
-async def queue_quotation_issue_pdf(
+def queue_quotation_issue_pdf(
     project_id: str,
     document_id: str,
     issue_id: str,
@@ -843,7 +843,7 @@ async def queue_quotation_issue_pdf(
 @router.post(
     "/projects/{project_id}/quotation-documents/{document_id}/issues/{issue_id}/export/xlsx",
 )
-async def queue_quotation_issue_xlsx(
+def queue_quotation_issue_xlsx(
     project_id: str,
     document_id: str,
     issue_id: str,

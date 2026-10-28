@@ -26,7 +26,7 @@ EDIT = "projects.parties.edit"
 
 
 @router.get("/", response_model=ListResponse[ProjectPartyResponse])
-async def list_parties(
+def list_parties(
     party_type: Optional[str] = Query(None),
     query: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
@@ -58,7 +58,7 @@ async def list_parties(
 @router.post(
     "/", response_model=ProjectPartyResponse, status_code=status.HTTP_201_CREATED
 )
-async def create_party(
+def create_party(
     payload: ProjectPartyCreate,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -80,7 +80,7 @@ async def create_party(
 
 
 @router.get("/{party_id}", response_model=ProjectPartyResponse)
-async def get_party(
+def get_party(
     party_id: str,
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -94,7 +94,7 @@ async def get_party(
 
 
 @router.put("/{party_id}", response_model=ProjectPartyResponse)
-async def update_party(
+def update_party(
     party_id: str,
     payload: ProjectPartyUpdate,
     _user: dict = Depends(require_permission(EDIT)),
@@ -113,7 +113,7 @@ async def update_party(
 
 
 @router.delete("/{party_id}")
-async def delete_party(
+def delete_party(
     party_id: str,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
