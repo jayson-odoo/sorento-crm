@@ -6,7 +6,7 @@
  * cleared. The admin's own localStorage token and slug are never touched.
  * Only apiFetch (CRM calls) and global fetch (portal calls) are mocked.
  */
-import React from 'react';
+import React, { StrictMode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
@@ -25,12 +25,14 @@ const apiFetch = vi.fn();
 vi.mock('@/lib/api', () => ({ apiFetch: (...a: unknown[]) => apiFetch(...a) }));
 
 import { impersonationStore } from '@/lib/impersonation-store';
+import { fetchImpersonatedUserContactId } from '@/services/contactImpersonationService';
 import { MySlug } from './MySlug';
 
 const TOKEN_KEY = 'sorento.portalToken';
 const SLUG_KEY = 'sorento.portalSlug';
 const PORTAL_URL = 'http://localhost:3000/portal?token=NEW-IMP-TOKEN&impersonation=1';
 const portalFetch = vi.fn();
+let usersMeId = 'u-eric';
 
 function ok(body: unknown) {
   return { ok: true, status: 200, json: async () => body, text: async () => '' };
@@ -40,6 +42,7 @@ function crm(startOk: boolean) {
   apiFetch.mockImplementation(async (url: string) => {
     if (url.includes('/user-management/users/me')) {
       return ok({
+        id: usersMeId,
         respond_contact_id: 'contact-eric',
         salesperson: { portal_kinds: ['stock_inquiry'], portal_slug: 'TARGETSLUG' },
       });
@@ -69,6 +72,7 @@ function mount() {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  usersMeId = 'u-eric';
   window.localStorage.clear();
   window.sessionStorage.clear();
   window.localStorage.setItem(TOKEN_KEY, 'ADMIN-OWN-TOKEN');
@@ -122,5 +126,65 @@ describe('MySlug starts the contact impersonation itself (C)', () => {
     expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
     expect(window.localStorage.getItem(SLUG_KEY)).toBe('ADMINSLUG01');
     expect(screen.queryByTestId('child')).toBeNull();
+  });
+});
+
+describe('MySlug one contact start per visit (round 11)', () => {
+  function mountStrict() {
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    return render(
+      <StrictMode>
+        <QueryClientProvider client={client}>
+          <MySlug>{(slug) => <div data-testid="child" data-slug={slug} />}</MySlug>
+        </QueryClientProvider>
+      </StrictMode>,
+    );
+  }
+  const startCount = () =>
+    apiFetch.mock.calls.filter((c) => String(c[0]).includes('/contact-impersonation/start')).length;
+
+  it('K1: under StrictMode the contact impersonation is started exactly once', async () => {
+    crm(true);
+    mountStrict();
+    await screen.findByTestId('child', {}, { timeout: 4000 });
+    expect(startCount()).toBe(1);
+  });
+
+  it('K2: a run cancelled before the start resolves writes no portal token', async () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => { release = r; });
+    crm(true);
+    const base = apiFetch.getMockImplementation()!;
+    apiFetch.mockImplementation(async (url: string, init?: unknown) => {
+      if (String(url).includes('/contact-impersonation/start')) await gate;
+      return base(url, init);
+    });
+    const view = mount();
+    await waitFor(() => expect(startCount()).toBe(1));
+    view.unmount();
+    release();
+    await new Promise((r) => setTimeout(r, 100));
+    expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+  });
+
+  it('K3: /users/me answering as someone other than the view-as target: null from the service', async () => {
+    crm(true);
+    usersMeId = 'admin-1';
+    expect(await fetchImpersonatedUserContactId()).toBeNull();
+  });
+
+  it('K3: /users/me answering as the target: its contact id', async () => {
+    crm(true);
+    usersMeId = 'u-eric';
+    expect(await fetchImpersonatedUserContactId()).toBe('contact-eric');
+  });
+
+  it('K3: an ended view-as answers as the admin: MySlug goes to verify and starts nothing', async () => {
+    crm(true);
+    usersMeId = 'admin-1';
+    mount();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/my-requests/verify'), { timeout: 4000 });
+    expect(startCount()).toBe(0);
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
   });
 });
