@@ -34,8 +34,10 @@ logger = logging.getLogger(__name__)
 MANAGEMENT_PERMISSION = "projects.projects.manage"
 
 
-def management_user_ids(db: Session) -> List[str]:
-    """Active users whose role grants the management permission."""
+def management_user_ids(db: Session, company_id: Optional[str] = None) -> List[str]:
+    """Active, non-bot users of ``company_id`` whose role grants the management permission."""
+    from app.models.company import UserCompany
+    from app.services.company_routing_service import DEFAULT_COMPANY_ID
     from app.models.user import (
         User,
         UserPermission,
@@ -49,8 +51,11 @@ def management_user_ids(db: Session) -> List[str]:
         .join(UserRolePermission, UserRolePermission.role_id == UserRoleAssignment.role_id)
         .join(UserPermission, UserPermission.id == UserRolePermission.permission_id)
         .join(User, User.id == UserRoleAssignment.user_id)
+        .join(UserCompany, UserCompany.user_id == User.id)
         .filter(
             UserPermission.slug == MANAGEMENT_PERMISSION,
+            UserCompany.company_id == str(company_id or DEFAULT_COMPANY_ID),
+            User.is_integration.is_(False),
             # There is no is_active column: ACTIVE vs INACTIVE/BLOCKED lives in `status`,
             # and `is_trashed` is the soft-delete. Both have to be excluded or a departed
             # manager keeps receiving warnings about projects they cannot open.
@@ -193,7 +198,7 @@ def notify_interest_registered(
 
     requester_name = resolve_user_names(db, [requester_user_id]).get(str(requester_user_id)) or "A colleague"
     recipients = {str(project.owner_user_id)} if project.owner_user_id else set()
-    recipients.update(management_user_ids(db))
+    recipients.update(management_user_ids(db, project.company_id))
     recipients.discard(str(requester_user_id))
     label = project_label(project)
     return _send(
@@ -288,7 +293,7 @@ def notify_floor_breach(
     )
     return _send(
         db,
-        user_ids=management_user_ids(db),
+        user_ids=management_user_ids(db, project.company_id),
         notif_type="project_price_floor_breach",
         title=f"{project_label(project)} priced below floor",
         body=body,
@@ -483,7 +488,7 @@ def notify_quotation_changes_requested(
     if len(excerpt) > 400:
         excerpt = f"{excerpt[:400]}..."
 
-    recipients = [str(project.owner_user_id)] if project.owner_user_id else management_user_ids(db)
+    recipients = [str(project.owner_user_id)] if project.owner_user_id else management_user_ids(db, project.company_id)
 
     return _send(
         db,
@@ -533,7 +538,7 @@ def notify_po_mismatch(
         for m in mismatches[:3]
     )
     more = "" if len(mismatches) <= 3 else f" and {len(mismatches) - 3} more"
-    recipients = management_user_ids(db)
+    recipients = management_user_ids(db, project.company_id)
     if project.owner_user_id:
         recipients.append(str(project.owner_user_id))
 

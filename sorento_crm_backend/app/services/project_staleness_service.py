@@ -352,7 +352,7 @@ def _notify(db: Session, *, project: Project, level: int, result: Dict[str, Any]
 
         recipients = [project.owner_user_id] if project.owner_user_id else []
         if level >= LEVEL_WARN:
-            recipients.extend(management_user_ids(db))
+            recipients.extend(management_user_ids(db, project.company_id))
 
         sent = False
         for user_id in {r for r in recipients if r}:

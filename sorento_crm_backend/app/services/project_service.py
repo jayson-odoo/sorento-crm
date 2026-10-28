@@ -741,12 +741,8 @@ def serialize_projects(
 
     # The customer is the lead's buyer (owner, 13 Oct): the Overview shows it and the
     # quotation header defaults its name, phone and Attn from it. Bulk like the rest.
-    # A customer picked on the register form (sales_profile.customer_id) wins over the lead's.
-    customers = _customers_for(
-        db,
-        [lead.customer_id for lead in leads.values() if lead.customer_id]
-        + [pr.customer_id for pr in profiles.values() if pr.customer_id],
-    )
+    # The customer is the one picked on the register form (sales_profile.customer_id).
+    customers = _customers_for(db, [pr.customer_id for pr in profiles.values() if pr.customer_id])
     # The phone and the main contact are the customer master's, which sits behind its own
     # grant; a project reader without it sees the buyer's name only (security review, 13 Oct).
     can_see_customer_contact = CUSTOMERS_VIEW_PERMISSION in permissions
@@ -825,12 +821,7 @@ def serialize_projects(
                     else None
                 ),
                 **_customer_fields(
-                    customers.get(profile.customer_id if profile else None)
-                    or (
-                        customers.get(leads[project.lead_id].customer_id)
-                        if project.lead_id in leads
-                        else None
-                    ),
+                    customers.get(profile.customer_id) if profile and profile.customer_id else None,
                     with_contact=can_see_customer_contact,
                 ),
                 "status_id": project.status_id,
@@ -923,6 +914,14 @@ def serialize_projects(
                 "updated_at": project.updated_at,
             }
         )
+    if "projects.registrations.submit" in permissions and "projects.projects.edit" not in permissions:
+        # A submit-only user edits only their own draft or rejected registration (J3b).
+        for row, project in zip(out, projects):
+            row["can_edit"] = bool(
+                actor_user_id
+                and project.owner_user_id == actor_user_id
+                and project.approval_state in (APPROVAL_DRAFT, APPROVAL_REJECTED)
+            )
     return out
 
 

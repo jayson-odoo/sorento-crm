@@ -143,7 +143,10 @@ def test_management_is_resolved_from_the_permission_not_a_list():
     receiving warnings without anybody editing a recipient screen."""
     from app.services import project_notify_service as notify
 
+    from app.models.company import UserCompany
+
     with blank_session() as db:
+        company_id = _sorento(db)
         permission = UserPermission(
             id=_uid(),
             name=f"{MARKER} view all financials",
@@ -187,11 +190,14 @@ def test_management_is_resolved_from_the_permission_not_a_list():
             [
                 UserRoleAssignment(id=_uid(), user_id=manager_id, role_id=role.id),
                 UserRoleAssignment(id=_uid(), user_id=departed_id, role_id=role.id),
+                UserCompany(user_id=manager_id, company_id=company_id),
+                UserCompany(user_id=plain_id, company_id=company_id),
+                UserCompany(user_id=departed_id, company_id=company_id),
             ]
         )
         db.flush()
 
-        recipients = notify.management_user_ids(db)
+        recipients = notify.management_user_ids(db, company_id)
         assert manager_id in recipients
         assert plain_id not in recipients
         assert departed_id not in recipients

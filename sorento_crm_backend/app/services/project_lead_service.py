@@ -907,7 +907,7 @@ def _decline_recipients(db: Session, lead: ProjectLead) -> List[str]:
 
     from app.services.project_notify_service import management_user_ids
 
-    return management_user_ids(db)
+    return management_user_ids(db, lead.company_id)
 
 
 def _assigner_user_id(db: Session, lead: ProjectLead) -> Optional[str]:

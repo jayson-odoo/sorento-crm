@@ -3,12 +3,12 @@ from __future__ import annotations
 
 from typing import Optional
 
-from fastapi import APIRouter, Depends, Query, status
+from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.projects import (
     ProjectPartyCreate,
@@ -24,6 +24,8 @@ router = APIRouter()
 
 VIEW = "projects.parties.view"
 EDIT = "projects.parties.edit"
+#: A salesperson who submits registrations searches parties without the parties grant.
+SUBMIT = "projects.registrations.submit"
 
 
 @router.get("/", response_model=ListResponse[ProjectPartyResponse])
@@ -33,7 +35,7 @@ async def list_parties(
     include_inactive: bool = Query(False),
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    _user: dict = Depends(require_permission(VIEW)),
+    _user: dict = Depends(require_any_permission([VIEW, SUBMIT])),
     db: Session = Depends(get_db),
 ):
     try:
@@ -61,12 +63,13 @@ async def list_parties(
 )
 async def create_party(
     payload: ProjectPartyCreate,
+    response: Response,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
 ):
     try:
         company_id = acting_company_id(db)
-        party = refs.create_party(
+        party, created = refs.create_party(
             db,
             company_id=company_id,
             payload=payload.model_dump(exclude_unset=True),
@@ -74,6 +77,8 @@ async def create_party(
         )
         db.commit()
         db.refresh(party)
+        if not created:
+            response.status_code = status.HTTP_200_OK
         return refs.serialize_parties(db, [party])[0]
     except Exception as exc:
         db.rollback()

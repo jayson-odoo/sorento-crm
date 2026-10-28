@@ -164,14 +164,14 @@ class ClashCandidateResponse(BaseModel):
     project_id: str
     project_code: Optional[str] = None
     title: str
-    outcome: str
+    outcome: Optional[str] = None
     status_label: Optional[str] = None
     owner_user_id: Optional[str] = None
     owner_name: Optional[str] = None
     developer_name: Optional[str] = None
     estimated_sales_value: Optional[Decimal] = None
     last_activity_at: Optional[datetime] = None
-    similarity: float
+    similarity: Optional[float] = None
     blocks: bool
 
 

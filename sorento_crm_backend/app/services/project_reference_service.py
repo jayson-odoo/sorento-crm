@@ -153,7 +153,8 @@ def _assert_party_type(party_type: str) -> None:
 
 def create_party(
     db: Session, *, company_id: str, payload: Dict[str, Any], actor_user_id: str
-) -> ProjectParty:
+) -> tuple:
+    """``(party, created)``: an active party of the same type and name comes back as is."""
     _assert_party_type(payload.get("party_type"))
     name = (payload.get("name") or "").strip()
     if not name:
@@ -172,13 +173,14 @@ def create_party(
         .filter(
             ProjectParty.company_id == company_id,
             ProjectParty.party_type == payload["party_type"],
+            ProjectParty.is_active.is_(True),
             func.lower(func.regexp_replace(func.btrim(ProjectParty.name), r"\s+", " ", "g"))
             == name.lower(),
         )
         .first()
     )
     if existing:
-        return existing
+        return existing, False
 
     party = ProjectParty(
         company_id=company_id,
@@ -195,7 +197,7 @@ def create_party(
     )
     db.add(party)
     db.flush()
-    return party
+    return party, True
 
 
 def get_party_or_404(db: Session, party_id: str) -> ProjectParty:
