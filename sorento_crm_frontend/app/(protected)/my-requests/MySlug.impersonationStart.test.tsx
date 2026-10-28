@@ -132,6 +132,13 @@ describe('MySlug starts the contact impersonation itself (C)', () => {
 describe('MySlug one contact start per visit (round 11)', () => {
   function mountStrict() {
     const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    // Preloaded, so the profile is settled on the first render and both StrictMode effect runs
+    // reach the start call (an empty cache would hide the double run behind isLoading).
+    client.setQueryData(['account-profile', 'u-eric'], {
+      id: 'u-eric',
+      respond_contact_id: 'contact-eric',
+      salesperson: { portal_kinds: ['stock_inquiry'], portal_slug: 'TARGETSLUG' },
+    });
     return render(
       <StrictMode>
         <QueryClientProvider client={client}>
