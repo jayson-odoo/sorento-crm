@@ -18,12 +18,19 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { Input } from '@/components/ui/input';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { formatDateTime } from '@/lib/helpers';
 import { useImportLogs } from '../hooks/useImportLogs';
 import type { ImportLog } from '../types/importLog.types';
+
+/** The entity types the importers write a log for (`create_import_log` callers). */
+const ENTITY_TYPE_OPTIONS = [
+  { value: 'order', label: 'Order' },
+  { value: 'stock', label: 'Stock' },
+];
 
 export default function ImportLogsList() {
   const router = useRouter();
@@ -215,10 +222,12 @@ export default function ImportLogsList() {
               activeCount: entityType ? 1 : 0,
               content: (
                 <div className="space-y-3">
-                  <Input
-                    placeholder="Filter by entity type..."
-                    value={entityType}
-                    onChange={(e) => setEntityType(e.target.value)}
+                  <SearchableMultiSelect
+                    value={splitMulti(entityType)}
+                    onChange={(v) => setEntityType(joinMulti(v))}
+                    options={ENTITY_TYPE_OPTIONS}
+                    placeholder="All entity types"
+                    clearable
                   />
                   {entityType && (
                     <Button
