@@ -97,7 +97,7 @@ class SpecPreviewRequest(BaseModel):
 
 
 @router.get("/")
-async def list_product_specifications(
+def list_product_specifications(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None, description="Match a product code or class."),
@@ -175,7 +175,7 @@ async def list_product_specifications(
 
 
 @router.get("/by-product/{product_id}")
-async def get_product_specification(
+def get_product_specification(
     product_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
     db: Session = Depends(get_db),
@@ -264,7 +264,7 @@ async def get_product_specification(
 
 
 @router.get("/exceptions")
-async def list_spec_exceptions(
+def list_spec_exceptions(
     page: int = Query(1, ge=1),
     limit: int = Query(25, ge=1, le=MAX_PAGE_LIMIT),
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.view")),
@@ -305,7 +305,7 @@ class ManualSpecValue(BaseModel):
 
 
 @router.post("/by-product/{product_id}/rederive")
-async def rederive_one_product(
+def rederive_one_product(
     product_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.products.edit")),
     db: Session = Depends(get_db),
@@ -486,7 +486,7 @@ def set_spec_values_in_one_batch(
 
 
 @router.put("/by-product/{product_id}/values/{spec_key}")
-async def set_spec_value_by_hand(
+def set_spec_value_by_hand(
     product_id: str,
     spec_key: str,
     payload: ManualSpecValue,
@@ -538,7 +538,7 @@ async def set_spec_value_by_hand(
 
 
 @router.delete("/by-product/{product_id}/values/{spec_key}")
-async def clear_hand_set_spec_value(
+def clear_hand_set_spec_value(
     product_id: str,
     spec_key: str,
     mode: str = Query(

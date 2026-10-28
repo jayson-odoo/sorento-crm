@@ -27,7 +27,7 @@ router = APIRouter()
 
 
 @router.get("/tree")
-async def get_categories_tree(
+def get_categories_tree(
     current_user: dict = Depends(require_permission_with_api_key("master_data.product_categories.view")),
     db: Session = Depends(get_db)
 ):
@@ -46,7 +46,7 @@ async def get_categories_tree(
 
 
 @router.get("/class-labels")
-async def get_class_labels(
+def get_class_labels(
     current_user: dict = Depends(
         require_any_permission_with_api_key(
             [
@@ -91,7 +91,7 @@ async def get_class_labels(
 
 
 @router.get("/", response_model=ListResponse[ProductCategoryResponse])
-async def get_categories(
+def get_categories(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -122,7 +122,7 @@ async def get_categories(
 
 
 @router.get("/select", response_model=List[ProductCategorySelectItem])
-async def get_categories_select(
+def get_categories_select(
     query: Optional[str] = Query(None),
     brand_id: Optional[List[Annotated[str, StringConstraints(pattern=UUID_PATTERN)]]] = Query(
         None,
@@ -176,7 +176,7 @@ async def get_categories_select(
 
 
 @router.get("/{category_id}", response_model=ProductCategoryResponse)
-async def get_category(
+def get_category(
     category_id: str,
     current_user: dict = Depends(require_permission_with_api_key("master_data.product_categories.view")),
     db: Session = Depends(get_db)
@@ -193,7 +193,7 @@ async def get_category(
 
 
 @router.post("/", response_model=ProductCategoryResponse, status_code=status.HTTP_201_CREATED)
-async def create_category(
+def create_category(
     category_data: ProductCategoryCreate,
     current_user: dict = Depends(require_permission("master_data.product_categories.add")),
     db: Session = Depends(get_db)
@@ -213,7 +213,7 @@ async def create_category(
 
 
 @router.put("/{category_id}", response_model=ProductCategoryResponse)
-async def update_category(
+def update_category(
     category_id: str,
     category_data: ProductCategoryUpdate,
     current_user: dict = Depends(require_permission("master_data.product_categories.edit")),
@@ -235,7 +235,7 @@ async def update_category(
 
 
 @router.delete("/{category_id}", status_code=status.HTTP_200_OK)
-async def delete_category(
+def delete_category(
     category_id: str,
     current_user: dict = Depends(require_permission("master_data.product_categories.delete")),
     db: Session = Depends(get_db)
