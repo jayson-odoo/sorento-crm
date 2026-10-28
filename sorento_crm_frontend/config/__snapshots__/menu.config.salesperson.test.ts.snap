@@ -1,0 +1,1121 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filtered menu matches the pre-change snapshot > admin with every permission 1`] = `
+[
+  {
+    "heading": "OVERVIEW",
+  },
+  {
+    "path": "/",
+    "title": "Dashboards",
+  },
+  {
+    "children": [
+      {
+        "path": "/ideas",
+        "title": "All ideas",
+      },
+      {
+        "path": "/ideas/portal",
+        "title": "Roadmap",
+      },
+    ],
+    "title": "Ideas",
+  },
+  {
+    "heading": "SALES",
+  },
+  {
+    "children": [
+      {
+        "path": "/sales/targets",
+        "title": "Targets",
+      },
+      {
+        "path": "/sales/opportunities",
+        "title": "Opportunities",
+      },
+      {
+        "path": "/sales/customer-asks",
+        "title": "Customer asks",
+      },
+      {
+        "path": "/sales/teams",
+        "title": "Sales Teams",
+      },
+      {
+        "path": "/master-data-management/sales-agents",
+        "title": "Sales Agents",
+      },
+      {
+        "path": "/sales/yearly-comparison",
+        "title": "Yearly comparison",
+      },
+      {
+        "path": "/sales/sales-by-debtor-type",
+        "title": "Sales by debtor type",
+      },
+      {
+        "path": "/sales/top-selling-items",
+        "title": "Top selling items",
+      },
+      {
+        "path": "/sales/set-apart-customers",
+        "title": "Set-apart customers",
+      },
+    ],
+    "title": "Sales",
+  },
+  {
+    "children": [
+      {
+        "path": "/project-sales/pipeline",
+        "title": "Projects",
+      },
+      {
+        "path": "/project-sales/leads",
+        "title": "Leads",
+      },
+      {
+        "path": "/project-sales/lead-acceptance",
+        "title": "Awaiting Acceptance",
+      },
+      {
+        "path": "/project-sales/my-tasks",
+        "title": "My Tasks",
+      },
+      {
+        "path": "/project-sales/stock-claims",
+        "title": "Stock Claims",
+      },
+      {
+        "path": "/project-sales/sample-requests",
+        "title": "Sample Requests",
+      },
+      {
+        "path": "/project-sales/divergences",
+        "title": "AutoCount Differences",
+      },
+      {
+        "path": "/project-sales/parties",
+        "title": "Parties",
+      },
+      {
+        "children": [
+          {
+            "path": "/project-sales/setup",
+            "title": "Setup",
+          },
+          {
+            "path": "/project-sales/series",
+            "title": "Series",
+          },
+          {
+            "path": "/project-sales/price-floors",
+            "title": "Price Floors",
+          },
+        ],
+        "title": "Configuration",
+      },
+    ],
+    "title": "Project Sales",
+  },
+  {
+    "children": [
+      {
+        "path": "/order-management/orders",
+        "title": "Delivery Orders",
+      },
+      {
+        "path": "/order-management/order-statuses",
+        "title": "Delivery Order Status",
+      },
+      {
+        "path": "/order-management/customers",
+        "title": "Customers",
+      },
+      {
+        "path": "/order-management/customer-groups",
+        "title": "Customer Groups",
+      },
+      {
+        "path": "/order-management/branches",
+        "title": "Customer Branches",
+      },
+    ],
+    "title": "Delivery Orders",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/marketing-management/promotions",
+            "title": "All Promotions",
+          },
+          {
+            "path": "/marketing-management/promotion-attachments",
+            "title": "Promotion Attachments",
+          },
+          {
+            "path": "/marketing-management/promotion-types",
+            "title": "Promotion Types",
+          },
+          {
+            "path": "/marketing-management/promotion-products",
+            "title": "Promotion Products",
+          },
+        ],
+        "title": "Promotions",
+      },
+      {
+        "path": "/marketing-management/campaigns",
+        "title": "Campaigns",
+      },
+    ],
+    "title": "Marketing",
+  },
+  {
+    "heading": "FINANCE",
+  },
+  {
+    "path": "/finance/billing-documents",
+    "title": "Billing Documents",
+  },
+  {
+    "heading": "SUPPLY CHAIN",
+  },
+  {
+    "children": [
+      {
+        "path": "/scm",
+        "title": "Dashboard",
+      },
+      {
+        "children": [
+          {
+            "path": "/scm/simulation",
+            "title": "Simulation",
+          },
+          {
+            "path": "/scm/market-signals",
+            "title": "Market Signals",
+          },
+          {
+            "path": "/scm/policies",
+            "title": "Policies",
+          },
+        ],
+        "title": "Planning",
+      },
+      {
+        "children": [
+          {
+            "path": "/project-sales/fulfilment-planning",
+            "title": "Fulfilment Planning",
+          },
+          {
+            "path": "/project-sales/plans",
+            "title": "Plans",
+          },
+          {
+            "path": "/project-sales/planning-changes",
+            "title": "Planning changes",
+          },
+          {
+            "path": "/project-sales/reports",
+            "title": "Forecast & Reports",
+          },
+        ],
+        "title": "Project Demand",
+      },
+    ],
+    "title": "Supply Chain",
+  },
+  {
+    "children": [
+      {
+        "path": "/procurement-management/suppliers",
+        "title": "Suppliers",
+      },
+      {
+        "path": "/procurement-management/product-suppliers",
+        "title": "Product-Suppliers",
+      },
+      {
+        "path": "/procurement-management/cost-price-uploads",
+        "title": "Cost Price Uploads",
+      },
+      {
+        "path": "/procurement-management/packing-lists",
+        "title": "Packing Lists",
+      },
+      {
+        "path": "/procurement-management/spo-allocations",
+        "title": "SPO Allocations",
+      },
+      {
+        "path": "/procurement-management/grn",
+        "title": "GRN",
+      },
+      {
+        "path": "/procurement-management/picking-lines",
+        "title": "Picking Lines",
+      },
+      {
+        "path": "/procurement-management/stock-inquiries",
+        "title": "Stock Inquiries",
+      },
+      {
+        "path": "/procurement-management/new-product-applications",
+        "title": "New Product Applications",
+      },
+      {
+        "children": [
+          {
+            "path": "/scm/reorder",
+            "title": "Reorder Planning",
+          },
+          {
+            "path": "/project-sales/stock-debt",
+            "title": "Stock Debt",
+          },
+          {
+            "path": "/scm/loading-plan",
+            "title": "Loading Plan",
+          },
+          {
+            "path": "/project-sales/order-inquiries",
+            "title": "Order Inquiries",
+          },
+          {
+            "path": "/scm/purchase-orders",
+            "title": "Purchase Orders",
+          },
+          {
+            "path": "/scm/proforma-invoices",
+            "title": "Proforma Invoices",
+          },
+        ],
+        "title": "Supply Chain",
+      },
+    ],
+    "title": "Procurement",
+  },
+  {
+    "children": [
+      {
+        "path": "/inventory-management/warehouses",
+        "title": "Warehouses",
+      },
+      {
+        "path": "/inventory-management/storage-zones",
+        "title": "Storage Zones",
+      },
+      {
+        "path": "/inventory-management/stock",
+        "title": "Stock",
+      },
+      {
+        "path": "/inventory-management/stock-status",
+        "title": "Stock status",
+      },
+      {
+        "path": "/inventory-management/stock-batches",
+        "title": "Stock Batches",
+      },
+      {
+        "path": "/inventory-management/stock-ledger",
+        "title": "Stock Ledger",
+      },
+      {
+        "path": "/inventory-management/stock-transfers",
+        "title": "Stock Transfers",
+      },
+    ],
+    "title": "Inventory",
+  },
+  {
+    "heading": "CATALOGUE",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/master-data-management/products",
+            "title": "All Products",
+          },
+          {
+            "path": "/master-data-management/product-attachments",
+            "title": "Product Attachments",
+          },
+          {
+            "path": "/master-data-management/product-sets",
+            "title": "Product Sets",
+          },
+        ],
+        "title": "Products",
+      },
+      {
+        "children": [
+          {
+            "path": "/master-data-management/product-specifications",
+            "title": "Product Specifications",
+          },
+          {
+            "path": "/master-data-management/spec-verification",
+            "title": "Spec Verification",
+          },
+          {
+            "path": "/master-data-management/flyer-spec-proposals",
+            "title": "Flyer Spec Proposals",
+          },
+        ],
+        "title": "Specifications",
+      },
+      {
+        "children": [
+          {
+            "path": "/master-data-management/product-categories",
+            "title": "Product Categories",
+          },
+          {
+            "path": "/master-data-management/brands",
+            "title": "Brands",
+          },
+          {
+            "path": "/master-data-management/units-of-measure",
+            "title": "Units of Measure",
+          },
+          {
+            "path": "/master-data-management/countries",
+            "title": "Countries",
+          },
+          {
+            "path": "/master-data-management/certificates",
+            "title": "Certificates",
+          },
+        ],
+        "title": "Reference Data",
+      },
+    ],
+    "title": "Products",
+  },
+  {
+    "children": [
+      {
+        "path": "/dealer-kit",
+        "title": "Catalogue Pages",
+      },
+      {
+        "path": "/dealer-kit/editions",
+        "title": "Editions",
+      },
+      {
+        "children": [
+          {
+            "path": "/dealer-kit/collections",
+            "title": "Product Collections",
+          },
+          {
+            "path": "/dealer-kit/tile-designs",
+            "title": "Tile Designs",
+          },
+          {
+            "path": "/dealer-kit/brochure-images",
+            "title": "Brochure Images",
+          },
+          {
+            "path": "/dealer-kit/flyer-readings",
+            "title": "Flyers",
+          },
+          {
+            "path": "/dealer-kit/bundles",
+            "title": "Bundles",
+          },
+        ],
+        "title": "Library",
+      },
+      {
+        "children": [
+          {
+            "path": "/dealer-kit/design",
+            "title": "Room Designer",
+          },
+          {
+            "path": "/dealer-kit/design/summary",
+            "title": "Design Summary",
+          },
+          {
+            "path": "/dealer-kit/price-tag-requests",
+            "title": "Price Tag Requests",
+          },
+          {
+            "path": "/dealer-kit/tag-templates",
+            "title": "Tag Templates",
+          },
+          {
+            "path": "/dealer-kit/tag-sizes",
+            "title": "Tag Sizes",
+          },
+        ],
+        "title": "Room Designer",
+      },
+    ],
+    "title": "Dealer Kit",
+  },
+  {
+    "heading": "OPERATIONS",
+  },
+  {
+    "children": [
+      {
+        "path": "/complaint-management/complaints",
+        "title": "Complaints",
+      },
+      {
+        "path": "/complaint-management/complaint-root-causes",
+        "title": "Root Causes",
+      },
+      {
+        "path": "/complaint-management/complaint-resolutions",
+        "title": "Resolutions",
+      },
+    ],
+    "title": "Complaints",
+  },
+  {
+    "children": [
+      {
+        "path": "/sla-management/sla-policies",
+        "title": "SLA Policies",
+      },
+      {
+        "path": "/sla-management/conversations",
+        "title": "Conversations",
+      },
+      {
+        "path": "/sla-management/conversation-sla-tracking",
+        "title": "Conversation SLA Tracking",
+      },
+      {
+        "path": "/sla-management/form-sla-tracking",
+        "title": "Form SLA Tracking",
+      },
+      {
+        "path": "/sla-management/team-pending",
+        "title": "My Team Tasks",
+      },
+      {
+        "path": "/sla-management/form-sla-config",
+        "title": "Form SLA Configuration",
+      },
+      {
+        "path": "/sla-management/escalation-logs",
+        "title": "SLA Event Logs",
+      },
+      {
+        "path": "/sla-management/message-snippets",
+        "title": "Message Snippets",
+      },
+      {
+        "path": "/sla-management/kpi-dashboard",
+        "title": "KPI Dashboard",
+      },
+    ],
+    "title": "SLA",
+  },
+  {
+    "children": [
+      {
+        "path": "/scm/sales-orders",
+        "title": "Sales Orders",
+      },
+      {
+        "path": "/scm/consignments",
+        "title": "Consignment",
+      },
+      {
+        "path": "/procurement-management/purchase-requests",
+        "title": "Purchase Requests",
+      },
+      {
+        "path": "/procurement-management/sponsorship-forms",
+        "title": "Sponsorship Forms",
+      },
+      {
+        "path": "/procurement-management/sponsorship-forms/report",
+        "title": "Sponsorship Report",
+      },
+    ],
+    "title": "Project Sales Admin",
+  },
+  {
+    "children": [
+      {
+        "path": "/forms-management/forms",
+        "title": "Forms",
+      },
+    ],
+    "title": "Forms",
+  },
+  {
+    "children": [
+      {
+        "path": "/workflow-forms-management/definitions",
+        "title": "Definitions",
+      },
+    ],
+    "title": "Workflow Forms",
+  },
+  {
+    "children": [
+      {
+        "path": "/resource-management/attachment-directories",
+        "title": "Files",
+      },
+      {
+        "path": "/resource-management/trash",
+        "title": "Trash",
+      },
+      {
+        "path": "/resource-management/attachment-types",
+        "title": "Attachment Types",
+      },
+    ],
+    "title": "Resources",
+  },
+  {
+    "heading": "ADMINISTRATION",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/user-management/users",
+            "title": "Administrative Users",
+          },
+          {
+            "path": "/user-management/contact-access-agents",
+            "title": "Internal Users",
+          },
+          {
+            "path": "/user-management/teams",
+            "title": "Teams",
+          },
+          {
+            "path": "/user-management/onboarding-requests",
+            "title": "Onboarding Requests",
+          },
+        ],
+        "title": "People",
+      },
+      {
+        "children": [
+          {
+            "path": "/user-management/roles",
+            "title": "Roles",
+          },
+          {
+            "path": "/user-management/permissions",
+            "title": "Permissions",
+          },
+          {
+            "path": "/user-management/access-agents",
+            "title": "AI Agents",
+          },
+          {
+            "path": "/user-management/contact-access-types",
+            "title": "Contact Access Types",
+          },
+          {
+            "path": "/user-management/contact-tags",
+            "title": "Contact Tags",
+          },
+        ],
+        "title": "Access",
+      },
+      {
+        "path": "/user-management/market-segments",
+        "title": "Market Segments",
+      },
+      {
+        "path": "/user-management/account",
+        "title": "Account",
+      },
+      {
+        "path": "/user-management/logs",
+        "title": "Logs",
+      },
+      {
+        "path": "/user-management/settings",
+        "title": "Settings",
+      },
+    ],
+    "title": "Users & Access",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/system-management/app-store",
+            "title": "App Store",
+          },
+          {
+            "path": "/system-management/app-store/bundles",
+            "title": "Module bundles",
+          },
+        ],
+        "title": "Platform",
+      },
+      {
+        "children": [
+          {
+            "path": "/system-management/api-call-logs",
+            "title": "API Call Log",
+          },
+        ],
+        "title": "Operations",
+      },
+      {
+        "children": [
+          {
+            "path": "/integration-management/integrations",
+            "title": "Integrations",
+          },
+          {
+            "path": "/integration-management/whatsapp-templates",
+            "title": "WhatsApp Templates",
+          },
+          {
+            "children": [
+              {
+                "path": "/system-management/email-outbox",
+                "title": "Email Outbox",
+              },
+              {
+                "path": "/system-management/respond-outbox",
+                "title": "Respond Outbox",
+              },
+            ],
+            "path": "/system-management/outgoing-mails",
+            "title": "Outgoing Mails",
+          },
+          {
+            "path": "/system-management/chat-history",
+            "title": "Chat History",
+          },
+          {
+            "path": "/system-management/chat-overview",
+            "title": "Chat Overview",
+          },
+          {
+            "path": "/system-management/top-asks",
+            "title": "Top Asks",
+          },
+          {
+            "path": "/system-management/bot-failures",
+            "title": "Bot Failures",
+          },
+          {
+            "path": "/system-management/topic-audit",
+            "title": "Topic Audit",
+          },
+          {
+            "path": "/system-management/chatbot-console",
+            "title": "Chatbot Console",
+          },
+          {
+            "path": "/system-management/chatbot-domains",
+            "title": "Chatbot Domains",
+          },
+          {
+            "path": "/system-management/chatbot-entity-kinds",
+            "title": "Entity Kinds",
+          },
+          {
+            "path": "/system-management/chatbot-status-words",
+            "title": "Status Words",
+          },
+          {
+            "path": "/system-management/email-event-configs",
+            "title": "Email Event Configs",
+          },
+          {
+            "path": "/system-management/email-templates",
+            "title": "Email Templates",
+          },
+          {
+            "path": "/system-management/email-theme",
+            "title": "Email Theme",
+          },
+          {
+            "path": "/system-management/respond-workspaces",
+            "title": "Respond.io Workspaces",
+          },
+          {
+            "path": "/system-management/respond-contacts",
+            "title": "Respond.io Contacts",
+          },
+        ],
+        "title": "Messaging",
+      },
+      {
+        "children": [
+          {
+            "path": "/system-management/automation",
+            "title": "Automation",
+          },
+          {
+            "path": "/system-management/numbering-rules",
+            "title": "Running Numbers",
+          },
+          {
+            "path": "/system-management/import-field-aliases",
+            "title": "Import Column Mappings",
+          },
+          {
+            "path": "/system-management/status-graphs",
+            "title": "Status Graphs",
+          },
+          {
+            "path": "/system-management/translations",
+            "title": "Translations",
+          },
+          {
+            "path": "/master-data-management/lookup-sets",
+            "title": "Lookup Sets",
+          },
+        ],
+        "title": "Configuration",
+      },
+      {
+        "children": [
+          {
+            "path": "/system-management/ai-assistant",
+            "title": "Settings",
+          },
+          {
+            "path": "/system-management/ai-assistant/prompts",
+            "title": "Prompts",
+          },
+          {
+            "path": "/system-management/ai-assistant/usage",
+            "title": "Usage",
+          },
+          {
+            "path": "/system-management/ai-assistant/model-prices",
+            "title": "Model prices",
+          },
+          {
+            "path": "/system-management/ai-assistant/wishlist",
+            "title": "Wishlist",
+          },
+          {
+            "path": "/system-management/mcp-tools",
+            "title": "MCP Tools",
+          },
+        ],
+        "title": "AI Assistant",
+      },
+    ],
+    "title": "System",
+  },
+]
+`;
+
+exports[`MENU_SIDEBAR for staff is unchanged > mixed user (salesperson plus staff role): salesperson null: filtered menu matches the pre-change snapshot > mixed user (salesperson plus staff role): salesperson null 1`] = `
+[
+  {
+    "heading": "OVERVIEW",
+  },
+  {
+    "children": [
+      {
+        "path": "/ideas",
+        "title": "All ideas",
+      },
+      {
+        "path": "/ideas/portal",
+        "title": "Roadmap",
+      },
+    ],
+    "title": "Ideas",
+  },
+  {
+    "heading": "SALES",
+  },
+  {
+    "children": [
+      {
+        "path": "/sales/customer-asks",
+        "title": "Customer asks",
+      },
+    ],
+    "title": "Sales",
+  },
+  {
+    "children": [
+      {
+        "path": "/project-sales/pipeline",
+        "title": "Projects",
+      },
+      {
+        "path": "/project-sales/leads",
+        "title": "Leads",
+      },
+      {
+        "path": "/project-sales/lead-acceptance",
+        "title": "Awaiting Acceptance",
+      },
+      {
+        "path": "/project-sales/my-tasks",
+        "title": "My Tasks",
+      },
+      {
+        "path": "/project-sales/stock-claims",
+        "title": "Stock Claims",
+      },
+      {
+        "path": "/project-sales/divergences",
+        "title": "AutoCount Differences",
+      },
+    ],
+    "title": "Project Sales",
+  },
+  {
+    "heading": "SUPPLY CHAIN",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/project-sales/fulfilment-planning",
+            "title": "Fulfilment Planning",
+          },
+          {
+            "path": "/project-sales/plans",
+            "title": "Plans",
+          },
+          {
+            "path": "/project-sales/planning-changes",
+            "title": "Planning changes",
+          },
+          {
+            "path": "/project-sales/reports",
+            "title": "Forecast & Reports",
+          },
+        ],
+        "title": "Project Demand",
+      },
+    ],
+    "title": "Supply Chain",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/project-sales/order-inquiries",
+            "title": "Order Inquiries",
+          },
+        ],
+        "title": "Supply Chain",
+      },
+    ],
+    "title": "Procurement",
+  },
+  {
+    "children": [
+      {
+        "path": "/inventory-management/stock-status",
+        "title": "Stock status",
+      },
+    ],
+    "title": "Inventory",
+  },
+]
+`;
+
+exports[`MENU_SIDEBAR for staff is unchanged > role with projects.projects.view: filtered menu matches the pre-change snapshot > role with projects.projects.view 1`] = `
+[
+  {
+    "heading": "SALES",
+  },
+  {
+    "children": [
+      {
+        "path": "/project-sales/pipeline",
+        "title": "Projects",
+      },
+      {
+        "path": "/project-sales/leads",
+        "title": "Leads",
+      },
+      {
+        "path": "/project-sales/lead-acceptance",
+        "title": "Awaiting Acceptance",
+      },
+      {
+        "path": "/project-sales/my-tasks",
+        "title": "My Tasks",
+      },
+      {
+        "path": "/project-sales/stock-claims",
+        "title": "Stock Claims",
+      },
+      {
+        "path": "/project-sales/divergences",
+        "title": "AutoCount Differences",
+      },
+    ],
+    "title": "Project Sales",
+  },
+  {
+    "heading": "SUPPLY CHAIN",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/project-sales/fulfilment-planning",
+            "title": "Fulfilment Planning",
+          },
+          {
+            "path": "/project-sales/plans",
+            "title": "Plans",
+          },
+          {
+            "path": "/project-sales/planning-changes",
+            "title": "Planning changes",
+          },
+          {
+            "path": "/project-sales/reports",
+            "title": "Forecast & Reports",
+          },
+        ],
+        "title": "Project Demand",
+      },
+    ],
+    "title": "Supply Chain",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/project-sales/order-inquiries",
+            "title": "Order Inquiries",
+          },
+        ],
+        "title": "Supply Chain",
+      },
+    ],
+    "title": "Procurement",
+  },
+  {
+    "children": [
+      {
+        "path": "/inventory-management/stock-status",
+        "title": "Stock status",
+      },
+    ],
+    "title": "Inventory",
+  },
+]
+`;
+
+exports[`MENU_SIDEBAR for staff is unchanged > role without projects.projects.view: filtered menu matches the pre-change snapshot > role without projects.projects.view 1`] = `
+[
+  {
+    "heading": "SALES",
+  },
+  {
+    "children": [
+      {
+        "path": "/sales/customer-asks",
+        "title": "Customer asks",
+      },
+    ],
+    "title": "Sales",
+  },
+]
+`;
+
+exports[`MENU_SIDEBAR for staff is unchanged > superadmin: filtered menu matches the pre-change snapshot > superadmin 1`] = `
+[
+  {
+    "heading": "ADMINISTRATION",
+  },
+  {
+    "children": [
+      {
+        "children": [
+          {
+            "path": "/system-management/companies",
+            "title": "Companies",
+          },
+        ],
+        "title": "Platform",
+      },
+      {
+        "children": [
+          {
+            "path": "/system-management/import-jobs",
+            "title": "Import Jobs",
+          },
+          {
+            "path": "/system-management/import-logs",
+            "title": "Import Logs",
+          },
+          {
+            "path": "/system-management/tracking-validation",
+            "title": "Tracking Validation",
+          },
+          {
+            "path": "/system-management/audit-logs",
+            "title": "Audit Logs",
+          },
+          {
+            "path": "/system-management/health",
+            "title": "System Health",
+          },
+          {
+            "path": "/system-management/activity",
+            "title": "Activity Timeline",
+          },
+          {
+            "path": "/system-management/scheduled-tasks",
+            "title": "Scheduled Tasks",
+          },
+        ],
+        "title": "Operations",
+      },
+      {
+        "children": [
+          {
+            "path": "/integration-management/integration-logs",
+            "title": "Integration Logs",
+          },
+        ],
+        "title": "Messaging",
+      },
+      {
+        "children": [
+          {
+            "path": "/system-management/work-calendar",
+            "title": "Work Calendar",
+          },
+        ],
+        "title": "Configuration",
+      },
+    ],
+    "title": "System",
+  },
+]
+`;
