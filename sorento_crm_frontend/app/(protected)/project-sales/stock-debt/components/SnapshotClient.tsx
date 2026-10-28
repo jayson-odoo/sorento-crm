@@ -21,7 +21,8 @@ import BackToList from '@/components/common/BackToList';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import RecordNavigation from '@/components/common/RecordNavigation';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { formatDateInMalaysia, formatDateTimeInMalaysia } from '@/lib/helpers';
@@ -305,10 +306,10 @@ export function SnapshotClient({ snapshotId }: { snapshotId: string }) {
                         aria-label="Search products"
                         className="w-full max-w-xs"
                       />
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         aria-label="Decision"
-                        value={decision}
-                        onChange={(value) => setDecision(value as SnapshotDecisionFilter)}
+                        value={splitMulti(decision)}
+                        onChange={(value) => setDecision(joinMulti(value))}
                         options={DECISION_OPTIONS}
                         placeholder="Decision"
                         triggerClassName="w-40"

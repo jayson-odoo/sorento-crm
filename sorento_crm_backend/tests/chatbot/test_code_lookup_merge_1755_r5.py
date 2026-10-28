@@ -137,6 +137,7 @@ def test_gate_on_candidate_lines_passes_held_ids_to_the_size_keys(db):
     )
 
     size = next(ln for ln in lines if ln.startswith('- "150mm"'))
-    assert size.startswith('- "150mm": spec trap_length = 150'), size
+    # DIMENSION-ANY: the size line leads; the held family's key is the first spec line.
+    assert size.startswith('- "150mm": size 150 mm (no dimension named); spec trap_length = 150'), size
     assert any(ln.startswith('- "zzwc701": ') and "code ZZWC701 (" in ln for ln in lines), lines
     assert "zzwc701" in listed and "zzwc701" in info

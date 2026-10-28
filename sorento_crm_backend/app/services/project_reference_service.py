@@ -6,7 +6,7 @@ ordinary CRUD.
 """
 from __future__ import annotations
 
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Sequence
 
 from sqlalchemy import func
 from sqlalchemy.orm import Session
@@ -21,6 +21,7 @@ from app.models.projects import (
 )
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_values
 
 PARTY_TYPES = (
     "developer",
@@ -49,15 +50,16 @@ def list_parties(
     db: Session,
     *,
     company_id: str,
-    party_type: Optional[str] = None,
+    party_type: Optional[str | Sequence[str]] = None,
     search: Optional[str] = None,
     include_inactive: bool = False,
     page: int = 1,
     limit: int = 50,
 ) -> tuple:
     query = db.query(ProjectParty).filter(ProjectParty.company_id == company_id)
-    if party_type:
-        query = query.filter(ProjectParty.party_type == party_type)
+    types = multi_values(party_type)
+    if types:
+        query = query.filter(ProjectParty.party_type.in_(types))
     if not include_inactive:
         query = query.filter(ProjectParty.is_active.is_(True))
     if search and search.strip():

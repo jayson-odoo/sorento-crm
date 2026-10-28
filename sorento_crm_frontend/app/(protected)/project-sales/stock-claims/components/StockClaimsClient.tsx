@@ -21,7 +21,9 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Skeleton } from '@/components/ui/skeleton';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { useAllocationClaims } from '../../_shared/hooks/useProjectAllocations';
 import type {
@@ -47,7 +49,6 @@ const DIRECTION_OPTIONS = [
 ];
 
 const STATE_OPTIONS = [
-  { value: 'all', label: 'Any outcome' },
   { value: 'accepted', label: ALLOCATION_CLAIM_STATE_LABEL.accepted },
   { value: 'requested', label: ALLOCATION_CLAIM_STATE_LABEL.requested },
   { value: 'refused', label: ALLOCATION_CLAIM_STATE_LABEL.refused },
@@ -64,7 +65,7 @@ const STATE_OPTIONS = [
  */
 export function StockClaimsClient() {
   const [direction, setDirection] = React.useState<AllocationClaimDirection>('all');
-  const [stateFilter, setStateFilter] = React.useState('all');
+  const [stateFilter, setStateFilter] = React.useState('');
   const {
     value: searchInput,
     setValue: setSearchInput,
@@ -77,7 +78,7 @@ export function StockClaimsClient() {
 
   const claims = useAllocationClaims({
     direction,
-    state: stateFilter === 'all' ? undefined : [stateFilter as AllocationClaimState],
+    state: stateFilter ? (splitMulti(stateFilter) as AllocationClaimState[]) : undefined,
     page: pagination.pageIndex + 1,
     limit: pagination.pageSize,
   });
@@ -266,7 +267,7 @@ export function StockClaimsClient() {
     columnResizeMode: 'onChange',
   });
 
-  const filtersActive = (direction !== 'all' ? 1 : 0) + (stateFilter !== 'all' ? 1 : 0);
+  const filtersActive = (direction !== 'all' ? 1 : 0) + (stateFilter ? 1 : 0);
 
   return (
     <>
@@ -322,13 +323,15 @@ export function StockClaimsClient() {
                     </div>
                     <div className="space-y-1.5">
                       <p className="text-sm font-medium">Outcome</p>
-                      <SearchableSelect
-                        value={stateFilter}
+                      <SearchableMultiSelect
+                        value={splitMulti(stateFilter)}
                         onChange={(value) => {
-                          setStateFilter(value);
+                          setStateFilter(joinMulti(value));
                           setPagination((current) => ({ ...current, pageIndex: 0 }));
                         }}
                         options={STATE_OPTIONS}
+                        placeholder="Any outcome"
+                        clearable
                       />
                     </div>
                   </div>

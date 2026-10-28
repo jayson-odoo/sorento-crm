@@ -79,6 +79,34 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// Assigned to is a multi-select now (FILTER-MULTISELECT PR6); a one-value pick stands in for it here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+  }) => (
+    <select
+      aria-label={placeholder ?? 'select'}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
+    >
+      <option value="">{placeholder ?? ''}</option>
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 import { AwaitingAcceptanceClient } from './AwaitingAcceptanceClient';
 
 function row(overrides: Partial<AwaitingAcceptanceRow> = {}): AwaitingAcceptanceRow {
@@ -288,7 +316,7 @@ describe('AwaitingAcceptanceClient', () => {
 
     await waitFor(() =>
       expect(listAwaitingAcceptance).toHaveBeenCalledWith(
-        expect.objectContaining({ owner_user_id: 'u-ali' }),
+        expect.objectContaining({ owner_user_id: ['u-ali'] }),
       ),
     );
   });

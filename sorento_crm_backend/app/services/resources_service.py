@@ -20,6 +20,7 @@ from app.services.error_handler import (
 )
 from app.services.embedding_events import publish_embedding_event
 from app.services.storage_router import extract_key
+from app.utils.multi_value import multi_values
 
 
 _UUID_RE = re.compile(
@@ -40,18 +41,29 @@ def _apply_company_filter(query, model, company: Optional[str]):
     non-UUID string - is a 422 rather than silently falling through to "no
     filter", which would show the caller everything instead of failing loud.
     """
-    if company is None:
+    # FILTER-MULTISELECT PR6: several values are OR-ed ("shared" and company ids together). The filter
+    # only NARROWS the rows the session's company scope already lets through, so naming a company
+    # outside the caller's scope shows nothing for it.
+    values = multi_values(company)
+    if not values:
         return query
-    value = str(company).strip()
-    if not value:
-        return query
-    if value.lower() == "shared":
-        return query.filter(model.company_id.is_(None))
-    if not _UUID_RE.match(value):
-        raise handle_unprocessable(
-            f"`company` must be 'shared' or a company UUID, got {value!r}."
-        )
-    return query.filter(model.company_id == value.lower())
+    shared = False
+    ids: list[str] = []
+    for value in values:
+        if value.lower() == "shared":
+            shared = True
+        elif _UUID_RE.match(value):
+            ids.append(value.lower())
+        else:
+            raise handle_unprocessable(
+                f"`company` must be 'shared' or a company UUID, got {value!r}."
+            )
+    clauses = []
+    if shared:
+        clauses.append(model.company_id.is_(None))
+    if ids:
+        clauses.append(model.company_id.in_(ids))
+    return query.filter(or_(*clauses))
 
 
 class AttachmentDirectoryService:
@@ -821,21 +833,24 @@ class AttachmentService:
 
         q = _apply_company_filter(q, Attachment, company)
 
-        if storage_status and str(storage_status).strip():
-            q = q.filter(Attachment.storage_status == str(storage_status).strip())
+        statuses = multi_values(storage_status)
+        if statuses:
+            q = q.filter(Attachment.storage_status.in_(statuses))
 
         if entity_type:
             q = q.filter(Attachment.entity_type == entity_type)
         if entity_id:
             q = q.filter(Attachment.entity_id == entity_id)
         if directory_id is not None:
-            q = q.filter(Attachment.directory_id == directory_id)
+            folders = multi_values(directory_id)
+            if folders:
+                q = q.filter(Attachment.directory_id.in_(folders))
         # Singular + plural type filters are unioned within each pair (OR), and the
         # id pair is ANDed with the code pair (passing an id and a mismatching code
         # still yields 0 rows, as it did when both were single-value filters).
         wanted_type_ids = {
             str(t).strip()
-            for t in ([attachment_type_id] + list(attachment_type_ids or []))
+            for t in (list(multi_values(attachment_type_id) or []) + list(attachment_type_ids or []))
             if t and str(t).strip()
         }
         if wanted_type_ids:
@@ -927,8 +942,9 @@ class AttachmentService:
                     AttachmentType.is_direct_access.is_(True)
                 )
                 q = q.filter(Attachment.attachment_type_id.in_(direct_type_ids))
-        if uploaded_by:
-            q = q.filter(Attachment.uploaded_by == uploaded_by)
+        uploaders = multi_values(uploaded_by)
+        if uploaders:
+            q = q.filter(Attachment.uploaded_by.in_(uploaders))
         if uploaded_at_from is not None:
             q = q.filter(Attachment.uploaded_at >= uploaded_at_from)
         if uploaded_at_to is not None:

@@ -10,8 +10,11 @@ import type {
 } from './stockDebt.types';
 
 export type SnapshotDecision = 'reserve' | 'buy' | 'ignore';
-/** The rows listing's Decision filter; '' = no filter. */
-export type SnapshotDecisionFilter = '' | 'decided' | 'undecided' | SnapshotDecision;
+/**
+ * The rows listing's Decision filter: one or several comma-joined values (OR-ed), each
+ * `decided`, `undecided` or a `SnapshotDecision`; '' = no filter.
+ */
+export type SnapshotDecisionFilter = string;
 
 /** The filters a snapshot was taken under, plus the labels it kept (AC-6). */
 export interface SnapshotFilters {

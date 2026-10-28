@@ -6,6 +6,7 @@ import { useMutation, useQueries, useQuery, useQueryClient } from '@tanstack/rea
 import type { QueryKey } from '@tanstack/react-query';
 import type { ListPagerPage, ListPagerParams } from '@/hooks/useListPager';
 import { toast } from '@/lib/toast';
+import { splitMulti } from '@/lib/list-filters/multiValue';
 import { projectCodeLabel } from '../lib/projectCode';
 import { getProductSetsForLineSelect } from '@/app/(protected)/master-data-management/product-sets/services/productSetService';
 import {
@@ -169,12 +170,12 @@ export function projectsListParamsFromUrl(params: ListPagerParams): ProjectListP
   return {
     query: params.searchQuery || undefined,
     developer_party_id: params.filters.developer_party_id
-      ? [params.filters.developer_party_id]
+      ? splitMulti(params.filters.developer_party_id)
       : undefined,
     owner_user_id: params.filters.owner_user_id
       ? [params.filters.owner_user_id]
       : undefined,
-    type_id: params.filters.type_id ? [params.filters.type_id] : undefined,
+    type_id: params.filters.type_id ? splitMulti(params.filters.type_id) : undefined,
     only_critical: params.filters.only_critical === 'true' || undefined,
     approval_state: (params.filters.approval_state || undefined) as ProjectListParams['approval_state'],
     page: params.pageIndex + 1,
