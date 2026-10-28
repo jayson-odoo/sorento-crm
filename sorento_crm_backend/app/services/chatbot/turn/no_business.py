@@ -30,11 +30,11 @@ _NO_BUSINESS_WORDS: frozenset[str] = frozenset(
         "night", "good", "gd", "gm", "selamat", "pagi", "petang", "malam", "salam",
         "assalamualaikum", "waalaikumsalam", "你好", "您好", "早", "早安", "早上好", "晚安", "哈喽",
         # thanks
-        "thanks", "thank", "thankyou", "thx", "tq", "tqvm", "ty", "tks", "terima", "kasih",
+        "thanks", "thank", "thankyou", "thx", "tq", "tqvm", "ty", "tks",
         "谢谢", "多谢", "感谢", "you", "u", "very", "much", "a", "lot",
         # acknowledgements
         "ok", "okay", "okie", "okey", "k", "kk", "noted", "alright", "cool", "nice", "great",
-        "got", "it", "好", "好的", "收到",
+        "好", "好的", "收到",
         # farewells
         "bye", "goodbye", "cya",
         # address terms and fillers
@@ -43,12 +43,19 @@ _NO_BUSINESS_WORDS: frozenset[str] = frozenset(
     }
 )
 
+#: Phrases whose words are only no-business together: "got" alone is Manglish for "do you
+#: have it?", "terima" alone is "received?", "kasih" alone is "give".
+_NO_BUSINESS_PHRASES = re.compile(r"\b(?:terima kasih|got it)\b")
+
 _WORD = re.compile(r"[^\W_]+")
-_RUN = re.compile(r"(.)\1+")
+_RUN = re.compile(r"(.)\1{2,}")
+#: Emoji and pictographs: an emoji-only message is a reaction, punctuation alone is not.
+_EMOJI = re.compile("[\U0001F000-\U0001FAFF\u2600-\u27BF\u2B00-\u2BFF]")
 
 
 def _squeeze(word: str) -> str:
-    """"hiii" / "okkk" / "helloooo" read as their plain word: every run of one letter is one."""
+    """"hiii" / "okkk" / "helloooo" read as their plain word: a run of three or more of one
+    letter is one."""
     return _RUN.sub(r"\1", word)
 
 
@@ -57,29 +64,33 @@ _SQUEEZED_WORDS: frozenset[str] = frozenset(_squeeze(w) for w in _NO_BUSINESS_WO
 
 def is_no_business(text: str) -> bool:
     """True when the message carries no business content at all: every word is a greeting,
-    thanks, acknowledgement or address term, or there are no words (emoji and punctuation
-    only). An empty message is NOT one (a photo with no caption is a business turn)."""
-    text = str(text or "").strip()
-    if not text:
+    thanks, acknowledgement or address term, or there are no words and at least one emoji.
+    Not one: an empty message (a photo with no caption is a business turn), any question
+    mark ("ok?", "afternoon?", a bare "??" chasing an answer), punctuation alone."""
+    text = str(text or "").strip().casefold()
+    if not text or "?" in text or "\uff1f" in text:
         return False
-    for word in _WORD.findall(text.casefold()):
-        if word not in _NO_BUSINESS_WORDS and _squeeze(word) not in _SQUEEZED_WORDS:
-            return False
-    return True
+    text = _NO_BUSINESS_PHRASES.sub(" ok ", text)
+    words = _WORD.findall(text)
+    if not words:
+        return bool(_EMOJI.search(text))
+    return all(w in _NO_BUSINESS_WORDS or _squeeze(w) in _SQUEEZED_WORDS for w in words)
 
 
 def without_context_ask(
-    verdict: dict[str, Any], *, text: str, quoted: bool, media: bool, open_question: Any
+    verdict: dict[str, Any], *, text: str, quoted: bool, media: bool, held: bool
 ) -> tuple[dict[str, Any], bool]:
     """The verdict with every business signal dropped when the message itself has none, and
     whether anything was dropped.
 
-    Only a turn with nothing on the table: an open question ("ok" to a stock offer, "thanks"
-    to a pick) is the LIVE conversation's to answer, and a quoted reply or a photo brings its
-    own subject. Otherwise a no-business message is filed as casual with every key `apply`
-    reads as "this message asked something" (`_IDLE_CHAT_DISQUALIFIERS`) cleared, so it plans
-    no fetch and the carried focus is left as it was."""
-    if open_question is not None or quoted or media or not is_no_business(text):
+    Only a turn with nothing on the table: `held` is any question the bot is waiting on (an
+    open pick or offer, a required ask, an open idea draft, a question the focus holds), and
+    "ok" to one of those is the LIVE conversation's to answer. A quoted reply or a photo
+    brings its own subject. Otherwise a no-business message is filed as casual with every key
+    `apply` reads as "this message asked something" (`_IDLE_CHAT_DISQUALIFIERS`) cleared, and
+    no state change declared (a parsed "new subject" would rebuild the focus), so it plans no
+    fetch and the carried focus is left as it was."""
+    if held or quoted or media or not is_no_business(text):
         return verdict, False
     asked = verdict.get("message_type") not in _CASUAL_TYPES or any(
         verdict.get(key) for key in _IDLE_CHAT_DISQUALIFIERS
@@ -88,6 +99,8 @@ def without_context_ask(
         return verdict, False
     cleared = dict(verdict)
     cleared["message_type"] = "casual"
+    if "state_changes" in cleared:
+        cleared["state_changes"] = []
     for key in _IDLE_CHAT_DISQUALIFIERS:
         if key not in cleared:
             continue

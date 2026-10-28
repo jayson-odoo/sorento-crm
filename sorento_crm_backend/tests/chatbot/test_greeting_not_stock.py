@@ -14,8 +14,8 @@ import uuid
 import pytest
 
 from app.services.chatbot.turn import no_business
-from tests.chatbot._turn_helpers import entity, verdict
-from tests.chatbot.test_engine import stub_access  # noqa: F401
+from tests.chatbot._turn_helpers import verdict
+from tests.chatbot.test_engine import seeded, stub_access, stub_parser  # noqa: F401
 from tests.chatbot.test_memory_s4_fallback_replay import (  # noqa: F401
     _run_turn,
     _seed_contact,
@@ -46,7 +46,8 @@ class TestIsNoBusiness:
         "text",
         ["Hi", "hi", "Hiii", "Hello boss", "hey there!", "Good morning", "Selamat pagi",
          "thanks", "Thank you very much", "tq", "ok", "Okay noted", "👍", "🙏🙏",
-         "ok 👍", "你好", "谢谢", "Assalamualaikum", "bye"],
+         "ok 👍", "你好", "谢谢", "Assalamualaikum", "bye", "Terima kasih boss", "got it", "ok got it thanks", "okkk",
+         "Helloooo"],
     )
     def test_no_business_content(self, text: str) -> None:
         assert no_business.is_no_business(text), text
@@ -54,17 +55,18 @@ class TestIsNoBusiness:
     @pytest.mark.parametrize(
         "text",
         ["", "   ", "eta?", "eta", "stock?", "hi stock 286", "Hi, SRTWC286", "price", "1", "hi 2",
-         "more", "all", "same as usual", "any update"],
+         "more", "all", "same as usual", "any update",
+         # Reviewer S1: Manglish / Malay asks and chases built from greeting-list words.
+         "got?", "boss got?", "got ah", "u got it?", "terima?", "terima", "kasih", "??", "?", "...",
+         "afternoon?", "malam?", "ok?", "好？", "forgot item"],
     )
     def test_business_or_empty(self, text: str) -> None:
         assert not no_business.is_no_business(text), text
 
 
 class TestWithoutContextAsk:
-    def _call(self, v, text="Hi", *, quoted=False, media=False, open_question=None):
-        return no_business.without_context_ask(
-            v, text=text, quoted=quoted, media=media, open_question=open_question
-        )
+    def _call(self, v, text="Hi", *, quoted=False, media=False, held=False):
+        return no_business.without_context_ask(v, text=text, quoted=quoted, media=media, held=held)
 
     def test_a_greeting_parsed_as_a_stock_ask_is_filed_as_casual(self) -> None:
         v = verdict(**SLIPPED_STOCK_ASK)
@@ -79,10 +81,16 @@ class TestWithoutContextAsk:
         cleared, dropped = self._call(v, "eta?")
         assert dropped is False and cleared is v
 
-    def test_an_open_question_leaves_the_verdict_alone(self) -> None:
+    def test_a_held_question_leaves_the_verdict_alone(self) -> None:
         v = verdict(**SLIPPED_STOCK_ASK)
-        _, dropped = self._call(v, "ok", open_question={"kind": "confirm"})
+        _, dropped = self._call(v, "ok", held=True)
         assert dropped is False
+
+    def test_a_declared_state_change_is_dropped_with_the_ask(self) -> None:
+        """Reviewer S2: a parsed "new subject" would rebuild the focus the greeting leaves alone."""
+        v = verdict(**SLIPPED_STOCK_ASK, state_changes=[{"op": "new_subject"}])
+        cleared, dropped = self._call(v)
+        assert dropped is True and cleared["state_changes"] == []
 
     def test_a_quoted_reply_or_a_photo_leaves_the_verdict_alone(self) -> None:
         v = verdict(**SLIPPED_STOCK_ASK)
@@ -141,6 +149,44 @@ class TestGreetingWithARememberedProduct:
         assert USUAL_CODE in sent_text(result), "the remembered product fills the ask's slot"
 
 
-def test_entity_helper_shape_matches() -> None:
-    """The slipped verdict's entity is the shape the shared helper builds."""
-    assert set(entity(USUAL_CODE, current_message=False)) == set(SLIPPED_STOCK_ASK["entities"][0])
+class TestAQuestionTheBotIsWaitingOn:
+    """Reviewer B1 / K2: "ok" to something the bot is waiting on is the live conversation's,
+    so the engine passes the guard every kind of held question, not only `open_question`."""
+
+    def test_ok_to_an_open_idea_draft_still_reaches_the_ideation_lane(
+        self, session_factory, seeded, system_settings_row, stub_parser, stub_access, monkeypatch
+    ) -> None:
+        from tests.chatbot.test_ideation_draft_keeps_lane import _run
+        from tests.chatbot.test_engine import _parser_output
+
+        result, captured = _run(
+            session_factory, system_settings_row, stub_parser, stub_access, monkeypatch,
+            text="ok",
+            parser=_parser_output(
+                message_type="business_query", intent_hint="submit_idea", domain_hint="ideate",
+                scope_intent=None, is_affirmative=True, user_goal="confirming", entities=[], entity_op=None,
+            ),
+        )
+        assert result.branch_kind == "ideate", result.branch_kind
+        assert len(captured) == 1
+        assert "context_ask_dropped" not in [
+            r.get("stage") or r.get("kind") for r in _turn_trace(session_factory, result.turn_id)
+        ]
+
+    def test_ok_over_an_open_pick_is_not_dropped(self, session_factory, stub_access, lane) -> None:
+        from app.services.chatbot.turn import pending as turn_pending
+        from tests.chatbot.test_ideation_draft_keeps_lane import ROSTER_PENDING
+        from tests.chatbot.test_s3_canned_and_ideate import _seed_session_variables
+
+        _seed_contact(session_factory, {"profile_facts": USUAL}, level="full")
+        _seed_session_variables(
+            session_factory,
+            {"focus": {"domains": ["inventory"]}, "open_question": turn_pending.to_wire(ROSTER_PENDING)},
+        )
+        result, _prompt = _run_turn(
+            session_factory, stub_access, message="ok", verdict_overrides=SLIPPED_STOCK_ASK, n=0, console=False
+        )
+        assert "context_ask_dropped" not in [
+            r.get("stage") or r.get("kind") for r in _turn_trace(session_factory, result.turn_id)
+        ]
+

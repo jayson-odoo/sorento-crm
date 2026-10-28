@@ -101,6 +101,7 @@ from app.services.chatbot.turn import task as turn_task
 from app.services.chatbot.turn.apply import apply as _apply_state
 from app.services.chatbot.turn.apply import is_product_shaped_entity
 from app.services.chatbot.turn.apply import RESET_KEEPS
+from app.services.chatbot.turn.apply import open_ideation_draft
 from app.services.chatbot.turn.decide import domain_in_message, names_its_own_domain
 from app.services.chatbot.turn.policy import load_policy
 from app.services.chatbot.turn.route import route as turn_route
@@ -5346,7 +5347,12 @@ def _run_stages_body(  # noqa: PLR0915
             text=user_turn.own_text,
             quoted=bool(user_turn.quoted_text.strip()),
             media=bool(user_turn.media),
-            open_question=open_question,
+            held=(
+                open_question is not None
+                or open_ideation_draft(state_in.ideation)
+                or bool((state_in.focus.required_ask or {}).get("asking"))
+                or chat_state._focus_questions(state_in.focus)
+            ),
         )
     except parser.ParserError as exc:
         # R5 / H44: no soft default and no default routing. A failed understanding is a
