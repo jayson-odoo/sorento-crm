@@ -368,3 +368,17 @@ describe('PurchaseRequestDetail - a resubmitted request (RESUBMITTED-STATUS)', (
     },
   );
 });
+
+describe('PurchaseRequestDetail - an appealed request (COMPLAINT-APPEAL-WORDING)', () => {
+  it('reads Appealed in the status pill, never Submitted or Resubmitted', async () => {
+    usePurchaseRequestMock.mockReturnValue({
+      data: purchaseRequest({ status: 'resubmitted', approval_status: null }),
+      isLoading: false,
+    });
+    renderPage();
+
+    expect((await screen.findAllByText('Appealed')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('Submitted')).toBeNull();
+    expect(screen.queryByText(/resubmitted/i)).toBeNull();
+  });
+});
