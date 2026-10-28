@@ -18,7 +18,7 @@ import pytest
 from app.services import gemini_context_cache
 from app.services.llm_provider import GeminiProvider
 
-SYSTEM = "You are the parser. " * 50
+SYSTEM = ("You are the parser. " * 50).strip()
 MESSAGES = [
     {"role": "system", "content": SYSTEM},
     {"role": "user", "content": "stock for SRT123"},
@@ -282,3 +282,53 @@ def test_tools_ride_in_the_cache_not_beside_it(google) -> None:
     sent = google.generates()[0]["json"]
     assert "tools" not in sent
     assert sent["cachedContent"] == "cachedContents/c1"
+
+
+def test_the_clarifier_asks_for_a_cache_per_prompt_version(monkeypatch) -> None:
+    from app.services.chatbot import llm_call
+    from app.services.chatbot.lanes import casual
+
+    seen: list[dict] = []
+
+    class _Result:
+        content = '{"response": "hi"}'
+
+    def fake_chat(provider, key, model, messages, **kwargs):
+        seen.append(kwargs)
+        return _Result()
+
+    monkeypatch.setattr(llm_call, "chat", fake_chat)
+    for version in (12, None):
+        config = casual.ClarifierConfig(
+            system_prompt="s", prompt_version=version, provider="gemini", model="m", api_key="k"
+        )
+        casual.call_clarifier(config, "u")
+
+    assert seen[0]["prompt_cache_key"] == "chatbot_clarifier:v12"
+    assert seen[1]["prompt_cache_key"] == "chatbot_clarifier:vfallback"
+
+
+def test_two_workers_share_one_entry_through_real_redis(google, monkeypatch) -> None:
+    """The real client's `SET NX` / `GET` against a live Redis, when one answers."""
+    redis = pytest.importorskip("redis")
+    from app.config import settings
+
+    client = redis.from_url(settings.redis_url, socket_timeout=1, socket_connect_timeout=1)
+    try:
+        client.ping()
+    except Exception:
+        pytest.skip("no Redis reachable")
+    monkeypatch.setattr(gemini_context_cache, "_KEY_PREFIX", "gemini_cache_test")
+    monkeypatch.setattr(gemini_context_cache, "_redis", lambda: client)
+    key = gemini_context_cache.cache_key("key-1", "gemini-3.5-flash-lite", {"parts": [{"text": SYSTEM}]}, None)
+    client.delete(gemini_context_cache._redis_key(key))
+    try:
+        _chat()
+        gemini_context_cache.reset_local()
+        second = _chat()
+
+        assert len(google.creates()) == 1
+        assert second.cached_tokens == 1100
+        assert 0 < client.ttl(gemini_context_cache._redis_key(key)) <= gemini_context_cache.CACHE_TTL_SECONDS
+    finally:
+        client.delete(gemini_context_cache._redis_key(key))

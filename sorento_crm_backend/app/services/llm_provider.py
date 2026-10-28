@@ -1479,6 +1479,81 @@ class GeminiProvider:
             raise RuntimeError("Gemini returned an unexpected response shape.")
         return body
 
+    def _generate(self, model_name: str, payload: dict, timeout: Optional[float], *, cache: bool) -> dict:
+        """`generateContent`, through an explicit context cache when asked (GEMINI-EXPLICIT-CACHE).
+
+        Gemini caches nothing implicitly for these calls (0 cached tokens on every parser
+        turn), so a caller that passes `prompt_cache_key` gets its system prompt and tools
+        put in a `cachedContents` entry once and every later call pointed at it. The API
+        refuses `systemInstruction` / `tools` beside `cachedContent`, so they leave the
+        request; `generationConfig` (the response schema included) stays on it.
+
+        Every cache problem answers the call uncached: a refused create, an unreachable
+        Redis, or an entry Google no longer has (400/403/404 on the cached call, which
+        also forgets the name so the next call creates a new one). A 429 or 5xx is the
+        provider's, not the cache's, and is raised for `llm_call` to wait out.
+        """
+        path = f"models/{model_name}:generateContent"
+        cached_name = self._cached_content(model_name, payload) if cache else None
+        if cached_name is None:
+            return self._request("POST", path, json_body=payload, timeout=timeout)
+
+        from app.services import gemini_context_cache
+
+        cached_payload = {k: v for k, v in payload.items() if k not in ("systemInstruction", "tools")}
+        cached_payload["cachedContent"] = cached_name
+        try:
+            return self._request("POST", path, json_body=cached_payload, timeout=timeout)
+        except GeminiHTTPError as exc:
+            if exc.status_code not in (400, 403, 404):
+                raise
+            logger.warning("gemini cache: %s refused (%s); answering uncached", cached_name, exc)
+            gemini_context_cache.forget(
+                gemini_context_cache.cache_key(
+                    self.api_key, model_name, payload.get("systemInstruction"), payload.get("tools")
+                )
+            )
+            return self._request("POST", path, json_body=payload, timeout=timeout)
+
+    def _cached_content(self, model_name: str, payload: dict) -> Optional[str]:
+        """The `cachedContents/...` name holding this payload's system prompt, or None."""
+        from app.services import gemini_context_cache
+
+        system = payload.get("systemInstruction")
+        if not system:
+            return None
+        tools = payload.get("tools")
+        key = gemini_context_cache.cache_key(self.api_key, model_name, system, tools)
+        name = gemini_context_cache.lookup(key)
+        if name is not None:
+            return name
+        if gemini_context_cache.recently_failed(key):
+            return None
+        entry: dict[str, Any] = {
+            "model": f"models/{model_name}",
+            "systemInstruction": system,
+            "ttl": f"{gemini_context_cache.CACHE_TTL_SECONDS}s",
+        }
+        if tools:
+            entry["tools"] = tools
+        try:
+            created = self._request("POST", "cachedContents", json_body=entry)
+            name = str(created.get("name") or "")
+            if not name:
+                raise RuntimeError("Gemini cachedContents create returned no name.")
+        except Exception as exc:  # noqa: BLE001 - a cache that cannot be made is a miss
+            logger.warning("gemini cache: create failed for %s (%s); answering uncached", model_name, exc)
+            gemini_context_cache.mark_failed(key)
+            return None
+        winner = gemini_context_cache.claim(key, name)
+        if winner != name:
+            # Another worker created one first: use theirs, and stop paying storage for ours.
+            try:
+                self._request("DELETE", name)
+            except Exception:  # noqa: BLE001 - it expires on its own
+                logger.warning("gemini cache: delete of duplicate %s failed", name, exc_info=True)
+        return winner
+
     def chat(
         self,
         messages: list[dict],
@@ -1495,6 +1570,7 @@ class GeminiProvider:
         prompt_cache_key: Optional[str] = None,
         reasoning_effort: Optional[str] = None,
     ) -> ChatResult:
+        """`prompt_cache_key` turns on the explicit context cache (`_generate`); its value is not sent."""
         from app.services import llm_cassette
 
         llm_cassette.refuse_uncovered(self.name)
@@ -1551,9 +1627,7 @@ class GeminiProvider:
             generation["responseMimeType"] = "application/json"
         payload["generationConfig"] = generation
 
-        body = self._request(
-            "POST", f"models/{model_name}:generateContent", json_body=payload, timeout=timeout
-        )
+        body = self._generate(model_name, payload, timeout, cache=bool(prompt_cache_key))
 
         candidates = body.get("candidates") or []
         if not candidates:
