@@ -1210,7 +1210,8 @@ class StockDebtService:
         PO line is dated on its Delivery date (`expected_date`, else `issue + lead`), and a
         PO line whose S/O names a sales order is pinned to that order's lines before the
         walk (`_book_so_holds`). `list()`/`cell()` pass it; `assignments_for` (the board
-        and the ladder) never does.
+        and the ladder) never does. Under `view` no board decision reaches the walk either
+        (STOCKDEBT-NO-PLAN-REACH, `_holds(routes=False)`).
         """
         self._event_cache: Dict[str, List[SupplyEvent]] = {}
         self._lead_cache: Dict[str, int] = {}
