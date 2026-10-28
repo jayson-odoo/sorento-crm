@@ -3,10 +3,11 @@ from __future__ import annotations
 
 from typing import Optional
 
+from fastapi.responses import JSONResponse
 from fastapi import APIRouter, Depends, Query, Response, status
 from sqlalchemy.orm import Session
 
-from app.api.v1.projects._common import acting_company_id
+from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
@@ -49,8 +50,19 @@ async def list_parties(
             page=page,
             limit=limit,
         )
+        data = refs.serialize_parties(db, rows)
+        if VIEW not in permission_slugs(db, _user["id"]):
+            # A salesperson with the submit grant only needs to pick a party (D8).
+            data = [{k: row.get(k) for k in ("id", "name", "party_type")} for row in data]
+            return JSONResponse(
+                {
+                    "data": data,
+                    "pagination": {"total": total, "page": page, "limit": limit},
+                    "empty": total == 0,
+                }
+            )
         return {
-            "data": refs.serialize_parties(db, rows),
+            "data": data,
             "pagination": {"total": total, "page": page, "limit": limit},
             "empty": total == 0,
         }

@@ -35,7 +35,7 @@ from app.schemas.projects import (
 )
 from app.services import project_reference_service as refs
 from app.services import project_service as svc
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_list_param import parse_uuid_list
 from app.services.uuid_path_param import validate_uuid_path
 
@@ -935,13 +935,27 @@ async def create_takeover_request(
         if foreign and payload.kind != svc.TAKEOVER_DISPUTE:
             # Someone limited to their own projects registers interest only (D8).
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
-        request = svc.create_takeover_request(
-            db,
-            project=project,
-            requester_user_id=current_user["id"],
-            kind=payload.kind,
-            reason=payload.reason,
-        )
+        if foreign and (
+            SUBMIT not in permission_slugs(db, current_user["id"]) or not svc.is_approved(project)
+        ):
+            # Out of scope: only a submitter, and only on an approved project, may reach it.
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Not found")
+        try:
+            request = svc.create_takeover_request(
+                db,
+                project=project,
+                requester_user_id=current_user["id"],
+                kind=payload.kind,
+                reason=payload.reason,
+            )
+        except AppException as exc:
+            if foreign and getattr(exc, "code", None) == "project_takeover_already_open":
+                raise AppException(
+                    status_code=409,
+                    message="You already have a request open. Wait for it to be decided.",
+                    code="project_takeover_already_open",
+                )
+            raise
         db.commit()
         db.refresh(request)
         if request.kind == svc.TAKEOVER_DISPUTE:
