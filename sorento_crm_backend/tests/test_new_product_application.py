@@ -463,8 +463,61 @@ def test_ac12_a_rejected_application_is_edited_and_resubmitted_in_one_press(worl
     world.sent.clear()
     again = _act(world, d["id"], "submit", world.sales)
     assert again.status_code == 200, again.text
-    assert again.json()["status"] == "submitted"
-    assert _to(world, d["id"], "new_product_application_submitted") == {world.manager}
+    # RESUBMITTED-STATUS (owner, 27 Oct): a submit answering a rejection is a resubmit.
+    assert again.json()["status"] == "resubmitted"
+    assert again.json()["status_label"] == "Resubmitted"
+    assert _to(world, d["id"], "new_product_application_resubmitted") == {world.manager}
+    assert _to(world, d["id"], "new_product_application_submitted") == set()
+
+
+def _resubmitted(w):
+    d = _submitted(w)
+    assert _act(w, d["id"], "reject", w.manager, reason="Supplier price too high").status_code == 200
+    again = _act(w, d["id"], "submit", w.sales)
+    assert again.status_code == 200, again.text
+    assert again.json()["status"] == "resubmitted"
+    return again.json()
+
+
+def test_resubmitted_is_approved_and_rejected_like_submitted(world):
+    a = _resubmitted(world)
+    approved = _act(world, a["id"], "approve", world.manager)
+    assert approved.status_code == 200, approved.text
+    assert approved.json()["status"] == "approved"
+
+    b = _resubmitted(world)
+    rejected = _act(world, b["id"], "reject", world.manager, reason="Still too high")
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["status"] == "rejected"
+
+
+def test_resubmitted_locks_every_write_like_submitted(world):
+    d = _resubmitted(world)
+    res = world.api.as_(world.sales).put(f"{NPA}/{d['id']}", json=_body(world, remark="sneaky"))
+    assert res.status_code == 422
+    assert "new_product_application_locked" in res.text
+
+
+def test_revise_from_resubmitted_tells_the_approvers_it_was_withdrawn(world):
+    d = _resubmitted(world)
+    world.sent.clear()
+    assert _act(world, d["id"], "revise", world.sales, reason="typo").status_code == 200
+    assert _to(world, d["id"], "new_product_application_withdrawn") == {world.manager}
+
+
+def test_resubmitted_can_be_cancelled(world):
+    d = _resubmitted(world)
+    assert _act(world, d["id"], "cancel", world.sales, reason="not needed").status_code == 200
+
+
+def test_list_filters_on_resubmitted(world):
+    plain = _submitted(world)
+    again = _resubmitted(world)
+    res = world.api.as_(world.admin).get(NPA, params={"status": "resubmitted", "limit": 100})
+    assert res.status_code == 200, res.text
+    ids = {row["id"] for row in res.json()["items"]}
+    assert again["id"] in ids
+    assert plain["id"] not in ids
 
 
 def test_ac13_approve_needs_the_approve_permission(world):

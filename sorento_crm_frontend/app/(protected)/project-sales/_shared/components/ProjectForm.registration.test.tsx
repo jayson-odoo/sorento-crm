@@ -305,7 +305,7 @@ describe('a pending or rejected project never blocks on a clash (review round 3)
     blocks: true,
   };
 
-  it.each(['pending', 'rejected'])(
+  it.each(['pending', 'resubmitted', 'rejected'])(
     'an approver picks a developer that clashes with an approved project and Save still saves (%s)',
     async (approvalState) => {
       previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });

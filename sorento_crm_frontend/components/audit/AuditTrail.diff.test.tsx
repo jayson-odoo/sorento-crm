@@ -168,6 +168,19 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     expect(screen.getByText('Product code: CWCX604-P-RL-NEW → CWCY604')).toBeInTheDocument();
   });
 
+  it('the real resubmitted status (RESUBMITTED-STATUS) heads the row "Resubmitted" too', () => {
+    mockEntries([
+      // No summary on the row: the raw values alone must say it is a resubmit.
+      entry({
+        description: null,
+        old_values: { status: 'rejected', product_code: 'CWCX604-P-RL-NEW' },
+        new_values: { status: 'resubmitted', product_code: 'CWCY604' },
+      }),
+    ]);
+    renderTrail();
+    expect(screen.getByTestId('audit-action').textContent).toBe('Resubmitted');
+  });
+
   it('a status-engine record (status_id, labels only in the summary) also reads "Resubmitted"', () => {
     mockEntries([
       entry({

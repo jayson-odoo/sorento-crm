@@ -332,9 +332,10 @@ def _own_bin_world(db):
         so_number=f"ZZT-SO-DONOR{_uid()[:4]}",
     )
     _decide(db, donor_order, donor_line, own, "30", eling)
-    # BOARD-NO-HOLD (27 Oct 2026): a Reserve holds nothing, so it no longer blocks the own
-    # bin. The blocking hold is made a BORROW in place (stored source flipped), the kind that
-    # still holds.
+    # Since BOARD-NO-HOLD / BORROW-NO-HOLD (27 and 28 Oct 2026) no decision holds stock, so
+    # nothing blocks the own bin and the engine no longer proposes a step-2 borrow from it:
+    # the asker's own-location Borrow is posted by hand (see the test below). The donor's
+    # decision is flipped to a BORROW in place only to keep the shape of the case.
     from app.models.project_so import SOLineAllocation
 
     db.query(SOLineAllocation).filter(
@@ -355,13 +356,16 @@ def _own_bin_world(db):
 def test_off_borrowing_at_the_lines_own_location_raises_an_order_back_on_this_line():
     with blank_session() as db:
         world = _own_bin_world(db)
-        # Measured on today's code: the engine DOES offer the own bin's pinned stock, as a
-        # step-2 order_borrow with the donor sitting at the same warehouse.
-        component = _step_two_borrow(db, world)
-        assert component["source_warehouse_id"] == str(world["own"].id)
-        for field in DONOR_FIELDS:
-            assert component[field] is None, (field, component[field])
-        payload = _component_to_payload(component, warehouse=world["own"])
+        # The own bin is free (a decision holds nothing), so the engine proposes a plain
+        # Reserve there and no step-2 borrow. A planner can still pick the own-location
+        # Borrow by hand (BORROW-OWN-LOC); it names the later order's line as its donor.
+        payload = {
+            "source": "other_location",
+            "warehouse_id": str(world["own"].id),
+            "qty": "30",
+            "reason": "Ladder v7.1 step 2.",
+            "donor_core_line_id": str(world["donor_cline"].id),
+        }
         _confirm_borrow(db, world, payload)
 
         rows = _order_backs(db)
@@ -602,16 +606,16 @@ def test_b1_off_a_donor_needing_authorisation_is_not_offered():
         assert offered == [], offered
 
 
-def test_off_a_same_agent_donor_ranked_ahead_confirms_and_the_donor_goes_short():
+def test_off_a_same_agent_donor_ranked_ahead_confirms_and_the_donor_stays_covered():
     """BORROW-CONFIRM-MATCH (owner, 22 Oct 2026, prod SO401624 line 304): Confirm refused
     "Later-order stock at BRW-BB is held for an order ranked ahead of this line, so it
     cannot be borrowed." for a Borrow the planner had picked. Owner: "confirm should be
     lenient also, confirm should match the dropdown". Under OFF a location borrow asks
     nobody, so rank is not a reason to refuse it - and no "authorised by" either.
 
-    The donor is not silently over-committed: the borrow pins the bin's units to THIS line,
-    so the donor ranked ahead queues against what is left and reads short (UAC-2), and the
-    order-back hangs on this line, as for any location borrow."""
+    The donor is not over-committed: a Borrow is a plan, not a hold (BORROW-NO-HOLD, 28 Oct
+    2026), so the donor ranked ahead keeps the bin's units at ITS date and stays covered,
+    and the order-back hangs on this line, as for any location borrow."""
     from app.models.product import Product
     from app.services.scm.supply_assignment import STATUS_COVERED
 
@@ -638,7 +642,7 @@ def test_off_a_same_agent_donor_ranked_ahead_confirms_and_the_donor_goes_short()
         )
         db.commit()
 
-        assert status_of(donor_cline.id) != STATUS_COVERED, "the donor gave its 90 away"
+        assert status_of(donor_cline.id) == STATUS_COVERED, "a Borrow takes nothing off it"
         rows = _order_backs(db)
         assert [str(r.so_line_id) for r in rows] == [str(line.id)], rows
         assert rows[0].stock_location == own.warehouse_code
@@ -676,7 +680,8 @@ def _ahead_later_order_world(db):
 
 def test_off_a_same_agent_later_order_ranked_ahead_stays_off_the_list_but_confirms():
     """The list is unchanged (step 2's B1 filter still leaves this donor out) and Confirm
-    takes it anyway when a planner posts it, the donor then reading short."""
+    takes it anyway when a planner posts it, the donor still reading covered (a Borrow holds
+    nothing, BORROW-NO-HOLD, 28 Oct 2026)."""
     from app.services.scm.supply_assignment import STATUS_COVERED
 
     with blank_session() as db:
@@ -711,7 +716,7 @@ def test_off_a_same_agent_later_order_ranked_ahead_stays_off_the_list_but_confir
             actor_user_id=eling,
         )
         db.commit()
-        assert status_of(donor_cline.id) != STATUS_COVERED
+        assert status_of(donor_cline.id) == STATUS_COVERED
 
 
 def _second_asker(db, world, *, line_no=1):

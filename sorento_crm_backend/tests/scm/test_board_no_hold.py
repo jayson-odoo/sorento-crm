@@ -1,10 +1,10 @@
-"""BOARD-NO-HOLD slice 2: a confirmed Reserve holds no stock; a Borrow still does.
+"""BOARD-NO-HOLD slice 2 (+ BORROW-NO-HOLD, 28 Oct): a confirmed Reserve OR Borrow holds no stock.
 
 Owner, 27 Oct 2026: "board decision don't hold stock, board decision is just a planning
 choice". Reserve = `ALLOC_RESERVE_SOURCES` (own / brw / group_take): a plan only, which
 keeps one job (card Q1 a), the line may draw the location its plan names AT ITS OWN DATE
-(`Hold(route=True)` in the walk, slice 1). Borrow = `ALLOC_BORROW_SOURCES` keeps holding
-exactly as before (card Q3). `order` (Buy) never held.
+(`Hold(route=True)` in the walk, slice 1). Borrow = `ALLOC_BORROW_SOURCES` is the same since
+BORROW-NO-HOLD (owner 28 Oct). `order` (Buy) never held.
 
 Plan: documentation/plans/scm/PLAN-board-no-hold-27oct.md (red-first list 1-11). Written
 BEFORE the wiring: `ProjectSupplyService._hold_query` still matches Reserve rows, Stock
@@ -151,19 +151,22 @@ def test_1b_a_reserve_line_that_comes_first_covers_itself_and_is_not_pinned(scm_
     ]
 
 
-def test_2_a_borrow_still_binds_first_at_any_date(scm_app):
-    """Control (Borrow keeps holding, card Q3): the same shape with the later order's
-    allocation `other_location` reads as today, later `pinned` 36, earlier short 36."""
+def test_2_a_borrow_is_served_in_date_order_and_never_pins(scm_app):
+    """BORROW-NO-HOLD AC-BNH-1: the same shape with the later order's allocation
+    `other_location` reads like a Reserve: earlier covered, later short, nothing pinned.
+    (Today: later `pinned` 36, earlier short 36.)"""
     _app, db, *_ = scm_app
     marker, product, bin_ib, _core, _pl = _world(db, source_type=BORROW)
 
     rows = _walk(db, product, {str(bin_ib.id): bin_ib})
     early, late = rows[f"{marker}-EARLY"], rows[f"{marker}-LATE"]
 
-    assert late.status == "pinned"
-    assert [(item.qty, item.pinned) for item in late.assigned] == [(36.0, True)]
-    assert early.status == "short"
-    assert early.uncovered == pytest.approx(36)
+    assert early.status == "covered"
+    assert early.uncovered == 0
+    assert late.status == "short"
+    assert late.uncovered == pytest.approx(36)
+    assert late.assigned == ()
+    assert not any(item.pinned for row in rows.values() for item in row.assigned)
 
 
 # --------------------------------------------------------------------------- 3, 4, 5
@@ -173,9 +176,9 @@ def _key(product, warehouse):
     return (str(product.id), str(warehouse.id))
 
 
-def test_3_free_stock_ignores_a_reserve_and_nets_a_borrow(scm_app):
+def test_3_free_stock_ignores_a_reserve_and_a_borrow(scm_app):
     """On hand 40, AutoCount reserved 4. A confirmed Reserve of 10 changes nothing: free 36,
-    held 0. Add a Borrow of 20 and free is 16, held 20."""
+    held 0. Add a Borrow of 20 and nothing changes (BORROW-NO-HOLD AC-BNH-6)."""
     from app.services.project_supply_service import ProjectSupplyService
 
     _app, db, *_ = scm_app
@@ -195,11 +198,11 @@ def test_3_free_stock_ignores_a_reserve_and_nets_a_borrow(scm_app):
                   source_type=BORROW)
     supply = ProjectSupplyService(db)
 
-    assert supply.free_stock_by_location([str(product.id)])[key] == Decimal("16")
-    assert supply.held_stock_by_location([str(product.id)])[key] == Decimal("20")
+    assert supply.free_stock_by_location([str(product.id)])[key] == Decimal("36")
+    assert supply.held_stock_by_location([str(product.id)]).get(key, Decimal("0")) == 0
 
 
-def test_4_holds_at_locations_lists_a_borrow_and_not_a_reserve(scm_app):
+def test_4_holds_at_locations_lists_neither_a_reserve_nor_a_borrow(scm_app):
     from app.services.project_supply_service import ProjectSupplyService
 
     _app, db, *_ = scm_app
@@ -216,9 +219,7 @@ def test_4_holds_at_locations_lists_a_borrow_and_not_a_reserve(scm_app):
         [str(product.id)], [str(bin_ib.id)]
     )
 
-    assert [(row["so_number"], row["qty"]) for row in rows] == [
-        (f"{marker}-B", Decimal("20"))
-    ]
+    assert rows == []
 
 
 def test_5_location_stock_free_figure_ignores_a_reserve(scm_app):
@@ -251,7 +252,7 @@ def _holds(db, product, core_lines, **kwargs):
     )
 
 
-def test_6_stock_debt_hands_a_reserve_over_as_a_route_and_a_borrow_as_a_pin(scm_app):
+def test_6_stock_debt_hands_a_reserve_and_a_borrow_over_as_routes(scm_app):
     _app, db, *_ = scm_app
     marker = f"ZZTNH{_u()[:6]}".upper()
     bin_ib = _warehouse(db, f"ZZTBRW{_u()[:4]}-IB")
@@ -275,7 +276,7 @@ def test_6_stock_debt_hands_a_reserve_over_as_a_route_and_a_borrow_as_a_pin(scm_
         KIND_ON_HAND, 30.0, f"on_hand:{bin_ib.id}"
     )
     assert reserve.warehouse == bin_ib.warehouse_code
-    assert borrow.route is False
+    assert borrow.route is True
     assert (borrow.kind, borrow.qty, borrow.supply_key) == (
         KIND_ON_HAND, 20.0, f"on_hand:{bin_ib.id}"
     )
@@ -399,7 +400,10 @@ def _decided_allocation(db, product, warehouse, qty, source_type):
     _alloc(db, project_line, warehouse, qty, source_type)
 
 
-def test_8_reorder_runs_deduct_a_borrow_and_not_a_reserve(scm_app):
+def test_8_the_project_buy_is_lowered_by_both_a_reserve_and_a_borrow(scm_app):
+    """BORROW-NO-HOLD AC-BNH-10, map half: the claim map counts every non-Buy allocation
+    (Reserve 30, Borrow 20) and feeds the PROJECT Buy only. That retail's net is lowered by
+    neither is proven in `test_reorder_plan_oi_need_in_full.py`."""
     _app, db, *_ = scm_app
     marker = f"ZZTNH{_u()[:6]}".upper()
     bin_ib = _warehouse(db, f"ZZTBRW{_u()[:4]}-IB")
@@ -408,17 +412,17 @@ def test_8_reorder_runs_deduct_a_borrow_and_not_a_reserve(scm_app):
     _decided_allocation(db, reserve_product, bin_ib, 30, ALLOC_SOURCE_OWN)
     _decided_allocation(db, borrow_product, bin_ib, 20, BORROW)
 
-    assert _reduction(db, reserve_product) == {}
+    assert _reduction(db, reserve_product) == {(str(reserve_product.id), str(bin_ib.id)): 30.0}
     assert _reduction(db, borrow_product) == {(str(borrow_product.id), str(bin_ib.id)): 20.0}
 
 
 # --------------------------------------------------------------------------- 9
 
 
-def test_9_the_confirm_floor_names_a_borrow_holder_and_no_reserve_holder(scm_app):
+def test_9_the_confirm_floor_names_neither_a_reserve_nor_a_borrow_holder(scm_app):
     """`_check_reserve_against_on_hand` reads `_holds_by_holder`: another order's confirmed
     Reserve is not a holder at the bin any more, so two orders may both confirm a Reserve
-    of one pile; a Borrow still is."""
+    of one pile; a Borrow is not one either (BORROW-NO-HOLD)."""
     from app.services.project_supply_service import ProjectSupplyService
 
     _app, db, *_ = scm_app
@@ -438,6 +442,6 @@ def test_9_the_confirm_floor_names_a_borrow_holder_and_no_reserve_holder(scm_app
                   source_type=BORROW)
     holders = ProjectSupplyService(db)._holds_by_holder(
         [str(product.id)], exclude_line_ids=[]
-    )[key]
+    ).get(key, [])
 
-    assert [(h["so_number"], h["qty"]) for h in holders] == [(f"{marker}-B", "20")]
+    assert holders == []

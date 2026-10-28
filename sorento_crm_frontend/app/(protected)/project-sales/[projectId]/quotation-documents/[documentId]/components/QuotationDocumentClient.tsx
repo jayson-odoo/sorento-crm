@@ -201,11 +201,16 @@ export function QuotationDocumentClient({
    */
   const pendingStatus = approvalGraph.data?.statuses.find((row) => row.key === 'pending_approval');
   const draftStatus = approvalGraph.data?.statuses.find((row) => row.key === 'draft');
+  // From Rejected the same press is a resubmission (RESUBMITTED-STATUS): the server lands it on
+  // the resubmitted rung, so the label comes off that rung's draft -> resubmitted edge.
+  const isResubmit = record.approval_status_key === 'rejected';
+  const resubmittedStatus = approvalGraph.data?.statuses.find((row) => row.key === 'resubmitted');
+  const sendTarget = isResubmit && resubmittedStatus ? resubmittedStatus : pendingStatus;
   const sendEdge = approvalGraph.data?.transitions.find(
-    (edge) =>
-      edge.to_status_id === pendingStatus?.id && edge.from_status_id === draftStatus?.id,
+    (edge) => edge.to_status_id === sendTarget?.id && edge.from_status_id === draftStatus?.id,
   );
-  const sendForApprovalLabel = sendEdge?.label || 'Send for approval';
+  const sendForApprovalLabel =
+    sendEdge?.label || (isResubmit ? 'Resubmit for approval' : 'Send for approval');
 
   /** What the next copy of a single frozen scope will be called, e.g. "v3". */
   const nextVersionLabel =

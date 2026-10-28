@@ -498,3 +498,14 @@ describe('browser smoke: the gear on an unapproved project', () => {
   });
 });
 
+
+describe('a resubmitted project (RESUBMITTED-STATUS)', () => {
+  it('offers Approve and Reject exactly like a pending one, and reads Resubmitted where the code would be', () => {
+    projectFixture = pendingProject({ approval_state: 'resubmitted' } as never);
+    renderDetail();
+    for (const name of ['Approve', 'Reject']) {
+      expect(within(header()).getByRole('button', { name })).toBeInTheDocument();
+    }
+    expect(screen.getAllByText('Resubmitted').length).toBeGreaterThan(0);
+  });
+});

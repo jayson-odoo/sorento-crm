@@ -112,6 +112,7 @@ afterEach(() => cleanup());
 
 const COLUMNS: [string, string][] = [
   ['Customers', 'customers'],
+  ['Companies', 'companies'],
   ['Access types', 'access_types'],
   ['Tags', 'tags'],
   ['Tag settings', 'tag_settings'],

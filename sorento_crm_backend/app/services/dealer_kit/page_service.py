@@ -457,6 +457,7 @@ def _bypass_message(edition) -> str:
         APPROVED,
         PENDING_APPROVAL,
         REJECTED,
+        RESUBMITTED,
     )
 
     name = edition.name
@@ -467,7 +468,7 @@ def _bypass_message(edition) -> str:
             "Edition rather than here, so the catalogue records which version "
             "went live and the Edition closes with it."
         )
-    if edition.status_key == PENDING_APPROVAL:
+    if edition.status_key in (PENDING_APPROVAL, RESUBMITTED):
         return (
             f"'{name}' is waiting for approval. Publishing here would put it "
             "live without that decision. Approve it first, then publish it "

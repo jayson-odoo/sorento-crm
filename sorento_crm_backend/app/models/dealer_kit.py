@@ -640,7 +640,7 @@ class Edition(Base, CompanyScopedMixin):
             "page_id",
             unique=True,
             postgresql_where=text(
-                "status_key IN ('draft', 'pending_approval', 'approved', 'rejected')"
+                "status_key IN ('draft', 'pending_approval', 'resubmitted', 'approved', 'rejected')"
             ),
         ),
         Index("ix_dealer_kit_edition_company_page", "company_id", "page_id"),

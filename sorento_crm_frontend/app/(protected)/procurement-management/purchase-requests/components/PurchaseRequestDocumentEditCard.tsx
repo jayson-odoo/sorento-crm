@@ -320,9 +320,11 @@ export function PurchaseRequestDocumentEditCard({
                       ? 'Rejected'
                       : (request.status ?? '').toLowerCase() === 'submitted'
                         ? 'Submitted'
-                        : (request.status ?? '').toLowerCase() === 'draft'
-                          ? 'Draft'
-                          : (request.approval_status || request.status || 'Draft')}
+                        : (request.status ?? '').toLowerCase() === 'resubmitted'
+                          ? 'Resubmitted'
+                          : (request.status ?? '').toLowerCase() === 'draft'
+                            ? 'Draft'
+                            : (request.approval_status || request.status || 'Draft')}
               </Badge>
             </div>
           </div>

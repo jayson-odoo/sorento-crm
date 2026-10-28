@@ -8,6 +8,7 @@
  */
 
 import type { QueryKey } from '@tanstack/react-query';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import type { ListPagerParams, ListPagerPage } from '@/hooks/useListPager';
 import {
   getContacts,
@@ -72,6 +73,14 @@ export function contactTagFiltersFromUrl(filters: Record<string, string>): {
   };
 }
 
+/**
+ * FILTER-MULTISELECT: the Company filter (the companies of the contact's linked customers, any-of),
+ * one comma-joined `company` value. A single id from an older link reads as a one-company filter.
+ */
+export function contactCompanyFilterFromUrl(filters: Record<string, string>): string[] {
+  return splitMulti(filters.company);
+}
+
 export type TagSettingsFilter = 'matches' | 'differs';
 
 export function contactTagSettingsFilterFromUrl(filters: Record<string, string>): TagSettingsFilter | null {
@@ -85,6 +94,7 @@ export function contactsListFilters({
   tagIds = [],
   noTags = false,
   tagSettings = null,
+  companyIds = [],
 }: {
   chatbotMemoryLevel: string | null;
   customersNone?: boolean;
@@ -92,6 +102,7 @@ export function contactsListFilters({
   tagIds?: string[];
   noTags?: boolean;
   tagSettings?: TagSettingsFilter | null;
+  companyIds?: string[];
 }): Record<string, string> {
   const filters: Record<string, string> = {};
   if (chatbotMemoryLevel) filters.chatbot_memory_level = chatbotMemoryLevel;
@@ -100,6 +111,8 @@ export function contactsListFilters({
   if (tagIds.length) filters.tag = tagIds.join(',');
   if (noTags) filters.tags = 'none';
   if (tagSettings) filters.tag_settings = tagSettings;
+  const company = joinMulti(companyIds);
+  if (company) filters.company = company;
   for (const [field, param] of Object.entries(CONTACT_ACCESS_FILTER_PARAMS)) {
     const value = access[field as keyof ContactAccessFilters];
     if (value) filters[param] = value;
