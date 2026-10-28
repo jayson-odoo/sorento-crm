@@ -60,11 +60,12 @@ worker_class = "app.uvicorn_worker.InboxUvicornWorker"
 # it a worker lived as long as the container and kept everything it ever grew: prod's colour was
 # 6.6 GiB six hours after a fresh start (documentation/plans/deploy/PLAN-backend-memory-28oct.md).
 # It retires through the same graceful shutdown as a deploy's stop (app/uvicorn_worker.py).
-# GUNICORN_MAX_REQUESTS=0 turns it off. The jitter is half the limit: a retiring worker stops
-# accepting while it drains (up to 100 s) and its replacement is forked only once it exits, and
-# workers that start together retire together unless the jitter spreads them.
+# GUNICORN_MAX_REQUESTS=0 turns it off. The jitter defaults to half the limit, whatever the limit
+# is set to: a retiring worker stops accepting while it drains (up to 100 s) and its replacement
+# is forked only once it exits, and workers that start together retire together unless the
+# jitter spreads them.
 max_requests = int(os.environ.get("GUNICORN_MAX_REQUESTS", "5000"))
-max_requests_jitter = int(os.environ.get("GUNICORN_MAX_REQUESTS_JITTER", "2500"))
+max_requests_jitter = int(os.environ.get("GUNICORN_MAX_REQUESTS_JITTER", str(max_requests // 2)))
 
 _api_host = os.environ.get("API_HOST", "0.0.0.0")
 _api_port = os.environ.get("API_PORT", "8000")

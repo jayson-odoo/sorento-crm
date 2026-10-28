@@ -177,7 +177,8 @@ A stray `TTIN` is undone by one `docker kill -s TTOU $C`.
   the permanent generation before every fork, so a worker's collector never walks it and never
   un-shares it (finding 7). Red-first.
 - `max_requests` + `max_requests_jitter` (env `GUNICORN_MAX_REQUESTS` 5000,
-  `GUNICORN_MAX_REQUESTS_JITTER` 2500; 0 = off): a worker retires after 5000-7500 requests and
+  `GUNICORN_MAX_REQUESTS_JITTER` defaults to half the limit, 2500; 0 = off): a worker retires after
+  5000-7500 requests and
   the master forks a fresh one, which bounds any remaining growth (arenas, caches). The jitter is
   half the limit on purpose: a retiring worker stops accepting while it drains (up to 100 s with
   a staff event stream open) and gunicorn forks its replacement only after it exits, so if every
