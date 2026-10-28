@@ -10,8 +10,6 @@ import { clearImpersonationToken, isImpersonationToken } from '@/app/(auth)/port
 import { stopContactImpersonation } from '@/services/contactImpersonationService';
 
 const BANNER_HEIGHT = 40;
-// Below `sm` the text wraps to two lines, so the page offset is taller.
-const BANNER_HEIGHT_NARROW = 64;
 const COLLAPSE_KEY = 'sorento.impersonationBannerCollapsed';
 
 export function ImpersonationBanner() {
@@ -30,9 +28,8 @@ export function ImpersonationBanner() {
     if (typeof document === 'undefined') return;
     const root = document.documentElement;
     if (session && !collapsed) {
-      const height = window.innerWidth < 640 ? BANNER_HEIGHT_NARROW : BANNER_HEIGHT;
-      root.style.setProperty('--impersonation-banner-height', `${height}px`);
-      document.body.style.paddingTop = `${height}px`;
+      root.style.setProperty('--impersonation-banner-height', `${BANNER_HEIGHT}px`);
+      document.body.style.paddingTop = `${BANNER_HEIGHT}px`;
     } else {
       root.style.removeProperty('--impersonation-banner-height');
       document.body.style.paddingTop = '';
@@ -90,7 +87,7 @@ export function ImpersonationBanner() {
       <div className="flex items-center justify-between gap-3">
         <div className="flex min-w-0 items-center gap-2 text-sm">
           <UserCog className="size-4 shrink-0" aria-hidden />
-          <span className="sm:truncate">
+          <span className="truncate">
             You are currently impersonating{' '}
             <Link
               href={`/user-management/users/${session.targetUser.id}`}
@@ -98,7 +95,9 @@ export function ImpersonationBanner() {
             >
               {targetName}
             </Link>
-            . Records you create or modify are still attributed to you.
+            <span className="hidden sm:inline">
+              . Records you create or modify are still attributed to you.
+            </span>
           </span>
         </div>
         <div className="flex items-center gap-2">
@@ -108,10 +107,11 @@ export function ImpersonationBanner() {
             onClick={onExit}
             disabled={stopping}
             className="border-amber-400 bg-white text-amber-900 hover:bg-amber-50"
+            aria-label="Exit impersonation"
             data-testid="impersonation-exit"
           >
-            <LogOut className="mr-1 size-3.5" />
-            Exit Impersonation
+            <LogOut className="size-3.5 sm:mr-1" />
+            <span className="hidden sm:inline">Exit Impersonation</span>
           </Button>
           <Button
             variant="ghost"

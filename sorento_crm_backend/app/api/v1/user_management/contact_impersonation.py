@@ -211,6 +211,42 @@ async def start_contact_impersonation(
     )
 
 
+def end_contact_session(
+    db: Session,
+    session_row: ContactImpersonationSession,
+    admin_id: str,
+    ip: Optional[str],
+) -> None:
+    """End one contact-impersonation session, revoke its portal token and audit it.
+
+    Flushes only: the caller commits (the CRM impersonation stop ends a linked contact session
+    in the same transaction).
+    """
+    session_row.ended_at = datetime.utcnow()
+    token_row = (
+        db.query(PortalToken)
+        .filter(PortalToken.id == session_row.portal_token_id)
+        .first()
+    )
+    if token_row is not None and token_row.revoked_at is None:
+        token_row.revoked_at = datetime.utcnow()
+    db.flush()
+    log_audit(
+        db,
+        entity_type="contact_impersonation_session",
+        entity_id=session_row.id,
+        action="UPDATE",
+        user_id=admin_id,
+        description="contact_impersonation_end",
+        new_values={
+            "admin_user_id": admin_id,
+            "target_contact_id": session_row.target_contact_id,
+            "ended_at": session_row.ended_at.isoformat(),
+        },
+        ip_address=ip,
+    )
+
+
 @router.post("/stop")
 async def stop_contact_impersonation(
     request: Request,
@@ -227,29 +263,7 @@ async def stop_contact_impersonation(
     )
     if not session_row:
         return {"ended": False}
-    session_row.ended_at = datetime.utcnow()
-    token_row = (
-        db.query(PortalToken)
-        .filter(PortalToken.id == session_row.portal_token_id)
-        .first()
-    )
-    if token_row is not None and token_row.revoked_at is None:
-        token_row.revoked_at = datetime.utcnow()
-    db.flush()
-    log_audit(
-        db,
-        entity_type="contact_impersonation_session",
-        entity_id=session_row.id,
-        action="UPDATE",
-        user_id=real_user["id"],
-        description="contact_impersonation_end",
-        new_values={
-            "admin_user_id": real_user["id"],
-            "target_contact_id": session_row.target_contact_id,
-            "ended_at": session_row.ended_at.isoformat(),
-        },
-        ip_address=request.client.host if request.client else None,
-    )
+    end_contact_session(db, session_row, real_user["id"], request.client.host if request.client else None)
     db.commit()
     return {"ended": True, "session_id": session_row.id}
 

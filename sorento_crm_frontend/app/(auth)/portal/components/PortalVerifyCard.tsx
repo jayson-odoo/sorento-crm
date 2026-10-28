@@ -19,7 +19,7 @@ import { useRouter, useSearchParams } from 'next/navigation';
 import { getSession } from 'next-auth/react';
 import { AlertCircle, MessageCircle } from 'lucide-react';
 import { toast } from '@/lib/toast';
-import { impersonationStore } from '@/lib/impersonation-store';
+import { impersonationStore, useImpersonationSession } from '@/lib/impersonation-store';
 import { Alert, AlertIcon, AlertTitle } from '@/components/ui/alert';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -90,6 +90,8 @@ type CardState =
 export function PortalVerifyCard({ slug, autoSend = true }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
+  // Viewing as the salesperson: "Not your number?" would clear the admin's own device sign-in.
+  const viewingAs = useImpersonationSession() !== null;
   const reason = searchParams?.get('reason');
   const isLogout = reason === 'logout';
   // Submission kind from the deep-link verify redirect - its presence means the
@@ -444,7 +446,7 @@ export function PortalVerifyCard({ slug, autoSend = true }: Props) {
         </p>
       )}
 
-      {slug && (
+      {slug && !viewingAs && (
         <button
           type="button"
           onClick={() => {
