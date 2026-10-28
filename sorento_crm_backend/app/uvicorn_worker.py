@@ -13,8 +13,8 @@ BACKEND-MEMORY: a worker also retires on its own (gunicorn `max_requests`, or a 
 """
 from __future__ import annotations
 
+import asyncio
 import sys
-import threading
 import time
 from typing import Callable
 
@@ -33,9 +33,10 @@ class DrainingServer(Server):
       wait; shutdown now stops them first, whatever started it.
     - gunicorn's heartbeat is sent only from uvicorn's main loop (`Server.on_tick`), so through the
       shutdown (up to 148 s, app/tasks/chat_turns.py) the arbiter heard nothing and aborted the
-      worker after its `timeout` (120 s), mid-row. A thread keeps beating until the shutdown
-      returns, never past `heartbeat_for` (gunicorn's graceful_timeout), so a hung shutdown is
-      still killed. A thread, because the lifespan shutdown blocks the event loop."""
+      worker after its `timeout` (120 s), mid-row. A task on the event loop keeps beating until
+      the shutdown returns, never past `heartbeat_for` (gunicorn's graceful_timeout). On the loop
+      on purpose: the drains wait runs off it (`asyncio.to_thread`, app/main.py), so the beats go
+      on through it, while a wedged loop stops beating and the arbiter still kills the worker."""
 
     HEARTBEAT_EVERY = 5.0
 
@@ -48,19 +49,17 @@ class DrainingServer(Server):
         from app.tasks import chat_turns
 
         chat_turns.begin_inbox_shutdown()
-        done = threading.Event()
-        threading.Thread(target=self._beat, args=(done,), name="gunicorn-heartbeat", daemon=True).start()
+        beat = asyncio.ensure_future(self._beat())
         try:
             await super().shutdown(sockets)
         finally:
-            done.set()
+            beat.cancel()
 
-    def _beat(self, done: threading.Event) -> None:
+    async def _beat(self) -> None:
         deadline = time.monotonic() + self._heartbeat_for
         while time.monotonic() < deadline:
             self._notify()
-            if done.wait(min(self.HEARTBEAT_EVERY, max(0.0, deadline - time.monotonic()))):
-                return
+            await asyncio.sleep(min(self.HEARTBEAT_EVERY, max(0.0, deadline - time.monotonic())))
 
 
 class InboxUvicornWorker(UvicornWorker):

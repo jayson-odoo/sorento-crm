@@ -90,7 +90,12 @@ loglevel = "info"
 
 
 def pre_fork(server, worker):
-    """Runs in the master right before each fork (start-up, a recycle, a TTIN)."""
+    """Runs in the master right before each fork (start-up, a recycle, a TTIN).
+
+    It also freezes the master's Worker object for this fork, which refers to itself
+    (`config.callback_notify`), so the master never frees it after the worker exits:
+    about 3 KB per recycle, accepted.
+    """
     gc.freeze()
 
 
