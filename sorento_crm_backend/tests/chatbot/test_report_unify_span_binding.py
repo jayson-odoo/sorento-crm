@@ -545,3 +545,15 @@ def test_by_capability_still_leaves_a_document_parse_with_no_agent_brand_or_cate
 
     verdict = {**_DOC_PARSE, "entities": [{"raw": PRODUCT, "hint": "product", "current_message": True}]}
     assert report_ask.by_capability(dict(verdict)) == verdict
+
+
+def test_a_plain_sales_order_list_naming_a_brand_keeps_the_brand_filter(bot) -> None:
+    """B6: "all my sales orders for MOCHA": a sales status beside a `document`, no group_by, a current-message brand.
+    The orders list runs with that brand, never the whole scope (the document exception must not drop it)."""
+    oct_ = {"date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"}
+    parse = _status(
+        "sales_report", _ent("mch", "brand", "MOCHA"), basis=None, group_by=None, document=["SO"], **oct_,
+    )
+    text, calls = bot.say(parse, "all my sales orders for mocha", spans=[list_resolver.Span("mch", "brand")])
+    orders = [a for n, a in calls if n == "crm_order_management_orders_list"]
+    assert len(orders) == 1 and orders[0].get("brand_ids") == [bot.ids["mocha"]], (calls, text)
