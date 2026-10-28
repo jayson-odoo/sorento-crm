@@ -1,8 +1,8 @@
 # PLAN: explicit Gemini context caching for parser calls (GEMINI-EXPLICIT-CACHE)
 
 Status: in review (reviewer READY 28 Oct; live check PASS 28 Oct on gemini-3.5-flash-lite, head
-90520ea7: one create, cached 9106 of ~9114 prompt tokens on all three calls). Small fix track:
-backend only, no migration, no auth/RBAC, no new ingest surface.
+90520ea7: one create, cached 9106 of ~9114 prompt tokens on all three calls). Data migration (price row) added
+on owner request; otherwise backend only, no auth/RBAC, no new ingest surface.
 
 ## Why
 
@@ -73,6 +73,18 @@ backed off.
 Not counted per turn: storage is a project cost, not on any `ai_assistant_usage_logs` row. The
 turn-cost views price a cached token only when `llm_model_prices.cached_input_usd_per_1m` is
 set (`analytics_connector/prices.py`); a Gemini row without it now reads NULL cost.
+
+## Price row (owner add-on, 28 Oct)
+
+Prod watch found no `llm_model_prices` row for `gemini-3.5-flash-lite`, so every parser turn on
+it read NULL cost. Migration `gemprice_0001_gemini_prices` (data only, idempotent) runs
+`prices.seed_prices(bind, ("gemini-3.5-flash-lite",))`: INSERT ... ON CONFLICT DO NOTHING with
+Google's Standard tier prices (input 0.30, cached 0.03, output 2.50 per 1M tokens,
+https://ai.google.dev/gemini-api/docs/pricing), then fills `cached_input_usd_per_1m` only where it
+is NULL. A price an operator set is never overwritten, and a filled cached price leaves that
+row's `note` as it was. The same row is in `SEED_PRICES`, so `scripts/bootstrap_env.py` seeds new
+environments. Tests: `tests/test_gemini_price_migration.py` (cost of a cached flash-lite call:
+9114 prompt / 9106 cached / 100 out = $0.00052558).
 
 ## UAC
 

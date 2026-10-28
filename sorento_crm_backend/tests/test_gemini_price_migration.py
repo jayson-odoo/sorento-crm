@@ -141,3 +141,16 @@ def test_a_fresh_environment_seeds_the_same_row():
         assert (row.input_usd_per_1m, row.cached_input_usd_per_1m, row.output_usd_per_1m) == (
             Decimal("0.300000"), Decimal("0.030000"), Decimal("2.500000"),
         )
+
+
+def test_the_migration_touches_only_the_rows_it_names():
+    """A NULL cached price on another seed model is that migration's business, not this one's."""
+    with pg_session() as db:
+        db.execute(text("DELETE FROM llm_model_prices WHERE model IN (:m, 'gpt-5.4-mini')"), {"m": MODEL})
+        db.execute(
+            text("INSERT INTO llm_model_prices (model, input_usd_per_1m, cached_input_usd_per_1m, output_usd_per_1m) "
+                 "VALUES ('gpt-5.4-mini', 0.75, NULL, 4.50)")
+        )
+        _upgrade(db)
+
+        assert _row(db, "gpt-5.4-mini").cached_input_usd_per_1m is None

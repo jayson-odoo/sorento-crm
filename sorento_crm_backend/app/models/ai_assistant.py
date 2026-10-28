@@ -192,7 +192,8 @@ class LLMModelPrice(Base):
 
     Read by the analytics connector's `llm_calls` / `turn_costs` views. `model` matches
     `ai_assistant_usage_logs.model` exactly; a model with no row is reported unpriced
-    (cost NULL), never as free. `cached_input_usd_per_1m` NULL means no cache discount.
+    (cost NULL), never as free. `cached_input_usd_per_1m` NULL means unknown: a call with
+    cached tokens is then unpriced too (`analytics_connector.prices.cost_sql`).
     """
 
     __tablename__ = "llm_model_prices"
