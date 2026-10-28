@@ -454,6 +454,8 @@ def _code_candidates(db: "Session", tokens: list[str], *, code_lookup: bool = Fa
 
 
 _SIZE_RE = re.compile(r"(\d+(?:\.\d+)?)([a-z]+)")
+#: Length units that are also ordinary words, read only when joined to the number ("6in", "2m").
+_WORD_UNITS = frozenset({"in", "m"})
 
 
 def _unit_index(db: "Session", hidden: frozenset[str] = frozenset()) -> dict[str, tuple[list[str], set[str]]]:
@@ -522,20 +524,33 @@ def _size_candidates(
     it spans are never code words (a code merely holding "600mm" is not what was said). The
     units are the registry's own (`product_spec_registry.unit`). The entries come back
     unresolved (`size` set): which keys hold the number is the value index's count."""
+    from app.services.product_spec_search import length_factor
+
     units = _unit_index(db, hidden)
     if not units:
         return [], set()
+    # DIMENSION-ANY: a length in another unit ("15cm") is read in the registry's millimetres.
+    mm = next((u for u in units if length_factor(u) == 1.0), None)
+
+    def known(unit: str, *, alone: bool = False) -> bool:
+        # A unit typed apart from its number is read only when it is no everyday word too: "5 in
+        # stock" is a quantity, never 5 inches.
+        return unit in units or (mm is not None and length_factor(unit) is not None and not (alone and unit in _WORD_UNITS))
+
     out: list[WordCandidates] = []
     spanned: set[int] = set()
     for position, token in enumerate(tokens):
         joined = _SIZE_RE.fullmatch(token)
-        if joined and joined.group(2) in units:
+        if joined and known(joined.group(2)):
             number, unit_name, shown, span = joined.group(1), joined.group(2), token, {position}
-        elif _is_number(token) and position + 1 < len(tokens) and tokens[position + 1] in units:
+        elif _is_number(token) and position + 1 < len(tokens) and known(tokens[position + 1], alone=True):
             unit_name = tokens[position + 1]
             number, shown, span = token, f"{token} {unit_name}", {position, position + 1}
         else:
             continue
+        if unit_name not in units:
+            in_mm = float(number) * (length_factor(unit_name) or 1.0)
+            number, unit_name = (str(int(in_mm)) if in_mm.is_integer() else f"{in_mm:g}"), str(mm)
         keys, bare = units[unit_name]
         out.append(WordCandidates(gram=shown, position=position, size=(number, unit_name, keys, bare)))
         spanned |= span
@@ -544,15 +559,19 @@ def _size_candidates(
 
 def _resolve(entries: list[WordCandidates], counts: dict) -> None:
     """F3-a: a size's lines are the keys that hold the number, ranked by data (every key of the
-    unit, in name order, when none does), the bare-size line first when a flagged key holds it
-    (R6-1); a shared phrase's exact spec lines are ranked by data in the slots they hold."""
+    unit, in name order, when none does), the bare-size line first for a length or when a flagged
+    key holds it (R6-1); a shared phrase's exact spec lines are ranked by data in the slots they hold."""
+    from app.services.product_spec_search import length_factor
+
     for entry in entries:
         if entry.size:
             number, unit_name, keys, bare = entry.size
             holders = [k for k in keys if counts.get((k, number, "num"), (0, 0))[0] > 0]
             ranked = sorted(holders, key=lambda k: _by_data(counts, (k, number, "num"))) or keys
             entry.items = [f"spec {key} = {number}" for key in ranked]
-            if bare & set(holders):
+            # DIMENSION-ANY: a length is offered as a size with no dimension named whatever key holds
+            # it (the prod miss: only height held 150, so the parser saw height alone and picked it).
+            if bare & set(holders) or length_factor(unit_name) == 1.0:
                 entry.items.insert(0, f"size {number} {unit_name} (no dimension named)")
             continue
         slots = [n for n, item in enumerate(entry.items) if item in entry.pairs]

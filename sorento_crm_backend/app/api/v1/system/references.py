@@ -3826,6 +3826,9 @@ def resolve_reference_post(
             result["predicate"]["row_labels"] = outcome["row_labels"]
         if outcome.get("other_brands"):
             result["predicate"]["other_brands"] = outcome["other_brands"]
+        # DIMENSION-ANY: a named dimension nothing held, answered under any dimension.
+        if outcome.get("dimension_fallback"):
+            result["predicate"]["dimension_fallback"] = outcome["dimension_fallback"]
         # R4 (round 4): what a zero set looked for and the count in its other values.
         if outcome.get("near_miss"):
             result["predicate"]["near_miss"] = outcome["near_miss"]

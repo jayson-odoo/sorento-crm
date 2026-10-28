@@ -658,14 +658,16 @@ def describe_set(
             unit = next(iter(units)) if len(units) == 1 else None
         if unit:
             values = [f"{v} {unit}" for v in values]
+        bare = row is None and key.startswith("any:")
         out.append(
             {
                 "key": key,
-                "label": (row.label if row is not None and row.label else _sentence_case(key)),
+                # DIMENSION-ANY: a size with no dimension named is said with none ("with 150 mm").
+                "label": "" if bare else (row.label if row is not None and row.label else _sentence_case(key)),
                 "value": " or ".join(values),
                 # Fix round 8: how the set's intro says it ("with thickness 1.2 mm",
                 # "gunmetal", "rimless").
-                "kind": (row.data_type or "enum").lower() if row is not None else "enum",
+                "kind": "numeric" if bare else (row.data_type or "enum").lower() if row is not None else "enum",
             }
         )
     return out
@@ -862,7 +864,51 @@ def _set_breakdown(
     return None
 
 
-def resolve_product_set(
+def resolve_product_set(db: Session, **kwargs: Any) -> dict:
+    """`_resolve_set`, and DIMENSION-ANY's fallback (owner, 28 Oct 2026: "it shouldn't restrict to
+    just 1 dimension"): a set that qualifies nothing under ONE named dimension ("length 150 mm") is
+    counted again with that number under any dimension (`product_spec_search.dimension_keys`). When
+    that set holds something it is the answer, carrying ``dimension_fallback`` (the named label and
+    value) so the reply says "None with length 150 mm; these have 150 mm in another dimension:".
+    Otherwise the first, honest miss stands."""
+    outcome = _resolve_set(db, **kwargs)
+    if outcome.get("qualifying_total"):
+        return outcome
+    wider = _any_dimension_specs(db, kwargs.get("specs"), kwargs.get("hidden_keys") or frozenset())
+    if wider is None:
+        return outcome
+    specs, named = wider
+    again = _resolve_set(db, **{**kwargs, "specs": specs})
+    if not again.get("qualifying_total"):
+        return outcome
+    return {**again, "dimension_fallback": named}
+
+
+def _any_dimension_specs(
+    db: Session, specs: list[dict] | None, hidden_keys: frozenset[str]
+) -> tuple[list[dict], dict[str, str]] | None:
+    """`specs` with its one grounded number under a named dimension widened to every visible
+    dimension key, and that key's label and value as said; None unless exactly one such entry."""
+    from app.services.product_spec_registry import active_registry, display_spec_value
+    from app.services.product_spec_search import dimension_keys
+
+    rows = {r.spec_key: r for r in active_registry(db) if r.spec_key not in hidden_keys}
+    dims = dimension_keys(rows.values())
+    named = [
+        n for n, e in enumerate(specs or [])
+        if e.get("grounded") and not e.get("any_keys") and e.get("key") in dims
+        and isinstance(e.get("value"), (int, float)) and not isinstance(e.get("value"), bool)
+    ]
+    if len(named) != 1 or len(dims) < 2:
+        return None
+    entry = (specs or [])[named[0]]
+    row = rows[entry["key"]]
+    widened = [dict(e) for e in specs or []]
+    widened[named[0]] = {**entry, "any_keys": dims}
+    return widened, {"label": str(row.label or entry["key"]), "value": f"{display_spec_value(entry['value'])} {row.unit}"}
+
+
+def _resolve_set(
     db: Session,
     *,
     require: dict,
