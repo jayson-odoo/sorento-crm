@@ -24,10 +24,6 @@ export function ClashWarningPanel({
 }: {
   candidates: ClashCandidate[];
   isLoading?: boolean;
-  /** @deprecated The panel has no row buttons any more; the form's primary is the action. */
-  onRequestJoin?: (candidate: ClashCandidate) => void;
-  /** @deprecated The panel has no row buttons any more; the form's primary is the action. */
-  onDispute?: (candidate: ClashCandidate) => void;
 }) {
   if (isLoading && candidates.length === 0) {
     return (

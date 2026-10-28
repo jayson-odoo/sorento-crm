@@ -69,10 +69,10 @@ export function TruncatedTextCell({
   );
 
   return (
-    <div className="flex min-w-0 items-center gap-1">
-      <div className="min-w-0 flex-1">
+    <span className="flex min-w-0 items-center gap-1">
+      <span className="block min-w-0 flex-1">
         {renderLabel ? renderLabel(truncated) : truncated}
-      </div>
+      </span>
       {showExpand ? (
         <Button
           type="button"
@@ -97,6 +97,6 @@ export function TruncatedTextCell({
           <p className="whitespace-pre-wrap break-words text-sm text-foreground">{value}</p>
         </DialogContent>
       </Dialog>
-    </div>
+    </span>
   );
 }

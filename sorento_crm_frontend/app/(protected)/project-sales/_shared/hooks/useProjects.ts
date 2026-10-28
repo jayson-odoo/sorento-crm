@@ -453,7 +453,7 @@ export function usePartyMutations() {
     mutationFn: (body: ProjectPartyBody) => createParty(body),
     onSuccess: (party) => {
       invalidate();
-      toast.success(`${party.name} added`);
+      toast.success(party.already_existed ? `${party.name} already exists` : `${party.name} added`);
     },
     onError: (error: Error) => toast.error(error.message),
   });

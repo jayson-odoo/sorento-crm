@@ -23,6 +23,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { FormSection } from '@/components/common/FormSection';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { toast } from '@/lib/toast';
 import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import { getUserLookup } from '@/services/userSelectService';
 import {
@@ -691,26 +692,28 @@ export function ProjectForm(props: ProjectFormProps) {
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="project-lead">Lead (optional)</Label>
-            <SearchableSelect
-              id="project-lead"
-              value={leadId}
-              onChange={setLeadId}
-              onOptionChange={setLeadOption}
-              fetchOptions={fetchLeadOptions}
-              selectedOption={leadOption ?? undefined}
-              clearable
-              placeholder="Search leads by title or code"
-              emptyMessage="No open leads match"
-              // Ungated, like the Leads page's own Create lead: the server decides who may
-              // create one (projects.projects.edit, the grant that registers a project).
-              createOption={{
-                label: (query) => <span>Create lead &ldquo;{query}&rdquo;</span>,
-                onCreate: setCreatingLeadTitle,
-              }}
-            />
-          </div>
+          {!submitOnly && (
+            <div className="space-y-1.5">
+              <Label htmlFor="project-lead">Lead (optional)</Label>
+              <SearchableSelect
+                id="project-lead"
+                value={leadId}
+                onChange={setLeadId}
+                onOptionChange={setLeadOption}
+                fetchOptions={fetchLeadOptions}
+                selectedOption={leadOption ?? undefined}
+                clearable
+                placeholder="Search leads by title or code"
+                emptyMessage="No open leads match"
+                // Ungated, like the Leads page's own Create lead: the server decides who may
+                // create one (projects.projects.edit, the grant that registers a project).
+                createOption={{
+                  label: (query) => <span>Create lead &ldquo;{query}&rdquo;</span>,
+                  onCreate: setCreatingLeadTitle,
+                }}
+              />
+            </div>
+          )}
         </FormSection>
 
         <FormSection
@@ -803,7 +806,11 @@ export function ProjectForm(props: ProjectFormProps) {
       )}
 
       {interestTarget && (
-        <RegisterInterestDialog candidate={interestTarget} onDone={() => setInterestTarget(null)} />
+        <RegisterInterestDialog
+          candidate={interestTarget}
+          canViewProject={!submitOnly}
+          onDone={() => setInterestTarget(null)}
+        />
       )}
 
       <ProjectAIExtractDialog
@@ -832,9 +839,11 @@ function TypedHint({ typed, picked }: { typed?: string | null; picked: string })
  */
 function RegisterInterestDialog({
   candidate,
+  canViewProject,
   onDone,
 }: {
   candidate: ClashCandidate;
+  canViewProject: boolean;
   onDone: () => void;
 }) {
   const router = useRouter();
@@ -859,7 +868,13 @@ function RegisterInterestDialog({
               return;
             }
             onDone();
-            router.push(`/project-sales/${candidate.project_id}`);
+            // A salesperson who cannot open the project goes back to the list (D8).
+            if (canViewProject) {
+              router.push(`/project-sales/${candidate.project_id}`);
+            } else {
+              toast.success(`Interest registered in ${candidate.project_code}`);
+              router.push('/project-sales/pipeline');
+            }
           }}
         >
           <DialogBody className="max-h-[60dvh] space-y-3 overflow-y-auto">

@@ -227,7 +227,10 @@ export type ProjectExtractFieldKey =
   | 'title'
   | 'customer';
 
-export type ProjectExtractResult = Partial<Record<ProjectExtractFieldKey, ProjectExtractProposal>>;
+/** The backend sends title and mukim as plain strings, the rest as proposal objects. */
+export type ProjectExtractResult = Partial<
+  Record<ProjectExtractFieldKey, ProjectExtractProposal | string>
+>;
 
 /** `text` is the title box text; `files` are photos. Writes nothing on the server (C4). */
 export async function aiExtractProject(
@@ -447,14 +450,18 @@ export async function listParties(
   return response.json();
 }
 
-export async function createParty(body: ProjectPartyBody): Promise<ProjectParty> {
+/** A 200 answer means the party already existed for that type (B4); 201 means it was created. */
+export async function createParty(
+  body: ProjectPartyBody,
+): Promise<ProjectParty & { already_existed?: boolean }> {
   const response = await apiFetch(`${BASE}/parties/`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
   if (!response.ok) throw new Error(await extractApiError(response, 'Failed to create the party'));
-  return response.json();
+  const party = (await response.json()) as ProjectParty;
+  return { ...party, already_existed: response.status === 200 };
 }
 
 export async function updateParty(

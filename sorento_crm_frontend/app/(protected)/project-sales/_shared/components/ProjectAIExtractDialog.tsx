@@ -37,9 +37,16 @@ const FIELD_DEFS: { name: ProjectExtractFieldKey; label: string }[] = [
 
 const PARTY_FIELDS: ProjectExtractFieldKey[] = ['developer', 'architect', 'main_contractor'];
 
-function proposalText(proposal: ProjectExtractProposal | undefined): string {
+function proposalText(proposal: ProjectExtractProposal | string | undefined): string {
+  if (typeof proposal === 'string') return proposal.trim();
   if (!proposal || (proposal.status !== 'match' && proposal.status !== 'new')) return '';
   return (proposal.value ?? proposal.name ?? '').trim();
+}
+
+function objectProposal(
+  proposal: ProjectExtractProposal | string | undefined,
+): ProjectExtractProposal | undefined {
+  return typeof proposal === 'string' ? undefined : proposal;
 }
 
 /** The review table lists only match and new proposals (C7). */
@@ -48,7 +55,8 @@ function toExtractResult(result: ProjectExtractResult): AIExtractResult {
   for (const { name } of FIELD_DEFS) {
     const text = proposalText(result[name]);
     // A customer is only ever matched, never created (C8).
-    if (name === 'customer' && result.customer?.status !== 'match') continue;
+    const customer = result.customer;
+    if (name === 'customer' && (typeof customer === 'string' || customer?.status !== 'match')) continue;
     if (text) values[name] = text;
   }
   return {
@@ -96,7 +104,7 @@ export function ProjectAIExtractDialog({
 
     for (const name of PARTY_FIELDS) {
       const proposal = proposals[name];
-      if (!listed(name) || !proposal) continue;
+      if (!listed(name) || !proposal || typeof proposal === 'string') continue;
       if (proposal.status === 'match' && proposal.id) {
         fill[name as 'developer'] = { id: proposal.id, name: proposal.name ?? '' };
       } else if (proposal.status === 'new' && canCreateParties && proposal.name) {
@@ -108,11 +116,11 @@ export function ProjectAIExtractDialog({
         fill[name as 'developer'] = { id: party.id, name: party.name };
       }
     }
-    const type = proposals.project_type;
+    const type = objectProposal(proposals.project_type);
     if (listed('project_type') && type?.status === 'match' && type.id) {
       fill.project_type = { id: type.id, name: type.name ?? '' };
     }
-    const customer = proposals.customer;
+    const customer = objectProposal(proposals.customer);
     if (listed('customer') && customer?.status === 'match' && customer.id) {
       fill.customer = { id: customer.id, name: customer.name ?? '' };
     }
@@ -131,7 +139,8 @@ export function ProjectAIExtractDialog({
       canAttach={false}
       textSource={{ label: 'Project title', text: titleText }}
       renderFieldStatus={(name) => {
-        const status = proposals[name as ProjectExtractFieldKey]?.status;
+        const proposal = proposals[name as ProjectExtractFieldKey];
+        const status = typeof proposal === 'string' ? undefined : proposal?.status;
         if (status !== 'match' && status !== 'new') return null;
         return (
           <span

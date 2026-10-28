@@ -136,6 +136,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   const isManager = useHasPermission('projects.projects.manage');
   // PROJECT-REG-PORTAL R7: a pending portal registration is approved or rejected here.
   const mayApprove = useHasPermission('projects.registrations.approve');
+  // A salesperson with the submit slug but no edit rights (J3): their own draft shows its
+  // fields with Edit and Submit for approval, and nothing else.
+  const canEditProjects = useHasPermission('projects.projects.edit');
+  const canSubmitRegistration = useHasPermission('projects.registrations.submit');
+  const submitOnly = !canEditProjects && canSubmitRegistration;
   const [rejecting, setRejecting] = React.useState(false);
   // The approved project an exact-duplicate refusal names, linked under the header.
   const [existingProject, setExistingProject] = React.useState<ProjectPossibleDuplicate | null>(
@@ -194,10 +199,15 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
   // The gear's items, each with its own rule; the gear itself shows only when one applies,
   // so an approver deciding a registration (Edit in the header, no Reassign, no Delete,
   // no stage moves) never opens an empty menu.
+  const isDraft = project.approval_state === 'draft';
+  // J3b: a submit-only user edits only their own draft or rejected registration.
+  const submitOnlyEdit =
+    submitOnly && (isDraft || project.approval_state === 'rejected');
   const showEditItem = !canDecide;
   const showDeleteItem = isProjectApproved(project) || isManager;
   const hasGearItems =
-    showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem;
+    !submitOnly &&
+    (showEditItem || isManager || secondaryMoves.length > 0 || showDeleteItem);
 
   /**
    * Spec In is where quoting starts, so making it opens the new quotation page (owner,
@@ -301,6 +311,15 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
                 </Button>
               </>
             )}
+            {submitOnlyEdit && (
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => router.push(`/project-sales/${project.id}/edit`)}
+              >
+                Edit
+              </Button>
+            )}
             {project.can_edit && hasGearItems && (
               <DetailActionsMenu ariaLabel="Project actions">
                 {/* First item, never a second primary (AC-PF005, D9): the form is the
@@ -350,6 +369,11 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           primary={
             canDecide ? (
               <ApproveButton projectId={project.id} onRefused={setExistingProject} />
+            ) : submitOnly && isDraft ? (
+              // The submit itself lives in the form, where the required fields are checked.
+              <Button type="button" onClick={() => router.push(`/project-sales/${project.id}/edit`)}>
+                Submit for approval
+              </Button>
             ) : (
               <ProjectStatusAction
                 moves={moves}
@@ -408,9 +432,9 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
           `role="tabpanel"`. Routing is unchanged - `value` still comes from the
           URL and `onValueChange` still writes it back, so each section keeps
           its own link and only the open one mounts. */}
-      <Tabs value={activeTab} onValueChange={(value) => selectTab(value as TabId)}>
+      <Tabs value={isDraft ? 'overview' : activeTab} onValueChange={(value) => selectTab(value as TabId)}>
         <TabsList aria-label="Project sections">
-          {TABS.map((tab) => (
+          {TABS.filter((tab) => !isDraft || tab.id === 'overview').map((tab) => (
             <TabsTrigger key={tab.id} value={tab.id}>
               <tab.icon />
               <span>{tab.label}</span>
@@ -472,11 +496,13 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
 
             <SourceCard project={project} />
 
-            <ProjectAccessPanel project={project} />
+            {!isDraft && <ProjectAccessPanel project={project} />}
           </div>
-          <div className="mt-4">
-            <CriticalPanel project={project} />
-          </div>
+          {!isDraft && (
+            <div className="mt-4">
+              <CriticalPanel project={project} />
+            </div>
+          )}
         </TabsContent>
 
         <TabsContent value="stakeholders">
