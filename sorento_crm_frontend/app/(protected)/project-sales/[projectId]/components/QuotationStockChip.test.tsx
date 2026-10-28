@@ -210,6 +210,34 @@ describe('STOCK-GROUPBY (AC-17, AC-20): the quotation popover carries the bar on
     },
   );
 
+  it('review: an allowed location with figures only in AutoCount stays a normal row, never Other group', async () => {
+    answer({
+      locations: [row('BRW-IB', '0'), row('MWH-IB', '4'), row('ZERO-IB', '0')],
+      incoming: [],
+      available_qty: '4',
+    });
+    const ac = (code: string, onHand: number) => ({
+      warehouse_id: `wh-${code}`, warehouse_code: code, warehouse_name: code, is_active: true,
+      on_hand: onHand, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: onHand,
+    });
+    useStockStatusMock.mockReturnValue({
+      data: {
+        product_id: 'prod-1', item_code: 'ITEM-1', description: null, as_of: null, so_due_by: null,
+        locations: [ac('BRW-IB', 5), ac('MWH-IB', 4), ac('ZERO-IB', 0)],
+        totals: { on_hand: 9, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 9, incoming_pl: 0, forecast_incl_pl: 9 },
+        incoming_pl: [], sales_orders: [], purchase_orders: [], spos: [],
+      },
+      isLoading: false,
+    });
+    openPopover();
+    await drawActual();
+    const text = document.body.textContent ?? '';
+    expect(text).toContain('BRW-IB');
+    expect(text).toContain('MWH-IB');
+    expect(text).not.toContain('ZERO-IB');
+    expect(text).not.toMatch(/Other group/i);
+  });
+
   it('AC-17 without the read (a failed read), the table has no bar', async () => {
     useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false });
     openPopover();

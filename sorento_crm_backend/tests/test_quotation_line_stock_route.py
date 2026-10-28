@@ -128,10 +128,10 @@ def _user(db, contact: RespondContact | None) -> str:
     return user_id
 
 
-def _policy(db, *, contact=None, access_type=None, include=None, exclude=None):
+def _policy(db, *, contact=None, access_type=None, include=None, exclude=None, mode="detailed"):
     db.add(StockVisibilityPolicy(
         id=_uid(), contact_id=contact.id if contact else None,
-        access_type_code=access_type, mode="detailed",
+        access_type_code=access_type, mode=mode,
         warehouse_ids=[w.id for w in include] if include is not None else None,
         excluded_warehouse_ids=[w.id for w in exclude] if exclude is not None else None,
     ))
@@ -380,3 +380,36 @@ def test_review_view_own_only_user_gets_200_with_the_same_trimmed_response(world
     assert body["sales_orders"] == []
     assert body["holds"] == []
     assert body["incoming"] and all(r["supplier_name"] is None for r in body["incoming"])
+
+
+def test_mode_availability_override_answers_null(world):
+    w = world
+    _policy(w.db, contact=w.contact, include=[w.w1], mode="availability")
+    w.db.commit()
+    response = _ask(w)
+    assert response.status_code == 200, response.text
+    assert response.json() is None
+
+
+def test_mode_availability_access_type_tier_answers_null(world):
+    from app.models.access import ContactAccessType, respond_contact_access_types
+
+    w = world
+    code = f"zzt{_uid()[:8]}"
+    w.db.add(ContactAccessType(code=code, name=f"{MARKER} type", is_active=True))
+    w.db.flush()
+    w.db.execute(respond_contact_access_types.insert().values(
+        contact_id=w.contact.id, access_type_code=code))
+    _policy(w.db, access_type=code, include=[w.w1], mode="availability")
+    w.db.commit()
+    response = _ask(w)
+    assert response.status_code == 200, response.text
+    assert response.json() is None
+
+
+@pytest.mark.parametrize("mode", ["compact", "detailed"])
+def test_only_availability_mode_blanks_the_quotation_stock(world, mode):
+    w = world
+    _policy(w.db, contact=w.contact, include=[w.w1], mode=mode)
+    w.db.commit()
+    assert _locations(_ask(w)) == w.codes(w.w1)
