@@ -1,8 +1,6 @@
 # PLAN: PORTAL-P4-REQUESTS, MY REQUESTS opens the staff pages with server-side "only theirs" (28 Oct 2026)
 
-Status: Build. Card v1 answered (28 Oct ~14:3x: Q1 a, Q2 a, Q3 a, Q4 follow the revision setting, Q5 c all 9 kinds); card v1.1 (5 extra kinds, Q6-Q8) filed 28 Oct, pending. S0 red tests (4 forms) in progress. Throwaway DB sorento_pp4_throwaway + .env.ci-tests (redis idx 2). Track: full (RBAC + permission slugs migration + new write surface), security review required. Size L, LEAD pattern. Lane PORTAL-P4-REQUESTS, draft PR #1953, stacked on #1944.
-the answers. Track: full (RBAC + permission slugs migration + new write surface), security review required. Size L,
-LEAD pattern. Lane PORTAL-P4-REQUESTS. Stacked on PR #1944 (PORTAL-P3-ROLE-MENU); this PR merges right after it.
+Status: Build. Card v1 answered (28 Oct ~14:3x: Q1 a, Q2 a, Q3 a, Q4 follow the revision setting, Q5 c all 9 kinds); card v1.1 (5 extra kinds, Q6-Q8) filed 28 Oct, pending. S0 red tests (4 forms) in progress. Throwaway DB sorento_pp4_throwaway + .env.ci-tests (redis idx 2). Track: full (RBAC + permission slugs migration + new write surface), security review required. Size L, LEAD pattern. Lane PORTAL-P4-REQUESTS, draft PR #1953, stacked on #1944 (PORTAL-P3-ROLE-MENU); this PR merges right after it.
 
 Source: `PLAN-portal-p3-role-menu-28oct.md` (open MY REQUESTS decision), PR #1944 crew-note 6461917897, owner
 28 Oct ~14:1x option (b), owner requirement 28 Oct ~14:2x (end-to-end exactly like the portal, card section
