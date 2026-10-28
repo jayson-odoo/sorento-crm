@@ -58,7 +58,7 @@ import PurchaseRequestForm from '@/app/(protected)/procurement-management/purcha
 const CASES: Array<[string, string, string, () => React.ReactElement]> = [
   ['stock inquiry', 'procurement.stock_inquiries', 'Select sales person', () => <StockInquiryForm />],
   ['purchase request', 'procurement.purchase_requests', 'Select requestor', () => <PurchaseRequestForm />],
-  ['sponsorship form', 'procurement.sponsorship_forms', 'Select requestor', () => <PurchaseRequestForm />],
+  ['sponsorship form', 'procurement.sponsorship_forms', 'Select requestor', () => <PurchaseRequestForm defaultRequestType="sponsorship_form" />],
 ];
 
 function mount(el: React.ReactElement) {
