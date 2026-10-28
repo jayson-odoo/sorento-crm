@@ -140,13 +140,23 @@ def test_number_hits_offer_every_spec_holding_the_value(session_factory):
     for message in ("any basin with 200mm trap", "200 mm", "20 cm trap"):
         got = ll.number_hits(message, db)
         assert all(h.row.list_name == "spec" for h in got), got
-        assert sorted(h.row.label.casefold() for h in got) == ["zz trap length 200mm (zz_trap_len: 200)", "zz width 200mm (zz_width: 200)"], (message, got)
+        # DIMENSION-ANY (owner, 28 Oct 2026): a length leads with the any-dimension size line, then the holders, then
+        # every other dimension (nameable, never held).
+        assert [h.row.label.casefold() for h in got] == [
+            "size 200mm, any dimension (size: 200)", "zz trap length 200mm (zz_trap_len: 200)", "zz width 200mm (zz_width: 200)",
+            "zz depth 200mm (zz_depth: 200)",
+        ], (message, got)
 
 
-def test_a_number_no_spec_holds_offers_nothing(session_factory):
+def test_a_length_no_spec_holds_offers_the_size_and_every_dimension(session_factory):
+    """DIMENSION-ANY (owner, 28 Oct 2026; was "offers nothing"): a length no key holds is still nameable, as a size
+    with no dimension named or as the dimension the message names, so the miss is said back as asked."""
     seed_world(session_factory)
     db = scoped(session_factory)
-    assert ll.number_hits("a 999mm basin", db) == []
+    assert [h.row.label.casefold() for h in ll.number_hits("a 999mm basin", db)] == [
+        "size 999mm, any dimension (size: 999)", "zz depth 999mm (zz_depth: 999)", "zz trap length 999mm (zz_trap_len: 999)",
+        "zz width 999mm (zz_width: 999)",
+    ]
     assert ll.number_hits("no numbers here", db) == []
 
 

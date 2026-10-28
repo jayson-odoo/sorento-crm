@@ -173,3 +173,25 @@ def test_live_a_named_length_miss_is_said_with_its_dimension(session_factory, se
 
     assert _fetched(calls) == [], (_text(r), calls)
     assert "length 999 mm" in _text(r).lower(), _text(r)
+
+
+def test_a_named_dimension_nothing_holds_is_still_offered_beside_the_holders(session_factory, seeded):
+    """Rule 2 on the live path: "length 150mm" where only height and trap hold 150 still offers Length 150, so the
+    parser names length and the set falls back to any dimension under its "None with length 150 mm" line."""
+    _seed(session_factory, WCS)
+
+    labels = _labels(session_factory, "zzwc with length 150mm got stock")
+
+    assert labels[:3] == [SIZE_150, "Height 150mm (dim_height: 150)", "Trap outlet length 150mm (trap_length: 150)"], labels
+    assert "Length 150mm (dim_length: 150)" in labels[3:], labels
+
+
+def test_live_a_named_length_nothing_holds_falls_back_with_its_line(session_factory, seeded, stub_access, monkeypatch):
+    ids = _seed(session_factory, WCS)
+
+    r, calls, _b = _live(
+        session_factory, stub_access, monkeypatch, "zzwc with length 150mm got stock",
+        _ent("zzwc", "category"), _spec("length 150mm", "dim_length", 150),
+    )
+
+    assert _fetched(calls) == sorted([ids["ZZDA-H"], ids["ZZDA-T"]]), (_text(r), calls)

@@ -49,7 +49,10 @@ def test_marked_version_lists_the_finish_and_every_200mm_spec(session_factory, s
     folded = [ln.casefold() for ln in lines]
     for want in ("- zz finish gunmetal (zz_finish: gunmetal)", "- zz trap length 200mm (zz_trap_len: 200)", "- zz width 200mm (zz_width: 200)"):
         assert want in folded, (want, lines)
-    assert "- zz depth 350mm" not in folded and not any("depth" in ln for ln in folded), lines
+    # The depth this world holds (350) is never offered for a 200 mm ask. DIMENSION-ANY (owner, 28 Oct 2026): depth
+    # is still nameable at 200, after the any-dimension size line and the holders.
+    assert not any("350" in ln for ln in folded), lines
+    assert "- size 200mm, any dimension (size: 200)" in folded and "- zz depth 200mm (zz_depth: 200)" in folded, lines
 
 
 def test_unmarked_version_has_no_spec_block(session_factory, seeded, stub_access, monkeypatch):

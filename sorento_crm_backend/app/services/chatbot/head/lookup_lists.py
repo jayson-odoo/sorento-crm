@@ -654,10 +654,6 @@ def load_rows(
 #: A length in the message: not glued to a letter or digit before it (a code), a unit after it.
 _LENGTH_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
 _SIZE_RE = re.compile(r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*x\s*(\d+(?:\.\d+)?)\s*(mm|cm|m)(?![a-z0-9])")
-#: Any quantity a numeric spec key stores: lengths, litres, horsepower, ounces.
-_QUANTITY_RE = re.compile(
-    r"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*(litres?|liters?|ounces?|mm|cm|hp|oz|l|m)(?![a-z0-9])"
-)
 _TO_MM = {"mm": 1.0, "cm": 10.0, "m": 1000.0}
 #: A unit word (as said or as the registry stores it) -> (unit class, factor to the class's base unit).
 _UNITS = {
@@ -682,15 +678,59 @@ def normalise_number(text: str) -> str | None:
     return f"{_mm(one.group(1), one.group(2))}mm" if one else None
 
 
+def _unit_words(rows: list[Any]) -> dict[str, tuple[str, float]]:
+    """`_UNITS` plus every alias the registry lists for a numeric key (`unit_aliases`, DIMENSION-ANY): "inch" ->
+    ("len", 25.4) off a mm key's `{"inch": 25.4}`. Unit words beyond the shipped ones are data, never code."""
+    units = dict(_UNITS)
+    for row in rows:
+        base = _UNITS.get((row.unit or "").strip().lower())
+        if base is None:
+            continue
+        for alias, factor in (getattr(row, "unit_aliases", None) or {}).items():
+            word = str(alias).strip().casefold()
+            if word and isinstance(factor, (int, float)) and not isinstance(factor, bool) and factor > 0:
+                units.setdefault(word, (base[0], base[1] * float(factor)))
+    return units
+
+
+def _quantity_re(words: Any) -> re.Pattern[str]:
+    """A quantity in the message: a number not glued to a letter or digit before it (a code), one of these unit
+    words after it, the longest first."""
+    alternatives = "|".join(re.escape(w) for w in sorted(words, key=len, reverse=True))
+    return re.compile(rf"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*({alternatives})(?![a-z0-9])")
+
+
+#: DIMENSION-ANY: the bracket key of the line that offers a length with no dimension named; the parser emits it as
+#: spec_key and grounding reads it as every dimension (`head/bare_size.py`).
+SIZE_KEY = "size"
+
+
 def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str] = frozenset()) -> list[Hit]:
-    """Every numeric spec key whose stored values hold a quantity the message says (mm / cm / m, litres, hp,
-    oz), in the key's own unit, the line ending in the bare number the parser reads ("trap length 200mm
-    (trap_length: 200)"). At most `MAX_NUMBER_ASKS` distinct quantities per message. No meaning score;
-    nothing is offered for a number no key holds. A code that merely contains digits is never a quantity."""
+    """Every numeric spec key whose stored values hold a quantity the message says (mm / cm / m, litres, hp, oz,
+    and the registry's own unit aliases), in the key's own unit, the line ending in the bare number the parser
+    reads ("trap length 200mm (trap_length: 200)"). At most `MAX_NUMBER_ASKS` distinct quantities per message. No
+    meaning score. A code that merely contains digits is never a quantity.
+
+    DIMENSION-ANY (owner, 28 Oct 2026): a length leads with "Size 150mm, any dimension (size: 150)", the line a
+    size said with no dimension named is emitted from, then the keys that hold it, then every other dimension's own
+    line, so a NAMED dimension is always nameable (a miss is said back as named, and a named dimension nothing holds
+    falls back to any dimension). Any other quantity no key holds offers nothing."""
+    from sqlalchemy import case, func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_spec import ProductSpecifications
+    from app.services.product_spec_registry import active_registry
+    from app.services.product_spec_search import dimension_keys, membership_clause
+
+    rows = [
+        row for row in active_registry(db)
+        if (row.data_type or "").lower() == "numeric" and row.spec_key not in hidden_spec_keys
+    ]
+    units = _unit_words(rows)
     folded = str(message or "").casefold()
     asks: list[tuple[str, float, str]] = []  # (unit class, value in its base unit, piece)
-    for m in _QUANTITY_RE.finditer(folded):
-        cls, factor = _UNITS[m.group(2)]
+    for m in _quantity_re(units).finditer(folded):
+        cls, factor = units[m.group(2)]
         ask = (cls, round(float(m.group(1)) * factor, 6), m.group(0))
         if not any(a[:2] == ask[:2] for a in asks):
             asks.append(ask)
@@ -698,17 +738,11 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
             break
     if not asks:
         return []
-    from sqlalchemy import case, func
-
-    from app.models.product import Product, chat_searchable_products
-    from app.models.product_spec import ProductSpecifications
-    from app.services.product_spec_registry import active_registry
-    from app.services.product_spec_search import membership_clause
-
+    dims = set(dimension_keys(rows))
     wanted: list[tuple[Any, str, float, str]] = []  # (registry row, shown, value in the key's unit, piece)
-    for row in active_registry(db):
+    for row in rows:
         unit = (row.unit or "").strip()
-        if (row.data_type or "").lower() != "numeric" or unit.lower() not in _UNITS or row.spec_key in hidden_spec_keys:
+        if unit.lower() not in _UNITS:
             continue
         cls, factor = _UNITS[unit.lower()]
         for ask_cls, base, piece in asks:
@@ -728,12 +762,27 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
         .filter(chat_searchable_products())
         .one()
     )
-    out: list[Hit] = []
-    for (row, shown, value, piece), held in zip(wanted, counts):
-        if int(held) > 0:
+    held = {(row.spec_key, shown) for (row, shown, _v, _p), n in zip(wanted, counts) if int(n) > 0}
+    sizes: dict[str, Hit] = {}
+    holding: list[Hit] = []
+    named: list[Hit] = []
+    for row, shown, value, piece in wanted:
+        is_dim = row.spec_key in dims
+        if is_dim and shown not in sizes:
+            label = f"Size {shown}, any dimension ({SIZE_KEY}: {value:g})"
+            sizes[shown] = Hit(LookupRow("spec", f"{SIZE_KEY}={shown}", label, (label,)), _fold(piece), 1.0, 0.0)
+        if (row.spec_key, shown) in held or is_dim:
             label = f"{row.label} {shown} ({row.spec_key}: {value:g})"
-            out.append(Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0))
-    return sorted(out, key=lambda h: h.row.label)
+            hit = Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0)
+            (holding if (row.spec_key, shown) in held else named).append(hit)
+    by_label = lambda h: h.row.label  # noqa: E731
+    return [*sorted(sizes.values(), key=by_label), *sorted(holding, key=by_label), *sorted(named, key=by_label)]
+
+
+def with_numbers(numbers: list[Hit], spec: list[Hit]) -> list[Hit]:
+    """The Spec block: the number lines first, then the word lines at their own cap (a length's dimension lines
+    never push a word the message also said out of the block)."""
+    return [*numbers, *spec[: TOP_K["spec"]]]
 
 
 def brand_words(db: "Session", brands: list[dict] | None = None) -> frozenset[str]:
