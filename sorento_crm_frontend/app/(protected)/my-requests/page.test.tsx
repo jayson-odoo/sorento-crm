@@ -16,6 +16,8 @@ vi.mock('next/navigation', () => ({
 vi.mock('@/hooks/useAccountProfileForHeader', () => ({
   useAccountProfileForHeader: () => ({
     salesperson: { portalKinds: ['stock_inquiry'], portalSlug: 'MYSLUG1234' },
+    isLoading: false,
+    isError: false,
     avatarSrc: undefined,
     displayName: '',
     displayEmail: '',
@@ -67,6 +69,7 @@ describe('/my-requests landing without and with a portal token', () => {
 
   it('with a portal token: the embedded landing renders and nothing navigates', async () => {
     token.value = 'PORTAL-TOKEN';
+    window.localStorage.setItem('sorento.portalSlug', 'MYSLUG1234');
     render(<MyRequestsPage />);
     expect(await screen.findByTestId('landing')).toBeInTheDocument();
     expect(navigatedTo()).toEqual([]);
