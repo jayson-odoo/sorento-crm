@@ -22,6 +22,12 @@ import {
   createSalesTypeLabelResolver,
   exportPurchaseRequestOrSponsorshipRevisionToExcel,
 } from '@/app/(protected)/procurement-management/purchase-requests/lib/purchase-request-excel-export';
+import {
+  useComplaint,
+  useComplaintRevisions,
+} from '@/app/(protected)/complaint-management/complaints/hooks/useComplaints';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import { useMyRequestRevisions } from '@/hooks/useMyRequests';
 
 /**
  * The "Revisions" tab on an office detail page (UAC H2, round 6).
@@ -47,18 +53,44 @@ import {
  *
  * Purchase requests and sponsorship forms are ONE backend route
  * (`/purchase-requests/{id}/revisions`), so both map to the same hook.
+ *
+ * A complaint (PORTAL-P4-REQUESTS, owner Q6 a) has no revision exports; a salesperson
+ * limited to their own complaints reads the lineage through My Requests, the staff route
+ * being closed to them.
  */
 export type FormRevisionsKind =
   | 'stock_inquiry'
   | 'purchase_request'
-  | 'sponsorship_form';
+  | 'sponsorship_form'
+  | 'complaint';
 
 interface FormRevisionsTabProps {
   kind: FormRevisionsKind;
   entityId: string;
 }
 
-export default function FormRevisionsTab({ kind, entityId }: FormRevisionsTabProps) {
+export default function FormRevisionsTab(props: FormRevisionsTabProps) {
+  if (props.kind === 'complaint') return <ComplaintRevisionsTab entityId={props.entityId} />;
+  return <ProcurementRevisionsTab {...props} />;
+}
+
+function ComplaintRevisionsTab({ entityId }: { entityId: string }) {
+  const { limited } = useRequestScope('complaint');
+  const complaint = useComplaint(entityId);
+  const revisionNo = Number(complaint.data?.revision_no ?? 0);
+  const staffQuery = useComplaintRevisions(limited ? null : entityId, revisionNo);
+  const mineQuery = useMyRequestRevisions('complaint', limited ? entityId : null, revisionNo);
+  const query = limited ? mineQuery : staffQuery;
+  return (
+    <RevisionsSection
+      entries={query.data as FormRevisionEntry[] | undefined}
+      isLoading={query.isLoading}
+      isError={query.isError}
+    />
+  );
+}
+
+function ProcurementRevisionsTab({ kind, entityId }: FormRevisionsTabProps) {
   const isStockInquiry = kind === 'stock_inquiry';
   // Both hooks of each pair are called unconditionally (rules of hooks); the one
   // that does not serve this kind is disabled by a null id and never fires a

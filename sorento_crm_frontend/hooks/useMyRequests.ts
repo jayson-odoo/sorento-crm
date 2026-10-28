@@ -4,6 +4,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
   deleteDraftSubmission,
+  fetchRevisions,
   fetchSubmission,
   reviseSubmission,
   saveDraft,
@@ -23,6 +24,19 @@ export function useMyRequestSubmission(kind: MyRequestKind, id: string | null | 
   return useQuery({
     queryKey: [MY_REQUEST_KEY, kind, id],
     queryFn: () => fetchSubmission(kind, id as string),
+    enabled: Boolean(id),
+  });
+}
+
+/** Their own request's revision lineage, keyed on its revision counter like the staff reads. */
+export function useMyRequestRevisions(
+  kind: MyRequestKind,
+  id: string | null | undefined,
+  revisionNo?: number | null,
+) {
+  return useQuery({
+    queryKey: [MY_REQUEST_KEY, kind, id, 'revisions', revisionNo ?? 0],
+    queryFn: () => fetchRevisions(kind, id as string),
     enabled: Boolean(id),
   });
 }

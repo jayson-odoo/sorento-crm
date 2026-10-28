@@ -4,7 +4,7 @@ import { useState, useCallback } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { Check, Copy, Edit, Plus, Trash2, FileDown, Printer, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
+import { Check, Edit, Plus, Trash2, FileDown, Printer, Send, Link2, ExternalLink, CheckCircle, XCircle, RotateCcw, MessageSquare, ArrowUpCircle, Ban, UserRoundCog } from 'lucide-react';
 import { getFormSLATrackers, escalateFormTracking } from '@/app/(protected)/sla-management/_shared/formSLAService';
 import { SlaActiveTrackerControls } from '@/app/(protected)/sla-management/_shared/SlaActiveTrackerControls';
 import { SlaExtendMenuItem, SlaExtendDialog } from '@/app/(protected)/sla-management/_shared/SlaExtendAction';
@@ -69,8 +69,9 @@ import {
 } from '../services/stockInquiryService';
 import { toast } from '@/lib/toast';
 import { formatDate } from '@/lib/helpers';
-import { isAwaitingReview, SI_REVIEW_STAGE, submitVerb } from '@/lib/submission-status';
+import { isAwaitingReview, SI_REVIEW_STAGE } from '@/lib/submission-status';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import { MyRequestActions } from '@/components/common/MyRequestActions';
 import {
   useDeleteMyRequestDraft,
   useMyRequestSubmission,
@@ -1364,71 +1365,5 @@ export default function StockInquiryDetail({
 
       <AuditTrail entityType="stock_inquiry" entityId={inquiryId} title="Audit Trail" />
     </div>
-  );
-}
-
-/**
- * The portal's action set on their own request (owner Q2 a): Edit and Submit while it is a
- * draft or rejected, Delete while it is a draft, Revise when the server allows it, Duplicate
- * always. The submit label follows the shared rule (a rejected row is sent back).
- */
-function MyRequestActions({
-  status,
-  revisable,
-  busy,
-  onEdit,
-  onRevise,
-  onDuplicate,
-  onDelete,
-  onSubmit,
-}: {
-  status: string;
-  revisable: boolean;
-  busy: boolean;
-  onEdit: () => void;
-  onRevise: () => void;
-  onDuplicate: () => void;
-  onDelete: () => void;
-  onSubmit: () => void;
-}) {
-  const draft = status === 'draft';
-  const open = draft || status === 'rejected';
-  return (
-    <>
-      {open && (
-        <Button variant="outline" size="sm" onClick={onEdit} disabled={busy}>
-          <Edit className="size-4" />
-          Edit
-        </Button>
-      )}
-      {draft && (
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={onDelete}
-          disabled={busy}
-          className="text-destructive border-destructive/40 hover:bg-destructive/10"
-        >
-          <Trash2 className="size-4" />
-          Delete
-        </Button>
-      )}
-      {revisable && (
-        <Button variant="outline" size="sm" onClick={onRevise} disabled={busy}>
-          <RotateCcw className="size-4" />
-          Revise
-        </Button>
-      )}
-      <Button variant="outline" size="sm" onClick={onDuplicate} disabled={busy}>
-        <Copy className="size-4" />
-        Duplicate
-      </Button>
-      {open && (
-        <Button variant="primary" size="sm" onClick={onSubmit} disabled={busy}>
-          <Send className="size-4" />
-          {submitVerb(status)}
-        </Button>
-      )}
-    </>
   );
 }

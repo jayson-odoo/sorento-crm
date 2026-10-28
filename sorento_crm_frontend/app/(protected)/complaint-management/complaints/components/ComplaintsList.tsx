@@ -44,9 +44,28 @@ import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
+import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+
+const STATUS_OPTIONS = [
+  { value: 'new', label: 'New' },
+  { value: 'submitted', label: 'Submitted' },
+  { value: 'resubmitted', label: 'Resubmitted' },
+  { value: 'updated', label: 'Updated' },
+  { value: 'responded', label: 'Responded' },
+  { value: 'approved', label: 'Approved' },
+  { value: 'rejected', label: 'Rejected' },
+  { value: 'settled_on_site', label: 'Settled on site' },
+];
+/** A user limited to their own rows (PORTAL-P4-REQUESTS) also filters by their drafts. */
+const LIMITED_STATUS_OPTIONS = [{ value: 'draft', label: 'Draft' }, ...STATUS_OPTIONS];
 
 export default function ComplaintsList() {
   const router = useRouter();
+  // A salesperson sees only their own rows (the server narrows the list): Create needs
+  // `.add`, and there is no bulk Delete, row Delete or PDF (the portal's action set).
+  const { limited } = useRequestScope('complaint');
+  const canAdd = useHasPermission('complaint_management.complaints.add');
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
     pageSize: 50,
@@ -298,7 +317,6 @@ export default function ComplaintsList() {
           </span>
         ),
         size: 160,
-        enableSorting: false,
         meta: { headerTitle: 'Handled By', skeleton: <Skeleton className="h-4 w-24" /> },
       },
       {
@@ -342,7 +360,8 @@ export default function ComplaintsList() {
         size: 56,
         enableSorting: false,
         enableHiding: false,
-        cell: ({ row }) => (
+        cell: ({ row }) =>
+          limited ? null : (
           // The entity's own set, in the row's "..." (D15). Declared once in
           // `../actions`, so the record's gear renders the same items, in the same
           // order, behind the same delete gate.
@@ -354,13 +373,13 @@ export default function ComplaintsList() {
             })}
             ariaLabel="complaint"
           />
-        ),
+          ),
       },
     ],
     // The mutation OBJECT is new on every render, so depending on it would rebuild
     // every column each time and remount the open menu out from under a click.
     // `mutate` is stable; `isPending` is the only part that changes.
-    [exportPdfMutation.mutate, exportPdfMutation.isPending],
+    [exportPdfMutation.mutate, exportPdfMutation.isPending, limited],
   );
 
   const table = useReactTable({
@@ -384,7 +403,7 @@ export default function ComplaintsList() {
 
   // The one offer this listing makes, in both places it belongs: the
   // toolbar, and the empty state's next step (S5-06).
-  const listPrimaryAction = (
+  const listPrimaryAction = limited && !canAdd ? undefined : (
     <Button
       onClick={() =>
         router.push('/complaint-management/complaints/new')
@@ -457,16 +476,7 @@ export default function ComplaintsList() {
                     <SearchableMultiSelect
                       value={splitMulti(statusFilter)}
                       onChange={(v) => setStatusFilter(joinMulti(v))}
-                      options={[
-                        { value: 'new', label: 'New' },
-                        { value: 'submitted', label: 'Submitted' },
-                        { value: 'resubmitted', label: 'Resubmitted' },
-                        { value: 'updated', label: 'Updated' },
-                        { value: 'responded', label: 'Responded' },
-                        { value: 'approved', label: 'Approved' },
-                        { value: 'rejected', label: 'Rejected' },
-                        { value: 'settled_on_site', label: 'Settled on site' },
-                      ]}
+                      options={limited ? LIMITED_STATUS_OPTIONS : STATUS_OPTIONS}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
                       clearable
@@ -525,15 +535,19 @@ export default function ComplaintsList() {
             onRefresh={() => void refetch()}
             isRefreshing={isFetching && !isLoading}
             primaryAction={listPrimaryAction}
-            bulkActions={[
-              {
-                key: 'delete',
-                label: 'Delete',
-                icon: Trash2,
-                destructive: true,
-                onClick: () => setBulkDeleteDialogOpen(true),
-              },
-            ]}
+            bulkActions={
+              limited
+                ? []
+                : [
+                    {
+                      key: 'delete',
+                      label: 'Delete',
+                      icon: Trash2,
+                      destructive: true,
+                      onClick: () => setBulkDeleteDialogOpen(true),
+                    },
+                  ]
+            }
           />
         </CardHeader>
         <CardTable>

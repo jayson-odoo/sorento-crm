@@ -428,6 +428,7 @@ class ComplaintService:
         root_cause_ids: Optional[List[str]] = None,
         resolution_ids: Optional[List[str]] = None,
         customer_names: Optional[List[str]] = None,
+        viewer_user_id: Optional[str] = None,
     ):
         """Build the filtered + sorted complaints query shared by ``list_complaints``
         and ``neighbours`` so the two can never drift.
@@ -435,6 +436,11 @@ class ComplaintService:
         The ORDER BY always appends ``Complaint.id`` as a deterministic tie-breaker
         so ``row_number``/offset position and prev/next neighbours are unambiguous
         when the primary sort column has equal values.
+
+        Every grid column sorts (PORTAL-P4-REQUESTS P4-23), the derived ones by the same
+        rule that fills them: Handled By reads the latest open form-SLA tracker
+        (``_batch_latest_unresolved_sla_trackers``), Attachments the linked files, Print
+        Count the viewer's own downloads.
         """
         q = self.db.query(Complaint)
         # CONTACT-BRAND-SCOPE: only complaints with a product line the contact may see.
@@ -510,13 +516,84 @@ class ComplaintService:
             "salesperson": Complaint.salesperson,
             "assigned_to": Complaint.assigned_to,
             "status": Complaint.status,
+            "complaint_number": Complaint.complaint_number,
+            "complaint_type": Complaint.complaint_type,
+            "project_title": Complaint.project_title,
+            "revision_no": Complaint.revision_no,
         }
+        if sort_field == "handled_by_name":
+            sort_map[sort_field] = self._handled_by_name_sort()
+        elif sort_field == "attachments":
+            sort_map[sort_field] = self._attachment_count_sort()
+        elif sort_field == "print_count":
+            sort_map[sort_field] = self._print_count_sort(viewer_user_id)
         sort_column = sort_map.get(sort_field, Complaint.complaint_date)
         if sort_dir == "desc":
             q = q.order_by(sort_column.desc(), Complaint.id.asc())
         else:
             q = q.order_by(sort_column.asc(), Complaint.id.asc())
         return q
+
+    @staticmethod
+    def _handled_by_name_sort():
+        """Name (or email) of the handling-lock holder on the complaint's latest open
+        form-SLA tracker: the value the list's Handled By shows, as a sort key."""
+        from sqlalchemy import select
+        from app.models.user import User
+
+        latest = (
+            select(ConversationSLATracking.handled_by_id)
+            .where(
+                ConversationSLATracking.source_entity_type == "complaint",
+                ConversationSLATracking.source_entity_id == Complaint.id,
+                *open_tracker_scope(),
+            )
+            .order_by(ConversationSLATracking.initiated_at.desc())
+            .limit(1)
+            .correlate(Complaint)
+            .scalar_subquery()
+        )
+        return (
+            select(func.coalesce(User.name, User.email))
+            .where(User.id == latest)
+            .scalar_subquery()
+        )
+
+    @staticmethod
+    def _attachment_count_sort():
+        """How many files are linked to the complaint (the Attachments column)."""
+        from sqlalchemy import String, cast, select
+        from app.models.entity_attachment import EntityAttachmentLink
+
+        return (
+            select(func.count(EntityAttachmentLink.id))
+            .where(
+                EntityAttachmentLink.entity_type == "complaint",
+                EntityAttachmentLink.entity_id == cast(Complaint.id, String),
+            )
+            .correlate(Complaint)
+            .scalar_subquery()
+        )
+
+    @staticmethod
+    def _print_count_sort(viewer_user_id: Optional[str]):
+        """How many PDFs the viewer took of the complaint; 0 for everyone when there is
+        no viewer."""
+        from sqlalchemy import literal, select
+        from app.models.download import UserDownload
+
+        if not viewer_user_id:
+            return literal(0)
+        return (
+            select(func.count(UserDownload.id))
+            .where(
+                UserDownload.user_id == str(viewer_user_id),
+                UserDownload.source_entity_type == "complaint",
+                UserDownload.source_entity_id == Complaint.id,
+            )
+            .correlate(Complaint)
+            .scalar_subquery()
+        )
 
     # ------------------------------------------------------------------ #
     # Aggregation / analytics
@@ -745,6 +822,7 @@ class ComplaintService:
             root_cause_ids=root_cause_ids,
             resolution_ids=resolution_ids,
             customer_names=customer_names,
+            viewer_user_id=viewer_user_id,
         )
 
         from sqlalchemy.orm import joinedload

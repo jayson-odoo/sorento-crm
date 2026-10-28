@@ -57,6 +57,13 @@ import {
   useUploadComplaintResponseAttachments,
 } from '../hooks/useComplaints';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { useRequestScope } from '@/hooks/useRequestScope';
+import {
+  useDeleteMyRequestDraft,
+  useMyRequestSubmission,
+  useSubmitMyRequest,
+} from '@/hooks/useMyRequests';
+import { MyRequestActions } from '@/components/common/MyRequestActions';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -126,6 +133,16 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
   // require complaint edit on the backend - gate on the same permission or a
   // chat-only user is offered a button that 403s.
   const canEditComplaint = useHasPermission('complaint_management.complaints.edit');
+  // A salesperson limited to their own complaints (PORTAL-P4-REQUESTS, owner Q2 a) gets the
+  // portal's action set only, run through My Requests; the revision policy is the server's
+  // answer there. Every staff action below is hidden for them.
+  const { limited } = useRequestScope('complaint');
+  const { data: mine } = useMyRequestSubmission(
+    'complaint',
+    limited && isValidId ? complaintId : null,
+  );
+  const deleteMine = useDeleteMyRequestDraft('complaint');
+  const submitMine = useSubmitMyRequest('complaint');
   const reassignMutation = useReassignSLATracking();
   const [reassignOpen, setReassignOpen] = useState(false);
   const uploadResponseAttachmentsMutation = useUploadComplaintResponseAttachments();
@@ -342,7 +359,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     );
   }
 
-  const canUseRespondChat = !!complaint.respond_inbox_url;
+  // Chat records are a staff tool (the Respond.io inbox), never offered to a salesperson.
+  const canUseRespondChat = !limited && !!complaint.respond_inbox_url;
+  // Inline edits of the technical team's fields are staff-only; a salesperson reads them.
+  const staffCtasEnabled = !limited && businessCtasEnabled;
 
   return (
     <div className="space-y-6">
@@ -384,6 +404,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             ariaLabel: 'complaint',
           }}
           gear={
+            limited ? undefined : (
             <DetailActionsMenu ariaLabel="Complaint actions">
               {/* The download history is an action, so it lives in the gear with the
                   rest; the record card carries the pager, the gear and the one workflow
@@ -555,8 +576,25 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                   move it last by itself, after this record's own Void. */}
               {recordActionItems(sharedActions)}
             </DetailActionsMenu>
+            )
           }
           primary={
+            limited ? (
+              <MyRequestActions
+                status={complaint.status ?? ''}
+                revisable={mine?.revision?.allowed === true}
+                busy={deleteMine.isPending || submitMine.isPending}
+                onEdit={() => router.push(`/complaint-management/complaints/${complaintId}/edit`)}
+                onRevise={() =>
+                  router.push(`/complaint-management/complaints/${complaintId}/edit?revise=1`)
+                }
+                onDuplicate={() => router.push(`/complaint-management/complaints/new?from=${complaintId}`)}
+                onDelete={() =>
+                  deleteMine.mutate(complaintId, { onSuccess: () => router.push(backHref) })
+                }
+                onSubmit={() => submitMine.mutate({ id: complaintId })}
+              />
+            ) : (
             <>
             {/* Business CTAs hide (not disable) while the handling lock is held by
                 someone else / unclaimed - keeps the header uncluttered. When the
@@ -622,8 +660,10 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </Button>
             )}
             </>
+            )
           }
           dialogs={
+            limited ? undefined : (
             <>
               <EntityDownloadsButton
                 entityType="complaint"
@@ -634,24 +674,29 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               />
               {sharedDialogs}
             </>
+            )
           }
         />
       </div>
 
-      <HandlingLockBanner
-        state={handlingLock.state}
-        tracker={handlingLock.tracker}
-        onClaim={handlingLock.claim}
-        onTakeOver={handlingLock.takeOver}
-      />
+      {!limited && (
+        <HandlingLockBanner
+          state={handlingLock.state}
+          tracker={handlingLock.tracker}
+          onClaim={handlingLock.claim}
+          onTakeOver={handlingLock.takeOver}
+        />
+      )}
 
-      <FormActionBanner
-        view={formAction.view}
-        onCancel={formAction.cancel}
-        onExpire={formAction.refresh}
-        onDismissOutcome={formAction.refresh}
-        isCancelling={formAction.isMutating}
-      />
+      {!limited && (
+        <FormActionBanner
+          view={formAction.view}
+          onCancel={formAction.cancel}
+          onExpire={formAction.refresh}
+          onDismissOutcome={formAction.refresh}
+          isCancelling={formAction.isMutating}
+        />
+      )}
 
       {formAction.view.kind === 'undoable' && (
         <UndoActionDialog
@@ -1101,15 +1146,17 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
         onConfirm={(reason) => voidMutation.mutateAsync({ void_reason: reason })}
       />
 
-      <SlaActiveTrackerControls
-        activeTracker={activeTracker}
-        label={`Complaint${complaint.complaint_number ? ` · ${complaint.complaint_number}` : ''}`}
-        onExtended={() =>
-          void queryClient.invalidateQueries({
-            queryKey: ['form-sla-trackers', 'complaint', complaintId],
-          })
-        }
-      />
+      {!limited && (
+        <SlaActiveTrackerControls
+          activeTracker={activeTracker}
+          label={`Complaint${complaint.complaint_number ? ` · ${complaint.complaint_number}` : ''}`}
+          onExtended={() =>
+            void queryClient.invalidateQueries({
+              queryKey: ['form-sla-trackers', 'complaint', complaintId],
+            })
+          }
+        />
+      )}
 
 
       {/* Complaint Information */}
@@ -1245,12 +1292,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               </p>
             </div>
           )}
-          {complaint.respond_inbox_url && (
+          {canUseRespondChat && (
             <div>
               <p className="text-sm text-muted-foreground">Respond conversation</p>
               <div className="flex flex-col sm:flex-row sm:items-center gap-2 py-0.5">
                 <a
-                  href={complaint.respond_inbox_url}
+                  href={complaint.respond_inbox_url ?? undefined}
                   target="_blank"
                   rel="noopener noreferrer"
                   className="text-primary hover:underline text-sm break-all font-medium"
@@ -1289,7 +1336,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
                 the salesperson, so a separate Notify button is redundant. */}
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="min-w-0 text-sm text-muted-foreground">Root Cause</p>
-              {businessCtasEnabled && (
+              {staffCtasEnabled && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1307,7 +1354,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <div>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="min-w-0 text-sm text-muted-foreground">Resolution</p>
-              {businessCtasEnabled && (
+              {staffCtasEnabled && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1325,7 +1372,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
           <div>
             <div className="flex items-center justify-between gap-2">
               <p className="text-sm text-muted-foreground">Technical Team Response</p>
-              {businessCtasEnabled && responseWritable && (
+              {staffCtasEnabled && responseWritable && (
                 <Button
                   variant="ghost"
                   size="sm"
@@ -1375,6 +1422,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
       <ComplaintManualAttachmentsSection
         complaintId={complaintId}
         attachments={complaint.attachments ?? []}
+        readOnly={limited}
       />
 
       <AuditTrail entityType="complaint" entityId={complaintId} title="Audit Trail" />

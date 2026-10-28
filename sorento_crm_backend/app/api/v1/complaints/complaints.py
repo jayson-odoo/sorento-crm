@@ -584,6 +584,28 @@ async def get_complaint_fulfilment_orders(
         raise handle_internal_error(str(e))
 
 
+@router.get("/{complaint_id}/revisions")
+async def get_complaint_revisions(
+    complaint_id: str,
+    current_user: dict = Depends(require_permission_with_api_key("complaint_management.complaints.view")),
+    db: Session = Depends(get_db),
+):
+    """Revision lineage for the office Revisions tab: the same payload the portal history
+    reads, one service, one shape. Read-only. A salesperson limited to their own complaints
+    reads theirs through My Requests (``/api/v1/my-requests/submissions/complaint/{id}/revisions``).
+    """
+    try:
+        validate_uuid_path(complaint_id, resource="Complaint")
+        from app.services.portal_revision_service import PortalRevisionService
+
+        ComplaintService(db).get_complaint(complaint_id)  # 404 if missing
+        return {"items": PortalRevisionService(db).list_revisions("complaint", complaint_id)}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+
+
 @router.get("/{complaint_id}", response_model=ComplaintResponse)
 async def get_complaint(
     complaint_id: str,

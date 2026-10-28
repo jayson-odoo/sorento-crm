@@ -30,11 +30,14 @@ interface ComplaintManualAttachmentsSectionProps {
   complaintId: string;
   /** Attachments from complaint detail (complaint_attachments table). Pass complaint.attachments. */
   attachments?: ComplaintAttachment[];
+  /** No link / unlink: a salesperson reading their own request (PORTAL-P4-REQUESTS). */
+  readOnly?: boolean;
 }
 
 export default function ComplaintManualAttachmentsSection({
   complaintId,
   attachments: attachmentsFromComplaint = [],
+  readOnly = false,
 }: ComplaintManualAttachmentsSectionProps) {
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -179,18 +182,20 @@ export default function ComplaintManualAttachmentsSection({
                   Download
                 </a>
               </Button>
-              <Button
-                variant="destructive"
-                size="sm"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment });
-                }}
-                disabled={unlinkPending}
-              >
-                <Trash2 className="size-4" />
-                Unlink
-              </Button>
+              {!readOnly && (
+                <Button
+                  variant="destructive"
+                  size="sm"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setUnlinkTarget({ id: link.id, name: displayName, isResponseAttachment });
+                  }}
+                  disabled={unlinkPending}
+                >
+                  <Trash2 className="size-4" />
+                  Unlink
+                </Button>
+              )}
             </div>
           );
         },
@@ -199,7 +204,7 @@ export default function ComplaintManualAttachmentsSection({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [attachments, unlinkPending],
+    [attachments, unlinkPending, readOnly],
   );
 
   return (
@@ -212,10 +217,12 @@ export default function ComplaintManualAttachmentsSection({
           </span>
         }
         toolbar={
-          <Button onClick={() => setLinkDialogOpen(true)}>
-            <Link2 className="size-4" />
-            Link Attachment
-          </Button>
+          readOnly ? undefined : (
+            <Button onClick={() => setLinkDialogOpen(true)}>
+              <Link2 className="size-4" />
+              Link Attachment
+            </Button>
+          )
         }
         columns={columns}
         rows={attachments}

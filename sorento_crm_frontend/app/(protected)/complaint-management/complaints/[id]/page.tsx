@@ -5,7 +5,7 @@ import { PageHeader } from '@/components/common/PageHeader';
 import BackToList from '@/components/common/BackToList';
 import ComplaintDetail from '../components/ComplaintDetail';
 import ComplaintFulfilmentOrdersSection from '../components/ComplaintFulfilmentOrdersSection';
-import FormDetailWithSLATabs from '@/app/(protected)/sla-management/_shared/FormDetailWithSLATabs';
+import FormDetailTabsWithRevisions from '@/app/(protected)/sla-management/_shared/FormDetailTabsWithRevisions';
 import RecordEntityRegistrar from '@/components/common/RecordEntityRegistrar';
 
 export const metadata: Metadata = {
@@ -53,9 +53,10 @@ async function ComplaintDetailWrapper({
   }
 
   return (
-    <FormDetailWithSLATabs
+    <FormDetailTabsWithRevisions
       sourceEntityType="complaint"
       sourceEntityId={id}
+      revisionsKind="complaint"
       commentsKind="complaint"
       extraTabs={[
         {
@@ -68,6 +69,6 @@ async function ComplaintDetailWrapper({
     >
       <RecordEntityRegistrar entityType="complaint" id={id} />
       <ComplaintDetail complaintId={id} />
-    </FormDetailWithSLATabs>
+    </FormDetailTabsWithRevisions>
   );
 }
