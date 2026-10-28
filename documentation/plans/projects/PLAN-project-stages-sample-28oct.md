@@ -1,8 +1,10 @@
 # PLAN: project pipeline stages incl. Sample Submission, via the status graph
 
-Status: Build - owner answered the card 28 Oct ~19:45 (Q1 mirror Spec In -> form on click, Q2 strict, Q3 a,
-Q4 sponsorship form on click, Q5 no dials). Track: size M, NOT the small fix
-track (carries a migration). UAC: `project-stages-sample-acceptance-criteria.md`.
+Status: Review - PR #1961. Owner answered the card 28 Oct ~19:45 (Q1 mirror Spec In -> form on click, Q2 strict,
+Q3 a, Q4 sponsorship form on click, Q5 no dials). Built red-first (1e56059103 -> fixes 8a7a01f9c4..1b7d6bd26c,
+kill-proof posted); review round 1 NOT READY (sponsorship picker showed the placeholder) -> red 22191651d2 -> fix
+0e009d7513; reviewer + browser rerun on 0e009d7513. Track: size M, NOT the small fix track (carries a migration).
+UAC: `project-stages-sample-acceptance-criteria.md`.
 
 ## Owner ask (28 Oct, verbatim)
 
