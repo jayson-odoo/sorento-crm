@@ -1,0 +1,293 @@
+"""DIMENSION-ANY on prod's LIVE path (crew gate on 3747d171, 28 Oct 2026): parser text v188 = prod's v69 runs
+closed_lists=False, lookup_lists=True, so the candidate block and its size line never ran there.
+
+What the parser is offered on that path is the Spec block of the lookup lists (`lookup_lists.number_hits`), and
+it fills spec_key / spec_value from a line's "(key: value)" bracket. Owner rules, kept semantic (the parser
+decides; code offers lines off registry data and resolves what the parser picked):
+- a length is offered as "Size N mm, any dimension (size: N)", so a size with no dimension named can be emitted
+  as such, and grounds to every dimension (no dimension invented in the reply);
+- every dimension's own line is offered for a length no key holds, so a NAMED miss ("length 999mm") is said back
+  as named;
+- a unit the registry lists as an alias ("10 inch", "15cm") is offered in the key's own unit (254 mm, 150 mm).
+"""
+from __future__ import annotations
+
+import json
+import uuid
+
+import pytest
+
+import app.main  # noqa: F401  isort:skip
+from app.models.product_spec import ProductSpecRegistry
+from app.services.company_scope import DEFAULT_COMPANY_ID
+from tests.chatbot.conftest import session_factory  # noqa: F401
+from tests.chatbot.test_closed_lists_bare_size import WC, _ent, _seed, _spec
+from tests.chatbot.test_closed_lists_spec_over_held import _fetched, _message, _stock_ask
+from tests.chatbot.test_dimension_any import WCS, _aliases
+from tests.chatbot.test_engine import _envelope, seeded, stub_access  # noqa: F401
+
+SIZE_150 = "Size 150mm, any dimension (size: 150)"
+
+
+def _labels(session_factory, message: str) -> list[str]:
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head import lookup_lists
+
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    return [h.row.label for h in lookup_lists.number_hits(message, db)]
+
+
+# --- What the parser is offered -------------------------------------------------------------------------------
+
+
+def test_a_length_leads_with_the_any_dimension_size_line(session_factory, seeded):
+    _seed(session_factory, WCS)
+
+    labels = _labels(session_factory, "zzwc with 150mm got stock")
+
+    assert labels[0] == SIZE_150, labels
+    assert "Height 150mm (dim_height: 150)" in labels and "Trap outlet length 150mm (trap_length: 150)" in labels, labels
+
+
+def test_a_centimetre_size_is_offered_in_mm_off_the_registry_alias(session_factory, seeded):
+    _seed(session_factory, WCS)
+    _aliases(session_factory)
+
+    assert _labels(session_factory, "zzwc with 15cm got stock")[0] == SIZE_150
+
+
+def test_an_inch_size_is_offered_in_mm_off_the_registry_alias_even_when_no_key_holds_it(session_factory, seeded):
+    _seed(session_factory, WCS)
+    _aliases(session_factory)
+
+    labels = _labels(session_factory, "kitchen sink 10 inch")
+
+    assert labels[0] == "Size 254mm, any dimension (size: 254)", labels
+    assert "Length 254mm (dim_length: 254)" in labels, labels
+
+
+def test_a_length_no_key_holds_offers_every_dimension_so_a_named_miss_is_nameable(session_factory, seeded):
+    _seed(session_factory, WCS)
+
+    labels = _labels(session_factory, "zzwc with length 999mm got stock")
+
+    assert labels[0] == "Size 999mm, any dimension (size: 999)", labels
+    assert {"Length 999mm (dim_length: 999)", "Width 999mm (dim_width: 999)", "Height 999mm (dim_height: 999)"} <= set(labels), labels
+
+
+def test_a_unit_with_no_registry_alias_is_no_size(session_factory, seeded):
+    """The unit words beyond mm / cm / m are registry data: with no alias on file, "10 inch" offers nothing."""
+    _seed(session_factory, WCS)
+    _aliases(session_factory, {})
+
+    assert _labels(session_factory, "kitchen sink 10 inch") == []
+
+
+def test_guard_a_litre_quantity_keeps_its_held_key_lines_only(session_factory, seeded):
+    db = session_factory()
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key="zz_capacity", label="Capacity", data_type="numeric", unit="L",
+        synonyms={"_self": ["capacity"]}, applies_when={},
+    ))
+    db.commit()
+    _seed(session_factory, (("ZZDL-B", WC, {"zz_capacity": 12}),))
+
+    labels = _labels(session_factory, "bin 12l")
+
+    assert labels == ["Capacity 12L (zz_capacity: 12)"], labels
+
+
+# --- The parser's pick, through the live engine path ------------------------------------------------------------
+
+
+def _live(session_factory, stub_access, monkeypatch, text: str, *entities: dict):
+    """One turn with prod's flags: closed_lists off, lookup_lists on. The parser is stubbed to the given pick."""
+    from app.services.ai_assistant_service import MCPRuntimeClient
+    from app.services.chatbot import engine as engine_mod
+    from app.services.chatbot.head import lookup_lists
+    from app.services.chatbot.head import parser as parser_mod
+    from tests.chatbot.test_closed_lists_hidden_keys_entries import real_hidden_spec_keys
+
+    def config(db, *, current_date, override_version_id=None):
+        return parser_mod.ParserConfig(
+            system_prompt="stub", prompt_version=1, provider="openai", model="m", api_key="k",
+            closed_lists=False, lookup_lists=True,
+        )
+
+    seen: list[str] = []
+    monkeypatch.setattr(lookup_lists, "EMBED", None, raising=False)
+    monkeypatch.setattr(parser_mod, "resolve_config", config)
+    monkeypatch.setattr(parser_mod, "parse", lambda c, block: seen.append(str(block)) or _stock_ask(*entities))
+    monkeypatch.setattr(engine_mod, "_contact_company_scope", lambda f, c: frozenset({DEFAULT_COMPANY_ID}))
+    calls: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        MCPRuntimeClient, "call_tool", lambda self, name, args: calls.append((name, args)) or json.dumps({"ok": True, "items": []})
+    )
+    stub_access(hidden_spec_keys=real_hidden_spec_keys(session_factory))
+    r = engine_mod.run_turn(_envelope(message=_message(text, 0)), session_factory=session_factory)
+    return r, calls, seen[-1] if seen else ""
+
+
+def _text(r) -> str:
+    return ((r.reply or {}).get("text") or "")
+
+
+def test_live_the_size_line_reaches_the_parser(session_factory, seeded, stub_access, monkeypatch):
+    _seed(session_factory, WCS)
+
+    _r, _calls, block = _live(session_factory, stub_access, monkeypatch, "zzwc with 150mm got stock", _ent("zzwc", "category"))
+
+    assert f"- {SIZE_150}" in block.splitlines(), block
+
+
+def test_live_a_size_pick_matches_every_dimension(session_factory, seeded, stub_access, monkeypatch):
+    ids = _seed(session_factory, WCS)
+
+    r, calls, _b = _live(
+        session_factory, stub_access, monkeypatch, "zzwc with 150mm got stock", _ent("zzwc", "category"), _spec("150mm", "size", 150),
+    )
+
+    assert _fetched(calls) == sorted([ids["ZZDA-H"], ids["ZZDA-T"]]), (_text(r), calls)
+
+
+def test_live_an_inch_size_pick_is_its_mm_value_and_a_miss_names_it(session_factory, seeded, stub_access, monkeypatch):
+    _seed(session_factory, WCS)
+    _aliases(session_factory)
+
+    r, calls, _b = _live(
+        session_factory, stub_access, monkeypatch, "zzwc 10 inch got stock", _ent("zzwc", "category"), _spec("10 inch", "size", 254),
+    )
+
+    assert _fetched(calls) == [], (_text(r), calls)
+    assert "254 mm" in _text(r), _text(r)
+
+
+def test_live_a_named_length_miss_is_said_with_its_dimension(session_factory, seeded, stub_access, monkeypatch):
+    _seed(session_factory, WCS)
+
+    r, calls, _b = _live(
+        session_factory, stub_access, monkeypatch, "zzwc with length 999mm got stock",
+        _ent("zzwc", "category"), _spec("length 999mm", "dim_length", 999),
+    )
+
+    assert _fetched(calls) == [], (_text(r), calls)
+    assert "length 999 mm" in _text(r).lower(), _text(r)
+
+
+def test_a_named_dimension_nothing_holds_is_still_offered_beside_the_holders(session_factory, seeded):
+    """Rule 2 on the live path: "length 150mm" where only height and trap hold 150 still offers Length 150, so the
+    parser names length and the set falls back to any dimension under its "None with length 150 mm" line."""
+    _seed(session_factory, WCS)
+
+    labels = _labels(session_factory, "zzwc with length 150mm got stock")
+
+    assert labels[:3] == [SIZE_150, "Height 150mm (dim_height: 150)", "Trap outlet length 150mm (trap_length: 150)"], labels
+    assert "Length 150mm (dim_length: 150)" in labels[3:], labels
+
+
+def test_live_a_named_length_nothing_holds_falls_back_with_its_line(session_factory, seeded, stub_access, monkeypatch):
+    ids = _seed(session_factory, WCS)
+
+    r, calls, _b = _live(
+        session_factory, stub_access, monkeypatch, "zzwc with length 150mm got stock",
+        _ent("zzwc", "category"), _spec("length 150mm", "dim_length", 150),
+    )
+
+    assert _fetched(calls) == sorted([ids["ZZDA-H"], ids["ZZDA-T"]]), (_text(r), calls)
+
+
+def test_guard_in_stock_is_never_offered_as_a_size_with_the_shipped_aliases(session_factory, seeded):
+    """Reviewer round 5: "any 5 in stock" / "got 10 in stock?" are stock asks; the migration's aliases hold no bare
+    "in", so no length is offered for them."""
+    _seed(session_factory, WCS)
+    _aliases(session_factory)
+
+    assert _labels(session_factory, "any 5 in stock") == []
+    assert _labels(session_factory, "got 10 in stock?") == []
+
+
+def test_a_large_length_is_written_without_an_exponent(session_factory, seeded):
+    _seed(session_factory, WCS)
+
+    labels = _labels(session_factory, "hose 1000m")
+
+    assert labels[0] == "Size 1000000mm, any dimension (size: 1000000)", labels
+    assert not any("e+" in label for label in labels), labels
+
+
+# --- Crew gate round 2 (dealer "hose 2m", turn c77de616): the parser was shown 10 dimension lines for "2m" ----------
+
+HOSE = "ZZHose"
+
+
+def _hose_world(session_factory) -> dict[str, str]:
+    """WCs carrying every dimension, and hoses that carry only a hose length (2000 mm on one)."""
+    ids = _seed(session_factory, (*WCS, ("ZZHS-2", HOSE, {"hose_length": 2000}), ("ZZHS-1", HOSE, {"hose_length": 1500})))
+    db = session_factory()
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key="hose_length", label="Hose length", data_type="numeric", unit="mm",
+        synonyms={"_self": ["hose"]}, applies_when={},
+    ))
+    db.commit()
+    return ids
+
+
+def _number_lines(block: str) -> list[str]:
+    """The Spec block's number lines: a length in mm, ending in a numeric "(key: N)" bracket."""
+    import re
+
+    return [ln[2:] for ln in block.splitlines() if re.fullmatch(r"- .* [\d.]+mm,? .*\(\w+: [\d.]+\)", ln)]
+
+
+def test_live_a_hose_length_offers_only_the_dimensions_hoses_carry(session_factory, seeded, stub_access, monkeypatch):
+    _hose_world(session_factory)
+
+    _r, _c, block = _live(session_factory, stub_access, monkeypatch, "zzhose 2m", _ent("zzhose", "category"))
+
+    assert _number_lines(block) == ["Size 2000mm, any dimension (size: 2000)", "Hose length 2000mm (hose_length: 2000)"], block
+
+
+def test_live_a_named_dimension_the_category_carries_is_still_offered(session_factory, seeded, stub_access, monkeypatch):
+    """The WC category's products carry length, so "length 150mm" for it keeps its Length line (rule 2), while a
+    dimension no WC carries (hose length) is not offered."""
+    _hose_world(session_factory)
+
+    _r, _c, block = _live(
+        session_factory, stub_access, monkeypatch, f"{WC.lower()} length 150mm", _ent(WC.lower(), "category"),
+    )
+
+    lines = _number_lines(block)
+    assert lines[0] == SIZE_150 and "Length 150mm (dim_length: 150)" in lines, block
+    assert not any(ln.startswith("Hose length") for ln in lines), block
+
+
+def test_live_no_category_named_keeps_every_dimension_nameable(session_factory, seeded, stub_access, monkeypatch):
+    _hose_world(session_factory)
+
+    _r, _c, block = _live(session_factory, stub_access, monkeypatch, "length 999mm got stock")
+
+    lines = _number_lines(block)
+    assert lines[0] == "Size 999mm, any dimension (size: 999)" and "Length 999mm (dim_length: 999)" in lines, block
+    assert "Hose length 999mm (hose_length: 999)" in lines, block
+
+
+def test_a_product_type_row_named_by_its_display_label_carries_its_dimensions(session_factory, seeded):
+    """Reviewer round 6: a "type:" Category row is keyed by the product type's display label
+    (`turn_runtime.product_type_names`), so a stored value whose label differs in words ("zzcc" shown as
+    "ZZ Snug Pair") must still map to that row, or every unheld dimension beside it is dropped."""
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head import lookup_lists
+
+    _seed(session_factory, (("ZZPT-1", WC, {"product_type": "zzcc", "dim_length": 650}),))
+    db = session_factory()
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key="product_type", label="Product type", data_type="enum",
+        allowed_values=["zzcc"], value_labels={"zzcc": "ZZ Snug Pair"}, synonyms={},
+    ))
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+    carried = lookup_lists._carried_by(db, ["dim_length"])
+
+    assert "type:zz snug pair" in carried["dim_length"], carried

@@ -1960,7 +1960,9 @@ def _unknown_value_members(
     """The described set without its unknown value, for the miss reply's phrase (its
     description and class). SET-STOCK-RENDER (owner, 16 Oct 2026): never broken down.
     None when the rest of the ask describes no set."""
-    from app.services.product_predicate_service import resolve_product_set
+    # `_resolve_set`, the strict count: these members back an unknown value's miss, which carries
+    # no dimension fallback line, so a named dimension is never widened here (DIMENSION-ANY).
+    from app.services.product_predicate_service import _resolve_set as resolve_product_set
     from app.services.product_spec_understanding import derive_search_inputs
 
     key = next((u.get("key") for u in unknown if u.get("key")), None)
@@ -3826,6 +3828,9 @@ def resolve_reference_post(
             result["predicate"]["row_labels"] = outcome["row_labels"]
         if outcome.get("other_brands"):
             result["predicate"]["other_brands"] = outcome["other_brands"]
+        # DIMENSION-ANY: a named dimension nothing held, answered under any dimension.
+        if outcome.get("dimension_fallback"):
+            result["predicate"]["dimension_fallback"] = outcome["dimension_fallback"]
         # R4 (round 4): what a zero set looked for and the count in its other values.
         if outcome.get("near_miss"):
             result["predicate"]["near_miss"] = outcome["near_miss"]
