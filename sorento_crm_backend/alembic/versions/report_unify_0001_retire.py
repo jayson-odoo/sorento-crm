@@ -12,7 +12,7 @@ MCP tools and the analytics connector keep them.
 unmoved and no republish follows from this migration.
 
 Revision ID: report_unify_0001_retire
-Revises: gemprice_0001_gemini_prices
+Revises: stg_0001_project_ladder_edges
 """
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ import sqlalchemy as sa
 from alembic import op
 
 revision = "report_unify_0001_retire"
-down_revision = "gemprice_0001_gemini_prices"
+down_revision = "stg_0001_project_ladder_edges"
 branch_labels = None
 depends_on = None
 
