@@ -192,9 +192,10 @@ def test_my_request_delete_price_tag_request_parks_commits_cancels_and_refuses(w
     assert portal.status_code >= 400
     assert _known(_park(w.client, h, DEL, pt.KIND, foreign)).status_code == portal.status_code
     assert exists(foreign)
-    viewer = s.make_user(w.sc.db, perms=[pt.PT_VIEW, pt.PT_VIEW_OWN, pt.PT_CREATE], contact=rep.contact, name="ZZT PT Staff")
-    mine = pt.create(rep.portal, w)["id"]
-    assert _known(_park(w.client, viewer.headers, DEL, pt.KIND, mine)).status_code == 403
+    # a `.view` holder with their own contact (users.respond_contact_id is unique) owning a draft
+    viewer = w.person("PT Staff", perms=[pt.PT_VIEW, pt.PT_VIEW_OWN, pt.PT_CREATE])
+    mine = pt.create(viewer.portal, w)["id"]
+    assert _known(_park(w.client, viewer.actor.headers, DEL, pt.KIND, mine)).status_code == 403
     assert exists(mine)
 
 

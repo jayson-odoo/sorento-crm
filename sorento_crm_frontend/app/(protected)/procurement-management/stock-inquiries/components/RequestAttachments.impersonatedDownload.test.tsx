@@ -73,7 +73,7 @@ function mount(el: React.ReactElement) {
 beforeEach(() => {
   cleanup();
   vi.clearAllMocks();
-  h.apiFetch.mockImplementation(async () => new Response(new Blob(['%PDF']), { status: 200 }));
+  h.apiFetch.mockImplementation(async () => new Response('%PDF', { status: 200 }));
 });
 
 describe.each(CASES)('%s own-request Download (%s)', (_kind, _name, build) => {

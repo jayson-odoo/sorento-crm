@@ -22,6 +22,20 @@ vi.mock('@/lib/listing-column-preferences/useListingColumnPreferences', () => ({
 }));
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn() } }));
 
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { name: 'Sam Sales' } }, status: 'authenticated' }),
+}));
+vi.mock('@/components/common/deferredToast', () => ({
+  deferredToast: vi.fn(() => 'toast-1'),
+  dismissDeferredToast: vi.fn(),
+}));
+const pending = vi.hoisted(() => ({
+  createPendingAction: vi.fn(),
+  cancelPendingAction: vi.fn(),
+  getCurrentPendingAction: vi.fn(),
+}));
+vi.mock('@/services/pendingActionService', () => pending);
+
 const noopMutation = { mutate: vi.fn(), mutateAsync: vi.fn(), isPending: false };
 vi.mock('../hooks/useStockInquiries', () => ({
   useDeleteStockInquiryAttachment: () => noopMutation,
@@ -65,6 +79,16 @@ beforeEach(() => {
   vi.clearAllMocks();
   svc.uploadAttachment.mockResolvedValue({ link_id: 'l-new', attachment_id: 'a-new', filename: 'new.pdf', size: 3, url: 'u', content_type: 'application/pdf' });
   svc.deleteAttachment.mockResolvedValue(undefined);
+  pending.getCurrentPendingAction.mockResolvedValue({ pending: null, last_outcome: null });
+  pending.cancelPendingAction.mockResolvedValue(undefined);
+  pending.createPendingAction.mockResolvedValue({
+    id: 'pa-1',
+    action_key: 'my_request_attachment.unlink',
+    entity_type: 'my_request_attachment',
+    entity_id: 'link-own',
+    commit_at: new Date(Date.now() + 5_000).toISOString().replace(/\.\d+Z$/, ''),
+    window_seconds: 5,
+  });
 });
 
 describe('StockInquiryAttachmentsSection, salesperson (requestKind="stock_inquiry")', () => {
@@ -77,13 +101,25 @@ describe('StockInquiryAttachmentsSection, salesperson (requestKind="stock_inquir
     await waitFor(() => expect(svc.uploadAttachment).toHaveBeenCalledWith('stock_inquiry', 'si-1', file));
   });
 
-  it('own file shows a delete action that calls my-requests DELETE with the link id', async () => {
+  it('own file shows a delete action that parks a deferred my_request_attachment.unlink with a countdown and Cancel', async () => {
     mount({ requestKind: 'stock_inquiry' });
     const row = screen.getByText('my-photo.pdf').closest('tr') as HTMLElement;
     fireEvent.click(within(row).getByRole('button', { name: /delete|remove/i }));
-    const dialog = screen.queryByRole('alertdialog');
-    if (dialog) fireEvent.click(within(dialog).getByRole('button', { name: /delete|remove|confirm/i }));
-    await waitFor(() => expect(svc.deleteAttachment).toHaveBeenCalledWith('link-own'));
+    await waitFor(() =>
+      expect(pending.createPendingAction).toHaveBeenCalledWith(
+        expect.objectContaining({
+          actionKey: 'my_request_attachment.unlink',
+          entityType: 'my_request_attachment',
+          entityId: 'link-own',
+        }),
+      ),
+    );
+    expect(await screen.findByRole('timer')).toBeTruthy();
+    fireEvent.keyDown(document.body, { key: 'Escape' });
+    expect(pending.cancelPendingAction).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: /cancel/i }));
+    await waitFor(() => expect(pending.cancelPendingAction).toHaveBeenCalledWith('pa-1'));
+    expect(svc.deleteAttachment).not.toHaveBeenCalled();
   });
 
   it('a staff-uploaded file shows no delete or unlink for them', () => {

@@ -40,6 +40,7 @@ vi.mock('@/hooks/usePermissions', () => ({
 }));
 
 import FormDetailTabsWithRevisions from './FormDetailTabsWithRevisions';
+import SampleRequestDetailTabs from '@/app/(protected)/project-sales/sample-requests/components/SampleRequestDetailTabs';
 import ComplaintDetailPage from '@/app/(protected)/complaint-management/complaints/[id]/page';
 
 const KINDS: Array<[string, string, string]> = [
@@ -113,5 +114,27 @@ describe('complaint page', () => {
     held = new Set(['complaint_management.complaints.view', 'complaint_management.complaints.view_own']);
     await mountPage();
     await waitFor(() => expect(tabs()).toContain('Fulfilment DOs'));
+  });
+});
+
+describe('sample request detail tabs', () => {
+  const mount = () =>
+    wrap(
+      <SampleRequestDetailTabs id="sr-1">
+        <div>Details content</div>
+      </SampleRequestDetailTabs>,
+    );
+
+  it('limited user (view_own, no view): no SLA Tracking tab', () => {
+    held = new Set(['projects.sample_requests.view_own']);
+    mount();
+    expect(tabs()).toContain('Details');
+    expect(tabs()).not.toContain('SLA Tracking');
+  });
+
+  it('staff (view): SLA Tracking tab stays', () => {
+    held = new Set(['projects.sample_requests.view', 'projects.sample_requests.view_own']);
+    mount();
+    expect(tabs()).toContain('SLA Tracking');
   });
 });

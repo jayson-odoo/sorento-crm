@@ -95,7 +95,7 @@ describe('MyRequestActions: Delete draft is a deferred my_request.delete', () =>
     expect(await screen.findByRole('timer')).toBeTruthy();
     expect(screen.getByRole('button', { name: /cancel/i })).toBeTruthy();
     expect(mine.deleteDraftSubmission).not.toHaveBeenCalled();
-    expect((props as { onDelete: () => void }).onDelete).not.toHaveBeenCalled();
+    expect((props as unknown as { onDelete: () => void }).onDelete).not.toHaveBeenCalled();
   });
 
   it('Cancel withdraws the parked action; Escape does not', async () => {
