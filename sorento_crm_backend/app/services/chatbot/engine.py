@@ -87,6 +87,7 @@ from app.services.chatbot.composers import sets as composers_sets
 from app.services.chatbot.turn import pending as turn_pending
 from app.services.chatbot.turn import chat_state
 from app.services.chatbot.turn import question as turn_question
+from app.services.chatbot.turn import no_business as turn_no_business
 from app.services.chatbot.turn import sub_asks as turn_sub_asks
 from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
@@ -5338,6 +5339,15 @@ def _run_stages_body(  # noqa: PLR0915
             positions_read_elsewhere=_positions_read_elsewhere(state_in),
             focus_has_product=bool(_focus_products(state_in)),
         )
+        # GREETING-NOT-STOCK: a greeting, thanks, ok or emoji with nothing on the table is
+        # never a business ask, whatever the remembered context led the parser to read into it.
+        verdict, context_ask_dropped = turn_no_business.without_context_ask(
+            verdict,
+            text=user_turn.own_text,
+            quoted=bool(user_turn.quoted_text.strip()),
+            media=bool(user_turn.media),
+            open_question=open_question,
+        )
     except parser.ParserError as exc:
         # R5 / H44: no soft default and no default routing. A failed understanding is a
         # failed turn with today's error reply.
@@ -5473,6 +5483,24 @@ def _run_stages_body(  # noqa: PLR0915
         turn_trace.add(
             "closed_lists_index",
             {"words": candidates_mod._tokens(user_turn.own_text), "matches": index_matches, "failed": bool(index_failed)},
+        )
+    if context_ask_dropped:
+        turn_trace.add(
+            "context_ask_dropped",
+            {
+                "message_type": parser_raw.get("message_type"),
+                "domain_hint": parser_raw.get("domain_hint"),
+                "intent_hint": parser_raw.get("intent_hint"),
+                "entities": [
+                    e.get("canonical_code") or e.get("raw")
+                    for e in (parser_raw.get("entities") or [])
+                    if isinstance(e, dict)
+                ],
+                "why": (
+                    "The message carries no business content and no question was open, so the "
+                    "ask the parser read into it from context was dropped and it is answered as a greeting."
+                ),
+            },
         )
     if phantom_answer:
         raw_positions = parser_raw.get("reference_positions")
