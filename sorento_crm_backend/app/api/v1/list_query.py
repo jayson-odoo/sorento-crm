@@ -6,6 +6,8 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.models.base import get_company_scope
+from app.services.company_scope import build_company_predicate
 from app.dependencies import get_current_user
 from app.models.list_query_metadata import ListQueryField
 from app.models.user import UserListColumnConfig, UserPermission
@@ -64,6 +66,95 @@ def _infer_filter_ui_type(f: ListQueryField) -> str:
     if dtype in ("boolean",):
         return "select"
     return "text"
+
+
+def _code_with_name_sql(code, name):
+    """SQL twin of `app.utils.product_display.code_with_name`: "CODE - Name", or just "CODE" when the name is
+    blank or equals the code (ignoring case and whitespace runs)."""
+    from sqlalchemy import case, func
+
+    def norm(col):
+        return func.lower(func.regexp_replace(func.trim(func.coalesce(col, "")), r"\s+", " ", "g"))
+
+    return case(
+        (norm(name) == "", func.coalesce(code, "")),
+        (norm(name) == norm(code), func.coalesce(code, "")),
+        else_=func.concat(func.coalesce(code, ""), " - ", name),
+    )
+
+
+def _option_specs() -> Dict[tuple, Dict[str, Any]]:
+    """Which fields offer a pick list, and how a value is labelled (FILTER-MULTISELECT PR7).
+
+    Keyed by (resource, field_key). `base` is the resource's own list base predicate, `value` and `label`
+    the SQL expressions, `joins` the (target, onclause) pairs the label needs. A field absent here has no
+    options and keeps the text box. Every statement runs through the caller's session, so the company
+    scope applies to the owned tables exactly as it does on the list.
+    """
+    from sqlalchemy import String, cast, func
+    from app.models.country import Country
+    from app.models.inventory import Warehouse
+    from app.models.order import Customer, Order, OrderLine, OrderStatus
+    from app.models.procurement import Supplier
+    from app.models.product import Brand, Product, ProductCategory, UnitOfMeasure
+    from app.models.workflow_forms import WorkflowFormDefinition, WorkflowSubmission
+
+    def own(model, column, base=()):
+        return {"root": model, "value": column, "label": column, "joins": [], "base": list(base)}
+
+    order_base = [Order.deleted_at.is_(None)]
+    return {
+        ("orders", "order_status_id"): {
+            "root": Order, "value": Order.order_status_id, "label": OrderStatus.status_name,
+            "joins": [(OrderStatus, OrderStatus.id == Order.order_status_id)], "base": order_base,
+        },
+        ("orders", "customer_id"): {
+            "root": Order, "value": Order.customer_id, "label": Customer.customer_name,
+            "joins": [(Customer, Customer.id == Order.customer_id)], "base": order_base,
+        },
+        ("orders", "order_type"): own(Order, Order.order_type, order_base),
+        ("orders", "agent"): own(Order, Order.agent, order_base),
+        ("orders", "line_product_id"): {
+            "root": OrderLine, "value": OrderLine.product_id,
+            "label": _code_with_name_sql(Product.product_code, Product.product_name),
+            "joins": [(Order, Order.id == OrderLine.order_id), (Product, Product.id == OrderLine.product_id)],
+            "base": order_base,
+        },
+        ("orders", "line_warehouse_id"): {
+            "root": OrderLine, "value": OrderLine.warehouse_id, "label": Warehouse.warehouse_name,
+            "joins": [(Order, Order.id == OrderLine.order_id), (Warehouse, Warehouse.id == OrderLine.warehouse_id)],
+            "base": order_base,
+        },
+        ("products", "category_id"): {
+            "root": Product, "value": Product.category_id, "label": ProductCategory.category_name,
+            "joins": [(ProductCategory, ProductCategory.id == Product.category_id)], "base": [],
+        },
+        ("products", "brand_id"): {
+            "root": Product, "value": Product.brand_id, "label": Brand.brand_name,
+            "joins": [(Brand, Brand.id == Product.brand_id)], "base": [],
+        },
+        ("products", "base_uom_id"): {
+            "root": Product, "value": Product.base_uom_id, "label": UnitOfMeasure.uom_name,
+            "joins": [(UnitOfMeasure, UnitOfMeasure.id == Product.base_uom_id)], "base": [],
+        },
+        ("products", "item_type"): {
+            "root": Product, "value": cast(Product.item_type, String), "label": cast(Product.item_type, String),
+            "joins": [], "base": [],
+        },
+        # The country filter compiles on the country's NAME, so the name is the value.
+        ("suppliers", "country"): {
+            "root": Supplier, "value": Country.name, "label": Country.name,
+            "joins": [(Country, Country.id == Supplier.country_id)], "base": [],
+        },
+        ("workflow_form_submissions", "definition_id"): {
+            "root": WorkflowSubmission, "value": WorkflowSubmission.definition_id, "label": WorkflowFormDefinition.name,
+            "joins": [(WorkflowFormDefinition, WorkflowFormDefinition.id == WorkflowSubmission.definition_id)],
+            "base": [],
+        },
+        ("workflow_form_submissions", "current_state_code"): own(
+            WorkflowSubmission, WorkflowSubmission.current_state_code
+        ),
+    }
 
 
 def _can_view(db: Session, user_id: str, resource_key: str) -> bool:
@@ -148,6 +239,7 @@ def list_fields(
     if not fields and not svc.get_resource(resource_key):
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown resource")
     out: list[ListQueryFieldResponse] = []
+    option_specs = _option_specs()
     for f in fields:
         base = ListQueryFieldResponse.model_validate(f)
         sec, sub = (None, None)
@@ -159,7 +251,9 @@ def list_fields(
                     "export_section": sec,
                     "export_subgroup": sub,
                     "filter_ui_type": _infer_filter_ui_type(f),
-                    "option_source": None,
+                    "option_source": (
+                        {"kind": "distinct"} if (resource_key, f.field_key) in option_specs else None
+                    ),
                     "relation_resource_key": None,
                     "relation_label_field": None,
                     "is_generated": True,
@@ -195,6 +289,67 @@ def list_fields(
                     )
                 )
     return out
+
+
+@router.get("/{resource_key}/fields/{field_key}/options")
+def field_options(
+    resource_key: str,
+    field_key: str,
+    query: Optional[str] = Query(None, max_length=200),
+    page: int = Query(1, ge=1),
+    limit: int = Query(50, ge=1, le=200),
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """The DISTINCT values of one filterable field over the resource's own scoped rows, for the dialog's
+    pick lists. Reads through the caller's session, so a value from a row the list would not show never
+    comes back; the view permission is the list's own."""
+    from sqlalchemy import func
+
+    # 403 first, as `list_fields` does: an unknown resource and a forbidden one look alike to a caller
+    # with no view right (`_can_view` is False for a resource with no adapter).
+    if not _can_view(db, current_user["id"], resource_key):
+        known = get_adapter(resource_key) is not None
+        # An unknown resource is a 404 only for a caller who may view some list at all; for anyone else it
+        # is the same 403 a real resource gives, so the answer never maps which resources exist.
+        if known or not any(
+            _can_view(db, current_user["id"], str(getattr(r, "resource_key", "") or ""))
+            for r in ListQueryMetadataService(db).list_resources()
+        ):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Permission denied")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Unknown resource")
+    spec = _option_specs().get((resource_key, field_key))
+    meta = ListQueryMetadataService(db)
+    if spec is None or field_key not in meta.fields_by_key(resource_key):
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="This field has no options")
+    try:
+        q = db.query(spec["value"].label("value"), spec["label"].label("label")).select_from(spec["root"])
+        for target, on in spec["joins"]:
+            q = q.join(target, on)
+        for clause in spec["base"]:
+            q = q.filter(clause)
+        # The session's scope listener only scopes classes named in the selected columns, so the ROOT
+        # resource's own company predicate is applied here, exactly as the list's rows are scoped.
+        if hasattr(spec["root"], "company_id"):
+            root_scope = build_company_predicate(spec["root"], get_company_scope(db))
+            if root_scope is not None:
+                q = q.filter(root_scope)
+        q = q.filter(spec["value"].isnot(None), spec["label"].isnot(None))
+        needle = (query or "").strip()
+        if needle:
+            literal = needle.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            q = q.filter(spec["label"].ilike(f"%{literal}%", escape="\\"))
+        grouped = q.group_by(spec["value"], spec["label"])
+        total = grouped.order_by(None).count()
+        rows = grouped.order_by(spec["label"]).offset((page - 1) * limit).limit(limit).all()
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise handle_internal_error(str(e))
+    return {
+        "data": [{"value": str(r.value), "label": str(r.label)} for r in rows],
+        "pagination": {"total": total, "page": page, "limit": limit},
+    }
 
 
 @router.post("/search")

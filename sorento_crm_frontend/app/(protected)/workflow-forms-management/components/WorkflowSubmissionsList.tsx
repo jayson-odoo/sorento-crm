@@ -22,12 +22,13 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { Input } from '@/components/ui/input';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useTenantModules } from '@/hooks/useTenantModules';
@@ -92,6 +93,18 @@ export default function WorkflowSubmissionsList({
     : null;
 
   const quickFilterActive = Boolean(quickStateCode.trim());
+  // The states of the scoped form (or, with none chosen, of every published form), from the published schema.
+  const stateOptions = useMemo(() => {
+    const scoped = fixedDefinitionId || (scopeDefinitionId !== '__all' ? scopeDefinitionId : undefined);
+    const seen = new Map<string, string>();
+    for (const d of defOptions) {
+      if (scoped && d.id !== scoped) continue;
+      for (const st of d.published_schema?.states ?? []) {
+        if (st.code && !seen.has(st.code)) seen.set(st.code, st.label || st.name || st.code);
+      }
+    }
+    return Array.from(seen, ([value, label]) => ({ value, label }));
+  }, [defOptions, fixedDefinitionId, scopeDefinitionId]);
 
   const wfDefForPayload =
     fixedDefinitionId ||
@@ -288,13 +301,15 @@ export default function WorkflowSubmissionsList({
                           <h4 className="text-sm font-semibold">Quick filters</h4>
                           <div className="space-y-2">
                             <Label htmlFor="wf-sub-state" className="text-xs">
-                              State code (exact)
+                              State
                             </Label>
-                            <Input
+                            <SearchableMultiSelect
                               id="wf-sub-state"
-                              placeholder="e.g. submitted"
-                              value={quickStateCode}
-                              onChange={(e) => setQuickStateCode(e.target.value)}
+                              value={splitMulti(quickStateCode)}
+                              onChange={(v) => setQuickStateCode(joinMulti(v))}
+                              options={stateOptions}
+                              placeholder="All states"
+                              clearable
                             />
                           </div>
                         </div>

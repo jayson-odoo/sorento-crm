@@ -24,7 +24,10 @@ async function parseJson<T>(res: Response): Promise<T> {
   return res.json();
 }
 
-export type WorkflowPublishedDefinition = Pick<WorkflowFormDefinition, 'id' | 'code' | 'name'>;
+export type WorkflowPublishedDefinition = Pick<WorkflowFormDefinition, 'id' | 'code' | 'name'> & {
+  /** Only the published states, for the submissions list's State filter. */
+  published_schema?: { states?: { code: string; label?: string; name?: string }[] } | null;
+};
 
 /** Published forms only; allowed with submissions.add / submissions.view (no definitions.view). */
 export async function fetchPublishedWorkflowDefinitionsForSubmission(): Promise<

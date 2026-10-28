@@ -1,4 +1,5 @@
 import { apiFetch } from '@/lib/api';
+import { extractApiError } from '@/lib/api-client';
 
 export type ListQueryResourceKey =
   | 'orders'
@@ -38,6 +39,8 @@ export type ListQueryFieldMeta = {
   export_section?: 'order' | 'line' | null;
   /** Delivery orders export UI: nested under line */
   export_subgroup?: 'product' | 'warehouse' | null;
+  /** Set (`{ kind: 'distinct' }`) when the field offers a pick list from the options endpoint. */
+  option_source?: { kind: string } | null;
 };
 
 export type FetchListQueryFieldsOptions = {
@@ -57,6 +60,26 @@ export async function fetchListQueryFields(
     const err = await r.json().catch(() => ({}));
     throw new Error(typeof err.detail === 'string' ? err.detail : 'Failed to load list fields');
   }
+  return r.json();
+}
+
+export type ListQueryFieldOption = { value: string; label: string };
+
+/** One page of a field's pick list: the distinct values over the resource's own scoped rows. */
+export async function fetchListQueryFieldOptions(
+  resourceKey: ListQueryResourceKey,
+  fieldKey: string,
+  params: { query?: string; page?: number; limit?: number } = {},
+): Promise<{ data: ListQueryFieldOption[]; pagination: { total: number; page: number; limit: number } }> {
+  const sp = new URLSearchParams();
+  if (params.query) sp.set('query', params.query);
+  if (params.page) sp.set('page', String(params.page));
+  if (params.limit) sp.set('limit', String(params.limit));
+  const q = sp.toString();
+  const r = await apiFetch(
+    `/api/v1/list-query/${resourceKey}/fields/${encodeURIComponent(fieldKey)}/options${q ? `?${q}` : ''}`,
+  );
+  if (!r.ok) throw new Error(await extractApiError(r, 'Failed to load the options'));
   return r.json();
 }
 
