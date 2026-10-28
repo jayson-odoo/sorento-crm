@@ -14,6 +14,9 @@ import time
 
 import uvicorn
 
+# Before anything imports gunicorn: app.main reads "gunicorn in sys.modules" as a production
+# entrypoint (app/services/dev_login.py running_under_gunicorn) and refuses a keyless env.
+import app.main  # noqa: F401  isort:skip
 from app import uvicorn_worker
 from app.tasks import chat_turns
 
