@@ -190,3 +190,34 @@ Recommendation: (a), never a link that fails.
 portal route bodies move into one service both call (one code, exactly the portal's flow). (b) Build a new staff-style
 price tag form.
 Recommendation: (a), reuse, never reinvent; (b) duplicates 3,800 lines of form logic.
+
+---
+
+# v1.2 (28 Oct, after the owner's v1.1 answers)
+
+**Owner answers to v1.1 (~14:4x, relayed by crew):**
+- Q6 (a): build the complaint revision code, so the per-form setting governs complaints in the portal and the CRM.
+- Q7: "the Project registration page should be merged with the Project page, should just have 1 project page". So
+  there is no MY REQUESTS > Project Registration. A salesperson registers from MY WORK > Projects (Register, which is
+  PROJECT-REGISTER-V2's form, with Save draft + Submit for approval). Their own registrations show in that Projects
+  list. P4 keeps only the `projects.registrations.submit` slug + grant (agreed with that lane). **8 kinds remain.**
+- Q8: reuse the Dealer Kit > Room Designer > Price Tag Requests table and request page.
+
+**What changes that the owner should know (Q8 re-check, crew-note on #1953 6462546044):**
+- The Dealer Kit price tag pages are a table, a request page and a designer. There is no create / edit form and no staff create API.
+- So for a salesperson, New and Edit price tag request = the staff request page in edit mode: fields become inputs in
+  place, the same layout as view (CLAUDE.md "View and Edit are the SAME layout"). Not the portal's form.
+- Save / submit / approve proof / request changes / collect / revise run the portal's code, moved into one service.
+- Effort stays L.
+
+**Effort now, 8 kinds:**
+| Kind | Effort |
+| --- | --- |
+| Stock Inquiry, Complaint, Purchase Request, Sponsorship, shared server piece | L (in build) |
+| Complaint revision code (Q6) | M |
+| Sample Request | M |
+| New Product Application | L |
+| Sales Opportunity | M- |
+| Price Tag Request | L |
+
+All in one PR (#1953), merged after #1944.

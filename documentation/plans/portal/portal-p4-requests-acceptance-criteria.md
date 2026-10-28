@@ -37,7 +37,8 @@ does not see it).
   `portal_revision_configs` + `system_settings`) exactly as the portal, because it is the same code: where the
   setting allows it, a revise writes the revision row, bumps `revision_no`, returns to the restart stage, keeps
   the requestor frozen, and the revision history is visible; where the setting is off (or the form has no revision
-  code), the Revise action is absent and the server refuses it. Complaint: card v1.1 Q.
+  code), the Revise action is absent and the server refuses it. Complaint gets revision code (card v1.1 Q6 a), so
+  the setting governs complaints in the portal and the CRM alike.
 - P4-15 Requestor options in the CRM equal the portal's `/requestor-options` for the same contact.
 - P4-16 Attachments added from the CRM appear on the row as portal uploads do; staff uploads cannot be removed by
   the salesperson.
@@ -59,9 +60,10 @@ does not see it).
   revision history visible; no staff action button.
 - P4-26 Staff screens unchanged.
 - P4-27 Usable at 375 px and 1280 px.
-- P4-28 No embedded portal view is left inside the CRM for any MY REQUESTS kind (Q5 c): Project Registration,
-  Sample Request, New Product Application, Price Tag Request and Sales Opportunity open CRM pages too (items after
-  card v1.1; Project Registration opens the PROJECT-REGISTER-V2 page).
+- P4-28 No embedded portal view is left inside the CRM for any MY REQUESTS kind (Q5 c). 8 kinds: the 4 forms plus
+  Sample Request, New Product Application, Price Tag Request, Sales Opportunity (their items follow, card v1.1/v1.2).
+  No MY REQUESTS > Project Registration item (v1.1 Q7): a salesperson registers from MY WORK > Projects (lane
+  PROJECT-REGISTER-V2); P4 ships only `projects.registrations.submit` granted to the salesperson role.
 
 ## Proof
 
