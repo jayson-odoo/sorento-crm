@@ -113,6 +113,37 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// The filters are multi-selects now (FILTER-MULTISELECT PR3): the same native stand-in, a multiple <select>.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    id,
+    value = [],
+    onChange,
+    options = [],
+    placeholder,
+  }: {
+    id?: string;
+    value?: string[];
+    onChange?: (v: string[]) => void;
+    options?: Array<{ value: string; label: string }>;
+    placeholder?: string;
+  }) => (
+    <select
+      multiple
+      id={id}
+      aria-label={placeholder}
+      value={value}
+      onChange={(e) => onChange?.(Array.from(e.target.selectedOptions, (o) => o.value))}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 const useSalesOrders = vi.fn();
 vi.mock('../../hooks/useSalesOrders', () => ({
   useSalesOrders: (...a: unknown[]) => useSalesOrders(...a),

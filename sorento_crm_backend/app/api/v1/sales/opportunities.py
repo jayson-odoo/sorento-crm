@@ -28,6 +28,7 @@ from app.services.error_handler import handle_internal_error
 from app.services.sales import opportunity_service as svc
 from app.services.sales import team_service
 from app.services.uuid_path_param import validate_uuid_path
+from app.utils.multi_value import multi_uuids
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -132,9 +133,9 @@ def _list(data: list) -> dict:
 @router.get("", response_model=ListResponse[SalesOpportunityResponse])
 def list_opportunities(
     query: Optional[str] = Query(None),
-    status_id: Optional[str] = Query(None),
-    sales_agent_id: Optional[str] = Query(None),
-    customer_id: Optional[str] = Query(None),
+    status_id: Optional[list[str]] = Query(None),
+    sales_agent_id: Optional[list[str]] = Query(None),
+    customer_id: Optional[list[str]] = Query(None),
     close_from: Optional[DateType] = Query(None),
     close_to: Optional[DateType] = Query(None),
     outcome: Optional[str] = Query(None),
@@ -145,17 +146,22 @@ def list_opportunities(
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
+    status_ids = multi_uuids(status_id, "Stage")
+    picked_agents = multi_uuids(sales_agent_id, "Agent")
+    customer_ids = multi_uuids(customer_id, "Customer")
     try:
         own = _own_agent_ids(db, _user)
-        agents = sales_agent_id
+        agents = picked_agents
         if own is not None:
-            agents = [a for a in own if not sales_agent_id or a == sales_agent_id]
+            # A user limited to their own records sees the picked agents only within their own
+            # scope: picking more never widens it, and a pick outside it shows nothing.
+            agents = [a for a in own if not picked_agents or str(a) in picked_agents]
         rows, total = svc.list_opportunities(
             db,
             query=query,
-            status_id=status_id,
+            status_id=status_ids,
             sales_agent_id=agents,
-            customer_id=customer_id,
+            customer_id=customer_ids,
             close_from=close_from,
             close_to=close_to,
             outcome=outcome,

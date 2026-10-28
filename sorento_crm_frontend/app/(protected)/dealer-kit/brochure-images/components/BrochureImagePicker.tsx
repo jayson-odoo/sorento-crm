@@ -40,7 +40,8 @@ import {
   type PaginationState,
 } from '@tanstack/react-table';
 
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardFooter, CardTable } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -309,25 +310,26 @@ export function BrochureImagePicker() {
     <div className="flex flex-col gap-5">
       <Card>
         <CardContent className="flex flex-col gap-4 py-5 lg:flex-row lg:items-end lg:justify-between">
-          <div className="flex flex-col gap-4 sm:flex-row sm:items-end">
+          <div className="flex flex-col gap-4 sm:flex-row sm:flex-wrap sm:items-end">
             <div className="flex min-w-0 flex-col gap-1.5">
               <Label htmlFor="dk-bi-promotion" className="text-xs text-muted-foreground">
                 Promotion
               </Label>
-              <SearchableSelect
+              <SearchableMultiSelect
                 id="dk-bi-promotion"
-                value={promotionId}
-                onChange={setPromotionId}
-                // Server-searched and paged: there are hundreds of promotions,
-                // so a static option list would cap the filter at one page and
-                // hide the rest without saying so.
+                value={splitMulti(promotionId)}
+                onChange={(v) => setPromotionId(joinMulti(v))}
+                // Server-searched: there are hundreds of promotions, so a static option list
+                // would cap the filter at one page and hide the rest without saying so.
                 fetchOptions={promotionOptions.fetchOptions}
                 paginated
                 pageSize={PROMOTION_PAGE_SIZE}
-                selectedOption={promotionOptions.optionFor(promotionId)}
+                selectedOptions={splitMulti(promotionId).map(
+                  (id) => promotionOptions.optionFor(id) ?? { value: id, label: 'Selected promotion' },
+                )}
                 placeholder="Every product"
                 clearable
-                className="w-full sm:w-72"
+                triggerClassName="w-full sm:w-72"
               />
             </div>
             <div className="flex min-w-0 flex-col gap-1.5">

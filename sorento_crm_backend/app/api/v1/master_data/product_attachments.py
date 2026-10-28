@@ -3,10 +3,6 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
 from app.database import get_db
-# Two lines on purpose: tests/test_uuid_path_sweep.py asserts the
-# `validate_uuid_path` import verbatim, so folding UUID_PATTERN into it would
-# make this router read as unguarded to that sweep.
-from app.services.uuid_path_param import UUID_PATTERN
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
     get_current_user,
@@ -29,6 +25,7 @@ from app.schemas.product import (
 )
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_uuids
 
 router = APIRouter()
 
@@ -49,14 +46,12 @@ router = APIRouter()
 
 @router.get("/brochure-images", response_model=BrochureImageList)
 async def list_brochure_images(
-    promotion_id: Optional[str] = Query(
+    promotion_id: Optional[list[str]] = Query(
         None,
-        # Validated here rather than in the service: compared against a UUID
-        # column raw, a malformed value reached psycopg as a DataError - an
-        # unhandled 500 that also left the session in a failed transaction.
-        # Every other id on this router is validated too.
-        pattern=UUID_PATTERN,
-        description="Narrow to the products in one promotion, so a whole flyer is one sitting.",
+        # Validated in the route (`multi_uuids`) rather than in the service: compared against
+        # a UUID column raw, a malformed value reached psycopg as a DataError - an unhandled
+        # 500 that also left the session in a failed transaction.
+        description="Narrow to the products in these promotions (several = any of them), so a whole flyer is one sitting.",
     ),
     only_unset: bool = Query(True, description="Hide products whose image is already chosen."),
     query: Optional[str] = Query(None, description="Matches product code or name."),
@@ -70,7 +65,7 @@ async def list_brochure_images(
     """Products and the images somebody could choose between."""
     result = brochure_image_service.list_brochure_images(
         db,
-        promotion_id=promotion_id,
+        promotion_id=multi_uuids(promotion_id, "Promotion"),
         only_unset=only_unset,
         query=query,
         page=page,
