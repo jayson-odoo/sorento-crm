@@ -1,4 +1,4 @@
-import { isAwaitingReview } from '@/lib/submission-status';
+import { APPEALED_LABEL, isAwaitingReview } from '@/lib/submission-status';
 import type { QuotationDocument } from '../services/quotationDocumentService';
 
 /**
@@ -24,7 +24,7 @@ export function quotationStanding(document: QuotationDocument): QuotationStandin
     return { label: 'Pending approval', variant: 'warning' };
   }
   if (document.approval_status_key === 'resubmitted') {
-    return { label: 'Resubmitted', variant: 'warning' };
+    return { label: APPEALED_LABEL, variant: 'warning' };
   }
   if (document.approval_status_key === 'approved') {
     return { label: 'Approved', variant: 'primary' };

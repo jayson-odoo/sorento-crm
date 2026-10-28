@@ -4,6 +4,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAuditLogs } from '@/hooks/useAuditLogs';
 import { actorDisplay } from '@/lib/audit-actor';
+import { appealWording } from '@/lib/submission-status';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   auditFieldChanges,
@@ -35,25 +36,34 @@ type ChangeLine = { text: string } | { label: string; before: string; after: str
  * What one audit row changed, one line per field. An empty list means the row changed
  * nothing a reader can see (only bookkeeping fields), and the row is not shown.
  * `childName` is set for a child row (a product line on its complaint's trail).
+ * `own` is set for the record's own row: its status lines say appealed, not resubmitted
+ * (owner, 28 Oct 2026, every form).
  */
 function collectChangeLines(
   entry: AuditLogEntry,
   childName: string | null,
   heading: AuditTrailHeading | undefined,
+  own: boolean,
 ): ChangeLine[] {
   if (entry.action === 'INSERT') return [{ text: childName ? `${childName} added` : 'Record created' }];
   if (entry.action === 'DELETE') return [{ text: childName ? `${childName} removed` : 'Record deleted' }];
   const summary = entry.description?.trim() || '';
-  if (entry.action !== 'UPDATE') return [{ text: summary || entry.action }];
+  // Only a status move is reworded: an undo row's summary quotes the reason as typed.
+  const statusMove = /^(status|approval_status|order_status)(:|\s+changed to)\s/i.test(summary);
+  if (entry.action !== 'UPDATE') {
+    return [{ text: (own && statusMove ? appealWording(summary) : summary) || entry.action }];
+  }
   const prefix = childName ? `${childName}: ` : '';
   // A past resubmit's "rejected → submitted" reads as what it is called today.
-  const shown = heading === 'Resubmitted' ? resubmittedSummary(summary) : summary;
+  const resubmit = heading === 'Appealed' ? resubmittedSummary(summary) : summary;
+  const shown = own && statusMove ? appealWording(resubmit) : resubmit;
   const lines: ChangeLine[] = summary ? [{ text: `${prefix}${shown}` }] : [];
   for (const change of auditFieldChanges(entry.old_values, entry.new_values)) {
     if (summary && summaryCovers(change, entry, summary)) continue;
+    const statusLine = own && STATUS_SUMMARY_KEYS.includes(change.key);
     lines.push(
       change.kind === 'line'
-        ? { text: `${prefix}${change.text}` }
+        ? { text: `${prefix}${statusLine ? appealWording(change.text) : change.text}` }
         : { label: `${prefix}${change.label}`, before: change.before, after: change.after },
     );
   }
@@ -88,13 +98,13 @@ export default function AuditTrail({ entityType, entityId, title = 'Audit Trail'
   const entries = data?.data ?? [];
   const isChild = (entry: AuditLogEntry) =>
     entry.entity_type !== entityType || entry.entity_id !== entityId;
-  // Rejected / Resubmitted come from the record's own history, never a child row's status.
+  // Rejected / Appealed come from the record's own history, never a child row's status.
   const headings = auditTrailHeadings(entries.filter((entry) => !isChild(entry)));
   const rows = entries
     .map((entry) => {
       const childName = isChild(entry) ? entry.entity_label || auditFieldLabel(entry.entity_type) : null;
       const heading = headings.get(entry.id);
-      return { entry, heading, lines: collectChangeLines(entry, childName, heading) };
+      return { entry, heading, lines: collectChangeLines(entry, childName, heading, !childName) };
     })
     .filter((row) => row.lines.length > 0);
   const empty = data?.empty ?? true;

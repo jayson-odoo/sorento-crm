@@ -321,6 +321,9 @@ def call_clarifier(config: ClarifierConfig, user_prompt: str) -> str:
             messages,
             temperature=0.0,
             max_tokens=CLARIFIER_MAX_TOKENS,
+            # One cache bucket per prompt version, as the parser's (GEMINI-EXPLICIT-CACHE:
+            # on Gemini this also puts the system prompt in an explicit context cache).
+            prompt_cache_key=f"{PROMPT_KEY}:v{config.prompt_version or 'fallback'}",
         )
     except llm_call.RateLimited as exc:
         raise ClarifierRateLimited(str(exc)) from exc

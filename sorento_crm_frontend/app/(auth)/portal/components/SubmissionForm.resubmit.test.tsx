@@ -1,6 +1,6 @@
 /**
  * RESUBMITTED-STATUS (owner, 27 Oct): a portal form that was rejected is sent back
- * with "Resubmit", not "Submit". Every portal kind surfaces a rejected record as
+ * with "Appeal" (owner, 28 Oct; it read "Resubmit" before), not "Submit". Every portal kind surfaces a rejected record as
  * `status: 'rejected'` (PR/SF via the backend's effective status), so one rule
  * covers them all. Mocking pattern mirrors `SubmissionForm.revisingBanner.test.tsx`.
  */
@@ -147,9 +147,12 @@ beforeEach(() => {
   window.history.replaceState({}, '', '/portal/stock_inquiry/si-1');
 });
 
-async function renderAt(over: Partial<PortalSubmissionDetail> = {}) {
-  (fetchSubmission as ReturnType<typeof vi.fn>).mockResolvedValue(detail(over));
-  render(<SubmissionForm kind="stock_inquiry" submissionId="si-1" />);
+async function renderAt(
+  over: Partial<PortalSubmissionDetail> = {},
+  kind: 'stock_inquiry' | 'complaint' = 'stock_inquiry',
+) {
+  (fetchSubmission as ReturnType<typeof vi.fn>).mockResolvedValue(detail({ kind, ...over }));
+  render(<SubmissionForm kind={kind} submissionId="si-1" />);
   await waitForSectionLoaded();
   // The form reloads once more when /me resolves (contact-derived defaults).
   await waitFor(() =>
@@ -161,8 +164,8 @@ async function renderAt(over: Partial<PortalSubmissionDetail> = {}) {
 
 
 describe('submitVerb', () => {
-  it('is Resubmit for a rejected form and Submit otherwise', () => {
-    expect(submitVerb('rejected')).toBe('Resubmit');
+  it('is Appeal for a rejected form and Submit otherwise', () => {
+    expect(submitVerb('rejected')).toBe('Appeal');
     expect(submitVerb('draft')).toBe('Submit');
     expect(submitVerb(null)).toBe('Submit');
     expect(submitVerb(undefined)).toBe('Submit');
@@ -170,17 +173,17 @@ describe('submitVerb', () => {
 });
 
 describe('SubmissionForm - the submit button after a rejection', () => {
-  it('reads "Resubmit" on a rejected form, and the confirm dialog says so too', async () => {
+  it('reads "Appeal" on a rejected form, and the confirm dialog says so too', async () => {
     await renderAt({ status: 'rejected', is_editable: true });
 
     const button = await screen.findByRole('button', {
-      name: 'Resubmit stock inquiry',
+      name: 'Appeal stock inquiry',
     });
     expect(screen.queryByRole('button', { name: 'Submit stock inquiry' })).toBeNull();
 
     fireEvent.click(button);
     expect(
-      await screen.findByText('Resubmit this stock inquiry?'),
+      await screen.findByText('Appeal this stock inquiry?'),
     ).toBeInTheDocument();
   });
 
@@ -190,6 +193,28 @@ describe('SubmissionForm - the submit button after a rejection', () => {
     expect(
       await screen.findByRole('button', { name: 'Submit stock inquiry' }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Resubmit/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(Resubmit|Appeal)/ })).toBeNull();
+  });
+});
+
+// COMPLAINT-APPEAL-WORDING (owner, 28 Oct): a rejected complaint goes back as an appeal.
+describe('SubmissionForm - a rejected complaint is appealed', () => {
+  it('reads "Appeal complaint", the confirm says so, and nothing says Resubmit', async () => {
+    await renderAt({ status: 'rejected', is_editable: true }, 'complaint');
+
+    const button = await screen.findByRole('button', { name: 'Appeal complaint' });
+    expect(screen.queryByRole('button', { name: /resubmit/i })).toBeNull();
+
+    fireEvent.click(button);
+    expect(await screen.findByText('Appeal this complaint?')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Appeal complaint' })).toBeInTheDocument();
+    expect(document.body.textContent).not.toMatch(/resubmit/i);
+  });
+
+  it('labels an appealed complaint "Appealed"', async () => {
+    await renderAt({ status: 'resubmitted', is_editable: false }, 'complaint');
+
+    expect(await screen.findByText('Appealed')).toBeInTheDocument();
+    expect(screen.queryByText('Resubmitted')).toBeNull();
   });
 });

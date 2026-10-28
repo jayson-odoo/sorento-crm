@@ -4,13 +4,12 @@ import * as React from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from 'next-auth/react';
 import { useQuery } from '@tanstack/react-query';
-import { Loader2 } from 'lucide-react';
+import { Loader2, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
   DialogBody,
   DialogContent,
-  DialogDescription,
   DialogFooter,
   DialogHeader,
   DialogTitle,
@@ -23,25 +22,28 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { FormSection } from '@/components/common/FormSection';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
-import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
+import { toast } from '@/lib/toast';
 import { useLookupSetOptions } from '@/hooks/useLookupSetOptions';
 import { getUserLookup } from '@/services/userSelectService';
-import { useBrandSelectQuery } from '@/app/(protected)/master-data-management/shared/hooks/use-brand-select-query';
 import {
   CLASH_MIN_CHARS,
   useClashPreview,
   useFetchClashPreview,
+  useFetchCustomerOptions,
   useFetchLeadOptions,
-  useProjectParties,
+  useFetchPartyOptions,
+  usePartyMutations,
   useProjectTemplates,
   useProjectTypes,
   useRegisterProject,
+  useSubmitProject,
   useTakeoverMutations,
   useUpdateProject,
 } from '../hooks/useProjects';
 import type {
   ClashCandidate,
+  PartyType,
   Project,
   ProjectRegisterBody,
   ProjectUpdateBody,
@@ -49,12 +51,16 @@ import type {
 import { ClashWarningPanel } from '../../pipeline/components/ClashWarningPanel';
 import { isAwaitingDecision } from './ApprovalStatePill';
 import { LeadWizardDialog } from '../../leads/components/LeadWizardDialog';
+import { ProjectAIExtractDialog, type ProjectExtractFill } from './ProjectAIExtractDialog';
 
 type LeadOption = { value: string; label: string; description?: string };
 
 type ProjectFormProps = { mode: 'create' } | { mode: 'edit'; project: Project };
 
 const OWNER_MANAGE_PERMISSION = 'projects.projects.manage';
+const PROJECT_EDIT_PERMISSION = 'projects.projects.edit';
+const REGISTRATION_SUBMIT_PERMISSION = 'projects.registrations.submit';
+const PARTY_EDIT_PERMISSION = 'projects.parties.edit';
 
 /**
  * The form both `/project-sales/new` and `/project-sales/<id>/edit` render
@@ -65,7 +71,7 @@ const OWNER_MANAGE_PERMISSION = 'projects.projects.manage';
  * from the register dialog it replaces (PR #1336 round 2). Two things differ from that
  * dialog:
  *
- * - A third section, "Salesperson and lead", open from the start.
+ * - A third section, "Salesperson and customer", open from the start.
  * - Edit mode starts every section open, never wipes the project's own template on
  *   first render, and excludes the project itself from its own clash check.
  */
@@ -75,12 +81,25 @@ export function ProjectForm(props: ProjectFormProps) {
   const router = useRouter();
   const { data: session } = useSession();
   const canManageOwner = useHasPermission(OWNER_MANAGE_PERMISSION);
+  const canEditProjects = useHasPermission(PROJECT_EDIT_PERMISSION);
+  const canSubmitRegistration = useHasPermission(REGISTRATION_SUBMIT_PERMISSION);
+  const canCreateParty = useHasPermission(PARTY_EDIT_PERMISSION);
+  // A salesperson with the submit slug but no edit rights saves a draft or submits for
+  // approval instead of registering (PROJECT-REGISTER-V2 J1).
+  const submitOnly = !canEditProjects && canSubmitRegistration;
 
   const register = useRegisterProject();
   const update = useUpdateProject(project?.id ?? '');
+  const submitDraft = useSubmitProject(project?.id ?? '');
+  const { create: createPartyMutation } = usePartyMutations();
 
   const [title, setTitle] = React.useState(project?.title ?? '');
   const [developerId, setDeveloperId] = React.useState(project?.developer_party_id ?? '');
+  const [developerOption, setDeveloperOption] = React.useState<PickOption | null>(
+    project?.developer_party_id
+      ? { value: project.developer_party_id, label: project.developer_name ?? 'Developer' }
+      : null,
+  );
   const [typeId, setTypeId] = React.useState(project?.type_id ?? '');
   const [templateId, setTemplateId] = React.useState(project?.template_id ?? '');
   const [registeredCompany, setRegisteredCompany] = React.useState(
@@ -95,14 +114,32 @@ export function ProjectForm(props: ProjectFormProps) {
   const [address, setAddress] = React.useState(project?.address ?? '');
   const [adminRef, setAdminRef] = React.useState(project?.admin_ref ?? '');
   const [architectId, setArchitectId] = React.useState(project?.architect_party_id ?? '');
+  const [architectOption, setArchitectOption] = React.useState<PickOption | null>(
+    project?.architect_party_id
+      ? { value: project.architect_party_id, label: project.architect_name ?? 'Architect' }
+      : null,
+  );
   const [mainContractorId, setMainContractorId] = React.useState(
     project?.main_contractor_party_id ?? '',
+  );
+  const [contractorOption, setContractorOption] = React.useState<PickOption | null>(
+    project?.main_contractor_party_id
+      ? {
+          value: project.main_contractor_party_id,
+          label: project.main_contractor_name ?? 'Main contractor',
+        }
+      : null,
+  );
+  const [customerId, setCustomerId] = React.useState(project?.customer_id ?? '');
+  const [customerOption, setCustomerOption] = React.useState<PickOption | null>(
+    project?.customer_id
+      ? { value: project.customer_id, label: project.customer_name ?? 'Customer' }
+      : null,
   );
   const [estimatedValue, setEstimatedValue] = React.useState(project?.estimated_sales_value ?? '');
   const [launchDate, setLaunchDate] = React.useState(project?.launch_date ?? '');
   const [deliveryFrom, setDeliveryFrom] = React.useState(project?.expected_delivery_from ?? '');
   const [deliveryTo, setDeliveryTo] = React.useState(project?.expected_delivery_to ?? '');
-  const [brandIds, setBrandIds] = React.useState<string[]>(project?.brand_ids ?? []);
   const [ownerUserId, setOwnerUserId] = React.useState(
     mode === 'create' ? (session?.user?.id ?? '') : (project?.owner_user_id ?? ''),
   );
@@ -122,17 +159,16 @@ export function ProjectForm(props: ProjectFormProps) {
   // The text typed into the Lead picker when nothing matched; non-null opens the lead wizard.
   const [creatingLeadTitle, setCreatingLeadTitle] = React.useState<string | null>(null);
 
-  const [joinTarget, setJoinTarget] = React.useState<{
-    candidate: ClashCandidate;
-    kind: 'join' | 'dispute';
-  } | null>(null);
+  // The blocking project the user is registering interest in (D4); non-null opens the dialog.
+  const [interestTarget, setInterestTarget] = React.useState<ClashCandidate | null>(null);
+  const [extractOpen, setExtractOpen] = React.useState(false);
 
-  const developers = useProjectParties({ party_type: 'developer', limit: 200 });
-  const architects = useProjectParties({ party_type: 'architect', limit: 200 });
-  const contractors = useProjectParties({ party_type: 'main_contractor', limit: 200 });
+  const fetchDeveloperOptions = useFetchPartyOptions('developer');
+  const fetchArchitectOptions = useFetchPartyOptions('architect');
+  const fetchContractorOptions = useFetchPartyOptions('main_contractor');
+  const fetchCustomerOptions = useFetchCustomerOptions();
   const types = useProjectTypes();
   const templates = useProjectTemplates(typeId || undefined);
-  const brands = useBrandSelectQuery();
   const states = useLookupSetOptions('my_state');
   const fetchLeadOptions = useFetchLeadOptions();
   const users = useQuery({
@@ -152,7 +188,7 @@ export function ProjectForm(props: ProjectFormProps) {
   const [sectionOpen, setSectionOpen] = React.useState({
     who: true,
     details: mode === 'edit',
-    salesLead: true,
+    salesCustomer: true,
   });
   // Edit mode never runs the auto-open below: every field already has a value, so
   // there is nothing "complete" to react to.
@@ -164,7 +200,7 @@ export function ProjectForm(props: ProjectFormProps) {
   // refurbishment has no launch date to count from.
   const derivesDelivery = selectedType?.derives_delivery_from_launch ?? false;
 
-  function toggleSection(key: 'who' | 'details' | 'salesLead', next: boolean) {
+  function toggleSection(key: 'who' | 'details' | 'salesCustomer', next: boolean) {
     if (key === 'details') detailsSettledRef.current = true;
     setSectionOpen((prev) => ({ ...prev, [key]: next }));
   }
@@ -209,13 +245,18 @@ export function ProjectForm(props: ProjectFormProps) {
   ).map((c) => (awaitingDecision ? { ...c, blocks: false } : c));
   const wouldBlock =
     identityChanged && hasChecked && candidates.some((candidate) => candidate.blocks);
-  const pending = register.isPending || update.isPending;
+  const pending = register.isPending || update.isPending || submitDraft.isPending;
   const [showErrors, setShowErrors] = React.useState(false);
   const valueError = numberFieldError(estimatedValue, { min: 0, optional: true });
-  // A new project comes from a lead (owner, 13 Oct): the picker offers to create one when
-  // none matches. Edit leaves it optional, so a project registered before the rule saves.
-  const leadMissing = mode === 'create' && !leadId;
-  const canSubmit = title.trim().length > 0 && !leadMissing && !wouldBlock && !pending;
+  // A new project needs a Customer (PROJECT-REGISTER-V2 A4); the lead is optional now. Edit
+  // leaves the customer optional, so a project registered before the rule saves. A
+  // salesperson's Submit for approval enforces it either way (J4).
+  const customerMissing = (mode === 'create' || submitOnly) && !customerId;
+  const canSubmit = title.trim().length > 0 && !customerMissing && !wouldBlock && !pending;
+  const canSaveDraft = title.trim().length > 0 && !pending;
+  // The top blocking candidate: the footer's one primary becomes Register interest (D2).
+  const blocker =
+    mode === 'create' && wouldBlock ? candidates.find((candidate) => candidate.blocks) : undefined;
 
   async function handleCheck() {
     const trimmed = title.trim();
@@ -244,20 +285,86 @@ export function ProjectForm(props: ProjectFormProps) {
       launch_date: launchDate || null,
       expected_delivery_from: deliveryFrom || null,
       expected_delivery_to: deliveryTo || null,
-      brand_ids: brandIds,
+      ...(mode === 'create' || customerId !== (project?.customer_id ?? '')
+        ? { customer_id: customerId || null }
+        : {}),
       lead_id: leadId || null,
+    };
+  }
+
+  /** Pre-fills the form from a confirmed AI extract; the typed title is never overwritten. */
+  function applyExtract(fill: ProjectExtractFill) {
+    if (fill.title && !title.trim()) setTitle(fill.title);
+    if (fill.developer) {
+      setDeveloperId(fill.developer.id);
+      setDeveloperOption({ value: fill.developer.id, label: fill.developer.name });
+    }
+    if (fill.architect) {
+      setArchitectId(fill.architect.id);
+      setArchitectOption({ value: fill.architect.id, label: fill.architect.name });
+    }
+    if (fill.main_contractor) {
+      setMainContractorId(fill.main_contractor.id);
+      setContractorOption({ value: fill.main_contractor.id, label: fill.main_contractor.name });
+    }
+    if (fill.project_type && fill.project_type.id !== typeId) {
+      setTypeId(fill.project_type.id);
+      setTemplateId('');
+    }
+    if (fill.state) setState(fill.state);
+    if (fill.mukim) setMukim(fill.mukim);
+    if (fill.customer) {
+      setCustomerId(fill.customer.id);
+      setCustomerOption({ value: fill.customer.id, label: fill.customer.name });
+    }
+    setTitleSettled(true);
+  }
+
+  /** Creates a party from the typed text and selects it (B2); holders of parties.edit only. */
+  function partyCreateOption(
+    partyType: PartyType,
+    noun: string,
+    pick: (id: string, option: PickOption) => void,
+  ) {
+    if (!canCreateParty) return undefined;
+    return {
+      label: (query: string) => (
+        <span>
+          Create {noun} &ldquo;{query}&rdquo;
+        </span>
+      ),
+      onCreate: async (query: string) => {
+        try {
+          const party = await createPartyMutation.mutateAsync({
+            name: query.trim(),
+            party_type: partyType,
+          });
+          pick(party.id, { value: party.id, label: party.name });
+        } catch {
+          // toasted by the mutation; the picker stays as it was
+        }
+      },
     };
   }
 
   async function handleSubmit(event: React.FormEvent) {
     event.preventDefault();
-    if (!canSubmit) return;
+    await save(submitOnly ? true : undefined);
+  }
+
+  /**
+   * `intent` is only set for a salesperson without edit rights: false saves a draft (title
+   * only, no duplicate check), true submits it for approval.
+   */
+  async function save(intent?: boolean) {
+    const draft = intent === false;
+    if (draft ? !canSaveDraft : !canSubmit) return;
     if (valueError) {
       setShowErrors(true);
       return;
     }
     // The one duplicate check on submit: the guard, whether or not Check was pressed.
-    if (checkable && identityChanged && !awaitingDecision) {
+    if (!draft && checkable && identityChanged && !awaitingDecision) {
       const trimmed = title.trim();
       setCheckedTitle(trimmed);
       // A failed check does not stop the user: the server refuses a blocked title
@@ -274,11 +381,14 @@ export function ProjectForm(props: ProjectFormProps) {
     // the user stays on the form with what they typed.
     try {
       if (mode === 'create') {
-        const created = await register.mutateAsync(buildBody());
+        const body: ProjectRegisterBody = buildBody();
+        if (intent !== undefined) body.submit = intent;
+        const created = await register.mutateAsync(body);
         router.push(`/project-sales/${created.id}`);
       } else {
         const body: ProjectUpdateBody = buildBody();
         await update.mutateAsync(body);
+        if (intent === true) await submitDraft.mutateAsync();
         router.push(`/project-sales/${project!.id}`);
       }
     } catch {
@@ -299,6 +409,51 @@ export function ProjectForm(props: ProjectFormProps) {
           open={sectionOpen.who}
           onOpenChange={(next) => toggleSection('who', next)}
         >
+          <div className="space-y-1.5">
+            <Label htmlFor="project-title">
+              Project title <span className="text-destructive">*</span>
+            </Label>
+            <Textarea
+              id="project-title"
+              value={title}
+              onChange={(event) => {
+                setTitle(event.target.value);
+                setCheckedTitle('');
+                if (!event.target.value.trim()) setTitleSettled(false);
+              }}
+              onBlur={() => setTitleSettled(title.trim().length > 0)}
+              placeholder="e.g. Setia Alam Phase 3B"
+              autoComplete="off"
+              rows={3}
+              className="min-h-20 [field-sizing:content]"
+              required
+            />
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!checkable || clash.isFetching}
+                onClick={() => void handleCheck()}
+              >
+                {clash.isFetching && hasChecked && (
+                  <Loader2 className="size-4 animate-spin" aria-hidden />
+                )}
+                Check
+              </Button>
+              <Button type="button" variant="outline" onClick={() => setExtractOpen(true)}>
+                <Sparkles className="size-4" aria-hidden />
+                AI extract
+              </Button>
+            </div>
+            {hasChecked && clash.isSuccess && !clash.isFetching && candidates.length === 0 && (
+              <p className="text-xs text-muted-foreground" aria-live="polite">
+                No existing project matches this title.
+              </p>
+            )}
+          </div>
+
+          {hasChecked && <ClashWarningPanel candidates={candidates} isLoading={clash.isFetching} />}
+
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
               <Label htmlFor="project-developer">Developer</Label>
@@ -306,16 +461,16 @@ export function ProjectForm(props: ProjectFormProps) {
                 id="project-developer"
                 value={developerId}
                 onChange={setDeveloperId}
+                onOptionChange={setDeveloperOption}
+                fetchOptions={fetchDeveloperOptions}
+                selectedOption={developerOption ?? undefined}
                 clearable
-                loadError={developers.error}
-                onRetry={() => void developers.refetch()}
-                options={(developers.data?.data ?? []).map((party) => ({
-                  value: party.id,
-                  label: party.name,
-                  description: party.registration_no ?? undefined,
-                }))}
                 placeholder="Search developers"
-                emptyMessage="No developers yet. Add one under Parties"
+                emptyMessage="No developers found"
+                createOption={partyCreateOption('developer', 'developer', (id, option) => {
+                  setDeveloperId(id);
+                  setDeveloperOption(option);
+                })}
               />
               <TypedHint typed={typed?.developer_name} picked={developerId} />
             </div>
@@ -344,62 +499,6 @@ export function ProjectForm(props: ProjectFormProps) {
               />
             </div>
           </div>
-
-          <div className="space-y-1.5">
-            <Label htmlFor="project-title">
-              Project title <span className="text-destructive">*</span>
-            </Label>
-            <div className="flex gap-2">
-              <Input
-                id="project-title"
-                value={title}
-                onChange={(event) => {
-                  setTitle(event.target.value);
-                  setCheckedTitle('');
-                  if (!event.target.value.trim()) setTitleSettled(false);
-                }}
-                onBlur={() => setTitleSettled(title.trim().length > 0)}
-                placeholder="e.g. Setia Alam Phase 3B"
-                autoComplete="off"
-                required
-              />
-              <Button
-                type="button"
-                variant="outline"
-                className="shrink-0"
-                disabled={!checkable || clash.isFetching}
-                onClick={() => void handleCheck()}
-              >
-                {clash.isFetching && hasChecked && (
-                  <Loader2 className="size-4 animate-spin" aria-hidden />
-                )}
-                Check
-              </Button>
-            </div>
-            {hasChecked && clash.isSuccess && !clash.isFetching && candidates.length === 0 && (
-              <p className="text-xs text-muted-foreground" aria-live="polite">
-                No existing project matches this title.
-              </p>
-            )}
-          </div>
-
-          {hasChecked && (
-            <ClashWarningPanel
-              candidates={candidates}
-              isLoading={clash.isFetching}
-              developerChosen={Boolean(developerId)}
-              onRequestJoin={
-                awaitingDecision
-                  ? undefined
-                  : (candidate) => setJoinTarget({ candidate, kind: 'join' })
-              }
-              onDispute={
-                awaitingDecision
-                  ? undefined
-                  : (candidate) => setJoinTarget({ candidate, kind: 'dispute' })
-              }
-            />
-          )}
 
           {typeId && (
             <div className="space-y-1.5">
@@ -557,15 +656,16 @@ export function ProjectForm(props: ProjectFormProps) {
                 id="project-architect"
                 value={architectId}
                 onChange={setArchitectId}
+                onOptionChange={setArchitectOption}
+                fetchOptions={fetchArchitectOptions}
+                selectedOption={architectOption ?? undefined}
                 clearable
-                loadError={architects.error}
-                onRetry={() => void architects.refetch()}
-                options={(architects.data?.data ?? []).map((party) => ({
-                  value: party.id,
-                  label: party.name,
-                }))}
                 placeholder="Search architects"
-                emptyMessage="No architects yet. Add one under Parties"
+                emptyMessage="No architects found"
+                createOption={partyCreateOption('architect', 'architect', (id, option) => {
+                  setArchitectId(id);
+                  setArchitectOption(option);
+                })}
               />
               <TypedHint typed={typed?.architect_name} picked={architectId} />
             </div>
@@ -575,41 +675,53 @@ export function ProjectForm(props: ProjectFormProps) {
                 id="project-contractor"
                 value={mainContractorId}
                 onChange={setMainContractorId}
+                onOptionChange={setContractorOption}
+                fetchOptions={fetchContractorOptions}
+                selectedOption={contractorOption ?? undefined}
                 clearable
-                loadError={contractors.error}
-                onRetry={() => void contractors.refetch()}
-                options={(contractors.data?.data ?? []).map((party) => ({
-                  value: party.id,
-                  label: party.name,
-                }))}
                 placeholder="Search main contractors"
-                emptyMessage="No main contractors yet. Add one under Parties"
+                emptyMessage="No main contractors found"
+                createOption={partyCreateOption(
+                  'main_contractor',
+                  'main contractor',
+                  (id, option) => {
+                    setMainContractorId(id);
+                    setContractorOption(option);
+                  },
+                )}
               />
               <TypedHint typed={typed?.main_contractor_name} picked={mainContractorId} />
             </div>
           </div>
 
-          <div className="space-y-1.5">
-            <Label htmlFor="project-brands">Brands</Label>
-            <SearchableMultiSelect
-              id="project-brands"
-              value={brandIds}
-              onChange={setBrandIds}
-              loadError={brands.error}
-              onRetry={() => void brands.refetch()}
-              options={(brands.data ?? []).map((brand) => ({
-                value: brand.id,
-                label: brand.brand_name,
-              }))}
-              placeholder="Select brands"
-            />
-          </div>
+          {!submitOnly && (
+            <div className="space-y-1.5">
+              <Label htmlFor="project-lead">Lead (optional)</Label>
+              <SearchableSelect
+                id="project-lead"
+                value={leadId}
+                onChange={setLeadId}
+                onOptionChange={setLeadOption}
+                fetchOptions={fetchLeadOptions}
+                selectedOption={leadOption ?? undefined}
+                clearable
+                placeholder="Search leads by title or code"
+                emptyMessage="No open leads match"
+                // Ungated, like the Leads page's own Create lead: the server decides who may
+                // create one (projects.projects.edit, the grant that registers a project).
+                createOption={{
+                  label: (query) => <span>Create lead &ldquo;{query}&rdquo;</span>,
+                  onCreate: setCreatingLeadTitle,
+                }}
+              />
+            </div>
+          )}
         </FormSection>
 
         <FormSection
-          title="Salesperson and lead"
-          open={sectionOpen.salesLead}
-          onOpenChange={(next) => toggleSection('salesLead', next)}
+          title="Salesperson and customer"
+          open={sectionOpen.salesCustomer}
+          onOpenChange={(next) => toggleSection('salesCustomer', next)}
         >
           <div className="grid gap-4 sm:grid-cols-2">
             <div className="space-y-1.5">
@@ -629,25 +741,19 @@ export function ProjectForm(props: ProjectFormProps) {
               />
             </div>
             <div className="space-y-1.5">
-              <Label htmlFor="project-lead">
-                Lead{mode === 'create' && <span className="text-destructive"> *</span>}
+              <Label htmlFor="project-customer">
+                Customer{mode === 'create' && <span className="text-destructive"> *</span>}
               </Label>
               <SearchableSelect
-                id="project-lead"
-                value={leadId}
-                onChange={setLeadId}
-                onOptionChange={setLeadOption}
-                fetchOptions={fetchLeadOptions}
-                selectedOption={leadOption ?? undefined}
-                clearable
-                placeholder="Search leads by title or code"
-                emptyMessage="No open leads match"
-                // Ungated, like the Leads page's own Create lead: the server decides who may
-                // create one (projects.projects.edit, the grant that registers a project).
-                createOption={{
-                  label: (query) => <span>Create lead &ldquo;{query}&rdquo;</span>,
-                  onCreate: setCreatingLeadTitle,
-                }}
+                id="project-customer"
+                value={customerId}
+                onChange={setCustomerId}
+                onOptionChange={setCustomerOption}
+                fetchOptions={fetchCustomerOptions}
+                selectedOption={customerOption ?? undefined}
+                clearable={mode === 'edit'}
+                placeholder="Search customers"
+                emptyMessage="No customers found"
               />
             </div>
           </div>
@@ -657,14 +763,31 @@ export function ProjectForm(props: ProjectFormProps) {
           <Button type="button" variant="outline" onClick={handleCancel}>
             Cancel
           </Button>
-          <Button type="submit" disabled={!canSubmit}>
-            {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-            {wouldBlock
-              ? 'Blocked by an existing project'
-              : mode === 'create'
-                ? 'Register project'
-                : 'Save changes'}
-          </Button>
+          {blocker ? (
+            <Button type="button" onClick={() => setInterestTarget(blocker)}>
+              Register interest in {blocker.project_code}
+            </Button>
+          ) : submitOnly ? (
+            <>
+              <Button
+                type="button"
+                variant="outline"
+                disabled={!canSaveDraft}
+                onClick={() => void save(false)}
+              >
+                {mode === 'edit' && project?.approval_state !== 'draft' ? 'Save changes' : 'Save draft'}
+              </Button>
+              <Button type="submit" disabled={!canSubmit}>
+                {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
+                Submit for approval
+              </Button>
+            </>
+          ) : (
+            <Button type="submit" disabled={!canSubmit}>
+              {pending && <Loader2 className="size-4 animate-spin" aria-hidden />}
+              {mode === 'create' ? 'Register project' : 'Save changes'}
+            </Button>
+          )}
         </div>
       </form>
 
@@ -684,16 +807,26 @@ export function ProjectForm(props: ProjectFormProps) {
         />
       )}
 
-      {joinTarget && (
-        <TakeoverRequestDialog
-          candidate={joinTarget.candidate}
-          kind={joinTarget.kind}
-          onDone={() => setJoinTarget(null)}
+      {interestTarget && (
+        <RegisterInterestDialog
+          candidate={interestTarget}
+          canViewProject={!submitOnly}
+          onDone={() => setInterestTarget(null)}
         />
       )}
+
+      <ProjectAIExtractDialog
+        open={extractOpen}
+        onOpenChange={setExtractOpen}
+        titleText={title}
+        canCreateParties={canCreateParty}
+        onFill={applyExtract}
+      />
     </>
   );
 }
+
+type PickOption = { value: string; label: string; description?: string };
 
 /** The name a portal registration typed, while no party is picked for it. */
 function TypedHint({ typed, picked }: { typed?: string | null; picked: string }) {
@@ -702,69 +835,61 @@ function TypedHint({ typed, picked }: { typed?: string | null; picked: string })
 }
 
 /**
- * The way out of a hard block.
- *
- * Without a recourse path, blocking produces defensive land-grabbing and pushes the
- * argument back into WhatsApp, which is the problem the module was built to solve.
- * The reason is mandatory because the owner or manager has to decide on something.
+ * The way out of a hard block: register interest in the project that already holds this
+ * development (PROJECT-REGISTER-V2 D4). It is the existing dispute request; a sales manager
+ * decides. The note is mandatory because the manager has to decide on something.
  */
-function TakeoverRequestDialog({
+function RegisterInterestDialog({
   candidate,
-  kind,
+  canViewProject,
   onDone,
 }: {
   candidate: ClashCandidate;
-  kind: 'join' | 'dispute';
+  canViewProject: boolean;
   onDone: () => void;
 }) {
+  const router = useRouter();
   const [reason, setReason] = React.useState('');
   const { request } = useTakeoverMutations(candidate.project_id);
 
-  const isJoin = kind === 'join';
-
   return (
     <Dialog open onOpenChange={(next) => !next && onDone()}>
-      <DialogContent className="max-h-[92dvh] w-full max-w-lg overflow-hidden">
+      <DialogContent className="max-h-[92dvh] w-full max-w-lg overflow-hidden" aria-describedby={undefined}>
         <DialogHeader>
-          <DialogTitle>{isJoin ? 'Ask to join this project' : 'Dispute this project'}</DialogTitle>
-          <DialogDescription>
-            {isJoin
-              ? `${candidate.owner_name ?? 'The owner'} decides. If they approve, you get edit rights on ${candidate.project_code}.`
-              : `A sales manager decides. If they agree, ${candidate.project_code} moves to you and ${candidate.owner_name ?? 'the current owner'} stays on as a collaborator.`}
-          </DialogDescription>
+          <DialogTitle>Register interest in {candidate.project_code}</DialogTitle>
         </DialogHeader>
 
         <form
           onSubmit={async (event) => {
             event.preventDefault();
             if (!reason.trim()) return;
-            await request.mutateAsync({ kind, reason: reason.trim() });
+            try {
+              await request.mutateAsync({ kind: 'dispute', reason: reason.trim() });
+            } catch {
+              // toasted by the mutation; the dialog stays open with the note
+              return;
+            }
             onDone();
+            // A salesperson who cannot open the project goes back to the list (D8).
+            if (canViewProject) {
+              router.push(`/project-sales/${candidate.project_id}`);
+            } else {
+              toast.success(`Interest registered in ${candidate.project_code}`);
+              router.push('/project-sales/pipeline');
+            }
           }}
         >
           <DialogBody className="max-h-[60dvh] space-y-3 overflow-y-auto">
-            <div className="rounded-md border border-border bg-muted/40 p-2.5 text-sm">
-              <span className="text-sm text-muted-foreground">{candidate.project_code}</span>
-              <p className="font-medium">{candidate.title}</p>
-              <p className="text-xs text-muted-foreground">
-                Owner: {candidate.owner_name ?? 'Unassigned'}
-                {candidate.status_label ? ` · ${candidate.status_label}` : ''}
-              </p>
-            </div>
             <div className="space-y-1.5">
               <Label htmlFor="takeover-reason">
-                Reason <span className="text-destructive">*</span>
+                How and when did you find this project?{' '}
+                <span className="text-destructive">*</span>
               </Label>
               <Textarea
                 id="takeover-reason"
                 value={reason}
                 onChange={(event) => setReason(event.target.value)}
                 rows={4}
-                placeholder={
-                  isJoin
-                    ? 'e.g. I hold the specifying architect relationship on this tender.'
-                    : 'e.g. I registered this with the developer in March and have the meeting notes.'
-                }
                 required
               />
             </div>
@@ -775,7 +900,7 @@ function TakeoverRequestDialog({
             </Button>
             <Button type="submit" disabled={!reason.trim() || request.isPending}>
               {request.isPending && <Loader2 className="size-4 animate-spin" aria-hidden />}
-              {isJoin ? 'Send request' : 'Raise dispute'}
+              Register interest
             </Button>
           </DialogFooter>
         </form>

@@ -18,6 +18,11 @@ from typing import Optional
 SUBMITTED = "submitted"
 RESUBMITTED = "resubmitted"
 
+# What a person reads for `resubmitted` and for the action behind it (owner, 28 Oct 2026:
+# "Appealed" / "Appeal" on every form). Display only: the stored value stays `resubmitted`.
+APPEALED_LABEL = "Appealed"
+APPEAL_VERB = "Appeal"
+
 AWAITING_REVIEW: tuple[str, ...] = (SUBMITTED, RESUBMITTED)
 
 # The review stage of each stage-based form, i.e. the stage `resubmitted` stands in for.

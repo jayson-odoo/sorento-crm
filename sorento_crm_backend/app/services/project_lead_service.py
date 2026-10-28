@@ -907,7 +907,7 @@ def _decline_recipients(db: Session, lead: ProjectLead) -> List[str]:
 
     from app.services.project_notify_service import management_user_ids
 
-    return management_user_ids(db)
+    return management_user_ids(db, lead.company_id)
 
 
 def _assigner_user_id(db: Session, lead: ProjectLead) -> Optional[str]:
@@ -1006,7 +1006,6 @@ def qualify_lead(
         type_id=payload.pop("type_id", None),
         template_id=payload.pop("template_id", None),
         details=details,
-        brand_ids=payload.pop("brand_ids", None),
         owner_user_id=payload.pop("owner_user_id", None) or lead.owner_user_id,
     )
     project.lead_id = lead.id

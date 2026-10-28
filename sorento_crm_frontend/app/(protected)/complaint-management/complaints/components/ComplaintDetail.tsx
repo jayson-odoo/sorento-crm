@@ -1217,7 +1217,12 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
             </div>
             <div>
               <p className="text-sm text-muted-foreground">Project Title</p>
-              <p className="font-medium">{complaint.project_title || '-'}</p>
+              <p
+                className="line-clamp-2 break-words font-medium"
+                title={complaint.project_title || undefined}
+              >
+                {complaint.project_title || '-'}
+              </p>
               {/* AC-L3: the registered project, by CODE. Rendered as a link because the
                   first thing somebody wants after seeing it is the pursuit itself. */}
               {complaint.project_code && (
