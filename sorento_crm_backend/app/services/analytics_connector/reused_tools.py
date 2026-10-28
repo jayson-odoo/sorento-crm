@@ -774,7 +774,7 @@ REUSED_TOOLS: tuple[dict, ...] = (
             'List PROJECT SALES pursuits (property developments, hotels, fitouts we are '
             'trying to win) with UUID filters, stage filter and pagination. PRIMARY TOOL for '
             "'which projects are we chasing', 'my pipeline', 'projects for <developer>', "
-            "'projects at tendering stage', 'critical projects', 'what is <salesperson> "
+            "'projects at sample submission stage', 'critical projects', 'what is <salesperson> "
             "working on'. NOT for delivery orders or purchase orders -- a project is a "
             'pursuit, not a transaction.\n\nOnly APPROVED projects are listed: a portal '
             'project registration still waiting for approval (or rejected) is not a project '
@@ -795,8 +795,8 @@ REUSED_TOOLS: tuple[dict, ...] = (
             'identified, registered, specified (Spec In), sample_submission, '
             'final_negotiation, sponsorship_form, po_received, lost, dormant. An unknown key returns 422 naming the valid ones.\n  * `outcome` -- '
             'open | won | lost | partial. Commercial result, DERIVED from the quotations; a '
-            "project can sit at 'tendering' with outcome 'partial' when one scope is won.\n  "
-            '* `only_critical=true` -- the Final Negotiation flag, not a stage.\nSORT KEYS: '
+            "project can sit at 'final_negotiation' with outcome 'partial' when one scope is won.\n  "
+            "* `only_critical=true` -- the critical flag (management actively involved), independent of the final_negotiation stage; for 'projects in final negotiation' use status_key=final_negotiation instead.\nSORT KEYS: "
             'created_at, updated_at, title, project_code, estimated_sales_value, '
             'last_meaningful_activity_at; combine with dir=asc|desc.'
         ),

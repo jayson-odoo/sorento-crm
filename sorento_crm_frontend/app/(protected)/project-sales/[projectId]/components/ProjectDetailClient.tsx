@@ -229,7 +229,10 @@ export function ProjectDetailClient({ projectId }: { projectId: string }) {
       {
         onSuccess: () => {
           // Forward only: Quoted -> Spec In ("Re-specify") is a correction, not a new quote.
-          const formRoute = target?.isForward ? STAGE_FORM_ROUTE[target.toKey] : undefined;
+          const formRoute =
+            target?.isForward && Object.hasOwn(STAGE_FORM_ROUTE, target.toKey)
+              ? STAGE_FORM_ROUTE[target.toKey]
+              : undefined;
           if (formRoute) router.push(formRoute(project!.id));
         },
       },

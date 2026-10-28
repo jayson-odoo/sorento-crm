@@ -36,6 +36,7 @@ import { NumberInput } from "@/components/ui/number-input";
 import { Textarea } from "@/components/ui/textarea";
 import { SearchableSelect } from "@/components/common/SearchableSelect";
 import { searchProjectsForLink } from "../services/purchaseRequestService";
+import { getProject } from "@/app/(protected)/project-sales/_shared/services/projectService";
 import { RequestCustomerField } from "./RequestCustomerField";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { ColumnDef } from "@tanstack/react-table";
@@ -159,6 +160,29 @@ export default function PurchaseRequestForm({
     },
     mode: 'onTouched',
   });
+
+  // A project passed in the URL fills the project link and, when still empty, the title.
+  const [defaultProject, setDefaultProject] = useState<{ value: string; label: string }>();
+  useEffect(() => {
+    if (!defaultProjectId || requestId) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const p = await getProject(defaultProjectId);
+        if (cancelled || !p) return;
+        setDefaultProject({
+          value: p.id,
+          label: [p.project_code, p.title].filter(Boolean).join(" - "),
+        });
+        if (!form.getValues("project_title")) form.setValue("project_title", p.title);
+      } catch {
+        // The hidden project_id still carries the link; only the label is lost.
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [defaultProjectId, requestId, form]);
 
   const requestType =
     form.watch("request_type") ?? defaultRequestType ?? "purchase_request";
@@ -709,6 +733,7 @@ export default function PurchaseRequestForm({
                       <SearchableSelect
                         value={field.value || ""}
                         onChange={(next) => field.onChange(next || null)}
+                        selectedOption={defaultProject}
                         fetchOptions={(query, pageIndex) =>
                           searchProjectsForLink(query, pageIndex + 1)
                         }
