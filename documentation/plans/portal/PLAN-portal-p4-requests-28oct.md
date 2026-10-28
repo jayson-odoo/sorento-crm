@@ -124,3 +124,10 @@ Fix round, red first:
   with allowed statuses (dev copy: ON). Confirm the production row with the owner before the release dispatch.
 - `projects.registrations.submit` is granted to salespeople but enforced only once PROJECT-REGISTER-V2 lands.
 - Merging #1953 ships #1944 (P3) with it: #1944's head 9d6372f976 is contained.
+
+## Merge note: #1961 (PROJECT-STAGES-SAMPLE) merges BEFORE #1953
+
+On the next main merge, `sponsorship-forms/new/page.tsx` and `PurchaseRequestForm.tsx` conflict. Resolution agreed with
+that lane (PR #1953 crew-note 6470523547): keep #1961's async page (`searchParams.project_id`) inside the P4 Suspense
+wrapper; the PurchaseRequestForm default-export wrapper passes `defaultProjectId` to BOTH the staff form (#1961 effect,
+`getProject`, `selectedOption`) and `LimitedPurchaseRequestForm`; add one vitest for the limited branch; #1961 tests stay green.
