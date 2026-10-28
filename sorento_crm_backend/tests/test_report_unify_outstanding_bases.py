@@ -527,3 +527,28 @@ def test_s6_a_brand_scoped_contact_is_refused_unpaid_because_an_invoice_has_no_b
     assert refused.json()["code"] == "report_dimension_not_allowed", refused.text
     assert api.get("/api/v1/order-management/report-ask", world.unscoped, basis="unpaid", **window).status_code == 200
     assert api.get("/api/v1/order-management/report-ask", world.scoped, basis="outstanding", **window).status_code == 200
+
+
+# ================================================================ the year dimension (crew 28 Oct): rows sum to the total
+
+
+def test_unpaid_year_rows_sum_to_the_total_across_two_years(client, db):
+    """Every date: 2026 holds IV1 + IV2 + IV3 (750), 2019 holds IV4 (50); the rows add up to the 800 total."""
+    _unpaid_world(db)
+    contact = _staff(db)
+    whole = _ok(client, contact, basis="unpaid", period=None)
+    body = _ok(client, contact, basis="unpaid", group_by="year", top_n=10, period=None)
+    assert {r["name"]: money(r["amount"]) for r in body["rows"]} == {"2026": D("750.00"), "2019": D("50.00")}, body["rows"]
+    assert sum(money(r["amount"]) for r in body["rows"]) == money(whole["total"]["amount"]) == D("800.00"), body
+
+
+def test_pending_delivery_year_rows_sum_to_the_total_across_two_years(client, db):
+    """Every date: 2026 holds the September and August DOs (11 / 1100), 2019 the old one (4 / 400); 15 / 1500 in all."""
+    _pending_world(db)
+    contact = _staff(db)
+    whole = _ok(client, contact, basis="pending_delivery", period=None)
+    body = _ok(client, contact, basis="pending_delivery", group_by="year", top_n=10, period=None)
+    assert {r["name"]: (r["qty"], money(r["amount"])) for r in body["rows"]} == {
+        "2026": (11, D("1100.00")), "2019": (4, D("400.00")),
+    }, body["rows"]
+    assert sum(r["qty"] for r in body["rows"]) == whole["total"]["qty"] == 15, body
