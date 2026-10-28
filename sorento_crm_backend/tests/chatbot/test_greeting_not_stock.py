@@ -4,7 +4,7 @@ from a contact with a tallied usual product got a stock summary for it).
 
 The parser is stubbed to make the prod slip on purpose (a greeting parsed as a stock ask
 for the remembered product, `current_message: false`); the guard after the parse
-(`turn/no_business.py`) is what must turn it back into a greeting. "eta?" over the same
+(`no_business.py`) is what must turn it back into a greeting. "eta?" over the same
 memory is an ask, and the remembered product still fills it.
 """
 from __future__ import annotations
@@ -13,7 +13,7 @@ import uuid
 
 import pytest
 
-from app.services.chatbot.turn import no_business
+from app.services.chatbot import no_business
 from tests.chatbot._turn_helpers import verdict
 from tests.chatbot.test_engine import seeded, stub_access, stub_parser  # noqa: F401
 from tests.chatbot.test_memory_s4_fallback_replay import (  # noqa: F401
@@ -44,7 +44,7 @@ SLIPPED_STOCK_ASK = {
 class TestIsNoBusiness:
     @pytest.mark.parametrize(
         "text",
-        ["Hi", "hi", "Hiii", "Hello boss", "hey there!", "Good morning", "Selamat pagi",
+        ["Hi", "hi", "Hii", "Hiii", "okk", "Hello boss", "hey there!", "Good morning", "Selamat pagi",
          "thanks", "Thank you very much", "tq", "ok", "Okay noted", "👍", "🙏🙏",
          "ok 👍", "你好", "谢谢", "Assalamualaikum", "bye", "Terima kasih boss", "got it", "ok got it thanks", "okkk",
          "Helloooo"],

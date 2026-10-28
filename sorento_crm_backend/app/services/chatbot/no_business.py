@@ -26,14 +26,14 @@ from app.services.chatbot.turn.apply import _CASUAL_TYPES, _IDLE_CHAT_DISQUALIFI
 _NO_BUSINESS_WORDS: frozenset[str] = frozenset(
     {
         # greetings
-        "hi", "hello", "helo", "hey", "heya", "hai", "yo", "morning", "afternoon", "evening",
+        "hi", "hii", "hello", "helo", "hey", "heya", "hai", "yo", "morning", "afternoon", "evening",
         "night", "good", "gd", "gm", "selamat", "pagi", "petang", "malam", "salam",
         "assalamualaikum", "waalaikumsalam", "你好", "您好", "早", "早安", "早上好", "晚安", "哈喽",
         # thanks
         "thanks", "thank", "thankyou", "thx", "tq", "tqvm", "ty", "tks",
         "谢谢", "多谢", "感谢", "you", "u", "very", "much", "a", "lot",
         # acknowledgements
-        "ok", "okay", "okie", "okey", "k", "kk", "noted", "alright", "cool", "nice", "great",
+        "ok", "okk", "okay", "okie", "okey", "k", "kk", "noted", "alright", "cool", "nice", "great",
         "好", "好的", "收到",
         # farewells
         "bye", "goodbye", "cya",

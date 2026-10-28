@@ -1,6 +1,6 @@
 # PLAN: greeting-not-stock
 
-Status: Build (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: Review READY, awaiting owner hand test (small fix track: no migration, no auth/RBAC change, no new ingest surface)
 
 ## Bug
 
@@ -17,7 +17,7 @@ ask (e.g. "eta?" resolves to the remembered product).
 ## Fix
 
 Deterministic guard in code (no prompt edit, so no parser eval run and no Gemini spend):
-`app/services/chatbot/turn/no_business.py::without_context_ask`, called in `engine.py` right
+`app/services/chatbot/no_business.py::without_context_ask` (outside the pure `turn/` package), called in `engine.py` right
 after `turn_question.without_phantom_answer`. When every word of the message is a greeting,
 thanks, acknowledgement or address term (or the message is emoji only), no question is open,
 and the turn is neither a quoted reply nor a photo, the verdict is filed as `casual` with every

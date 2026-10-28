@@ -464,7 +464,8 @@ def test_r6_s1_a_rejected_change_set_leaves_the_held_subject_and_the_engine_does
     chat.say("t1", _ask_with([_entity(brand, "brand"), _entity("water closet", "category")],
                              [_op("set", "brand"), _op("set", "category")], "t1"))
     # an unknown axis rejects the whole change set (`state_led` stays None on it); `say` asserts the turn is done
-    t2 = chat.say("ok", _ask_with([], [_op("set", "no_such_axis")], "ok"))
+    # GREETING-NOT-STOCK: a real ask, not "ok" - a bare "ok" with nothing open is idle chat now.
+    t2 = chat.say("check again", _ask_with([], [_op("set", "no_such_axis")], "check again"))
     listed = _codes_in(t2, world)
     assert listed and listed <= g["srt_wc"], ("the held subject was not fetched after a rejected change set", t2[:200])
 

@@ -87,7 +87,7 @@ from app.services.chatbot.composers import sets as composers_sets
 from app.services.chatbot.turn import pending as turn_pending
 from app.services.chatbot.turn import chat_state
 from app.services.chatbot.turn import question as turn_question
-from app.services.chatbot.turn import no_business as turn_no_business
+from app.services.chatbot import no_business as turn_no_business
 from app.services.chatbot.turn import sub_asks as turn_sub_asks
 from app.services.chatbot.turn import state as turn_state
 from app.services.chatbot.turn import compose as turn_compose
@@ -5347,6 +5347,8 @@ def _run_stages_body(  # noqa: PLR0915
             text=user_turn.own_text,
             quoted=bool(user_turn.quoted_text.strip()),
             media=bool(user_turn.media),
+            # The last two arms are defensive: a required ask the parser answers and most
+            # focus-held questions already reach `open_question`.
             held=(
                 open_question is not None
                 or open_ideation_draft(state_in.ideation)
