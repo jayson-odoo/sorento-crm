@@ -150,7 +150,7 @@ def _skip_fields(
 
 
 @router.get("")
-async def get_form_tracking(
+def get_form_tracking(
     source_entity_type: str = Query(...),
     source_entity_id: str = Query(...),
     current_user: dict = Depends(get_current_user),
@@ -194,7 +194,7 @@ class _EscalateRequest(BaseModel):
 
 
 @router.post("/{tracking_id}/escalate")
-async def escalate_form_tracking(
+def escalate_form_tracking(
     tracking_id: str,
     payload: _EscalateRequest,
     current_user: dict = Depends(require_permission("sla.form.escalate")),
@@ -221,7 +221,7 @@ class _TakeOverRequest(BaseModel):
 
 
 @router.post("/{tracking_id}/claim")
-async def claim_form_handling(
+def claim_form_handling(
     tracking_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -236,7 +236,7 @@ async def claim_form_handling(
 
 
 @router.post("/{tracking_id}/take-over")
-async def take_over_form_handling(
+def take_over_form_handling(
     tracking_id: str,
     payload: _TakeOverRequest,
     current_user: dict = Depends(get_current_user),
@@ -252,7 +252,7 @@ async def take_over_form_handling(
 
 
 @router.post("/{tracking_id}/release")
-async def release_form_handling(
+def release_form_handling(
     tracking_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),

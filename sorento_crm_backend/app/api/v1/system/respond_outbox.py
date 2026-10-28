@@ -87,7 +87,7 @@ def _parse_payload(
 
 
 @router.get("/respond-outbox", response_model=ListResponse[RespondOutboxRowResponse])
-async def list_respond_outbox(
+def list_respond_outbox(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     status_filter: Optional[list[str]] = Query(None, alias="status"),

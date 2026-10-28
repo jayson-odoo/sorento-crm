@@ -48,7 +48,7 @@ _DELETE = "master_data.certificates.delete"
 
 
 @router.get("/", response_model=ListResponse[CertificateResponse])
-async def get_certificates(
+def get_certificates(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: Optional[str] = Query(None, description="Sort column (allowlisted server-side)."),
@@ -135,7 +135,7 @@ async def get_certificates(
 
 
 @router.post("/", response_model=CertificateResponse, status_code=status.HTTP_201_CREATED)
-async def create_certificate(
+def create_certificate(
     payload: CertificateCreate,
     current_user: dict = Depends(require_permission(_ADD)),
     db: Session = Depends(get_db),
@@ -155,7 +155,7 @@ async def create_certificate(
 
 
 @router.delete("/bulk", status_code=status.HTTP_200_OK)
-async def bulk_delete_certificates(
+def bulk_delete_certificates(
     body: BulkDeleteCertificatesRequest = Body(...),
     current_user: dict = Depends(require_permission(_DELETE)),
     db: Session = Depends(get_db),
@@ -179,7 +179,7 @@ async def bulk_delete_certificates(
 
 
 @router.get("/{certificate_id}", response_model=CertificateResponse)
-async def get_certificate(
+def get_certificate(
     certificate_id: str,
     resolve_signed_urls: bool = Query(
         False, description="Sign the CURRENT revision's file into preview_url / download_url."
@@ -204,7 +204,7 @@ async def get_certificate(
 
 
 @router.put("/{certificate_id}", response_model=CertificateResponse)
-async def update_certificate(
+def update_certificate(
     certificate_id: str,
     payload: CertificateEditRequest,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -257,7 +257,7 @@ async def update_certificate(
 
 
 @router.delete("/{certificate_id}", status_code=status.HTTP_200_OK)
-async def delete_certificate(
+def delete_certificate(
     certificate_id: str,
     current_user: dict = Depends(require_permission(_DELETE)),
     db: Session = Depends(get_db),
@@ -277,7 +277,7 @@ async def delete_certificate(
 @router.post(
     "/{certificate_id}/merge-into/{target_id}", response_model=CertificateResponse
 )
-async def merge_certificate_into(
+def merge_certificate_into(
     certificate_id: str,
     target_id: str,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -323,7 +323,7 @@ def _log_coverage(db: Session, service: CertificateService, certificate, coverag
     response_model=CertificateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def add_certificate_product(
+def add_certificate_product(
     certificate_id: str,
     payload: CertificateProductAddRequest,
     current_user: dict = Depends(require_permission(_EDIT)),
@@ -355,7 +355,7 @@ async def add_certificate_product(
 
 
 @router.delete("/{certificate_id}/products/{coverage_id}", status_code=status.HTTP_200_OK)
-async def remove_certificate_product(
+def remove_certificate_product(
     certificate_id: str,
     coverage_id: str,
     current_user: dict = Depends(require_permission(_EDIT)),

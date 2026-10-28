@@ -156,7 +156,7 @@ def record_lifecycle_decision(payload: dict = Body(...), db: Session = Depends(g
 
 
 @router.post("/reorder-levels/import/preview")
-async def preview_level_import(
+def preview_level_import(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     _=Depends(_EDIT),
@@ -165,11 +165,11 @@ async def preview_level_import(
 
     Same resolution `apply` runs - created / updated / unchanged / conflicts / problems -
     so the Test button and Confirm cannot disagree about the same file (S13c)."""
-    return import_svc.preview(db, await read_upload(file))
+    return import_svc.preview(db, read_upload(file))
 
 
 @router.post("/reorder-levels/import/apply")
-async def apply_level_import(
+def apply_level_import(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
     user: dict = Depends(_EDIT),
@@ -177,7 +177,7 @@ async def apply_level_import(
     """Apply the listing. AutoCount owns the level; a hand-set level is never silently
     overwritten - it comes back in `conflict_rows` for a person to settle."""
     out = import_svc.apply(
-        db, await read_upload(file),
+        db, read_upload(file),
         actor=(user or {}).get("email") or (user or {}).get("id"),
     )
     db.commit()

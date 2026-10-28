@@ -21,7 +21,6 @@ real production singleton, so every test runs on a blank schema.
 """
 from __future__ import annotations
 
-import asyncio
 
 import pytest
 from pydantic import ValidationError
@@ -72,7 +71,7 @@ def test_voice_degraded_model_is_in_the_get_response_dict(db: Session):
     )
     db.commit()
 
-    payload = asyncio.run(get_settings(current_user={"id": "zzt"}, db=db))
+    payload = get_settings(current_user={"id": "zzt"}, db=db)
     settings = payload["settings"]
 
     assert "media_voice_degraded_model" in settings

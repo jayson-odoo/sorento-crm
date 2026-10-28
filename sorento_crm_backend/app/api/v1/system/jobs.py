@@ -24,7 +24,7 @@ router = APIRouter()
 
 
 @router.get("/jobs", response_model=ListResponse[ImportJobResponse])
-async def list_jobs(
+def list_jobs(
     job_type: Optional[list[str]] = Query(None),
     status_filter: Optional[list[str]] = Query(None, alias="status"),
     page: int = Query(1, ge=1),
@@ -116,7 +116,7 @@ async def list_jobs(
 
 
 @router.get("/jobs/{job_id}", response_model=ImportJobResponse)
-async def get_job(
+def get_job(
     job_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -234,7 +234,7 @@ def _job_rows_query(db: Session, job: ImportJob, outcome, code, query):
 
 
 @router.get("/jobs/{job_id}/rows", response_model=ListResponse[ImportJobRowResponse])
-async def list_job_rows(
+def list_job_rows(
     job_id: str,
     outcome: Optional[list[str]] = Query(None, description="created|updated|unchanged|skipped|failed"),
     code: Optional[list[str]] = Query(None, description="reason code from the job's breakdown"),
@@ -294,7 +294,7 @@ async def list_job_rows(
 
 
 @router.get("/jobs/{job_id}/rows/export")
-async def export_job_rows(
+def export_job_rows(
     job_id: str,
     outcome: Optional[list[str]] = Query(None),
     code: Optional[list[str]] = Query(None),
@@ -359,7 +359,7 @@ async def export_job_rows(
 
 
 @router.get("/jobs/{job_id}/source")
-async def download_job_source_file(
+def download_job_source_file(
     job_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -409,7 +409,7 @@ async def download_job_source_file(
 
 
 @router.get("/jobs/{job_id}/status", response_model=JobStatusResponse)
-async def get_job_status(
+def get_job_status(
     job_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -466,7 +466,7 @@ async def get_job_status(
 
 
 @router.post("/jobs/{job_id}/cancel", status_code=status.HTTP_200_OK)
-async def cancel_job(
+def cancel_job(
     job_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)

@@ -29,7 +29,7 @@ EDIT = "projects.types.edit"
 
 
 @router.get("/types", response_model=ListResponse[ProjectTypeResponse])
-async def list_types(
+def list_types(
     include_inactive: bool = Query(False),
     _user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -51,7 +51,7 @@ async def list_types(
 @router.post(
     "/types", response_model=ProjectTypeResponse, status_code=status.HTTP_201_CREATED
 )
-async def create_type(
+def create_type(
     payload: ProjectTypeCreate,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -71,7 +71,7 @@ async def create_type(
 
 
 @router.put("/types/{type_id}", response_model=ProjectTypeResponse)
-async def update_type(
+def update_type(
     type_id: str,
     payload: ProjectTypeUpdate,
     _user: dict = Depends(require_permission(EDIT)),
@@ -90,7 +90,7 @@ async def update_type(
 
 
 @router.delete("/types/{type_id}")
-async def delete_type(
+def delete_type(
     type_id: str,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -108,7 +108,7 @@ async def delete_type(
 
 
 @router.get("/templates", response_model=ListResponse[ProjectTemplateResponse])
-async def list_templates(
+def list_templates(
     type_id: Optional[str] = Query(None),
     include_inactive: bool = Query(False),
     _user: dict = Depends(require_permission(VIEW)),
@@ -136,7 +136,7 @@ async def list_templates(
     response_model=ProjectTemplateResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_template(
+def create_template(
     payload: ProjectTemplateCreate,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -156,7 +156,7 @@ async def create_template(
 
 
 @router.put("/templates/{template_id}", response_model=ProjectTemplateResponse)
-async def update_template(
+def update_template(
     template_id: str,
     payload: ProjectTemplateUpdate,
     _user: dict = Depends(require_permission(EDIT)),
@@ -175,7 +175,7 @@ async def update_template(
 
 
 @router.delete("/templates/{template_id}")
-async def delete_template(
+def delete_template(
     template_id: str,
     _user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),

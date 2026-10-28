@@ -42,7 +42,7 @@ def _position(lat: Any, lng: Any) -> tuple[float, float]:
 
 
 @router.get("/nearest-place")
-async def nearest_place(
+def nearest_place(
     lat: Optional[str] = Query(None, description="Latitude, -90 to 90."),
     lng: Optional[str] = Query(None, description="Longitude, -180 to 180."),
 ):

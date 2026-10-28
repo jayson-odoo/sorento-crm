@@ -31,7 +31,7 @@ router = APIRouter()
 
 
 @router.get("/{token}", response_model=QuotationSignPageResponse)
-async def read_quotation_for_signing(
+def read_quotation_for_signing(
     token: str,
     db: Session = Depends(get_db),
 ):
@@ -48,7 +48,7 @@ async def read_quotation_for_signing(
 
 
 @router.post("/{token}/accept", response_model=QuotationSignPageResponse)
-async def accept_quotation(
+def accept_quotation(
     token: str,
     payload: QuotationSignAcceptRequest,
     request: Request,
@@ -81,7 +81,7 @@ async def accept_quotation(
 
 
 @router.post("/{token}/request-changes", response_model=QuotationSignPageResponse)
-async def request_quotation_changes(
+def request_quotation_changes(
     token: str,
     payload: QuotationSignChangesRequest,
     db: Session = Depends(get_db),

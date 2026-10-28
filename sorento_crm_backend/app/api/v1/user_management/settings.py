@@ -264,7 +264,7 @@ class AppConfigResponse(BaseModel):
 
 
 @router.get("/")
-async def get_settings(
+def get_settings(
     current_user: dict = Depends(require_permission("user_management.settings.view")),
     db: Session = Depends(get_db)
 ):
@@ -505,7 +505,7 @@ async def get_settings(
 # Declared immediately after `GET /` and ahead of every other GET in this file so a
 # path-parameter route added later (e.g. `/{section}`) cannot shadow this static path.
 @router.get("/app-config", response_model=AppConfigResponse)
-async def get_app_config(
+def get_app_config(
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -686,7 +686,7 @@ def _runtime_settings_body(db: Session) -> dict:
 
 
 @router.get("/runtime")
-async def get_runtime_settings(
+def get_runtime_settings(
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):
@@ -695,7 +695,7 @@ async def get_runtime_settings(
 
 
 @router.put("/runtime")
-async def update_runtime_settings(
+def update_runtime_settings(
     payload: Any = Body(...),
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
@@ -739,7 +739,7 @@ def _completed_lane_vocabulary() -> frozenset[str]:
 
 
 @router.get("/chatbot-lanes", response_model=List[ChatbotLane])
-async def get_chatbot_lanes(
+def get_chatbot_lanes(
     current_user: dict = Depends(require_permission("user_management.settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -1119,7 +1119,7 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
 
 
 @router.put("/general", status_code=status.HTTP_200_OK)
-async def update_general_settings(
+def update_general_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1147,7 +1147,7 @@ async def update_general_settings(
 
 
 @router.post("/general", status_code=status.HTTP_200_OK)
-async def update_general_settings_post(
+def update_general_settings_post(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1167,7 +1167,7 @@ async def update_general_settings_post(
 
 
 @router.put("/social", status_code=status.HTTP_200_OK)
-async def update_social_settings(
+def update_social_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1198,7 +1198,7 @@ async def update_social_settings(
 
 
 @router.put("/notifications", status_code=status.HTTP_200_OK)
-async def update_notification_settings(
+def update_notification_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission("user_management.settings.edit")),
     db: Session = Depends(get_db)
@@ -1232,7 +1232,7 @@ async def update_notification_settings(
 
 
 @router.put("/smtp", status_code=status.HTTP_200_OK)
-async def update_smtp_settings(
+def update_smtp_settings(
     settings_data: SystemSettingUpdate,
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
@@ -1266,7 +1266,7 @@ async def update_smtp_settings(
 
 
 @router.post("/smtp/test", status_code=status.HTTP_200_OK, response_model=SmtpTestResult)
-async def test_smtp_connection(
+def test_smtp_connection(
     current_user: dict = Depends(require_permission(RUNTIME_SETTINGS_PERMISSION)),
     db: Session = Depends(get_db),
 ):

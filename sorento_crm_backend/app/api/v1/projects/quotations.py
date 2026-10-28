@@ -131,7 +131,7 @@ def _notify_breaches(db: Session, line, actor_user_id: str) -> None:
     "/projects/{project_id}/quotations",
     response_model=ListResponse[ProjectQuotationResponse],
 )
-async def list_quotations(
+def list_quotations(
     project_id: str,
     # API-key readable (AC-K1): `crm_project_quotations_list` answers "what did we quote".
     _user: dict = Depends(require_any_permission_with_api_key(READ)),
@@ -158,7 +158,7 @@ async def list_quotations(
     response_model=ProjectQuotationResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_quotation(
+def create_quotation(
     project_id: str,
     payload: ProjectQuotationCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -186,7 +186,7 @@ async def create_quotation(
 
 
 @router.put("/quotations/{quotation_id}", response_model=ProjectQuotationResponse)
-async def update_quotation(
+def update_quotation(
     quotation_id: str,
     payload: ProjectQuotationUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -207,7 +207,7 @@ async def update_quotation(
 
 
 @router.post("/quotations/{quotation_id}/outcome", response_model=ProjectQuotationResponse)
-async def set_quotation_outcome(
+def set_quotation_outcome(
     quotation_id: str,
     payload: ProjectQuotationOutcomeRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -236,7 +236,7 @@ async def set_quotation_outcome(
 
 
 @router.delete("/quotations/{quotation_id}")
-async def delete_quotation(
+def delete_quotation(
     quotation_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
@@ -281,7 +281,7 @@ def _quotation_for_edit(db: Session, quotation_id: str, current_user: dict):
     "/quotations/{quotation_id}/line-verdict",
     response_model=QuotationLineVerdictResponse,
 )
-async def judge_draft_line(
+def judge_draft_line(
     quotation_id: str,
     product_id: Optional[str] = Query(None),
     product_set_id: Optional[str] = Query(None, pattern=UUID_PATTERN),
@@ -389,7 +389,7 @@ async def judge_draft_line(
 
 
 @router.get("/quotation-line-images", response_model=QuotationLineImagesResponse)
-async def quotation_line_images(
+def quotation_line_images(
     product_id: str = Query(..., pattern=UUID_PATTERN),
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -442,7 +442,7 @@ def quotation_line_stock(
     "/quotations/{quotation_id}/versions",
     response_model=ListResponse[ProjectQuotationVersionResponse],
 )
-async def list_versions(
+def list_versions(
     quotation_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -461,7 +461,7 @@ async def list_versions(
     response_model=ProjectQuotationVersionResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def revise_quotation(
+def revise_quotation(
     quotation_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -486,7 +486,7 @@ async def revise_quotation(
     "/quotation-versions/{version_id}/lines",
     response_model=ListResponse[ProjectQuotationLineResponse],
 )
-async def list_lines(
+def list_lines(
     version_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -503,7 +503,7 @@ async def list_lines(
     response_model=ProjectQuotationLineResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_line(
+def create_line(
     version_id: str,
     payload: ProjectQuotationLineCreate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -533,7 +533,7 @@ async def create_line(
     "/quotation-versions/{version_id}/lines",
     response_model=ListResponse[ProjectQuotationLineResponse],
 )
-async def replace_lines(
+def replace_lines(
     version_id: str,
     payload: ProjectQuotationLineBulkWrite,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -579,7 +579,7 @@ async def replace_lines(
     "/quotation-versions/{version_id}/lines/{line_id}",
     response_model=ProjectQuotationLineResponse,
 )
-async def update_line(
+def update_line(
     version_id: str,
     line_id: str,
     payload: ProjectQuotationLineUpdate,
@@ -611,7 +611,7 @@ async def update_line(
 
 
 @router.delete("/quotation-versions/{version_id}/lines/{line_id}")
-async def delete_line(
+def delete_line(
     version_id: str,
     line_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -634,7 +634,7 @@ async def delete_line(
     "/quotation-versions/{version_id}/recompute",
     response_model=QuotationRecomputeResponse,
 )
-async def recompute_version(
+def recompute_version(
     version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -748,7 +748,7 @@ def _line_or_404(db: Session, version_id: str, line_id: str):
 
 
 @router.get("/config/loss-reasons", response_model=List[dict])
-async def list_loss_reasons(
+def list_loss_reasons(
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
 ):
@@ -761,7 +761,7 @@ async def list_loss_reasons(
 
 
 @router.get("/config/series", response_model=ListResponse[ProjectSeriesResponse])
-async def list_series(
+def list_series(
     include_inactive: bool = Query(False),
     _user: dict = Depends(require_permission(CONFIG_VIEW)),
     db: Session = Depends(get_db),
@@ -783,7 +783,7 @@ async def list_series(
     response_model=ProjectSeriesResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def create_series(
+def create_series(
     payload: ProjectSeriesCreate,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),
@@ -808,7 +808,7 @@ async def create_series(
 
 
 @router.put("/config/series/{series_id}", response_model=ProjectSeriesResponse)
-async def update_series(
+def update_series(
     series_id: str,
     payload: ProjectSeriesUpdate,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -844,7 +844,7 @@ async def update_series(
 
 
 @router.delete("/config/series/{series_id}")
-async def delete_series(
+def delete_series(
     series_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),
@@ -901,7 +901,7 @@ def _series_or_404(db: Session, series_id: str):
     "/config/series/{series_id}/products/rows",
     response_model=ListResponse[SeriesProductRowResponse],
 )
-async def list_series_product_rows(
+def list_series_product_rows(
     series_id: str,
     page: int = Query(1, ge=1, le=1000000),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
@@ -931,7 +931,7 @@ async def list_series_product_rows(
     "/config/series/{series_id}/products/{product_id}",
     response_model=SeriesProductRowResponse,
 )
-async def update_series_product_pricing(
+def update_series_product_pricing(
     series_id: str,
     product_id: str,
     payload: SeriesProductPricingUpdate,
@@ -961,7 +961,7 @@ async def update_series_product_pricing(
     "/config/series/{series_id}/products/{product_id}",
     status_code=204,
 )
-async def remove_series_product(
+def remove_series_product(
     series_id: str,
     product_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -989,7 +989,7 @@ async def remove_series_product(
     "/config/series/{series_id}/sets/rows",
     response_model=ListResponse[SeriesSetRowResponse],
 )
-async def list_series_set_rows(
+def list_series_set_rows(
     series_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -1007,7 +1007,7 @@ async def list_series_set_rows(
     "/config/series/{series_id}/sets/{product_set_id}",
     response_model=SeriesSetRowResponse,
 )
-async def update_series_set_pricing(
+def update_series_set_pricing(
     series_id: str,
     product_set_id: str,
     payload: SeriesProductPricingUpdate,
@@ -1037,7 +1037,7 @@ async def update_series_set_pricing(
     "/config/series/{series_id}/sets/{product_set_id}",
     status_code=204,
 )
-async def remove_series_set(
+def remove_series_set(
     series_id: str,
     product_set_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -1065,7 +1065,7 @@ async def remove_series_set(
     "/config/series/{series_id}/products",
     response_model=ProjectSeriesProductImportResponse,
 )
-async def import_series_products(
+def import_series_products(
     series_id: str,
     payload: ProjectSeriesProductImport,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
@@ -1105,7 +1105,7 @@ async def import_series_products(
     response_model=SeriesProductImportJobResponse,
     status_code=202,
 )
-async def upload_series_products(
+def upload_series_products(
     series_id: str,
     file: UploadFile = File(..., description="An .xlsx or .csv carrying a PRODUCT CODE column"),
     mode: str = Form("append"),
@@ -1152,7 +1152,7 @@ async def upload_series_products(
             )
 
         series = _series_or_404(db, series_id)
-        content = await file.read()
+        content = file.file.read()
         if not content:
             raise AppException(
                 status_code=422, message="That file is empty.", code="series_import_empty_file"
@@ -1312,7 +1312,7 @@ def _serialize_series(
 
 
 @router.get("/config/price-floors", response_model=ListResponse[PriceFloorRuleResponse])
-async def list_price_floors(
+def list_price_floors(
     _user: dict = Depends(require_permission(CONFIG_VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -1328,7 +1328,7 @@ async def list_price_floors(
     "/config/price-floors/effective",
     response_model=PriceFloorEffectiveResponse,
 )
-async def get_effective_price_floor(
+def get_effective_price_floor(
     product_id: Optional[str] = Query(None),
     category_id: Optional[str] = Query(None),
     _user: dict = Depends(require_permission(CONFIG_VIEW)),
@@ -1364,7 +1364,7 @@ async def get_effective_price_floor(
     response_model=PriceFloorRuleResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def upsert_price_floor(
+def upsert_price_floor(
     payload: PriceFloorRuleUpsert,
     current_user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),
@@ -1387,7 +1387,7 @@ async def upsert_price_floor(
 
 
 @router.delete("/config/price-floors/{rule_id}")
-async def delete_price_floor(
+def delete_price_floor(
     rule_id: str,
     _user: dict = Depends(require_permission(CONFIG_EDIT)),
     db: Session = Depends(get_db),

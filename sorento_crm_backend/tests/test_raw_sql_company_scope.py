@@ -20,7 +20,6 @@ seeding is scope-independent and never commits real data. All rows carry a
 """
 from __future__ import annotations
 
-import asyncio
 import os
 import uuid
 from types import SimpleNamespace
@@ -244,7 +243,7 @@ def test_bind_endpoint_rejects_cross_company_product(db, two_companies):
     payload = ProductAttachmentLinkRequestAny(attachment_id=att_a, product_code=code)
 
     with pytest.raises(HTTPException) as exc:
-        asyncio.run(create_product_attachment(payload, current_user={"id": "system"}, db=db))
+        create_product_attachment(payload, current_user={"id": "system"}, db=db)
     assert exc.value.status_code == 400
     assert "product_code" in str(exc.value.detail).lower()
 
@@ -279,10 +278,8 @@ def test_lookup_resolve_scopes_from_body(db, two_companies, monkeypatch):
         set_key=f"zzraw_set_{suffix}", raw="CHAIR-01", contact_id="rid-1", space_id="space-1"
     )
     # X-API-Key/MCP principal -> body contact params DO re-scope (AC-I3).
-    result = asyncio.run(
-        lookup_mod.resolve(
-            body, current_user={"id": "system", "auth_method": "api_key"}, db=db
-        )
+    result = lookup_mod.resolve(
+        body, current_user={"id": "system", "auth_method": "api_key"}, db=db
     )
 
     assert result.value == "CHAIR-01"
@@ -291,10 +288,8 @@ def test_lookup_resolve_scopes_from_body(db, two_companies, monkeypatch):
     # L3: a logged-in JWT user with the SAME forged body params is NOT re-scoped - 
     # their active-company scope is preserved (no cross-company escalation).
     set_company_scope(db, None)
-    asyncio.run(
-        lookup_mod.resolve(
-            body, current_user={"id": "u1", "auth_method": "jwt"}, db=db
-        )
+    lookup_mod.resolve(
+        body, current_user={"id": "u1", "auth_method": "jwt"}, db=db
     )
     assert get_company_scope(db) is None  # JWT scope untouched by body params
 
@@ -314,5 +309,5 @@ def test_lookup_resolve_without_contact_leaves_scope(db, two_companies, monkeypa
     # No contact params in the body -> resolver's scope is left untouched.
     set_company_scope(db, None)
     body = LookupResolveRequest(set_key=f"zzraw_set2_{suffix}", raw="CHAIR-01")
-    asyncio.run(lookup_mod.resolve(body, current_user={"id": "system"}, db=db))
+    lookup_mod.resolve(body, current_user={"id": "system"}, db=db)
     assert get_company_scope(db) is None

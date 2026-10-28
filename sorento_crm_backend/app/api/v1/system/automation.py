@@ -35,7 +35,7 @@ def _hydrate(row, db: Session) -> AutomationResponse:
 
 
 @router.get("/automation/triggers/catalog", response_model=TriggerCatalog)
-async def get_trigger_catalog(
+def get_trigger_catalog(
     current_user: dict = Depends(require_permission("automation.automations.view")),
 ):
     return TriggerCatalog(
@@ -54,7 +54,7 @@ async def get_trigger_catalog(
 
 
 @router.get("/automation/automations", response_model=ListResponse[AutomationResponse])
-async def list_automations(
+def list_automations(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     query: Optional[str] = Query(None),
@@ -73,7 +73,7 @@ async def list_automations(
 
 
 @router.get("/automation/automations/{automation_id}", response_model=AutomationResponse)
-async def get_automation(
+def get_automation(
     automation_id: str,
     current_user: dict = Depends(require_permission("automation.automations.view")),
     db: Session = Depends(get_db),
@@ -87,7 +87,7 @@ async def get_automation(
 
 
 @router.post("/automation/automations", response_model=AutomationResponse, status_code=201)
-async def create_automation(
+def create_automation(
     payload: AutomationCreate,
     current_user: dict = Depends(require_permission("automation.automations.add")),
     db: Session = Depends(get_db),
@@ -101,7 +101,7 @@ async def create_automation(
 
 
 @router.put("/automation/automations/{automation_id}", response_model=AutomationResponse)
-async def update_automation(
+def update_automation(
     automation_id: str,
     payload: AutomationUpdate,
     current_user: dict = Depends(require_permission("automation.automations.edit")),
@@ -117,7 +117,7 @@ async def update_automation(
     "/automation/automations/{automation_id}/toggle",
     response_model=AutomationResponse,
 )
-async def toggle_automation(
+def toggle_automation(
     automation_id: str,
     payload: AutomationToggleRequest,
     current_user: dict = Depends(require_permission("automation.automations.edit")),
@@ -131,7 +131,7 @@ async def toggle_automation(
     "/automation/automations/{automation_id}",
     response_model=SuccessResponse,
 )
-async def delete_automation(
+def delete_automation(
     automation_id: str,
     current_user: dict = Depends(require_permission("automation.automations.delete")),
     db: Session = Depends(get_db),
@@ -144,7 +144,7 @@ async def delete_automation(
     "/automation/automations/{automation_id}/run",
     response_model=AutomationRunNowResponse,
 )
-async def run_automation_now(
+def run_automation_now(
     automation_id: str,
     current_user: dict = Depends(require_permission("automation.automations.run")),
     db: Session = Depends(get_db),
@@ -162,7 +162,7 @@ async def run_automation_now(
     "/automation/automations/{automation_id}/runs",
     response_model=ListResponse[AutomationRunResponse],
 )
-async def list_automation_runs(
+def list_automation_runs(
     automation_id: str,
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),

@@ -107,7 +107,7 @@ def _action_body(service: ProjectPOExtractionService, result: dict) -> dict:
     response_model=POVersionUploadResponse,
     status_code=status.HTTP_202_ACCEPTED,
 )
-async def upload_purchase_order_document(
+def upload_purchase_order_document(
     project_id: str,
     file: UploadFile = File(..., description="The customer PO as a PDF, JPEG or PNG"),
     po_number: Optional[str] = Form(None),
@@ -124,7 +124,7 @@ async def upload_purchase_order_document(
         project = _project_for_edit(db, project_id, current_user)
         if purchase_order_id:
             validate_uuid_path(purchase_order_id, resource="Purchase order")
-        content = await file.read()
+        content = file.file.read()
         if len(content) > MAX_UPLOAD_BYTES:
             raise AppException(
                 status_code=413,
@@ -165,7 +165,7 @@ async def upload_purchase_order_document(
 
 
 @router.get("/purchase-orders/{po_id}/versions")
-async def list_purchase_order_versions(
+def list_purchase_order_versions(
     po_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -214,7 +214,7 @@ async def list_purchase_order_versions(
 @router.get(
     "/purchase-order-versions/{po_version_id}", response_model=POVersionDetailResponse
 )
-async def get_purchase_order_version(
+def get_purchase_order_version(
     po_version_id: str,
     _user: dict = Depends(require_any_permission(READ)),
     db: Session = Depends(get_db),
@@ -245,7 +245,7 @@ async def get_purchase_order_version(
 @router.put(
     "/purchase-order-versions/{po_version_id}", response_model=POVersionDetailResponse
 )
-async def update_purchase_order_version_header(
+def update_purchase_order_version_header(
     po_version_id: str,
     payload: POVersionHeaderUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -270,7 +270,7 @@ async def update_purchase_order_version_header(
     "/purchase-order-versions/{po_version_id}/lines/{line_id}",
     response_model=POVersionDetailResponse,
 )
-async def update_purchase_order_version_line(
+def update_purchase_order_version_line(
     po_version_id: str,
     line_id: str,
     payload: POLineUpdate,
@@ -302,7 +302,7 @@ async def update_purchase_order_version_line(
     "/purchase-order-versions/{po_version_id}/retry-extraction",
     response_model=POVersionDetailResponse,
 )
-async def retry_purchase_order_extraction(
+def retry_purchase_order_extraction(
     po_version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -333,7 +333,7 @@ async def retry_purchase_order_extraction(
     "/purchase-order-versions/{po_version_id}/confirm",
     response_model=POVersionDetailResponse,
 )
-async def confirm_purchase_order_version(
+def confirm_purchase_order_version(
     po_version_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -369,7 +369,7 @@ async def confirm_purchase_order_version(
 @router.post(
     "/po-annotations/{annotation_id}/accept", response_model=AnnotationActionResponse
 )
-async def accept_po_annotation(
+def accept_po_annotation(
     annotation_id: str,
     payload: Optional[AnnotationAcceptRequest] = None,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -394,7 +394,7 @@ async def accept_po_annotation(
 @router.post(
     "/po-annotations/{annotation_id}/edit", response_model=AnnotationActionResponse
 )
-async def edit_po_annotation(
+def edit_po_annotation(
     annotation_id: str,
     payload: AnnotationEditRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -421,7 +421,7 @@ async def edit_po_annotation(
 @router.post(
     "/po-annotations/{annotation_id}/reject", response_model=AnnotationActionResponse
 )
-async def reject_po_annotation(
+def reject_po_annotation(
     annotation_id: str,
     payload: AnnotationRejectRequest,
     current_user: dict = Depends(require_permission(EDIT)),

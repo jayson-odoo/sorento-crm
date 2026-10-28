@@ -79,7 +79,7 @@ def _one(db: Session, lead, current_user: dict) -> dict:
 
 
 @router.get("", response_model=ListResponse[ProjectLeadResponse])
-async def list_leads(
+def list_leads(
     query: Optional[str] = Query(None, description="Matches the title or the lead code."),
     outcome: Optional[List[str]] = Query(None),
     status_id: Optional[List[str]] = Query(None),
@@ -129,7 +129,7 @@ async def list_leads(
 
 
 @router.get("/disqualify-reasons", response_model=List[ProjectLeadReasonOption])
-async def list_disqualify_reasons(
+def list_disqualify_reasons(
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -145,7 +145,7 @@ async def list_disqualify_reasons(
     "/awaiting-acceptance",
     response_model=ListResponse[ProjectLeadAwaitingAcceptanceRow],
 )
-async def list_awaiting_acceptance(
+def list_awaiting_acceptance(
     owner_user_id: Optional[List[str]] = Query(None),
     min_hours: float = Query(
         0, ge=0, description="Only leads that have been waiting at least this long."
@@ -191,7 +191,7 @@ async def list_awaiting_acceptance(
 
 
 @router.get("/metrics", response_model=ProjectLeadConversionMetrics)
-async def lead_conversion_metrics(
+def lead_conversion_metrics(
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
 ):
@@ -204,7 +204,7 @@ async def lead_conversion_metrics(
 @router.get(
     "/by-customer/{customer_id}/portfolio", response_model=CustomerPortfolioResponse
 )
-async def customer_portfolio(
+def customer_portfolio(
     customer_id: str,
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -222,7 +222,7 @@ async def customer_portfolio(
 
 
 @router.get("/{lead_id}", response_model=ProjectLeadResponse)
-async def get_lead(
+def get_lead(
     lead_id: str,
     current_user: dict = Depends(require_permission(VIEW)),
     db: Session = Depends(get_db),
@@ -238,7 +238,7 @@ async def get_lead(
 
 
 @router.post("", response_model=ProjectLeadResponse, status_code=status.HTTP_201_CREATED)
-async def create_lead(
+def create_lead(
     payload: ProjectLeadCreate,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -297,7 +297,7 @@ async def create_lead(
 
 
 @router.put("/{lead_id}", response_model=ProjectLeadResponse)
-async def update_lead(
+def update_lead(
     lead_id: str,
     payload: ProjectLeadUpdate,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -319,7 +319,7 @@ async def update_lead(
 
 
 @router.post("/{lead_id}/status", response_model=ProjectLeadResponse)
-async def change_lead_status(
+def change_lead_status(
     lead_id: str,
     payload: ProjectLeadStatusChangeRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -343,7 +343,7 @@ async def change_lead_status(
 
 
 @router.post("/{lead_id}/assign", response_model=ProjectLeadResponse)
-async def assign_lead(
+def assign_lead(
     lead_id: str,
     payload: ProjectLeadAssignRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -375,7 +375,7 @@ async def assign_lead(
 
 
 @router.post("/{lead_id}/accept", response_model=ProjectLeadResponse)
-async def accept_lead(
+def accept_lead(
     lead_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -403,7 +403,7 @@ async def accept_lead(
 
 
 @router.post("/{lead_id}/decline", response_model=ProjectLeadResponse)
-async def decline_lead(
+def decline_lead(
     lead_id: str,
     payload: ProjectLeadDeclineRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -433,7 +433,7 @@ async def decline_lead(
 
 
 @router.get("/{lead_id}/qualify-preview", response_model=ClashPreviewResponse)
-async def preview_qualify(
+def preview_qualify(
     lead_id: str,
     title: Optional[str] = Query(None, description="Defaults to the lead's title."),
     developer_party_id: Optional[str] = Query(None),
@@ -470,7 +470,7 @@ async def preview_qualify(
     response_model=ProjectResponse,
     status_code=status.HTTP_201_CREATED,
 )
-async def qualify_lead(
+def qualify_lead(
     lead_id: str,
     payload: ProjectLeadQualifyRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -522,7 +522,7 @@ async def qualify_lead(
 
 
 @router.post("/{lead_id}/disqualify", response_model=ProjectLeadResponse)
-async def disqualify_lead(
+def disqualify_lead(
     lead_id: str,
     payload: ProjectLeadDisqualifyRequest,
     current_user: dict = Depends(require_permission(EDIT)),
@@ -544,7 +544,7 @@ async def disqualify_lead(
 
 
 @router.post("/{lead_id}/reopen", response_model=ProjectLeadResponse)
-async def reopen_lead(
+def reopen_lead(
     lead_id: str,
     current_user: dict = Depends(require_permission(EDIT)),
     db: Session = Depends(get_db),
@@ -567,7 +567,7 @@ async def reopen_lead(
 
 
 @router.delete("/{lead_id}")
-async def delete_lead(
+def delete_lead(
     lead_id: str,
     current_user: dict = Depends(require_permission(DELETE)),
     db: Session = Depends(get_db),
