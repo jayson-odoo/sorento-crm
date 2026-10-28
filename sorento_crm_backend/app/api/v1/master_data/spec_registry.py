@@ -26,6 +26,7 @@ from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_text, multi_values
 from app.database import get_db
 from app.dependencies import (
     require_any_permission_with_api_key,
@@ -583,12 +584,12 @@ async def reread_catalogue(
 @router.get("/{spec_key}/products")
 async def products_carrying_spec(
     spec_key: str,
-    value: Optional[str] = None,
+    value: Optional[list[str]] = Query(None),
     q: Optional[str] = None,
-    class_label: Optional[str] = Query(
-        None, description="Narrows to one product class (`class`), e.g. \"Kitchen Sink\"."
+    class_label: Optional[list[str]] = Query(
+        None, description="Narrows to these product classes (`class`), e.g. \"Kitchen Sink\"; several = any of them."
     ),
-    source_filter: Optional[str] = Query(
+    source_filter: Optional[list[str]] = Query(
         None,
         alias="source",
         description="Narrows to one provenance source, e.g. \"derived\" or \"human\".",
@@ -641,8 +642,7 @@ async def products_carrying_spec(
         .filter(ProductSpecifications.values.has_key(spec_key))  # noqa: W601
         .filter(Product.is_active.is_(True))
     )
-    if value is not None:
-        base = base.filter(stored_value == value)
+    values = multi_text(value)
     if q and q.strip():
         # Searched in the database rather than in the page, because the list is
         # paginated: filtering the hundred rows on screen would report "no matches" for
@@ -656,6 +656,11 @@ async def products_carrying_spec(
                 ProductSpecifications.provenance[spec_key]["evidence"].astext.ilike(needle),
             )
         )
+    # The Value options follow the search box but are counted BEFORE the value filter, so picking one
+    # leaves the others on offer.
+    base_all_values = base
+    if values:
+        base = base.filter(stored_value.in_(values))
 
     # Counted over `base` before `class_label`/`source` narrow it further, so the
     # dropdown options describe everything there is to pick, not just what is already
@@ -664,7 +669,7 @@ async def products_carrying_spec(
     tallies = {
         "by_value": [
             {"value": v, "count": n}
-            for v, n in base.with_entities(stored_value, func.count()).group_by(stored_value)
+            for v, n in base_all_values.with_entities(stored_value, func.count()).group_by(stored_value)
             .order_by(func.count().desc()).limit(30).all()
         ],
         "by_class": [
@@ -679,10 +684,11 @@ async def products_carrying_spec(
         ],
     }
 
-    if class_label is not None:
-        base = base.filter(stored_class == class_label)
-    if source_filter is not None:
-        base = base.filter(stored_source == source_filter)
+    class_labels, sources = multi_text(class_label), multi_values(source_filter)
+    if class_labels:
+        base = base.filter(stored_class.in_(class_labels))
+    if sources:
+        base = base.filter(stored_source.in_(sources))
 
     total = base.count()
     rows = (

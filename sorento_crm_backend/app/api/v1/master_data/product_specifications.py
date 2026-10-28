@@ -19,6 +19,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, or_
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_text, multi_values
 from app.database import get_db
 from app.dependencies import require_permission_with_api_key
 from app.models.product import Brand, Product, ProductCategory
@@ -29,11 +30,13 @@ from app.models.product_spec import (
 )
 from app.schemas.common import MAX_PAGE_LIMIT
 from app.services import product_spec_verification
-from app.services.error_handler import AppException, handle_internal_error, handle_not_found
+from app.services.error_handler import AppException, handle_internal_error, handle_not_found, handle_unprocessable
 from app.services.product_class_signal import explain_code
 from app.services.product_spec_registry import value_for_registry
 from app.services.product_spec_extract import MAX_TEXT_LENGTH as MAX_EXTRACT_TEXT
 from app.services.product_spec_search import RELEVANCE_FLOOR, search_specs
+
+_VERIFICATION_STATES = ("unverified", "verified", "needs_reverify")
 
 router = APIRouter()
 
@@ -717,8 +720,8 @@ def spec_verification_worklist(
     query: Optional[str] = Query(None, description="Match a product code or name."),
     # Literal rather than str: an unknown state or sort is a client bug, and silently
     # serving the unfiltered list instead of 422ing hides it.
-    state: Optional[Literal["unverified", "verified", "needs_reverify"]] = Query(None),
-    class_label: Optional[str] = Query(None),
+    state: Optional[list[str]] = Query(None),
+    class_label: Optional[list[str]] = Query(None),
     include_discontinued: bool = Query(False),
     sort: Literal["default", "coverage", "code"] = Query("default"),
     direction: str = Query("asc", alias="dir", description="asc | desc"),
@@ -731,13 +734,16 @@ def spec_verification_worklist(
     line stays honest while the reviewer is filtered down (AC-D.6). `classes` carries
     the class filter's own options, so the screen needs no second call for a dropdown.
     """
+    states = multi_values(state)
+    if states and any(s not in _VERIFICATION_STATES for s in states):
+        raise handle_unprocessable(f"State: expected one of {', '.join(_VERIFICATION_STATES)}")
     return product_spec_verification.worklist(
         db,
         page=page,
         limit=limit,
         query=query,
-        state=state,
-        class_label=class_label,
+        state=states,
+        class_label=multi_text(class_label),
         include_discontinued=include_discontinued,
         sort=sort,
         direction=direction,
