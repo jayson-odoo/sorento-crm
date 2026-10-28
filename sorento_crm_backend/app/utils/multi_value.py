@@ -14,7 +14,16 @@ from typing import Optional
 from app.services.error_handler import handle_unprocessable
 
 
-def multi_values(raw: Iterable[str] | str | None) -> Optional[list[str]]:
+MAX_FILTER_VALUES = 200
+
+
+def _capped(values: list[str], label: str) -> list[str]:
+    if len(values) > MAX_FILTER_VALUES:
+        raise handle_unprocessable(f"{label}: at most {MAX_FILTER_VALUES} values")
+    return values
+
+
+def multi_values(raw: Iterable[str] | str | None, label: str = "filter") -> Optional[list[str]]:
     """The distinct non-blank values, in the order given; None when there are none (no filter)."""
     if raw is None:
         return None
@@ -25,10 +34,10 @@ def multi_values(raw: Iterable[str] | str | None) -> Optional[list[str]]:
             value = part.strip()
             if value and value not in out:
                 out.append(value)
-    return out or None
+    return _capped(out, label) or None
 
 
-def multi_text(raw: Iterable[str] | str | None) -> Optional[list[str]]:
+def multi_text(raw: Iterable[str] | str | None, label: str = "filter") -> Optional[list[str]]:
     """The values of a FREE-TEXT filter (a class label, a spec value), which can contain commas.
 
     The frontend sends one repeated param per value, so every item is ONE value, read whole:
@@ -42,12 +51,12 @@ def multi_text(raw: Iterable[str] | str | None) -> Optional[list[str]]:
         value = str(item or "").strip()
         if value and value not in out:
             out.append(value)
-    return out or None
+    return _capped(out, label) or None
 
 
 def multi_uuids(raw: Iterable[str] | str | None, label: str) -> Optional[list[str]]:
     """``multi_values`` for ids: each must be a UUID, else a 422 naming the filter."""
-    values = multi_values(raw)
+    values = multi_values(raw, label)
     if values is None:
         return None
     try:
@@ -58,7 +67,7 @@ def multi_uuids(raw: Iterable[str] | str | None, label: str) -> Optional[list[st
 
 def multi_choices(raw: Iterable[str] | str | None, allowed: Iterable[str], label: str) -> Optional[list[str]]:
     """``multi_values`` for a CLOSED set of codes: each must be one of ``allowed``, else a 422 naming it."""
-    values = multi_values(raw)
+    values = multi_values(raw, label)
     if values is None:
         return None
     allowed_set = set(allowed)

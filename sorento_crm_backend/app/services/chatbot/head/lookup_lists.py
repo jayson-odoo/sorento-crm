@@ -12,10 +12,13 @@ offered (their exact path runs after the parser).
 """
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import logging
+import os
 import random
 import re
+import tempfile
 import threading
 import time
 from dataclasses import dataclass
@@ -918,6 +921,72 @@ _sleep = time.sleep
 _jitter = random.random
 
 
+def _shared_path(model: str) -> str | None:
+    """The shared vector file of `model`, or None when sharing is off (`CHATBOT_LOOKUP_VECTOR_DIR` = off/0/false/no).
+    The directory defaults to the system temp dir, which every worker of a container sees."""
+    base = os.environ.get("CHATBOT_LOOKUP_VECTOR_DIR") or tempfile.gettempdir()
+    if base.strip().lower() in ("off", "0", "false", "no"):
+        return None
+    return os.path.join(base, "lookup-vectors-" + re.sub(r"[^A-Za-z0-9._-]", "_", model) + ".npz")
+
+
+def _lock_shared(path: str) -> int | None:
+    """Take the exclusive lock beside the shared file (blocking); None, with a warning, when it cannot be had."""
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        fd = os.open(path[: -len(".npz")] + ".lock", os.O_CREAT | os.O_RDWR, 0o600)
+    except OSError:
+        logger.warning("lookup shared vectors: no lock file, warming without the shared file", exc_info=True)
+        return None
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+    except OSError:
+        os.close(fd)
+        logger.warning("lookup shared vectors: lock failed, warming without the shared file", exc_info=True)
+        return None
+    return fd
+
+
+def _read_shared(path: str) -> dict[str, Any]:
+    """sha1 -> unit float32 vector from the shared file; empty when it is absent or unusable (warned)."""
+    import numpy as np
+
+    if not os.path.exists(path):
+        return {}
+    try:
+        with np.load(path, allow_pickle=False) as f:
+            keys, vectors = f["keys"], f["vectors"]
+        if vectors.ndim != 2 or vectors.dtype != np.float32 or len(keys) != len(vectors):
+            raise ValueError("unexpected shape")
+        return {str(k): vectors[i] for i, k in enumerate(keys)}
+    except Exception:  # noqa: BLE001 - a bad file is rebuilt by this warm
+        logger.warning("lookup shared vectors: %s unreadable, re-embedding", path, exc_info=True)
+        return {}
+
+
+def _write_shared(path: str, vectors: dict[str, Any]) -> None:
+    """Write the shared file atomically (temp file in the same directory, then rename); never raises."""
+    import numpy as np
+
+    if not vectors:
+        return
+    tmp = None
+    try:
+        fd, tmp = tempfile.mkstemp(prefix=".part-", suffix=".npz", dir=os.path.dirname(path))
+        with os.fdopen(fd, "wb") as out:
+            np.savez(out, keys=np.array(list(vectors)), vectors=np.stack(list(vectors.values())).astype(np.float32))
+        os.replace(tmp, path)
+        tmp = None
+    except Exception:  # noqa: BLE001 - the warm stands without the file
+        logger.warning("lookup shared vectors: could not write %s", path, exc_info=True)
+    finally:
+        if tmp is not None:
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
 def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chunk_size: int) -> Embedder:
     """A row-vector embedder over `request` (texts -> raw vectors): vectors cached per process by (model, sha1 of
     text) as unit float32, the uncached texts of a call sent in chunks inside one `EMBED_TIMEOUT` budget. `matrix`
@@ -946,29 +1015,65 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
         with _store_lock:
             return [_cache[_key(t, model)] for t in texts]
 
-    def fill(texts: list[str]) -> None:
+    def fill(texts: list[str]) -> int:
         """The background warm-up: every uncached text in chunks, each chunk under its own timeout, no
         total deadline; chunks are kept as they complete. A rate-limited chunk is waited out (`WARM_RETRY_WAITS`),
-        then the error is re-raised; a large warm is back-to-back requests and trips the per-minute limit."""
-        with _store_lock:
-            todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
-            if len(_cache) + len(todo) > _CACHE_CAP:  # the cap `embed` keeps, so the store stays bounded
-                _cache.clear()
-                _matrices.clear()
-                todo = list(dict.fromkeys(texts))
-        for i in range(0, len(todo), chunk_size):
-            chunk = todo[i : i + chunk_size]
-            for wait in (*WARM_RETRY_WAITS, None):
-                try:
-                    raw = request(chunk)
-                    break
-                except Exception as exc:  # noqa: BLE001
-                    from app.services.chatbot import llm_call
+        then the error is re-raised; a large warm is back-to-back requests and trips the per-minute limit.
+        The workers of a container share their vectors through a per-model file (`_shared_path`) under an
+        exclusive file lock held for the whole warm, so one worker embeds and the rest load. Returns how many
+        texts came from that file."""
+        lock_fd = None
+        path = _shared_path(model)
+        if path is not None:
+            lock_fd = _lock_shared(path)
+        loaded = embedded = 0
+        file_vectors: dict[str, Any] = {}
+        try:
+            with _store_lock:
+                missing = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+                if len(_cache) + len(missing) > _CACHE_CAP:  # the cap `embed` keeps, so the store stays bounded
+                    _cache.clear()
+                    _matrices.clear()
+            if lock_fd is not None:
+                file_vectors = _read_shared(path)
+                with _store_lock:
+                    held = next((v for k, v in _cache.items() if k[0] == model), None)
+                    width = next((v.shape[-1] for v in file_vectors.values()), None)
+                    if held is not None and width is not None and held.shape[-1] != width:
+                        logger.warning("lookup shared vectors: file width %d differs from the cache, ignoring it", width)
+                        file_vectors = {}
+                    for t in dict.fromkeys(texts):
+                        sha = _key(t, model)[1]
+                        if _key(t, model) not in _cache and sha in file_vectors:
+                            _cache[_key(t, model)] = file_vectors[sha]
+                            loaded += 1
+            with _store_lock:
+                todo = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+            for i in range(0, len(todo), chunk_size):
+                chunk = todo[i : i + chunk_size]
+                for wait in (*WARM_RETRY_WAITS, None):
+                    try:
+                        raw = request(chunk)
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        from app.services.chatbot import llm_call
 
-                    if wait is None or not llm_call.is_rate_limited(exc) or llm_call._quota_exhausted(exc):
-                        raise
-                    _sleep(wait * (1 + 0.5 * _jitter()))
-            store(chunk, raw)
+                        if wait is None or not llm_call.is_rate_limited(exc) or llm_call._quota_exhausted(exc):
+                            raise
+                        _sleep(wait * (1 + 0.5 * _jitter()))
+                store(chunk, raw)
+                embedded += len(chunk)
+        finally:
+            if lock_fd is not None:
+                try:
+                    with _store_lock:
+                        asked = {_key(t, model)[1]: _cache[_key(t, model)] for t in texts if _key(t, model) in _cache}
+                    merged = {**file_vectors, **asked}
+                    if embedded or not all(sha in file_vectors for sha in asked):  # else the file already says it
+                        _write_shared(path, merged if len(merged) <= _CACHE_CAP else asked)
+                finally:
+                    os.close(lock_fd)  # closing the descriptor releases the flock
+        return loaded
 
     def matrix(texts: list[str]):
         import numpy as np
@@ -1112,10 +1217,11 @@ def warm(rows: list[LookupRow], embed: Embedder | None) -> None:
     def run() -> None:
         started = time.monotonic()
         try:
-            getattr(embed, "fill", embed)(texts)
+            from_file = getattr(embed, "fill", embed)(texts)
             logger.info(
-                "lookup lists warm: %d texts cached on %s in %.1f s",
+                "lookup lists warm: %d texts cached on %s in %.1f s (%d from the shared file)",
                 len(texts), getattr(embed, "model", "?"), time.monotonic() - started,
+                from_file if isinstance(from_file, int) else 0,
             )
         except Exception:  # noqa: BLE001 - advisory
             logger.warning("lookup lists warm failed", exc_info=True)

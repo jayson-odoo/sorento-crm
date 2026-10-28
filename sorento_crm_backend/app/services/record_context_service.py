@@ -29,6 +29,7 @@ from app.models.complaints import Complaint
 from app.models.procurement import PurchaseRequestHeader, StockInquiry
 from app.models.sla import ConversationSLATracking, SLAPolicyTier
 from app.services.error_handler import AppException
+from app.services.submission_status import APPEALED_LABEL
 
 # Asia/Kuala_Lumpur - fixed UTC+8 (no DST). Mirrors sla_service.MALAYSIA_TZ.
 MALAYSIA_TZ = timezone(timedelta(hours=8))
@@ -100,7 +101,7 @@ def _pr_display_status(status: Any, approval_status: Any) -> str:
     if s == "submitted":
         return "Submitted"
     if s == "resubmitted":
-        return "Resubmitted"
+        return APPEALED_LABEL
     return "Draft"
 
 
