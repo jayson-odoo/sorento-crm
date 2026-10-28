@@ -46,6 +46,10 @@ vi.mock('@/lib/api', async (importOriginal) => {
   };
 });
 
+vi.mock('@/app/(protected)/project-sales/_shared/services/projectService', () => ({
+  getProject: vi.fn(),
+}));
+
 const createMutateAsync = vi.fn().mockResolvedValue({ id: 'new-1' });
 vi.mock('../hooks/usePurchaseRequests', () => ({
   usePurchaseRequest: () => ({ data: undefined, isLoading: false }),
@@ -67,6 +71,7 @@ vi.mock(
 vi.mock('./PurchaseRequestAttachmentsSection', () => ({ __esModule: true, default: () => null }));
 
 import PurchaseRequestForm from './PurchaseRequestForm';
+import { getProject } from '@/app/(protected)/project-sales/_shared/services/projectService';
 
 function renderForm(defaultProjectId?: string) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
@@ -113,5 +118,25 @@ describe('PurchaseRequestForm default project', () => {
     renderForm();
     const payload = await submitSponsorship();
     expect(payload.project_id ?? null).toBeNull();
+  });
+
+  it('AC-PS-21: the picker shows the project and the empty title takes its title', async () => {
+    vi.mocked(getProject).mockResolvedValue({
+      id: PROJECT_ID,
+      project_code: 'PPF2610003',
+      title: 'Setia Alam',
+    } as never);
+    renderForm(PROJECT_ID);
+    await waitFor(() => expect(getProject).toHaveBeenCalledWith(PROJECT_ID));
+    expect(await screen.findByText('PPF2610003 - Setia Alam')).toBeTruthy();
+    expect(screen.queryByText('Search a project by code or title')).toBeNull();
+    const title = document.querySelector('input[name="project_title"]') as HTMLInputElement;
+    await waitFor(() => expect(title.value).toBe('Setia Alam'));
+  });
+
+  it('AC-PS-27: getProject is not called without defaultProjectId', async () => {
+    renderForm();
+    await screen.findByLabelText('Customer Name');
+    expect(getProject).not.toHaveBeenCalled();
   });
 });

@@ -214,6 +214,20 @@ def test_ps06_downgrade_removes_only_its_own_edges(db):
     )
 
 
+@pytest.mark.parametrize("label,survives", [("Back to Spec In", False), ("Rework spec", True)])
+def test_ps06b_downgrade_matches_the_exact_label(db, label, survives):
+    """AC-PS-06: an edge on a migration from/to pair goes only when its label is exact.
+
+    The edge key is unique per from/to pair, so the two labels run as separate cases.
+    """
+    rungs = _prod_graph(db)
+    _add_edge(db, rungs["sample_submission"], rungs["specified"], label)
+    _run(db, "upgrade")
+    _run(db, "downgrade")
+    present = ("sample_submission", "specified", label) in _edge_triples(db)
+    assert present is survives
+
+
 def test_ps15_no_forward_skips_after_upgrade(db):
     """AC-PS-15"""
     rungs = _prod_graph(db)
@@ -290,3 +304,42 @@ def test_ps40_status_key_text_names_the_new_rungs(path, marker):
     for key in ("sample_submission", "final_negotiation", "sponsorship_form"):
         assert key in window, window
     assert "quoted" not in window and "tendering" not in window, window
+
+
+_MCP_CATALOG = _BACKEND.parent / "sorento_crm_mcp" / "sorento_crm_mcp" / "catalog.py"
+_REUSED = _BACKEND / "app" / "services" / "analytics_connector" / "reused_tools.py"
+
+
+def _projects_list_description(path: pathlib.Path, start_marker: str, end_marker: str) -> str:
+    src = path.read_text()
+    start = src.index(start_marker)
+    end = src.index(end_marker, start)
+    return re.sub(r"[\"'\s]+", " ", src[start:end])
+
+
+def _both_descriptions() -> list:
+    return [
+        _projects_list_description(
+            _MCP_CATALOG, '"crm_projects_list",\n', '"crm_project_detail",'
+        ),
+        _projects_list_description(
+            _REUSED,
+            '"name": \'crm_projects_list\'',
+            '"name": \'crm_resource_attachments_catalogue\'',
+        ),
+    ]
+
+
+def test_ps40_whole_projects_list_description_has_no_retired_stage_words():
+    """AC-PS-40: no 'quoted' / 'tendering' anywhere in the tool description."""
+    for window in _both_descriptions():
+        assert "tendering" not in window, window
+        assert "quoted" not in window, window
+
+
+def test_ps41_only_critical_is_not_called_the_final_negotiation_flag():
+    """AC-PS-41"""
+    for window in _both_descriptions():
+        line = window[window.index("only_critical=true") :][:160]
+        assert "the Final Negotiation flag" not in line, line
+        assert "critical" in line.lower(), line

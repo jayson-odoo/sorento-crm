@@ -800,4 +800,31 @@ describe('the prod-shaped ladder (PROJECT-STAGES-SAMPLE)', () => {
     expect(changeStatus).toHaveBeenCalled();
     expect(push).not.toHaveBeenCalled();
   });
+
+  it('AC-PS-28: a forward rung keyed like an Object.prototype member moves and opens nothing', () => {
+    graphFixture = graph({
+      statuses: [
+        status('s-spec', 'specified', 'Spec In', 2),
+        status('s-proto', 'toString', 'Prototype Rung', 3),
+        status('s-po', 'po_received', 'PO Received', 7, { is_terminal: true }),
+      ],
+      transitions: [
+        transition('t-0', 's-spec', 's-proto', 'Advance proto', 0),
+        transition('t-1', 's-spec', 's-po', 'PO received', 0),
+      ],
+    });
+    projectFixture = project({
+      status_id: 's-spec',
+      status_key: 'specified',
+      status_label: 'Spec In',
+    });
+    succeed();
+    renderDetail();
+    fireEvent.click(header().getByRole('button', { name: 'Advance proto' }));
+    expect(changeStatus).toHaveBeenCalledWith(
+      { projectId: 'p1', toStatusId: 's-proto' },
+      expect.anything(),
+    );
+    expect(push).not.toHaveBeenCalled();
+  });
 });
