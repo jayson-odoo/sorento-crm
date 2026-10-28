@@ -59,6 +59,11 @@ Response: the existing `StockDetail` shape over the allowed set, or JSON `null` 
   caller, including a user holding only `projects.projects.view_own` (who reaches the route through
   `_own_scope._REFERENCE_PATHS`). Inactive warehouses never count, even when nothing is set.
 
+- **AC-QSA-13 [BE]** (owner ruling 28 Oct, security review) A contact whose EFFECTIVE Stock
+  visibility Mode is "Availability only" (`availability`, from its own row or merged from its access
+  types) gets 200 `null`: nothing shown, same as exclude-all. "Compact" and "Detailed" are unchanged
+  (only the location set applies to them; hide-zero is not read).
+
 ## Phase 1/2: frontend, Lines tab
 
 - **AC-QSA-20 [FE]** The Lines tab toolbar renders no "Stock at" picker, for any user; the
@@ -71,7 +76,9 @@ Response: the existing `StockDetail` shape over the allowed set, or JSON `null` 
   only: no "Other group" rows are appended, and no separate `group=pools` read is made. Incoming lists
   the read's `incoming` only. (Review round) The AutoCount read is filtered to the read's warehouses
   before the table sees it, so no Group by choice (remembered in `cellStockTable.groupBy`, shared with
-  the board) shows on hand or SOs at a location the read did not list.
+  the board) shows on hand or SOs at a location the read did not list. A location the read lists is drawn
+  as a normal row when either the CRM figures or AutoCount's figures for it are non-zero, and is never
+  drawn as an "Other group" row.
 - **AC-QSA-24 [FE]** A set line's parts read the same endpoint per part (no group), with the same
   null = nothing rule: a part answering null leaves the set line's Qty cell with no pill, no skeleton
   and no text. Each part's popover section leaves out all-zero locations, like AC-QSA-23.

@@ -1,7 +1,8 @@
 # PLAN: quotation line stock limited to the user's allowed locations (QUOTE-STOCK-AGENT-LOC)
 
-Status: Build. Card answered 28 Oct 19:25. Track: M (no migration, no permission change; reviewer, no
-security-reviewer).
+Status: Build (round 3). Track: M (no migration). The `_own_scope` addition opened the route to
+view_own-only users, so security-reviewer ran (28 Oct: no blockers; its Mode question went to the
+owner, answered (b)). Hand test filed as laneboard script 1962.
 
 ## Owner rulings
 
@@ -56,6 +57,9 @@ rule 1"): only the contact's Stock visibility decides.
    exclusion covering every active warehouse gives none -> blank.
 3. Intersected with active `fulfilment_planning` warehouses: the universe the old picker drew from.
 4. Sales agents play no part: no agent gate, and `location_group` is not read (Q1 (a)).
+5. A contact whose effective Mode is "Availability only" sees nothing (owner, 28 Oct, after the
+   security review: "these dealers won't have system account anyway"); compact / detailed use the
+   location set only.
 
 ## Design
 
