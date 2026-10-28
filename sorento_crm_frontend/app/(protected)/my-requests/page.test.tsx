@@ -30,7 +30,11 @@ vi.mock('@/app/(auth)/portal/components/PortalLanding', () => ({
 const token: { value: string | null } = { value: null };
 vi.mock('@/app/(auth)/portal/lib/portal-client', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/app/(auth)/portal/lib/portal-client')>();
-  return { ...original, readPortalToken: () => token.value };
+  return {
+    ...original,
+    readPortalToken: () => token.value,
+    fetchMe: vi.fn(async () => ({ portal_slug: 'MYSLUG1234' })),
+  };
 });
 
 import MyRequestsPage from './page';

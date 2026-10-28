@@ -2,7 +2,7 @@
 
 import { JSX, useCallback, useMemo } from 'react';
 import Link from 'next/link';
-import { usePathname } from 'next/navigation';
+import { usePathname, useSearchParams } from 'next/navigation';
 import { useEffectiveIsSuperadmin } from '@/hooks/useEffectiveIsSuperadmin';
 import { MENU_SIDEBAR } from '@/config/menu.config';
 import { injectPublishedWorkflowForms } from '@/config/workflow-forms-dynamic-menu';
@@ -33,6 +33,7 @@ import { MenuItemPinButton } from './menu-item-pin-button';
 
 export function SidebarMenu() {
   const pathname = usePathname();
+  const currentType = useSearchParams()?.get('type') ?? null;
   // The EFFECTIVE user's flag: the impersonation target's while viewing as, else the
   // session's (MENU-PERM-GATE). The permission set below is already the target's, the
   // backend answers /users/me/permissions for the impersonated user.
@@ -86,8 +87,16 @@ export function SidebarMenu() {
 
   // Memoize matchPath to prevent unnecessary re-renders
   const matchPath = useCallback(
-    (path: string): boolean => matchesMenuPath(path, pathname, menuPaths),
-    [pathname, menuPaths],
+    (path: string): boolean => {
+      // A MY REQUESTS entry (`/my-requests?type=X`) is active only for its own `type`.
+      const q = path.indexOf('?');
+      if (q !== -1) {
+        const wanted = new URLSearchParams(path.slice(q + 1)).get('type');
+        return pathname === path.slice(0, q) && wanted !== null && wanted === currentType;
+      }
+      return matchesMenuPath(path, pathname, menuPaths);
+    },
+    [pathname, currentType, menuPaths],
   );
 
   // Global classNames for consistent styling

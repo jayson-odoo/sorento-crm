@@ -15,7 +15,10 @@ const sessionRef: { data: unknown; status: 'loading' | 'authenticated' } = {
 const permissionsRef: { set: Set<string> } = { set: new Set() };
 
 vi.mock('next-auth/react', () => ({ useSession: () => sessionRef }));
-vi.mock('next/navigation', () => ({ usePathname: () => '/' }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(''),
+}));
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({
     permissionSet: permissionsRef.set,

@@ -323,6 +323,16 @@ export function PortalLanding({ slug, embedded = false }: { slug?: string; embed
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [contact?.contact_id, landingKinds]);
 
+  // Embedded in the CRM with no `?type=`: put the kind shown into the URL, so the sidebar can
+  // highlight exactly one MY REQUESTS item.
+  const urlTypeSyncedRef = useRef(false);
+  useEffect(() => {
+    if (!embedded || urlTypeSyncedRef.current || !activeTab) return;
+    urlTypeSyncedRef.current = true;
+    if (searchParams?.get('type')) return;
+    router.replace(`/my-requests?type=${activeTab}`);
+  }, [embedded, activeTab, searchParams, router]);
+
   const handleTabChange = useCallback((next: PortalLandingKind) => {
     userPickedTabRef.current = true;
     setActiveTab(next);

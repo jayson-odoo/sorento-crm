@@ -205,8 +205,12 @@ export function useProject(projectId: string | undefined) {
   });
 }
 
-export function useProjectTypes() {
-  return useQuery({ queryKey: PROJECT_TYPES_KEY, queryFn: () => listProjectTypes() });
+export function useProjectTypes(options: { enabled?: boolean } = {}) {
+  return useQuery({
+    queryKey: PROJECT_TYPES_KEY,
+    queryFn: () => listProjectTypes(),
+    enabled: options.enabled ?? true,
+  });
 }
 
 export function useProjectTemplates(typeId?: string) {
@@ -222,11 +226,12 @@ export function useProjectParties(params: {
   page?: number;
   limit?: number;
   include_inactive?: boolean;
-}) {
+}, options: { enabled?: boolean } = {}) {
   return useQuery({
     ...LIST_QUERY_OPTIONS,
     queryKey: [PARTIES_KEY, params],
     queryFn: () => listParties(params),
+    enabled: options.enabled ?? true,
   });
 }
 

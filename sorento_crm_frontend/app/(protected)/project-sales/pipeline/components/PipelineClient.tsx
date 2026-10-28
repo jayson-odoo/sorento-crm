@@ -112,8 +112,9 @@ export function PipelineClient() {
   ]);
 
   const graph = useProjectStatusGraph('project');
-  const developers = useProjectParties({ party_type: 'developer', limit: 200 });
-  const types = useProjectTypes();
+  // Parties and types are `.view` lookups; an own-only user is refused them, so they are not asked for.
+  const developers = useProjectParties({ party_type: 'developer', limit: 200 }, { enabled: canStart });
+  const types = useProjectTypes({ enabled: canStart });
   const move = useChangeProjectStatus();
 
   const listParams = React.useMemo(
@@ -229,6 +230,8 @@ export function PipelineClient() {
   // a filter to be added and one place for it to be forgotten.
   const filterContent = (
     <div className="space-y-3">
+      {canStart && (
+        <>
       <div className="space-y-1.5">
         <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
           Developer
@@ -261,6 +264,8 @@ export function PipelineClient() {
           placeholder="All types"
         />
       </div>
+        </>
+      )}
       <div className="space-y-1.5">
         <Label htmlFor="filter-approval" className="text-xs text-muted-foreground">
           Approval
@@ -338,25 +343,27 @@ export function PipelineClient() {
                 <Table2 className="size-4" aria-hidden />
               </Button>
             </div>
-            {canStart && (<DropdownMenu>
-              <DropdownMenuTrigger asChild>
-                <Button type="button">
-                  Start
-                  <ChevronDown className="size-4" aria-hidden />
-                </Button>
-              </DropdownMenuTrigger>
-              <DropdownMenuContent align="end">
-                <DropdownMenuItem onSelect={() => router.push('/project-sales/new')}>
-                  Register a project
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
-                  Upload PO
-                </DropdownMenuItem>
-                <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
-                  Upload delivery schedule
-                </DropdownMenuItem>
-              </DropdownMenuContent>
-            </DropdownMenu>)}
+            {canStart && (
+              <DropdownMenu>
+                <DropdownMenuTrigger asChild>
+                  <Button type="button">
+                    Start
+                    <ChevronDown className="size-4" aria-hidden />
+                  </Button>
+                </DropdownMenuTrigger>
+                <DropdownMenuContent align="end">
+                  <DropdownMenuItem onSelect={() => router.push('/project-sales/new')}>
+                    Register a project
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
+                    Upload PO
+                  </DropdownMenuItem>
+                  <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
+                    Upload delivery schedule
+                  </DropdownMenuItem>
+                </DropdownMenuContent>
+              </DropdownMenu>
+            )}
           </div>
         }
       />
@@ -400,7 +407,7 @@ export function PipelineClient() {
         ) : (
           <EmptyState
             title="No projects registered yet"
-            body="Register one from Start."
+            body={canStart ? 'Register one from Start.' : 'Projects assigned to you appear here.'}
           />
         )
       ) : view === 'board' ? (
@@ -452,7 +459,9 @@ export function PipelineClient() {
               <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
                 {hasFilters
                   ? 'Clear the filters to see every project.'
-                  : 'Register one from Start.'}
+                  : canStart
+                    ? 'Register one from Start.'
+                    : 'Projects assigned to you appear here.'}
               </p>
             </div>
           }

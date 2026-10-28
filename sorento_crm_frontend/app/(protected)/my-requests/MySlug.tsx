@@ -2,8 +2,13 @@
 
 import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
-import { clearPortalToken, readPortalToken } from '@/app/(auth)/portal/lib/portal-client';
-import { clearPortalSlug, portalVerifyPath, readPortalSlug } from '@/app/(auth)/portal/lib/portal-paths';
+import {
+  PortalUnauthorizedError,
+  clearPortalToken,
+  fetchMe,
+  readPortalToken,
+} from '@/app/(auth)/portal/lib/portal-client';
+import { clearPortalSlug, readPortalSlug } from '@/app/(auth)/portal/lib/portal-paths';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 
@@ -26,23 +31,50 @@ export function MySlug({ children }: { children: (slug: string) => ReactNode }) 
       router.replace('/');
       return;
     }
-    const token = readPortalToken();
-    // A token that is not this salesperson's (shared device) is dropped, as the portal slug page does.
-    if (token && readPortalSlug() !== mySlug) {
+    let cancelled = false;
+    const toVerify = () => {
+      const deep = /^\/my-requests\/([^/]+)\/([^/]+)$/.exec(pathname ?? '');
+      const qs = new URLSearchParams();
+      const type = searchParams?.get('type') ?? deep?.[1];
+      if (type) qs.set('type', type);
+      if (deep && deep[2] !== 'new') qs.set('id', deep[2]);
+      const q = qs.toString();
+      router.replace(`/my-requests/verify${q ? `?${q}` : ''}`);
+    };
+    const dropToken = () => {
       clearPortalToken();
       clearPortalSlug();
-    }
+    };
+    const token = readPortalToken();
+    // A token that is not this salesperson's (shared device) is dropped, as the portal slug page does.
     if (!token || readPortalSlug() !== mySlug) {
-      const deep = /^\/my-requests\/([^/]+)\/([^/]+)$/.exec(pathname ?? '');
-      router.replace(
-        portalVerifyPath({
-          type: searchParams?.get('type') ?? deep?.[1],
-          id: deep && deep[2] !== 'new' ? deep[2] : null,
-        }),
-      );
+      if (token) dropToken();
+      toVerify();
       return;
     }
-    setReady(true);
+    // The stored slug is only a hint: the token's own identity must be this salesperson's too.
+    void fetchMe()
+      .then((me) => {
+        if (cancelled) return;
+        if (me.portal_slug !== mySlug) {
+          dropToken();
+          toVerify();
+          return;
+        }
+        setReady(true);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        if (e instanceof PortalUnauthorizedError) {
+          toVerify();
+          return;
+        }
+        // Not an identity answer (network): the page shows its own error.
+        setReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
     // Intentional: re-checked only when the profile settles.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isLoading, isError, mySlug]);

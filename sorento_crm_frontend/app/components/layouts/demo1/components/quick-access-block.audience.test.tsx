@@ -10,7 +10,10 @@ const permsRef: { set: Set<string> } = { set: new Set() };
 const profile: { salesperson: { portalKinds: string[]; portalSlug: string } | null } = { salesperson: null };
 
 vi.mock('next-auth/react', () => ({ useSession: () => sessionRef }));
-vi.mock('next/navigation', () => ({ usePathname: () => '/' }));
+vi.mock('next/navigation', () => ({
+  usePathname: () => '/',
+  useSearchParams: () => new URLSearchParams(''),
+}));
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ permissionSet: permsRef.set, isLoading: false }),
   useHasAnyPermission: () => true,

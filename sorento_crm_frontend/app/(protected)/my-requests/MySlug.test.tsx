@@ -32,6 +32,11 @@ vi.mock('@/hooks/useAccountProfileForHeader', () => ({
   }),
 }));
 
+vi.mock('@/app/(auth)/portal/lib/portal-client', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/app/(auth)/portal/lib/portal-client')>();
+  return { ...original, fetchMe: vi.fn(async () => ({ portal_slug: 'MYSLUG1234' })) };
+});
+
 import { MySlug } from './MySlug';
 
 const TOKEN_KEY = 'sorento.portalToken';
