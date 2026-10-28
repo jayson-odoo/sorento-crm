@@ -809,9 +809,16 @@ def _carried_by(db: "Session", keys: list[str]) -> dict[str, frozenset[str]]:
         .group_by(Product.category_id, *kinds)
         .all()
     )
+    from app.services.product_spec_registry import active_registry, display_spec_value
+
+    # A "type:" row is named by the product type's display label (`turn_runtime.product_type_names`), which can
+    # differ in words from the stored value: both are folded.
+    type_row = next((r for r in active_registry(db) if r.spec_key == "product_type"), None)
+    type_labels = dict(getattr(type_row, "value_labels", None) or {})
     out: dict[str, set[str]] = {k: set() for k in keys}
     for category_id, klass, product_type, *carries in rows:
-        names = {str(category_id)} | {"type:" + _fold(n) for n in (klass, product_type) if n}
+        shown = display_spec_value(product_type, type_labels) if product_type else None
+        names = {str(category_id)} | {"type:" + _fold(n) for n in (klass, product_type, shown) if n}
         for key, carried in zip(keys, carries):
             if carried:
                 out[key] |= names

@@ -270,3 +270,24 @@ def test_live_no_category_named_keeps_every_dimension_nameable(session_factory, 
     lines = _number_lines(block)
     assert lines[0] == "Size 999mm, any dimension (size: 999)" and "Length 999mm (dim_length: 999)" in lines, block
     assert "Hose length 999mm (hose_length: 999)" in lines, block
+
+
+def test_a_product_type_row_named_by_its_display_label_carries_its_dimensions(session_factory, seeded):
+    """Reviewer round 6: a "type:" Category row is keyed by the product type's display label
+    (`turn_runtime.product_type_names`), so a stored value whose label differs in words ("zzcc" shown as
+    "ZZ Snug Pair") must still map to that row, or every unheld dimension beside it is dropped."""
+    from app.models.base import set_company_scope
+    from app.services.chatbot.head import lookup_lists
+
+    _seed(session_factory, (("ZZPT-1", WC, {"product_type": "zzcc", "dim_length": 650}),))
+    db = session_factory()
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key="product_type", label="Product type", data_type="enum",
+        allowed_values=["zzcc"], value_labels={"zzcc": "ZZ Snug Pair"}, synonyms={},
+    ))
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+    carried = lookup_lists._carried_by(db, ["dim_length"])
+
+    assert "type:zz snug pair" in carried["dim_length"], carried
