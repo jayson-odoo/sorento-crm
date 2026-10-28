@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 from pydantic import BaseModel
 
+from app.api.v1._request_own_scope import RequestScope, empty_page, purchase_request_own_scope
 from app.database import get_db
 from app.services.uuid_path_param import validate_uuid_path
 from app.dependencies import (
@@ -63,15 +64,26 @@ async def get_purchase_requests(
     dir: Optional[str] = Query("desc"),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db),
+    own: Optional[RequestScope] = Depends(purchase_request_own_scope),
 ):
-    """List purchase requests and sponsorship forms with pagination."""
+    """List purchase requests and sponsorship forms with pagination.
+
+    A user with a kind's ``view_own`` alone gets the rows of that kind their own contact
+    submitted, drafts included, and none of a kind they hold neither slug for.
+    """
+    contact_id = None
+    if own is not None:
+        narrowed = own.list_filter(request_type)
+        if narrowed is None:
+            return empty_page(page, limit)
+        request_type, contact_id = narrowed
     try:
         service = PurchaseRequestService(db)
         result = service.list_requests(
             page=page,
             limit=limit,
             query=query,
-            contact_id=None,
+            contact_id=contact_id,
             space_id=None,
             request_type=request_type,
             approval_status=approval_status,

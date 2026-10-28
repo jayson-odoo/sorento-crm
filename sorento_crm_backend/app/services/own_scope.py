@@ -16,7 +16,10 @@ read asks the same question for one id:
 - opportunities: the sales agent is one of theirs;
 - sample requests: the salesperson is them, or the portal contact is theirs;
 - new product applications: the applicant is them, or the portal contact is theirs;
-- conversations: contacts linked to their agents' customers (the portal Conversations rule).
+- conversations: contacts linked to their agents' customers (the portal Conversations rule);
+- the four request forms (PORTAL-P4-REQUESTS, ``REQUEST_KINDS``): the row's ``contact_id`` is
+  their contact, the portal's own rule. A requestor named on someone else's row does not count,
+  and the space is not matched.
 """
 from __future__ import annotations
 
@@ -36,6 +39,24 @@ NPA_VIEW = "procurement.new_product_applications.view"
 NPA_VIEW_OWN = "procurement.new_product_applications.view_own"
 CONVERSATIONS_VIEW = "sla_management.conversations.view"
 CONVERSATIONS_VIEW_OWN = "sla_management.conversations.view_own"
+
+#: Request form kind -> (view, view_own). Purchase requests and sponsorship forms share one
+#: table and one staff router; the row's ``request_type`` is its kind.
+REQUEST_KINDS = {
+    "stock_inquiry": ("procurement.stock_inquiries.view", "procurement.stock_inquiries.view_own"),
+    "complaint": (
+        "complaint_management.complaints.view",
+        "complaint_management.complaints.view_own",
+    ),
+    "purchase_request": (
+        "procurement.purchase_requests.view",
+        "procurement.purchase_requests.view_own",
+    ),
+    "sponsorship_form": (
+        "procurement.sponsorship_forms.view",
+        "procurement.sponsorship_forms.view_own",
+    ),
+}
 
 
 def is_limited(perms: Iterable[str], view: str, view_own: str) -> bool:
@@ -143,6 +164,52 @@ def conversation_contact_ids(m: Me):
     from app.services.portal_conversation_service import agent_contact_ids
 
     return agent_contact_ids(list(m.agent_ids))
+
+
+# ------------------------------------------------------------------ request forms
+
+
+def request_access(perms: Iterable[str], kind: str) -> Optional[str]:
+    """``"all"`` with the kind's ``view``, ``"own"`` with only its ``view_own``, else None."""
+    view, view_own = REQUEST_KINDS[kind]
+    slugs = set(perms or ())
+    if view in slugs:
+        return "all"
+    return "own" if view_own in slugs else None
+
+
+def _request_model(kind: str):
+    from app.models.complaints import Complaint
+    from app.models.procurement import PurchaseRequestHeader, StockInquiry
+
+    if kind == "stock_inquiry":
+        return StockInquiry
+    if kind == "complaint":
+        return Complaint
+    return PurchaseRequestHeader
+
+
+def request_clause(model, m: Me):
+    """Rows of a request form that are theirs: submitted by their contact. No contact, none."""
+    if not m.contact_id:
+        return false()
+    return model.contact_id == m.contact_id
+
+
+def request_in_scope(db: Session, kind: str, row_id: Optional[str], m: Me) -> bool:
+    """Is this row of ``kind`` theirs? A sponsorship form is not a purchase request."""
+    import uuid
+
+    try:
+        uuid.UUID(str(row_id))
+    except (TypeError, ValueError):
+        # Never compared to the uuid column: the cast error would abort the transaction.
+        return False
+    model = _request_model(kind)
+    q = db.query(model.id).filter(model.id == str(row_id), request_clause(model, m))
+    if model.__tablename__ == "purchase_requests":
+        q = q.filter(model.request_type == kind)
+    return q.first() is not None
 
 
 # ------------------------------------------------------------------ deferred actions
