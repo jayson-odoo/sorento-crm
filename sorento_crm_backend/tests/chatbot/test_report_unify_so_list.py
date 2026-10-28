@@ -143,3 +143,27 @@ def test_without_pick_axis_keeps_the_offers_own_status_so_the_held_frame_rides_u
     }
     out = report_ask.without_pick_axis(verdict, pending)
     assert out["order_status"] == "sales_ranking" and out.get("group_by") is None, out
+
+
+def test_a_one_when_the_parser_emits_status_so_outstanding_on_both_turns_still_opens_the_list(console, monkeypatch) -> None:
+    """Live step 13: `status: so_outstanding` on BOTH turns, so `focus.status` is carried and `lane_parse_output`'s
+    document / status projection must not overwrite the `sales_ranking` the SO-list pick seam set."""
+    _state_on(console)
+    first = _outstanding("outstanding")
+    first.update(
+        order_status="so_outstanding", status="so_outstanding", document=["SO"], entity_op="replace_combine",
+        basis=None, entities=[{**_e("Sorento", "brand"), "hint_confident": True}],
+    )
+    t0, l0 = _say_all(console, monkeypatch, first, "any outstanding mocha item in sales order")
+    assert len(_ran(l0)) == 1 and OFFER in t0, (t0, l0)
+    live = _parser_output(
+        message_type="business_query", domain_hint="order", intent_hint="check_order", order_status="so_outstanding",
+        status="so_outstanding", document=["SO"], self_reference=False, entities=[], entity_op="reuse",
+        reference_positions=[1], reference_target="dym", domain_in_message=False,
+        user_goal="trying to view the sales order list",
+        open_question_answer={"mode": "pick", "items": [], "picked": [1], "qty_for_all": None},
+    )
+    text, log = _say_all(console, monkeypatch, live, "1")
+    ran = _ran(log)
+    assert len(ran) == 1 and ran[0]["group_by"] == "sales_order", (text, log)
+    assert "ZZT-SO-1001" in text, text
