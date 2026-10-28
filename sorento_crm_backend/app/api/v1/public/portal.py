@@ -33,6 +33,7 @@ from fastapi import (
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
+from app.api.v1.user_management.contact_impersonation import salesperson_user_id_for_contact
 from app.database import get_db
 from app.models.entity_attachment import EntityAttachmentLink
 from app.models.portal import PortalToken
@@ -346,6 +347,9 @@ class PortalMeResponse(BaseModel):
     # PROJECT-REG-PORTAL D4: the contact's first active sales agent as a name, so the project
     # registration form can show who the project is registered for before its first save.
     sales_agent_name: Optional[str] = None
+    # PORTAL-P3-ROLE-MENU: set only on an admin's impersonation token whose contact is a salesperson's:
+    # the portal sends such an admin to that user's CRM view.
+    crm_user_id: Optional[str] = None
 
 
 def _sales_agent_name(db: Session, contact_id: str) -> Optional[str]:
@@ -411,6 +415,9 @@ def portal_me(
         ),
         attachment_allowed_extensions=service.portal_allowed_extensions(),
         sales_agent_name=_sales_agent_name(db, token.contact_id),
+        crm_user_id=(
+            salesperson_user_id_for_contact(db, contact) if token.is_impersonation else None
+        ),
     )
 
 

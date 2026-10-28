@@ -9,6 +9,7 @@ import {
   fetchMeWithGrace,
   isImpersonationToken,
   readPortalToken,
+  writePortalToken,
 } from '@/app/(auth)/portal/lib/portal-client';
 import {
   clearPortalSlug,
@@ -17,6 +18,10 @@ import {
 import { Skeleton } from '@/components/ui/skeleton';
 import { useAccountProfileForHeader } from '@/hooks/useAccountProfileForHeader';
 import { useImpersonationSession } from '@/lib/impersonation-store';
+import {
+  fetchImpersonatedUserContactId,
+  startContactImpersonation,
+} from '@/services/contactImpersonationService';
 
 /**
  * The CRM-side shell of the portal forms (PORTAL-P3-ROLE-MENU): hands the signed-in salesperson's
@@ -56,16 +61,53 @@ export function MySlug({
       clearPortalToken();
       clearPortalSlug();
     };
-    // An admin viewing as the salesperson holds an impersonation token (this tab only): the
-    // device's stored slug is the admin's, not compared and never written; only the token's
-    // own identity is checked, and a wrong one drops only that token.
-    const impersonating = isImpersonationToken();
-    // Viewing as someone with no token of their own in this tab: the stored token and slug are
-    // the admin's own device sign-in, never cleared here. The code step is the way in.
-    if (viewingAs && !impersonating) {
-      toVerify();
-      return;
+    // The token's own identity must be this salesperson's. The stored slug is only a hint, and
+    // an impersonation token (this tab only) skips it: the device's stored slug is the admin's.
+    const checkIdentity = () =>
+      fetchMeWithGrace()
+        .then((me) => {
+          if (cancelled) return;
+          if (me.portal_slug !== mySlug) {
+            if (isImpersonationToken()) clearImpersonationToken();
+            else dropToken();
+            toVerify();
+            return;
+          }
+          setReady(true);
+        })
+        .catch((e) => {
+          if (cancelled) return;
+          if (e instanceof PortalUnauthorizedError) {
+            toVerify();
+            return;
+          }
+          // Not an identity answer (network): the page shows its own error.
+          setReady(true);
+        });
+
+    // Viewing as the salesperson with no token of its own in this tab: start the contact
+    // impersonation here. The stored token and slug are the admin's own device sign-in and are
+    // never cleared; a failed start sends the visitor to the code step.
+    if (viewingAs && !isImpersonationToken()) {
+      void (async () => {
+        try {
+          const contactId = await fetchImpersonatedUserContactId();
+          if (!contactId) throw new Error('no linked contact');
+          const started = await startContactImpersonation(contactId);
+          const token = new URL(started.portalUrl, window.location.origin).searchParams.get('token');
+          if (!token) throw new Error('no portal token');
+          writePortalToken(token, { impersonation: true });
+        } catch {
+          if (!cancelled) toVerify();
+          return;
+        }
+        if (!cancelled) await checkIdentity();
+      })();
+      return () => {
+        cancelled = true;
+      };
     }
+    const impersonating = isImpersonationToken();
     const token = readPortalToken();
     // A token that is not this salesperson's (shared device) is dropped, as the portal slug page does.
     if (!token || (!impersonating && readPortalSlug() !== mySlug)) {
@@ -73,27 +115,7 @@ export function MySlug({
       toVerify();
       return;
     }
-    // The stored slug is only a hint: the token's own identity must be this salesperson's too.
-    void fetchMeWithGrace()
-      .then((me) => {
-        if (cancelled) return;
-        if (me.portal_slug !== mySlug) {
-          if (impersonating) clearImpersonationToken();
-          else dropToken();
-          toVerify();
-          return;
-        }
-        setReady(true);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        if (e instanceof PortalUnauthorizedError) {
-          toVerify();
-          return;
-        }
-        // Not an identity answer (network): the page shows its own error.
-        setReady(true);
-      });
+    void checkIdentity();
     return () => {
       cancelled = true;
     };

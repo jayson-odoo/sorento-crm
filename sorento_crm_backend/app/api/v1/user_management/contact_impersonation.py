@@ -88,7 +88,7 @@ def _resolve_contact_and_space(db: Session, contact_id: str) -> tuple[RespondCon
     return contact, workspace.space_id
 
 
-def _salesperson_user_id(db: Session, contact: RespondContact) -> Optional[str]:
+def salesperson_user_id_for_contact(db: Session, contact: RespondContact) -> Optional[str]:
     for user in db.query(User).filter(User.respond_contact_id == contact.id).all():
         if is_salesperson(db, user):
             return str(user.id)
@@ -207,7 +207,7 @@ async def start_contact_impersonation(
     )
 
     return _serialize(
-        session_row, contact, space_id, portal_url, _salesperson_user_id(db, contact)
+        session_row, contact, space_id, portal_url, salesperson_user_id_for_contact(db, contact)
     )
 
 

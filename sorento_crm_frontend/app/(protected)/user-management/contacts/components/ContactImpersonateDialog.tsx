@@ -3,9 +3,8 @@
 import { useState } from 'react';
 import { LoaderCircleIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
-import { useImpersonation } from '@/hooks/useImpersonation';
+import { useEnterCrmView } from '@/hooks/useEnterCrmView';
 import { writePortalToken } from '@/app/(auth)/portal/lib/portal-client';
 import {
   AlertDialog,
@@ -36,8 +35,7 @@ export function ContactImpersonateDialog({
 }) {
   const [starting, setStarting] = useState(false);
   const router = useRouter();
-  const queryClient = useQueryClient();
-  const { start: startUserImpersonation } = useImpersonation();
+  const enterCrmView = useEnterCrmView();
   const label = contact?.name || contact?.phone_number || contact?.id || '';
 
   return (
@@ -69,15 +67,13 @@ export function ContactImpersonateDialog({
                 if (session.crmUserId) {
                   // A salesperson contact: the CRM view of that user plus the portal token, in this tab.
                   try {
-                    await startUserImpersonation(session.crmUserId);
+                    await enterCrmView(session.crmUserId);
                   } catch (err) {
                     await stopContactImpersonation().catch(() => {});
                     throw err;
                   }
                   const token = new URL(session.portalUrl, window.location.origin).searchParams.get('token');
                   if (token) writePortalToken(token, { impersonation: true });
-                  // No cached admin profile or permissions may survive into the target's view.
-                  await queryClient.invalidateQueries();
                   toast.success(`Now impersonating ${label}`);
                   onClose();
                   router.push('/my-requests');

@@ -85,6 +85,8 @@ export interface PortalContact {
   attachment_allowed_extensions?: string[];
   /** The contact's first active sales agent as a name (project registration's read-only field). */
   sales_agent_name?: string | null;
+  /** Set on an admin's impersonation token of a salesperson's contact: that user's id (their CRM view). */
+  crm_user_id?: string | null;
 }
 
 export interface PortalSubmissionSummary {

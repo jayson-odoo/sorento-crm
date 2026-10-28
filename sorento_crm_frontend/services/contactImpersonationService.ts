@@ -67,3 +67,14 @@ export async function fetchCurrentContactImpersonation(): Promise<ContactImperso
   const body = (await response.json()) as ApiResponse | null;
   return body ? _adapt(body) : null;
 }
+
+/**
+ * The contact linked to the user the CRM is currently viewed as (the `/api/v1/` URL carries the
+ * impersonation header, so this answers for the target). Null when there is none.
+ */
+export async function fetchImpersonatedUserContactId(): Promise<string | null> {
+  const response = await apiFetch('/api/v1/user-management/users/me');
+  if (!response.ok) return null;
+  const body = (await response.json()) as { respond_contact_id?: string | null };
+  return body.respond_contact_id ?? null;
+}
