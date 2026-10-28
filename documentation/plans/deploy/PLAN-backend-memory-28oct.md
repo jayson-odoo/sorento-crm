@@ -1,9 +1,9 @@
 # Backend memory growth (BACKEND-MEMORY)
 
-Status: investigation (2026-10-28). Track: small fix track expected (no migration, no auth/RBAC,
-no ingest surface); confirmed once the fix shape is known.
+Status: in progress (2026-10-28), PR #1950. Track: small fix track (under 300 lines, no migration,
+no auth/RBAC, no ingest surface).
 Lane: `crew/backend-memory`
-UAC: `backend-memory-28oct-acceptance-criteria.md` (written with the fix, once the cause is measured)
+UAC: `backend-memory-28oct-acceptance-criteria.md`
 
 ## Why
 
@@ -66,37 +66,61 @@ glibc. Treat absolute numbers as indicative and the shape (grows or plateaus) as
    (`user_service.py:1384`, ~15-25 MB), `_COMPILED` up to 20,000 (`product_spec_rules.py:211`),
    `_EMBED_CACHE` LRU 512 (`project_registration_service.py:115`, ~25 MB), all capped.
 
-**Conclusion so far:** nothing local grows with time or request count. The measured steady state
-per worker is about 0.5-0.75 GB, so a colour should sit near 1 + 4 x 0.7 = 3.8 GB, not 6.6 GB.
-The gap fits glibc malloc arena retention: a worker runs many threads (anyio's thread pool for sync
-endpoints, the 8-thread direct-turn pool `app/tasks/chat_turns.py:88`, inbox drains, prefetch and
-warm threads), glibc gives each thread up to 8 x cores arenas, each arena keeps its high-water mark,
-and the chat path allocates 100+ MB of numpy temporaries per turn on whichever thread runs it. That
-is UNVERIFIED on prod until the owner's `memreport` shows how much of each worker sits in arenas.
+7. **Copy-on-write un-sharing by the garbage collector (measured, the likely main cause).** After
+   `import app.main` the master holds 3,460,480 GC-tracked objects. A forked child (a worker) that
+   runs one full `gc.collect()` takes 87,217 page faults, about 1.4 GB of pages touched, and pauses
+   1.67 s: a full collection writes into the header of every tracked object, so each page that holds
+   one is copied out of the shared preload into the worker's private memory. With `gc.freeze()` in
+   the parent before the fork, the same collection takes 32 faults and 0.00 s (scratch script
+   `gc_freeze_faults.py`, recorded in the PR). A worker runs its first full collection only once
+   enough new long-lived objects pile up (CPython runs one when they reach 25% of the long-lived
+   total), so each worker un-shares the preloaded heap in steps over hours, and four workers end
+   up with four private copies. That matches the shape on prod (6.6 GiB six hours after a fresh
+   start) and the size: master about 1 GB + 4 x (0.3 own + 0.6-0.8 copied + 0.23 chat lookup) is
+   about 5.5-6.3 GB. macOS pages are 16 KB and Linux pages 4 KB, so the prod number will be
+   smaller than 1.4 GB per worker; owner step 1 (`Shared_*` against `Private_Dirty` per worker)
+   confirms it. `gc.freeze` appears nowhere in the backend today.
 
-## Zero-downtime recovery today (owner runs; verified locally)
+**Conclusion:** nothing grows with request count; the growth is time-shaped. The leading cause is
+(7): each worker's garbage collector un-shares the preloaded app heap, so preload's saving erodes
+over hours. glibc malloc arena retention (many threads per worker, 100+ MB numpy temporaries per
+chat turn) may add to it; UNVERIFIED until owner step 1 shows the arena numbers.
 
-gunicorn's own signals: `TTIN` adds a worker, `TTOU` removes one, and gunicorn always removes the
-OLDEST (`gunicorn/arbiter.py:573-576`, sorted by age, SIGTERM). Locally: 2 rounds under steady
-traffic, workers 57159 then 57160 retired in age order, private memory 477 -> 307 MB, every request
-200. `start.sh:64` `exec`s gunicorn, so it is PID 1 and `docker kill -s` reaches it.
+## Zero-downtime recovery today (owner runs)
 
-What users see: nothing, normally. The retiring worker stops taking new connections and finishes
-what it has (up to 100 s, `app/uvicorn_worker.py:15`); an open staff event stream is closed and the
-browser reconnects; inbox drains finish their row (`app/tasks/chat_turns.py:208`). The new worker
-answers chat turns with spelling-only lookup matching until its warm finishes (10-70 s), exactly
-as after every deploy. Peak memory during a round: one extra fresh worker, about +0.5 GB.
+gunicorn's own signals: `TTIN` adds a worker, `TTOU` removes one, and gunicorn removes the
+OLDEST (`gunicorn/arbiter.py:573-576`, sorted by age, SIGTERM). `start.sh:64` `exec`s gunicorn, so
+it is PID 1 and `docker kill -s` reaches it, IF the prod compose does not wrap it (step 0 checks).
+Locally: 2 rounds under steady traffic, workers retired in age order, private memory 477 -> 307
+MB, every request 200 (no long-lived connections were open in that test).
+
+What users see, plainly: the retiring worker is NOT given its full graceful shutdown. gunicorn's
+master keeps checking every worker's heartbeat against its 120 s `timeout`
+(`gunicorn/arbiter.py:209` calls `murder_workers`, `:488-507`; gunicorn 23.0.0); uvicorn sends that heartbeat only from its main loop
+(`uvicorn/server.py:246-250`), not while it shuts down; an open staff event stream holds the
+shutdown for the full 100 s (`app/uvicorn_worker.py:15`). So the master hard-kills the retiring
+worker with SIGABRT 60-100 s after the TTOU (the last heartbeat can be 60 s old). The inbox drains
+stop taking rows at the signal and finish theirs within seconds (`app/tasks/chat_turns.py:178`),
+so the usual loss is: staff event streams on that worker drop and the browser reconnects; a slow
+sync `/chat/turn` still running on it is cut (n8n sees an error for that turn); expect one
+`WORKER TIMEOUT` line per round in the log. The new worker answers chat turns with spelling-only
+lookup matching until its warm finishes (10-70 s), as after every deploy. Peak memory during a
+round: one extra fresh worker, about +0.5 GB. Run it in a quiet hour.
+
+A recycled worker is forked from today's master without `gc.freeze`, so it un-shares again over
+the next hours: the recycle buys the headroom to deploy release #3, it is not the fix.
 
 ### Owner commands (on the server, from `/opt/sorento-crm2`; steps 0-2 are read-only)
 
 ```bash
-C=sorento-crm2-backend_blue-1
+cd /opt/sorento-crm2
+C=$(docker compose ps -q backend_$(cat .active_color))
 
-# 0. PID 1 must be gunicorn; the picture before
+# 0. Which process is PID 1 (step 3 needs gunicorn there), and the picture before
 docker exec $C cat /proc/1/cmdline | tr '\0' ' '; echo
 grep MemAvailable /proc/meminfo; docker stats --no-stream
 
-# 1. Per process: age, private memory, and how much of it sits in glibc malloc arenas
+# 1. Per process (MB): age, shared vs private memory, the [heap] and the glibc malloc arenas
 docker exec -i $C python3 - <<'PY'
 import os
 HEAP = 64 << 20
@@ -104,47 +128,73 @@ hz = os.sysconf("SC_CLK_TCK"); up = float(open("/proc/uptime").read().split()[0]
 for pid in sorted(int(p) for p in os.listdir("/proc") if p.isdigit()):
     try:
         cmd = open(f"/proc/{pid}/cmdline", "rb").read().replace(b"\0", b" ").decode()[:60]
-        roll = {f[0].rstrip(":"): int(f[1]) // 1024 for f in (l.split() for l in open(f"/proc/{pid}/smaps_rollup")) if len(f) == 3 and f[2] == "kB"}
+        r = {f[0].rstrip(":"): int(f[1]) // 1024 for f in (l.split() for l in open(f"/proc/{pid}/smaps_rollup")) if len(f) == 3 and f[2] == "kB"}
         start = int(open(f"/proc/{pid}/stat").read().rsplit(")", 1)[1].split()[19]) / hz
-        maps = []
+        maps = []  # [lo, hi, perms, anonymous, name, rss_kb, private_dirty_kb]
         for line in open(f"/proc/{pid}/smaps"):
             f = line.split()
             if f and "-" in f[0] and ":" not in f[0]:
-                lo, hi = (int(x, 16) for x in f[0].split("-")); maps.append([lo, hi, f[1], len(f) == 5, 0])
-            elif maps and f and f[0] == "Rss:":
-                maps[-1][4] = int(f[1])
+                lo, hi = (int(x, 16) for x in f[0].split("-"))
+                maps.append([lo, hi, f[1], len(f) == 5, f[5] if len(f) > 5 else "", 0, 0])
+            elif maps and f and f[0] in ("Rss:", "Private_Dirty:"):
+                maps[-1][5 if f[0] == "Rss:" else 6] = int(f[1])
+        heap_pd = sum(m[6] for m in maps if m[4] == "[heap]") // 1024
         arenas = arena_kb = 0
-        for i, (lo, hi, perms, anon, rss) in enumerate(maps):
+        for i, (lo, hi, perms, anon, name, rss, pd) in enumerate(maps):
             if anon and perms == "rw-p" and lo % HEAP == 0:
                 end = maps[i + 1][1] if i + 1 < len(maps) and maps[i + 1][0] == hi and maps[i + 1][2] == "---p" else hi
                 if end - lo == HEAP:
                     arenas += 1; arena_kb += rss
     except (OSError, ValueError, IndexError):
         continue
-    print(f"pid={pid} age_h={(up - start) / 3600:.1f} rss={roll.get('Rss')}MB pss={roll.get('Pss')}MB private_dirty={roll.get('Private_Dirty')}MB anon={roll.get('Anonymous')}MB malloc_arenas={arenas} arena_rss={arena_kb // 1024}MB {cmd}")
+    print(f"pid={pid} age_h={(up - start) / 3600:.1f} rss={r.get('Rss')} pss={r.get('Pss')} shared_clean={r.get('Shared_Clean')} shared_dirty={r.get('Shared_Dirty')} private_dirty={r.get('Private_Dirty')} heap_private_dirty={heap_pd} malloc_arenas={arenas} arena_rss={arena_kb // 1024} (MB) {cmd}")
 PY
 docker exec $C sh -c 'cat /sys/fs/cgroup/memory.stat 2>/dev/null || cat /sys/fs/cgroup/memory/memory.stat' | grep -E '^(total_)?(anon|file|rss|cache|shmem) '
 
 # 2. Requests in the last hour (sizes max_requests)
 docker logs --since 1h $C 2>&1 | grep -c ' - Status: '
+```
 
-# 3. Rolling recycle, one worker at a time. Run ONE round, re-run step 1 and check that the new
-#    worker is small and MemAvailable rose; then run the other three.
+Reading step 1: the master (pid 1) is the preloaded app. A worker whose `shared_clean +
+shared_dirty` is small and whose `private_dirty` is near the master's size has un-shared the
+preload (finding 7, fixed by `gc.freeze`). Large `arena_rss` points at malloc arenas instead.
+
+Step 3, a separate yes/no: run it ONLY if step 0's first line contains `gunicorn`, in a quiet hour.
+One round, then re-run step 1 and check that MemAvailable rose; then the other three rounds.
+
+```bash
 docker kill -s TTIN $C; sleep 90      # a 5th worker boots and warms its lookup vectors
-docker kill -s TTOU $C; sleep 160     # the OLDEST worker finishes its requests (<= 150 s) and exits
-docker logs --since 5m $C 2>&1 | grep -E 'Booting worker|Shutting down|Finished server process'
+docker kill -s TTOU $C; sleep 160     # the OLDEST worker retires (hard-killed at 60-100 s, see above)
+docker logs --since 5m $C 2>&1 | grep -E 'Booting worker|Shutting down|WORKER TIMEOUT|Finished server process'
 grep MemAvailable /proc/meminfo; docker stats --no-stream
 ```
 
-Stop at any step if the output looks wrong: step 3 changes nothing but which processes serve, and
-`docker kill -s TTOU $C` (once) undoes a stray `TTIN`.
+A stray `TTIN` is undone by one `docker kill -s TTOU $C`.
 
-## Lasting fix (proposal, waits on the owner's numbers)
+## Lasting fix (this PR)
 
-- `max_requests` + `max_requests_jitter` in `gunicorn.conf.py` (env `GUNICORN_MAX_REQUESTS`,
-  `GUNICORN_MAX_REQUESTS_JITTER`, 0 = off): a worker retires itself after N requests, gracefully,
-  through the same path as `TTOU`. Bounds growth whatever the cause. N from the owner's request
-  count per hour, sized so each worker recycles every 1-2 hours.
-- `MALLOC_ARENA_MAX=2` in the backend image if `memreport` shows the arenas hold most of the
-  private memory.
-- `fill()` honours `_CACHE_CAP` (one line, red test first).
+- `gc.freeze()` in gunicorn's `pre_fork` hook (`gunicorn.conf.py`): the preloaded heap moves to
+  the permanent generation before every fork, so a worker's collector never walks it and never
+  un-shares it (finding 7). Red-first.
+- `max_requests` + `max_requests_jitter` (env `GUNICORN_MAX_REQUESTS` 5000,
+  `GUNICORN_MAX_REQUESTS_JITTER` 500; 0 = off): a worker retires after about 5000-5500 requests
+  and the master forks a fresh one, which bounds any remaining growth (arenas, caches).
+- `DrainingServer` (`app/uvicorn_worker.py`): a self-retiring worker (max_requests or TTOU) gets
+  the deploy's graceful shutdown, not the hard kill above: it stops the inbox drains when shutdown
+  starts (the request limit sends no signal) and keeps gunicorn's heartbeat going through the
+  bounded shutdown, never past `graceful_timeout`, so a hung shutdown is still killed. Chosen over
+  raising `timeout` to 210 s or more, which would also leave a genuinely hung worker serving
+  errors for 3.5 minutes before it is replaced.
+- The warm path `fill()` honours `_CACHE_CAP` (finding 5).
+- `MALLOC_ARENA_MAX=2`: only if owner step 1 shows the arenas hold the memory.
+
+Cost of each recycle: the new worker re-embeds the lookup texts (`lookup_lists.py:755-829`, the
+cache is per process): 7,035 texts, 213,597 characters, about 53k tokens. On the 20 Oct copy
+the embedder prompt has no production label, so it is OpenAI `text-embedding-3-small` in chunks
+of 500: 15 requests, about USD 0.001 at list price (USD 0.02 per million tokens). On Gemini it
+would be 71 requests of 100, about USD 0.008 (UNVERIFIED list price). The new worker matches by
+spelling only for those 10-70 s, on a quarter of the traffic. At 10,000 requests an hour (the
+real number comes from owner step 2) each worker recycles about every 2 hours: 48 recycles a day,
+about USD 0.05 a day on OpenAI, and about 0.5% of chat turns on spelling-only matching. If that
+window ever shows up in chat quality, warm the vectors once in the master before the fork (shared,
+no window); not built now, no evidence it is needed.
