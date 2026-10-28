@@ -5,6 +5,7 @@
  * even when the slug is held. Status and the purchasing response stay visible, read-only. Staff detail unchanged.
  * Scaffolding follows StockInquiryDetail.test.tsx.
  */
+import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
@@ -97,7 +98,7 @@ const WORKFLOW_SLUGS = [
   'sla_management.conversation_sla_tracking.reassign',
 ];
 const STAFF = ['procurement.stock_inquiries.view', 'procurement.stock_inquiries.edit', 'procurement.stock_inquiries.delete', ...WORKFLOW_SLUGS];
-const PORTAL_SET = ['Edit', 'Delete', 'Submit', 'Revise', 'Duplicate'];
+const PORTAL_SET = ['Edit', 'Delete', 'Submit', submitVerb('rejected'), 'Revise', 'Duplicate'];
 
 function record(over: Record<string, unknown> = {}) {
   return {
@@ -160,7 +161,7 @@ describe('limited user, detail', () => {
     mount(LIMITED, { status: 'rejected' });
     const labels = await actionLabels();
     expect(labels).toContain('Edit');
-    expect(labels).toContain('Submit');
+    expect(labels).toContain(submitVerb('rejected'));
     expect(labels).toContain('Duplicate');
     expect(labels).not.toContain('Delete');
   });

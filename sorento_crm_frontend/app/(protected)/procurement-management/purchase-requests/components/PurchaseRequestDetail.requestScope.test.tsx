@@ -5,6 +5,7 @@
  * approval / sign-off footer and the Revisions tab stay visible, read-only. Staff detail unchanged.
  * Scaffolding follows PurchaseRequestDetail.test.tsx and StockInquiryDetail.requestScope.test.tsx.
  */
+import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor, cleanup } from '@testing-library/react';
@@ -101,7 +102,7 @@ const KINDS: Array<{ kind: Kind; base: string; number: string }> = [
   { kind: 'purchase_request', base: 'procurement.purchase_requests', number: 'PR26-0001' },
   { kind: 'sponsorship_form', base: 'procurement.sponsorship_forms', number: 'SF26-0001' },
 ];
-const PORTAL_SET = ['Edit', 'Delete', 'Submit', 'Revise', 'Duplicate'];
+const PORTAL_SET = ['Edit', 'Delete', 'Submit', submitVerb('rejected'), 'Revise', 'Duplicate'];
 
 function record(k: (typeof KINDS)[number], over: Record<string, unknown> = {}) {
   return {
@@ -174,7 +175,7 @@ describe.each(KINDS)('$kind detail, limited user', (k) => {
     mount(k, LIMITED, { status: 'submitted', approval_status: 'rejected' });
     const labels = await actionLabels(k);
     expect(labels).toContain('Edit');
-    expect(labels).toContain('Submit');
+    expect(labels).toContain(submitVerb('rejected'));
     expect(labels).toContain('Duplicate');
     expect(labels).not.toContain('Delete');
   });

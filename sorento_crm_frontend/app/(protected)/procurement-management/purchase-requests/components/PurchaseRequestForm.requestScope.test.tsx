@@ -9,6 +9,7 @@
  *    "Send revision" -> POST .../{id}/revise.
  *  - staff /new: no draft buttons, original Create, requestors from the staff endpoint.
  */
+import { submitVerb } from '@/lib/submission-status';
 import React from 'react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -214,10 +215,10 @@ describe.each(KINDS)('$kind form, limited user, edit', (k) => {
     expect(urls((c) => c.url.startsWith('/api/v1/procurement/') && c.method !== 'GET')).toHaveLength(0);
   });
 
-  it('a rejected row is editable (Submit available)', async () => {
+  it('a rejected row is editable (send-back button available)', async () => {
     sources['pr-5'] = detail(k.kind, { id: 'pr-5', status: 'submitted', approval_status: 'rejected', is_draft: true });
     mount(k, LIMITED, { requestId: 'pr-5' });
-    expect(await screen.findByRole('button', { name: /^Submit/ })).toBeInTheDocument();
+    expect(await screen.findByRole('button', { name: new RegExp(`^${submitVerb('rejected')}`) })).toBeInTheDocument();
   });
 
   it.each([
