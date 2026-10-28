@@ -503,9 +503,13 @@ def get_activity_feed(
         trace_id=trace_id,
         include_user=False,
     ).distinct()
-    # Admins who only acted while impersonating appear as real_user_id (plan 8.1).
+    # Admins who only acted while impersonating appear as real_user_id (plan 8.1). Same
+    # company predicate as the user_id half, or another company's admin is listed.
+    real_base = db.query(AuditLog.real_user_id).filter(AuditLog.real_user_id.isnot(None))
+    if scope_filter is not None:
+        real_base = real_base.filter(scope_filter)
     real_scope = _apply_filters(
-        db.query(AuditLog.real_user_id).filter(AuditLog.real_user_id.isnot(None)),
+        real_base,
         stored_types=stored_types,
         action=action,
         user_id=None,
