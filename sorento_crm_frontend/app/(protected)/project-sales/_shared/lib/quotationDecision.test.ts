@@ -190,10 +190,10 @@ describe('nextAction: Send for approval comes before Sign (E1, owner order)', ()
 });
 
 describe('a resubmitted quotation (RESUBMITTED-STATUS)', () => {
-  it('stands as Resubmitted, is locked, and a manager decides it like a pending one', async () => {
+  it('stands as Appealed, is locked, and a manager decides it like a pending one', async () => {
     const { isLockedForApproval } = await import('./quotationDecision');
     const record = document({ approval_status_key: 'resubmitted' } as Partial<QuotationDocument>);
-    expect(quotationStanding(record)).toEqual({ label: 'Resubmitted', variant: 'warning' });
+    expect(quotationStanding(record)).toEqual({ label: 'Appealed', variant: 'warning' });
     expect(isLockedForApproval(record)).toBe(true);
     expect(nextAction(record, { canEdit: true, canApprove: true, isSigned: true }).kind).toBe('approve');
     expect(nextAction(record, { canEdit: true, canApprove: false, isSigned: true }).hint).toBe(

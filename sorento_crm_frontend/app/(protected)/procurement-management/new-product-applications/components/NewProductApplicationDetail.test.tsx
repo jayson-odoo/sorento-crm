@@ -283,11 +283,11 @@ describe('who sees which next action', () => {
     ).toBeInTheDocument();
   });
 
-  it('labels the applicant\'s send button Resubmit on a rejected application', () => {
+  it('labels the applicant\'s send button Appeal on a rejected application', () => {
     state.data = detail({ status: 'rejected', status_label: 'Rejected', reject_reason: 'x' });
     state.perms = new Set(['procurement.new_product_applications.create']);
     render(<Page />);
-    expect(button(/^resubmit$/i)).toBeInTheDocument();
+    expect(button(/^appeal$/i)).toBeInTheDocument();
     expect(button(/^submit$/i)).not.toBeInTheDocument();
   });
 
@@ -344,7 +344,7 @@ describe('a portal-sourced application on the staff side', () => {
       screen.queryByRole('link', { name: 'Edit' }),
     ).not.toBeInTheDocument();
     // A rejected application goes back as a resubmission (RESUBMITTED-STATUS).
-    expect(button(/^resubmit$/i)).toBeInTheDocument();
+    expect(button(/^appeal$/i)).toBeInTheDocument();
   });
 });
 

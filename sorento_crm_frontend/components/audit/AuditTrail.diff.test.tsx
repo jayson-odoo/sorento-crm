@@ -139,8 +139,8 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     expect(document.body.textContent).not.toContain(a);
   });
 
-  // Owner + Kay, 27 Oct: rejected -> submitted reads "Resubmitted" ("Appealed" on a complaint,
-  // owner 28 Oct), derived from the transition
+  // Owner + Kay, 27 Oct: rejected -> submitted reads as a resubmission ("Appealed" on every
+  // form since owner 28 Oct), derived from the transition
   // so existing history shows it without a data change. Same two resubmit shapes as above.
   it('resubmit shape 1 (status + long text append) heads the row "Appealed by <actor>" (a complaint)', () => {
     mockEntries([
@@ -183,7 +183,7 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     expect(screen.getByTestId('audit-action').textContent).toBe('Appealed');
   });
 
-  it('a status-engine record (status_id, labels only in the summary) also reads "Resubmitted"', () => {
+  it('a status-engine record (status_id, labels only in the summary) also reads "Appealed"', () => {
     mockEntries([
       entry({
         entity_type: 'purchase_request',
@@ -193,7 +193,23 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
       }),
     ]);
     render(<AuditTrail entityType="purchase_request" entityId={COMPLAINT_ID} />);
-    expect(screen.getByTestId('audit-action').textContent).toBe('Resubmitted');
+    expect(screen.getByTestId('audit-action').textContent).toBe('Appealed');
+    expect(screen.getAllByTestId('audit-change-line')[0].textContent).toBe('Status: Rejected → Appealed');
+  });
+
+  it('a status-engine row written as Resubmitted reads Appealed on every form', () => {
+    mockEntries([
+      entry({
+        entity_type: 'quotation',
+        description: 'Status: Rejected → Resubmitted',
+        old_values: { status_id: 'f0000000-0000-4000-8000-000000000005' },
+        new_values: { status_id: 'f0000000-0000-4000-8000-000000000006' },
+      }),
+    ]);
+    render(<AuditTrail entityType="quotation" entityId={COMPLAINT_ID} />);
+    expect(screen.getByTestId('audit-action').textContent).toBe('Appealed');
+    expect(screen.getAllByTestId('audit-change-line')[0].textContent).toBe('Status: Rejected → Appealed');
+    expect(document.body.textContent).not.toMatch(/resubmit/i);
   });
 
   it('any other status move keeps the plain action heading', () => {

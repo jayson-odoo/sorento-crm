@@ -4,11 +4,10 @@ import { render, screen, cleanup, within } from '@testing-library/react';
 import AuditTrail from './AuditTrail';
 import type { AuditLogEntry } from '@/types/audit.types';
 
-// AUDIT-TRAIL-RESUBMITTED: every resubmission on a record's trail reads "Resubmitted by <who>"
+// AUDIT-TRAIL-RESUBMITTED: every resubmission on a record's trail reads "Appealed by <who>"
 // and every rejection "Rejected by <who>", derived from the record's own history (oldest
-// first), so past resubmits read the same as new ones. A complaint's resubmission is called an
-// appeal (COMPLAINT-APPEAL-WORDING, owner 28 Oct): it reads "Appealed", every other form keeps
-// "Resubmitted". Fixtures only, no real data.
+// first), so past resubmits read the same as new ones. Every form calls a resubmission an appeal
+// (COMPLAINT-APPEAL-WORDING, owner 28 Oct): the heading reads "Appealed". Fixtures only, no real data.
 
 const useAuditLogs = vi.fn();
 
@@ -250,7 +249,7 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     ]);
   });
 
-  it('a stage-based form resubmitted before the status existed (stock inquiry) reads Resubmitted', () => {
+  it('a stage-based form resubmitted before the status existed (stock inquiry) reads Appealed', () => {
     mockHistory([
       status('pending_project_sales', 'rejected', {
         ...STAFF,
@@ -264,12 +263,12 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     renderTrail('stock_inquiry');
 
     const rows = rowsOldestFirst();
-    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
+    expect(rows.map((r) => r.heading)).toEqual(['Rejected', 'Appealed']);
     // Only the plain "submitted" stage is renamed; a named stage stays as recorded.
     expect(rows[1].lines).toEqual(['status: rejected → pending_project_sales']);
   });
 
-  it('a status-engine record (labels only in the summary) reads Rejected, then Resubmitted on the customer save', () => {
+  it('a status-engine record (labels only in the summary) reads Rejected, then Appealed on the customer save', () => {
     const engine = { entity_type: 'purchase_request' };
     mockHistory([
       entry({
@@ -283,7 +282,7 @@ describe('AuditTrail resubmissions (AUDIT-TRAIL-RESUBMITTED)', () => {
     ]);
     renderTrail('purchase_request');
 
-    expect(rowsOldestFirst().map((r) => r.heading)).toEqual(['Rejected', 'Resubmitted']);
+    expect(rowsOldestFirst().map((r) => r.heading)).toEqual(['Rejected', 'Appealed']);
   });
 
   it('a child row on the trail never moves the record status', () => {

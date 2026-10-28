@@ -1,6 +1,6 @@
 /**
  * RESUBMITTED-STATUS (owner, 27 Oct): a portal form that was rejected is sent back
- * with "Resubmit", not "Submit". Every portal kind surfaces a rejected record as
+ * with "Appeal" (owner, 28 Oct; it read "Resubmit" before), not "Submit". Every portal kind surfaces a rejected record as
  * `status: 'rejected'` (PR/SF via the backend's effective status), so one rule
  * covers them all. Mocking pattern mirrors `SubmissionForm.revisingBanner.test.tsx`.
  */
@@ -164,8 +164,8 @@ async function renderAt(
 
 
 describe('submitVerb', () => {
-  it('is Resubmit for a rejected form and Submit otherwise', () => {
-    expect(submitVerb('rejected')).toBe('Resubmit');
+  it('is Appeal for a rejected form and Submit otherwise', () => {
+    expect(submitVerb('rejected')).toBe('Appeal');
     expect(submitVerb('draft')).toBe('Submit');
     expect(submitVerb(null)).toBe('Submit');
     expect(submitVerb(undefined)).toBe('Submit');
@@ -173,17 +173,17 @@ describe('submitVerb', () => {
 });
 
 describe('SubmissionForm - the submit button after a rejection', () => {
-  it('reads "Resubmit" on a rejected form, and the confirm dialog says so too', async () => {
+  it('reads "Appeal" on a rejected form, and the confirm dialog says so too', async () => {
     await renderAt({ status: 'rejected', is_editable: true });
 
     const button = await screen.findByRole('button', {
-      name: 'Resubmit stock inquiry',
+      name: 'Appeal stock inquiry',
     });
     expect(screen.queryByRole('button', { name: 'Submit stock inquiry' })).toBeNull();
 
     fireEvent.click(button);
     expect(
-      await screen.findByText('Resubmit this stock inquiry?'),
+      await screen.findByText('Appeal this stock inquiry?'),
     ).toBeInTheDocument();
   });
 
@@ -193,7 +193,7 @@ describe('SubmissionForm - the submit button after a rejection', () => {
     expect(
       await screen.findByRole('button', { name: 'Submit stock inquiry' }),
     ).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^Resubmit/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /^(Resubmit|Appeal)/ })).toBeNull();
   });
 });
 
