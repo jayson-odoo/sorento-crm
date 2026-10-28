@@ -23,6 +23,14 @@ vi.mock('@/hooks/usePermissions', () => ({
   }),
   useHasAnyPermission: () => false,
 }));
+vi.mock('@/hooks/useAccountProfileForHeader', () => ({
+  useAccountProfileForHeader: () => ({
+    salesperson: null,
+    avatarSrc: undefined,
+    displayName: '',
+    displayEmail: '',
+  }),
+}));
 vi.mock('@/hooks/useTenantModules', () => ({
   useTenantModules: () => ({ enabledModuleKeys: null, isLoading: false }),
 }));

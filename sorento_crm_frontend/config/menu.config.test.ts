@@ -375,9 +375,15 @@ describe('filterOrphanHeadings', () => {
 // ---------------------------------------------------------------------------
 
 describe('menu.config - section headings', () => {
-  it('has exactly 7 headings in order', () => {
+  it('has exactly 9 headings in order: the two salesperson ones first, then the 7 staff ones', () => {
     const headings = MENU_SIDEBAR.filter((i) => i.heading).map((i) => i.heading);
+    expect(MENU_SIDEBAR.filter((i) => i.heading && i.audience === 'salesperson').map((i) => i.heading)).toEqual([
+      'MY WORK',
+      'MY REQUESTS',
+    ]);
     expect(headings).toEqual([
+      'MY WORK',
+      'MY REQUESTS',
       'OVERVIEW',
       'SALES',
       // Finance billing documents (PLAN-finance-billing-documents-27sep 3.5, UAC S2-1).
