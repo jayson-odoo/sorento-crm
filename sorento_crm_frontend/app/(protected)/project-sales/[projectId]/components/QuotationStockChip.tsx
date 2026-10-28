@@ -17,6 +17,10 @@ import type {
   StockDetailIncoming,
 } from '../../_shared/types/fulfilmentPlanning.types';
 import { useStockStatus } from '@/components/stock-status/useStockStatus';
+import type {
+  StockStatus,
+  StockStatusLocation,
+} from '@/components/stock-status/stockStatus.types';
 
 type StockTone = 'ok' | 'part' | 'none';
 
@@ -130,6 +134,34 @@ function hasFigures(row: StockLocations[number]): boolean {
   );
 }
 
+/**
+ * AutoCount's read narrowed to the locations the quotation read listed: its other locations, and
+ * the documents and totals that belong to them, never reach the table (any Group by draws them).
+ */
+function onlyLocations(status: StockStatus, codes: Set<string>): StockStatus {
+  const locations = status.locations.filter((loc) => codes.has(loc.warehouse_code));
+  const ids = new Set(locations.map((loc) => loc.warehouse_id));
+  const sum = (pick: (loc: StockStatusLocation) => number) =>
+    locations.reduce((total, loc) => total + pick(loc), 0);
+  return {
+    ...status,
+    locations,
+    totals: {
+      on_hand: sum((loc) => loc.on_hand),
+      so_qty: sum((loc) => loc.so_qty),
+      po_qty: sum((loc) => loc.po_qty),
+      spo_qty: sum((loc) => loc.spo_qty),
+      forecast: sum((loc) => loc.forecast),
+      incoming_pl: 0,
+      forecast_incl_pl: sum((loc) => loc.forecast),
+    },
+    incoming_pl: [],
+    sales_orders: (status.sales_orders ?? []).filter((row) => ids.has(row.warehouse_id)),
+    purchase_orders: (status.purchase_orders ?? []).filter((row) => ids.has(row.warehouse_id)),
+    spos: (status.spos ?? []).filter((row) => ids.has(row.warehouse_id)),
+  };
+}
+
 function StockPopoverBody({
   productId,
   label,
@@ -149,6 +181,13 @@ function StockPopoverBody({
   // AutoCount, so its figures and PO qty show. It restates the read's rows only; a location the
   // user may not see never joins from AutoCount. A failed read leaves today's figures.
   const autoCount = useStockStatus(productId);
+  const allowedStatus = React.useMemo(
+    () =>
+      autoCount.data
+        ? onlyLocations(autoCount.data, new Set(locations.map((row) => row.location ?? '')))
+        : null,
+    [autoCount.data, locations],
+  );
 
   return (
     <>
@@ -165,8 +204,7 @@ function StockPopoverBody({
           locations={locations.filter(hasFigures)}
           showGroupSubtotal
           stockOnly
-          autoCount={autoCount.data ?? null}
-          autoCountAppendsLocations={false}
+          autoCount={allowedStatus}
         />
       )}
       <div className="text-xs text-muted-foreground">
@@ -227,7 +265,11 @@ function PartStockSection({ part }: { part: SetStockPart }) {
       {detail.isLoading ? (
         <Skeleton className="h-10 w-full" />
       ) : detail.data ? (
-        <CellStockTable locations={detail.data.locations ?? []} showGroupSubtotal stockOnly />
+        <CellStockTable
+          locations={(detail.data.locations ?? []).filter(hasFigures)}
+          showGroupSubtotal
+          stockOnly
+        />
       ) : detail.data === null ? null : (
         <p className="text-xs text-muted-foreground">Stock could not be loaded</p>
       )}

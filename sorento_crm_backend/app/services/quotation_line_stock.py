@@ -40,6 +40,12 @@ def quotation_line_stock(
     ids = allowed_warehouse_ids(db, str(user["id"]))
     if not ids:
         return None
-    return FulfilmentBoardService(db, reveal_eta_delay=reveal_eta_delay).stock_detail(
+    detail = FulfilmentBoardService(db, reveal_eta_delay=reveal_eta_delay).stock_detail(
         product_id, None, line_ids=[], warehouse_ids=ids
     )
+    # Locations, totals and incoming SPOs only: who owes what, and who supplies it, is not for
+    # a quotation line, whoever asks.
+    detail["sales_orders"] = []
+    detail["holds"] = []
+    detail["incoming"] = [{**row, "supplier_name": None} for row in detail.get("incoming", [])]
+    return detail
