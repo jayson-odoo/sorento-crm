@@ -133,3 +133,56 @@ Opportunity (`config/menu.config.tsx:66-89`); this lane moves only the 4 forms.
 (a) Those 5 keep the embedded portal page until their own lanes. (b) Hide those 5 from the CRM sidebar until their
 lanes (salespeople use the portal link for them). (c) Take all 9 in this lane.
 Recommendation: (a), so a salesperson loses nothing, and #1944 + this lane can ship.
+
+---
+
+# v1.1: the 5 extra MY REQUESTS kinds (Q5 (c)) and the revision setting (Q4)
+
+Same rule as v1 for every kind: MY REQUESTS > kind opens a CRM page, the server returns only the salesperson's own rows
+(their contact, or for sample requests / NPA also "them" as the salesperson / applicant, the P2 rule), staff pages and
+staff routes are read-only for a salesperson, and their own create / draft / submit / revise run the SAME code the
+portal runs, called from the CRM session. Staff: no change. Paths: BE `sorento_crm_backend/app`, FE
+`sorento_crm_frontend/app/(protected)`.
+
+| Kind | CRM page today | Only theirs on the server today | Portal flow (what must stay identical) | Gaps | Effort |
+| --- | --- | --- | --- | --- | --- |
+| Sample Request | list / new / detail / edit `project-sales/sample-requests` | yes, `view_own` (P2): salesperson OR contact (`sample_request_service.py:620-625`); detail 404 | own router `public/portal_sample_request.py`: draft, submit, cancel; customer picker = own agents' customers; no revise / comments / attachments | grants (`view_own` + `.create`); staff create stamps `source=staff`, no contact (`sample_requests.py:170`) so the CRM path must stamp like the portal and run its customer / project checks; list shows all statuses like the portal | M |
+| New Product Application | list / new / detail / edit `procurement-management/new-product-applications` | yes, `view_own` (P2): applicant OR contact; detail 404 | own router `public/portal_new_product_application.py`: draft, submit, revise, cancel, "start from" an own responded stock inquiry, uploads | grants (`view_own` + `.create`); menu gate lacks `view_own` (`menu.config.tsx:439-444`); staff detail shows item group, base UOM, list price the portal hides (`new_product_applications.py:152`; `new_product_application_service.py:947, 1001`): hidden for a salesperson; portal-raised rows answer 409 on the staff edit (`:292-298`), so the salesperson edits through the portal code | L |
+| Sales Opportunity | list + create modal + inline edit `sales/opportunities` | yes, `view_own` (P2): own agents; detail 404 | own router `public/portal_sales_opportunity.py`: create (default agent when the customer has none, `:202-204`), update stage / lost reason; no draft or submit | grants (`view_own` + `.add` + `.edit`); a prospect with no agent gets 403 on the staff path (`opportunities.py:57-81`): the CRM path assigns the portal's default agent; agent picker, Won-to-sales-order link and Delete hidden for a salesperson | M- |
+| Price Tag Request | list + detail + designer `dealer-kit/price-tag-requests`; NO staff new / edit page, no staff create API (`price_tag_requests.py:159-1422`) | no: list / detail need `.view` and return everyone (`:168-184, 250-259`); no `view_own` slug | own router `public/portal_price_tag.py`, logic in route bodies: draft (number at draft time), submit (`emit_form_event` + notify + auto-assign, `:431-503`), proof approve / request changes / review comments / collect (`:507-635`), revise (adapter exists, setting OFF on dev), debtor picker (multi-agent) | new slug `dealer_kit.price_tag_requests.view_own` + guard; move the route bodies into a service so portal and CRM run one code; new / edit page = the existing price tag request form (`(auth)/portal/components/PriceTagRequestForm.tsx`, the only form there is, Q8) on a CRM client; staff detail gains the portal action set for the salesperson | L |
+| Project Registration | `/project-sales/new` = staff ProjectForm, being rebuilt by lane PROJECT-REGISTER-V2 (needs `projects.projects.edit` today) | yes for projects, `view_own` (P2), pipeline; drafts never show on staff routes | generic portal code: draft, submit to pending / resubmitted, approvers notified, approve draws the code (`project_registration_service.py:591-770, 910-972`) | owner already ruled: opens the REGISTER-V2 page. REGISTER-V2 proposes (its card Q7, pending): a new slug `projects.registrations.submit` (P4 defines and grants it in `pp4_0001`), the salesperson's submit goes to `approval_state=pending` and the existing approve / reject / notify run unchanged, registrations seen in the Projects pipeline under MY WORK (menu gate needs `view_own`, `menu.config.tsx:192-196`); draft and resubmit from that form are its open items | S here (link, slug, grant, menu gate); form in REGISTER-V2 |
+
+Revision setting (Q4 answer, crew-note on #1953): User Management > Settings > Portal revisions, one row per form
+(`portal_revision_configs`, `models/portal.py:138-163`) plus a global switch and cap (`system_settings`). A form is
+revisable only with revision code AND its row on AND the global switch on (`portal_revision_service.py:745-754`). Dev
+(15 Oct): Stock Inquiry ON, Complaint ON but it has no revision code so it does nothing (portal revise answers 422),
+Purchase Request / Sponsorship / Price Tag OFF. Sample Request, NPA (own Revise move), Project Registration, Sales
+Opportunity are not on that page (`forms/revision_configs.py:38-59`). The CRM follows the setting exactly because it
+runs the same code.
+
+## Real examples (dev copy, 15 Oct)
+
+Price tag, sample request, NPA and opportunity counts per salesperson are in the lead's notes; the hand test uses one
+salesperson with rows in each kind (chosen on the crew copy).
+
+## Questions (recommendation first)
+
+**Q6. Complaint revision.** Its switch on the settings page shows ON but does nothing (no revision code).
+(a) Build complaint revision code (adapter: which fields freeze, restart stage) so the setting really governs
+complaints, in the portal and in the CRM alike. (b) Keep complaint without revision and take it off the settings page
+so the switch no longer misleads.
+Recommendation: (a), because you asked that revisions follow the setting for every form, complaint included.
+
+**Q7. MY REQUESTS > Project Registration until PROJECT-REGISTER-V2 merges.**
+The REGISTER-V2 page is not built yet; today `/project-sales/new` needs `projects.projects.edit`, which a salesperson
+must not get (it opens the staff register path).
+(a) The item is hidden for salespeople until REGISTER-V2 merges; REGISTER-V2 switches it on with its page (P4 ships the
+slug and grant). (b) P4 ships the item pointing at `/project-sales/new` now; it shows "no access" until REGISTER-V2
+merges.
+Recommendation: (a), never a link that fails.
+
+**Q8. Price tag request form in the CRM.** There is no staff form; the only form is the portal's.
+(a) The CRM new / edit page renders the existing price tag request form component on a CRM-session client, and the
+portal route bodies move into one service both call (one code, exactly the portal's flow). (b) Build a new staff-style
+price tag form.
+Recommendation: (a), reuse, never reinvent; (b) duplicates 3,800 lines of form logic.
