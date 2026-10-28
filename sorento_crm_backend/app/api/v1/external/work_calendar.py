@@ -25,7 +25,7 @@ router = APIRouter()
     response_model=ExternalWorkCalendarSummary,
     summary="Get working day ranges and working hours",
 )
-async def get_work_calendar_summary(
+def get_work_calendar_summary(
     _current_user: dict = Depends(get_external_api_user),
     db: Session = Depends(get_db),
 ):
@@ -59,7 +59,7 @@ async def get_work_calendar_summary(
     response_model=ExternalWorkingDayCheckResponse,
     summary="Check if today is a working day",
 )
-async def get_is_working_day(
+def get_is_working_day(
     timezone: Optional[str] = Query(
         None,
         alias="timezone",
