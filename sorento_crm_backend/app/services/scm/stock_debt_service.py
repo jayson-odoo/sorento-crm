@@ -48,7 +48,6 @@ from app.models.procurement import (
 )
 from app.models.product import Product, ProductCategory
 from app.models.project_so import (
-    ALLOC_RESERVE_SOURCES,
     INQUIRY_CANCELLED,
     OrderInquiry,
     OrderInquiryLink,
@@ -1696,10 +1695,12 @@ class StockDebtService:
         anybody queues (AC-S2-2), and both are keyed to the CORE sales-order line, which is
         what the demand read above is keyed on.
 
-        **The allocation half is `ProjectSupplyService._hold_query` (Borrows, pinned) and
-        `_decision_allocation_query` split by source (Reserves are `Hold.route`: a plan, not a hold, BOARD-NO-HOLD),
-        not a second spelling of it.** That is the one predicate for "this row is holding stock right now" - confirmed,
-        located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
+        **The allocation half is `ProjectSupplyService._decision_allocation_query`, not a
+        second spelling of it.** No decision holds stock (BOARD-NO-HOLD, BORROW-NO-HOLD), so
+        every one of its rows, Reserve or Borrow, is a `Hold.route`: a plan the line may
+        draw at its own date. `_hold_query` is that base minus those sources and matches no
+        decision row now. It is the one predicate for "this row is holding stock right now"
+        - confirmed, located, not an ORDER source, and belonging to no decision or to an ACTIVE one - and
         it is shared with the free-stock arithmetic precisely so the two cannot come to
         disagree. Restated by hand here, it had already lost `confirmed_at IS NOT NULL`, so a
         decision saved but never confirmed held stock on this screen and nowhere else.
@@ -1766,7 +1767,7 @@ class StockDebtService:
         holds. A bin OUTSIDE the span is still honoured off a stand-in (AC-S2-1b), which
         `assign()` caps at that bin's free stock (`stand_in_floors`, read by
         `_stand_in_floors`). Either way the bin is shared by the pins on it in the order
-        they were made: confirmed decisions first, then placements, each the earliest
+        they were made: confirmed decisions (routes), then placements, each the earliest
         first. The cap stays in `assign()`, the one place that knows whether a line still
         needs the pin: spent here, a second pin of a line its first pin already covered
         took a bin the next line was pinned on (dev, 14 Oct 2026).
@@ -1777,17 +1778,17 @@ class StockDebtService:
         through the auto placement on SPO-2026/05-0001, and `_landed_holds` then nets its
         own read to nothing), so without the mark here the feature lent nothing on the real
         book. A decision allocation (`so_line_allocations`) is never lendable: a Borrow
-        pins and a Reserve is a route, neither is goods that landed for the line. `None` marks nothing.
+        and a Reserve are both routes, neither is goods that landed for the line. `None` marks nothing.
         """
         if not line_keys:
             return []
         keys = list(line_keys)
         out: List[Hold] = []
 
-        # BOARD-NO-HOLD: ONE read of the live decision allocations (the base `_hold_query`
-        # narrows), split here: a Borrow is a pin, a Reserve is a plan the walk takes as a
-        # ROUTE (the line may draw the bin at its own date, `Hold.route`).
-        tagged = (
+        # BOARD-NO-HOLD + BORROW-NO-HOLD: ONE read of the live decision allocations. A
+        # decision is a plan, not a hold, whatever its source: every row is a ROUTE the
+        # walk takes (the line may draw the bin at its own date, `Hold.route`).
+        route_rows = (
             self.supply._decision_allocation_query(
                 [str(pid) for pid in product_ids],
                 exclude_line_ids=None,
@@ -1797,7 +1798,6 @@ class StockDebtService:
                     held_qty_expr(),
                     Warehouse.warehouse_code,
                     _hold_product,
-                    SOLineAllocation.source_type,
                 ),
             )
             .join(Warehouse, Warehouse.id == SOLineAllocation.warehouse_id)
@@ -1811,9 +1811,6 @@ class StockDebtService:
             )
             .all()
         )
-        rows = [r[:5] for r in tagged if r[5] not in ALLOC_RESERVE_SOURCES]
-        route_rows = [r[:5] for r in tagged if r[5] in ALLOC_RESERVE_SOURCES]
-
         links = (
             self.db.query(
                 OrderInquiryLink.id.label("link_id"),
@@ -1870,8 +1867,7 @@ class StockDebtService:
                 if event.kind == KIND_ON_HAND
             }
 
-        walked = [(False, row) for row in rows] + [(True, row) for row in route_rows]
-        for is_route, (core_line_id, warehouse_id, qty, warehouse_code, product_id) in walked:
+        for core_line_id, warehouse_id, qty, warehouse_code, product_id in route_rows:
             # STOCK-DEBT-STALE-PIN (see the docstring): a pin on stock the bin no longer
             # holds (or never held: the own location may be chosen at 0) covers nobody.
             if _float(qty) <= 0 or found_empty(str(product_id), str(warehouse_id)):
@@ -1883,7 +1879,7 @@ class StockDebtService:
                     qty=_float(qty),
                     kind=KIND_ON_HAND,
                     warehouse=warehouse_code,
-                    route=is_route,
+                    route=True,
                 )
             )
 

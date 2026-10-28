@@ -348,7 +348,7 @@ class Hold:
     #: `order_back` for what nearer lines drew first. The CALLER decides it (the Stock
     #: Debt view, off `reserve_window_end`); the board never sets it.
     lendable: bool = False
-    #: BOARD-NO-HOLD (rule 7): a confirmed Reserve plan. Not spent in step 1 and never
+    #: BOARD-NO-HOLD (rule 7): a confirmed decision (Reserve or Borrow) plan. Not spent in step 1 and never
     #: pinned; the line may draw the named bin at its own date, in date order.
     route: bool = False
 

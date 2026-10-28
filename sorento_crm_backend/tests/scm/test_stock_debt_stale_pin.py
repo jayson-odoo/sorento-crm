@@ -67,11 +67,11 @@ def _stock(db, product, warehouse, *, on_hand, reserved=0):
 def _own_pin(db, project_line, warehouse, qty, confirmed_at=None):
     """A CONFIRMED allocation that HOLDS `qty` at the bin.
 
-    The prod rows were 'own' (a Reserve). BOARD-NO-HOLD (owner, 27 Oct 2026) made a Reserve
-    a plan, not a hold, so the pin semantics this file pins (`pinned`, the cap at the bin's
-    free stock, the stand-in, first confirmed first) are exercised on a BORROW
-    (`other_location`), the kind that still binds first at any date. What a Reserve does
-    now is `tests/scm/test_board_no_hold.py`'s.
+    The prod rows were 'own' (a Reserve). BOARD-NO-HOLD (27 Oct 2026) and BORROW-NO-HOLD
+    (28 Oct 2026) made every confirmed decision allocation a plan, not a hold: it is a ROUTE
+    in the walk (never `pinned`, taken at the line's own date, capped at the bin's free
+    stock, a stand-in outside the span). The name `_own_pin` is historic; it writes a Borrow
+    row, and what a route does is what this file pins.
     """
     from datetime import datetime
 
@@ -191,8 +191,9 @@ def test_a_pin_above_the_bins_free_stock_covers_only_what_is_there(
     assert balance == -(pinned - covered)
 
 
-def test_a_pin_within_the_bins_stock_still_reads_pinned(scm_app):
-    """Regression guard: pinned 126 with 200 on hand is covered in full, as before."""
+def test_a_route_within_the_bins_stock_reads_covered_not_pinned(scm_app):
+    """A decision for 126 with 200 on hand is covered in full, and reads `covered` (never
+    `pinned`: a decision holds nothing)."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bin_ib = _warehouse(db, f"ZZTBRW{_u()[:4]}-IB")
@@ -206,7 +207,7 @@ def test_a_pin_within_the_bins_stock_still_reads_pinned(scm_app):
         balance = _balance(c, marker, product, month_key(due))
 
     [line] = cell["demand"]
-    assert line["status"] == "pinned"
+    assert line["status"] == "covered"
     assert line["assigned_qty"] == 126
     assert line["short_qty"] == 0
     assert line["assigned_from"] == [_on_hand_entry(bin_ib, 126)]
@@ -272,20 +273,19 @@ def test_a_pin_at_a_bin_outside_the_span_is_capped_at_its_free_stock(
     [line] = cell["demand"]
     assert line["assigned_qty"] == covered
     assert line["short_qty"] == 40 - covered
-    assert line["status"] == ("pinned" if covered == 40 else "short")
+    assert line["status"] == ("covered" if covered == 40 else "short")
     assert line["assigned_from"] == (
         [_on_hand_entry(unflagged, covered)] if covered else []
     )
     assert balance == -(40 - covered)
 
 
-def test_two_pins_at_one_bin_outside_the_span_share_its_free_stock_first_confirmed_first(
+def test_two_routes_at_one_bin_outside_the_span_share_its_free_stock_earliest_due_first(
     scm_app,
 ):
-    """Two pins (2 confirmed first but due later, 8 confirmed later but due first) on an
-    unflagged bin holding 5: the bin covers 5 in all, the promise made first kept first -
-    the order the walk honours pins in on a bin it can see, so a bin outside the span is
-    shared the same way. Neither row order nor the due date decides it."""
+    """Two decisions (2 confirmed first but due later, 8 confirmed later but due first) on
+    an unflagged bin holding 5: the bin covers 5 in all, shared by DATE like every route on
+    a bin the walk can see (the line due first takes it), not by confirm time."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -307,9 +307,9 @@ def test_two_pins_at_one_bin_outside_the_span_share_its_free_stock_first_confirm
         cell = _cell(c, product, month_key(due))
 
     by_so = {line["so_number"]: line for line in cell["demand"]}
-    confirmed_first, confirmed_later = by_so[f"{marker}-SO2"], by_so[f"{marker}-SO1"]
-    assert (confirmed_first["assigned_qty"], confirmed_first["short_qty"]) == (2, 0)
-    assert (confirmed_later["assigned_qty"], confirmed_later["short_qty"]) == (3, 5)
+    due_later, due_first = by_so[f"{marker}-SO2"], by_so[f"{marker}-SO1"]
+    assert (due_first["assigned_qty"], due_first["short_qty"]) == (5, 3)
+    assert (due_later["assigned_qty"], due_later["short_qty"]) == (0, 2)
 
 
 @pytest.mark.parametrize(
@@ -397,7 +397,7 @@ def test_received_spo_placements_share_a_thin_bin_outside_the_span_first_linked_
 
 
 @pytest.mark.parametrize("flagged", [True, False], ids=["in-span", "outside-span"])
-def test_a_pin_the_walk_does_not_serve_leaves_the_bin_to_the_next_pin(scm_app, flagged):
+def test_a_route_the_walk_does_not_serve_leaves_the_bin_to_the_next_route(scm_app, flagged):
     """Crew probe on dev, 14 Oct (product 0fb2507c, BRW 79): a line already covered by its
     FIRST pin takes nothing from its second, so that second pin must not spend the bin.
     A owes 30, pinned 30 at Y (30) first and 30 at X (40, another group) next; B owes 40,
@@ -434,7 +434,7 @@ def test_a_pin_the_walk_does_not_serve_leaves_the_bin_to_the_next_pin(scm_app, f
     assert [(entry["ref"], entry["qty"]) for entry in a["assigned_from"]] == [
         (f"On hand {y_bin.warehouse_code}", 30),
     ]
-    assert (b["assigned_qty"], b["short_qty"], b["status"]) == (40, 0, "pinned")
+    assert (b["assigned_qty"], b["short_qty"], b["status"]) == (40, 0, "covered")
     assert [(entry["ref"], entry["qty"]) for entry in b["assigned_from"]] == [
         (f"On hand {x_bin.warehouse_code}", 40),
     ]
@@ -473,10 +473,10 @@ def test_a_line_that_lends_keeps_its_lent_units_out_of_the_book_so(scm_app):
 # ------------------------------------------------------------------ the Supply tab
 
 
-def test_the_supply_tab_lists_the_bin_a_pin_covers_a_later_month_from(scm_app):
-    """A line due next month pinned on stock held today: that month's Supply tab lists the
-    bin beside it (Free 0 there - its free part is credited to today's column), so the tab
-    is never empty next to a row it covers."""
+def test_a_routed_line_due_later_is_listed_in_todays_supply_column_only(scm_app):
+    """A line due next month whose decision names stock held today: the bin is NOT listed in
+    that later month's Supply tab (a route is not a pin), it stays in today's column, which
+    shows the 126 taken and the 74 still free."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bin_ib = _warehouse(db, f"ZZTBRW{_u()[:4]}-IB")
@@ -489,22 +489,20 @@ def test_the_supply_tab_lists_the_bin_a_pin_covers_a_later_month_from(scm_app):
         cell = _cell(c, product, month_key(due))
         now = _cell(c, product, month_key(TODAY))
 
-    [row] = cell["supply"]
-    assert (row["kind"], row["warehouse_code"], row["qty"]) == (
+    assert cell["supply"] == []
+    [home] = now["supply"]
+    assert (home["kind"], home["warehouse_code"], home["qty"]) == (
         "on_hand", bin_ib.warehouse_code, 200,
     )
-    assert row["free_qty"] == 0
-    assert row["assigned_to"] == [
+    assert home["free_qty"] == 74
+    assert home["assigned_to"] == [
         {"so_number": f"{marker}-SO1", "line_no": None, "qty": 126},
     ]
-    # Today's column still owns the free part.
-    [home] = now["supply"]
-    assert home["free_qty"] == 74
 
 
-def test_the_supply_tab_lists_a_pinned_bin_outside_the_span(scm_app):
-    """A pin on a bin the read cannot see is listed in its line's column too, for the part
-    the order holds, Free 0."""
+def test_a_routed_bin_outside_the_span_is_not_listed_in_the_supply_tab(scm_app):
+    """A decision on a bin the read cannot see covers its line off a stand-in, which is
+    nobody's stock: the line reads covered from that bin, and the Supply tab lists no row."""
     app, db = _client(scm_app)
     marker = f"ZZTSP{_u()[:6]}".upper()
     bb = _warehouse(db, f"ZZTBRW{_u()[:4]}-BB")
@@ -519,14 +517,10 @@ def test_the_supply_tab_lists_a_pinned_bin_outside_the_span(scm_app):
     with TestClient(app) as c:
         cell = _cell(c, product, month_key(due))
 
-    [row] = cell["supply"]
-    assert (row["kind"], row["warehouse_code"], row["qty"], row["free_qty"]) == (
-        "on_hand", unflagged.warehouse_code, 30, 0,
-    )
-    assert row["assigned_to"] == [
-        {"so_number": f"{marker}-SO1", "line_no": None, "qty": 30},
-    ]
-    assert cell["supply_total_qty"] == 30
+    [line] = cell["demand"]
+    assert (line["status"], line["assigned_qty"]) == ("covered", 30)
+    assert line["assigned_from"] == [_on_hand_entry(unflagged, 30)]
+    assert cell["supply"] == []
 
 
 # --------------------------------------------- the Fulfilment Planning board's read
@@ -563,12 +557,13 @@ def test_the_board_reads_the_same_capped_pin(scm_app, flagged, on_hand, covered)
     assert line.uncovered == 126 - covered
 
 
-def test_a_pinned_reserve_bin_outside_the_span_reads_free_0_under_the_projection(scm_app):
+def test_a_routed_reserve_bin_outside_the_span_lists_no_supply_row_under_the_projection(
+    scm_app,
+):
     """Reviewer, rounds 1-2: under `group=BB` the HQ project reserve is outside the span, so
-    a BB line pinned there is covered off a stand-in. With the projection switch on, its
-    Supply row states what the pin holds and Free 0, never the reserve's whole projected
-    remainder (470 here) beside a Qty of only the pinned part. The pinned line is the only
-    demand, so nothing else spends the remainder and hides the override."""
+    a BB line whose decision names it is covered off a stand-in. With the projection switch
+    on, the Supply tab lists no row for that bin: the stand-in is nobody's stock, and the
+    reserve's whole projected remainder (470 here) must not appear in its place."""
     from tests.scm.test_stock_debt_projection_routes import _warehouse as _segment_warehouse
 
     app, db = _client(scm_app)
@@ -597,4 +592,4 @@ def test_a_pinned_reserve_bin_outside_the_span_reads_free_0_under_the_projection
         row for row in cell["supply"]
         if row["kind"] == "on_hand" and row["warehouse_code"] == hq.warehouse_code
     ]
-    assert [(row["qty"], row["free_qty"]) for row in rows] == [(30, 0)]
+    assert rows == []
