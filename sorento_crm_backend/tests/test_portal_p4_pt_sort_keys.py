@@ -35,6 +35,7 @@ def _rows(w, **per_row):
             req.assigned_to_id = per_row["assignee"](tag).id
         if "changed" in per_row:
             req.data_changed_tag_count = per_row["changed"](tag)
+            req.data_checked_at = datetime.utcnow()
         made.append((tag, req.id))
     w.sc.db.commit()
     return [rid for _tag, rid in sorted(made)]
