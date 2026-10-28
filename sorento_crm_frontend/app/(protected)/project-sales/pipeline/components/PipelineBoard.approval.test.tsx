@@ -203,7 +203,7 @@ describe('PipelineBoard: nothing moves in or out of the two lanes (RW12)', () =>
 });
 
 describe('PipelineBoard: a resubmitted registration (RESUBMITTED-STATUS)', () => {
-  it('waits in the Awaiting approval lane, wearing its own Resubmitted pill', () => {
+  it('waits in the Awaiting approval lane, wearing its own Appealed pill', () => {
     render(
       <PipelineBoard
         statuses={STATUSES}
@@ -214,6 +214,6 @@ describe('PipelineBoard: a resubmitted registration (RESUBMITTED-STATUS)', () =>
     const awaiting = lane('Awaiting approval');
     expect(within(awaiting).getByText('Resubmitted Tower')).toBeInTheDocument();
     expect(within(awaiting).getByText('Pending Tower')).toBeInTheDocument();
-    expect(within(card('Resubmitted Tower')).getByText('Resubmitted')).toBeInTheDocument();
+    expect(within(card('Resubmitted Tower')).getByText('Appealed')).toBeInTheDocument();
   });
 });

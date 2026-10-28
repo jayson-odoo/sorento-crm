@@ -4,7 +4,7 @@ import re
 import threading
 import uuid
 from datetime import datetime
-from typing import Optional, List
+from typing import Any, Optional, List
 
 from sqlalchemy import desc
 from sqlalchemy.orm import Session
@@ -310,8 +310,8 @@ class JobService:
     def list_jobs(
         self,
         user_id: Optional[str] = None,
-        job_type: Optional[str] = None,
-        status: Optional[JobStatus] = None,
+        job_type: Optional[Any] = None,
+        status: Optional[Any] = None,
         limit: int = 50,
         offset: int = 0
     ) -> List[ImportJob]:
@@ -320,11 +320,16 @@ class JobService:
         
         if user_id:
             query = query.filter(ImportJob.user_id == user_id)
-        if job_type:
-            query = query.filter(ImportJob.job_type == job_type)
-        if status:
+        # One value or several (a list), OR-ed within the filter.
+        types = [job_type] if isinstance(job_type, str) else list(job_type or [])
+        if types:
+            query = query.filter(ImportJob.job_type.in_(types))
+        statuses = [status] if isinstance(status, (str, JobStatus)) else list(status or [])
+        if statuses:
             # Compare with enum value (string)
-            query = query.filter(ImportJob.status == status.value if isinstance(status, JobStatus) else status)
+            query = query.filter(
+                ImportJob.status.in_([s.value if isinstance(s, JobStatus) else s for s in statuses])
+            )
 
         # Multi-company: staff import-jobs listing shows only the active company's
         # jobs (+ legacy-null). ImportJob is not an owned mixin (worker infra), so

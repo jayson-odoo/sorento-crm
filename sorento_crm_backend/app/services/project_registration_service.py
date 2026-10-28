@@ -722,7 +722,7 @@ def notify(db: Session, project: Project, event: str) -> int:
             title = f"Project registration waits for your approval: {title_text}"
         elif event == "resubmitted":
             recipients = _holders(db, project, exclude=[applicant])
-            title = f"Project registration resubmitted, waits for your approval: {title_text}"
+            title = f"Project registration appealed, waits for your approval: {title_text}"
         else:
             from app.services.project_service import project_label
 

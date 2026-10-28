@@ -29,6 +29,8 @@ from app.schemas.workflow_forms import (
 from app.services.workflow_forms_service import WorkflowFormsService, validate_schema
 from app.models.workflow_forms import WorkflowSubmission
 
+from app.utils.multi_value import multi_values
+
 router = APIRouter()
 
 
@@ -233,12 +235,14 @@ def list_submissions(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     definition_id: Optional[str] = Query(None),
-    state_code: Optional[str] = Query(None),
+    state_code: Optional[list[str]] = Query(None),
     db: Session = Depends(get_db),
     _user: dict = Depends(require_permission_with_api_key("workflow_forms.submissions.view")),
 ):
     svc = WorkflowFormsService(db)
-    result = svc.list_submissions(page=page, limit=limit, definition_id=definition_id, state_code=state_code)
+    result = svc.list_submissions(
+        page=page, limit=limit, definition_id=definition_id, state_code=multi_values(state_code)
+    )
     return ListResponse(
         data=result["data"],
         pagination=PaginationResponse(total=result["total"], page=result["page"], limit=result["limit"]),

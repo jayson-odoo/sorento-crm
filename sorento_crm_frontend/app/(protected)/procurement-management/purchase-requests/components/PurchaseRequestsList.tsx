@@ -1,5 +1,6 @@
 'use client';
 
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useMemo, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -53,7 +54,7 @@ const REQUEST_TYPE_LABELS: Record<string, string> = {
 /** API value -> display label for status filter */
 const STATUS_FILTER_OPTIONS: { value: string; label: string }[] = [
   { value: 'draft', label: 'Draft' },
-  { value: 'resubmitted', label: 'Resubmitted' },
+  { value: 'resubmitted', label: APPEALED_LABEL },
   { value: 'pending', label: 'Pending approval' },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
@@ -74,7 +75,7 @@ function getDisplayStatus(row: PurchaseRequest): string {
   // No approval decision yet - reflect the lifecycle status so a portal-submitted
   // request shows "Submitted" (tallies with the portal), not "Draft".
   if (s === 'submitted') return 'Submitted';
-  if (s === 'resubmitted') return 'Resubmitted';
+  if (s === 'resubmitted') return APPEALED_LABEL;
   return 'Draft';
 }
 

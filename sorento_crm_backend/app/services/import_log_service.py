@@ -22,11 +22,12 @@ class ImportLogService:
     def __init__(self, db: Session):
         self.db = db
 
-    def list_import_logs(self, page: int = 1, limit: int = 50, entity_type: Optional[str] = None):
+    def list_import_logs(self, page: int = 1, limit: int = 50, entity_type: Optional[Any] = None):
         """List import logs with pagination and optional entity filter."""
         q = self.db.query(ImportLog)
-        if entity_type:
-            q = q.filter(ImportLog.entity_type == entity_type)
+        types = [entity_type] if isinstance(entity_type, str) else list(entity_type or [])
+        if types:
+            q = q.filter(ImportLog.entity_type.in_(types))
 
         # Multi-company: staff import-logs listing shows only the active company's
         # logs (+ legacy-null). ImportLog is not an owned mixin; filter by hand.

@@ -460,7 +460,7 @@ export default function ComplaintsList() {
                       options={[
                         { value: 'new', label: 'New' },
                         { value: 'submitted', label: 'Submitted' },
-                        { value: 'resubmitted', label: 'Resubmitted' },
+                        { value: 'resubmitted', label: 'Appealed' },
                         { value: 'updated', label: 'Updated' },
                         { value: 'responded', label: 'Responded' },
                         { value: 'approved', label: 'Approved' },

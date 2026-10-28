@@ -60,7 +60,7 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     renderTrail();
     const lines = screen.getAllByTestId('audit-change-line').map((li) => li.textContent);
     // AUDIT-TRAIL-RESUBMITTED (owner, 28 Oct): a past resubmit reads as what it is called today.
-    expect(lines[0]).toBe('status: rejected → resubmitted');
+    expect(lines[0]).toBe('status: rejected → appealed');
     // The summary already says it; the raw status field is not listed twice.
     expect(lines.filter((l) => l?.includes('rejected'))).toHaveLength(1);
     // Long text: a collapsible before/after, with BOTH full values present (never cut).
@@ -83,7 +83,7 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     ]);
     renderTrail();
     const lines = screen.getAllByTestId('audit-change-line').map((li) => li.textContent);
-    expect(lines).toEqual(['status: rejected → resubmitted', 'Product code: CWCX604-P-RL-NEW → CWCY604']);
+    expect(lines).toEqual(['status: rejected → appealed', 'Product code: CWCX604-P-RL-NEW → CWCY604']);
   });
 
   it('hides an UPDATE whose only change is a bookkeeping field', () => {
@@ -139,9 +139,10 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     expect(document.body.textContent).not.toContain(a);
   });
 
-  // Owner + Kay, 27 Oct: rejected -> submitted reads "Resubmitted", derived from the transition
+  // Owner + Kay, 27 Oct: rejected -> submitted reads as a resubmission ("Appealed" on every
+  // form since owner 28 Oct), derived from the transition
   // so existing history shows it without a data change. Same two resubmit shapes as above.
-  it('resubmit shape 1 (status + long text append) heads the row "Resubmitted by <actor>"', () => {
+  it('resubmit shape 1 (status + long text append) heads the row "Appealed by <actor>" (a complaint)', () => {
     mockEntries([
       entry({
         description: 'status: rejected → submitted',
@@ -151,12 +152,12 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
     ]);
     renderTrail();
     const row = screen.getAllByRole('listitem').find((li) => li.dataset.auditEntry) as HTMLElement;
-    expect(within(row).getByTestId('audit-action').textContent).toBe('Resubmitted');
+    expect(within(row).getByTestId('audit-action').textContent).toBe('Appealed');
     expect(row.textContent).toContain('by Portal contact');
     expect(within(row).getByText('Defect description changed')).toBeInTheDocument();
   });
 
-  it('resubmit shape 2 (status + product code) heads the row "Resubmitted" with the field change under it', () => {
+  it('resubmit shape 2 (status + product code) heads the row "Appealed" (a complaint) with the field change under it', () => {
     mockEntries([
       entry({
         description: 'status: rejected → submitted',
@@ -165,11 +166,11 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
       }),
     ]);
     renderTrail();
-    expect(screen.getByTestId('audit-action').textContent).toBe('Resubmitted');
+    expect(screen.getByTestId('audit-action').textContent).toBe('Appealed');
     expect(screen.getByText('Product code: CWCX604-P-RL-NEW → CWCY604')).toBeInTheDocument();
   });
 
-  it('the real resubmitted status (RESUBMITTED-STATUS) heads the row "Resubmitted" too', () => {
+  it('the real resubmitted status (RESUBMITTED-STATUS) heads the row "Appealed" on a complaint', () => {
     mockEntries([
       // No summary on the row: the raw values alone must say it is a resubmit.
       entry({
@@ -179,10 +180,10 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
       }),
     ]);
     renderTrail();
-    expect(screen.getByTestId('audit-action').textContent).toBe('Resubmitted');
+    expect(screen.getByTestId('audit-action').textContent).toBe('Appealed');
   });
 
-  it('a status-engine record (status_id, labels only in the summary) also reads "Resubmitted"', () => {
+  it('a status-engine record (status_id, labels only in the summary) also reads "Appealed"', () => {
     mockEntries([
       entry({
         entity_type: 'purchase_request',
@@ -192,7 +193,36 @@ describe('AuditTrail field diff (AUDIT-TRAIL-DIFF)', () => {
       }),
     ]);
     render(<AuditTrail entityType="purchase_request" entityId={COMPLAINT_ID} />);
-    expect(screen.getByTestId('audit-action').textContent).toBe('Resubmitted');
+    expect(screen.getByTestId('audit-action').textContent).toBe('Appealed');
+    expect(screen.getAllByTestId('audit-change-line')[0].textContent).toBe('Status: Rejected → Appealed');
+  });
+
+  it('a status-engine row written after the relabel (Rejected → Appealed) heads the row Appealed', () => {
+    mockEntries([
+      entry({
+        entity_type: 'quotation',
+        description: 'Status: Rejected → Appealed',
+        old_values: { status_id: 'f0000000-0000-4000-8000-000000000005' },
+        new_values: { status_id: 'f0000000-0000-4000-8000-000000000006' },
+      }),
+    ]);
+    render(<AuditTrail entityType="quotation" entityId={COMPLAINT_ID} />);
+    expect(screen.getByTestId('audit-action').textContent).toBe('Appealed');
+  });
+
+  it('a status-engine row written as Resubmitted reads Appealed on every form', () => {
+    mockEntries([
+      entry({
+        entity_type: 'quotation',
+        description: 'Status: Rejected → Resubmitted',
+        old_values: { status_id: 'f0000000-0000-4000-8000-000000000005' },
+        new_values: { status_id: 'f0000000-0000-4000-8000-000000000006' },
+      }),
+    ]);
+    render(<AuditTrail entityType="quotation" entityId={COMPLAINT_ID} />);
+    expect(screen.getByTestId('audit-action').textContent).toBe('Appealed');
+    expect(screen.getAllByTestId('audit-change-line')[0].textContent).toBe('Status: Rejected → Appealed');
+    expect(document.body.textContent).not.toMatch(/resubmit/i);
   });
 
   it('any other status move keeps the plain action heading', () => {

@@ -36,6 +36,9 @@ def _meta_allowed_ops(meta: Any) -> list[str]:
 def _coerce_value(value: Any, data_type: str) -> Any:
     if value is None:
         return None
+    if isinstance(value, (list, tuple)):
+        # Only "In list" takes several values, and it coerces them one by one (`_apply_scalar`).
+        raise ValueError("this operator takes a single value, not a list")
     if data_type == "number":
         return Decimal(str(value))
     if data_type == "boolean":
@@ -58,6 +61,11 @@ def _apply_scalar(column: Any, op: str, value: Any, data_type: str) -> ColumnEle
         want_null = value is True or str(value).lower() in ("true", "1", "yes")
         return column.is_(None) if want_null else column.isnot(None)
 
+    if op == "in":
+        if not isinstance(value, (list, tuple)) or not value:
+            raise ValueError("in operator requires non-empty list value")
+        return column.in_([_coerce_value(v, data_type) for v in value])
+
     v = _coerce_value(value, data_type)
 
     if op == "eq":
@@ -68,10 +76,6 @@ def _apply_scalar(column: Any, op: str, value: Any, data_type: str) -> ColumnEle
         return column.ilike(f"%{v}%")
     if op == "starts_with":
         return column.ilike(f"{v}%")
-    if op == "in":
-        if not isinstance(v, (list, tuple)) or not v:
-            raise ValueError("in operator requires non-empty list value")
-        return column.in_(list(v))
     if op == "gt":
         return column > v
     if op == "gte":

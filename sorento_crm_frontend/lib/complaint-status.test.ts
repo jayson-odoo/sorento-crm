@@ -57,8 +57,11 @@ describe('complaint-status (skip stage: settled_on_site pill + label)', () => {
 });
 
 describe('complaint-status (RESUBMITTED-STATUS: submitted again after a rejection)', () => {
-  it('reads Resubmitted', () => {
-    expect(complaintStatusLabel('resubmitted')).toBe('Resubmitted');
+  // COMPLAINT-APPEAL-WORDING (owner, 28 Oct): a complaint sent back after a rejection is an
+  // appeal. The stored value stays `resubmitted`; only the label changes.
+  it('reads Appealed', () => {
+    expect(complaintStatusLabel('resubmitted')).toBe('Appealed');
+    expect(complaintStatusLabel('RESUBMITTED')).toBe('Appealed');
   });
 
   it('has its own pill, told apart from a first submit', () => {
