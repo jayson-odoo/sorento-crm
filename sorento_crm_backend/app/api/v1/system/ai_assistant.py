@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database import get_db
+from app.utils.multi_value import multi_values
 from app.dependencies import require_any_permission, require_permission
 from app.models.access import RespondContact
 from app.models.ai_assistant import (
@@ -86,7 +87,7 @@ from app.services.uuid_path_param import validate_uuid_path
 router = APIRouter()
 
 
-def _feature_filters(feature: Optional[str]) -> list:
+def _feature_filters(feature: Optional[list[str] | str]) -> list:
     """Optional ``AIAssistantUsageLog.feature == feature`` filter clause.
 
     Returns ``[]`` when no feature is requested, so the existing default
@@ -94,9 +95,10 @@ def _feature_filters(feature: Optional[str]) -> list:
     the discriminator was added) are treated as legacy AI assistant rows
     and only included when ``feature`` is unset.
     """
-    if not feature:
+    features = multi_values(feature)
+    if not features:
         return []
-    return [AIAssistantUsageLog.feature == feature]
+    return [AIAssistantUsageLog.feature.in_(features)]
 
 
 _COST = cost_sql(AIAssistantUsageLog.__tablename__, LLMModelPrice.__tablename__)
@@ -620,7 +622,7 @@ def _test_chatbot_prompt_version(
 def usage_summary(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
-    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
+    feature: Optional[list[str]] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -657,7 +659,7 @@ def usage_summary(
 def usage_by_day(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
-    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
+    feature: Optional[list[str]] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -709,7 +711,7 @@ def usage_top_users(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     limit: int = Query(10, ge=1, le=100),
-    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
+    feature: Optional[list[str]] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):
@@ -809,7 +811,7 @@ def usage_recent_queries(
     from_: Optional[str] = Query(None, alias="from"),
     to: Optional[str] = Query(None),
     limit: int = Query(50, ge=1, le=200),
-    feature: Optional[str] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
+    feature: Optional[list[str]] = Query(None, description="Filter by usage feature (ai_assistant | ai_extract | ai_document_extract | chatbot_parser)."),
     _user: dict = Depends(require_permission("system.ai_assistant_settings.view")),
     db: Session = Depends(get_db),
 ):

@@ -6,10 +6,9 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { getMyCompanyContext } from '@/app/(protected)/system-management/companies/services/companyService';
-import { multiChipLabel, multiValueSummary } from '@/lib/list-filters/multiValue';
+import { multiChipLabel, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { useContactAccessTypes } from '../../contact-access-types/hooks/useContactAccessTypes';
 import { getContact } from '../[id]/services/contactService';
-import { customerFilterLabel, customerFilterLabelKey } from '../lib/customerFilterLabel';
 import {
   popoverFilterChips,
   popoverFilterCount,
@@ -20,7 +19,7 @@ import {
   contactsListFilters,
   type ContactAccessFilters as AccessFilters,
 } from '../lib/listQuery';
-import ContactAccessFilters from './ContactAccessFilters';
+import ContactAccessFilters, { useCustomerFilterNames } from './ContactAccessFilters';
 
 interface State {
   accessFilters: AccessFilters;
@@ -61,13 +60,7 @@ export function useContactFiltersToolbar(s: State) {
     .filter((o) => s.companyIds.includes(o.value))
     .map((o) => o.label);
   // Same keys as ContactAccessFilters' own label read-back, so the cache is shared; chips never show an id.
-  const customerLabel = useQuery({
-    queryKey: customerFilterLabelKey(s.accessFilters.customerId),
-    queryFn: () => customerFilterLabel(s.accessFilters.customerId as string),
-    enabled: !!s.accessFilters.customerId,
-    staleTime: Infinity,
-    retry: 0,
-  });
+  const customerNames = useCustomerFilterNames(splitMulti(s.accessFilters.customerId));
   const differsLabel = useQuery({
     queryKey: [
       'contact-filter-differs-label',
@@ -99,10 +92,12 @@ export function useContactFiltersToolbar(s: State) {
     activeSummary: popoverFilterChips(
       map,
       {
-        access_type: accessTypes.find(
-          (t) => t.code === s.accessFilters.accessType,
-        )?.name,
-        customer_id: customerLabel.data,
+        access_type: multiValueSummary(
+          splitMulti(s.accessFilters.accessType).map(
+            (code) => accessTypes.find((t) => t.code === code)?.name ?? code,
+          ),
+        ),
+        customer_id: customerNames.length ? multiValueSummary(customerNames) : undefined,
         access_differs_from: differsLabel.data,
         company: companyNames.length ? multiValueSummary(companyNames) : undefined,
       },

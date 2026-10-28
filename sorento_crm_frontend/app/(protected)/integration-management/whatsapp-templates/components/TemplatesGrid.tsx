@@ -22,7 +22,8 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import {
   listTemplates,
@@ -48,7 +49,7 @@ export default function TemplatesGrid() {
     debouncedValue: searchQuery,
     isSettling: searchSettling,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState<TemplateStatus | 'all'>('all');
+  const [statusFilter, setStatusFilter] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, isPlaceholderData, isFetching, refetch, isRefetching, error } = useQuery({
@@ -65,7 +66,7 @@ export default function TemplatesGrid() {
         page: pagination.pageIndex + 1,
         limit: pagination.pageSize,
         query: searchQuery,
-        status: statusFilter,
+        status: statusFilter || undefined,
       }),
   });
 
@@ -204,27 +205,27 @@ export default function TemplatesGrid() {
             }
             filters={{
               kind: 'custom',
-              active: statusFilter !== 'all',
-              activeCount: statusFilter !== 'all' ? 1 : 0,
+              active: statusFilter !== '',
+              activeCount: statusFilter ? 1 : 0,
               content: (
                 <div className="space-y-3">
-                  <SearchableSelect
-                    value={statusFilter}
-                    onChange={(v) => setStatusFilter(v as TemplateStatus | 'all')}
+                  <SearchableMultiSelect
+                    value={splitMulti(statusFilter)}
+                    onChange={(v) => setStatusFilter(joinMulti(v))}
                     options={[
-                      { value: 'all', label: 'All Status' },
                       { value: 'approved', label: 'Approved' },
                       { value: 'pending', label: 'Pending' },
                       { value: 'rejected', label: 'Rejected' },
                     ]}
                     placeholder="Status"
                     triggerClassName="w-full"
+                    clearable
                   />
-                  {statusFilter !== 'all' && (
+                  {statusFilter && (
                     <Button
                       variant="outline"
                       size="sm"
-                      onClick={() => setStatusFilter('all')}
+                      onClick={() => setStatusFilter('')}
                       className="w-full"
                     >
                       Clear Filters

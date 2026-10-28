@@ -16,6 +16,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.models.project_so import DECISION_ACTIVE, SOLineAllocation, SOSupplyDecision
 from app.services.project_supply_service import ProjectSupplyService
 
 from .._pg_fixture import blank_session
@@ -187,7 +188,10 @@ def test_confirm_accepts_a_hand_picked_borrow_on_a_line_beyond_the_reserve_windo
     """Owner ruling (b), 22 Oct 2026, on SO401624 line 224's shape (SRTWB242, BRW-BB, due
     2027-06-07, 90 days of lead time): beyond the reserve window the ladder still composes a
     Buy and walks no borrow rung, but the Borrow LIST is offered, and a donor a planner picks
-    from it confirms. End to end: read off the sheet, picked, confirmed, held."""
+    from it confirms. End to end: read off the sheet, picked, confirmed, recorded.
+
+    BORROW-NO-HOLD (28 Oct 2026): a confirmed Borrow is a plan, not a hold, so it holds
+    nothing; Confirm still writes its allocation row on the active decision."""
     with blank_session() as db:
         company_id, eling, project, product = _world(db)
         _group, sites = _group_sites(db)
@@ -210,6 +214,7 @@ def test_confirm_accepts_a_hand_picked_borrow_on_a_line_beyond_the_reserve_windo
         codes = [c["warehouse_code"] for c in sheet_line["borrow_candidates"]]
         assert codes == [elsewhere.warehouse_code, own.warehouse_code], codes
         picked = sheet_line["borrow_candidates"][0]
+        assert picked["source"] == "other_location", picked
 
         world = {"eling": eling, "product": product, "order": order, "line": line}
         body = _confirm(
@@ -225,4 +230,18 @@ def test_confirm_accepts_a_hand_picked_borrow_on_a_line_beyond_the_reserve_windo
             ],
         )
         assert not body.get("stock_short_notices"), body.get("stock_short_notices")
-        assert _held_at(db, world, elsewhere) == Decimal("441")
+        assert _held_at(db, world, elsewhere) == Decimal("0"), "a plan holds nothing"
+        rows = (
+            db.query(SOLineAllocation.source_type, SOLineAllocation.qty)
+            .join(SOSupplyDecision, SOSupplyDecision.id == SOLineAllocation.decision_id)
+            .filter(
+                SOLineAllocation.so_line_id == line.id,
+                SOLineAllocation.warehouse_id == str(elsewhere.id),
+                SOLineAllocation.confirmed_at.isnot(None),
+                SOSupplyDecision.state == DECISION_ACTIVE,
+            )
+            .all()
+        )
+        assert [(r.source_type, Decimal(r.qty)) for r in rows] == [
+            (picked["source"], Decimal("441"))
+        ], rows

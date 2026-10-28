@@ -23,7 +23,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getApiCallLogs, getApiCallLogSources } from './services/apiCallLogService';
 import { ApiCallDetailDrawer } from './components/ApiCallDetailDrawer';
@@ -38,7 +39,6 @@ function localInput(offsetHours: number): string {
 }
 
 const OUTCOME_OPTIONS = [
-  { value: '', label: 'All outcomes' },
   { value: 'success', label: 'Success' },
   { value: 'client_error', label: 'Client error (4xx)' },
   { value: 'server_error', label: 'Server error (5xx)' },
@@ -110,7 +110,7 @@ export default function ApiCallLogsPage() {
   });
 
   const sourceOptions = useMemo(
-    () => [{ value: '', label: 'All sources' }, ...sources.map((s) => ({ value: s, label: s }))],
+    () => sources.map((s) => ({ value: s, label: s })),
     [sources],
   );
 
@@ -229,22 +229,24 @@ export default function ApiCallLogsPage() {
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Source</Label>
-            <SearchableSelect
-              value={source}
-              onChange={setSource}
+            <SearchableMultiSelect
+              value={splitMulti(source)}
+              onChange={(v) => setSource(joinMulti(v))}
               options={sourceOptions}
               placeholder="All sources"
               className="w-44"
+              clearable
             />
           </div>
           <div className="space-y-1">
             <Label className="text-xs text-muted-foreground">Outcome</Label>
-            <SearchableSelect
-              value={outcome}
-              onChange={setOutcome}
+            <SearchableMultiSelect
+              value={splitMulti(outcome)}
+              onChange={(v) => setOutcome(joinMulti(v))}
               options={OUTCOME_OPTIONS}
               placeholder="All outcomes"
               className="w-48"
+              clearable
             />
           </div>
           <div className="space-y-1">

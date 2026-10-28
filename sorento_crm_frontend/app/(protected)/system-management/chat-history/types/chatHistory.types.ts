@@ -61,7 +61,8 @@ export interface ChatHistoryFilters {
    * the pager counts them (AC-255).
    */
   contact_id?: string | string[];
-  direction?: 'incoming' | 'outgoing';
+  /** 'incoming', 'outgoing' or both comma-joined. */
+  direction?: string;
   search?: string;
   breached_only?: boolean;
 }

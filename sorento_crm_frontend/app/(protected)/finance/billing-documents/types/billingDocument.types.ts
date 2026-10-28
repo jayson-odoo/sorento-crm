@@ -102,7 +102,8 @@ export interface BillingDocumentListParams {
   sorting: SortingState;
   searchQuery: string;
   documentTypes?: BillingDocumentType[];
-  status?: BillingDocumentStatus | '';
+  /** One value, or several comma-joined (OR-ed). */
+  status?: string;
   customerId?: string;
   agentCode?: string;
   dateFrom?: string | null;

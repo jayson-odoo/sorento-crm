@@ -12,6 +12,7 @@ from app.models.user import User
 from app.schemas.common import ListResponse, MAX_PAGE_LIMIT
 from app.schemas.outgoing_mail import OutgoingMailResponse
 from app.services.error_handler import handle_internal_error
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -20,7 +21,7 @@ router = APIRouter()
 async def list_outgoing_mails(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    status: Optional[str] = Query(None, description="pending | sent | failed"),
+    status: Optional[list[str]] = Query(None, description="pending | sent | failed"),
     query: Optional[str] = Query(None, description="Search by recipient email or subject"),
     current_user: dict = Depends(require_permission("system.outgoing_mails.view")),
     db: Session = Depends(get_db),
@@ -33,8 +34,9 @@ async def list_outgoing_mails(
             .join(User, User.id == Notification.user_id)
             .filter(NotificationDelivery.channel == "email")
         )
-        if status and status.strip():
-            q = q.filter(NotificationDelivery.status == status.strip())
+        statuses = multi_values(status)
+        if statuses:
+            q = q.filter(NotificationDelivery.status.in_(statuses))
         if query and query.strip():
             term = f"%{query.strip()}%"
             q = q.filter(or_(User.email.ilike(term), Notification.title.ilike(term)))

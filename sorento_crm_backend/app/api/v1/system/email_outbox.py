@@ -14,6 +14,7 @@ from app.services.email_outbox_service import cancel as cancel_outbox, retry as 
 from app.services.error_handler import handle_internal_error
 from app.tasks.email_outbox_tasks import _fetch_attachment, attachment_refs
 from app.utils.http import content_disposition
+from app.utils.multi_value import multi_values
 
 router = APIRouter()
 
@@ -64,7 +65,7 @@ def _to_response(row: EmailOutbox) -> EmailOutboxRowResponse:
 async def list_email_outbox(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     event_key: Optional[str] = Query(None),
     query: Optional[str] = Query(None, description="Search recipient or subject"),
     current_user: dict = Depends(require_permission("system.email_outbox.view")),
@@ -72,8 +73,9 @@ async def list_email_outbox(
 ):
     try:
         q = db.query(EmailOutbox)
-        if status_filter:
-            q = q.filter(EmailOutbox.status == status_filter.strip())
+        statuses = multi_values(status_filter)
+        if statuses:
+            q = q.filter(EmailOutbox.status.in_(statuses))
         if event_key:
             q = q.filter(EmailOutbox.event_key == event_key.strip())
         if query and query.strip():
