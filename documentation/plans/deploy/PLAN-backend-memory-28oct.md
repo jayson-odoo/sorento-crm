@@ -182,7 +182,7 @@ for pid in sorted(int(p) for p in os.listdir("/proc") if p.isdigit()):
 PY
 docker exec $C sh -c 'cat /sys/fs/cgroup/memory.stat 2>/dev/null || cat /sys/fs/cgroup/memory/memory.stat' | grep -E '^(total_)?(anon|file|rss|cache|shmem) '
 
-# 2. Requests in the last hour (sizes max_requests)
+# 2. Requests in the last hour
 docker logs --since 1h $C 2>&1 | grep -c ' - Status: '
 ```
 
@@ -191,10 +191,11 @@ shared_dirty` is small and whose `private_dirty` is near the master's size has u
 preload (finding 7, fixed by `gc.freeze`). Large `arena_rss` points at malloc arenas instead.
 
 Step 3, a separate yes/no: run it ONLY if step 0's first line contains `gunicorn`, in a quiet hour.
-One round, then re-run step 1 and check that MemAvailable rose; then the other three rounds.
+One round, then re-run step 1 and check that MemAvailable rose; then the remaining rounds, one per
+worker (prod runs 8). To SHED workers instead (8 -> 6), run only the `TTOU` line, once per worker.
 
 ```bash
-docker kill -s TTIN $C; sleep 90      # a 5th worker boots and warms its lookup vectors
+docker kill -s TTIN $C; sleep 90      # one extra worker boots and warms its lookup vectors
 docker kill -s TTOU $C; sleep 160     # the OLDEST worker retires (hard-killed at 60-100 s, see above)
 docker logs --since 5m $C 2>&1 | grep -E 'Booting worker|Shutting down|WORKER TIMEOUT|Finished server process'
 grep MemAvailable /proc/meminfo; docker stats --no-stream

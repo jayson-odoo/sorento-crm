@@ -152,9 +152,6 @@ def test_post_fork_is_idempotent_per_call(monkeypatch):
         assert call.kwargs.get("close") is False
 
 
-
-
-
 def test_pre_fork_freezes_the_preloaded_heap():
     """BACKEND-MEMORY: the master moves every object it holds (the preloaded app) into the
     permanent generation right before each fork, so a worker's garbage collector never walks

@@ -1,5 +1,5 @@
-"""BACKEND-MEMORY: a worker that retires on its own (a `TTOU`, the tool for shedding workers
-without a restart) shuts down as gracefully as a deploy's stop.
+"""BACKEND-MEMORY: a worker the running master retires (a `TTOU`, the tool for shedding workers
+without a restart, or a `HUP`) shuts down as gracefully as a deploy's stop.
 
 gunicorn's heartbeat is sent only from uvicorn's main loop (`Server.on_tick`), so through the
 shutdown the arbiter heard nothing and aborted the worker after its `timeout` (120 s, the last
@@ -20,7 +20,6 @@ from app import uvicorn_worker
 
 def _server(notify=lambda: None, heartbeat_for=150.0):
     return uvicorn_worker.DrainingServer(uvicorn.Config(app=None), notify, heartbeat_for)
-
 
 
 def test_the_heartbeat_keeps_going_through_the_drains_wait(monkeypatch):

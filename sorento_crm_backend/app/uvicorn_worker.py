@@ -8,8 +8,8 @@ before gunicorn's SIGKILL. 100 s lets a sync mode-off `/chat/turn` (n8n's 90 s b
 finish; the budget against `graceful_timeout` is written out in
 `app/tasks/chat_turns.py` (INBOX_SHUTDOWN_GRACE_SECONDS).
 
-BACKEND-MEMORY: a worker also retires on its own (a `TTOU`), and `DrainingServer` makes that
-shutdown as graceful as a deploy's stop.
+BACKEND-MEMORY: the master also retires single workers while it keeps running (`TTOU`, `HUP`),
+and `DrainingServer` makes that shutdown as graceful as a deploy's stop.
 """
 from __future__ import annotations
 
@@ -26,8 +26,8 @@ TIMEOUT_GRACEFUL_SHUTDOWN_SECONDS = 100
 
 
 class DrainingServer(Server):
-    """uvicorn's server for a worker that retires on its own (BACKEND-MEMORY): a `TTOU` sends
-    the worker SIGTERM but gunicorn's master keeps checking its heartbeat against `timeout`
+    """uvicorn's server for a worker the running master retires (BACKEND-MEMORY): a `TTOU` or `HUP`
+    sends the worker SIGTERM but gunicorn's master keeps checking its heartbeat against `timeout`
     (120 s), and uvicorn sends that heartbeat only from its main loop (`Server.on_tick`). An open
     staff event stream holds the shutdown for 100 s, so the master SIGABRTed the worker 60-100 s
     in, before the lifespan shutdown let the inbox drains finish. A task on the event loop keeps
