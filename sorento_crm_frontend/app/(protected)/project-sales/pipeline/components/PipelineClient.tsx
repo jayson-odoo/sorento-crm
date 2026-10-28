@@ -8,7 +8,7 @@ import type { PaginationState, SortingState } from '@tanstack/react-table';
 import type { ProjectListParams } from '../../_shared/types/project.types';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { usePermissions } from '@/hooks/usePermissions';
+import { useHasAnyPermission, useHasPermission, usePermissions } from '@/hooks/usePermissions';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -64,6 +64,8 @@ export function PipelineClient() {
   const router = useRouter();
   // Start (register, upload) is for `.view` holders; an own-only salesperson gets the list alone.
   const canStart = usePermissions().permissionSet.has('projects.projects.view');
+  const canEdit = useHasPermission('projects.projects.edit');
+  const canRegister = useHasAnyPermission(['projects.projects.edit', 'projects.registrations.submit']);
   const [view, setView] = React.useState<PipelineView>('board');
   const [startAction, setStartAction] = React.useState<StartAction>(null);
   const {
@@ -364,7 +366,7 @@ export function PipelineClient() {
                 <Table2 className="size-4" aria-hidden />
               </Button>
             </div>
-            {canStart && (
+            {canRegister && (
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <Button type="button">
@@ -376,12 +378,16 @@ export function PipelineClient() {
                   <DropdownMenuItem onSelect={() => router.push('/project-sales/new')}>
                     Register a project
                   </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
-                    Upload PO
-                  </DropdownMenuItem>
-                  <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
-                    Upload delivery schedule
-                  </DropdownMenuItem>
+                  {canEdit && (
+                    <>
+                      <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
+                        Upload PO
+                      </DropdownMenuItem>
+                      <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
+                        Upload delivery schedule
+                      </DropdownMenuItem>
+                    </>
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -428,7 +434,7 @@ export function PipelineClient() {
         ) : (
           <EmptyState
             title="No projects registered yet"
-            body={canStart ? 'Register one from Start.' : 'Projects assigned to you appear here.'}
+            body={canRegister ? 'Register one from Start.' : 'Projects assigned to you appear here.'}
           />
         )
       ) : view === 'board' ? (

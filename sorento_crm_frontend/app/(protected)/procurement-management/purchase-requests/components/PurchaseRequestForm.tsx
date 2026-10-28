@@ -864,6 +864,7 @@ function PurchaseRequestFormBody({
                         paginated
                         pageSize={25}
                         clearable
+                        truncateTriggerLabel
                         placeholder="Search a project by code or title"
                         emptyMessage="No project matches that. Leave it empty if it was never registered."
                       />

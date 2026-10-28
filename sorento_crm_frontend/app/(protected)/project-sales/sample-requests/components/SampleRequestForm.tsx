@@ -295,6 +295,7 @@ export default function SampleRequestForm({
                 paginated
                 pageSize={25}
                 clearable
+                truncateTriggerLabel
                 placeholder="Search a project by code or title"
                 emptyMessage="No project matches that."
               />

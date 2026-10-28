@@ -67,6 +67,7 @@ GET /order-inquiry-headers
 GET /order-inquiry-headers/{inquiry_id}
 GET /order-inquiry-headers/{inquiry_id}/related-documents
 GET /order-inquiry-rows/{row_id}/po-candidates
+GET /parties/
 GET /planning-changes
 GET /planning-changes/{batch_id}
 GET /plans
@@ -181,6 +182,8 @@ POST /order-inquiry-rows/{row_id}/place-on-po
 POST /order-inquiry-rows/{row_id}/unplace
 POST /planning-changes/{batch_id}/apply
 POST /projects/
+POST /projects/ai-extract
+POST /projects/clash-preview
 POST /projects/{project_id}/approve
 POST /projects/{project_id}/purchase-orders
 POST /projects/{project_id}/purchase-orders/upload
@@ -200,6 +203,7 @@ POST /projects/{project_id}/reject
 POST /projects/{project_id}/samples
 POST /projects/{project_id}/stakeholders
 POST /projects/{project_id}/status
+POST /projects/{project_id}/submit
 POST /projects/{project_id}/takeover-requests
 POST /projects/{project_id}/takeover-requests/{request_id}/decide
 POST /projects/{project_id}/tasks

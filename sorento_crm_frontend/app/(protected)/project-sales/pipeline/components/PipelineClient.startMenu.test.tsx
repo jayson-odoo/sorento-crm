@@ -101,7 +101,9 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 const permsRef: { set: Set<string> } = { set: new Set() };
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ permissionSet: permsRef.set, isLoading: false, isError: false }),
-  useHasAnyPermission: () => false,
+  // main (PROJECT-REGISTER-V2) gates Start on edit / registrations.submit: answer from the same set.
+  useHasPermission: (slug: string) => permsRef.set.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => permsRef.set.has(s)),
 }));
 
 import { PipelineClient } from './PipelineClient';
@@ -156,7 +158,8 @@ describe('PipelineClient Start menu by permission (PORTAL-P3-ROLE-MENU P3-14, P3
   });
 
   it('view holder: Start opens the same three items as today', async () => {
-    permsRef.set = new Set(['projects.projects.view']);
+    // main (PROJECT-REGISTER-V2): Start needs the right to register (edit or registrations.submit).
+    permsRef.set = new Set(['projects.projects.view', 'projects.projects.edit']);
     renderClient();
     openStart();
     const items = await screen.findAllByRole('menuitem');
@@ -168,7 +171,7 @@ describe('PipelineClient Start menu by permission (PORTAL-P3-ROLE-MENU P3-14, P3
   });
 
   it('view and view_own together: Start is shown', async () => {
-    permsRef.set = new Set(['projects.projects.view', 'projects.projects.view_own']);
+    permsRef.set = new Set(['projects.projects.view', 'projects.projects.view_own', 'projects.projects.edit']);
     renderClient();
     expect(screen.getByRole('button', { name: /^start/i })).toBeInTheDocument();
     await waitFor(() => expect(listProjects).toHaveBeenCalled());

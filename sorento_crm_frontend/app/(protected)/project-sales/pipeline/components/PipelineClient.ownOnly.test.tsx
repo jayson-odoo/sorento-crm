@@ -102,7 +102,9 @@ vi.mock('@/components/common/SearchableSelect', () => ({
 const permsRef: { set: Set<string> } = { set: new Set() };
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({ permissionSet: permsRef.set, isLoading: false, isError: false }),
-  useHasAnyPermission: () => false,
+  // main (PROJECT-REGISTER-V2) gates Start on edit / registrations.submit: answer from the same set.
+  useHasPermission: (slug: string) => permsRef.set.has(slug),
+  useHasAnyPermission: (slugs: string[]) => slugs.some((s) => permsRef.set.has(s)),
 }));
 
 import { PipelineClient } from './PipelineClient';
@@ -175,7 +177,7 @@ describe('PipelineClient for an own-only user (R6)', () => {
   });
 
   it('view holder: parties and types are requested, hint is as today', async () => {
-    permsRef.set = new Set(['projects.projects.view']);
+    permsRef.set = new Set(['projects.projects.view', 'projects.projects.edit']); // main: the Start hint needs the right to register
     renderClient();
     await waitFor(() => expect(listParties).toHaveBeenCalled());
     expect(listProjectTypes).toHaveBeenCalled();

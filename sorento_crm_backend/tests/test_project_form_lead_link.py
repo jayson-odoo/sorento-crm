@@ -155,6 +155,10 @@ def api():
         company_id = _sorento(db)
         project_seed_service.run(db, company_id=company_id)
         user_id = _user(db, f"{MARKER} Admin")
+        from ._sample_request_seed import make_customer
+
+        _REGISTER_CUSTOMER["id"] = make_customer(db, company_id).id
+        db.commit()
         client, originals = _client(db, user_id, FULL_PERMS)
         try:
             with company_scope(db, frozenset({company_id})):
@@ -163,8 +167,12 @@ def api():
             _restore(originals)
 
 
+#: A register call needs a customer (PROJECT-REGISTER-V2 A5); the fixture seeds one.
+_REGISTER_CUSTOMER: dict = {}
+
+
 def _register(client, **overrides):
-    payload = {"title": _title("Project")}
+    payload = {"title": _title("Project"), "customer_id": _REGISTER_CUSTOMER["id"]}
     payload.update(overrides)
     return client.post(f"{PROJECTS_BASE}/", json=payload)
 
@@ -509,7 +517,7 @@ def test_full_field_round_trip_on_update(api):
     assert response.status_code == 200, response.text
 
     fetched = client.get(f"{PROJECTS_BASE}/{project['id']}").json()
-    assert fetched["brand_ids"] == [brand.id]
+    assert "brand_ids" not in fetched  # brands are removed from the project API
     assert fetched["location"] == "Petaling Jaya"
     assert fetched["address"] == "Lot 1, Jalan Test"
     assert fetched["expected_delivery_from"] == "2027-01-01"
