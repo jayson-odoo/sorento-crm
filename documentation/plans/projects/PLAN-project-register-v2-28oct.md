@@ -1,6 +1,6 @@
 # PLAN: Register a project v2 (PROJECT-REGISTER-V2)
 
-Status: Plan done; card v1.2 answered 28 Oct (Q1-Q5); mock v1.2 + card Q6 awaiting owner OK. No code before that.
+Status: Plan done; card answered 28 Oct (Q1-Q5, Q7 = b); mock v1.4 + card Q6 awaiting owner OK. No code before that.
 Track: full, size L (new flow + permission-gated reassign; no migration expected). Security review required
 (reassign / interest rules, new AI upload route, party and customer pickers).
 Branch `crew/project-register-v2`, base origin/main `30a40cf04f`.
@@ -57,11 +57,22 @@ project + existing approve / reject / notify), not P4's portal-token adapter (th
   dialog (C1, C7), Register interest flow (D2-D4, D7), Access card Interested + manager actions + Reassign dialog
   (E1-E5), brands UI removal (G3), long titles (H1-H3), MCP sanitizer (G5).
 
+- S3 Salesperson path (Q7 b, UAC J): register route / `register_project` branch on permission (edit = today's
+  direct register; `projects.registrations.submit` only = draft or pending); draft save without required fields;
+  owner-only draft visibility in `get_project_or_404` / `list_projects` (`BE/services/project_service.py:973-978,
+  1073-1076`, same rule as PORTAL-P4 under view_own); submit / resubmit copy `portal_submit` `:671-679` and call
+  `project_registration_service.notify` (`:713`); `_applicant_user_id` (`:699-702`) falls back to the owner when the
+  contact is not linked. FE: footer Save draft + Submit for approval, Draft pill; `/project-sales/new` gate and the
+  Start menu "Register a project" item (`FE/pipeline/components/PipelineClient.tsx:346`) for edit OR submit slug; edit
+  page gate (`FE/[projectId]/edit/page.tsx:21`) edit OR submit slug, server limits submit-only users to their own
+  draft / rejected rows. Depends on #1944 (PORTAL-P3-ROLE-MENU: view_own page gates, `projectViewPermissions.ts`):
+  merge main after it lands; P4 (#1953) defines + grants the slug and merges after #1944.
+
 ## Test list (tester writes these red FIRST, from the UAC; coder makes them green)
 
 pytest (BE, Postgres fixture `tests/_pg_fixture.py`, seed own chain): A5, A6, B4, C2 (403 / 422 types / count),
 C3 (each status), C4 (row counts unchanged), C5 (429), C6 (502), D5, D6, E2 (403), E3, E4, E6 (activity row), E7,
-F1, F2, F3, G1, G2, I1 (if Q6 a). Plus the global guards `tests/test_schema_uuid_id_principle.py` and
+F1, F2, F3, G1, G2, I1 (if Q6 a), J1-J8 (assert notification + notification_deliveries rows; never a real send). Plus the global guards `tests/test_schema_uuid_id_principle.py` and
 `tests/test_list_pagination_limit.py` (list endpoint touched).
 vitest (touched files only, `--maxWorkers=2`): ProjectForm (A1-A4, B1-B3, D2-D4, D7, G3), AI extract dialog (C7),
 ProjectAccessPanel (E1, E2, E4), Reassign dialog (E5), TruncatedTextCell (H1), ProjectDetailClient header (H2),

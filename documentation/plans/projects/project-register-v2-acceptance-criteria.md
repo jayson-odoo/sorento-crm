@@ -130,6 +130,10 @@ BE = `sorento_crm_backend/app`.
 - J1 A user holding `projects.registrations.submit` but not `projects.projects.edit` can open `/project-sales/new`;
   the footer shows Cancel, "Save draft" and the primary "Submit for approval". A user with neither: page denied and
   `POST /projects/` -> 403.
+- J1b The Projects page (one page for everyone; its view_own gate comes from #1944) shows the "Register a project"
+  entry to holders of edit OR the submit slug; for a submit-only user it is the only Start menu entry. The edit page
+  (`[projectId]/edit/page.tsx:21`) opens for edit OR the submit slug; the server lets a submit-only user edit ONLY
+  their own draft or rejected registration (anything else -> 403).
 - J2 Save draft: the project is stored with `approval_state = 'draft'`, no code, owner = the user,
   `sales_profile.contact_id` = the user's `respond_contact_id`; NO notification of any kind is created. Required
   fields are not enforced on a draft (title only).

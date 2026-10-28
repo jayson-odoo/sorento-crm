@@ -1,5 +1,17 @@
 # CARD: Register a project v2 (PROJECT-REGISTER-V2), v1.3, 28 Oct
 
+## v1.4: one Projects page; AI extract reads the title box
+
+- Owner ~14:4x: "the Project registration page should be merged with the Project page, should just have 1 project
+  page". No separate registration page or menu for salespeople: the Projects page (`/project-sales/pipeline`) is the
+  one page; its header entry "Register a project" (today inside the "Start" menu, `FE/pipeline/components/
+  PipelineClient.tsx:346`) opens the form (`/project-sales/new`), and a salesperson's drafts, awaiting approval and
+  rejected registrations are rows in that same list (own rows only, status pill). For a salesperson the Start menu
+  shows only "Register a project". Today the Projects page needs `projects.projects.view` (`FE/pipeline/page.tsx:13`)
+  and no project-sales page knows `view_own`; who opens the page gates to `view_own` is being split with PORTAL-P4.
+- Owner note 6: AI extract reads straight from the Project title box (checked by default when it has text, shown
+  read-only and clamped); a photo is optional; nothing is pasted twice.
+
 ## v1.3: Q7 = (b), salesperson Save draft + Submit for approval; communications unchanged
 
 Owner 28 Oct: a salesperson without `projects.projects.edit` (holds `projects.registrations.submit`, defined and
