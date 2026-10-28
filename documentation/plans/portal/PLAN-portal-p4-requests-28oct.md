@@ -136,3 +136,19 @@ wrapper; the PurchaseRequestForm default-export wrapper passes `defaultProjectId
 `project-sales/[projectId]/components/ProjectDetailClient.test.tsx` (describe "the prod-shaped ladder"; routes
 `/procurement-management/sponsorship-forms/new?project_id=` and `/project-sales/sample-requests/new?project_id=`),
 `project-sales/[projectId]/components/ProjectStatusPill.test.tsx`; BE `tests/test_project_stages_ladder.py`.
+
+## Hand test 1 FAIL -> form parity rework (owner 28 Oct ~22:50-23:10; crew answers Q1-Q5 all (a))
+
+Parity table: #1953 crew-note 6472424819. Rule: a salesperson's create / edit / VIEW of every kind renders the PORTAL's
+own form component inside the CRM page, through an injected client pointing at `/api/v1/my-requests`; the portal itself
+is unchanged; staff list / detail / every action button unchanged (staff detail gains missing portal fields read-only);
+complaint staff edit of root cause / resolution / technical response untouched and never a salesperson-side revision diff;
+CRM keeps D7 deferred deletes. Canonical data = the portal's (price tag `debtor_code ?? customer_code`, `print_by='self'`;
+opportunity amount as the portal form sends it): identical by construction once the same component is used.
+
+| Slice | Scope |
+| --- | --- |
+| R1 | `SubmissionClient` injection (SF + children), CRM client, BE shared `/me` + `/lookups/*` + ai-extract on my-requests; SI + Complaint create/edit/view; delete MyStockInquiryForm + ComplaintForm limited branch |
+| R2 | PR + Sponsorship (SF); staff detail read-only portal fields (External reference ...) |
+| R3 | Price Tag (PriceTagRequestForm), NPA, Sample Request, Opportunity portal components; delete OwnPriceTagRequest + limited branches |
+| R4 | side-by-side browser pass per kind (portal vs CRM + staff buttons), crew re-files hand test |
