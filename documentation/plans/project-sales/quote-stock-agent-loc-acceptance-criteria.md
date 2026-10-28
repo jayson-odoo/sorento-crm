@@ -1,6 +1,7 @@
 # UAC: quotation line stock = the locations the user's contact may see (QUOTE-STOCK-AGENT-LOC)
 
-Plan: `PLAN-quote-stock-agent-loc-28oct.md` (same folder). Owner rulings 28 Oct 19:00, 19:10, 19:25.
+Plan: `PLAN-quote-stock-agent-loc-28oct.md` (same folder). Owner rulings 28 Oct 19:00, 19:10, 19:25,
+and the later one dropping the linked-agent gate: only the user's contact's Stock visibility decides.
 
 ## Journey
 
@@ -9,14 +10,14 @@ Plan: `PLAN-quote-stock-agent-loc-28oct.md` (same folder). Owner rulings 28 Oct 
    the salesperson's contact may see (the contact's Stock visibility, the same setting the chatbot
    answers from). There is no "Stock at" picker.
 3. Clicking the figure opens the stock table: only those locations, then the incoming SPOs at them.
-4. A user with no linked sales agent, or whose contact may see no location, sees nothing there.
+4. A user with no linked contact, or whose contact may see no location, sees nothing there. Sales
+   agents play no part: an admin or purchasing user whose contact has no Stock visibility set sees
+   every location, like anyone else.
 
 ## Definitions
 
 - **User's contact**: `users.respond_contact_id`.
-- **Linked agent**: an ACTIVE `sales_agents` row whose `contact_id` is the user's contact
-  (`agents_for_contact`, `app/services/sales/portal_agent.py:24`). The agent's `location_group` plays
-  no part in the location set (owner Q1 (a)).
+- **Sales agents play no part**: neither a linked agent nor its `location_group` changes the set.
 - **Allowed set**: `scope_warehouse_ids(db, resolve_policy(db, contact))`
   (`app/services/stock_visibility.py:394`, `:229`); None = every active warehouse. Then intersected
   with active warehouses where `fulfilment_planning` is true (the universe the old picker drew from).
@@ -28,15 +29,16 @@ Permission: any of `projects.projects.view` / `projects.projects.view_own` (the 
 Response: the existing `StockDetail` shape over the allowed set, or JSON `null` (no stock allowed).
 
 - **AC-QSA-1 [BE]** Given a user with no `respond_contact_id`, when they ask, then 200 `null`.
-- **AC-QSA-2 [BE]** Given a user whose contact is linked to no agent, or only to an INACTIVE agent,
-  then 200 `null`, even when the contact's Stock visibility allows locations.
-- **AC-QSA-3 [BE]** Given a linked agent and a contact override that includes planning warehouses
+- **AC-QSA-2 [BE]** Given a user whose contact is linked to NO sales agent and whose contact override
+  includes planning warehouse W1, then `locations` lists W1 (no agent gate). Given the same user with
+  no Stock visibility rows at all, then every planning warehouse counts.
+- **AC-QSA-3 [BE]** Given a contact override that includes planning warehouses
   W1 and W2, and stock of the product at W1, W2 and W3 (another group), then `locations` lists W1 and
   W2 only, and `available_qty` = sum over W1 and W2 of (on hand - SO qty + SPO qty); W3 adds nothing.
-- **AC-QSA-4 [BE]** Given a linked agent and NO Stock visibility rows at all (no override, no access
+- **AC-QSA-4 [BE]** Given a contact and NO Stock visibility rows at all (no override, no access
   type row, no default row), then every planning warehouse counts (two different groups and a site
   pool all contribute). Same answer when the only row is a global default with `warehouse_ids` NULL.
-- **AC-QSA-5 [BE]** Given a linked agent and an override that excludes every active warehouse, then
+- **AC-QSA-5 [BE]** Given an override that excludes every active warehouse, then
   200 `null`. Same for an override whose include list is empty.
 - **AC-QSA-6 [BE]** Given an override that excludes W3 only, then every planning warehouse except W3.
 - **AC-QSA-7 [BE]** Given an allowed set containing a warehouse with `fulfilment_planning = false`
@@ -47,9 +49,10 @@ Response: the existing `StockDetail` shape over the allowed set, or JSON `null` 
   values, then the set is the contact's Stock visibility set, unchanged by either group.
 - **AC-QSA-10 [BE]** Given an open SPO for the product at W1 (allowed) and one at W3 (not allowed),
   then `incoming` carries only the W1 SPO.
-- **AC-QSA-11 [BE]** Given an admin user with no linked agent, then 200 `null` (no role bypass,
-  owner Q2). Given a user without either READ permission, then 403. Given a product_id that is not a
-  uuid, then 422.
+- **AC-QSA-11 [BE]** Given an admin user whose contact has no Stock visibility rows, then every
+  planning warehouse counts; given an admin user with no contact, then 200 `null` (no role bypass
+  either way, owner Q2). Given a user without either READ permission, then 403. Given a product_id
+  that is not a uuid, then 422.
 
 ## Phase 1/2: frontend, Lines tab
 

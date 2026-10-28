@@ -46,14 +46,16 @@ security-reviewer).
 
 ## Rule (owner rulings applied)
 
-Same for every user, admins included (Q2: no bypass; `resolve_policy` has no role check):
-1. No linked ACTIVE agent (`agents_for_contact` on `users.respond_contact_id`) -> no stock, blank.
+Same for every user, admins included (Q2: no bypass; `resolve_policy` has no role check). The
+linked-agent gate the 19:10 ruling named was dropped by the owner after the 19:25 answers ("(b). Drop
+rule 1"): only the contact's Stock visibility decides.
+1. No linked contact (`users.respond_contact_id` NULL) -> no stock, blank.
 2. Otherwise the location set = `scope_warehouse_ids(resolve_policy(contact))`: contact override >
    access types > global default (`stock_visibility.py:229`). No row anywhere = all
    (`default_policy` `:121-135` returns `warehouse_ids=None`). Only an empty include list or an
    exclusion covering every active warehouse gives none -> blank.
 3. Intersected with active `fulfilment_planning` warehouses: the universe the old picker drew from.
-4. The agent's `location_group` plays no part (Q1 (a)); several agents change nothing.
+4. Sales agents play no part: no agent gate, and `location_group` is not read (Q1 (a)).
 
 ## Design
 
@@ -88,4 +90,5 @@ One lane, one slice S1 (BE route + FE swap). Tester red tests from the UAC first
 ## Next
 
 Red tests (tester), coder, kill test, reviewer, agent-browser 1280/375 on the crew copy, hand-test
-script (agent + restricted contact, agent + unset contact, contact excluding all, no agent).
+script (restricted contact, unset contact = all, exclude-all contact = blank, user with no contact =
+blank, admin/purchasing with unset contact = all).
