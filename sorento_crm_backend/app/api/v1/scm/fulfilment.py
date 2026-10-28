@@ -614,7 +614,7 @@ def list_loading_plans(
     query: Optional[str] = Query(None),
     #: "active" (the default chip) is planning + sent. A cancelled plan is a decision
     #: already made, and a list that opens on it hides the work in front of somebody.
-    status_filter: Optional[str] = Query(None, alias="status"),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
     _user: dict = Depends(_READ),
     db: Session = Depends(get_db),
 ):
