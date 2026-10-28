@@ -220,3 +220,15 @@ def test_ac_s3_15_a_partly_cached_warm_still_runs_and_logs_once(env, caplog):
                 t.join(10)
     assert emb.is_cached(ll.row_texts(rows))
     assert len([r for r in caplog.records if r.name == LOGGER and r.levelno == logging.INFO]) == 1, caplog.records
+
+
+def test_the_warm_honours_the_cache_cap(env, monkeypatch):
+    """BACKEND-MEMORY: the background warm (`fill`) obeys `_CACHE_CAP` the way the turn path
+    (`embed`) does: past the cap the old vectors go and the new set is stored, so the
+    per-process row-vector store stays bounded."""
+    monkeypatch.setattr(ll, "_CACHE_CAP", 10)
+    embed = ll._vector_embedder(_model(), Flaky([]), 3)
+    embed.fill([f"old {i}" for i in range(8)])
+    embed.fill([f"new {i}" for i in range(8)])
+    assert len(ll._cache) <= 10, len(ll._cache)
+    assert embed.is_cached([f"new {i}" for i in range(8)])
