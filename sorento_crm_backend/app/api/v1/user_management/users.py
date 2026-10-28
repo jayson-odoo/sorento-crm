@@ -511,6 +511,7 @@ def _salesperson_me(db: Session, user) -> Optional[dict]:
     return {
         "portal_kinds": sorted(resolve_visible_form_types(db, contact.id)),
         "portal_slug": PortalService(db).get_or_create_slug(contact),
+        "contact_id": str(contact.id),
     }
 
 

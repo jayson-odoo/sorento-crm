@@ -76,7 +76,7 @@ beforeEach(() => {
 });
 
 describe('ContactImpersonateDialog with a linked salesperson user (F1)', () => {
-  it('crm_user_id: starts CRM impersonation, stores the token in sessionStorage, goes to /my-requests, no window.open', async () => {
+  it('crm_user_id: starts CRM impersonation, writes no portal token, goes to /my-requests, no window.open', async () => {
     answer('user-eric-1');
     mount();
     fireEvent.click(screen.getByRole('button', { name: 'Impersonate' }));
@@ -89,7 +89,7 @@ describe('ContactImpersonateDialog with a linked salesperson user (F1)', () => {
     const body = JSON.parse(String(apiFetch.mock.calls.find((c) => String(c[0]).includes('/user-management/impersonation/start'))![1].body));
     expect(body.target_user_id).toBe('user-eric-1');
     expect(impersonationStore.getState()?.targetUser.id).toBe('user-eric-1');
-    expect(window.sessionStorage.getItem(TOKEN_KEY)).toBe('IMP-TOKEN-123');
+    expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
   });
 

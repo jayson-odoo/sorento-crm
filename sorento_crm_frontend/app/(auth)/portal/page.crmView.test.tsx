@@ -77,14 +77,14 @@ beforeEach(() => {
 });
 
 describe('legacy /portal impersonation entry (B)', () => {
-  it('crm_user_id: CRM impersonation started, tab token kept, goes to /my-requests', async () => {
+  it('crm_user_id: CRM impersonation started, no portal token kept, goes to /my-requests', async () => {
     me.mockResolvedValue(meBody('u-eric'));
     crmStart(true);
     mount();
     await waitFor(() => expect(router.replace).toHaveBeenCalledWith('/my-requests'));
     expect(JSON.parse(String(startCalls()[0][1].body)).target_user_id).toBe('u-eric');
     expect(impersonationStore.getState()?.targetUser.id).toBe('u-eric');
-    expect(window.sessionStorage.getItem(TOKEN_KEY)).toBe('IMP-TOKEN');
+    expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(window.localStorage.getItem(TOKEN_KEY)).toBeNull();
     expect(screen.queryByTestId('legacy-landing')).toBeNull();
   });

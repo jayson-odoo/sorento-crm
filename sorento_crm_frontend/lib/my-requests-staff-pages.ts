@@ -1,8 +1,7 @@
 /**
  * PORTAL-P4-REQUESTS: the request forms a salesperson opens from MY REQUESTS on the STAFF pages,
- * which the server narrows to their own rows (`<form>.view_own`). The other portal kinds still render
- * the portal form inside /my-requests until their own slices. Read by the menu and by the
- * /my-requests deep-link redirects.
+ * which the server narrows to their own rows (`<form>.view_own`). Read by the menu, by the
+ * /my-requests redirects and by the portal-to-CRM twin paths.
  */
 export const MY_REQUEST_STAFF_PAGES: Readonly<Record<string, { path: string; permission: string }>> = {
   stock_inquiry: {
@@ -44,4 +43,9 @@ export const MY_REQUEST_STAFF_PAGES: Readonly<Record<string, { path: string; per
 /** The staff list path for a kind that moved, or null for a kind still served under /my-requests. */
 export function myRequestStaffPath(kind: string | null | undefined): string | null {
   return (kind && MY_REQUEST_STAFF_PAGES[kind]?.path) || null;
+}
+
+/** Trim trailing punctuation a pasted link can absorb off a record id. */
+export function sanitizeId(raw: string): string {
+  return (raw || '').replace(/[^0-9a-fA-F-].*$/, '');
 }

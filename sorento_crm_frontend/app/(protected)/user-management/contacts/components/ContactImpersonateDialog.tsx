@@ -5,7 +5,6 @@ import { LoaderCircleIcon } from 'lucide-react';
 import { useRouter } from 'next/navigation';
 import { toast } from '@/lib/toast';
 import { useEnterCrmView } from '@/hooks/useEnterCrmView';
-import { writePortalToken } from '@/app/(auth)/portal/lib/portal-client';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -65,15 +64,13 @@ export function ContactImpersonateDialog({
               try {
                 const session = await startContactImpersonation(contact.id);
                 if (session.crmUserId) {
-                  // A salesperson contact: the CRM view of that user plus the portal token, in this tab.
+                  // A salesperson contact: the CRM view of that user in this tab.
                   try {
                     await enterCrmView(session.crmUserId);
                   } catch (err) {
                     await stopContactImpersonation().catch(() => {});
                     throw err;
                   }
-                  const token = new URL(session.portalUrl, window.location.origin).searchParams.get('token');
-                  if (token) writePortalToken(token, { impersonation: true });
                   toast.success(`Now impersonating ${label}`);
                   onClose();
                   router.push('/my-requests');

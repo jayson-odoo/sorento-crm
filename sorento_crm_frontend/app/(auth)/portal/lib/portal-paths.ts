@@ -11,6 +11,8 @@
  * token or OTP).
  */
 
+import { myRequestStaffPath } from '@/lib/my-requests-staff-pages';
+
 const SLUG_KEY = 'sorento.portalSlug';
 
 export function readPortalSlug(): string | null {
@@ -123,17 +125,22 @@ export function waMeUrl(phoneNumber: string, text: string): string {
 }
 
 /**
- * The CRM twin (`/my-requests/...`) of a slug-tree portal path, for a salesperson's deep link.
- * The portal token never travels. The verify page and every legacy or non-portal path have no
- * twin (null).
+ * The STAFF page (PORTAL-P4-REQUESTS S8) a salesperson's slug-tree portal link opens in the CRM:
+ * the kind's list, `/new` or detail page. The portal token never travels. The verify page, an
+ * unknown kind and every legacy or non-portal path have no twin (null).
  */
 export function crmPathForPortalPath(path: string): string | null {
   const m = /^\/portal\/c\/[^/?#]+((?:\/[^?#]*)?)(?:\?([^#]*))?/.exec(path);
   if (!m) return null;
-  const rest = m[1] ?? '';
-  if (rest === '/verify' || rest.startsWith('/verify/')) return null;
+  const rest = (m[1] ?? '').replace(/\/+$/, '');
   const qs = new URLSearchParams(m[2] ?? '');
-  qs.delete('token');
-  const q = qs.toString();
-  return `/my-requests${rest}${q ? `?${q}` : ''}`;
+  const parts = rest.split('/').filter(Boolean);
+  if (parts[0] === 'verify') return null;
+  const kind = parts.length === 0 ? qs.get('type') || 'stock_inquiry' : parts[0];
+  const list = myRequestStaffPath(kind);
+  if (!list) return null;
+  if (parts.length === 0) return list;
+  if (parts.length === 1) return list;
+  if (parts[1] === 'new') return `${list}/new`;
+  return `${list}/${parts[1]}`;
 }

@@ -29,7 +29,7 @@ export function useAccountProfileForHeader() {
         avatar?: string | null;
         name?: string | null;
         email?: string | null;
-        salesperson?: { portal_kinds: string[]; portal_slug: string } | null;
+        salesperson?: { portal_kinds: string[]; portal_slug: string; contact_id?: string | null } | null;
       }>;
     },
     enabled: status === 'authenticated',
@@ -44,7 +44,9 @@ export function useAccountProfileForHeader() {
   );
 
   const salesperson = profile?.salesperson
-    ? { portalKinds: profile.salesperson.portal_kinds, portalSlug: profile.salesperson.portal_slug }
+    ? { portalKinds: profile.salesperson.portal_kinds, portalSlug: profile.salesperson.portal_slug,
+        contactId: profile.salesperson.contact_id ?? null,
+      }
     : null;
 
   return {

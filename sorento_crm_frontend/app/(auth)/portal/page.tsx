@@ -20,6 +20,7 @@ import { PortalLanding } from './components/PortalLanding';
 import { PortalVerifyCard } from './components/PortalVerifyCard';
 import {
   PortalUnauthorizedError,
+  clearImpersonationToken,
   demoteTokenToSession,
   fetchMeWithGrace,
   isImpersonationToken,
@@ -85,6 +86,8 @@ function PortalRootContent() {
           if (me.crm_user_id) {
             try {
               await enterCrmView(me.crm_user_id);
+              // The CRM view needs no portal token: drop the one this link carried.
+              clearImpersonationToken();
               if (!cancelled) router.replace('/my-requests');
               return;
             } catch {

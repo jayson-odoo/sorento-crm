@@ -124,7 +124,7 @@ describe('PortalVerifyCard - salesperson deep links land in the CRM shell', () =
     render(<PortalVerifyCard slug="SLUG123456" />);
     await enterCode(true);
     await waitFor(() => expect(assignMock).toHaveBeenCalledTimes(1));
-    expect(assignMock.mock.calls[0][0]).toBe('/my-requests/complaint/abc-123');
+    expect(assignMock.mock.calls[0][0]).toBe('/complaint-management/complaints/abc-123');
   });
 
   it('?type=: /my-requests?type=stock_inquiry', async () => {
@@ -133,7 +133,7 @@ describe('PortalVerifyCard - salesperson deep links land in the CRM shell', () =
     render(<PortalVerifyCard slug="SLUG123456" />);
     await enterCode(true);
     await waitFor(() => expect(assignMock).toHaveBeenCalledTimes(1));
-    expect(assignMock.mock.calls[0][0]).toBe('/my-requests?type=stock_inquiry');
+    expect(assignMock.mock.calls[0][0]).toBe('/procurement-management/stock-inquiries');
   });
 
   it('plain link: /my-requests', async () => {
@@ -141,7 +141,7 @@ describe('PortalVerifyCard - salesperson deep links land in the CRM shell', () =
     render(<PortalVerifyCard slug="SLUG123456" />);
     await enterCode();
     await waitFor(() => expect(assignMock).toHaveBeenCalledTimes(1));
-    expect(assignMock.mock.calls[0][0]).toBe('/my-requests');
+    expect(assignMock.mock.calls[0][0]).toBe('/procurement-management/stock-inquiries');
   });
 
   it('not a salesperson: deep link keeps today\'s portal destination', async () => {

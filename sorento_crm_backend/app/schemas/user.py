@@ -345,6 +345,7 @@ class UserUpdate(BaseModel):
 class SalespersonMeOut(BaseModel):
     portal_kinds: List[str] = []
     portal_slug: str
+    contact_id: Optional[str] = None
 
 
 class UserResponse(UserBase):

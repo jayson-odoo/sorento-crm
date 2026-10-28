@@ -57,9 +57,9 @@ beforeEach(() => {
 
 describe('SalespersonCrmRedirect', () => {
   it.each([
-    ['/portal/c/SLUG123456', '/my-requests'],
-    ['/portal/c/SLUG123456?type=complaint', '/my-requests?type=complaint'],
-    ['/portal/c/SLUG123456/complaint/abc-123', '/my-requests/complaint/abc-123'],
+    ['/portal/c/SLUG123456', '/procurement-management/stock-inquiries'],
+    ['/portal/c/SLUG123456?type=complaint', '/complaint-management/complaints'],
+    ['/portal/c/SLUG123456/complaint/abc-123', '/complaint-management/complaints/abc-123'],
   ])('salesperson on %s is sent to %s', async (here, to) => {
     at(here);
     render(<SalespersonCrmRedirect />);

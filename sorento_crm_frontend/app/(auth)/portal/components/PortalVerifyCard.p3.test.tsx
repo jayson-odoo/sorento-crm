@@ -118,13 +118,13 @@ function sessionWith(homePath?: string) {
 }
 
 describe('PortalVerifyCard - salesperson lands in the CRM shell', () => {
-  it('homePath /my-requests: the browser opens /my-requests', async () => {
+  it('homePath /my-requests: the browser opens the Stock Inquiry staff list', async () => {
     sessionWith('/my-requests');
     render(<PortalVerifyCard slug="SLUG123456" />);
     await enterCode();
 
     await waitFor(() => expect(assignMock).toHaveBeenCalledTimes(1));
-    expect(assignMock.mock.calls[0][0]).toBe('/my-requests');
+    expect(assignMock.mock.calls[0][0]).toBe('/procurement-management/stock-inquiries');
   });
 
   it.each([
