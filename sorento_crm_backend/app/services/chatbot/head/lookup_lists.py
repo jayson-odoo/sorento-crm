@@ -990,6 +990,11 @@ def _vector_embedder(model: str, request: Callable[[list[str]], list[Any]], chun
         loaded = 0
         file_vectors: dict[str, Any] = {}
         try:
+            with _store_lock:
+                missing = [t for t in dict.fromkeys(texts) if _key(t, model) not in _cache]
+                if len(_cache) + len(missing) > _CACHE_CAP:  # the cap `embed` keeps, so the store stays bounded
+                    _cache.clear()
+                    _matrices.clear()
             if lock_fd is not None:
                 file_vectors = _read_shared(path)
                 with _store_lock:
