@@ -195,3 +195,22 @@ def test_live_a_named_length_nothing_holds_falls_back_with_its_line(session_fact
     )
 
     assert _fetched(calls) == sorted([ids["ZZDA-H"], ids["ZZDA-T"]]), (_text(r), calls)
+
+
+def test_guard_in_stock_is_never_offered_as_a_size_with_the_shipped_aliases(session_factory, seeded):
+    """Reviewer round 5: "any 5 in stock" / "got 10 in stock?" are stock asks; the migration's aliases hold no bare
+    "in", so no length is offered for them."""
+    _seed(session_factory, WCS)
+    _aliases(session_factory)
+
+    assert _labels(session_factory, "any 5 in stock") == []
+    assert _labels(session_factory, "got 10 in stock?") == []
+
+
+def test_a_large_length_is_written_without_an_exponent(session_factory, seeded):
+    _seed(session_factory, WCS)
+
+    labels = _labels(session_factory, "hose 1000m")
+
+    assert labels[0] == "Size 1000000mm, any dimension (size: 1000000)", labels
+    assert not any("e+" in label for label in labels), labels

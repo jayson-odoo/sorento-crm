@@ -17,7 +17,9 @@ down_revision = "resub_0001_resubmitted_status"
 branch_labels = None
 depends_on = None
 
-MM_ALIASES = '{"cm": 10, "m": 1000, "in": 25.4, "inch": 25.4, "inches": 25.4}'
+# No bare "in": "any 5 in stock" is a stock ask, and offering it as 127 mm leads the Spec block with a size
+# (reviewer round 5). "inch" / "inches" carry the unit.
+MM_ALIASES = '{"cm": 10, "m": 1000, "inch": 25.4, "inches": 25.4}'
 
 
 def upgrade() -> None:

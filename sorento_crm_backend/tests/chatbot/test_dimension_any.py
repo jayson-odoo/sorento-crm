@@ -24,7 +24,7 @@ from tests.chatbot.test_engine import seeded, stub_access  # noqa: F401
 
 
 #: The registry's own unit aliases for its millimetre keys (migration dimany_0001_unit_aliases).
-MM_ALIASES = {"cm": 10, "m": 1000, "in": 25.4, "inch": 25.4, "inches": 25.4}
+MM_ALIASES = {"cm": 10, "m": 1000, "inch": 25.4, "inches": 25.4}
 
 
 def _aliases(session_factory, aliases: dict | None = None) -> None:
@@ -137,12 +137,14 @@ def test_a_unit_alias_is_registry_data_never_code(session_factory, seeded):
     assert _size_line(session_factory, "zzwc 15cm got stock", "15cm") is None
 
 
-def test_a_word_unit_is_offered_and_the_parser_decides(session_factory, seeded):
-    """No word list in code: "5 in" is offered as 127 mm off the registry's "in" alias, and the
-    parser (prompt + eval) decides whether "5 in stock" means a size."""
+def test_a_word_unit_is_offered_only_when_the_registry_lists_it(session_factory, seeded):
+    """No word list in code: the migration's aliases carry no bare "in" ("5 in stock" is a stock ask), so nothing is
+    offered; a registry that does list it gets the 127 mm line and the parser decides."""
     _seed(session_factory, WCS)
     _aliases(session_factory)
+    assert _size_line(session_factory, "any 5 in stock", "5 in") is None
 
+    _aliases(session_factory, {**MM_ALIASES, "in": 25.4})
     line = _size_line(session_factory, "any 5 in stock", "5 in")
 
     assert line is not None and line.startswith('- "5 in": size 127 mm (no dimension named)'), line

@@ -700,6 +700,11 @@ def _quantity_re(words: Any) -> re.Pattern[str]:
     return re.compile(rf"(?<![a-z0-9.])(\d+(?:\.\d+)?)\s*({alternatives})(?![a-z0-9])")
 
 
+def _plain(value: float) -> str:
+    """A number as a person writes it: no exponent, no trailing zeros ("1000000", "152.4")."""
+    return f"{value:.6f}".rstrip("0").rstrip(".")
+
+
 #: DIMENSION-ANY: the bracket key of the line that offers a length with no dimension named; the parser emits it as
 #: spec_key and grounding reads it as every dimension (`head/bare_size.py`).
 SIZE_KEY = "size"
@@ -748,7 +753,7 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
         for ask_cls, base, piece in asks:
             if ask_cls == cls:
                 value = round(base / factor, 6)
-                wanted.append((row, f"{value:g}{unit}", value, piece))
+                wanted.append((row, f"{_plain(value)}{unit}", value, piece))
     if not wanted:
         return []
     columns = [
@@ -769,14 +774,14 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
     for row, shown, value, piece in wanted:
         is_dim = row.spec_key in dims
         if is_dim and shown not in sizes:
-            label = f"Size {shown}, any dimension ({SIZE_KEY}: {value:g})"
+            label = f"Size {shown}, any dimension ({SIZE_KEY}: {_plain(value)})"
             sizes[shown] = Hit(LookupRow("spec", f"{SIZE_KEY}={shown}", label, (label,)), _fold(piece), 1.0, 0.0)
         if (row.spec_key, shown) in held or is_dim:
-            label = f"{row.label} {shown} ({row.spec_key}: {value:g})"
+            label = f"{row.label} {shown} ({row.spec_key}: {_plain(value)})"
             hit = Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0)
             (holding if (row.spec_key, shown) in held else named).append(hit)
     by_label = lambda h: h.row.label  # noqa: E731
-    return [*sorted(sizes.values(), key=by_label), *sorted(holding, key=by_label), *sorted(named, key=by_label)]
+    return [*sizes.values(), *sorted(holding, key=by_label), *sorted(named, key=by_label)]
 
 
 def with_numbers(numbers: list[Hit], spec: list[Hit]) -> list[Hit]:
