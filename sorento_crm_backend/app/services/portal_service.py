@@ -1961,7 +1961,7 @@ class PortalService:
                 pass
             try:
                 sentence = (
-                    "A previously rejected stock inquiry has been resubmitted via the "
+                    "A previously rejected stock inquiry has been appealed via the "
                     "user portal and requires your review."
                     if is_resubmission
                     else "A new stock inquiry has been submitted via the user portal and "
@@ -1972,7 +1972,7 @@ class PortalService:
                     agent_code="lead_time_enquiries",
                     team_assignment_code="project_sales",
                     title=(
-                        "Stock inquiry resubmitted"
+                        "Stock inquiry appealed"
                         if is_resubmission
                         else "New Stock Inquiry created"
                     ),

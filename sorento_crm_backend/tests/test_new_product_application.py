@@ -465,7 +465,7 @@ def test_ac12_a_rejected_application_is_edited_and_resubmitted_in_one_press(worl
     assert again.status_code == 200, again.text
     # RESUBMITTED-STATUS (owner, 27 Oct): a submit answering a rejection is a resubmit.
     assert again.json()["status"] == "resubmitted"
-    assert again.json()["status_label"] == "Resubmitted"
+    assert again.json()["status_label"] == "Appealed"
     assert _to(world, d["id"], "new_product_application_resubmitted") == {world.manager}
     assert _to(world, d["id"], "new_product_application_submitted") == set()
 

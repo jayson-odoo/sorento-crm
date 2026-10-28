@@ -102,19 +102,21 @@ _BY_FE: dict[str, _EntityCfg] = {cfg.fe_type: cfg for cfg in _REGISTRY}
 # Action mapping (stored <-> FE verb)                                         #
 # --------------------------------------------------------------------------- #
 # The audit listener writes "CREATE"; older/manual calls may write "INSERT".
+# LINK / UNLINK: a person linked or unlinked a product's file (product_link_audit). They read
+# as added / removed, so their id-only values are never diffed into chips.
 _STORED_ACTIONS_FOR_FE = {
-    "created": ("INSERT", "CREATE"),
+    "created": ("INSERT", "CREATE", "LINK"),
     "updated": ("UPDATE",),
-    "deleted": ("DELETE",),
+    "deleted": ("DELETE", "UNLINK"),
     "imported": ("IMPORT",),
 }
 
 
 def _fe_action(stored: Optional[str]) -> str:
     s = (stored or "").upper()
-    if s in ("INSERT", "CREATE"):
+    if s in ("INSERT", "CREATE", "LINK"):
         return "created"
-    if s == "DELETE":
+    if s in ("DELETE", "UNLINK"):
         return "deleted"
     if s == "IMPORT":
         return "imported"

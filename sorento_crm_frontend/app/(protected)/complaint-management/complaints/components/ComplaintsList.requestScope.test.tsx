@@ -63,6 +63,7 @@ vi.mock('../hooks/useComplaints', () => ({
 
 import ComplaintsList from './ComplaintsList';
 import type { Complaint } from '../types/complaint.types';
+import { APPEALED_LABEL } from '@/lib/submission-status';
 
 const LIMITED = ['complaint_management.complaints.view_own', 'complaint_management.complaints.add'];
 const STAFF = [
@@ -145,7 +146,7 @@ describe('Complaint list, limited user', () => {
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: /^filters/i }));
     await user.click(await screen.findByText('All statuses'));
-    expect(await screen.findByText('Resubmitted')).toBeInTheDocument(); // the option list is open
+    expect(await screen.findByText(APPEALED_LABEL)).toBeInTheDocument(); // the option list is open (#1952: resubmitted reads Appealed)
     expect(screen.getByText('Draft')).toBeInTheDocument();
   });
 });

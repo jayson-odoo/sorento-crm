@@ -43,6 +43,7 @@ from app.models.procurement import PurchaseRequestHeader, PurchaseRequestLine, S
 from app.services import submission_status
 from app.services.document_number import suffix_revision
 from app.services.error_handler import handle_conflict, handle_not_found, handle_unprocessable
+from app.services.submission_status import APPEALED_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -2079,7 +2080,7 @@ def _revision_label(row: PortalFormRevision) -> str:
     if row.kind == KIND_ORIGINAL:
         return "Original (reconstructed)" if row.is_reconstructed else "Original"
     if row.kind == KIND_RESUBMISSION:
-        return "Resubmitted"
+        return APPEALED_LABEL
     return f"Revision {row.revision_no}"
 
 

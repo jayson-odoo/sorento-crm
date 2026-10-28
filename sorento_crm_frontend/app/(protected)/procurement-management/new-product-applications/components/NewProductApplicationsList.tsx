@@ -1,5 +1,6 @@
 'use client';
 
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useMemo, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
@@ -49,7 +50,7 @@ const BASE_PATH = '/procurement-management/new-product-applications';
 const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
-  { value: 'resubmitted', label: 'Resubmitted' },
+  { value: 'resubmitted', label: APPEALED_LABEL },
   { value: 'approved', label: 'Approved' },
   { value: 'rejected', label: 'Rejected' },
   { value: 'completed', label: 'Completed' },

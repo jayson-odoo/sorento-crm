@@ -1,3 +1,5 @@
+import { APPEALED_LABEL } from '@/lib/submission-status';
+
 export interface StockInquiry {
   id: string;
   inquiry_number?: string | null;
@@ -66,7 +68,7 @@ export interface StockInquiry {
 export const STOCK_INQUIRY_STATUS_LABELS: Record<string, string> = {
   new: 'New',
   pending_project_sales: 'Pending project sales',
-  resubmitted: 'Resubmitted',
+  resubmitted: APPEALED_LABEL,
   pending_purchasing: 'Pending purchasing',
   rejected: 'Rejected',
   responded: 'Responded',

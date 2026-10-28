@@ -58,6 +58,7 @@ from app.services.pdf_revision_support import (
     revision_reason,
     snapshot_datetime,
 )
+from app.services.submission_status import APPEALED_LABEL
 
 logger = logging.getLogger(__name__)
 
@@ -73,7 +74,7 @@ FILENAME_STEM = "product-inquiry"
 _STATUS_LABELS = {
     "new": "New",
     "pending_project_sales": "Pending project sales",
-    "resubmitted": "Resubmitted",
+    "resubmitted": APPEALED_LABEL,
     "pending_purchasing": "Pending purchasing",
     "rejected": "Rejected",
     "responded": "Responded",

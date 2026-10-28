@@ -1,5 +1,6 @@
 'use client';
 
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useMemo } from 'react';
 import type { UseFormReturn, FieldArrayWithId } from 'react-hook-form';
 import type { ColumnDef } from '@tanstack/react-table';
@@ -327,7 +328,7 @@ export function PurchaseRequestDocumentEditCard({
                       : (request.status ?? '').toLowerCase() === 'submitted'
                         ? 'Submitted'
                         : (request.status ?? '').toLowerCase() === 'resubmitted'
-                          ? 'Resubmitted'
+                          ? APPEALED_LABEL
                           : (request.status ?? '').toLowerCase() === 'draft'
                             ? 'Draft'
                             : (request.approval_status || request.status || 'Draft')}

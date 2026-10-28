@@ -206,7 +206,7 @@ def _entry_filename_marker(entry: dict) -> str:
     Always present, exactly one of three:
 
     * ``original`` - the version-0 entry, whose own number is the bare one;
-    * ``resubmitted-v<N>`` - a RESUBMISSION, which carries the record's CURRENT
+    * ``appealed-v<N>`` - a RESUBMISSION (read "appeal" since owner, 28 Oct 2026), which carries the record's CURRENT
       ``revision_no`` (an office reject never burns a revision, UAC C4), so it
       shares its number with the revision it followed, and a second resubmit
       would share it again - hence the version number;
@@ -222,7 +222,7 @@ def _entry_filename_marker(entry: dict) -> str:
     if kind == KIND_ORIGINAL:
         return "original"
     if kind == KIND_RESUBMISSION:
-        return f"resubmitted-v{int(entry.get('version_no') or 0)}"
+        return f"appealed-v{int(entry.get('version_no') or 0)}"
     return "as-submitted"
 
 

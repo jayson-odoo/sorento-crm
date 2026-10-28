@@ -26,6 +26,7 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
+import { APPEALED_LABEL } from '@/lib/submission-status';
 import { useComplaintRootCausesSelect } from '../../complaint-root-causes/hooks/useComplaintRootCauses';
 import { useComplaintResolutionsSelect } from '../../complaint-resolutions/hooks/useComplaintResolutions';
 import { Skeleton } from '@/components/ui/skeleton';
@@ -50,7 +51,7 @@ import { useRequestScope } from '@/hooks/useRequestScope';
 const STATUS_OPTIONS = [
   { value: 'new', label: 'New' },
   { value: 'submitted', label: 'Submitted' },
-  { value: 'resubmitted', label: 'Resubmitted' },
+  { value: 'resubmitted', label: APPEALED_LABEL },
   { value: 'updated', label: 'Updated' },
   { value: 'responded', label: 'Responded' },
   { value: 'approved', label: 'Approved' },
