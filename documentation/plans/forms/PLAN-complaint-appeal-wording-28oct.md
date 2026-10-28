@@ -1,6 +1,6 @@
 # PLAN: complaint appeal wording (COMPLAINT-APPEAL-WORDING)
 
-Status: in review, round 2 every form (wording only; one data-only label migration, no auth change)
+Status: merge-ready, reviewer READY round 4 (wording only; one data-only label migration, no auth change)
 
 ## Ask
 
