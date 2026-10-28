@@ -58,6 +58,7 @@ const SALES_PERMS = [
   'projects.sample_requests.view_own',
   'sales.opportunities.view_own',
   'procurement.new_product_applications.view_own',
+  'dealer_kit.price_tag_requests.view_own',
 ];
 
 const ALL_KINDS = [...LANDING_KINDS] as string[];
@@ -82,6 +83,7 @@ const STAFF_LIST: Record<string, string> = {
   sample_request: '/project-sales/sample-requests',
   sales_opportunity: '/sales/opportunities',
   new_product_application: '/procurement-management/new-product-applications',
+  price_tag_request: '/dealer-kit/price-tag-requests',
 };
 
 describe('MENU_SIDEBAR for a salesperson', () => {
