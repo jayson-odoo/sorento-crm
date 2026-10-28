@@ -214,3 +214,59 @@ def test_a_large_length_is_written_without_an_exponent(session_factory, seeded):
 
     assert labels[0] == "Size 1000000mm, any dimension (size: 1000000)", labels
     assert not any("e+" in label for label in labels), labels
+
+
+# --- Crew gate round 2 (dealer "hose 2m", turn c77de616): the parser was shown 10 dimension lines for "2m" ----------
+
+HOSE = "ZZHose"
+
+
+def _hose_world(session_factory) -> dict[str, str]:
+    """WCs carrying every dimension, and hoses that carry only a hose length (2000 mm on one)."""
+    ids = _seed(session_factory, (*WCS, ("ZZHS-2", HOSE, {"hose_length": 2000}), ("ZZHS-1", HOSE, {"hose_length": 1500})))
+    db = session_factory()
+    db.add(ProductSpecRegistry(
+        id=str(uuid.uuid4()), spec_key="hose_length", label="Hose length", data_type="numeric", unit="mm",
+        synonyms={"_self": ["hose"]}, applies_when={},
+    ))
+    db.commit()
+    return ids
+
+
+def _number_lines(block: str) -> list[str]:
+    """The Spec block's number lines: a length in mm, ending in a numeric "(key: N)" bracket."""
+    import re
+
+    return [ln[2:] for ln in block.splitlines() if re.fullmatch(r"- .* [\d.]+mm,? .*\(\w+: [\d.]+\)", ln)]
+
+
+def test_live_a_hose_length_offers_only_the_dimensions_hoses_carry(session_factory, seeded, stub_access, monkeypatch):
+    _hose_world(session_factory)
+
+    _r, _c, block = _live(session_factory, stub_access, monkeypatch, "zzhose 2m", _ent("zzhose", "category"))
+
+    assert _number_lines(block) == ["Size 2000mm, any dimension (size: 2000)", "Hose length 2000mm (hose_length: 2000)"], block
+
+
+def test_live_a_named_dimension_the_category_carries_is_still_offered(session_factory, seeded, stub_access, monkeypatch):
+    """The WC category's products carry length, so "length 150mm" for it keeps its Length line (rule 2), while a
+    dimension no WC carries (hose length) is not offered."""
+    _hose_world(session_factory)
+
+    _r, _c, block = _live(
+        session_factory, stub_access, monkeypatch, f"{WC.lower()} length 150mm", _ent(WC.lower(), "category"),
+    )
+
+    lines = _number_lines(block)
+    assert lines[0] == SIZE_150 and "Length 150mm (dim_length: 150)" in lines, block
+    assert not any(ln.startswith("Hose length") for ln in lines), block
+
+
+def test_live_no_category_named_keeps_every_dimension_nameable(session_factory, seeded, stub_access, monkeypatch):
+    _hose_world(session_factory)
+
+    _r, _c, block = _live(session_factory, stub_access, monkeypatch, "length 999mm got stock")
+
+    lines = _number_lines(block)
+    assert lines[0] == "Size 999mm, any dimension (size: 999)" and "Length 999mm (dim_length: 999)" in lines, block
+    assert "Hose length 999mm (hose_length: 999)" in lines, block
