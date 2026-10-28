@@ -127,6 +127,9 @@ class LookupRow:
     texts: tuple[str, ...]
     #: EEM-CATEGORY-PICK: a category row's class (`product_class_signal.category_class`); a "type:" row is its own.
     group: str | None = None
+    #: DIMENSION-ANY: a number line offered for a dimension no product holds at that value is kept only beside a
+    #: Category row whose products carry the key (these are those rows' keys); None is always kept.
+    scope: frozenset[str] | None = None
 
 
 @dataclass(frozen=True)
@@ -768,6 +771,7 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
         .one()
     )
     held = {(row.spec_key, shown) for (row, shown, _v, _p), n in zip(wanted, counts) if int(n) > 0}
+    scopes = _carried_by(db, sorted({row.spec_key for row, shown, _v, _p in wanted if row.spec_key in dims and (row.spec_key, shown) not in held}))
     sizes: dict[str, Hit] = {}
     holding: list[Hit] = []
     named: list[Hit] = []
@@ -778,16 +782,52 @@ def number_hits(message: str, db: "Session", *, hidden_spec_keys: frozenset[str]
             sizes[shown] = Hit(LookupRow("spec", f"{SIZE_KEY}={shown}", label, (label,)), _fold(piece), 1.0, 0.0)
         if (row.spec_key, shown) in held or is_dim:
             label = f"{row.label} {shown} ({row.spec_key}: {_plain(value)})"
-            hit = Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,)), _fold(piece), 1.0, 0.0)
-            (holding if (row.spec_key, shown) in held else named).append(hit)
+            holds = (row.spec_key, shown) in held
+            scope = None if holds else scopes.get(row.spec_key, frozenset())
+            hit = Hit(LookupRow("spec", f"{row.spec_key}={shown}", label, (label,), scope=scope), _fold(piece), 1.0, 0.0)
+            (holding if holds else named).append(hit)
     by_label = lambda h: h.row.label  # noqa: E731
     return [*sizes.values(), *sorted(holding, key=by_label), *sorted(named, key=by_label)]
 
 
-def with_numbers(numbers: list[Hit], spec: list[Hit]) -> list[Hit]:
+def _carried_by(db: "Session", keys: list[str]) -> dict[str, frozenset[str]]:
+    """Per spec key, the Category row keys (`load_rows`: a category's id, "type:<class or product type>") whose
+    chat-searchable products carry the key at all. One grouped query."""
+    if not keys:
+        return {}
+    from sqlalchemy import func
+
+    from app.models.product import Product, chat_searchable_products
+    from app.models.product_spec import ProductSpecifications
+
+    values = ProductSpecifications.values
+    kinds = (values["class"]["value"].astext, values["product_type"]["value"].astext)
+    rows = (
+        db.query(Product.category_id, *kinds, *[func.bool_or(values.has_key(k)) for k in keys])
+        .join(ProductSpecifications, ProductSpecifications.product_id == Product.id)
+        .filter(chat_searchable_products())
+        .group_by(Product.category_id, *kinds)
+        .all()
+    )
+    out: dict[str, set[str]] = {k: set() for k in keys}
+    for category_id, klass, product_type, *carries in rows:
+        names = {str(category_id)} | {"type:" + _fold(n) for n in (klass, product_type) if n}
+        for key, carried in zip(keys, carries):
+            if carried:
+                out[key] |= names
+    return {k: frozenset(v) for k, v in out.items()}
+
+
+def with_numbers(numbers: list[Hit], spec: list[Hit], categories: list[Hit] | None = None) -> list[Hit]:
     """The Spec block: the number lines first, then the word lines at their own cap (a length's dimension lines
-    never push a word the message also said out of the block)."""
-    return [*numbers, *spec[: TOP_K["spec"]]]
+    never push a word the message also said out of the block).
+
+    DIMENSION-ANY (crew gate round 2, dealer "hose 2m" shown 10 dimension lines): a dimension no product holds at
+    the asked value is offered only when a Category row of this block carries it (hoses carry a hose length, not a
+    trap outlet length); with no Category row, every dimension stays nameable."""
+    named = {h.row.key for h in categories or []}
+    kept = [h for h in numbers if h.row.scope is None or not named or h.row.scope & named]
+    return [*kept, *spec[: TOP_K["spec"]]]
 
 
 def brand_words(db: "Session", brands: list[dict] | None = None) -> frozenset[str]:
