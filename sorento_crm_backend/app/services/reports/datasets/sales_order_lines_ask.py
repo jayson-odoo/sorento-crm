@@ -170,6 +170,7 @@ def _definition(basis: str) -> reg.ReportDefinition:
             if basis == "outstanding" else ()
         ),
         reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(_bucket_expr(), "YYYY-MM"), size=110),
+        reg.Column("year", "Year", "text", "dimension", lambda c: sa.cast(sa.cast(sa.extract("year", _bucket_expr()), sa.Integer), sa.Text), size=90),
         reg.Column("all", "All", "text", "dimension", lambda c: sa.cast(sa.literal("all"), sa.Text), size=80),
         reg.Column("amount", "RM", "money", "measure", lambda c: amount_expr, size=130),
         reg.Column("qty", "Qty", "integer", "measure", lambda c: qty_expr, size=100),

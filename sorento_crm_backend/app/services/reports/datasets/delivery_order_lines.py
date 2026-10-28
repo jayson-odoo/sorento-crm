@@ -278,6 +278,7 @@ COLUMNS = (
         size=110,
     ),
     reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(Order.order_date, "YYYY-MM"), size=110),
+    reg.Column("year", "Year", "text", "dimension", lambda c: sa.cast(sa.cast(sa.extract("year", Order.order_date), sa.Integer), sa.Text), size=90),
     reg.Column("delivery_order", "Delivery order", "text", "dimension", lambda c: Order.order_number, size=140),
     # The one-column side of a one-dimension view. An expression, not a bare constant:
     # Postgres refuses a constant in GROUP BY.

@@ -435,10 +435,11 @@ def test_unpaid_offers_no_quantity_measure(client, db) -> None:
 # ================================================================ unpaid on screen: customer / sales agent / month only
 
 
-def test_slice4_unpaid_offers_only_customer_sales_agent_and_month_to_group_by(client, db) -> None:
-    """Slice 4 / AC-RU-8b on screen: the unpaid dimensions are customer, sales agent, month (and the `all` total)."""
+def test_slice4_unpaid_offers_only_customer_sales_agent_month_and_year_to_group_by(client, db) -> None:
+    """Slice 4 / AC-RU-8b on screen: the unpaid dimensions are customer, sales agent, month and year (the Yearly
+    comparison is the report ask grouped by year, crew 28 Oct), and the `all` total."""
     dims = {c["key"] for c in _meta(client, KEYS["unpaid"]).json()["catalog"] if c["tag"] == "dimension"}
-    assert dims == {"customer", "sales_agent", "month", "all"}, dims
+    assert dims == {"customer", "sales_agent", "month", "year", "all"}, dims
 
 
 @pytest.mark.parametrize("rows", ["customer", "sales_agent", "month"])

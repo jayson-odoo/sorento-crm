@@ -126,7 +126,9 @@ class FieldSpec:
     #: The field is answered ONLY by the parser's declared pick of one of its offered options (`picked_option`): never
     #: by the shape fallback of an ask that keeps one for its other fields, never by a typed label or digit
     #: (owner rule 28 Oct 2026: understanding comes from the semantic parser only).
-    parser_only: bool = False
+    #: A callable decides per question from the slot's carried extras (the basis field is parser-only only while it asks
+    #: the outstanding KIND).
+    parser_only: bool | Callable[[dict[str, Any]], bool] = False
     #: The options this field's question offers, `(value, label)`, read when it is asked (with the ask's carried extras)
     #: and kept on the slot, so the parser is shown the question as a pick of them (`turn/question.of_required_ask`)
     #: and the answer is its pick resolved against them. The numbered text the field's question prints is unchanged.
@@ -387,6 +389,14 @@ def collect(
     return Outcome(values=values, extras=carried)
 
 
+def is_parser_only(spec: FieldSpec | None, extras: dict[str, Any] | None = None) -> bool:
+    """Whether `spec` is answered ONLY by the parser's declared pick, for the question as it was asked (`extras`)."""
+    if spec is None:
+        return False
+    flag = spec.parser_only
+    return bool(flag(extras or {})) if callable(flag) else bool(flag)
+
+
 def picked_option(slot: dict[str, Any], answer: Any) -> Resolved:
     """The option of the open slot the PARSER declared picked (`open_question_answer` mode pick, its first position in
     range), as `Resolved("ok")`; anything else is `Resolved("unknown")`. Never read from the reply's text."""
@@ -397,6 +407,10 @@ def picked_option(slot: dict[str, Any], answer: Any) -> Resolved:
         value, label = options[picked[0] - 1]
         return Resolved("ok", value=value, label=label)
     return Resolved("unknown")
+
+
+def _dict_of(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
 
 
 def reply_verdict(
@@ -421,7 +435,9 @@ def reply_verdict(
     mode = answer.get("mode") if isinstance(answer, dict) else None
     answers = mode in ANSWER_MODES
     asked = next((f for f in (*ask.fields, *ask.slot_fields) if f.name == slot.get("asking")), None)
-    if not ask.answered_by_parser or (ask.shape_fallback and not answers and not (asked and asked.parser_only)):
+    if not ask.answered_by_parser or (
+        ask.shape_fallback and not answers and not is_parser_only(asked, _dict_of(slot.get("extras")))
+    ):
         return _reply_verdict_by_shape(verdict, slot, text, ask)
     if not (text or "").strip() or not answers:
         return verdict, "required_ask_dropped"

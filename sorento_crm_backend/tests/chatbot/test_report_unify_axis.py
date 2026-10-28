@@ -22,8 +22,9 @@ def test_r2_an_axis_the_report_ask_cannot_draw_is_said_and_nothing_runs(bot, sta
     assert "customer, product, brand, category, sales agent, location, channel or month." in text, text
 
 
-def test_r2_the_yearly_comparison_still_runs_on_the_sales_analysis_tool(bot) -> None:
+def test_r2_the_yearly_comparison_is_the_report_ask_grouped_by_year(bot) -> None:
+    """Crew 28 Oct: no chat path calls `crm_sales_analysis`; the Yearly comparison is the report ask, axis year."""
     text, calls = bot.say(
         _status("sales_analysis", group_by="year", sales_basis="delivered", basis=None, **YEAR), "sales by year"
     )
-    assert [n for n, _a in calls] == ["crm_sales_analysis"], (calls, text)
+    assert [n for n, _a in calls] == ["crm_report_ask"] and calls[0][1]["group_by"] == "year", (calls, text)

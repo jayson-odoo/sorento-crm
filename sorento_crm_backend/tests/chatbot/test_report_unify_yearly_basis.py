@@ -1,6 +1,5 @@
-"""REPORT-UNIFY phase 3 fix round, R3: the Yearly comparison (axis year, `crm_sales_analysis`) asks its basis through a
-`required_fields` slot, offering only "Invoiced, delivered or ordered?", never defaulting; the answer runs the analysis
-with that basis. Two turns, the harness of `test_report_unify_routing.py`."""
+"""REPORT-UNIFY phase 3 fix round, R3 (moved to the report ask, crew 28 Oct): the Yearly comparison (axis year) is the
+report ask grouped by year; it asks the ONE basis question, never defaulting; the answer runs it with that basis. Two turns, the harness of `test_report_unify_routing.py`."""
 from __future__ import annotations
 
 import pytest
@@ -13,7 +12,7 @@ from tests.chatbot.test_report_unify_routing import (  # noqa: F401  (bot / cons
     console,
 )
 
-QUESTION = "Invoiced, delivered or ordered?"
+QUESTION = "Invoiced, delivered, ordered or outstanding?"
 
 
 def _yearly(**over):
@@ -21,7 +20,7 @@ def _yearly(**over):
     return _status("sales_analysis", **fields)
 
 
-def test_r3_a_yearly_comparison_naming_no_basis_asks_the_three(bot) -> None:
+def test_r3_a_yearly_comparison_naming_no_basis_asks_the_one_four_option_question(bot) -> None:
     text, calls = bot.say(_yearly(), "sales by year")
     assert calls == [], calls
     assert text.strip() == QUESTION, text
@@ -38,13 +37,13 @@ def test_r3_the_answer_runs_the_yearly_comparison_with_that_basis(bot, position,
         ),
         basis,
     )
-    assert [n for n, _a in calls] == ["crm_sales_analysis"], (calls, text)
+    assert [n for n, _a in calls] == ["crm_report_ask"], (calls, text)  # no chat path calls crm_sales_analysis now
     args = calls[0][1]
-    assert args["basis"] == basis and args["cols"] == "year", args
+    assert args["basis"] == basis and args["group_by"] == "year", args
     assert args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
 
 
 def test_r3_a_basis_named_up_front_is_never_asked(bot) -> None:
     text, calls = bot.say(_yearly(sales_basis="ordered"), "ordered sales by year")
-    assert [n for n, _a in calls] == ["crm_sales_analysis"], (calls, text)
-    assert calls[0][1]["basis"] == "ordered", calls
+    assert [n for n, _a in calls] == ["crm_report_ask"], (calls, text)
+    assert calls[0][1]["basis"] == "ordered" and calls[0][1]["group_by"] == "year", calls

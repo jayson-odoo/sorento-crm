@@ -71,7 +71,8 @@ def test_r6b_4_by_capability_reads_the_typed_axis() -> None:
     absent = {"order_status": "sales_analysis", "group_by": "customer", "measure": None}
     assert report_ask.by_capability(absent)["group_by"] == "customer"  # key absent: today's behaviour
     yearly = {"order_status": "sales_analysis", "group_by": "year", "by_words": "by year", "measure": None}
-    assert report_ask.by_capability(yearly)["order_status"] == "sales_analysis"  # the Yearly comparison file stays on its tool
+    out = report_ask.by_capability(yearly)  # crew 28 Oct: the Yearly comparison is the report ask grouped by year
+    assert out["order_status"] == "sales_ranking" and out["group_by"] == "year", out
 
 
 @pytest.mark.parametrize(

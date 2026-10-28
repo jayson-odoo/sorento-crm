@@ -187,10 +187,12 @@ def test_the_envelope_hands_the_shown_rows_and_their_keys_on():
     assert refused.get("drill_rows") is None, refused
 
 
-def test_required_query_hints_force_the_contact_pair_and_the_period():
+def test_required_query_hints_force_the_contact_pair_only():
+    """The period is the route's to enforce per basis (`period_required`; every date for the outstanding kinds): an
+    MCP-required period rejected every no-period outstanding ask before it reached the route (crew hand test)."""
     from sorento_crm_mcp.server import TOOL_REQUIRED_QUERY_HINTS
 
-    assert TOOL_REQUIRED_QUERY_HINTS["crm_report_ask"] == ("contact_id", "space_id", "date_from", "date_to")
+    assert TOOL_REQUIRED_QUERY_HINTS["crm_report_ask"] == ("contact_id", "space_id")
 
 
 def test_one_printed_row_reads_singular():

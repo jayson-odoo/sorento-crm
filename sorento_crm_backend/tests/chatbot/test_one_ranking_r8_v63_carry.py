@@ -53,8 +53,9 @@ def _row2(**over: Any) -> dict[str, Any]:
 
 
 def _row3(**over: Any) -> dict[str, Any]:
-    """'by salesppl': a sales agent ranking flagged fresh, nothing else read, reuse."""
-    base: dict[str, Any] = dict(group_by="sales_agent", ranking_refine=False)
+    """'by salesppl': a sales agent ranking flagged fresh, nothing else read, reuse. `rank_direction` is the parser's
+    ranking mark: a group_by with none of rank_direction / top_n / rank_by is a breakdown, never asked "How many?"."""
+    base: dict[str, Any] = dict(group_by="sales_agent", ranking_refine=False, rank_direction="top")
     base.update(over)
     return _v63(**base)
 

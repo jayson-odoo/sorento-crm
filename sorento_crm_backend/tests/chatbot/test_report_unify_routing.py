@@ -303,7 +303,7 @@ def test_ac_ru_11_the_reply_naming_the_kind_runs_the_first_ask_with_its_filters_
     period is not asked."""
     text, calls = bot.say(_status("outstanding", _customer(bot), basis=None, **NO_DATES), "outstanding for zzt rank customer")
     assert calls == [] and KIND_QUESTION in text, text
-    _text, calls = bot.say(_reply(basis="unpaid"), "unpaid invoices")
+    _text, calls = bot.say(_reply(basis="unpaid", open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None}), "unpaid invoices")
     args = _only_report_ask(calls)
     assert args["basis"] == "unpaid", args
     assert args["customer_ids"] == [bot.ids["customer"]], args

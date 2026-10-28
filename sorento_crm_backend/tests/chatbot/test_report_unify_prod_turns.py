@@ -194,7 +194,7 @@ def test_p8_outstanding_for_a_product_family_and_length_asks_the_kind_then_runs_
     text, calls = bot.say(parse, "SRTWC 8518-SH-250mm got outstanding?")
     assert calls == [], calls
     assert KIND_QUESTION in text, text
-    text, calls = bot.say(_reply(basis="outstanding"), "undelivered orders")
+    text, calls = bot.say(_reply(basis="outstanding", open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None}), "undelivered orders")
     args = _only_report_ask(calls)
     assert args["basis"] == "outstanding", args
     assert args["product_code"] == P8518, args

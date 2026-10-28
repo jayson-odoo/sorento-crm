@@ -64,6 +64,7 @@ GROUP_BY = {
     "location": "location",
     "channel": "channel",
     "month": "month",
+    "year": "year",
 }
 
 #: The parser's other report types (`order_status`): one that fills no open field of the sales
@@ -81,6 +82,8 @@ CEILING_NOTE = f"I can list at most the top {TOP_N_MAX:,} in one reply."
 #: A month breakdown is a trend, never asked "How many?": every month of the period (1b code
 #: review S2). This is its own row count, not a second top-N limit.
 MONTH_TOP_N = 100
+#: The axes that are a run of time: a trend lists every bucket, oldest first, and shows both measures.
+TREND_AXES = ("month", "year")
 
 #: The plural each word hint's "matches several" line names (1b code review S3).
 SEVERAL_NOUNS = {"brand": "brands", "category": "categories"}
@@ -96,6 +99,7 @@ AXIS_NOUNS = {
     "location": ("location", "locations"),
     "channel": ("channel", "channels"),
     "month": ("month", "months"),
+    "year": ("year", "years"),
 }
 #: Said when a drill names rows ("these agents") and no ranking is held: never a guess.
 NO_RANKING_LINE = (
@@ -105,6 +109,7 @@ NO_RANKING_LINE = (
 #: A channel or a month list is not a drill source: those are named in words.
 NOT_A_SOURCE_LINES = {
     "month": "I can't narrow by the months above. Name the period instead, for example September.",
+    "year": "I can't narrow by the years above. Name the period instead, for example 2026.",
     "channel": "I can't narrow by the channels above. Name the channel instead, for example dealer only.",
 }
 #: The route's per-filter cap (`order_management/report_ask._MAX_VALUES`).
@@ -314,11 +319,11 @@ def _basis_offered(extras: dict[str, Any]) -> tuple[tuple[str, str], ...]:
     return KIND_OPTIONS if extras.get("kind_ask") else BASIS_OPTIONS
 
 
-# Parser only (owner rule 28 Oct): the answer is the parser's declared pick of an offered option, or its own `basis`
-# reading when it is one of them; never a shape fallback and never the reply's text.
+# The answer is the parser's declared pick of an offered option, or its own `basis` reading when it is one of them,
+# never the reply's text. The outstanding KIND question is parser-only (no shape fallback either, crew hand test).
 BASIS = rf.FieldSpec(
     name="basis", noun="basis", question=ranking_ask.RANKING_BASIS_LINE, question_fn=_basis_question,
-    resolve=_resolve_basis, allow_all=False, offered=_basis_offered, parser_only=True,
+    resolve=_resolve_basis, allow_all=False, offered=_basis_offered, parser_only=lambda extras: bool(extras.get("kind_ask")),
 )
 
 #: The scope question's slot (`asking == "scope"`, the drill ask): its words ride on the slot's
@@ -504,6 +509,14 @@ def by_capability(verdict: dict[str, Any], *, subject: bool = False, seam: bool 
         return verdict
     if status in OUTSTANDING_STATUSES:
         return as_outstanding(verdict, subject=subject)
+    if status == ASK_NAME and verdict.get("ranking_refine") is not True:
+        # A group_by with no count, no direction and no ranked measure from the parser is a breakdown, not a ranking:
+        # every row, never "How many?" (crew hand test, 28 Oct). Parser fields only.
+        group = jsc.js_string(typed_group_by(verdict).get("group_by") or "").strip().lower()
+        if group in GROUP_BY and group not in TREND_AXES and not any(
+            verdict.get(k) not in (None, "") for k in ("rank_direction", "top_n", "rank_by")
+        ):
+            return {**verdict, "report_breakdown": True}
     if status not in SALES_STATUSES:
         return verdict  # an order / PO list keeps its own grouping; only the report ask's statuses are typed
     verdict = typed_group_by(verdict)  # R6: a null `by_words` names no axis, so the guess routes nothing
@@ -846,7 +859,7 @@ def _settled_by_its_axis(values: dict[str, Any], group_by: Any) -> dict[str, Any
     """A slot's values less what a total or a month trend settled on its own: its count (none, or the month
     default) and a metric settled EMPTY (both measures shown). A new axis owes those afresh, under its own rules;
     a measure the customer typed (R7) is a value, and stays."""
-    if group_by not in (None, "month"):
+    if group_by not in (None, *TREND_AXES):
         return dict(values)
     return {k: v for k, v in values.items() if k != "top_n" and not (k == "metric" and not _dict(v).get("value"))}
 
@@ -1262,7 +1275,7 @@ def _given_top_n(args: dict[str, Any], top_n: Any) -> dict[str, Any]:
     if not args.get("group_by"):
         return {"top_n": rf.Resolved("ok", value=None, label="")}
     got = top_n_from(top_n)
-    if args.get("group_by") == "month" and got.status != "ok":
+    if args.get("group_by") in TREND_AXES and got.status != "ok":
         return {"top_n": rf.Resolved("ok", value=MONTH_TOP_N, label=str(MONTH_TOP_N))}
     if top_n is None:
         return {}
@@ -1274,7 +1287,7 @@ def _given_choices(args: dict[str, Any]) -> dict[str, Any]:
     and a month trend show both measures, so they are never asked the metric (settled as None);
     the basis is always asked unless named. Anything not named is left out, so it is asked."""
     given: dict[str, Any] = {}
-    if not args.get("group_by") or args.get("group_by") == "month":
+    if not args.get("group_by") or args.get("group_by") in TREND_AXES:
         given["metric"] = rf.Resolved("ok", value=args.get("measure"), label=args.get("measure") or "")
     elif args.get("measure"):
         given["metric"] = rf.Resolved("ok", value=args["measure"], label=args["measure"])
@@ -1428,11 +1441,13 @@ def _settle(
             # one of the options the question offers; anything else is no basis (never "invoiced" for a kind question).
             offered = {v for v, _l in (_basis_offered(extras) if extras.get("kind_ask") else BASIS_OPTIONS)}
             picked = rf.picked_option(slot, _dict(parse_output.get("required_ask_answer")))
-            said = picked.value if picked.status == "ok" else parse_output.get("basis")
+            said = picked.value if picked.status == "ok" else next(
+                (v for v in (parse_output.get("basis"), parse_output.get("sales_basis")) if v in offered), None
+            )
             parse_output = {**parse_output, "basis": said if said in offered else None}
         elif extras.get("kind_ask") and parse_output.get("basis") not in OUTSTANDING_KINDS:
             parse_output = {**parse_output, "basis": None}
-        if asked_field is not None and asked_field.parser_only and asked_field.name != "basis":
+        if asked_field is not None and asked_field.name != "basis" and rf.is_parser_only(asked_field, extras):
             # The company and the sales agent pick: the parser's declared pick only, never the reply's text.
             answer = _dict(parse_output.get("required_ask_answer"))
             return rf.collect(
@@ -1458,7 +1473,7 @@ def _settle(
             args = swapped["args"]
             held = {**_given_choices(args), **_given_top_n(args, extras.get("top_n"))}
             held = _company_held(extras, _dict(slot.get("values")), args, held)
-            if args.get("group_by") != _dict(extras.get("args")).get("group_by") and _dict(extras.get("args")).get("group_by") in (None, "month"):
+            if args.get("group_by") != _dict(extras.get("args")).get("group_by") and _dict(extras.get("args")).get("group_by") in (None, *TREND_AXES):
                 # What a total or a month trend settled on its own (no count, both measures) is not
                 # what the new axis owes: the new axis's rules (`held`) decide, typed values stay.
                 slot = {**slot, "values": _settled_by_its_axis(_dict(slot.get("values")), _dict(extras.get("args")).get("group_by"))}
@@ -1490,15 +1505,17 @@ def _settle(
             return again, None
         reply_dates = {"start": parse_output.get("date_filter_start"), "end": parse_output.get("date_filter_end")}
         reply: Any = jsc.js_string(parse_output.get("required_ask_reply") or "")
-        if asked_field is not None and asked_field.parser_only:
+        if asked_field is not None and (asked_field.name == "basis" or rf.is_parser_only(asked_field, extras)):
             # An option-bearing question never reads the reply's text (`_from_pick` would take a typed digit or label).
             said = basis_from(parse_output)
-            reply = rf.Resolved("ok", value=said, label=said) if said else rf.Resolved("unknown")
+            # (An unread reply keeps its typed words only so a give-up can echo them; they are never interpreted.)
+            reply = rf.Resolved("ok", value=said, label=said) if said else rf.Resolved("unknown", label=str(reply))
         outcome = rf.collect(
             db,
             SALES_RANKING_ASK,
             slot=slot,
             reply=reply,
+            cancel=_dict(parse_output.get("required_ask_answer")).get("mode") == "cancel",  # the parser's declared cancel
             given=held,
             extras={
                 "reply_dates": reply_dates,

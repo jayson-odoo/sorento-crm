@@ -35,7 +35,7 @@ from app.services.chatbot.lanes.business import fetch as fetch_mod
 from app.services.chatbot.lanes.business import low_stock_ask
 from app.services.chatbot.lanes.business import chat_report
 from app.services.chatbot.lanes.business import report_ask
-from app.services.chatbot.lanes.business import sales_basis_ask, sales_company_ask
+from app.services.chatbot.lanes.business import sales_company_ask
 from app.services.chatbot.lanes.business import ranking_ask
 from app.services.chatbot.lanes.business import resolve_gate
 from app.services.chatbot.lanes.business import services as business_services
@@ -1871,7 +1871,7 @@ def run_fetch(
         parse_output = report_ask.take_words(report_ask.from_top_selling(parse_output), "")
         order_status_raw = report_ask.ASK_NAME
     _company_answer = isinstance(parse_output.get("required_ask"), dict) and (
-        parse_output["required_ask"].get("ask") in (sales_company_ask.ASK_NAME, sales_basis_ask.ASK_NAME)
+        parse_output["required_ask"].get("ask") == sales_company_ask.ASK_NAME
     )  # the reply to the Yearly comparison's company question re-runs THAT ask: never retyped here
     if (
         domain in contracts.ORDER_OR_SALES_DOMAINS
@@ -2123,31 +2123,6 @@ def run_fetch(
                 trace.add("report_period", {"unreadable": True, "order_status": order_status_raw})
             return _fixed_reply(report_ask.UNREADABLE_PERIOD_LINE)
 
-    slot_open = parse_output.get("required_ask") if isinstance(parse_output.get("required_ask"), dict) else {}
-    answering_basis = slot_open.get("ask") == sales_basis_ask.ASK_NAME
-    if (
-        order_status_raw == "sales_analysis"
-        and not has_own_accounts
-        and slot_open.get("ask") != sales_company_ask.ASK_NAME
-        and (jsc.js_string(parse_output.get("group_by") or "") == "year" or answering_basis)
-    ):
-        # SALES-TOTAL-ASK (#1931), owner ruling 27 Oct: ONE basis question, "Invoiced, delivered, ordered or
-        # outstanding?", answered by the parser's pick; never defaulted. Only the Yearly comparison (`group_by` year)
-        # is left on the analysis tool (`report_ask.by_capability` turns every other sales total and breakdown into the
-        # report ask, which asks the same line). Outstanding, which the analysis has not, is the report ask's total.
-        settled = sales_basis_ask.settle(db, parse_output)
-        if settled is not None:
-            if trace is not None:
-                trace.add("required_ask", {"ask": sales_basis_ask.ASK_NAME, "done": settled.done, "values": settled.values})
-            if not settled.done:
-                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
-            answered = sales_basis_ask.run_input(settled)
-            parse_output = {**parse_output, **answered, "required_ask": None, "order_status": "sales_analysis"}
-            semantic_input.update(answered)
-        else:
-            semantic_input["sales_basis"] = sales_basis_ask.named_basis(parse_output)
-        if semantic_input.get("sales_basis") == "outstanding":
-            parse_output, order_status_raw = sales_basis_ask.as_report_ask(parse_output), report_ask.ASK_NAME
     if order_status_raw == contracts.SALES_TARGET_STATUS and domain in contracts.ORDER_OR_SALES_DOMAINS:
         # SALES-TARGET-CHAT: the target ask has its own tool; the route scopes the contact
         # (its links or its agents) and the grant was checked above, before any pick.
@@ -2155,50 +2130,11 @@ def run_fetch(
         # The injected scope links are not a named customer: only one the person named goes.
         entities = [e for e in entities if not (isinstance(e, dict) and e.get("scope"))]
         tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_target_override"}}
-    elif order_status_raw == "sales_analysis" and not has_own_accounts:
-        # REPORT-UNIFY (Q1): only the Yearly comparison file is left here (`group_by` year, the one axis the
-        # report ask has not); every other sales analysis is the report ask's (`report_ask.by_capability`).
-        # PLAN-retail-sales-reports-26sep S1: a sales ANALYSIS (a company's sales by
-        # month, by year, by channel) is the reports kernel's own query, answered as the
-        # whole table in text and the same query as an Excel (Owner ruling 26 Sep 07:16
-        # Q2). An override like the two reports beside it, never `tools[0]`; the grant
-        # was checked above, before anything was fetched.
-        # Crew re-verify E2: the REPLY to the company question is never axis-checked. It re-runs
-        # the FIRST message's ask (its axis was checked on the asking turn), so an unsettled
-        # reply gets the question's own line and a settled one copies every carried key, the
-        # empty ones included, over whatever the reply parse carries ("Sorento" parsed with
-        # group_by "date"). A FRESH ask checks its axis first, then asks the company question.
-        slot_asked = parse_output.get("required_ask")
-        answering_company = isinstance(slot_asked, dict) and slot_asked.get("ask") == sales_company_ask.ASK_NAME
-        answering_basis = isinstance(slot_asked, dict) and slot_asked.get("ask") == sales_basis_ask.ASK_NAME
-        if not answering_company and not answering_basis:
-            group_by = jsc.js_string(parse_output.get("group_by") or "")
-            if group_by and group_by != "year":
-                # (REPORT-UNIFY: the report ask draws every other axis; only the Yearly comparison is left here.)
-                # Review round 2 S1: "sales by customer" is not answered with a by-channel
-                # table and no word that the ask was changed; it is said, and nothing fetched.
-                return _sales_analysis_axis_unsupported(group_by)
-        # SALES-COMPANY (CHAT-PICK-QTY-STATE item 1): a contact in two companies who names
-        # neither is asked which HERE, before any fetch, as a `required_fields` slot, so the
-        # reply is read against this question (the route's own "Sorento or Mocha?" came back
-        # as result text and left no question open). The answer re-runs the first message's
-        # analysis: its channel, basis, axis, count and window ride the slot.
-        settled = sales_company_ask.settle(db, parse_output, contact_id=contact_id, space_id=space_id)
-        if settled is not None:
-            if trace is not None:
-                trace.add("required_ask", {"ask": sales_company_ask.ASK_NAME, "done": settled.done,
-                                           "values": settled.values})
-            if not settled.done:
-                return _fixed_reply(settled.reply or "", required_ask=settled.slot)
-            if answering_company:
-                carry = jsc.get(settled.extras, "carry") or {}
-                for key in sales_company_ask.CARRIED:
-                    semantic_input[key] = carry.get(key)
-            for key, value in sales_company_ask.run_input(settled).items():
-                if key == "sales_company" or answering_company or not jsc.truthy(semantic_input.get(key)):
-                    semantic_input[key] = value
-        tool_name = _SALES_ANALYSIS_TOOL
-        tool_item = {"name": tool_name, "_tool_pick": {"source": "sales_analysis_override"}}
+    elif order_status_raw == "sales_analysis" and jsc.js_string(parse_output.get("group_by") or ""):
+        # REPORT-UNIFY: `report_ask.by_capability` turned every sales total and every axis the report ask draws (the
+        # Yearly comparison, axis year, included) into the report ask; what is left names an axis it cannot draw. Said,
+        # never answered with another table, and nothing is fetched. No chat path calls `crm_sales_analysis` any more.
+        return _sales_analysis_axis_unsupported(jsc.js_string(parse_output.get("group_by") or ""))
     elif domain == chat_report.DOMAIN and chat_report.is_chat_report(parse_output):
         # CA-3 (PLAN-chat-analytics-ca3-chat-dataset-10oct.md slice 5): what customers ask
         # the bot, `crm_report_ask` with `dataset=chat`. The reveal was checked above; every

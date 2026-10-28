@@ -3394,6 +3394,7 @@ _REPORT_ASK_PLURALS = {
     "location": "locations",
     "channel": "channels",
     "month": "months",
+    "year": "years",
 }
 
 
@@ -3467,7 +3468,7 @@ def _ask_rows(rows: list, group_by: Any, measure: Any = None, sort: Any = None) 
         else:
             merged[name] = dict(row)
     out = list(merged.values())
-    if group_by == "month":
+    if group_by in ("month", "year"):
         out.sort(key=lambda r: str(r.get("name")))
     elif len(out) < len(rows):
         first, second = {"qty": ("qty", "amount"), "amount": ("amount", "qty")}.get(str(measure), ("count", "amount"))
@@ -3576,9 +3577,10 @@ def _report_ask(body: dict) -> str:
         # REPORT-SMART-L R3a: what the top selling reply said of a least sold ranking (an item that sold nothing is never ranked).
         lines.insert(1, TOP_SELLING_NO_SALE_LINE.replace("Items", "Categories") if group_by == "category" else TOP_SELLING_NO_SALE_LINE)
     for row in rows:
-        if group_by == "month":
-            # A trend, not a ranking: its months in date order, no rank number.
-            lines.append(f"{_ask_month(row.get('name'))} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
+        if group_by in ("month", "year"):
+            # A trend, not a ranking: its months (or years) in date order, no rank number.
+            when = _ask_month(row.get("name")) if group_by == "month" else str(row.get("name"))
+            lines.append(f"{when} {_ask_figures(row, measure)}{_ask_before(row, measure)}")
         else:
             label = row.get("code") if group_by == "category" and _filled(row.get("code")) else row.get("name")
             lines.append(f"{row.get('rank')}. {label} {_ask_figures(row, measure)}{_ask_before(row, measure)}")

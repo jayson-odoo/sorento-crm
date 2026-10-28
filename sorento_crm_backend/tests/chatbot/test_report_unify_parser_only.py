@@ -47,15 +47,15 @@ def test_the_yearly_basis_answered_by_the_parsers_pick_runs_that_basis(bot, posi
     bot.say(_yearly(), "sales by year")
     # The words are not the option's label: only the declared pick position can name the basis.
     text, calls = bot.say(_answer(position), "the one i said before lah")
-    assert [n for n, _a in calls] == ["crm_sales_analysis"], (calls, text)
-    assert calls[0][1]["basis"] == basis, calls
+    assert [n for n, _a in calls] == ["crm_report_ask"], (calls, text)
+    assert calls[0][1]["basis"] == basis and calls[0][1]["group_by"] == "year", calls
 
 
 @pytest.mark.parametrize("basis", ["invoiced", "delivered", "ordered"])
 def test_a_short_reply_the_parser_did_not_declare_an_answer_is_not_taken_as_the_yearly_basis(bot, basis) -> None:
     bot.say(_yearly(), "sales by year")
     text, calls = bot.say(_undeclared(sales_basis=basis), basis)
-    assert not [a for n, a in calls if n == "crm_sales_analysis" and a.get("basis") == basis], (calls, text)
+    assert not [a for n, a in calls if a.get("basis") == basis and a.get("group_by") == "year"], (calls, text)
 
 
 # ---------------------------------------------------------------- the company pick
@@ -183,3 +183,43 @@ def test_total_sales_for_a_two_company_contact_asks_the_company_first(bot) -> No
     sorento, mocha = _two_companies(bot)
     text, calls = bot.say(_status("sales_analysis", group_by=None, sales_basis=None, basis=None), "total sales 2026")
     assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+
+
+# ---------------------------------------------------------------- the Yearly comparison is the report ask (crew, 28 Oct)
+
+
+def test_sales_by_year_asks_the_one_basis_question_then_a_pick_runs_the_report_ask_by_year(bot) -> None:
+    two_years = {"date_filter_start": "2025-01-01", "date_filter_end": "2026-12-31"}
+    text, calls = bot.say(
+        _status("sales_analysis", group_by="year", sales_basis=None, basis=None, **two_years), "sales by year 2025 to 2026"
+    )
+    assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
+    text, calls = bot.say(_answer(2), "the middle one")
+    assert [n for n, _a in calls] == ["crm_report_ask"], (calls, text)
+    args = calls[0][1]
+    assert args["group_by"] == "year" and args["basis"] == "delivered", args
+    assert args["date_from"] == "2025-01-01" and args["date_to"] == "2026-12-31", args
+
+
+# ---------------------------------------------------------------- a breakdown is not a ranking: no "How many?"
+
+
+def test_a_group_by_with_no_count_direction_or_rank_by_is_a_breakdown_never_asked_how_many(bot) -> None:
+    sep = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
+    breakdown = _status(
+        "sales_ranking", group_by="sales_agent", rank_direction=None, top_n=None, rank_by=None, measure=None,
+        basis=None, **sep,
+    )
+    text, calls = bot.say(breakdown, "Total sale for all sale agents on September 2026")
+    assert calls == [] and "How many" not in text, (text, calls)
+    # The measure and the basis stay asked (one numbered reply); the parser fills both from one answer.
+    answered = _reply(
+        message_type="business_query", domain_hint=None, intent_hint=None, entities=[], measure="amount", basis="delivered",
+        open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None},
+    )
+    text, calls = bot.say(answered, "amount, delivered")
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "sales_agent" and args["basis"] == "delivered" and "top_n" not in {
+        k for k, v in args.items() if v is None
+    }, args
+    assert "How many" not in text, text

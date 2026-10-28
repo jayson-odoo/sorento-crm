@@ -259,7 +259,7 @@ def test_r9_review_after_a_sales_analysis_total_the_reply_is_not_a_sales_report(
     analysis = _v63(order_status="sales_analysis", entities=[], entity_op="replace_combine", domain_in_message=True,
                     sales_basis="invoiced", **YEAR_2026)
     text, log = _turn(console, monkeypatch, analysis, "total invoiced sales in 2026")
-    assert not _calls(log, SALES_REPORT_TOOL) and _ran(log) == [], ("setup", text, log)
+    assert not _calls(log, SALES_REPORT_TOOL) and len(_ran(log)) == 1, ("setup", text, log)  # the report ask's total
     from app.services.chatbot.lanes.business.report_ask import CATALOGUE_LINE
 
     text, log = _turn(console, monkeypatch, _axisless(), "qty, delivered")

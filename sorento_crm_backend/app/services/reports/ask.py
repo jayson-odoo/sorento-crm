@@ -32,7 +32,7 @@ from app.services.sales_report_service import _money_edge, _qty
 #: The words a caller may group by and filter by. Every word is named the same as the column or
 #: param key behind it, so one list each serves every basis (a word that differs from its key
 #: earns a mapping then).
-DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month")
+DIMENSIONS = ("customer", "product", "brand", "category", "sales_agent", "location", "channel", "month", "year")
 FILTERS = ("customer", "product", "brand", "category", "sales_agent", "customer_agent", "location", "channel")
 
 #: The datasets a caller may ask over; the first is the default (a call naming none is sales).
@@ -81,7 +81,7 @@ CATALOGUE: dict[str, dict[str, dict[str, Any]]] = {
         "unpaid": {
             "definition": unpaid_documents.DEFINITION,
             "label": "unpaid invoices",
-            "dimensions": ("customer", "sales_agent", "month"),
+            "dimensions": ("customer", "sales_agent", "month", "year"),
             "filters": ("customer", "sales_agent", "customer_agent"),
         },
     },
@@ -104,7 +104,7 @@ PER_DOCUMENT_FILTERS = ("product", "brand", "category", "spec", "location", "cha
 SPEC_GROUP = "spec:"
 
 #: What a customer-scoped contact (a dealer) may group or filter by (PLAN section 0, Q1/Q2).
-DEALER_KEYS = frozenset({"product", "brand", "category", "month", "sales_order"})
+DEALER_KEYS = frozenset({"product", "brand", "category", "month", "year", "sales_order"})
 CHAT_DEALER_KEYS = frozenset({"topic", "subject", "product", "month"})
 
 GROUP_LABELS = {
@@ -116,6 +116,7 @@ GROUP_LABELS = {
     "location": "Location",
     "channel": "Channel",
     "month": "Month",
+    "year": "Year",
     "sales_order": "Sales order",
 }
 

@@ -1381,3 +1381,24 @@ def test_group_by_sales_order_is_refused_on_the_other_order_bases(client, db, ba
     resp = client.get(ROUTE, params={**PERIOD, "basis": basis, "group_by": "sales_order", "top_n": 5,
                                      **_as_contact(_full(db))}, headers=KEY)
     assert resp.status_code == 422 and resp.json()["code"] == "unknown_group_by", resp.text
+
+
+def test_group_by_year_rows_sum_to_the_total_across_a_two_year_period(client, db):
+    """Crew (28 Oct): the Yearly comparison is the report ask grouped by year, on the ask's own line date."""
+    cust = seed_customer(db, name=unique_code("Cust"))
+    prod = _prod(db, "ZZTYR-1")
+    seed_so_line(db, cust=cust, prod=prod, qty=3, total="300.00", order_date=date(2025, 6, 10))
+    seed_so_line(db, cust=cust, prod=prod, qty=2, total="200.00", order_date=date(2025, 11, 2))
+    seed_so_line(db, cust=cust, prod=prod, qty=5, total="500.00", order_date=date(2026, 3, 5))
+    db.commit()
+    window = {"date_from": "2025-01-01", "date_to": "2026-12-31"}
+    contact = _full(db)
+    whole = client.get(ROUTE, params={**window, "basis": "delivered", **_as_contact(contact)}, headers=KEY).json()
+    body = client.get(
+        ROUTE, params={**window, "basis": "delivered", "group_by": "year", "top_n": 10, **_as_contact(contact)}, headers=KEY
+    ).json()
+    assert {r["name"]: (r["qty"], money(r["amount"])) for r in body["rows"]} == {
+        "2025": (5, D("500.00")), "2026": (5, D("500.00")),
+    }, body["rows"]
+    assert sum(r["qty"] for r in body["rows"]) == whole["total"]["qty"], (body, whole)
+    assert body["group_label"] == "Year", body

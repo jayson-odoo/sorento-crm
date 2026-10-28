@@ -25,7 +25,10 @@ def test_r4_a_bare_outstanding_asks_the_kind_and_runs_nothing(bot, status) -> No
 def test_r4_the_kind_answer_runs_the_whole_company_figure_never_the_order_list(bot) -> None:
     bot.say(_status("outstanding", basis=None, **NO_DATES), "outstanding")
     text, calls = bot.say(
-        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="pending_delivery"),
+        _reply(
+            message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="pending_delivery",
+            open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None},
+        ),
         "pending delivery",
     )
     args = _only_report_ask(calls)
@@ -65,7 +68,10 @@ def test_s11_a_kind_answer_after_the_outstanding_reveal_was_revoked_is_refused(b
         },
     )
     text, calls = bot.say(
-        _reply(message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="pending_delivery"),
+        _reply(
+            message_type="business_query", domain_hint=None, intent_hint=None, entities=[], basis="pending_delivery",
+            open_question_answer={"mode": "fill", "picked": [], "items": [], "qty_for_all": None},
+        ),
         "pending delivery",
     )
     assert calls == [], calls

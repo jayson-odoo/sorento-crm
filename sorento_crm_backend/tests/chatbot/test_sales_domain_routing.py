@@ -102,10 +102,10 @@ class TestTheSalesStatusesMeanTheSalesDomain:
 
 
 class TestTheLanePicksTheSalesTools:
-    def test_the_yearly_comparison_stays_on_the_sales_analysis_tool(self, session_factory) -> None:
-        # REPORT-UNIFY (Q1): only the Yearly comparison file (axis year) is left on `crm_sales_analysis`. A basis is named: it is asked, never defaulted (owner, 27 Oct).
+    def test_the_yearly_comparison_is_the_report_ask_grouped_by_year(self, session_factory) -> None:
+        # Crew 28 Oct: no chat path calls `crm_sales_analysis`. A basis is named: it is asked, never defaulted (owner, 27 Oct).
         captured = _picked("sales", "sales_analysis", [], group_by="year", sales_basis="delivered", response=_sales_analysis_hit())
-        assert [c[0] for c in captured] == ["crm_sales_analysis"]
+        assert [c[0] for c in captured] == ["crm_report_ask"] and captured[0][1]["group_by"] == "year", captured
 
     def test_sales_analysis_under_sales_is_the_report_ask(self, session_factory) -> None:
         captured = _picked("sales", "sales_analysis", [], basis="delivered", response=_sales_analysis_hit(), **_A_MONTH)

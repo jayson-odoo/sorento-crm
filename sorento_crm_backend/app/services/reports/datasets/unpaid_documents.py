@@ -64,6 +64,7 @@ COLUMNS = (
         lambda c: sa.func.coalesce(SalesAgent.sales_agent, NO_AGENT), size=140,
     ),
     reg.Column("month", "Month", "text", "dimension", lambda c: sa.func.to_char(BillingDocument.doc_date, "YYYY-MM"), size=110),
+    reg.Column("year", "Year", "text", "dimension", lambda c: sa.cast(sa.cast(sa.extract("year", BillingDocument.doc_date), sa.Integer), sa.Text), size=90),
     reg.Column("all", "All", "text", "dimension", lambda c: sa.cast(sa.literal("all"), sa.Text), size=80),
     reg.Column("amount", "RM", "money", "measure", lambda c: BillingDocument.outstanding, size=130),
     # No quantity on a document: the shared pivot reads one, so it stays resolvable but is not offered.
