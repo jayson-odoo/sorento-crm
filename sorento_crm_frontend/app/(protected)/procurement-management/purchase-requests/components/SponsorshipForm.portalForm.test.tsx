@@ -2,12 +2,12 @@
  * PORTAL-P4-REQUESTS R2 (form parity, PAR-1/3/5): a LIMITED user (`view_own`, not `view`) creates, edits and VIEWS a
  * Sponsorship Form through the PORTAL's own SubmissionForm (kind `sponsorship_form`), wired to `/api/v1/my-requests` by an injected
  * client. Entry points are the components the pages render: PurchaseRequestForm (new / edit) and
- * PurchaseRequestDetail (view). Staff keep today's screens; the staff detail adds "External reference" read-only.
+ * PurchaseRequestDetail (view). Staff keep today's screens.
  * Mirrors StockInquiry.portalForm.test.tsx.
  */
 import React from 'react';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { createCrmApi, json, SF_DETAIL } from '@/app/(auth)/portal/components/__fixtures__/crmSubmissionApi';
 
@@ -193,11 +193,6 @@ describe('limited user, New Sponsorship Form renders the portal form', () => {
     await waitFor(() => expect(urls((c) => c.url.startsWith('/api/v1/my-requests/requestor-options')).length).toBeGreaterThan(0), { timeout: 3000 });
   });
 
-  it('has an External reference input', async () => {
-    mountForm(LIMITED);
-    await waitFor(() => expect(document.getElementById('external_reference')).not.toBeNull());
-  });
-
   it('the attachment dropzone is on create; a picked file uploads via /api/v1/my-requests/attachments only after the draft exists', async () => {
     const { container } = mountForm(LIMITED);
     expect(await screen.findByRole('button', { name: /Choose file/i })).toBeInTheDocument();
@@ -341,20 +336,6 @@ describe('staff keep today\'s Sponsorship Form screens', () => {
     const names = [...screen.queryAllByRole('button'), ...screen.queryAllByRole('link')].map((n) => (n.textContent ?? '').trim());
     expect(names).toContain('Edit');
     expect(urls((c) => c.url.startsWith('/api/v1/my-requests/submissions'))).toHaveLength(0);
-  });
-
-  it('staff detail shows External reference read-only (text, no input)', async () => {
-    mountDetail(STAFF, { external_reference: 'EXT-9' });
-    const label = await screen.findByText('External reference');
-    expect(within(label.parentElement as HTMLElement).getByText('EXT-9')).toBeInTheDocument();
-    expect(document.getElementById('external_reference')).toBeNull();
-    expect(screen.queryByDisplayValue('EXT-9')).toBeNull();
-  });
-
-  it('an empty External reference renders the detail\'s usual empty marker', async () => {
-    mountDetail(STAFF, { external_reference: null });
-    const label = await screen.findByText('External reference');
-    expect((label.parentElement?.textContent ?? '').replace('External reference', '').trim()).toBe('-');
   });
 });
 
