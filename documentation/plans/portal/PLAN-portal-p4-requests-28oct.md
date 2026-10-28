@@ -41,9 +41,18 @@ Server (shared slice S0, before the per-form slices):
    a foreign id answers 404; every other staff route answers 403 (P2 `_own_scope.py` pattern). The complaints list
    accepts `view_own` next to `view` (`complaints.py:268`). Form comments accept `view_own` on an own row
    (`form_comment_service.py:46-51`).
-4. Write surface for a LIMITED user: `/api/v1/my-requests/{kind}/...` mirroring the portal routes
-   (`public/portal.py:787-798, 1098-1259, 1369, 1549, 1652-1756`): draft create/save/delete, submit, revise,
-   revision-draft, requestor-options, attachments, comments. Identity = a transient, never-persisted portal identity
+4. Write surface for a LIMITED user, CONTRACT: router mounted at `/api/v1/my-requests` exposing the SAME paths,
+   bodies and responses as the portal router (`public/portal.py`), so FE and tests reuse the portal shapes:
+   `GET /requestor-options` (787), `GET /submissions/{kind}/{id}` (1058), revisions GETs (1076, 1197),
+   `POST /submissions/{kind}/{id}/revise` (1098), `PUT|DELETE /submissions/{kind}/{id}/revision-draft` (1148, 1173),
+   `POST /submissions/{kind}` (1223), `PUT /submissions/{kind}/{id}` (1235), `DELETE /submissions/{kind}/{id}` (1248),
+   `POST /submissions/{kind}/{id}/submit` (1259), `GET|POST /attachments` (1369, 1549),
+   `GET /attachments/{id}/download` (1497), `DELETE /attachments/{link_id}` (1756),
+   `GET|POST /submissions/{kind}/{id}/comments`, `PATCH|DELETE .../comments/{comment_id}` (1652-1736).
+   Kinds allowed in S0: `stock_inquiry`, `complaint`, `purchase_request`, `sponsorship_form`; any other kind 404 until
+   card v1.1 is answered. Caller must hold `<kind>.view_own` and have a linked contact (else 403); create also needs
+   the kind's `.add`. Staff (holders of `.view`) are refused (403): they keep the staff create.
+   Identity = a transient, never-persisted portal identity
    (contact_id = `me().contact_id`, space_id = the contact's workspace space, `contact_impersonation.py:69-88`) passed
    to the SAME functions (`portal_service.create_or_update_draft` 1042, `submit_draft` 1089, `delete` ~1391,
    `portal_revision_service.revise` 1507). The portal code reads only `contact_id` / `space_id` off the token in these
