@@ -44,7 +44,11 @@ decision), so a link or unlink leaves no trace. And `DELETE /master-data/product
 
 ## Tests
 
-`tests/test_product_attachment_audit.py`: 403 without the slug; delete with it writes one UNLINK
-row rooted on the product with filename + type; create writes LINK; certificate coverage removal
-writes UNLINK; the external n8n link writes none; the product trail endpoint returns the row
-with the description.
+`tests/test_product_attachment_audit.py`: 403 on POST, PUT and DELETE without the slug; a
+non-admin holding it can delete; delete writes one UNLINK row rooted on the product with filename
++ type; create writes LINK, a re-POST writes none; certificate coverage add/remove writes
+LINK/UNLINK, covering a second product does not re-log the first; unlinking a cert file from the
+product writes one row; the n8n intake writes none; the product trail endpoint returns the row
+with the description; the Activity timeline reads it as added/removed with no id chips (LINK /
+UNLINK map to created / deleted in `activity_service._fe_action`). Catalogue photo replace:
+`tests/test_catalogue_photo_readings_api.py`.

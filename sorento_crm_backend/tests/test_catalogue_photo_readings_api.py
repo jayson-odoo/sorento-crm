@@ -818,15 +818,15 @@ class TestAttach:
             assert client.post(f"{PREFIX}/{reading_id}/attach").status_code == 200
 
         photo_a = self._photo(api, reading_id, CODE_A)
-        trail = {
+        trail = sorted(
             (r.action, (r.old_values or r.new_values)["attachment_id"])
             for r in api.db.query(AuditLog).filter(
                 AuditLog.root_entity_type == "product",
                 AuditLog.root_entity_id == str(products[CODE_A].id),
                 AuditLog.action.in_(["LINK", "UNLINK"]),
             )
-        }
-        assert trail == {("UNLINK", str(lookalike.id)), ("LINK", str(photo_a.attachment_id))}
+        )
+        assert trail == [("LINK", str(photo_a.attachment_id)), ("UNLINK", str(lookalike.id))]
 
     def test_keep_both_keeps_the_old_link_and_adds_the_new(self, api) -> None:
         _photo_type(api.db)

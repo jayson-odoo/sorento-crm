@@ -239,3 +239,44 @@ def test_the_n8n_intake_link_stays_unaudited(env):
     assert response.status_code == 200, response.text
     assert env.projection(attachment.id)
     assert _trail_rows(env, product.id) == []
+
+
+def test_covering_a_second_product_leaves_the_first_products_trail_alone(env):
+    """Only the NEW coverage row is a link: covering B must not re-log A."""
+    cert_type = env.attachment_type(is_certificate=True, name="Certification")
+    attachment = env.attachment(cert_type, "covab")
+    first, second = env.product("COVA"), env.product("COVB")
+    created = _create(
+        env,
+        certificate_number="AUDIT COV 3",
+        attachment_id=str(attachment.id),
+        valid_until=(TODAY + timedelta(days=400)).isoformat(),
+    )
+    for product in (first, second):
+        added = env.client.post(
+            f"{CERT_BASE}/{created['id']}/products", json={"product_id": str(product.id)}
+        )
+        assert added.status_code == 201, added.text
+
+    assert len(_trail_rows(env, first.id, "LINK")) == 1
+    assert len(_trail_rows(env, second.id, "LINK")) == 1
+
+
+def test_the_activity_timeline_reads_an_unlink_as_removed_without_id_chips(env):
+    """LINK / UNLINK carry only ids and names; diffed as an update they would print UUIDs."""
+    _product, attachment, drawing_type, link = _drawing_link(env)
+    assert env.client.delete(f"{LINKS}/{link.id}").status_code == 200
+
+    response = env.client.get(
+        "/api/v1/audit/activity",
+        params={"entity_type": "product_attachments", "action": "deleted"},
+    )
+
+    assert response.status_code == 200, response.text
+    items = [i for i in response.json()["items"] if i["entity_id"] == str(link.id)]
+    assert len(items) == 1
+    assert items[0]["action"] == "deleted"
+    assert items[0]["changes"] == []
+    assert items[0]["summary"] == (
+        f"File unlinked: {attachment.original_filename} ({drawing_type.type_name})"
+    )
