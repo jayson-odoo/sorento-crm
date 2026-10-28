@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, HTTPException, status, Body, File
 from sqlalchemy.orm import Session
 
 logger = logging.getLogger(__name__)
+from app.utils.multi_value import multi_uuids
 from app.database import get_db
 from app.dependencies import get_current_user, get_current_user_or_api_key, require_permission
 from app.services.procurement_service import SPOAllocationService
@@ -207,8 +208,8 @@ async def get_spo_documents(
         ),
     ),
     state: str = Query("outstanding"),
-    product_id: Optional[str] = Query(None),
-    warehouse_id: Optional[str] = Query(None),
+    product_id: Optional[list[str]] = Query(None),
+    warehouse_id: Optional[list[str]] = Query(None),
     overdue_only: bool = Query(False),
     sort: Optional[str] = Query("spo_number"),
     dir: Optional[str] = Query("desc"),
@@ -219,14 +220,16 @@ async def get_spo_documents(
     newest first by default, the fifth reader of `spo_supply.open_incoming_clauses()`.
     `query` also matches the raw, unlinked `spo_allocations.container_number` (PLAN-
     spo-list-container-number.md AC-4)."""
+    product_ids = multi_uuids(product_id, "Product")
+    warehouse_ids = multi_uuids(warehouse_id, "Warehouse")
     try:
         service = SPOAllocationService(db)
         result = service.list_documents(
             page=page,
             limit=limit,
             state=state,
-            product_id=product_id,
-            warehouse_id=warehouse_id,
+            product_id=product_ids,
+            warehouse_id=warehouse_ids,
             overdue_only=overdue_only,
             query=query,
             sort_field=sort or "spo_number",

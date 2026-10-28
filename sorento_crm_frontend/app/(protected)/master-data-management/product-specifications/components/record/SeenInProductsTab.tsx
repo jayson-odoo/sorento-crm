@@ -16,7 +16,8 @@ import { DataGridListToolbar } from '@/components/ui/data-grid-list-toolbar';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { readableValue } from '@/lib/spec-readable';
 import { useSpecKeyProductsQuery } from '../../hooks/useSpecKeyProductsQuery';
@@ -52,8 +53,8 @@ export function SeenInProductsTab({
   valueLabels?: Record<string, string>;
 }) {
   const pathname = usePathname();
-  const [valueFilter, setValueFilter] = useState<string | undefined>();
-  const [classFilter, setClassFilter] = useState<string | undefined>();
+  const [valueFilter, setValueFilter] = useState<string[]>([]);
+  const [classFilter, setClassFilter] = useState<string[]>([]);
   const [sourceFilter, setSourceFilter] = useState<string | undefined>();
   const [pagination, setPagination] = useState<PaginationState>({
     pageIndex: 0,
@@ -71,9 +72,9 @@ export function SeenInProductsTab({
   }, [query, valueFilter, classFilter, sourceFilter]);
 
   const { data, isLoading, isFetching, isPlaceholderData, error, refetch } = useSpecKeyProductsQuery(specKey, {
-    value: valueFilter,
+    value: valueFilter.length ? valueFilter : undefined,
     q: query || undefined,
-    classLabel: classFilter,
+    classLabel: classFilter.length ? classFilter : undefined,
     source: sourceFilter,
     limit: pagination.pageSize,
     offset: pagination.pageIndex * pagination.pageSize,
@@ -187,8 +188,8 @@ export function SeenInProductsTab({
   );
 
   const filtersActiveCount =
-    (valueFilter !== undefined ? 1 : 0) +
-    (classFilter !== undefined ? 1 : 0) +
+    (valueFilter.length ? 1 : 0) +
+    (classFilter.length ? 1 : 0) +
     (sourceFilter !== undefined ? 1 : 0);
 
   return (
@@ -223,9 +224,9 @@ export function SeenInProductsTab({
                 activeCount: filtersActiveCount,
                 content: (
                   <div className="space-y-3">
-                    <SearchableSelect
-                      value={valueFilter ?? ''}
-                      onChange={(v) => setValueFilter(v || undefined)}
+                    <SearchableMultiSelect
+                      value={valueFilter}
+                      onChange={setValueFilter}
                       clearable
                       placeholder="Value"
                       options={(data?.by_value ?? []).map((row) => ({
@@ -233,9 +234,9 @@ export function SeenInProductsTab({
                         label: `${readableValue(row.value, unit ?? undefined, valueLabels)} (${row.count.toLocaleString()})`,
                       }))}
                     />
-                    <SearchableSelect
-                      value={classFilter ?? ''}
-                      onChange={(v) => setClassFilter(v || undefined)}
+                    <SearchableMultiSelect
+                      value={classFilter}
+                      onChange={setClassFilter}
                       clearable
                       placeholder="Class"
                       options={(data?.by_class ?? []).map((row) => ({
@@ -243,9 +244,9 @@ export function SeenInProductsTab({
                         label: `${row.class ?? 'unclassed'} (${row.count.toLocaleString()})`,
                       }))}
                     />
-                    <SearchableSelect
-                      value={sourceFilter ?? ''}
-                      onChange={(v) => setSourceFilter(v || undefined)}
+                    <SearchableMultiSelect
+                      value={splitMulti(sourceFilter)}
+                      onChange={(v) => setSourceFilter(joinMulti(v) || undefined)}
                       clearable
                       placeholder="Source"
                       options={(data?.by_source ?? []).map((row) => ({

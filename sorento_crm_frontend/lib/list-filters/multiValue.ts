@@ -45,3 +45,16 @@ export function idFilterLabels(
 ): string[] {
   return chosen.map((o) => (o.label === o.value ? unknown : o.label));
 }
+
+/**
+ * The values of a FREE-TEXT filter read from a link: one repeated param per value, each read whole
+ * (a value can contain a comma). Stripped and deduped, never split.
+ */
+export function splitText(raws: readonly string[]): string[] {
+  const out: string[] = [];
+  for (const raw of raws) {
+    const value = raw.trim();
+    if (value && !out.includes(value)) out.push(value);
+  }
+  return out;
+}

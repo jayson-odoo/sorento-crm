@@ -549,21 +549,22 @@ export async function getSpecCoverage(): Promise<SpecCoverage> {
 export async function getSpecKeyProducts(
   specKey: string,
   params: {
-    value?: string;
+    /** Free-text values ride repeated params, one each, so a value with a comma stays whole. */
+    value?: string[];
     q?: string;
-    classLabel?: string;
+    classLabel?: string[];
     source?: string;
     limit?: number;
     offset?: number;
   } = {},
 ): Promise<SpecKeyProducts> {
   const query = new URLSearchParams();
-  if (params.value !== undefined) query.set('value', params.value);
+  for (const v of params.value ?? []) query.append('value', v);
   // Searched server-side over the whole key, not over the page on screen.
   if (params.q) query.set('q', params.q);
   // Class and Source narrow the query itself (UAC B.5, D17), not the page already on
   // screen - a key with 10,000 rows only has one page loaded client-side.
-  if (params.classLabel) query.set('class_label', params.classLabel);
+  for (const c of params.classLabel ?? []) query.append('class_label', c);
   if (params.source) query.set('source', params.source);
   query.set('limit', String(params.limit ?? 100));
   query.set('offset', String(params.offset ?? 0));

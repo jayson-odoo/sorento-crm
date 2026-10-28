@@ -84,7 +84,7 @@ class TestToolPickAndArgs:
         call, captured = _capturing_mcp(_rendered())
         out = run_fetch(_payload(sales_basis=None), services=FetchServices(mcp_call=call))
         assert captured == [], captured
-        assert "Invoiced, delivered or ordered?" in str(out), out
+        assert "Invoiced, delivered, ordered or outstanding?" in str(out), out
 
     def test_a_total_asks_channel_by_year(self, session_factory):
         _name, args = _args(session_factory, sales_channel="project")
@@ -131,7 +131,7 @@ class TestGate:
         _seed_contact(session_factory, variables={})
         result, captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[]),
+            qf=_qf(order_status="sales_analysis", entities=[], sales_basis="invoiced"),
             text_body="total project sales this year", msg_id="ZZT-sa-no-key-1",
             attributes=[],
         )

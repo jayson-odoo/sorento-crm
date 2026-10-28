@@ -204,7 +204,8 @@ def _turn_a() -> dict[str, Any]:
 
 
 def _turn_b(**overrides: Any) -> dict[str, Any]:
-    """"dealer sales september 2026", the no-product ask (a product-naming parse runs the report)."""
+    """"dealer sales september 2026", the no-product ask (a product-naming parse runs the report). Its basis is
+    named: one with none is asked the basis before the company (SALES-TOTAL-ASK, `test_sales_total_ask` T6)."""
     base = dict(
         domain_hint="order", intent_hint="check_order", order_status="sales_analysis",
         sales_channel="dealer", sales_company=None, sales_basis="delivered", group_by="year",
@@ -378,7 +379,8 @@ def test_g3_another_ask_while_the_question_is_open_is_its_own_ask(two):
 
 
 def _turn_e1() -> dict[str, Any]:
-    """"dealer sales september 2026", as the parser emitted it live (v63, gpt-5.4-mini)."""
+    """"dealer sales september 2026", as the parser emitted it live (v63, gpt-5.4-mini), with its basis named
+    (one with none is asked the basis before the company: SALES-TOTAL-ASK)."""
     return _parser_output(
         domain_hint="sales", intent_hint="check_order", order_status="sales_analysis",
         sales_channel="dealer", sales_company=None, sales_basis="delivered", group_by="year",

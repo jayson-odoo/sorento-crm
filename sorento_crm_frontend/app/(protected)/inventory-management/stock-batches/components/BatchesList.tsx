@@ -22,7 +22,8 @@ import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBatches } from '../hooks/useStockBatches';
 import type { StockBatch } from '../types/batch.types';
@@ -193,15 +194,13 @@ export default function BatchesList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter || 'all'}
-                      onChange={(v) => setStatusFilter(v === 'all' ? '' : v)}
-                      options={[
-                        { value: 'all', label: 'All statuses' },
-                        ...BATCH_STATUSES.map((s) => ({ value: s.value, label: s.label })),
-                      ]}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
+                      options={BATCH_STATUSES.map((s) => ({ value: s.value, label: s.label }))}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
+                      clearable
                     />
                   </div>
                   {statusFilter && (

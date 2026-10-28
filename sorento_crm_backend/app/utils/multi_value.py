@@ -28,6 +28,23 @@ def multi_values(raw: Iterable[str] | str | None) -> Optional[list[str]]:
     return out or None
 
 
+def multi_text(raw: Iterable[str] | str | None) -> Optional[list[str]]:
+    """The values of a FREE-TEXT filter (a class label, a spec value), which can contain commas.
+
+    The frontend sends one repeated param per value, so every item is ONE value, read whole:
+    stripped, deduped, never split. Use ``multi_values`` for ids and codes.
+    """
+    if raw is None:
+        return None
+    items = [raw] if isinstance(raw, str) else raw
+    out: list[str] = []
+    for item in items:
+        value = str(item or "").strip()
+        if value and value not in out:
+            out.append(value)
+    return out or None
+
+
 def multi_uuids(raw: Iterable[str] | str | None, label: str) -> Optional[list[str]]:
     """``multi_values`` for ids: each must be a UUID, else a 422 naming the filter."""
     values = multi_values(raw)

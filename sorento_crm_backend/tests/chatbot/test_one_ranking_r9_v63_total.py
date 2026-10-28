@@ -255,9 +255,10 @@ def test_r9_review_a_typed_count_with_no_axis_keeps_today_s_reply(console, monke
 
 
 def test_r9_review_after_a_sales_analysis_total_the_reply_is_not_a_sales_report(console, monkeypatch) -> None:
+    # SALES-TOTAL-ASK: the total names its basis, or it is asked one first (`test_sales_total_ask`).
     analysis = _v63(order_status="sales_analysis", entities=[], entity_op="replace_combine", domain_in_message=True,
-                    **YEAR_2026)
-    text, log = _turn(console, monkeypatch, analysis, "total sales in 2026")
+                    sales_basis="invoiced", **YEAR_2026)
+    text, log = _turn(console, monkeypatch, analysis, "total invoiced sales in 2026")
     assert not _calls(log, SALES_REPORT_TOOL) and _ran(log) == [], ("setup", text, log)
     from app.services.chatbot.lanes.business.report_ask import CATALOGUE_LINE
 

@@ -20,6 +20,7 @@ from sqlalchemy.orm import Session
 
 import app.services.scm.proforma_invoice_service as pi_service
 import app.services.scm.supplier_code_matcher as matcher
+from app.utils.multi_value import multi_values
 from app.services.error_handler import AppException
 from app.services.pdf_render import today_in_malaysia
 from app.services.procurement.supplier_cost_service import (
@@ -840,15 +841,17 @@ def get_detail(db: Session, set_id: str, current_user: Optional[dict]) -> dict:
 
 
 def list_sets(db: Session, *, page: int, limit: int, sort: str, dir: str, query: Optional[str],
-              status: Optional[str], supplier_id: Optional[str]) -> dict:
+              status: Optional[list[str] | str], supplier_id: Optional[list[str] | str]) -> dict:
     from app.models.cost_price import CostPriceChangeLine, CostPriceChangeSet
     from app.models.procurement import Supplier
 
     q = db.query(CostPriceChangeSet)
     if supplier_id:
-        q = q.filter(CostPriceChangeSet.supplier_id == supplier_id)
+        q = q.filter(
+            CostPriceChangeSet.supplier_id.in_([supplier_id] if isinstance(supplier_id, str) else supplier_id)
+        )
     if status:
-        statuses = [s.strip() for s in status.split(",") if s.strip()]
+        statuses = multi_values(status)
         if statuses:
             q = q.filter(CostPriceChangeSet.status.in_(statuses))
     if query:

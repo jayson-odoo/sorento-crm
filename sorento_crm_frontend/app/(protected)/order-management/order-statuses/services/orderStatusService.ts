@@ -3,8 +3,10 @@ import { extractApiError } from '@/lib/api-client';
 import type { OrderStatus, OrderStatusFormData, OrderStatusDetail } from '../types/orderStatus.types';
 import type { DataGridApiFetchParams, DataGridApiResponse } from '@/components/ui/data-grid';
 
-export async function getOrderStatuses(params: DataGridApiFetchParams): Promise<DataGridApiResponse<OrderStatus>> {
-  const { pageIndex, pageSize, sorting, searchQuery } = params;
+export async function getOrderStatuses(
+  params: DataGridApiFetchParams & { is_final_status?: boolean },
+): Promise<DataGridApiResponse<OrderStatus>> {
+  const { pageIndex, pageSize, sorting, searchQuery, is_final_status } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -12,6 +14,7 @@ export async function getOrderStatuses(params: DataGridApiFetchParams): Promise<
     limit: String(pageSize),
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
+    ...(is_final_status !== undefined ? { is_final_status: String(is_final_status) } : {}),
   });
   const response = await apiFetch(`/api/v1/order-management/order-statuses?${queryParams.toString()}`);
   if (!response.ok) throw new Error('Failed to fetch delivery order statuses');
