@@ -32,10 +32,7 @@ import { EmptyState, PipelineBoard } from './PipelineBoard';
 import { POIntakeUploadDialog } from '../../[projectId]/components/POIntakeUploadDialog';
 import { DeliveryScheduleUploadDialog } from '../../[projectId]/components/DeliveryScheduleUploadDialog';
 import { PageHeader } from '@/components/common/PageHeader';
-import {
-  isSearchInFlight,
-  useDebouncedSearch,
-} from '@/hooks/useDebouncedSearch';
+import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { ListLoadFailure } from '@/components/common/ListLoadFailure';
 
@@ -87,10 +84,7 @@ export function PipelineClient() {
   // it, so the list reads it (S3-01). Below the state it writes: the hook applies
   // during the render, and a const read above its own line throws.
   useListStateFromUrl((urlState) => {
-    setPagination({
-      pageIndex: urlState.pageIndex,
-      pageSize: urlState.pageSize,
-    });
+    setPagination({ pageIndex: urlState.pageIndex, pageSize: urlState.pageSize });
     setSorting(urlState.sorting);
     resetSearch(urlState.searchQuery);
     setDeveloperFilter(urlState.filters.developer_party_id ?? '');
@@ -129,12 +123,11 @@ export function PipelineClient() {
       owner_user_id: ownerFilter ? [ownerFilter] : undefined,
       type_id: typeFilter ? [typeFilter] : undefined,
       only_critical: onlyCritical || undefined,
-      approval_state: (approvalFilter ||
-        undefined) as ProjectListParams['approval_state'],
+      approval_state: (approvalFilter || undefined) as ProjectListParams['approval_state'],
       page: view === 'board' ? 1 : pagination.pageIndex + 1,
       limit: view === 'board' ? 200 : pagination.pageSize,
       sort: sorting[0]?.id ?? 'created_at',
-      dir: ((sorting[0]?.desc ?? true) ? 'desc' : 'asc') as 'asc' | 'desc',
+      dir: (sorting[0]?.desc ?? true ? 'desc' : 'asc') as 'asc' | 'desc',
     }),
     [
       debouncedSearch,
@@ -195,12 +188,7 @@ export function PipelineClient() {
   );
 
   const hasFilters = Boolean(
-    debouncedSearch ||
-    developerFilter ||
-    ownerFilter ||
-    typeFilter ||
-    onlyCritical ||
-    approvalFilter,
+    debouncedSearch || developerFilter || ownerFilter || typeFilter || onlyCritical || approvalFilter,
   );
   const total = projects.data?.pagination.total ?? 0;
   const rows = projects.data?.data ?? [];
@@ -214,11 +202,7 @@ export function PipelineClient() {
     <ListSearchInput
       value={search}
       onChange={setSearch}
-      isSettling={isSearchInFlight(
-        debouncedSearchSettling,
-        projects.isFetching,
-        debouncedSearch,
-      )}
+      isSettling={isSearchInFlight(debouncedSearchSettling, projects.isFetching, debouncedSearch)}
       placeholder="Search title or code…"
       aria-label="Search projects"
       className="w-full"
@@ -246,10 +230,7 @@ export function PipelineClient() {
   const filterContent = (
     <div className="space-y-3">
       <div className="space-y-1.5">
-        <Label
-          htmlFor="filter-developer"
-          className="text-xs text-muted-foreground"
-        >
+        <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
           Developer
         </Label>
         <SearchableSelect
@@ -281,10 +262,7 @@ export function PipelineClient() {
         />
       </div>
       <div className="space-y-1.5">
-        <Label
-          htmlFor="filter-approval"
-          className="text-xs text-muted-foreground"
-        >
+        <Label htmlFor="filter-approval" className="text-xs text-muted-foreground">
           Approval
         </Label>
         <SearchableSelect
@@ -360,33 +338,25 @@ export function PipelineClient() {
                 <Table2 className="size-4" aria-hidden />
               </Button>
             </div>
-            {canStart && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button type="button">
-                    Start
-                    <ChevronDown className="size-4" aria-hidden />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end">
-                  <DropdownMenuItem
-                    onSelect={() => router.push('/project-sales/new')}
-                  >
-                    Register a project
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => setStartAction('upload-po')}
-                  >
-                    Upload PO
-                  </DropdownMenuItem>
-                  <DropdownMenuItem
-                    onSelect={() => setStartAction('upload-schedule')}
-                  >
-                    Upload delivery schedule
-                  </DropdownMenuItem>
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+            {canStart && (<DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button type="button">
+                  Start
+                  <ChevronDown className="size-4" aria-hidden />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end">
+                <DropdownMenuItem onSelect={() => router.push('/project-sales/new')}>
+                  Register a project
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStartAction('upload-po')}>
+                  Upload PO
+                </DropdownMenuItem>
+                <DropdownMenuItem onSelect={() => setStartAction('upload-schedule')}>
+                  Upload delivery schedule
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>)}
           </div>
         }
       />
@@ -403,10 +373,7 @@ export function PipelineClient() {
                 <Filter className="size-4" aria-hidden />
                 Filters
                 {activeFilterCount > 0 && (
-                  <Badge
-                    variant="secondary"
-                    className="ms-0.5 px-1 py-0 text-[10px]"
-                  >
+                  <Badge variant="secondary" className="ms-0.5 px-1 py-0 text-[10px]">
                     {activeFilterCount}
                   </Badge>
                 )}
@@ -419,16 +386,10 @@ export function PipelineClient() {
         </div>
       )}
 
-      {view === 'board' &&
-      !projects.isLoading &&
-      projects.error &&
-      total === 0 ? (
+      {view === 'board' && !projects.isLoading && projects.error && total === 0 ? (
         // A failed read is not "no projects registered yet" (lever L2).
         <div className="rounded-lg border px-4 py-6 text-sm">
-          <ListLoadFailure
-            error={projects.error}
-            onRetry={() => void projects.refetch()}
-          />
+          <ListLoadFailure error={projects.error} onRetry={() => void projects.refetch()} />
         </div>
       ) : view === 'board' && !projects.isLoading && total === 0 ? (
         hasFilters ? (

@@ -2,8 +2,7 @@
 
 import type { ReactNode } from 'react';
 import RequireAccess from '@/app/components/common/RequireAccess';
-
-const PROJECT_VIEW_PERMISSIONS = ['projects.projects.view', 'projects.projects.view_own'];
+import { PROJECT_VIEW_PERMISSIONS } from '@/app/(protected)/project-sales/_shared/projectViewPermissions';
 
 export default function ProjectSalesLayout({ children }: { children: ReactNode }) {
   return <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>{children}</RequireAccess>;

@@ -74,6 +74,8 @@ const WA_TEXT = 'Hi, I need my portal link.';
 interface Props {
   /** Stable contact slug - present on the slug tree, absent on legacy. */
   slug?: string;
+  /** Request a code on mount (default). False inside the CRM while an admin views as the salesperson. */
+  autoSend?: boolean;
 }
 
 type CardState =
@@ -84,7 +86,7 @@ type CardState =
   | 'request-link' // "Not your number?" - ask for own portal link
   | 'lookup-failed'; // transient slug-info/token-info failure - offer retry
 
-export function PortalVerifyCard({ slug }: Props) {
+export function PortalVerifyCard({ slug, autoSend = true }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const reason = searchParams?.get('reason');
@@ -144,7 +146,7 @@ export function PortalVerifyCard({ slug }: Props) {
 
     const autoFire = async (cid: string, sid: string, guardKey: string) => {
       const reasonNow = searchParams?.get('reason');
-      if (reasonNow === 'logout') return;
+      if (reasonNow === 'logout' || !autoSend) return;
       const sentKey = SENT_KEY_PREFIX + guardKey;
       const alreadyFired =
         typeof window !== 'undefined' && window.sessionStorage.getItem(sentKey) === '1';

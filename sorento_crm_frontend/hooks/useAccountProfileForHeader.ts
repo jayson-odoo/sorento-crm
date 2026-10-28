@@ -12,7 +12,7 @@ import { resolveUserAvatarSrc } from '@/lib/helpers';
 export function useAccountProfileForHeader() {
   const { data: session, status } = useSession();
 
-  const { data: profile } = useQuery({
+  const { data: profile, isError } = useQuery({
     queryKey: ['account-profile'],
     queryFn: async () => {
       const response = await apiFetch('/api/user-management/account/');
@@ -43,6 +43,9 @@ export function useAccountProfileForHeader() {
 
   return {
     salesperson,
+    // Settled = answered, failed, or answered null; a disabled query (session still loading) is not.
+    isLoading: status === 'loading' || (status === 'authenticated' && profile === undefined && !isError),
+    isError,
     avatarSrc,
     displayName: profile?.name ?? session?.user?.name ?? '',
     displayEmail: profile?.email ?? session?.user?.email ?? '',

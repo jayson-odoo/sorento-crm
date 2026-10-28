@@ -89,31 +89,6 @@ const MY_REQUEST_ITEMS: MenuConfig = orderLandingKinds(
 
 
 export const MENU_SIDEBAR: MenuConfig = [
-  { heading: 'MY WORK', audience: 'salesperson' },
-  {
-    title: 'Projects',
-    icon: Briefcase,
-    path: '/project-sales/pipeline',
-    permission: 'projects.projects.view_own',
-    audience: 'salesperson',
-  },
-  {
-    title: 'Conversations',
-    icon: MessageSquare,
-    path: '/sla-management/conversations',
-    permission: 'sla_management.conversations.view_own',
-    audience: 'salesperson',
-  },
-  {
-    title: 'Customer asks',
-    icon: Star,
-    path: '/sales/customer-asks',
-    permission: 'sales.customer_asks.view',
-    audience: 'salesperson',
-  },
-  { heading: 'MY REQUESTS', audience: 'salesperson' },
-  ...MY_REQUEST_ITEMS,
-
   { heading: 'OVERVIEW' },
   {
     // The home page is the My pending widget (/conversation-sla-tracking/my-pending) over
@@ -1471,6 +1446,31 @@ export const MENU_SIDEBAR: MenuConfig = [
   // { title: 'Store - Services', icon: Codepen, disabled: true },
   // { title: 'AI Promt', icon: Theater, disabled: true },
   // { title: 'Invoice Generator', icon: ScrollText, disabled: true },
+
+  { heading: 'MY WORK', audience: 'salesperson' },
+  {
+    title: 'Projects',
+    icon: Briefcase,
+    path: '/project-sales/pipeline',
+    permission: 'projects.projects.view_own',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Conversations',
+    icon: MessageSquare,
+    path: '/sla-management/conversations',
+    permission: 'sla_management.conversations.view_own',
+    audience: 'salesperson',
+  },
+  {
+    title: 'Customer asks',
+    icon: Star,
+    path: '/sales/customer-asks',
+    permission: 'sales.customer_asks.view',
+    audience: 'salesperson',
+  },
+  { heading: 'MY REQUESTS', audience: 'salesperson' },
+  ...MY_REQUEST_ITEMS,
 ];
 
 export const MENU_SIDEBAR_CUSTOM: MenuConfig = [

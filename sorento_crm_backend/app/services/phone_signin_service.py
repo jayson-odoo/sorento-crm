@@ -333,6 +333,9 @@ def home_path_for_user(db: Session, user: User) -> str:
         )
 
     if is_salesperson(db, user):
+        # Mint the contact's portal slug now, so /users/me and the verify page find it.
+        if contact is not None:
+            PortalService(db).get_or_create_slug(contact)
         return "/my-requests"
 
     if "salesperson" in role_slugs and contact is not None:

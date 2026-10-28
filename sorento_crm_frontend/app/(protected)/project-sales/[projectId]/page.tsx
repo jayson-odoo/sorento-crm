@@ -5,6 +5,7 @@ import { projectCrumbs } from '@/app/(protected)/project-sales/_shared/lib/crumb
 import RequireAccess from '@/app/components/common/RequireAccess';
 import BackToList from '@/components/common/BackToList';
 import { ProjectDetailClient } from './components/ProjectDetailClient';
+import { PROJECT_VIEW_PERMISSIONS } from '@/app/(protected)/project-sales/_shared/projectViewPermissions';
 
 export const metadata: Metadata = {
   title: 'Project',
@@ -18,7 +19,7 @@ export default async function ProjectDetailPage({
 }) {
   const { projectId } = await params;
   return (
-    <RequireAccess permission="projects.projects.view">
+    <RequireAccess permission={PROJECT_VIEW_PERMISSIONS}>
       <Container className="space-y-6">
         {/* Crumbs left, one Back right (D6, S3-01). The Back carries the pipeline's
             query string, so it returns to the page the reader left. */}
