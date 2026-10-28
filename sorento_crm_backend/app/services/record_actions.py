@@ -2278,6 +2278,8 @@ def _delete_my_request(db: Session, payload: dict):
         str(payload.get("requested_by_id") or ""),
         str(payload.get("entity_type") or ""),
         _entity_id(payload),
+        # The admin who parked it while viewing as them, for the audit (set by the route).
+        real_user_id=payload.get("real_user_id"),
     )
     return {"message": "Deleted"}
 
@@ -2309,7 +2311,12 @@ def _unlink_my_request_attachment(db: Session, payload: dict):
 
     # The salesperson's own upload on their own request, through the portal's own unlink; a
     # staff upload stays locked. Re-checked here as the state can change inside the window.
-    unlink_attachment(db, str(payload.get("requested_by_id") or ""), _entity_id(payload))
+    unlink_attachment(
+        db,
+        str(payload.get("requested_by_id") or ""),
+        _entity_id(payload),
+        real_user_id=payload.get("real_user_id"),
+    )
     return {"message": "Unlinked"}
 
 

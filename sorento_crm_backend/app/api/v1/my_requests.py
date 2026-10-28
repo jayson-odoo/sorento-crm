@@ -302,19 +302,36 @@ UNLINK_KINDS = (*own_scope.REQUEST_KINDS, *_ATTACHMENT_KINDS)
 
 
 @contextmanager
-def _acting_as(db: Session, user_id: str, token: PortalToken) -> Iterator[None]:
+def _acting_as(
+    db: Session, user_id: str, token: PortalToken, real_user_id: Optional[str]
+) -> Iterator[None]:
     """The parked delete commits after its request, from a sweep or someone's poll: the audit
-    actor is the user who parked it, their contact named, as ``_act_through`` names it."""
+    actor is the user who parked it, their contact named, as ``_act_through`` names it, and the
+    admin who parked it while viewing as them (``real_user_id``, stored at park time) kept as the
+    real user, as ``get_current_user`` stamps an impersonated request."""
     from app.audit_context import AuditActor, actor_scope
 
+    real = real_user_id or user_id
     actor = AuditActor(
-        actor_type="user", user_id=user_id, real_user_id=user_id, contact_id=str(token.contact_id)
+        actor_type="user",
+        user_id=user_id,
+        real_user_id=real,
+        auth_method="impersonation" if real != user_id else None,
+        contact_id=str(token.contact_id),
     )
     with actor_scope(actor, db=db):
         yield
 
 
-def delete_request(db: Session, user_id: str, kind: str, request_id: str, *, check_only: bool = False) -> None:
+def delete_request(
+    db: Session,
+    user_id: str,
+    kind: str,
+    request_id: str,
+    *,
+    check_only: bool = False,
+    real_user_id: Optional[str] = None,
+) -> None:
     """``my_request.delete``: the portal's own draft delete, as ``user_id``, behind the same gates
     as ``DELETE /my-requests/submissions/{kind}/{id}``. ``check_only`` (park time) runs every
     refusal and deletes nothing; the commit runs them again, as the state may have moved."""
@@ -328,14 +345,21 @@ def delete_request(db: Session, user_id: str, kind: str, request_id: str, *, che
         else:
             deletable_submission_draft(db, token, kind, request_id)
         return
-    with _acting_as(db, user_id, token):
+    with _acting_as(db, user_id, token, real_user_id):
         if kind == "price_tag_request":
             delete_price_tag_draft(db, token, request_id)
         else:
             delete_submission_draft(db, token, kind, request_id)
 
 
-def unlink_attachment(db: Session, user_id: str, link_id: str, *, check_only: bool = False) -> None:
+def unlink_attachment(
+    db: Session,
+    user_id: str,
+    link_id: str,
+    *,
+    check_only: bool = False,
+    real_user_id: Optional[str] = None,
+) -> None:
     """``my_request_attachment.unlink``: the portal's own ``DELETE /attachments/{link_id}``, as
     ``user_id``, behind that my-requests route's gates. A staff upload stays locked."""
     token = portal_token_for(db, user_id, UNLINK_KINDS)
@@ -343,7 +367,7 @@ def unlink_attachment(db: Session, user_id: str, link_id: str, *, check_only: bo
     if check_only:
         removable_attachment_link(db, token, link_id)
         return
-    with _acting_as(db, user_id, token):
+    with _acting_as(db, user_id, token, real_user_id):
         remove_attachment_link(db, token, link_id)
 
 

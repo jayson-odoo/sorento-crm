@@ -31,12 +31,12 @@ from contextlib import nullcontext
 from datetime import datetime
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.dependencies import get_current_user
+from app.dependencies import get_actor_user_id, get_current_user
 from app.models.base import company_scope
 from app.services.company_scope_resolver import grants_scope_value
 from app.models.sla import (
@@ -133,6 +133,12 @@ _ANY_OF_PERMISSIONS: dict = {
         "projects.order_inquiries.reserve",
     ),
 }
+
+
+#: Actions whose commit names the admin at the keyboard when one parked it while viewing as the
+#: requester: the salesperson's own deletes from the CRM request pages (PORTAL-P4-REQUESTS D7).
+#: The commit runs after the request, so the admin is stored with the action, server-side.
+_REAL_USER_ACTIONS = ("my_request.delete", "my_request_attachment.unlink")
 
 
 #: Actions whose ids become an ss URL path: the record id (and `payload.idea_id`) must be a UUID
@@ -495,6 +501,7 @@ def _commit_if_due(service: FormActionService, row: Optional[SlaFormAction]) -> 
 @router.post("", status_code=status.HTTP_202_ACCEPTED)
 def create_pending_action(
     body: _CreateRequest,
+    request: Request,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -545,20 +552,25 @@ def create_pending_action(
                 )
 
             window_seconds = record_action_window_seconds(db, action)
+            # The handler is handed the record it runs on and who asked for it, so it
+            # never has to read the action row back.
+            payload = {
+                **(body.payload or {}),
+                "entity_id": str(body.entity_id),
+                # The record's kind, for the one action parked against several (the
+                # salesperson's `my_request.delete`); set here, never by the caller.
+                "entity_type": body.entity_type,
+                "requested_by_id": actor_id,
+            }
+            if body.action_key in _REAL_USER_ACTIONS:
+                # The admin when one is viewing as the requester, else the requester; set
+                # here, never by the caller.
+                payload["real_user_id"] = get_actor_user_id(request, current_user)
             outcome = service.dispatch(
                 action_key=body.action_key,
                 entity_type=body.entity_type,
                 entity_id=str(body.entity_id),
-                # The handler is handed the record it runs on and who asked for it, so it
-                # never has to read the action row back.
-                payload={
-                    **(body.payload or {}),
-                    "entity_id": str(body.entity_id),
-                    # The record's kind, for the one action parked against several (the
-                    # salesperson's `my_request.delete`); set here, never by the caller.
-                    "entity_type": body.entity_type,
-                    "requested_by_id": actor_id,
-                },
+                payload=payload,
                 actor_id=actor_id,
                 channel=FORM_ACTION_CHANNEL_UI,
                 grace_seconds=window_seconds,
