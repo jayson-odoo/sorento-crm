@@ -49,9 +49,11 @@ def _product(db) -> Product:
     return row
 
 
-def _warehouse(db, code: str, *, planning: bool = True, pool: bool = False) -> Warehouse:
+def _warehouse(
+    db, code: str, *, planning: bool = True, pool: bool = False, active: bool = True
+) -> Warehouse:
     row = Warehouse(
-        id=_uid(), warehouse_code=f"{code}-{_uid()[:4]}", warehouse_name=code, is_active=True,
+        id=_uid(), warehouse_code=f"{code}-{_uid()[:4]}", warehouse_name=code, is_active=active,
         segment=None if pool else "project", fulfilment_planning=planning,
     )
     db.add(row)
@@ -81,7 +83,7 @@ def _so(db, product, warehouse, qty: int) -> None:
     db.flush()
 
 
-def _spo(db, product, warehouse, qty: int) -> str:
+def _spo(db, product, warehouse, qty: int, *, supplier: bool = False) -> str:
     from app.models.procurement import InboundShipment, SPOAllocation
 
     number = f"ZZT-SPO-{_uid()[:8]}"
@@ -91,8 +93,17 @@ def _spo(db, product, warehouse, qty: int) -> str:
     )
     db.add(shipment)
     db.flush()
+    supplier_id = None
+    if supplier:
+        from app.models.procurement import Supplier
+
+        row = Supplier(id=_uid(), supplier_code=f"ZZT{_uid()[:6]}", supplier_name=f"{MARKER} Supplier")
+        db.add(row)
+        db.flush()
+        supplier_id = row.id
     db.add(SPOAllocation(
         id=_uid(), spo_number=number, spo_line_number=1, inbound_shipment_id=shipment.id,
+        supplier_id=supplier_id,
         warehouse_id=warehouse.id, product_id=product.id, allocated_quantity=qty,
         quantity_received=0, receipt_status="pending",
     ))
@@ -139,6 +150,8 @@ class _World:
         self.w3 = _warehouse(db, "QB3-BB")
         self.pool = _warehouse(db, "QPOOL", pool=True)
         self.off = _warehouse(db, "QOFF", planning=False)
+        self.dead = _warehouse(db, "QDEAD", active=False)
+        _stock(db, self.product, self.dead, 13)
         for wh, qty in ((self.w1, 100), (self.w2, 50), (self.w3, 25), (self.pool, 10),
                         (self.off, 7)):
             _stock(db, self.product, wh, qty)
@@ -249,6 +262,8 @@ def test_ac_qsa_4_no_policy_rows_means_every_planning_warehouse(world):
     w = world
     w.db.commit()
     assert _locations(_ask(w)) == w.codes(w.w1, w.w2, w.w3, w.pool)
+    assert w.dead.warehouse_code not in _locations(_ask(w))
+    assert Decimal(_ask(w).json()["qty_on_hand"]) == Decimal(100 + 50 + 25 + 10)
     _policy(w.db, include=None)  # global default row, warehouse_ids NULL
     w.db.commit()
     assert _locations(_ask(w)) == w.codes(w.w1, w.w2, w.w3, w.pool)
@@ -340,3 +355,28 @@ def test_ac_qsa_11_admin_has_no_bypass_and_guards(world):
     # Guards against a missing route: the allowed call above answered 200.
     assert _ask(w, slugs=()).status_code == 403
     assert _ask(w, product_id="not-a-uuid").status_code == 422
+
+
+def test_review_response_is_trimmed_of_orders_holds_and_supplier(world):
+    w = world
+    _spo(w.db, w.product, w.w1, 40, supplier=True)
+    w.db.commit()
+    response = _ask(w)
+    assert _locations(response) == w.codes(w.w1, w.w2, w.w3, w.pool)
+    body = response.json()
+    assert body["sales_orders"] == [], body["sales_orders"]
+    assert body["holds"] == []
+    assert body["incoming"], "the SPO itself must still be listed"
+    assert all(row["supplier_name"] is None for row in body["incoming"]), body["incoming"]
+
+
+def test_review_view_own_only_user_gets_200_with_the_same_trimmed_response(world):
+    w = world
+    _spo(w.db, w.product, w.w1, 40, supplier=True)
+    w.db.commit()
+    response = _ask(w, slugs=("projects.projects.view_own",))
+    assert _locations(response) == w.codes(w.w1, w.w2, w.w3, w.pool)
+    body = response.json()
+    assert body["sales_orders"] == []
+    assert body["holds"] == []
+    assert body["incoming"] and all(r["supplier_name"] is None for r in body["incoming"])

@@ -175,6 +175,41 @@ describe('STOCK-GROUPBY (AC-17, AC-20): the quotation popover carries the bar on
     expect(screen.queryByText(/WH3-BB/)).not.toBeInTheDocument();
   });
 
+  it.each([['type'], ['customer']])(
+    'review blocker 1: grouped by %s, a location the read did not list leaks nothing',
+    async (level) => {
+      window.localStorage.setItem('cellStockTable.groupBy', JSON.stringify([level]));
+      useStockStatusMock.mockReturnValue({
+        data: {
+          product_id: 'prod-1',
+          item_code: 'ITEM-1',
+          description: null,
+          as_of: null,
+          so_due_by: null,
+          locations: [
+            { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', warehouse_name: 'BRW-IB', is_active: true, on_hand: 10, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 10 },
+            { warehouse_id: 'wh-WH3-BB', warehouse_code: 'WH3-BB', warehouse_name: 'WH3-BB', is_active: true, on_hand: 9, so_qty: 4, po_qty: 0, spo_qty: 0, forecast: 5 },
+          ],
+          totals: { on_hand: 19, so_qty: 4, po_qty: 0, spo_qty: 0, forecast: 15, incoming_pl: 0, forecast_incl_pl: 15 },
+          incoming_pl: [],
+          sales_orders: [
+            { line_id: 'l1', sales_order_id: 's1', so_number: 'SO-LEAK-1', debtor_code: 'D1', debtor_name: 'Leaky Debtor Sdn Bhd', project_label: null, salesperson: null, doc_date: null, due_date: null, qty: 4, covered_in_crm: false, warehouse_id: 'wh-WH3-BB' },
+          ],
+          purchase_orders: [],
+          spos: [],
+        },
+        isLoading: false,
+      });
+      openPopover();
+      await drawActual();
+      const table = document.body.textContent ?? '';
+      expect(table).not.toContain('Leaky Debtor');
+      expect(table).not.toContain('SO-LEAK-1');
+      expect(table).not.toContain('WH3-BB');
+      expect(screen.queryByText('19')).not.toBeInTheDocument();
+    },
+  );
+
   it('AC-17 without the read (a failed read), the table has no bar', async () => {
     useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false });
     openPopover();

@@ -2374,19 +2374,35 @@ describe('QuotationVersionEditor sets (SET-QUOTE-LINE)', () => {
       expect(popover.getAllByText(/MWH-IB/).length).toBeGreaterThanOrEqual(3);
     });
 
-    it('AC-QSA-24: a part whose read answers null shows nothing for that part', async () => {
+    it('AC-QSA-24: a part whose read answers null leaves the Qty cell with no pill, skeleton or text', async () => {
       stockFor({ pa: '30', pb: null, pc: '7' });
       listQuotationLines.mockResolvedValue([setLine({ set_parts: PARTS })]);
       await renderEditing();
 
       await waitFor(() => expect(useQuotationLineStockMock).toHaveBeenCalledWith('pb'));
-      const pill = screen.queryByRole('button', { name: 'Stock on CWC1009-RL' });
-      if (pill) {
-        fireEvent.pointerDown(pill, { button: 0, ctrlKey: false });
-        fireEvent.click(pill);
-        const popover = within(await screen.findByRole('dialog'));
-        expect(popover.queryByText(/CWCY1009/)).toBeNull();
-      }
+      const cell = screen.getByRole('textbox', { name: 'Qty on CWC1009-RL' }).closest('td') as HTMLElement;
+      expect(screen.queryByRole('button', { name: 'Stock on CWC1009-RL' })).toBeNull();
+      expect(cell.querySelector('[class*="animate-pulse"], [data-slot="skeleton"]')).toBeNull();
+      expect(cell.textContent ?? '').not.toMatch(/avail|Stock -/);
+    });
+
+    it('review gap 5: a set part popover leaves out a location with no on hand, SO or SPO', async () => {
+      const zero = { location: 'ZZ-ZERO', where: 'group', available_qty: '0', so_qty: '0', spo_qty: '0', qty_on_hand: '0' };
+      useQuotationLineStockMock.mockImplementation(((productId: string) => ({
+        data: { ...STOCK_IB, available_qty: '30', locations: [...STOCK_IB.locations, zero] },
+        isLoading: false,
+        isError: false,
+        error: null,
+      })) as never);
+      listQuotationLines.mockResolvedValue([setLine({ set_parts: PARTS })]);
+      await renderEditing();
+
+      const pill = await screen.findByRole('button', { name: 'Stock on CWC1009-RL' });
+      fireEvent.pointerDown(pill, { button: 0, ctrlKey: false });
+      fireEvent.click(pill);
+      const popover = within(await screen.findByRole('dialog'));
+      expect(popover.getAllByText(/MWH-IB/).length).toBeGreaterThan(0);
+      expect(popover.queryAllByText(/ZZ-ZERO/)).toHaveLength(0);
     });
 
     it('F3: the old "N complete sets" text is gone from the quantity cell', async () => {
