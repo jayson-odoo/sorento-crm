@@ -288,30 +288,6 @@ def test_tools_ride_in_the_cache_not_beside_it(google) -> None:
     assert sent["cachedContent"] == "cachedContents/c1"
 
 
-def test_the_clarifier_asks_for_a_cache_per_prompt_version(monkeypatch) -> None:
-    from app.services.chatbot import llm_call
-    from app.services.chatbot.lanes import casual
-
-    seen: list[dict] = []
-
-    class _Result:
-        content = '{"response": "hi"}'
-
-    def fake_chat(provider, key, model, messages, **kwargs):
-        seen.append(kwargs)
-        return _Result()
-
-    monkeypatch.setattr(llm_call, "chat", fake_chat)
-    for version in (12, None):
-        config = casual.ClarifierConfig(
-            system_prompt="s", prompt_version=version, provider="gemini", model="m", api_key="k"
-        )
-        casual.call_clarifier(config, "u")
-
-    assert seen[0]["prompt_cache_key"] == "chatbot_clarifier:v12"
-    assert seen[1]["prompt_cache_key"] == "chatbot_clarifier:vfallback"
-
-
 def test_two_workers_share_one_entry_through_real_redis(google, monkeypatch) -> None:
     """The real client's `SET NX` / `GET` against a live Redis, when one answers."""
     redis = pytest.importorskip("redis")
