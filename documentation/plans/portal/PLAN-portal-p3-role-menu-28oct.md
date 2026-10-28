@@ -1,6 +1,6 @@
 # PLAN: PORTAL-P3-ROLE-MENU, salesperson role + trimmed CRM sidebar (28 Oct 2026)
 
-Status: Build, slice 1. Owner answered the card 28 Oct ~08:40; design v2 below.
+Status: Review passed (reviewer READY, security-reviewer READY, 28 Oct); owner hand test pending on the crew copy. Rounds 1-9 red-first with kill-proofs on PR #1944. Track: full.
 Track: full (RBAC grant + landing change + API guard), security review required. Size M, LEAD pattern.
 Lane PORTAL-P3-ROLE-MENU.
 
@@ -85,6 +85,13 @@ Owner: "Impersonation also need to have same views" (option b). Contacts > "Impe
 contact whose linked user is a salesperson starts the EXISTING CRM user impersonation of that user plus the
 EXISTING contact-impersonation portal token, then opens `/my-requests`; Exit ends both. Contacts without such a
 user keep today's portal impersonation. UAC P3-23..P3-28.
+
+## Known, recorded (28 Oct)
+
+- The shared-device guard runs when a My requests page loads, not on a click between kinds on an open page.
+- An admin who switches straight from impersonating salesperson A to a CRM-only impersonation of B leaves A's
+  contact session open until its token expires (only that admin holds the token).
+- While impersonating, the header name and avatar show the target ("same views").
 
 ## Not in this lane
 
