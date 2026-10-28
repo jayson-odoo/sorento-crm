@@ -88,7 +88,8 @@ export interface DeclineLeadBody {
 }
 
 export interface AwaitingAcceptanceParams extends DataGridParamsInput {
-  owner_user_id?: string;
+  /** Several assignees are OR-ed; sent as repeated params. */
+  owner_user_id?: string[];
   min_hours?: number;
 }
 

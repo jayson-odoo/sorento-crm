@@ -26,7 +26,8 @@ import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
@@ -38,16 +39,13 @@ import { STATUS_PILL_BASE, statusPillClass } from '@/lib/status-pill';
 import {
   DELIVERY_MODE_LABELS,
   type SampleRequestRow,
-  type SampleRequestStatus,
 } from '@/types/sampleRequest';
 import { useSampleRequestsQuery } from '../hooks/useSampleRequests';
 
 const BASE_PATH = '/project-sales/sample-requests';
 
-/** `open` is the server default (the coordinator queue); `all` names every status. */
+/** Nothing chosen is the server default, the coordinator queue (the open statuses). */
 const STATUS_OPTIONS: { value: string; label: string }[] = [
-  { value: 'open', label: 'Open requests' },
-  { value: 'all', label: 'All statuses' },
   { value: 'draft', label: 'Draft' },
   { value: 'submitted', label: 'Submitted' },
   { value: 'processing', label: 'Processing' },
@@ -55,27 +53,6 @@ const STATUS_OPTIONS: { value: string; label: string }[] = [
   { value: 'delivered', label: 'Delivered' },
   { value: 'cancelled', label: 'Cancelled' },
 ];
-
-const ALL_KEYS: SampleRequestStatus[] = [
-  'draft',
-  'submitted',
-  'processing',
-  'customer_confirmed',
-  'delivered',
-  'cancelled',
-];
-
-function statusParam(filter: string): string | undefined {
-  if (filter === 'open') return undefined;
-  if (filter === 'all') return ALL_KEYS.join(',');
-  return filter;
-}
-
-/** The inverse of {@link statusParam}: the URL carries the `status` param `rowHref` wrote. */
-function statusFilterFromParam(param: string | undefined): string {
-  if (!param) return 'open';
-  return param === ALL_KEYS.join(',') ? 'all' : param;
-}
 
 export function deliveryText(row: Pick<SampleRequestRow, 'delivery_date'>) {
   return row.delivery_date ? formatDateInMalaysia(row.delivery_date) : '-';
@@ -93,16 +70,16 @@ export default function SampleRequestsList() {
     isSettling: searchSettling,
     reset: resetSearch,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState('open');
-  const [salespersonFilter, setSalespersonFilter] = useState('__all__');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [salespersonFilter, setSalespersonFilter] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   useListStateFromUrl((state) => {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
-    setStatusFilter(statusFilterFromParam(state.filters.status));
-    setSalespersonFilter(state.filters.salesperson_id ?? '__all__');
+    setStatusFilter(joinMulti(splitMulti(state.filters.status)));
+    setSalespersonFilter(joinMulti(splitMulti(state.filters.salesperson_id)));
   });
 
   const { data: salespeople = [] } = useQuery({
@@ -111,8 +88,8 @@ export default function SampleRequestsList() {
     staleTime: 5 * 60_000,
   });
 
-  const status = statusParam(statusFilter);
-  const salespersonId = salespersonFilter !== '__all__' ? salespersonFilter : undefined;
+  const status = statusFilter || undefined;
+  const salespersonId = salespersonFilter || undefined;
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } =
     useSampleRequestsQuery({
       pageIndex: pagination.pageIndex,
@@ -255,7 +232,7 @@ export default function SampleRequestsList() {
   });
 
   const filtersActiveCount =
-    (statusFilter !== 'open' ? 1 : 0) + (salespersonFilter !== '__all__' ? 1 : 0);
+    (statusFilter ? 1 : 0) + (salespersonFilter ? 1 : 0);
 
   return (
     <DataGrid
@@ -290,29 +267,37 @@ export default function SampleRequestsList() {
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={setStatusFilter}
-                      placeholder="Status"
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
+                      placeholder="Open requests"
                       triggerClassName="mt-1 w-full"
                       options={STATUS_OPTIONS}
+                      clearable
                     />
                   </div>
                   <div>
                     <Label>Salesperson</Label>
-                    <SearchableSelect
-                      value={salespersonFilter}
-                      onChange={setSalespersonFilter}
-                      placeholder="Salesperson"
+                    <SearchableMultiSelect
+                      value={splitMulti(salespersonFilter)}
+                      onChange={(v) => setSalespersonFilter(joinMulti(v))}
+                      placeholder="All salespeople"
                       triggerClassName="mt-1 w-full"
-                      options={[
-                        { value: '__all__', label: 'All salespeople' },
-                        ...salespeople.map((u) => ({
-                          value: u.id,
-                          label: u.name?.trim() || 'Unnamed user',
-                          searchText: u.name ?? '',
-                        })),
-                      ]}
+                      options={salespeople.map((u) => ({
+                        value: u.id,
+                        label: u.name?.trim() || 'Unnamed user',
+                        searchText: u.name ?? '',
+                      }))}
+                      clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">
+                            {multiChipLabel('Salesperson', idFilterLabels(chosen))}
+                          </span>
+                        ) : (
+                          <span className="text-muted-foreground">All salespeople</span>
+                        )
+                      }
                     />
                   </div>
                   {filtersActiveCount > 0 && (
@@ -321,8 +306,8 @@ export default function SampleRequestsList() {
                         variant="ghost"
                         size="sm"
                         onClick={() => {
-                          setStatusFilter('open');
-                          setSalespersonFilter('__all__');
+                          setStatusFilter('');
+                          setSalespersonFilter('');
                         }}
                       >
                         Clear filters

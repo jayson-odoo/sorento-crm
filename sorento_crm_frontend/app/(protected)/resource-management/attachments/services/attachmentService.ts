@@ -21,7 +21,8 @@ export type AttachmentsListParams = DataGridApiFetchParams & {
   virus_status?: string;
   directory_id?: string | null;
   link_status?: 'linked' | 'unlinked';
-  storage_status?: 'accessible' | 'missing' | 'unchecked';
+  /** One status, or several comma-joined (OR-ed). */
+  storage_status?: string;
   resolve_signed_urls?: boolean;
   access_levels?: string[];
   access_levels_match?: 'any' | 'all' | 'exact';

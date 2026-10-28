@@ -15,7 +15,7 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from datetime import date, datetime
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Dict, Iterable, List, Optional, Sequence
 
 from dateutil.relativedelta import relativedelta
 from sqlalchemy import func, or_
@@ -27,6 +27,7 @@ from app.models.sample_request import SampleRequest, SampleRequestLine
 from app.models.status import Status, StatusTransition
 from app.models.user import SystemSetting, User
 from app.services.error_handler import AppException, handle_not_found
+from app.utils.multi_value import multi_values
 from app.services.pdf_render import today_in_malaysia
 
 ENTITY = "sample_request"
@@ -604,7 +605,7 @@ def list_for(
     statuses: Optional[List[str]] = None,
     project_id: Optional[str] = None,
     contact_id: Optional[str] = None,
-    salesperson_id: Optional[str] = None,
+    salesperson_id: Optional[str | Sequence[str]] = None,
     q: Optional[str] = None,
     page: int = 1,
     limit: int = 25,
@@ -625,8 +626,9 @@ def list_for(
         query = query.filter(mine)
     if project_id:
         query = query.filter(SampleRequest.project_id == project_id)
-    if salesperson_id:
-        query = query.filter(SampleRequest.salesperson_id == salesperson_id)
+    salespeople = multi_values(salesperson_id)
+    if salespeople:
+        query = query.filter(SampleRequest.salesperson_id.in_(salespeople))
     if statuses:
         ids = [s.id for k, s in _statuses(db).items() if k in statuses]
         query = query.filter(SampleRequest.status_id.in_(ids))
