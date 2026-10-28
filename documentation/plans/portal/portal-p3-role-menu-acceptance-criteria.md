@@ -65,3 +65,17 @@ holds `salesperson` plus any other role ("mixed").
 
 ## Known, accepted (owner 28 Oct)
 - Sign-in-only GETs readable by any CRM session (plan "Owner answers" Q4). Not tested here.
+
+## Round 6: admin impersonation (owner ruling 28 Oct ~11:50, "Impersonation also need to have same views")
+- P3-23 Admin "Impersonate in portal" on a contact whose linked CRM user is a salesperson opens exactly that
+  user's CRM view: CRM shell, MY WORK / MY REQUESTS, `/my-requests` landing on the favourite form else Stock
+  Inquiry, `/my-requests/...` deep paths, with the existing CRM impersonation banner and its Exit.
+- P3-24 The portal token used inside that view is the existing contact-impersonation token for that contact only
+  (tab-scoped, as today); no new token kind, no auto-send of a WhatsApp code under impersonation.
+- P3-25 No privilege beyond the impersonated user: every CRM request acts as that user (existing CRM
+  impersonation rules, admins cannot be impersonated); every portal request acts as that contact.
+- P3-26 Exit restores the admin cleanly: CRM impersonation ended, the contact-impersonation token revoked and
+  cleared from the tab, admin back on their own CRM view.
+- P3-27 A contact WITHOUT a linked salesperson user: "Impersonate in portal" behaves exactly as today (portal,
+  yellow banner).
+- P3-28 A salesperson's own portal-link sign-in is unchanged.

@@ -79,6 +79,13 @@ favourite is per device (no server field); same browser as the portal = same fav
    existing PortalVerifyCard (WhatsApp code once per device), slug from `/users/me`. No new
    token-minting route.
 
+## Round 6: admin impersonation (owner ruling 28 Oct ~11:50)
+
+Owner: "Impersonation also need to have same views" (option b). Contacts > "Impersonate in portal" on a
+contact whose linked user is a salesperson starts the EXISTING CRM user impersonation of that user plus the
+EXISTING contact-impersonation portal token, then opens `/my-requests`; Exit ends both. Contacts without such a
+user keep today's portal impersonation. UAC P3-23..P3-28.
+
 ## Not in this lane
 
 - Fail-closed API guard (Q4, accepted gap above).
