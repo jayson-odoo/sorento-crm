@@ -108,7 +108,10 @@ def ground_bare(
         if (r.data_type or "").lower() == "numeric" and getattr(r, "unit", None) and r.spec_key not in hidden_keys
     ]
     typed = _SAID.search(said)
-    unit_said = str(entity.get("spec_unit") or (typed.group(2) if typed else "") or "").strip().casefold()
+    # The unit typed beside the number when the parser kept that number ("15cm", 15), else the
+    # resolver's own `spec_unit`.
+    beside = typed.group(2) if typed and _number(typed.group(1)) == number else ""
+    unit_said = str(beside or entity.get("spec_unit") or (typed.group(2) if typed else "") or "").strip().casefold()
     dims = dimension_keys(rows)
     if dims and (not unit_said or length_factor(unit_said) is not None):
         # The parser copied the typed number off "15cm": read it in millimetres. A number the

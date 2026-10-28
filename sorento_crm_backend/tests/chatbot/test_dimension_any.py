@@ -222,3 +222,65 @@ def test_guard_two_named_dimensions_are_never_widened(session_factory, seeded):
 
     assert outcome["qualifying_total"] == 0, outcome
     assert "dimension_fallback" not in outcome
+
+
+def test_guard_a_named_length_held_but_out_of_stock_is_no_fallback(session_factory, seeded):
+    """Reviewer B1: a WC that holds length 150 with no stock is the honest "but no stock" miss,
+    never "None with length 150 mm" over a height-150 WC that has stock."""
+    from sqlalchemy import update
+
+    from app.models.base import set_company_scope
+    from app.models.inventory import Stock
+    from app.services.product_predicate_service import resolve_product_set
+
+    ids = _seed(session_factory, (("ZZPR-L", WC, {"dim_length": 150}), ("ZZPR-H", WC, {"dim_height": 150})))
+    db = session_factory()
+    db.execute(update(Stock).where(Stock.product_id == ids["ZZPR-L"]).values(quantity_on_hand=0))
+    db.commit()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+    outcome = resolve_product_set(
+        db, require={"stock": True}, specs=[{"key": "dim_length", "value": 150, "grounded": True}], scope_terms=["zzwc"],
+    )
+
+    assert outcome["qualifying_total"] == 0, outcome
+    assert "dimension_fallback" not in outcome, outcome
+
+
+def test_guard_a_hidden_dimension_is_never_a_leg_of_the_fallback(session_factory, seeded):
+    """Reviewer S1: the fallback's OR is built off the visible keys only."""
+    from app.models.base import set_company_scope
+    from app.services.product_predicate_service import resolve_product_set
+
+    _seed(session_factory, WCS)
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+
+    outcome = resolve_product_set(
+        db, require={}, specs=[{"key": "dim_length", "value": 400, "grounded": True}], scope_terms=["zzwc"],
+        hidden_keys=frozenset({"dim_width"}),
+    )
+
+    assert outcome["qualifying_total"] == 0, outcome
+    assert "dimension_fallback" not in outcome, outcome
+
+
+def test_the_route_hands_the_fallback_to_the_reply(session_factory, seeded):
+    """Reviewer S2: the resolve route's predicate carries `dimension_fallback` (a field
+    `response_model`-style plumbing could drop), so the set header can lead with the line."""
+    from app.api.v1.system.references import ResolveReferenceRequest, resolve_reference_post
+    from app.models.base import set_company_scope
+
+    _seed(session_factory, WCS)
+    db = session_factory()
+    set_company_scope(db, frozenset({DEFAULT_COMPANY_ID}))
+    body = ResolveReferenceRequest(
+        query="zzwc length 150mm", tokens=["zzwc"], require={"stock": True}, scope_terms=["zzwc"],
+        extracted_specs=[{"key": "dim_length", "value": 150, "evidence": "length 150mm", "grounded": True}],
+    )
+
+    payload = resolve_reference_post(body, current_user={}, db=db)
+
+    predicate = payload.get("predicate") or {}
+    assert predicate.get("qualifying_total") == 2, payload
+    assert predicate.get("dimension_fallback") == {"label": "Length", "value": "150 mm"}, predicate

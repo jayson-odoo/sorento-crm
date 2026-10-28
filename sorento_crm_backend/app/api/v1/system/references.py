@@ -1960,7 +1960,9 @@ def _unknown_value_members(
     """The described set without its unknown value, for the miss reply's phrase (its
     description and class). SET-STOCK-RENDER (owner, 16 Oct 2026): never broken down.
     None when the rest of the ask describes no set."""
-    from app.services.product_predicate_service import resolve_product_set
+    # `_resolve_set`, the strict count: these members back an unknown value's miss, which carries
+    # no dimension fallback line, so a named dimension is never widened here (DIMENSION-ANY).
+    from app.services.product_predicate_service import _resolve_set as resolve_product_set
     from app.services.product_spec_understanding import derive_search_inputs
 
     key = next((u.get("key") for u in unknown if u.get("key")), None)

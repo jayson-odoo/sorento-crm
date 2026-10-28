@@ -870,12 +870,16 @@ def resolve_product_set(db: Session, **kwargs: Any) -> dict:
     counted again with that number under any dimension (`product_spec_search.dimension_keys`). When
     that set holds something it is the answer, carrying ``dimension_fallback`` (the named label and
     value) so the reply says "None with length 150 mm; these have 150 mm in another dimension:".
+    Only when nothing holds the named dimension at all: a product that holds it but fails a require
+    leg (no stock) is the honest miss "here it is, but no stock", never "none with length 150 mm".
     Otherwise the first, honest miss stands."""
     outcome = _resolve_set(db, **kwargs)
     if outcome.get("qualifying_total"):
         return outcome
     wider = _any_dimension_specs(db, kwargs.get("specs"), kwargs.get("hidden_keys") or frozenset())
     if wider is None:
+        return outcome
+    if kwargs.get("require") and _resolve_set(db, **{**kwargs, "require": {}, "limit": 1}).get("qualifying_total"):
         return outcome
     specs, named = wider
     again = _resolve_set(db, **{**kwargs, "specs": specs})
