@@ -84,3 +84,19 @@ holds `salesperson` plus any other role ("mixed").
   (portal `/me` returns `crm_user_id` for impersonation tokens only), and Users > "Impersonate user" followed by My
   requests (the contact impersonation starts itself, once per visit). Contacts without a salesperson user keep the old
   portal on every path.
+
+## Owner requirement 28 Oct ~14:20: after-submit parity for MY REQUESTS (built in PORTAL-P4-REQUESTS)
+For Stock Inquiry, Complaint, Purchase Request and Sponsorship Form, the end-to-end flow of every submission works
+exactly like the portal. Only create / save as draft / submit move to the staff pages (P4); everything after submit
+behaves as today.
+- P3-30 Happy flow: create -> save as draft -> submit -> approval steps exactly per that form's SLA config -> approved.
+- P3-31 Reject -> resubmit (status Resubmitted + audit trail as #1942) -> approved.
+- P3-32 Notifications fire at each step as in the portal; on crew copies assert the notification / outbox records,
+  never send.
+- P3-33 Revision: create a revision; revision viewing.
+- P3-34 Comments, responses, status banners and revision history stay visible to the salesperson on the CRM detail
+  page.
+- P3-35 Proof: one E2E test per form driving the real API through these states (red-first where behaviour is new);
+  browser pass on the crew copy walking P3-30 and P3-31 for at least Stock Inquiry and Complaint as (a) the
+  salesperson and (b) an admin impersonating them, approver side as a staff approver, each step's visible items
+  compared with the portal on the same record.
