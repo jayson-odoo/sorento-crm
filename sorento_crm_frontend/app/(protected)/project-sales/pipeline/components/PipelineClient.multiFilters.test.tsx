@@ -83,7 +83,7 @@ vi.mock('../../_shared/services/projectService', async (importOriginal) => {
   };
 });
 
-// PORTAL-P3-ROLE-MENU: the developer / type filters show only to holders of projects.projects.view.
+// The pipeline gates Start and the Developer/Type lookups on projects.projects.view (PORTAL-P3-ROLE-MENU).
 vi.mock('@/hooks/usePermissions', () => ({
   usePermissions: () => ({
     permissionSet: new Set(['projects.projects.view']),

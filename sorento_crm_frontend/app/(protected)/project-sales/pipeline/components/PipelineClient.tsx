@@ -238,52 +238,52 @@ export function PipelineClient() {
     <div className="space-y-3">
       {canStart && (
         <>
-          <div className="space-y-1.5">
-            <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
-              Developer
-            </Label>
-            <SearchableMultiSelect
-              id="filter-developer"
-              value={splitMulti(developerFilter)}
-              onChange={(value) => setDeveloperFilter(joinMulti(value))}
-              clearable
-              renderTriggerLabel={(chosen) =>
-                chosen.length ? (
-                  <span className="block truncate">{multiChipLabel('Developer', idFilterLabels(chosen))}</span>
-                ) : (
-                  <span className="text-muted-foreground">All developers</span>
-                )
-              }
-              options={(developers.data?.data ?? []).map((party) => ({
-                value: party.id,
-                label: party.name,
-              }))}
-              placeholder="All developers"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
-              Type
-            </Label>
-            <SearchableMultiSelect
-              id="filter-type"
-              value={splitMulti(typeFilter)}
-              onChange={(value) => setTypeFilter(joinMulti(value))}
-              clearable
-              renderTriggerLabel={(chosen) =>
-                chosen.length ? (
-                  <span className="block truncate">{multiChipLabel('Type', idFilterLabels(chosen))}</span>
-                ) : (
-                  <span className="text-muted-foreground">All types</span>
-                )
-              }
-              options={(types.data ?? []).map((type) => ({
-                value: type.id,
-                label: type.name,
-              }))}
-              placeholder="All types"
-            />
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
+            Developer
+          </Label>
+          <SearchableMultiSelect
+            id="filter-developer"
+            value={splitMulti(developerFilter)}
+            onChange={(value) => setDeveloperFilter(joinMulti(value))}
+            clearable
+            renderTriggerLabel={(chosen) =>
+              chosen.length ? (
+                <span className="block truncate">{multiChipLabel('Developer', idFilterLabels(chosen))}</span>
+              ) : (
+                <span className="text-muted-foreground">All developers</span>
+              )
+            }
+            options={(developers.data?.data ?? []).map((party) => ({
+              value: party.id,
+              label: party.name,
+            }))}
+            placeholder="All developers"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
+            Type
+          </Label>
+          <SearchableMultiSelect
+            id="filter-type"
+            value={splitMulti(typeFilter)}
+            onChange={(value) => setTypeFilter(joinMulti(value))}
+            clearable
+            renderTriggerLabel={(chosen) =>
+              chosen.length ? (
+                <span className="block truncate">{multiChipLabel('Type', idFilterLabels(chosen))}</span>
+              ) : (
+                <span className="text-muted-foreground">All types</span>
+              )
+            }
+            options={(types.data ?? []).map((type) => ({
+              value: type.id,
+              label: type.name,
+            }))}
+            placeholder="All types"
+          />
+        </div>
         </>
       )}
       <div className="space-y-1.5">
