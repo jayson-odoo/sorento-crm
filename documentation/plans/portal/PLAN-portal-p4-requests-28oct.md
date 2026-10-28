@@ -85,7 +85,8 @@ Frontend (per-form slices after S0; one coder each, parallel worktrees, folded b
 | S3 | Purchase Request + Sponsorship FE + PR/SF sort keys; + own comment delete via my-requests (red 137a2d6ca2) | 8afda83c66 | 567f545163 | green 93 FE + 48 BE; kill-proof posted |
 | S4 + S6 | Sample Request + Sales Opportunity (own portal routers registered on my-requests, staff guard, sort keys) + pp4_0001 grants for the extra kinds (no dealer_kit.page.view); test fixes cb84a4059a | c26c787622 | 25d2878e5d | green 33 FE + 67 BE; kill-proof posted |
 | S5 | New Product Application (staff detail portal-shaped for a salesperson, portal rows editable via my-requests) | 88facc513f | 7872c6724d | green 31 FE + 32 BE; kill-proof posted |
-| S7 | Price Tag (request page edit mode `?edit=1`, card v1.2 rec a; owner answer pending) | b074ecca37 | coder (Opus) running | red 23 FE + 29 BE |
+| S7 | Price Tag on the Dealer Kit table + request page (`?edit=1`, `/new`); staff guard; sort keys | b074ecca37 | d54954b62a | green 31 FE + 36/37 BE (1 seeding bug, tester fixing) |
+| S7b | price tag parity (crew answer a81067665 = (a)): share the portal's proof viewer, pinned-comment review, per-line combos/parts/promotions editor on the CRM request page; portal unchanged | tester running | - | - |
 | S-ATT | salesperson attachments (own upload/delete immediate like the portal; staff uploads locked) | 2d07b537be | 76ea23c8af | green 23 FE (+16 BE guards); kill-proof posted |
 | S8 | no embedded portal view in the CRM; `/my-requests` = landing redirect honouring the favourite star; no portal token in the CRM; deep links to staff pages | db8a85a639 | - | red 32 FE (29 pins) |
 
