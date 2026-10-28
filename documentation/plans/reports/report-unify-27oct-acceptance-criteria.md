@@ -61,6 +61,14 @@ Status: Agreed (owner answers 27 Oct ~19:15). Plan: `PLAN-report-unify-27oct.md`
   - "my ..." from an ungranted salesperson = own customers, "Limited to: your customers".
 - **AC-RU-17.** The retired tools are gone from the policy rows, the MCP catalog and the analytics connector (Q1).
 
+- **AC-RU-17a** (owner 28 Oct 09:30). An undelivered-orders answer (basis `outstanding`) ends with "Reply 1 for the
+  sales order list". Replying 1 lists the open sales orders behind that figure: the same basis, filters, company and
+  period, grouped by sales order, with their open qty and RM summing to the figure. Pending delivery and unpaid get
+  no such offer.
+- **AC-RU-17b** (owner 28 Oct 08:40). A contact without a linked customer sees all figures, on totals and rankings
+  alike. A contact with a linked customer sees only that customer's figures. "My ..." from a live salesperson stays
+  its own book.
+
 ## Span binding (slice 3)
 
 - **AC-RU-18.** "mch" bound by the span pass to brand MOCHA reaches the report as the MOCHA brand id (H2).

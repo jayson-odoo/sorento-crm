@@ -18,6 +18,8 @@ pick up `invoiced` on rebase.
 | Q3 spec | (a) | spec filter AND `group_by=spec:<key>` |
 | Q4 not applied | (a) | A "Not applied: \<filter\> (\<reason\>)" line. The bot asks instead only when that filter was the only subject. |
 | Q6 access (22:52) | (a) | The route checks the **Outstanding** reveal (`sales_orders.outstanding`) for bases `outstanding` / `pending_delivery` / `unpaid` and the **Sales report** reveal (`sales_orders.sales_report`) for the sales bases. A linked contact stays limited to its own customers. No new permission. |
+| Q7 salesperson scope (28 Oct 08:40) | linked customer | One rule for totals and rankings, set by the contact's linked customer (`_contact_scope.enforce_customer_scope`, called at `report_ask.py:472`). With no linked customer: ALL figures. With one: only that customer's. An ungranted live salesperson is no longer always narrowed to its own book. Assumed, flagged to the owner: "my ..." still means the own book. |
+| Q8 retired behaviours (28 Oct 09:30) | keep 1, retire 2 and 3 | Item 1: under an undelivered-orders answer (basis `outstanding`), the offer "Reply 1 for the sales order list" lists the open SOs behind the figure. It re-runs the SAME ask grouped by a new `sales_order` dimension on the outstanding definition, so the list is the figure's population by construction. Items 2 (sales-report drill offers) and 3 (SF-2 carried offer) retire. |
 | Q5 screen | (a) | One "Sales & outstanding" report screen over the same ask definitions |
 
 ### The two new outstanding bases (Q2)
