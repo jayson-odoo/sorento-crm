@@ -1298,9 +1298,14 @@ export function LineSplitSheet({
         'table-fixed border-separate border-spacing-0 text-xs',
         resized
           ? 'min-w-(--sheet-min) max-md:min-w-(--sheet-min-phone)'
-          : readOnly
-            ? 'min-w-[1030px] max-md:min-w-[850px]'
-            : 'min-w-[1180px] max-md:min-w-[1000px]',
+          : // The New item code column (112px) widens the sheet rather than squeeze REMARK.
+            newItemColumn
+            ? readOnly
+              ? 'min-w-[1142px] max-md:min-w-[962px]'
+              : 'min-w-[1292px] max-md:min-w-[1112px]'
+            : readOnly
+              ? 'min-w-[1030px] max-md:min-w-[850px]'
+              : 'min-w-[1180px] max-md:min-w-[1000px]',
       )}
     >
       <TableHeader className="[&_tr]:border-0">
