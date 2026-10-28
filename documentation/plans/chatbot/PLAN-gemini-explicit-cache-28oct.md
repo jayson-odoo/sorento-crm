@@ -1,7 +1,8 @@
 # PLAN: explicit Gemini context caching for parser calls (GEMINI-EXPLICIT-CACHE)
 
-Status: in review (reviewer READY 28 Oct); awaiting a live check on gemini-3.5-flash-lite (small fix
-track: backend only, no migration, no auth/RBAC, no new ingest surface)
+Status: in review (reviewer READY 28 Oct; live check PASS 28 Oct on gemini-3.5-flash-lite, head
+90520ea7: one create, cached 9106 of ~9114 prompt tokens on all three calls). Small fix track:
+backend only, no migration, no auth/RBAC, no new ingest surface.
 
 ## Why
 
@@ -49,9 +50,9 @@ labeller (`analytics/labeller.py`), and now the clarifier (`lanes/casual.py`).
   `tools`, `toolConfig` beside it (https://ai.google.dev/gemini-api/docs/caching?lang=rest).
 - Minimum cacheable size: the caching page lists 1,024 to 4,096 tokens depending on model
   (3.5 Flash: 4,096 on the current localized pages); Flash-Lite is not listed. The parser
-  prompt (~28k tokens) clears every listed minimum. Whether `gemini-3.5-flash-lite` accepts
-  `createCachedContent` is NOT verified from here (no Gemini key in the sandbox): the live
-  check below settles it, and a refusal degrades to today's uncached behaviour.
+  prompt (~28k tokens) clears every listed minimum. `gemini-3.5-flash-lite` accepts
+  `createCachedContent` with the parser's call shape (JSON schema, thinking config): verified
+  live 28 Oct with `scripts/gemini_cache_live_check.py` (crew, Mac).
 - Pricing, 3.5 Flash-Lite, Standard tier (https://ai.google.dev/gemini-api/docs/pricing via
   aggregators): input $0.30/1M, cached input $0.03/1M, cache storage $1.00/1M tokens/hour.
 
