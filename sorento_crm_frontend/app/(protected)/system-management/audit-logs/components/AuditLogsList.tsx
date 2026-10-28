@@ -21,7 +21,8 @@ import { Skeleton } from '@/components/ui/skeleton';
 import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import {
@@ -38,8 +39,6 @@ import { getUsersSelect } from '@/services/userSelectService';
 import { useAuditLogs } from '../hooks/useAuditLogs';
 import type { AuditLog } from '../types/auditLog.types';
 
-const ACTION_ALL = '__all__';
-const ENTITY_TYPE_ALL = '__all__';
 
 // Entity types the audit trigger records (stored value = table/entity name). A
 // fixed list beats free text so a singular/plural typo ("user" vs "users") can't
@@ -104,7 +103,7 @@ export default function AuditLogsList() {
 
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [entityType, setEntityType] = useState('');
-  const [action, setAction] = useState(ACTION_ALL);
+  const [action, setAction] = useState('');
   const [userId, setUserId] = useState('');
   const {
     value: entityIdInput,
@@ -124,7 +123,7 @@ export default function AuditLogsList() {
     entity_type: entityType || undefined,
     entity_id: entityId || undefined,
     user_id: userId || undefined,
-    action: action !== ACTION_ALL ? action : undefined,
+    action: action || undefined,
     changed_from: dateFrom || undefined,
     changed_to: dateTo || undefined,
   });
@@ -152,7 +151,7 @@ export default function AuditLogsList() {
 
   const activeFilterCount =
     (entityType ? 1 : 0) +
-    (action !== ACTION_ALL ? 1 : 0) +
+    (action ? 1 : 0) +
     (userId ? 1 : 0) +
     (dateFrom || dateTo ? 1 : 0);
 
@@ -300,7 +299,7 @@ export default function AuditLogsList() {
 
   const clearFilters = () => {
     setEntityType('');
-    setAction(ACTION_ALL);
+    setAction('');
     setUserId('');
     setDateFrom('');
     setDateTo('');
@@ -358,24 +357,21 @@ export default function AuditLogsList() {
                   <div className="space-y-3">
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Entity type</label>
-                      <SearchableSelect
-                        value={entityType || ENTITY_TYPE_ALL}
-                        onChange={(v) => setEntityType(v === ENTITY_TYPE_ALL ? '' : v)}
-                        options={[
-                          { value: ENTITY_TYPE_ALL, label: 'All entity types' },
-                          ...ENTITY_TYPES.map((t) => ({ value: t, label: t })),
-                        ]}
+                      <SearchableMultiSelect
+                        value={splitMulti(entityType)}
+                        onChange={(v) => setEntityType(joinMulti(v))}
+                        options={ENTITY_TYPES.map((t) => ({ value: t, label: t }))}
                         placeholder="All entity types"
                         triggerClassName="w-full"
+                        clearable
                       />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">Action</label>
-                      <SearchableSelect
-                        value={action}
-                        onChange={setAction}
+                      <SearchableMultiSelect
+                        value={splitMulti(action)}
+                        onChange={(v) => setAction(joinMulti(v))}
                         options={[
-                          { value: ACTION_ALL, label: 'All actions' },
                           { value: 'INSERT', label: 'Insert' },
                           { value: 'CREATE', label: 'Create' },
                           { value: 'UPDATE', label: 'Update' },
@@ -384,26 +380,27 @@ export default function AuditLogsList() {
                         ]}
                         placeholder="Action"
                         triggerClassName="w-full"
+                        clearable
                       />
                     </div>
                     <div className="space-y-1.5">
                       <label className="text-xs font-medium text-muted-foreground">User</label>
-                      <SearchableSelect
-                        value={userId}
-                        onChange={setUserId}
+                      <SearchableMultiSelect
+                        value={splitMulti(userId)}
+                        onChange={(v) => setUserId(joinMulti(v))}
                         loadError={usersError}
                         onRetry={() => void refetchUsers()}
-                        options={[
-                          { value: '', label: 'Any user' },
-                          ...(users?.map((u) => ({
+                        options={
+                          users?.map((u) => ({
                             value: u.id,
                             label: u.name || u.email || 'Unnamed user',
                             searchText: `${u.name ?? ''} ${u.email ?? ''}`.trim(),
-                          })) ?? []),
-                        ]}
+                          })) ?? []
+                        }
                         placeholder="Any user"
                         emptyMessage="No users found."
                         triggerClassName="w-full"
+                        clearable
                       />
                     </div>
                     <div className="grid grid-cols-2 gap-2">

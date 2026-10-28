@@ -55,6 +55,8 @@ export type SearchableMultiSelectProps = {
   selectedOptions?: SearchableMultiSelectOption[];
   /** Trigger size - shared with Radix SelectTrigger. Default `md`. */
   size?: SelectTriggerSize;
+  /** Forwarded to the trigger's `aria-label`, for a caller whose accessible name isn't the visible label. */
+  'aria-label'?: string;
   /**
    * Size the MENU to its widest option instead of to the trigger. Option labels wrap
    * in both modes either way. Same contract as `SearchableSelect.wrapOptions`, kept in
@@ -123,6 +125,7 @@ export function SearchableMultiSelect({
   fetchOptions,
   selectedOptions,
   size,
+  'aria-label': ariaLabel,
   wrapOptions = false,
   id,
   placeholder = 'Select...',
@@ -333,6 +336,7 @@ export function SearchableMultiSelect({
           // Radix SelectTrigger exposes role=combobox; keep parity so callers and tests
           // can find the trigger by role, and screen readers announce expanded state.
           role="combobox"
+          aria-label={ariaLabel}
           aria-expanded={open}
           className={cn(
             selectTriggerVariants({ size }),
