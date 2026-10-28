@@ -243,7 +243,7 @@ def _stamp_company(data: dict, attachment, company_names: dict) -> None:
 
 
 @router.get("/", response_model=ListResponse[AttachmentResponse])
-async def get_attachments(
+def get_attachments(
     page: int = Query(1, ge=1),
     limit: int = Query(50, ge=1, le=5000),
     query: Optional[str] = Query(None),
@@ -388,7 +388,7 @@ async def get_attachments(
 
 
 @router.get("/collision-check")
-async def collision_check(
+def collision_check(
     filename: str = Query(..., description="Candidate display name (stored_filename) to test."),
     directory_id: Optional[str] = Query(None, description="Folder to check within; no folder → never collides."),
     current_user: dict = Depends(require_any_permission_with_api_key(ATTACHMENT_UPLOAD_READERS)),
@@ -411,7 +411,7 @@ async def collision_check(
 
 
 @router.get("/drive", response_model=DriveListResponse)
-async def get_drive_contents(
+def get_drive_contents(
     directory_id: Optional[str] = Query(
         None, description="Folder to list (omit/null = drive root)."
     ),
@@ -560,7 +560,7 @@ STOCK_LIST_TYPE_NAMES = ("Stock List", "Stock_List")
 
 
 @router.get("/current-stock-list", response_model=AttachmentResponse)
-async def get_current_stock_list(
+def get_current_stock_list(
     current_user: dict = Depends(require_any_permission_with_api_key(STOCK_LIST_READERS)),
     db: Session = Depends(get_db),
 ):
@@ -653,7 +653,7 @@ def _attachment_response_with_linked_entities(
 
 
 @router.delete("/links/{link_id}", status_code=status.HTTP_200_OK)
-async def delete_attachment_link(
+def delete_attachment_link(
     link_id: str,
     entity_type: str = Query(..., description="Entity type of the link, e.g. inbound_shipment"),
     current_user: dict = Depends(get_current_user),
@@ -682,7 +682,7 @@ async def delete_attachment_link(
 
 
 @router.get("/{attachment_id}", response_model=AttachmentResponse)
-async def get_attachment(
+def get_attachment(
     attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -700,7 +700,7 @@ async def get_attachment(
 
 
 @router.post("/{attachment_id}/link-packing-list", status_code=status.HTTP_200_OK)
-async def link_attachment_to_packing_list(
+def link_attachment_to_packing_list(
     attachment_id: str,
     body: LinkPackingListRequest,
     current_user: dict = Depends(get_current_user),
@@ -733,7 +733,7 @@ async def link_attachment_to_packing_list(
 
 
 @router.post("/{attachment_id}/unlink-packing-list", status_code=status.HTTP_200_OK)
-async def unlink_packing_list_from_attachment(
+def unlink_packing_list_from_attachment(
     attachment_id: str,
     body: LinkPackingListRequest,
     current_user: dict = Depends(get_current_user),
@@ -1364,7 +1364,7 @@ async def bulk_import_attachments(
 
 
 @router.post("/bulk-download")
-async def bulk_download_attachments(
+def bulk_download_attachments(
     body: BulkDownloadRequest,
     current_user: dict = Depends(require_any_permission_with_api_key(DRIVE_READERS)),
     db: Session = Depends(get_db),
@@ -1471,7 +1471,7 @@ async def bulk_download_attachments(
 
 
 @router.put("/{attachment_id}", response_model=AttachmentResponse)
-async def update_attachment(
+def update_attachment(
     attachment_id: str,
     attachment_data: AttachmentUpdate,
     current_user: dict = Depends(get_current_user),
@@ -1494,7 +1494,7 @@ async def update_attachment(
 
 
 @router.post("/bulk-move", response_model=AttachmentsBulkMoveResponse)
-async def bulk_move_attachments(
+def bulk_move_attachments(
     body: AttachmentsBulkMoveRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1511,7 +1511,7 @@ async def bulk_move_attachments(
 
 
 @router.get("/{attachment_id}/download")
-async def download_attachment(
+def download_attachment(
     attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -1547,7 +1547,7 @@ async def download_attachment(
 
 
 @router.get("/{attachment_id}/metadata", response_model=AttachmentResponse)
-async def get_attachment_metadata(
+def get_attachment_metadata(
     attachment_id: str,
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
@@ -1565,7 +1565,7 @@ async def get_attachment_metadata(
 
 
 @router.get("/{attachment_id}/preview-url")
-async def get_attachment_preview_url(
+def get_attachment_preview_url(
     attachment_id: str,
     variant: str = Query(
         "original",
@@ -1596,7 +1596,7 @@ async def get_attachment_preview_url(
 
 
 @router.delete("/{attachment_id}", status_code=status.HTTP_200_OK)
-async def delete_attachment(
+def delete_attachment(
     attachment_id: str,
     current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
@@ -1614,7 +1614,7 @@ async def delete_attachment(
 
 
 @router.post("/{attachment_id}/archive", status_code=status.HTTP_200_OK)
-async def archive_attachment(
+def archive_attachment(
     attachment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1632,7 +1632,7 @@ async def archive_attachment(
 
 
 @router.put("/{attachment_id}/restore", status_code=status.HTTP_200_OK)
-async def restore_attachment(
+def restore_attachment(
     attachment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1650,7 +1650,7 @@ async def restore_attachment(
 
 
 @router.post("/bulk-archive", status_code=status.HTTP_200_OK)
-async def bulk_archive_attachments(
+def bulk_archive_attachments(
     body: AttachmentBulkDeleteRequest,
     current_user: dict = Depends(require_permission("resource.attachments.delete")),
     db: Session = Depends(get_db)
@@ -1667,7 +1667,7 @@ async def bulk_archive_attachments(
 
 
 @router.post("/bulk-delete", status_code=status.HTTP_200_OK)
-async def bulk_delete_attachments(
+def bulk_delete_attachments(
     body: AttachmentBulkDeleteRequest,
     current_user: dict = Depends(require_permission("resource.attachments.bulk_delete")),
     db: Session = Depends(get_db)
@@ -1684,7 +1684,7 @@ async def bulk_delete_attachments(
 
 
 @router.post("/reorder", status_code=status.HTTP_200_OK)
-async def reorder_attachments(
+def reorder_attachments(
     body: AttachmentReorderRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
@@ -1705,7 +1705,7 @@ async def reorder_attachments(
     response_model=BulkAttachmentTypeResponse,
     status_code=status.HTTP_200_OK,
 )
-async def bulk_set_attachment_type(
+def bulk_set_attachment_type(
     body: BulkAttachmentTypeRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1730,7 +1730,7 @@ async def bulk_set_attachment_type(
     response_model=BulkCompanyResponse,
     status_code=status.HTTP_200_OK,
 )
-async def bulk_set_company(
+def bulk_set_company(
     body: BulkCompanyRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1759,7 +1759,7 @@ async def bulk_set_company(
 
 
 @router.post("/bulk-access-levels/preview", response_model=BulkAccessLevelsPreviewResponse)
-async def preview_bulk_access_levels(
+def preview_bulk_access_levels(
     body: BulkAccessLevelsPreviewRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1779,7 +1779,7 @@ async def preview_bulk_access_levels(
 
 
 @router.post("/bulk-access-levels/apply", response_model=BulkAccessLevelsApplyResponse)
-async def apply_bulk_access_levels(
+def apply_bulk_access_levels(
     body: BulkAccessLevelsApplyRequest,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
@@ -1801,7 +1801,7 @@ async def apply_bulk_access_levels(
 
 
 @router.post("/{attachment_id}/resubmit", status_code=status.HTTP_200_OK)
-async def resubmit_attachment_webhook(
+def resubmit_attachment_webhook(
     attachment_id: str,
     current_user: dict = Depends(get_current_user),
     db: Session = Depends(get_db)
