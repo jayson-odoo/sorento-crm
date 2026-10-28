@@ -48,15 +48,16 @@ regex or word lists. Eval gate before any prod prompt publish.
   (AC-S3-13). Four warms at once (start-up OR the label flip itself) = ~18.6k texts. After 3 retries the fill gives up
   (`lookup_lists.py:916-928`); turns stay spelling-only until every text is cached (`:1086-1091`).
 
-## Steps (filled after the card's answers)
+## Steps
 
-1. Card (crew ask) - owner answers.
-2. Eval gate on dev: v68.txt (lists) vs v68+spans, Gemini flash-lite, smallest row set inside the ledger cap.
-3. Code (only if chosen): red tests first (tester), coder, reviewer.
-4. Verification + rollback recipe for crew (Sorento Chat connector, read-only).
-5. Owner step list.
+1. Card (crew ask) - answered ~15:4x.
+2. Eval on dev (crew runs live): `crew/state/eval/span-pass-prod/run.sh live` + `score_ab.py` (arm A = this morning's
+   v68.txt run on the same ids); free stub passed 20/20 (span v2, 3-small vectors, spans ran on every row).
+3. Code: red 91af4278bf (tester) -> coder -> reviewer, PR #1959.
+4. Verification + rollback recipe below.
+5. Activation below (owner).
 
-## Verification recipe (DRAFT, assumes the card's recommended answers; read-only)
+## Verification recipe (read-only; crew + owner)
 
 The connector (`app/services/analytics_connector/datasets.py`) has no trace column: it proves the parser version and
 the span CALL, not the embedding. The embedding proof is the turn drawer (owner) or one read-only SQL (owner).
@@ -91,8 +92,8 @@ Pass: `embedder` = the expected model on most turns, `meaning_spans` > 0, fallba
 (Checked on dev sorento_explore1020, 30 days: gemini-embedding-001 48 turns / 31 meaning spans; unwarmed 41 / 0; fallback 2.)
 
 Backend log (owner or crew with log access): one INFO line per worker
-`lookup lists warm: N texts cached on <model> in S s` (`lookup_lists.py:1072-1075`); a WARNING
-`lookup lists warm failed` with 429 = the burst problem (card Q2).
+`lookup lists warm: N texts cached on <model> in S s (F from the shared file)` (`warm` in `lookup_lists.py`; the
+shared-file count is new in #1959); a WARNING `lookup lists warm failed` with 429 = the burst problem (card Q2).
 
 ## Rollback (labels only, live within 60 s, no deploy)
 
@@ -102,24 +103,45 @@ Backend log (owner or crew with log access): one INFO line per worker
 Order when rolling back both: embedder first only if the parser stays on spans; otherwise parser first (the n-gram
 path reads OpenAI vectors only, `lookup_lists.py:307`).
 
-## Owner steps (DRAFT, assumes the card's recommended answers)
+## Activation (owner; the midnight window is fine)
 
-Before: run the read-only check (prod):
+What ships where:
+- Step 1 needs NO release: labels and one pasted prompt version only. It can run any time after crew's eval (Q5) passes.
+- Step 2 needs the release that carries PR #1959 (the shared vector file). Merge, then crew dispatches `deploy.yml` and
+  the owner approves it in the GitHub `production` environment. Check it is live before step 2: the backend log after the
+  deploy shows `lookup lists warm: N texts cached on text-embedding-3-small in S s (F from the shared file)` lines (the
+  "(F from the shared file)" part is new in #1959).
+
+00:00, before anything (read-only SQL on prod, copy the output to crew):
 ```sql
 SELECT l.name, v.version, l.provider, l.model, md5(v.template) FROM ai_prompt_labels l
 JOIN ai_prompt_versions v ON v.id = l.version_id
 WHERE l.label = 'production' AND l.name IN ('chatbot_semantic_parser', 'chatbot_span_extractor', 'chatbot_lookup_embedder');
+SELECT version, md5(template), position('meaning' in template) > 0 AS has_meaning, commit_message
+FROM ai_prompt_versions WHERE name = 'chatbot_span_extractor' ORDER BY version;
 ```
-Expect parser v69 md5 8c77b4eb, span extractor v1, embedder row with provider/model empty.
+Expect: parser v69 md5 8c77b4eb; span extractor on v1; embedder with provider/model empty; one span extractor version
+with `has_meaning` true and commit message "ENTITY-EXTRACT-MATCH S3: ..." (that is "v2" below, whatever its number).
 
-Step 1 (spans on, OpenAI vectors; no deploy):
-1. AI Assistant > Prompts > `chatbot_span_extractor` > production label: provider gemini, model gemini-3.5-flash-lite.
-2. `chatbot_semantic_parser` > new version: paste `crew/state/eval/span-pass-prod/v69-spans.txt` (md5 57d7d412) > save.
-3. Move the production label to that version (keep provider/model as v69's label had them).
-4. Tell crew the time; crew runs the verification recipe. Rollback = label back to v69.
+Step 1, ~00:05 (spans on, span v2, OpenAI vectors). System Management > AI Assistant > Prompts:
+1. `chatbot_span_extractor`: move the production label to the "meaning" version; set its provider gemini, model
+   gemini-3.5-flash-lite.
+2. `chatbot_semantic_parser`: new version, paste `crew/state/eval/span-pass-prod/v69-spans.txt` (md5 57d7d412, 102,624
+   chars; it is v69 with its last line `== LOOKUP LISTS ==` changed to `== LOOKUP SPANS ==`), save.
+3. Move the parser production label to that new version, with the same provider/model v69's label has.
+4. Wait 60 s (prompt cache), then System Management > Chatbot Console: send "ada stok 马桶?" as a staff contact. Open
+   the turn in Chat History: the span pass section shows `gemini / gemini-3.5-flash-lite | label |
+   text-embedding-3-small | N ms` and the phrase 马桶 with a meaning ("toilet" or similar).
+5. Tell crew the time (T1). Crew runs the verification recipe at T1 + 30 min and next morning.
+Rollback: parser label back to v69 (and span extractor label back to v1).
 
-Step 2 (Gemini vectors; after the Q2 warm fix is deployed):
-1. `chatbot_lookup_embedder` > production label: provider gemini, model `gemini-embedding-001` (exactly).
-2. `chatbot_span_extractor` > move production label to v2 (the "meaning" version from eem_0003), same model.
-3. Watch the backend log for `lookup lists warm: N texts cached on gemini-embedding-001` (one per worker).
-4. Tell crew the time; crew re-runs the verification. Rollback = clear embedder provider/model; span label back to v1.
+Step 2, any night after the #1959 release is live (Gemini vectors):
+1. `chatbot_lookup_embedder`: production label provider gemini, model `gemini-embedding-001` (exactly this name; any
+   other name switches meaning off, `list_resolver.py:59-75`).
+2. Wait 60 s, then send the same Console turn twice, a minute apart. The first turn may read `spelling only` (that
+   worker is warming); the backend log shows ONE worker `... cached on gemini-embedding-001 in ~1-5 min (0 from the
+   shared file)` and the other workers, on their first turn, `(N from the shared file)` in under a second. The second
+   Console turn's drawer reads `gemini-embedding-001`.
+3. A `lookup lists warm failed` WARNING with 429 = the burst is still too big: roll back (below) and tell crew.
+4. Tell crew the time (T2). Crew re-runs the verification recipe.
+Rollback: clear the embedder label's provider and model (= OpenAI 3-small, already cached in every worker).
