@@ -83,6 +83,7 @@ from app.models.sales_agent import SalesAgent
 from app.models.user import User
 from app.services.company_scope import build_company_predicate
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_text, multi_values
 from app.services.product_companion_service import (
     bundled_with_item_codes_map,
     resolve_bundled_item_codes,
@@ -1468,17 +1469,22 @@ class OrderInquiryWorklistService:
             )
         if raised_date:
             base = base.filter(_RAISED_DAY == _as_day(raised_date))
-        if state:
-            base = base.filter(OrderInquiryRow.state == state)
+        # FILTER-MULTISELECT PR6: State, Project, Supplier, Raised by, Location and Agent take several
+        # values, OR-ed within the filter (a single string, a comma-joined one or a list all read).
+        states = multi_values(state)
+        if states:
+            base = base.filter(OrderInquiryRow.state.in_(states))
         elif not include_cancelled:
             # S5/AC-OH-50..51 (R2): a `cancelled` row is a revision that called the line
             # off - not owed, and not a row purchasing needs to see unless the State
             # filter specifically asks for it.
             base = base.filter(OrderInquiryRow.state != INQUIRY_CANCELLED)
-        if project_id:
-            base = base.filter(ProjectSalesOrder.project_id == project_id)
-        if project:
-            base = base.filter(_PROJECT_TITLE == project)
+        project_ids = multi_values(project_id)
+        if project_ids:
+            base = base.filter(ProjectSalesOrder.project_id.in_(project_ids))
+        titles = multi_text(project)
+        if titles:
+            base = base.filter(_PROJECT_TITLE.in_(titles))
         if inquiry_id:
             base = base.filter(OrderInquiry.id == inquiry_id)
         if reserve:
@@ -1509,13 +1515,15 @@ class OrderInquiryWorklistService:
             base = base.filter(
                 OrderInquiryRow.id.in_(sorted(self._dead_document_rows(dead_document)))
             )
-        if supplier_id:
-            base = base.filter(Supplier.id == supplier_id)
-        if raised_by:
+        supplier_ids = multi_values(supplier_id)
+        if supplier_ids:
+            base = base.filter(Supplier.id.in_(supplier_ids))
+        raisers = multi_values(raised_by)
+        if raisers:
             # By id, off the ROW's own raiser (its revision's confirmer, the header only
             # when there is no revision). The screen picks the person from the summary's
             # own list, so this never has to guess which "Cindy" was meant.
-            base = base.filter(_RAISED_BY_ID == raised_by)
+            base = base.filter(_RAISED_BY_ID.in_(raisers))
         if linked:
             # WHERE the row is linked (AC-I5), which is a different question from what
             # STATE it is in: a buyer asking "what have I still not put on anything"
@@ -1612,10 +1620,12 @@ class OrderInquiryWorklistService:
                 base = base.filter(OrderInquiryRow.ack_state == ack)
         # S1, R-K: Location, Agent, SO month, PO number, SPO number - the five filters
         # the Excel parity batch adds to the Filters popover.
-        if location:
-            base = base.filter(_LOCATION == location)
-        if agent:
-            base = base.filter(SalesAgent.id == agent)
+        locations = multi_text(location)
+        if locations:
+            base = base.filter(_LOCATION.in_(locations))
+        agents = multi_values(agent)
+        if agents:
+            base = base.filter(SalesAgent.id.in_(agents))
         if so_month:
             first, following = _month_bounds(so_month)
             base = base.filter(_SO_DATE >= first, _SO_DATE < following)
@@ -3110,8 +3120,11 @@ class OrderInquiryWorklistService:
         moment you use it cannot be used a second time.
         """
         visible = self._base(**filters)
+        # The State control's own counts are taken with its own filter dropped, so picking one state
+        # does not zero the others (the same rule every axis below follows).
+        state_scope = self._base(**{**filters, "state": None})
         state_rows = (
-            visible.with_entities(
+            state_scope.with_entities(
                 OrderInquiryRow.state,
                 func.count(OrderInquiryRow.id),
                 func.coalesce(func.sum(OrderInquiryRow.qty), 0),
@@ -3124,8 +3137,12 @@ class OrderInquiryWorklistService:
         total_qty = _ZERO
         for state, count, qty in state_rows:
             by_state[state] = int(count)
-            total_rows += int(count)
-            total_qty += _dec(qty)
+        # The totals describe what is on screen, so they honour the State filter.
+        total_rows, total_qty_value = visible.with_entities(
+            func.count(OrderInquiryRow.id), func.coalesce(func.sum(OrderInquiryRow.qty), 0)
+        ).one()
+        total_rows = int(total_rows or 0)
+        total_qty = _dec(total_qty_value)
         # S5/AC-OH-52: `visible` above already hides `cancelled` by default (AC-OH-50), so
         # `by_state["cancelled"]` would otherwise read 0 the moment the State filter most
         # needs to offer its real count. The State facet is the one reader that must see

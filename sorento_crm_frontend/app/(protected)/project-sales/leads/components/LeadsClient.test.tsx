@@ -149,6 +149,34 @@ vi.mock(
   () => ({ useCustomerSelectQuery: () => ({ data: [], isLoading: false }) }),
 );
 
+// Outcome and Source are multi-selects now (FILTER-MULTISELECT PR6); a one-value pick stands in for them here.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+  }: {
+    value: string[];
+    onChange: (next: string[]) => void;
+    options?: { value: string; label: string }[];
+    placeholder?: string;
+  }) => (
+    <select
+      aria-label={placeholder ?? 'select'}
+      value={value[0] ?? ''}
+      onChange={(event) => onChange(event.target.value ? [event.target.value] : [])}
+    >
+      <option value="">{placeholder ?? ''}</option>
+      {(options ?? []).map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 import { LeadsClient } from './LeadsClient';
 
 function lead(overrides: Partial<LeadWithAcceptance> = {}): LeadWithAcceptance {

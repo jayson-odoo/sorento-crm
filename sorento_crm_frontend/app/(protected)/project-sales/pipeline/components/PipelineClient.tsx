@@ -15,7 +15,13 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import {
+  idFilterLabels,
+  joinMulti,
+  multiChipLabel,
+  splitMulti,
+} from '@/lib/list-filters/multiValue';
 import { useListStateFromUrl } from '@/hooks/useListStateFromUrl';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -120,9 +126,9 @@ export function PipelineClient() {
   const listParams = React.useMemo(
     () => ({
       query: debouncedSearch || undefined,
-      developer_party_id: developerFilter ? [developerFilter] : undefined,
+      developer_party_id: developerFilter ? splitMulti(developerFilter) : undefined,
       owner_user_id: ownerFilter ? [ownerFilter] : undefined,
-      type_id: typeFilter ? [typeFilter] : undefined,
+      type_id: typeFilter ? splitMulti(typeFilter) : undefined,
       only_critical: onlyCritical || undefined,
       approval_state: (approvalFilter || undefined) as ProjectListParams['approval_state'],
       page: view === 'board' ? 1 : pagination.pageIndex + 1,
@@ -232,48 +238,62 @@ export function PipelineClient() {
     <div className="space-y-3">
       {canStart && (
         <>
-          <div className="space-y-1.5">
-            <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
-              Developer
-            </Label>
-            <SearchableSelect
-              id="filter-developer"
-              value={developerFilter}
-              onChange={setDeveloperFilter}
-              clearable
-              options={(developers.data?.data ?? []).map((party) => ({
-                value: party.id,
-                label: party.name,
-              }))}
-              placeholder="All developers"
-            />
-          </div>
-          <div className="space-y-1.5">
-            <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
-              Type
-            </Label>
-            <SearchableSelect
-              id="filter-type"
-              value={typeFilter}
-              onChange={setTypeFilter}
-              clearable
-              options={(types.data ?? []).map((type) => ({
-                value: type.id,
-                label: type.name,
-              }))}
-              placeholder="All types"
-            />
-          </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="filter-developer" className="text-xs text-muted-foreground">
+            Developer
+          </Label>
+          <SearchableMultiSelect
+            id="filter-developer"
+            value={splitMulti(developerFilter)}
+            onChange={(value) => setDeveloperFilter(joinMulti(value))}
+            clearable
+            renderTriggerLabel={(chosen) =>
+              chosen.length ? (
+                <span className="block truncate">{multiChipLabel('Developer', idFilterLabels(chosen))}</span>
+              ) : (
+                <span className="text-muted-foreground">All developers</span>
+              )
+            }
+            options={(developers.data?.data ?? []).map((party) => ({
+              value: party.id,
+              label: party.name,
+            }))}
+            placeholder="All developers"
+          />
+        </div>
+        <div className="space-y-1.5">
+          <Label htmlFor="filter-type" className="text-xs text-muted-foreground">
+            Type
+          </Label>
+          <SearchableMultiSelect
+            id="filter-type"
+            value={splitMulti(typeFilter)}
+            onChange={(value) => setTypeFilter(joinMulti(value))}
+            clearable
+            renderTriggerLabel={(chosen) =>
+              chosen.length ? (
+                <span className="block truncate">{multiChipLabel('Type', idFilterLabels(chosen))}</span>
+              ) : (
+                <span className="text-muted-foreground">All types</span>
+              )
+            }
+            options={(types.data ?? []).map((type) => ({
+              value: type.id,
+              label: type.name,
+            }))}
+            placeholder="All types"
+          />
+        </div>
         </>
       )}
       <div className="space-y-1.5">
         <Label htmlFor="filter-approval" className="text-xs text-muted-foreground">
           Approval
         </Label>
-        <SearchableSelect
+        <SearchableMultiSelect
           id="filter-approval"
-          value={approvalFilter}
-          onChange={setApprovalFilter}
+          value={splitMulti(approvalFilter)}
+          onChange={(value) => setApprovalFilter(joinMulti(value))}
           clearable
           options={[
             { value: 'pending', label: 'Awaiting approval' },

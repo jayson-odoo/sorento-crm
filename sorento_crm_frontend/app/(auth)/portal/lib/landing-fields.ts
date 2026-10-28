@@ -126,11 +126,18 @@ export interface LandingDateRange {
   to?: string;
 }
 
-export type LandingFilterValue = string | LandingDateRange;
+/** A text field holds one value or several (OR-ed): free text, so an array, never a comma-joined string. */
+export type LandingFilterValue = string | string[] | LandingDateRange;
 export type LandingFilters = Record<string, LandingFilterValue>;
 
 function isDateRange(v: LandingFilterValue): v is LandingDateRange {
-  return typeof v === 'object' && v !== null;
+  return typeof v === 'object' && v !== null && !Array.isArray(v);
+}
+
+/** The picked values of a text filter; `[]` when none. */
+export function landingFilterValues(v: LandingFilterValue | undefined): string[] {
+  if (v === undefined || isDateRange(v)) return [];
+  return (Array.isArray(v) ? v : [v]).filter(Boolean);
 }
 
 export function activeLandingFilterCount(filters: LandingFilters): number {
@@ -138,7 +145,7 @@ export function activeLandingFilterCount(filters: LandingFilters): number {
   for (const v of Object.values(filters)) {
     if (isDateRange(v)) {
       if (v.from || v.to) n += 1;
-    } else if (v) {
+    } else if (landingFilterValues(v).length) {
       n += 1;
     }
   }
@@ -170,8 +177,10 @@ export function applyLandingFilters(
         if (value.to && rowDate > value.to) return false;
         return true;
       }
-      if (!value) return true;
-      return landingFieldValue(row, field) === value;
+      const picked = landingFilterValues(value);
+      if (!picked.length) return true;
+      const own = landingFieldValue(row, field);
+      return own !== null && picked.includes(own);
     }),
   );
 }
