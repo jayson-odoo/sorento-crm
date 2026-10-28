@@ -144,3 +144,28 @@ describe('withAutoCount', () => {
     expect(rows.every((r) => r.where === 'other_group' && (r.net ?? null) === null)).toBe(true); // no subtotal, as v6 draws it
   });
 });
+
+describe('withAutoCount appendUnlisted (QUOTE-STOCK-AGENT-LOC, AC-QSA-23)', () => {
+  const listed = [row('BRW-IB', { where: 'own', net_of: 'IB', qty_on_hand: '1', available_qty: '1' })];
+  const status = {
+    product_id: 'prod-1',
+    locations: [
+      loc('BRW-IB', 6, 2, 0, 1),
+      loc('MWH-IB', 140, 0, 0, 0),
+      loc('WH3-BB', 9, 0, 0, 0),
+    ],
+  } as unknown as StockStatus;
+
+  it('false restates the listed rows and appends none of the unlisted AutoCount locations', () => {
+    const out = withAutoCount(listed, status, undefined, false);
+    expect(out.map((r) => r.location)).toEqual(['BRW-IB']);
+    expect(out[0].qty_on_hand).toBe('6');
+    expect(out[0].so_qty).toBe('2');
+  });
+
+  it('omitted keeps today\'s default: unlisted locations still join', () => {
+    const codes = withAutoCount(listed, status).map((r) => r.location);
+    expect(codes).toContain('MWH-IB');
+    expect(codes).toContain('WH3-BB');
+  });
+});

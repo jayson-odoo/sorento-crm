@@ -152,6 +152,29 @@ describe('STOCK-GROUPBY (AC-17, AC-20): the quotation popover carries the bar on
     expect(screen.getByTestId('group-by-bar')).toBeInTheDocument();
   });
 
+  it('AC-QSA-23: an AutoCount location the read did not list is not drawn in the popover table', async () => {
+    useStockStatusMock.mockReturnValue({
+      data: {
+        product_id: 'prod-1',
+        item_code: 'ITEM-1',
+        locations: [
+          { warehouse_id: 'wh-BRW-IB', warehouse_code: 'BRW-IB', warehouse_name: 'BRW-IB', is_active: true, on_hand: 10, so_qty: 2, po_qty: 0, spo_qty: 0, forecast: 8 },
+          { warehouse_id: 'wh-WH3-BB', warehouse_code: 'WH3-BB', warehouse_name: 'WH3-BB', is_active: true, on_hand: 9, so_qty: 0, po_qty: 0, spo_qty: 0, forecast: 9 },
+        ],
+        totals: { on_hand: 19, so_qty: 2, po_qty: 0, spo_qty: 0, forecast: 17, incoming_pl: 0, forecast_incl_pl: 17 },
+        incoming_pl: [],
+        sales_orders: [],
+        purchase_orders: [],
+        spos: [],
+      },
+      isLoading: false,
+    });
+    openPopover();
+    await drawActual();
+    expect(screen.getAllByText(/BRW-IB/).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/WH3-BB/)).not.toBeInTheDocument();
+  });
+
   it('AC-17 without the read (a failed read), the table has no bar', async () => {
     useStockStatusMock.mockReturnValue({ data: undefined, isLoading: false });
     openPopover();
