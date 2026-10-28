@@ -214,6 +214,7 @@ def test_confirm_accepts_a_hand_picked_borrow_on_a_line_beyond_the_reserve_windo
         codes = [c["warehouse_code"] for c in sheet_line["borrow_candidates"]]
         assert codes == [elsewhere.warehouse_code, own.warehouse_code], codes
         picked = sheet_line["borrow_candidates"][0]
+        assert picked["source"] == "other_location", picked
 
         world = {"eling": eling, "product": product, "order": order, "line": line}
         body = _confirm(
