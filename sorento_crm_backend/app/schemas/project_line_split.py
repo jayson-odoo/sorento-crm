@@ -68,6 +68,9 @@ class LineSplitLineOut(BaseModel):
     line_id: str
     line_no: Optional[int] = None
     item_code: str = ""
+    #: PRODUCT-CHANGE-TALLY: the product AutoCount swapped the line from (the email's ITEM
+    #: CODE; `item_code` is then its NEW ITEM CODE). Null when the product did not change.
+    was_item_code: Optional[str] = None
     location: str = ""
     base_qty: float
     base_date: Optional[date] = None

@@ -5067,6 +5067,10 @@ class ProjectOrderInquiryService:
                 was["qty"] = plan.base_qty
             if whole or row.new_date is not None:
                 was["delivery_date"] = plan.base_date
+            if plan.was_item_code:
+                # PRODUCT-CHANGE-TALLY: a split line AutoCount swapped the product of prints
+                # ITEM CODE (old) / NEW ITEM CODE (new) like any other line.
+                was["item_code"] = plan.was_item_code
             qty = row.new_qty if row.new_qty is not None else plan.base_qty
             stand_in = SimpleNamespace(
                 id=template.get("row_id"),

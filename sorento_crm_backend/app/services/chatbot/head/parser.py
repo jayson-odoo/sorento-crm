@@ -1360,7 +1360,8 @@ def parse(config: ParserConfig, user_block: str) -> ParsedOutput:
             json_schema=config.json_schema or _base_schema(config),
             json_schema_name=PARSE_OUTPUT_SCHEMA_NAME,
             # One cache bucket per published prompt version: every parse on it shares
-            # the same static prefix (OpenAI only; the others ignore it).
+            # the same static prefix (OpenAI routing; on Gemini it turns on the explicit
+            # context cache, GEMINI-EXPLICIT-CACHE; Anthropic ignores it).
             prompt_cache_key=f"{PROMPT_KEY}:v{config.prompt_version or 'fallback'}",
             **({"reasoning_effort": effort} if effort != "off" else {}),
         )
