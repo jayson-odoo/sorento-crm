@@ -19,6 +19,7 @@ import {
   submitMySampleRequest,
   updateMyNewProductApplication,
   uploadAttachment,
+  deleteAttachment,
   updateMySampleRequest,
   type MyRequestAttachmentKind,
   type MyRequestKind,
@@ -227,5 +228,18 @@ export function useUploadMyRequestAttachment(kind: MyRequestAttachmentKind, refr
       toast.success('File added');
     },
     onError: (error: Error) => toast.error(error.message || 'Upload failed.'),
+  });
+}
+
+/** Remove one of their own files at once (the portal does the same); `refreshKeys` as for the upload. */
+export function useDeleteMyRequestAttachment(refreshKeys: unknown[][]) {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (linkId: string) => deleteAttachment(linkId),
+    onSuccess: () => {
+      for (const key of refreshKeys) void queryClient.invalidateQueries({ queryKey: key });
+      toast.success('File removed');
+    },
+    onError: (error: Error) => toast.error(error.message || 'Failed to remove attachment.'),
   });
 }

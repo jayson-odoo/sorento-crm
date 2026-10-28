@@ -1422,7 +1422,7 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
       <ComplaintManualAttachmentsSection
         complaintId={complaintId}
         attachments={complaint.attachments ?? []}
-        readOnly={limited}
+        requestKind={limited ? 'complaint' : undefined}
       />
 
       <AuditTrail entityType="complaint" entityId={complaintId} title="Audit Trail" />

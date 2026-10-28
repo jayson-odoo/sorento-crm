@@ -1355,7 +1355,7 @@ export default function StockInquiryDetail({
       <StockInquiryAttachmentsSection
         inquiryId={inquiryId}
         attachments={inquiry.attachments ?? []}
-        readOnly={limited}
+        requestKind={limited ? 'stock_inquiry' : undefined}
       />
 
       {/* The lineage lives in the page's own "Revisions" TAB (round 6), not in

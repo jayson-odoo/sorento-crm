@@ -11,13 +11,13 @@
 
 import { useMemo, useState } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
-import { Link2, Paperclip, Trash2, Upload } from 'lucide-react';
+import { Link2, Paperclip, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
-import { useUploadMyRequestAttachment } from '@/hooks/useMyRequests';
+import { OwnAttachmentDelete, OwnAttachmentUpload } from '@/components/common/OwnRequestAttachmentActions';
 import { formatDate } from '@/lib/helpers';
 import type { NewProductApplicationAttachment } from '@/types/newProductApplication';
 import { linkNewProductApplicationAttachment } from '../services/newProductApplicationService';
@@ -41,10 +41,10 @@ export default function NewProductApplicationAttachments({
   own?: boolean;
 }) {
   const [linkOpen, setLinkOpen] = useState(false);
-  const upload = useUploadMyRequestAttachment('new_product_application', [
+  const refreshKeys = useMemo<unknown[][]>(() => [
     ['new-product-application', applicationId],
     ['new-product-applications'],
-  ]);
+  ], [applicationId]);
   const unlink = useDeferredRowAction({
     actionKey: 'new_product_application_attachment.unlink',
     entityType: 'new_product_application_attachment',
@@ -117,6 +117,21 @@ export default function NewProductApplicationAttachments({
         meta: { headerTitle: 'Linked At' },
       },
     ];
+    if (editable && own) {
+      cols.push({
+        id: 'actions',
+        header: () => <span className="sr-only">Actions</span>,
+        cell: ({ row }) => {
+          if (row.original.uploaded_by_role !== 'contact') return null;
+          return (
+            <OwnAttachmentDelete linkId={row.original.link_id} refreshKeys={refreshKeys} />
+          );
+        },
+        size: 130,
+        enableResizing: false,
+        meta: { headerTitle: 'Actions' },
+      });
+    }
     if (editable && !own) {
       cols.push({
         id: 'actions',
@@ -145,7 +160,7 @@ export default function NewProductApplicationAttachments({
       });
     }
     return cols;
-  }, [editable, own, unlink]);
+  }, [editable, own, unlink, refreshKeys]);
 
   return (
     <>
@@ -158,23 +173,11 @@ export default function NewProductApplicationAttachments({
         }
         toolbar={
           editable && own ? (
-            <Button asChild disabled={upload.isPending}>
-              <label className="cursor-pointer">
-                <Upload className="size-4" />
-                Upload file
-                <input
-                  type="file"
-                  aria-label="Upload file"
-                  className="sr-only"
-                  disabled={upload.isPending}
-                  onChange={(e) => {
-                    const file = e.target.files?.[0];
-                    e.target.value = '';
-                    if (file) upload.mutate({ submissionId: applicationId, file });
-                  }}
-                />
-              </label>
-            </Button>
+            <OwnAttachmentUpload
+              kind="new_product_application"
+              requestId={applicationId}
+              refreshKeys={refreshKeys}
+            />
           ) : editable ? (
             <Button type="button" onClick={() => setLinkOpen(true)}>
               <Link2 className="size-4" />

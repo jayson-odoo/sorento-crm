@@ -1,12 +1,14 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useState } from 'react';
 import type { ColumnDef } from '@tanstack/react-table';
 import { Download, ExternalLink, Link2, Paperclip, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { formatDate } from '@/lib/helpers';
+import { OwnAttachmentDelete, OwnAttachmentUpload } from '@/components/common/OwnRequestAttachmentActions';
+import { myRequestsAttachmentDownloadUrl, type MyRequestKind } from '@/services/myRequestsService';
 import {
   useDeleteStockInquiryAttachment,
   useDeleteStockInquiryResponseAttachment,
@@ -34,13 +36,18 @@ interface StockInquiryAttachmentsSectionProps {
   attachments?: StockInquiryAttachment[];
   /** No link / unlink: a salesperson reading their own request (PORTAL-P4-REQUESTS). */
   readOnly?: boolean;
+  /** A salesperson on their own request: upload and remove their own files through My Requests (P4-16). */
+  requestKind?: MyRequestKind;
 }
 
 export default function StockInquiryAttachmentsSection({
   inquiryId,
   attachments: attachmentsFromInquiry = [],
   readOnly = false,
+  requestKind,
 }: StockInquiryAttachmentsSectionProps) {
+  const own = requestKind != null;
+  const refreshKeys = useMemo<unknown[][]>(() => [['stock-inquiry', inquiryId], ['stock-inquiries']], [inquiryId]);
   const [linkDialogOpen, setLinkDialogOpen] = useState(false);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [previewIndex, setPreviewIndex] = useState(0);
@@ -61,14 +68,20 @@ export default function StockInquiryAttachmentsSection({
     [attachmentsFromInquiry],
   );
 
+  const downloadUrl = useCallback(
+    (attachmentId: string) =>
+      own
+        ? myRequestsAttachmentDownloadUrl(attachmentId)
+        : `/api/v1/resource-management/attachments/${attachmentId}/download`,
+    [own],
+  );
+
   const previewItems = useMemo<AttachmentPreviewItem[]>(
     () =>
       attachments.map((link) => {
         const name = link.original_filename ?? link.file_name ?? 'Unnamed file';
         const cdn = link.file_url?.startsWith('http') ? link.file_url : undefined;
-        const download = link.attachment_id
-          ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
-          : undefined;
+        const download = link.attachment_id ? downloadUrl(link.attachment_id) : undefined;
         return {
           id: link.id,
           name,
@@ -77,7 +90,7 @@ export default function StockInquiryAttachmentsSection({
           sizeBytes: link.file_size_bytes,
         };
       }),
-    [attachments],
+    [attachments, downloadUrl],
   );
 
   const linkedAttachmentIds = useMemo(
@@ -176,7 +189,7 @@ export default function StockInquiryAttachmentsSection({
                 <a
                   href={
                     link.attachment_id
-                      ? `/api/v1/resource-management/attachments/${link.attachment_id}/download`
+                      ? downloadUrl(link.attachment_id)
                       : (link.file_url ?? '#')
                   }
                   download={displayName}
@@ -185,7 +198,10 @@ export default function StockInquiryAttachmentsSection({
                   Download
                 </a>
               </Button>
-              {!readOnly && (
+              {requestKind && link.uploaded_by_role === 'contact' && (
+                <OwnAttachmentDelete linkId={link.id} refreshKeys={refreshKeys} />
+              )}
+              {!readOnly && !own && (
                 <Button
                   variant="destructive"
                   size="sm"
@@ -207,7 +223,7 @@ export default function StockInquiryAttachmentsSection({
         meta: { headerTitle: 'Actions' },
       },
     ],
-    [attachments, unlinkPending, readOnly],
+    [attachments, unlinkPending, readOnly, requestKind, refreshKeys, downloadUrl],
   );
 
   return (
@@ -220,7 +236,9 @@ export default function StockInquiryAttachmentsSection({
           </span>
         }
         toolbar={
-          readOnly ? undefined : (
+          requestKind ? (
+            <OwnAttachmentUpload kind={requestKind} requestId={inquiryId} refreshKeys={refreshKeys} />
+          ) : readOnly ? undefined : (
             <Button onClick={() => setLinkDialogOpen(true)}>
               <Link2 className="size-4" />
               Link Attachment

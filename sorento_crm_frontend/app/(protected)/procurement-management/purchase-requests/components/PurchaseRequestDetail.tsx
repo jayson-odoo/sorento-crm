@@ -1572,7 +1572,7 @@ export default function PurchaseRequestDetail({
           <PurchaseRequestAttachmentsSection
             requestId={requestId}
             attachments={request.attachments}
-            readOnly={limited}
+            requestKind={limited ? scopeKind : undefined}
           />
         </div>
 
