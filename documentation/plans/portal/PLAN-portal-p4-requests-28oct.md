@@ -131,3 +131,8 @@ On the next main merge, `sponsorship-forms/new/page.tsx` and `PurchaseRequestFor
 that lane (PR #1953 crew-note 6470523547): keep #1961's async page (`searchParams.project_id`) inside the P4 Suspense
 wrapper; the PurchaseRequestForm default-export wrapper passes `defaultProjectId` to BOTH the staff form (#1961 effect,
 `getProject`, `selectedOption`) and `LimitedPurchaseRequestForm`; add one vitest for the limited branch; #1961 tests stay green.
+#1961 tests that must stay green after that merge: FE `purchase-requests/components/PurchaseRequestForm.defaultProject.test.tsx`
+(5 cases; mocks `getProject` from `@/app/(protected)/project-sales/_shared/services/projectService`),
+`project-sales/[projectId]/components/ProjectDetailClient.test.tsx` (describe "the prod-shaped ladder"; routes
+`/procurement-management/sponsorship-forms/new?project_id=` and `/project-sales/sample-requests/new?project_id=`),
+`project-sales/[projectId]/components/ProjectStatusPill.test.tsx`; BE `tests/test_project_stages_ladder.py`.
