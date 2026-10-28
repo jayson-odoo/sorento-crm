@@ -142,6 +142,12 @@ concurrency:
 env:
   IMAGE_REPO: jayson1004/sorento-crm
   RELEASE_TAG: 1.0.1
+  # Every job runs in UTC, as GitHub-hosted runners always did. Prod is expected to be UTC too: no
+  # tracked Dockerfile, compose or deploy script sets TZ (python-slim / node-alpine default), though
+  # the server's own compose and .env are not in the repo. The self-hosted sorento-mac VM
+  # (colima-ci) is Asia/Kuala_Lumpur, which moved naive-time tests 8 h on release run 40680704839
+  # (RELEASE5-FIX).
+  TZ: UTC
 
 # Where the jobs run (owner, 14 Oct 2026: Actions minutes nearly spent).
 # Self-hosted Linux arm64 runners on the Mac mini carry the label

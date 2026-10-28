@@ -126,6 +126,35 @@ class TestParserSendsPromptCacheKey:
         ]
 
 
+class TestClarifierSendsPromptCacheKey:
+    """GEMINI-EXPLICIT-CACHE: the clarifier asks for a cache per prompt version too.
+    `real_casual_llm` keeps conftest's `_stub_casual_llm` off `call_clarifier`; `llm_call.chat`
+    is faked below, so no network either way."""
+
+    @pytest.mark.real_casual_llm
+    def test_one_key_per_prompt_version(self, monkeypatch):
+        from app.services.chatbot.lanes import casual
+
+        seen: list[dict] = []
+
+        class _Result:
+            content = '{"response": "hi"}'
+
+        def fake_chat(provider, key, model, messages, **kwargs):
+            seen.append(kwargs)
+            return _Result()
+
+        monkeypatch.setattr(llm_call, "chat", fake_chat)
+        for version in (12, None):
+            config = casual.ClarifierConfig(
+                system_prompt="s", prompt_version=version, provider="gemini", model="m", api_key="k"
+            )
+            casual.call_clarifier(config, "u")
+
+        assert seen[0]["prompt_cache_key"] == "chatbot_clarifier:v12"
+        assert seen[1]["prompt_cache_key"] == "chatbot_clarifier:vfallback"
+
+
 class TestPromptCacheKey:
     def _client(self):
         import types

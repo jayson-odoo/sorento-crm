@@ -740,10 +740,9 @@ def serialize_projects(
             for row in db.query(ProjectLead).filter(ProjectLead.id.in_(lead_ids)).all()
         }
 
-    # The customer is the lead's buyer (owner, 13 Oct): the Overview shows it and the
-    # quotation header defaults its name, phone and Attn from it. Bulk like the rest.
     # The customer is the one picked on the register form (sales_profile.customer_id);
-    # where none was, the linked lead's buyer.
+    # where none was, the linked lead's buyer. The Overview shows it and the quotation
+    # header defaults its name, phone and Attn from it (owner, 13 Oct). Bulk like the rest.
     def _effective_customer_id(project_row):
         pr = profiles.get(project_row.id)
         if pr and pr.customer_id:
