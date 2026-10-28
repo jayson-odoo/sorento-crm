@@ -611,7 +611,7 @@ async def shutdown_event():
 
 
 @app.get("/")
-async def root():
+def root():
     """Root endpoint."""
     return {"message": "Sorento CRM API", "version": "1.0.0"}
 
