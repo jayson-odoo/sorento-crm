@@ -1,9 +1,10 @@
 """S1 - a confirmed allocation that HOLDS stock holds only what is STILL OWED.
 
-BOARD-NO-HOLD (owner, 27 Oct 2026): a confirmed Reserve (own / brw / group_take) no longer
-holds stock at all, so the cap is exercised on a BORROW (`other_location`), the kind that
-still does; `tests/scm/test_board_no_hold.py` pins that a Reserve holds nothing. The
-seeding below says `source_type` once, in `_decided_line`.
+BOARD-NO-HOLD (27 Oct 2026) and BORROW-NO-HOLD (28 Oct 2026): a confirmed decision, Reserve
+or Borrow, no longer holds stock at all, so free stock is on hand whatever the delivery
+(the first two cases below). What survives of the cap is the quantity a route carries into
+Stock Debt (`test_stock_debt_holds_read_the_same_capped_qty`). The seeding below says
+`source_type` once, in `_decided_line`.
 
 `PLAN-fulfilment-board-plans-delivered-lines.md` S1, UAC AC-S1-1 to AC-S1-5.
 
@@ -228,19 +229,17 @@ def _free(db, product, warehouse) -> Decimal:
 # --------------------------------------------------------------------------- #
 
 
-def test_hold_caps_at_still_owed_on_partial_delivery():
-    """AC-S1-1. 3 allocated, 3 ordered, 1 shipped: the hold is 2.
-
-    The shipped unit is already off `quantity_on_hand`. Holding 3 subtracts it a second time,
-    which is stock the business has that no screen can see.
+def test_a_decision_on_a_partly_delivered_line_takes_nothing_off_free_stock():
+    """AC-S1-1, new rule. 3 allocated, 3 ordered, 1 shipped: nothing is held, so the whole
+    10 on hand is free (the old cap, 2 held, is the route's own qty, AC-S1-4 below).
     """
     with blank_session() as db:
         product, warehouse, _core = _decided_line(
             db, ordered="3", delivered="1", alloc_qty="3", on_hand="10"
         )
 
-        assert _free(db, product, warehouse) == Decimal("8"), (
-            "10 on hand less a hold capped at the 2 still owed"
+        assert _free(db, product, warehouse) == Decimal("10"), (
+            "a decision holds nothing, so on hand is free"
         )
 
 
@@ -271,15 +270,15 @@ def test_hold_is_zero_on_cancelled_line_with_unreversed_delivery():
         assert _free(db, product, warehouse) == Decimal("10")
 
 
-def test_hold_unchanged_when_nothing_delivered():
-    """AC-S1-5. The cap is a NO-OP above the delivered line: 3 allocated on 3 ordered and
-    nothing shipped still holds 3, exactly as it does today."""
+def test_a_decision_with_nothing_delivered_takes_nothing_off_free_stock():
+    """AC-S1-5, new rule. 3 allocated on 3 ordered and nothing shipped holds nothing: the
+    whole 10 is free."""
     with blank_session() as db:
         product, warehouse, _core = _decided_line(
             db, ordered="3", delivered="0", alloc_qty="3", on_hand="10"
         )
 
-        assert _free(db, product, warehouse) == Decimal("7")
+        assert _free(db, product, warehouse) == Decimal("10")
 
 
 # --------------------------------------------------------------------------- #
