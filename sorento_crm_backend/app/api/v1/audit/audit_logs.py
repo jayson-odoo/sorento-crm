@@ -13,6 +13,7 @@ from app.models.user import User
 from app.models.access import RespondContact
 from app.services.user_service import UserPermissionService
 from app.services.error_handler import AppException
+from app.utils.multi_value import multi_uuids, multi_values
 from app.models.base import get_company_scope
 
 router = APIRouter()
@@ -255,10 +256,10 @@ def _child_labels(db: Session, items, entity_type: str, entity_id: str) -> dict[
 
 @router.get("/", response_model=ListResponse[AuditLogResponse])
 async def get_audit_logs(
-    entity_type: Optional[str] = Query(None, description="Filter by entity type (e.g. complaint, stock_inquiry, purchase_request)"),
+    entity_type: Optional[list[str]] = Query(None, description="Filter by entity type(s) (e.g. complaint, stock_inquiry, purchase_request)"),
     entity_id: Optional[str] = Query(None, description="Filter by entity id"),
-    user_id: Optional[str] = Query(None),
-    action: Optional[str] = Query(None, description="INSERT, UPDATE, or DELETE"),
+    user_id: Optional[list[str]] = Query(None),
+    action: Optional[list[str]] = Query(None, description="INSERT, UPDATE, or DELETE"),
     trace_id: Optional[str] = Query(None, description="Filter by request correlation id (groups a multi-row change)"),
     changed_from: Optional[datetime] = Query(None, description="Filter changed_at >= (ISO); e.g. a day bar drill-down"),
     changed_to: Optional[datetime] = Query(None, description="Filter changed_at <= (ISO)"),
@@ -272,13 +273,15 @@ async def get_audit_logs(
     db: Session = Depends(get_db),
 ):
     """List audit log entries, optionally filtered by entity_type and entity_id (for per-record history)."""
-    _authorize_log_read(db, current_user, entity_type, entity_id)
+    entity_types = multi_values(entity_type)
+    user_ids = multi_uuids(user_id, "User")
+    _authorize_log_read(db, current_user, entity_types[0] if entity_types and len(entity_types) == 1 else None, entity_id)
     items, total = list_audit_logs(
         db,
-        entity_type=entity_type,
+        entity_type=entity_types,
         entity_id=entity_id,
-        user_id=user_id,
-        action=action,
+        user_id=user_ids,
+        action=multi_values(action),
         trace_id=trace_id,
         changed_from=changed_from,
         changed_to=changed_to,
@@ -305,8 +308,8 @@ async def get_audit_logs(
 
     record_labels = entity_labels(db, items)
     status_labels = _status_labels(db, items)
-    if include_children and entity_type and entity_id:
-        record_labels.update(_child_labels(db, items, entity_type, entity_id))
+    if include_children and entity_types and len(entity_types) == 1 and entity_id:
+        record_labels.update(_child_labels(db, items, entity_types[0], entity_id))
     data = []
     for it in items:
         payload = AuditLogResponse.model_validate(it).model_dump()

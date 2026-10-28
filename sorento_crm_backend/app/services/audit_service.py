@@ -542,10 +542,10 @@ def log_import_audit(
 
 def list_audit_logs(
     db: Session,
-    entity_type: Optional[str] = None,
+    entity_type: Optional[list[str] | str] = None,
     entity_id: Optional[str] = None,
-    user_id: Optional[str] = None,
-    action: Optional[str] = None,
+    user_id: Optional[list[str] | str] = None,
+    action: Optional[list[str] | str] = None,
     trace_id: Optional[str] = None,
     changed_from: Optional[datetime] = None,
     changed_to: Optional[datetime] = None,
@@ -564,30 +564,33 @@ def list_audit_logs(
     both: an unparseable value can never match a row, so short-circuit to empty.
     """
     q = db.query(AuditLog)
+    entity_types = [entity_type] if isinstance(entity_type, str) else entity_type
+    user_ids = [user_id] if isinstance(user_id, str) else user_id
+    actions = [action] if isinstance(action, str) else action
     if entity_id and not _is_uuid(entity_id):
         return [], 0
-    if include_children and entity_type and entity_id:
+    if include_children and entity_types and entity_id:
         from sqlalchemy import and_, or_
 
         q = q.filter(or_(
-            and_(AuditLog.entity_type == entity_type, AuditLog.entity_id == entity_id),
-            and_(AuditLog.root_entity_type == entity_type, AuditLog.root_entity_id == entity_id),
+            and_(AuditLog.entity_type.in_(entity_types), AuditLog.entity_id == entity_id),
+            and_(AuditLog.root_entity_type.in_(entity_types), AuditLog.root_entity_id == entity_id),
         ))
     else:
-        if entity_type:
-            q = q.filter(AuditLog.entity_type == entity_type)
+        if entity_types:
+            q = q.filter(AuditLog.entity_type.in_(entity_types))
         if entity_id:
             q = q.filter(AuditLog.entity_id == entity_id)
-    if user_id:
-        if not _is_uuid(user_id):
+    if user_ids:
+        if not all(_is_uuid(u) for u in user_ids):
             return [], 0
         # Plan 8.1: an impersonated write carries the target as user_id and the admin
         # as real_user_id, so filtering by a person finds both kinds of row.
         from sqlalchemy import or_
 
-        q = q.filter(or_(AuditLog.user_id == user_id, AuditLog.real_user_id == user_id))
-    if action:
-        q = q.filter(AuditLog.action == action.upper())
+        q = q.filter(or_(AuditLog.user_id.in_(user_ids), AuditLog.real_user_id.in_(user_ids)))
+    if actions:
+        q = q.filter(AuditLog.action.in_([a.upper() for a in actions]))
     if trace_id:
         q = q.filter(AuditLog.trace_id == trace_id)
     # Multi-company: staff audit listing shows only the active company's rows

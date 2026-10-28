@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 
 vi.mock('@/components/common/SearchableSelect', () => ({
@@ -29,6 +30,34 @@ vi.mock('@/components/common/SearchableSelect', () => ({
     placeholder?: string;
   }) => (
     <select aria-label={placeholder ?? 'select'} value={value} onChange={(e) => onChange(e.target.value)}>
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
+// Outcome is a multi-select now (FILTER-MULTISELECT PR2): same native stand-in, a multiple <select>.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    value,
+    onChange,
+    options,
+    placeholder,
+  }: {
+    value: string[];
+    onChange: (v: string[]) => void;
+    options: { value: string; label: string }[];
+    placeholder?: string;
+  }) => (
+    <select
+      multiple
+      aria-label={placeholder ?? 'multi'}
+      value={value}
+      onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}
+    >
       {options.map((o) => (
         <option key={o.value} value={o.value}>
           {o.label}
@@ -75,7 +104,7 @@ describe('PullChangesTab - Outcome filter actually filters (E1)', () => {
     renderTab();
     await waitFor(() => expect(getImportJobRows).toHaveBeenCalledTimes(1));
 
-    fireEvent.change(screen.getByLabelText('All outcomes'), { target: { value: 'failed' } });
+    await userEvent.setup().selectOptions(screen.getByLabelText('All outcomes'), ['failed']);
 
     await waitFor(() =>
       expect(getImportJobRows).toHaveBeenLastCalledWith(
@@ -89,7 +118,7 @@ describe('PullChangesTab - Outcome filter actually filters (E1)', () => {
     renderTab();
     await waitFor(() => expect(getImportJobRows).toHaveBeenCalledTimes(1));
 
-    fireEvent.change(screen.getByLabelText('All outcomes'), { target: { value: 'failed' } });
+    await userEvent.setup().selectOptions(screen.getByLabelText('All outcomes'), ['failed']);
     await waitFor(() =>
       expect(getImportJobRows).toHaveBeenLastCalledWith(
         JOB_ID,
@@ -102,6 +131,6 @@ describe('PullChangesTab - Outcome filter actually filters (E1)', () => {
     // The `outcome: undefined` key is already cached fresh from the very first render (same
     // params), so React Query serves it without a further `getImportJobRows` call - the
     // control's own value resetting is what proves `PullChangesTab` threaded Clear through.
-    await waitFor(() => expect(screen.getByLabelText('All outcomes')).toHaveValue(''));
+    await waitFor(() => expect(screen.getByLabelText('All outcomes')).toHaveValue([]));
   });
 });

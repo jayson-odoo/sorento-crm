@@ -1,3 +1,5 @@
+import { multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
+
 /**
  * The contacts list's Filters popover, summarised: how many filters are on and one removable chip per
  * filter. Tag (`tag`) and Tag settings (`tag_settings`) are primary toolbar controls, so they are
@@ -31,17 +33,17 @@ const CHIPS: [
   string,
   (value: string, labels: Partial<Record<string, string>>) => string | null,
 ][] = [
-  ['access_type', (v, l) => `Access type: ${l.access_type ?? v}`],
-  ['tier', (v) => `Tier: ${TIER[v] ?? v}`],
+  // FILTER-MULTISELECT: several companies are one filter, one chip; the popover names them.
+  ['company', (_v, l) => `Company: ${l.company ?? 'Selected companies'}`],
+  // Several values are one filter, one chip: "Tier: Dealer, Office +1".
+  ['access_type', (v, l) => `Access type: ${l.access_type ?? multiValueSummary(splitMulti(v))}`],
+  ['tier', (v) => `Tier: ${multiValueSummary(splitMulti(v).map((t) => TIER[t] ?? t))}`],
   ...Object.keys(YES_NO).map((k): [string, (v: string) => string | null] => [
     k,
     (v) => `${YES_NO_TITLE[k]}: ${YES_NO[k][v === 'yes' ? 0 : 1]}`,
   ]),
-  ['region', (v) => `Region: ${REGION[v] ?? v}`],
-  [
-    'customer_id',
-    (_v, l) => `Customer: ${l.customer_id ?? 'Selected customer'}`,
-  ],
+  ['region', (v) => `Region: ${multiValueSummary(splitMulti(v).map((r) => REGION[r] ?? r))}`],
+  ['customer_id', (_v, l) => `Customer: ${l.customer_id ?? 'Selected customer'}`],
   [
     'access_differs_from',
     (_v, l) =>

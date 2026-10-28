@@ -17,7 +17,10 @@ from sqlalchemy.orm import Session
 from app.database import get_db
 from app.dependencies import require_permission
 from app.services.api_call_log_service import DEFAULT_LIMIT, MAX_LIMIT, list_call_logs
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import handle_internal_error, handle_unprocessable
+from app.utils.multi_value import multi_values
+
+_OUTCOMES = ("success", "client_error", "server_error")
 
 logger = logging.getLogger(__name__)
 
@@ -55,8 +58,8 @@ class ApiCallLogListResponse(BaseModel):
 def list_api_call_logs(
     date_from: Optional[datetime] = Query(None),
     date_to: Optional[datetime] = Query(None),
-    source: Optional[str] = Query(None),
-    outcome: Optional[str] = Query(None, pattern="^(success|client_error|server_error)$"),
+    source: Optional[list[str]] = Query(None),
+    outcome: Optional[list[str]] = Query(None),
     endpoint: Optional[str] = Query(None),
     correlation_id: Optional[str] = Query(None),
     min_latency_ms: Optional[int] = Query(None, ge=0),
@@ -75,6 +78,9 @@ def list_api_call_logs(
     Unbounded by default would mean a full-table scan on a table that grows with
     every external request.
     """
+    outcomes = multi_values(outcome)
+    if outcomes and any(o not in _OUTCOMES for o in outcomes):
+        raise handle_unprocessable(f"Outcome: expected one of {', '.join(_OUTCOMES)}")
     try:
         if date_from is None and date_to is None:
             date_from = datetime.utcnow() - timedelta(hours=24)
@@ -83,8 +89,8 @@ def list_api_call_logs(
             db,
             date_from=date_from,
             date_to=date_to,
-            source=source,
-            outcome=outcome,
+            source=multi_values(source),
+            outcome=outcomes,
             endpoint=endpoint,
             correlation_id=correlation_id,
             min_latency_ms=min_latency_ms,

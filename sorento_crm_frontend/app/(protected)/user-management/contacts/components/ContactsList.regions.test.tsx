@@ -4,7 +4,7 @@
  * boundary). RED until the list renders the column and sends `region` to the list request.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { render, screen, fireEvent, cleanup, waitFor, within } from '@testing-library/react';
+import { render, screen, cleanup, waitFor, within } from '@testing-library/react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import userEvent from '@testing-library/user-event';
 
@@ -79,6 +79,27 @@ vi.mock('@/components/common/SearchableSelect', async (importOriginal) => {
   return { ...actual, SearchableSelect: (props: Props) => <Stub {...props} /> };
 });
 
+vi.mock('@/components/common/SearchableMultiSelect', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/components/common/SearchableMultiSelect')>();
+  const React = await import('react');
+  type Props = Parameters<typeof actual.SearchableMultiSelect>[0];
+  const Stub = ({ value, onChange, options, fetchOptions, placeholder }: Props) => {
+    const [loaded, setLoaded] = React.useState(options ?? []);
+    React.useEffect(() => {
+      if (fetchOptions) void fetchOptions('').then(setLoaded);
+    }, [fetchOptions]);
+    return (
+      <select multiple aria-label={placeholder ?? 'multi'} value={value}
+        onChange={(e) => onChange(Array.from(e.target.selectedOptions, (o) => o.value))}>
+        {(fetchOptions ? loaded : (options ?? [])).map((o) => (
+          <option key={o.value} value={o.value}>{o.label}</option>
+        ))}
+      </select>
+    );
+  };
+  return { ...actual, SearchableMultiSelect: (props: Props) => <Stub {...props} /> };
+});
+
 const BASE_ROW = {
   phone_number: '+60100000011',
   first_name: 'ZZT',
@@ -139,7 +160,7 @@ describe('ContactsList - Regions column and filter (AC-CR-19, AC-CR-20)', () => 
     renderList();
     await screen.findByText('+60100000011');
     await userEvent.setup().click(screen.getByRole('button', { name: /^filters/i }));
-    fireEvent.change(await screen.findByLabelText(/region/i), { target: { value: 'east' } });
+    await userEvent.setup().selectOptions(await screen.findByLabelText(/region/i), ['east']);
     await waitFor(() => {
       const calls = getContactsMock.mock.calls;
       const filters = calls[calls.length - 1][1] as Record<string, string>;

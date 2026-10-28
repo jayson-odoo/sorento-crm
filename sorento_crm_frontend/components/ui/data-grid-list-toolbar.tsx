@@ -1,6 +1,6 @@
 'use client';
 
-import { Fragment, ReactNode, useMemo, useState } from 'react';
+import { Fragment, ReactNode, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import type { Table } from '@tanstack/react-table';
 import { Columns3, Download, Filter, MoreHorizontal, RefreshCw, X, type LucideIcon } from 'lucide-react';
@@ -9,6 +9,7 @@ import { cn } from '@/lib/utils';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Checkbox } from '@/components/ui/checkbox';
+import { useRangeDragMoving } from '@/components/ui/data-grid-range-select';
 import { DataGridColumnVisibility } from '@/components/ui/data-grid-column-visibility';
 import {
   DropdownMenu,
@@ -151,6 +152,14 @@ export type ListToolbarSelectAllMatching = {
   loadedCount: number;
   /** True when the user has opted into selecting the full filtered set. */
   active: boolean;
+  /**
+   * Most rows the page will select. A page that ticks the matching ids itself (rather than
+   * acting on the filter server-side) fetches them in one request, so it is bounded by that
+   * endpoint's page size. Above it the link reads "Select first 1,000 of 1,248".
+   */
+  limit?: number;
+  /** True while the page is fetching the matching ids: the link reads "Selecting..." and is disabled. */
+  pending?: boolean;
   onSelectAll: () => void;
   onClear: () => void;
 };
@@ -380,7 +389,12 @@ export function DataGridListToolbar<TData extends object>({
     }
   };
 
-  const exportCountLabel = allRecordsActive && selectAllMatching ? selectAllMatching.total : selectedCount;
+  const matchingLimit = selectAllMatching?.limit;
+  const matchingCapped = Boolean(selectAllMatching && matchingLimit && selectAllMatching.total > matchingLimit);
+  const matchingCount = selectAllMatching
+    ? Math.min(selectAllMatching.total, matchingLimit ?? selectAllMatching.total)
+    : 0;
+  const exportCountLabel = allRecordsActive && selectAllMatching ? matchingCount : selectedCount;
 
   // Banner shows once every loaded row is selected AND more rows exist beyond the page.
   const allPageRowsSelected = table.getIsAllPageRowsSelected();
@@ -392,6 +406,24 @@ export function DataGridListToolbar<TData extends object>({
   // (page rows or the full filtered set). Export lives in BOTH places - gated
   // off in the normal cluster, enabled inside the bulk strip.
   const bulkStripActive = hasSelection || allRecordsActive;
+
+  // GRID-DRAG-SELECT: while a checkbox drag moves in this table, nothing above the rows may
+  // change height, or the rows slide under a still pointer and the drag ticks rows past it
+  // (the bulk strip is 130px shorter than Internal Users' idle toolbar). So:
+  // - the toolbar holds the height it had before the drag (the strip can only shrink it);
+  // - a strip that was showing stays up even if the drag unticks every row (the idle toolbar
+  //   would grow back), and reads "0 selected" until the release;
+  // - the select-all banner waits for the release.
+  const rangeDragMoving = useRangeDragMoving(table);
+  const toolbarRef = useRef<HTMLDivElement>(null);
+  const heightBeforeDrag = useRef<number>(0);
+  const stripBeforeDrag = useRef(false);
+  useLayoutEffect(() => {
+    if (rangeDragMoving) return;
+    heightBeforeDrag.current = toolbarRef.current?.offsetHeight ?? 0;
+    stripBeforeDrag.current = bulkStripActive;
+  });
+  const showBulkStrip = bulkStripActive || (rangeDragMoving && stripBeforeDrag.current);
 
   const clearSelection = () => {
     table.resetRowSelection();
@@ -439,20 +471,27 @@ export function DataGridListToolbar<TData extends object>({
   // to wrap them goes.
   return (
     <>
-      <div data-slot="data-grid-list-toolbar" className="flex w-full flex-col gap-2 py-5">
+      <div
+        ref={toolbarRef}
+        data-slot="data-grid-list-toolbar"
+        className="flex w-full flex-col gap-2 py-5"
+        style={rangeDragMoving && heightBeforeDrag.current ? { minHeight: heightBeforeDrag.current } : undefined}
+      >
         {/* `flex-wrap`: at a narrow desktop width the two clusters used to push each
             other past the viewport edge instead of stacking, so Quick filters and
             Group by went out of reach. */}
         <div className="flex w-full flex-col flex-wrap gap-3 sm:flex-row sm:items-center sm:justify-between">
           {/* LEFT cluster - replaced by the bulk strip while rows are selected (D2/H). */}
-          {bulkStripActive ? (
+          {showBulkStrip ? (
             <div className="flex flex-wrap items-center gap-2">
               {/* Where the box already sits when nothing is selected, so it does not move
                   under the cursor the moment a row is ticked. */}
               {keepSearchWhileSelected ? searchSlot : null}
               <Badge variant="secondary" className="h-8 gap-1 px-2.5 text-sm">
                 {allRecordsActive && selectAllMatching
-                  ? `All ${selectAllMatching.total} selected`
+                  ? matchingCapped
+                    ? `${matchingCount.toLocaleString('en-US')} selected`
+                    : `All ${selectAllMatching.total.toLocaleString('en-US')} selected`
                   : `${stripSelectionCount} selected`}
               </Badge>
               {bulkActionsSlot == null && exportButtonEl}
@@ -644,13 +683,19 @@ export function DataGridListToolbar<TData extends object>({
         ) : null}
 
         {/* "Select all N records" banner (Odoo pattern, D4/F). */}
-        {showSelectAllBanner && selectAllMatching ? (
+        {showSelectAllBanner && selectAllMatching && !rangeDragMoving ? (
           <div className="flex flex-wrap items-center justify-center gap-2 rounded-md border border-dashed bg-muted/40 px-3 py-1.5 text-sm">
             {allRecordsActive ? (
               <>
-                <span>
-                  All <span className="font-medium">{selectAllMatching.total}</span> records matching the current filters are selected.
-                </span>
+                {matchingCapped ? (
+                  <span>
+                    {`First ${matchingCount.toLocaleString('en-US')} of ${selectAllMatching.total.toLocaleString('en-US')} matching records are selected.`}
+                  </span>
+                ) : (
+                  <span>
+                    All <span className="font-medium">{selectAllMatching.total.toLocaleString('en-US')}</span> records matching the current filters are selected.
+                  </span>
+                )}
                 <Button variant="link" size="sm" className="h-auto p-0" onClick={clearSelection}>
                   Clear selection
                 </Button>
@@ -658,10 +703,20 @@ export function DataGridListToolbar<TData extends object>({
             ) : (
               <>
                 <span>
-                  All <span className="font-medium">{selectAllMatching.loadedCount}</span> on this page selected.
+                  All <span className="font-medium">{selectAllMatching.loadedCount.toLocaleString('en-US')}</span> on this page selected.
                 </span>
-                <Button variant="link" size="sm" className="h-auto p-0" onClick={selectAllMatching.onSelectAll}>
-                  Select all {selectAllMatching.total} records
+                <Button
+                  variant="link"
+                  size="sm"
+                  className="h-auto p-0"
+                  disabled={selectAllMatching.pending}
+                  onClick={selectAllMatching.onSelectAll}
+                >
+                  {selectAllMatching.pending
+                    ? 'Selecting...'
+                    : matchingCapped
+                    ? `Select first ${matchingCount.toLocaleString('en-US')} of ${selectAllMatching.total.toLocaleString('en-US')}`
+                    : `Select all ${selectAllMatching.total.toLocaleString('en-US')} records`}
                 </Button>
               </>
             )}

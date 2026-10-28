@@ -55,7 +55,7 @@ import LoadErrorState from '@/components/common/LoadErrorState';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { PageHeader } from '@/components/common/PageHeader';
 import { RowActionsMenu } from '@/components/common/RowActionsMenu';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
 import { BulkActionsMenu } from '@/app/(protected)/scm/components/BulkActionsMenu';
 import {
   isSearchInFlight,
@@ -103,9 +103,9 @@ export function IdeasListView({
   const canManage = useHasPermission(IDEAS_MANAGE_PERMISSION);
   const [captureOpen, setCaptureOpen] = useState(false);
   const [view, setView] = useState<View>('active');
-  const [status, setStatus] = useState('');
-  const [submitter, setSubmitter] = useState('');
-  const [channel, setChannel] = useState('');
+  const [status, setStatus] = useState<string[]>([]);
+  const [submitter, setSubmitter] = useState<string[]>([]);
+  const [channel, setChannel] = useState<string[]>([]);
   const [from, setFrom] = useState('');
   const [to, setTo] = useState('');
   const [sorting, setSorting] = useState<SortingState>([]);
@@ -393,11 +393,11 @@ export function IdeasListView({
     enableColumnResizing: true,
   });
 
-  const filtersActive = [submitter, channel, from || to].filter(Boolean).length;
-  const anyFilter = Boolean(debouncedSearch || status || filtersActive);
+  const filtersActive = [submitter.length, channel.length, from || to].filter(Boolean).length;
+  const anyFilter = Boolean(debouncedSearch || status.length || filtersActive);
   const clearFilters = () => {
-    setSubmitter('');
-    setChannel('');
+    setSubmitter([]);
+    setChannel([]);
     setFrom('');
     setTo('');
   };
@@ -464,7 +464,7 @@ export function IdeasListView({
             </HoverCardContent>
           </HoverCard>
           <div className="w-full sm:w-36">
-            <SearchableSelect
+            <SearchableMultiSelect
               aria-label="Status"
               value={status}
               onChange={setStatus}
@@ -499,7 +499,7 @@ export function IdeasListView({
     <div className="space-y-3">
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Submitter</Label>
-        <SearchableSelect
+        <SearchableMultiSelect
           aria-label="Submitter"
           value={submitter}
           onChange={setSubmitter}
@@ -511,7 +511,7 @@ export function IdeasListView({
       </div>
       <div className="space-y-1">
         <Label className="text-xs text-muted-foreground">Channel</Label>
-        <SearchableSelect
+        <SearchableMultiSelect
           aria-label="Channel"
           value={channel}
           onChange={setChannel}
@@ -555,7 +555,7 @@ export function IdeasListView({
       </div>
       {filtersActive > 0 ? (
         <Button type="button" variant="ghost" size="sm" onClick={clearFilters}>
-          Clear
+          Clear filters
         </Button>
       ) : null}
     </div>

@@ -1,0 +1,319 @@
+<title>Faster Row Selection</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<style>
+/* Layout: questions on top, then one "everything on" grid, then four isolated option grids side by side (2x2, 1 col on phone). Grid look copies the app's ReUI tokens. */
+:root {
+  --bg: #ffffff; --fg: #09090b; --muted: #f4f4f5; --muted-fg: #71717a;
+  --border: #ececee; --primary: #3b82f6; --primary-soft: #eff6ff; --sel: #f5f8ff;
+  --warn: #b45309; --ok: #15803d; --card: #ffffff; --shadow: 0 1px 2px rgba(9,9,11,.05);
+  --font: "Inter", ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+  --mono: ui-monospace, "SF Mono", Menlo, Consolas, monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --bg: #09090b; --fg: #fafafa; --muted: #18181b; --muted-fg: #a1a1aa;
+  --border: #27272a; --primary: #2563eb; --primary-soft: #172554; --sel: #111a2e;
+  --warn: #f59e0b; --ok: #4ade80; --card: #0c0c0f; --shadow: none; color-scheme: dark } }
+:root[data-theme="dark"] {
+  --bg: #09090b; --fg: #fafafa; --muted: #18181b; --muted-fg: #a1a1aa;
+  --border: #27272a; --primary: #2563eb; --primary-soft: #172554; --sel: #111a2e;
+  --warn: #f59e0b; --ok: #4ade80; --card: #0c0c0f; --shadow: none; color-scheme: dark }
+body { background: var(--bg); color: var(--fg); font-family: var(--font); font-size: 14px; line-height: 1.5; }
+.wrap { max-width: 1180px; margin: 0 auto; padding-block: 28px 64px;
+  padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
+  display: flex; flex-direction: column; gap: 28px; }
+h1 { font-size: 22px; font-weight: 600; margin: 0; text-wrap: balance; letter-spacing: -.01em; }
+h2 { font-size: 16px; font-weight: 600; margin: 0; text-wrap: balance; }
+p { margin: 0; max-width: 72ch; }
+.sub { color: var(--muted-fg); }
+.eyebrow { font-size: 11px; text-transform: uppercase; letter-spacing: .08em; color: var(--muted-fg); font-weight: 600; }
+[hidden] { display: none !important; }
+.card-h:empty { display: none; }
+kbd { font-family: var(--mono); font-size: 11px; border: 1px solid var(--border); border-bottom-width: 2px; border-radius: 4px; padding: 0 5px; background: var(--muted); }
+
+.qs { display: grid; gap: 10px; counter-reset: q; }
+.q { display: grid; grid-template-columns: 28px 1fr; gap: 4px 10px; padding: 12px 14px; border: 1px solid var(--border); border-radius: 8px; background: var(--card); }
+.q::before { counter-increment: q; content: "Q" counter(q); font-weight: 600; color: var(--primary); font-size: 13px; padding-top: 1px; }
+.q .rec { grid-column: 2; font-size: 13px; color: var(--muted-fg); }
+.q .rec b { color: var(--ok); font-weight: 600; }
+
+.section { display: flex; flex-direction: column; gap: 12px; }
+.cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+@media (max-width: 860px) { .cards { grid-template-columns: minmax(0, 1fr); } }
+.card { border: 1px solid var(--border); border-radius: 10px; background: var(--card); box-shadow: var(--shadow); display: flex; flex-direction: column; min-width: 0; }
+.card-h { padding: 12px 14px 10px; display: flex; flex-direction: column; gap: 4px; border-bottom: 1px solid var(--border); }
+.card-h .try { font-size: 12.5px; color: var(--muted-fg); }
+.tag { display: inline-flex; align-self: flex-start; font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 999px; background: var(--primary-soft); color: var(--primary); }
+
+/* toolbar + bulk strip */
+.tb { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; padding: 8px 12px; min-height: 46px; }
+.search { flex: 1 1 160px; min-width: 0; height: 30px; border: 1px solid var(--border); border-radius: 6px; padding: 0 10px; color: var(--muted-fg); display: flex; align-items: center; font-size: 13px; background: var(--bg); }
+.bulk { display: flex; align-items: center; gap: 8px; font-size: 13px; }
+.bulk .n { font-weight: 600; font-variant-numeric: tabular-nums; }
+.btn { height: 30px; padding: 0 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--fg); font: inherit; font-size: 13px; cursor: pointer; }
+.btn.primary { background: var(--primary); border-color: var(--primary); color: #fff; }
+.btn:focus-visible, .cb:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.linkbtn { background: none; border: 0; color: var(--primary); font: inherit; font-size: 13px; cursor: pointer; padding: 0; text-decoration: underline; text-underline-offset: 2px; }
+.banner { margin: 0 12px 8px; border: 1px dashed var(--border); background: var(--muted); border-radius: 6px; padding: 6px 10px; font-size: 13px; text-align: center; display: flex; flex-wrap: wrap; justify-content: center; gap: 4px 10px; }
+
+/* grid */
+.gwrap { overflow-x: auto; border-top: 1px solid var(--border); }
+table { width: 100%; border-collapse: collapse; table-layout: fixed; min-width: 520px; font-size: 13px; }
+th, td { text-align: left; padding: 0 10px; height: 38px; border-bottom: 1px solid var(--border); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+th { height: 36px; font-weight: 500; color: var(--muted-fg); background: var(--muted); font-size: 12.5px; }
+td.c, th.c { width: 44px; padding: 0; text-align: center; position: relative; }
+tr.row { cursor: pointer; }
+tr.row:hover td { background: var(--muted); }
+tr.row.sel td { background: var(--sel); }
+tr.row.sel td.c::before { content: ""; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; background: var(--primary); }
+tr.row.flash td { animation: flash .5s ease-out; }
+@keyframes flash { from { background: var(--primary-soft); } }
+@media (prefers-reduced-motion: reduce) { tr.row.flash td { animation: none; } }
+.dragging, .dragging * { user-select: none; -webkit-user-select: none; cursor: ns-resize !important; }
+td.c { touch-action: pan-y; }
+.cbhit { display: inline-flex; align-items: center; justify-content: center; width: 100%; height: 100%; }
+.cb { width: 16px; height: 16px; border-radius: 4px; border: 1px solid #a1a1aa; background: var(--bg); display: inline-flex; align-items: center; justify-content: center; cursor: pointer; padding: 0; color: #fff; }
+.cb[aria-checked="true"], .cb[aria-checked="mixed"] { background: var(--primary); border-color: var(--primary); }
+.cb svg { width: 11px; height: 11px; display: none; }
+.cb[aria-checked="true"] .tick, .cb[aria-checked="mixed"] .dash { display: block; }
+.pill { display: inline-flex; font-size: 11.5px; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); color: var(--muted-fg); }
+.pill.on { color: var(--ok); border-color: currentColor; }
+.mono { font-family: var(--mono); font-size: 12px; color: var(--muted-fg); font-variant-numeric: tabular-nums; }
+.foot { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; padding: 8px 12px; font-size: 12px; color: var(--muted-fg); }
+.log { font-family: var(--mono); font-size: 11.5px; color: var(--muted-fg); min-height: 1.5em; }
+.log b { color: var(--fg); font-weight: 500; }
+.toast { position: fixed; bottom: calc(16px + env(safe-area-inset-bottom, 0px)); right: max(16px, env(safe-area-inset-right, 0px)); background: var(--fg); color: var(--bg); padding: 8px 12px; border-radius: 8px; font-size: 13px; }
+.notes { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+@media (max-width: 860px) { .notes { grid-template-columns: minmax(0, 1fr); } }
+.note { border-left: 2px solid var(--border); padding: 2px 0 2px 12px; font-size: 13px; }
+.note h3 { font-size: 13px; margin: 0 0 2px; font-weight: 600; }
+</style>
+
+<div class="wrap">
+  <header style="display:flex;flex-direction:column;gap:6px">
+    <span class="eyebrow">GRID-DRAG-SELECT · interactive mock · fake rows</span>
+    <h1>Tick many rows without clicking each box</h1>
+    <p class="sub">Every grid below really behaves. The top one has every option switched on; the four below isolate one option each so you can feel them separately. Dragging across the Name or Phone text still selects text for copying, and clicking a row still opens it (here it shows a toast).</p>
+  </header>
+
+  <section class="section" aria-labelledby="qh">
+    <h2 id="qh">Questions for you</h2>
+    <div class="qs">
+      <div class="q"><span>Which options do we ship?</span><span class="rec">Recommendation: <b>A + B + D now</b> (shift+click, checkbox drag, keyboard) in the shared component, so all ~140 selectable grids get them at once. C is a separate question below.</span></div>
+      <div class="q"><span>Should drag also UNtick?</span><span class="rec">Recommendation: <b>yes, the first box decides.</b> Pressing on an unticked box ticks the run; pressing on a ticked box unticks it. Dragging back up restores what was there before.</span></div>
+      <div class="q"><span>On a phone or tablet, what does a finger do on the checkbox column?</span><span class="rec">Recommendation: <b>tap only, no drag.</b> A finger swipe on a list must keep scrolling it. Shift+click and keyboard do not exist on touch, so phones keep tap-per-row plus the existing "select all on this page".</span></div>
+      <div class="q"><span>"Select all N matching" (C): only 2 grids have it today (Stock balance, Order inquiries). Add it to Contacts?</span><span class="rec">Recommendation: <b>Contacts only, as a follow-up in this lane, capped at 1000.</b> The page fetches the matching ids (the contacts list already allows 1000 per request) and ticks them, so every existing bulk action keeps working unchanged. Other grids get it when someone asks.</span></div>
+      <div class="q"><span>Above the cap, what happens?</span><span class="rec">Recommendation: <b>the link says "Select first 1000 of 1,248"</b> and the bulk bar shows 1000. No silent truncation, no server-side "apply to filter" endpoints (that is per-action backend work).</span></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div style="display:flex;flex-direction:column;gap:4px">
+      <span class="tag">Recommended: A + B + D, plus C on Contacts</span>
+      <h2>Contacts, everything on</h2>
+      <p class="sub" style="font-size:13px">Try: press a checkbox and drag down 6 rows. Click a box, then <kbd>Shift</kbd>+click another. Tab to a box and press <kbd>Shift</kbd>+<kbd>↓</kbd>. Tick the header, then "Select first 1,000 of 1,248". Drag across a name to select its text.</p>
+    </div>
+    <div class="card" id="g-all"></div>
+  </section>
+
+  <section class="section">
+    <h2>Each option on its own</h2>
+    <div class="cards">
+      <div class="card" id="g-shift"></div>
+      <div class="card" id="g-drag"></div>
+      <div class="card" id="g-match"></div>
+      <div class="card" id="g-key"></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <h2>What stays exactly as it is</h2>
+    <div class="notes">
+      <div class="note"><h3>Text selection and copy</h3>Drag only starts when the press lands on the checkbox column. Pressing on any other cell is a normal text selection.</div>
+      <div class="note"><h3>Row click and inline edit</h3>A click on the row still opens the record. Buttons, links, inputs and menus inside a cell keep their own clicks. A drag never opens a row.</div>
+      <div class="note"><h3>Header box and bulk bar</h3>The header checkbox, the "N selected" count, the Actions menu and Clear behave as today. They just fill faster.</div>
+    </div>
+  </section>
+</div>
+
+<script>
+(() => {
+  const FIRST = ['Demo','Sample','Test','Acme','Contoh','Mock','Alpha','Beta','Gamma','Delta','Nova','Orbit','Pixel','Ruby','Kayu','Batu','Lima','Tiga','Zeta','Omega'];
+  const LAST = ['Hardware','Trading','Tiles','Builders','Interior','Ceramics','Supply','Home','Studio','Works'];
+  const ROWS = Array.from({ length: 12 }, (_, i) => ({
+    id: i,
+    name: `${FIRST[i % FIRST.length]} ${LAST[(i * 3) % LAST.length]} Sdn Bhd`,
+    phone: `+60 12-000 ${String(1001 + i * 7).padStart(4, '0')}`,
+    access: ['Dealer', 'Retail', 'Project', 'Dealer'][i % 4],
+    ai: i % 3 !== 1,
+  }));
+  const TOTAL = 1248, CAP = 1000;
+
+  const SVG = '<svg class="tick" viewBox="0 0 12 12" fill="none"><path d="M2.5 6.2 5 8.5l4.5-5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><svg class="dash" viewBox="0 0 12 12"><path d="M3 6h6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>';
+
+  let toastT;
+  function toast(msg) {
+    let t = document.querySelector('.toast');
+    if (!t) { t = document.createElement('div'); t.className = 'toast'; t.setAttribute('role', 'status'); document.body.appendChild(t); }
+    t.textContent = msg; t.hidden = false;
+    clearTimeout(toastT); toastT = setTimeout(() => { t.hidden = true; }, 1600);
+  }
+
+  function makeGrid(el, opt) {
+    const sel = new Set();
+    let anchor = null, allMatching = false, drag = null, pressHandled = false;
+
+    el.innerHTML = `
+      <div class="card-h">${opt.title ? `
+        ${opt.tag ? `<span class="tag">${opt.tag}</span>` : ''}
+        ${opt.title ? `<h2>${opt.title}</h2>` : ''}
+        ${opt.try ? `<span class="try">${opt.try}</span>` : ''}` : ''}</div>
+      <div class="tb"><div class="search">Search contacts</div><div class="bulk"></div></div>
+      <div class="banner" hidden></div>
+      <div class="gwrap"><table>
+        <colgroup><col style="width:44px"><col style="width:38%"><col style="width:24%"><col style="width:20%"><col></colgroup>
+        <thead><tr><th class="c"><span class="cbhit"><button class="cb hcb" role="checkbox" aria-checked="false" aria-label="Select all rows on this page">${SVG}</button></span></th>
+        <th>Name</th><th>Phone</th><th>Access type</th><th>AI replies</th></tr></thead>
+        <tbody></tbody></table></div>
+      <div class="foot"><span class="log" aria-live="polite"></span><span>1-12 of ${TOTAL.toLocaleString()}</span></div>`;
+
+    const tbody = el.querySelector('tbody'), bulk = el.querySelector('.bulk'), banner = el.querySelector('.banner');
+    const hcb = el.querySelector('.hcb'), log = el.querySelector('.log');
+    const say = (html) => { log.innerHTML = html; };
+
+    tbody.innerHTML = ROWS.map(r => `
+      <tr class="row" data-i="${r.id}">
+        <td class="c"><span class="cbhit"><button class="cb" role="checkbox" aria-checked="false" aria-label="Select ${r.name}" tabindex="${r.id === 0 ? 0 : -1}">${SVG}</button></span></td>
+        <td title="${r.name}">${r.name}</td><td class="mono">${r.phone}</td>
+        <td><span class="pill">${r.access}</span></td><td><span class="pill ${r.ai ? 'on' : ''}">${r.ai ? 'On' : 'Off'}</span></td>
+      </tr>`).join('');
+    const trs = [...tbody.querySelectorAll('tr')];
+    const boxes = trs.map(tr => tr.querySelector('.cb'));
+
+    function render() {
+      trs.forEach((tr, i) => {
+        const on = sel.has(i);
+        tr.classList.toggle('sel', on);
+        boxes[i].setAttribute('aria-checked', String(on));
+      });
+      const n = sel.size;
+      hcb.setAttribute('aria-checked', n === ROWS.length ? 'true' : n ? 'mixed' : 'false');
+      const count = allMatching ? Math.min(TOTAL, CAP) : n;
+      bulk.innerHTML = count ? `<span class="n">${count.toLocaleString()} selected</span><button class="btn primary" type="button">Actions ▾</button><button class="btn" type="button" data-clear>Clear</button>` : '';
+      const showBanner = opt.matching && (allMatching || n === ROWS.length);
+      banner.hidden = !showBanner;
+      if (showBanner) {
+        banner.innerHTML = allMatching
+          ? `<span>First <b>${CAP.toLocaleString()}</b> of ${TOTAL.toLocaleString()} matching contacts selected.</span><button class="linkbtn" data-clear>Clear selection</button>`
+          : `<span>All <b>${ROWS.length}</b> on this page selected.</span><button class="linkbtn" data-all>Select first ${CAP.toLocaleString()} of ${TOTAL.toLocaleString()} matching</button>`;
+      }
+    }
+    function setRow(i, on) { on ? sel.add(i) : sel.delete(i); }
+    function flash(a, b) { for (let i = Math.min(a, b); i <= Math.max(a, b); i++) { trs[i].classList.remove('flash'); void trs[i].offsetWidth; trs[i].classList.add('flash'); } }
+    function clear() { sel.clear(); allMatching = false; anchor = null; render(); say('Cleared'); }
+
+    el.addEventListener('click', (e) => {
+      if (e.target.closest('[data-clear]')) return clear();
+      if (e.target.closest('[data-all]')) { allMatching = true; render(); say(`Fetched ${CAP} matching ids and ticked them`); return; }
+      if (e.target.closest('.btn.primary')) { toast('Actions menu (unchanged)'); return; }
+    });
+
+    hcb.addEventListener('click', () => {
+      const on = sel.size !== ROWS.length;
+      ROWS.forEach((_, i) => setRow(i, on));
+      if (!on) allMatching = false;
+      anchor = null; render(); say(on ? 'Header: ticked this page' : 'Header: cleared this page');
+    });
+
+    // Row click opens the record unless the press was on the checkbox column, a drag happened, or text was selected.
+    tbody.addEventListener('click', (e) => {
+      const tr = e.target.closest('tr.row'); if (!tr) return;
+      if (e.target.closest('td.c')) return;
+      if (String(window.getSelection())) { say('Text selected: row did not open'); return; }
+      toast(`Open ${ROWS[+tr.dataset.i].name}`);
+    });
+
+    // Plain click + Shift+click (A). Drag grids handle the press in pointerdown instead.
+    boxes.forEach((b, i) => {
+      b.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (pressHandled) { pressHandled = false; return; } // pointer press already handled by drag
+        if (opt.shift && e.shiftKey && anchor !== null) {
+          const on = sel.has(anchor);
+          const [a, z] = [Math.min(anchor, i), Math.max(anchor, i)];
+          for (let k = a; k <= z; k++) setRow(k, on);
+          flash(a, z); render(); say(`<b>Shift+click</b>: ${on ? 'ticked' : 'unticked'} rows ${a + 1}-${z + 1}`);
+        } else {
+          setRow(i, !sel.has(i)); render(); say(`${sel.has(i) ? 'Ticked' : 'Unticked'} row ${i + 1}`);
+        }
+        anchor = i; focusBox(i);
+      });
+    });
+
+    // Drag (B): press on a checkbox cell, move over rows. Mouse and pen only; touch keeps scrolling.
+    if (opt.drag) {
+      tbody.addEventListener('pointerdown', (e) => {
+        pressHandled = false;
+        const cell = e.target.closest('td.c'); if (!cell || e.button !== 0) return;
+        if (e.pointerType === 'touch') return; // tap still toggles via click
+        const i = +cell.parentElement.dataset.i;
+        if (opt.shift && e.shiftKey && anchor !== null) return; // let Shift+click run
+        e.preventDefault();
+        pressHandled = true;
+        const on = !sel.has(i);
+        drag = { start: i, last: i, on, before: new Set(sel), moved: false };
+        setRow(i, on); anchor = i; render(); focusBox(i);
+        document.documentElement.classList.add('dragging');
+      });
+      window.addEventListener('pointermove', (e) => {
+        if (!drag) return;
+        const tr = document.elementFromPoint(e.clientX, e.clientY)?.closest?.('tr.row');
+        let i = tr && tbody.contains(tr) ? +tr.dataset.i : null;
+        if (i === null) { // above or below the body: clamp
+          const r = tbody.getBoundingClientRect();
+          if (e.clientY < r.top) i = 0; else if (e.clientY > r.bottom) i = ROWS.length - 1; else return;
+        }
+        if (i === drag.last) return;
+        drag.last = i; drag.moved = true;
+        const [a, z] = [Math.min(drag.start, i), Math.max(drag.start, i)];
+        ROWS.forEach((_, k) => setRow(k, k >= a && k <= z ? drag.on : drag.before.has(k)));
+        render(); say(`<b>Drag</b>: ${drag.on ? 'ticking' : 'unticking'} rows ${a + 1}-${z + 1}`);
+      });
+      const end = () => {
+        if (!drag) return;
+        if (!drag.moved) say(`${drag.on ? 'Ticked' : 'Unticked'} row ${drag.start + 1}`);
+        anchor = drag.last; drag = null;
+        document.documentElement.classList.remove('dragging');
+      };
+      window.addEventListener('pointerup', end); window.addEventListener('pointercancel', end);
+    }
+
+    // Keyboard (D): roving focus on the checkbox column.
+    function focusBox(i) { boxes.forEach((b, k) => b.tabIndex = k === i ? 0 : -1); if (document.activeElement !== boxes[i]) boxes[i].focus({ preventScroll: false }); }
+    boxes.forEach((b, i) => b.addEventListener('keydown', (e) => {
+      if (!opt.keys) return;
+      if (e.key === ' ') {
+        e.preventDefault();
+        setRow(i, !sel.has(i)); anchor = i; render(); say(`<b>Space</b>: ${sel.has(i) ? 'ticked' : 'unticked'} row ${i + 1}`);
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        const j = Math.max(0, Math.min(ROWS.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+        if (e.shiftKey) {
+          if (anchor === null) { anchor = i; setRow(i, true); }
+          const on = sel.has(anchor);
+          setRow(j, on); flash(j, j); render();
+          say(`<b>Shift+${e.key === 'ArrowDown' ? '↓' : '↑'}</b>: ${on ? 'ticked' : 'unticked'} row ${j + 1}`);
+        }
+        focusBox(j);
+      }
+    }));
+
+    render();
+  }
+
+  makeGrid(document.getElementById('g-all'), { shift: true, drag: true, keys: true, matching: true });
+  makeGrid(document.getElementById('g-shift'), { shift: true, tag: 'Option A', title: 'Shift+click a range', try: 'Click one box, then Shift+click another. Everything between takes the first box\'s state, as in Gmail.' });
+  makeGrid(document.getElementById('g-drag'), { drag: true, tag: 'Option B', title: 'Drag down the checkbox column', try: 'Press a box and drag up or down. Start on a ticked box to untick a run. Dragging over names still selects text.' });
+  makeGrid(document.getElementById('g-match'), { matching: true, tag: 'Option C', title: 'Select all matching', try: 'Tick the header box, then the link in the banner. Capped at 1,000 so existing bulk actions keep working.' });
+  makeGrid(document.getElementById('g-key'), { keys: true, tag: 'Option D', title: 'Keyboard', try: 'Click a box (or Tab to it). Space toggles, ↑/↓ moves, Shift+↑/↓ extends the tick to the next row.' });
+})();
+</script>

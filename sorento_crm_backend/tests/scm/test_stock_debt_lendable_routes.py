@@ -478,9 +478,9 @@ def test_the_far_lines_placement_inside_the_window_stays_pinned(scm_app):
 
 
 def test_a_confirmed_borrow_on_a_far_line_is_never_lent(scm_app):
-    """A decision hold (`so_line_allocations`, a Borrow somebody confirmed on the board)
-    is not landed goods: it stays pinned however far out the line is due. (A Reserve holds
-    nothing since BOARD-NO-HOLD, 27 Oct 2026: it is a route, read in date order.)"""
+    """A decision (`so_line_allocations`, a Borrow somebody confirmed on the board) is not
+    landed goods: it is a route read in date order (BORROW-NO-HOLD, 28 Oct 2026), so the
+    NEAR line draws the bin first and the far line is never charged a `Lent`."""
     from tests.scm.test_stock_debt_routes import _confirmed_hold
 
     app, db, _uid = _client(scm_app, VIEW)
@@ -502,7 +502,8 @@ def test_a_confirmed_borrow_on_a_far_line_is_never_lent(scm_app):
     with TestClient(app) as c:
         near_cell = _cell(c, product, month_key(TODAY + timedelta(days=20)))
         far_cell = _cell(c, product, month_key(far_due))
-    assert _by_so(near_cell, "NEAR")["status"] == "short"
+    assert _by_so(near_cell, "NEAR")["status"] == "covered"
     far = _by_so(far_cell, "FAR")
-    assert far["status"] == "pinned"
+    assert far["status"] == "short"
+    assert (far["assigned_qty"], far["short_qty"]) == (56, 32)
     assert far["lent_qty"] == 0

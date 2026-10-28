@@ -23,7 +23,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Input } from '@/components/ui/input';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { getUserLookup, type UserLookupItem } from '@/services/userSelectService';
 import { formatDateTime } from '@/lib/helpers';
 import { useEventLogs } from '../hooks/useEventLogs';
@@ -33,8 +34,8 @@ export default function EventLogList() {
   const [pagination, setPagination] = useState<PaginationState>({ pageIndex: 0, pageSize: 50 });
   const [sorting, setSorting] = useState<SortingState>([{ id: 'event_at', desc: true }]);
   const [trackingId, setTrackingId] = useState('');
-  const [eventType, setEventType] = useState('__all__');
-  const [assignedTo, setAssignedTo] = useState('__all__');
+  const [eventType, setEventType] = useState('');
+  const [assignedTo, setAssignedTo] = useState('');
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({});
 
   const { data, isLoading, isPlaceholderData, refetch, isFetching, error } = useEventLogs({
@@ -42,8 +43,8 @@ export default function EventLogList() {
     pageSize: pagination.pageSize,
     sorting,
     tracking_id: trackingId || undefined,
-    event_type: eventType && eventType !== '__all__' ? eventType : undefined,
-    assigned_to: assignedTo && assignedTo !== '__all__' ? assignedTo : undefined,
+    event_type: eventType || undefined,
+    assigned_to_id: assignedTo || undefined,
   });
 
   useEffect(() => {
@@ -139,7 +140,7 @@ export default function EventLogList() {
     manualFiltering: true,
   });
 
-  const advancedFiltersActive = eventType !== '__all__' || assignedTo !== '__all__';
+  const advancedFiltersActive = Boolean(eventType || assignedTo);
 
   return (
     <DataGrid table={table} recordCount={data?.pagination.total || 0} isLoading={isLoading}
@@ -167,15 +168,14 @@ export default function EventLogList() {
               kind: 'custom',
               active: advancedFiltersActive,
               activeCount:
-                (eventType !== '__all__' ? 1 : 0) + (assignedTo !== '__all__' ? 1 : 0),
+                (eventType ? 1 : 0) + (assignedTo ? 1 : 0),
               content: (
                 <div className="space-y-3">
                   <p className="text-sm font-medium">Advanced filters</p>
-                  <SearchableSelect
-                    value={eventType}
-                    onChange={(value) => setEventType(value)}
+                  <SearchableMultiSelect
+                    value={splitMulti(eventType)}
+                    onChange={(values) => setEventType(joinMulti(values))}
                     options={[
-                      { value: '__all__', label: 'All events' },
                       { value: 'escalation', label: 'Escalation' },
                       { value: 'reassignment', label: 'Reassignment' },
                       { value: 'response', label: 'Response' },
@@ -183,29 +183,28 @@ export default function EventLogList() {
                     ]}
                     placeholder="Event type"
                     triggerClassName="w-full"
+                    clearable
                   />
-                  <SearchableSelect
-                    value={assignedTo}
-                    onChange={(value) => setAssignedTo(value)}
+                  <SearchableMultiSelect
+                    value={splitMulti(assignedTo)}
+                    onChange={(values) => setAssignedTo(joinMulti(values))}
                     loadError={respondUsersError}
                     onRetry={() => void refetchRespondUsers()}
-                    options={[
-                      { value: '__all__', label: 'All assignees' },
-                      ...(respondUsers || []).map((user: UserLookupItem) => ({
-                        value: user.respond_user_id || user.id,
-                        label: user.name || 'Unnamed user',
-                      })),
-                    ]}
+                    options={(respondUsers || []).map((user: UserLookupItem) => ({
+                      value: user.id,
+                      label: user.name || 'Unnamed user',
+                    }))}
                     placeholder="Assigned to"
                     triggerClassName="w-full"
+                    clearable
                   />
                   <Button
                     variant="outline"
                     size="sm"
                     className="w-full"
                     onClick={() => {
-                      setEventType('__all__');
-                      setAssignedTo('__all__');
+                      setEventType('');
+                      setAssignedTo('');
                     }}
                   >
                     Clear advanced filters

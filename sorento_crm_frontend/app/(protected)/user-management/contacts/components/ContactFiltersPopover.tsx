@@ -4,27 +4,32 @@ import { useQuery } from '@tanstack/react-query';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Label } from '@/components/ui/label';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { getMyCompanyContext } from '@/app/(protected)/system-management/companies/services/companyService';
+import { multiChipLabel, multiValueSummary, splitMulti } from '@/lib/list-filters/multiValue';
 import { useContactAccessTypes } from '../../contact-access-types/hooks/useContactAccessTypes';
 import { getContact } from '../[id]/services/contactService';
-import { customerFilterLabel, customerFilterLabelKey } from '../lib/customerFilterLabel';
 import {
   popoverFilterChips,
   popoverFilterCount,
 } from '../lib/contactFilterSummary';
 import {
   contactAccessFiltersFromUrl,
+  contactCompanyFilterFromUrl,
   contactsListFilters,
   type ContactAccessFilters as AccessFilters,
 } from '../lib/listQuery';
-import ContactAccessFilters from './ContactAccessFilters';
+import ContactAccessFilters, { useCustomerFilterNames } from './ContactAccessFilters';
 
 interface State {
   accessFilters: AccessFilters;
   customersNone: boolean;
   noTags: boolean;
+  companyIds: string[];
   setAccessFilters: (next: AccessFilters) => void;
   setCustomersNone: (on: boolean) => void;
   setNoTags: (on: boolean) => void;
+  setCompanyIds: (ids: string[]) => void;
 }
 
 /**
@@ -37,16 +42,25 @@ export function useContactFiltersToolbar(s: State) {
     customersNone: s.customersNone,
     access: s.accessFilters,
     noTags: s.noTags,
+    companyIds: s.companyIds,
   });
   const { data: accessTypes = [] } = useContactAccessTypes();
-  // Same keys as ContactAccessFilters' own label read-back, so the cache is shared; chips never show an id.
-  const customerLabel = useQuery({
-    queryKey: customerFilterLabelKey(s.accessFilters.customerId),
-    queryFn: () => customerFilterLabel(s.accessFilters.customerId as string),
-    enabled: !!s.accessFilters.customerId,
-    staleTime: Infinity,
-    retry: 0,
+  // The companies the viewer can switch into: the company switcher's own query, so the cache is
+  // shared, and the reach the list's Company filter and Companies column read.
+  const { data: companyContext } = useQuery({
+    queryKey: ['company-my-context'],
+    queryFn: getMyCompanyContext,
+    staleTime: 30 * 1000,
   });
+  const companyOptions = (companyContext?.companies ?? []).map((c) => ({
+    value: c.id,
+    label: c.name,
+  }));
+  const companyNames = companyOptions
+    .filter((o) => s.companyIds.includes(o.value))
+    .map((o) => o.label);
+  // Same keys as ContactAccessFilters' own label read-back, so the cache is shared; chips never show an id.
+  const customerNames = useCustomerFilterNames(splitMulti(s.accessFilters.customerId));
   const differsLabel = useQuery({
     queryKey: [
       'contact-filter-differs-label',
@@ -65,6 +79,7 @@ export function useContactFiltersToolbar(s: State) {
     s.setAccessFilters(contactAccessFiltersFromUrl(next));
     s.setCustomersNone(next.customers === 'none');
     s.setNoTags(next.tags === 'none');
+    s.setCompanyIds(contactCompanyFilterFromUrl(next));
   };
   const clearAll = () => apply({});
   const count = popoverFilterCount(map);
@@ -77,16 +92,37 @@ export function useContactFiltersToolbar(s: State) {
     activeSummary: popoverFilterChips(
       map,
       {
-        access_type: accessTypes.find(
-          (t) => t.code === s.accessFilters.accessType,
-        )?.name,
-        customer_id: customerLabel.data,
+        access_type: multiValueSummary(
+          splitMulti(s.accessFilters.accessType).map(
+            (code) => accessTypes.find((t) => t.code === code)?.name ?? code,
+          ),
+        ),
+        customer_id: customerNames.length ? multiValueSummary(customerNames) : undefined,
         access_differs_from: differsLabel.data,
+        company: companyNames.length ? multiValueSummary(companyNames) : undefined,
       },
       apply,
     ),
     content: (
       <div className="space-y-3" data-testid="contacts-filters-popover">
+        <SearchableMultiSelect
+          value={s.companyIds}
+          onChange={s.setCompanyIds}
+          options={companyOptions}
+          placeholder="Company: any"
+          // Names the filter like its siblings ("Access type: Dealer"), several values summarised.
+          renderTriggerLabel={(chosen) =>
+            chosen.length ? (
+              <span className="block truncate">
+                {multiChipLabel('Company', chosen.map((o) => o.label))}
+              </span>
+            ) : (
+              <span className="text-muted-foreground">Company: any</span>
+            )
+          }
+          triggerClassName="w-full"
+          clearable
+        />
         <ContactAccessFilters
           value={s.accessFilters}
           onChange={s.setAccessFilters}

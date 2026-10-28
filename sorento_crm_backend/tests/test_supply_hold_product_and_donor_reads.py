@@ -37,10 +37,10 @@ from .test_so_supply_confirmation import (  # noqa: F401  (api is a fixture)
 )
 
 
-def test_a_remapped_lines_hold_nets_out_of_the_core_products_free_stock(api):
-    """BOARD-NO-HOLD (owner, 27 Oct 2026): the hold here is a BORROW at the line's own
-    location (`other_location`), since a Reserve no longer holds stock at all; what is
-    pinned is unchanged - the hold is keyed by the CORE line's product."""
+def test_a_remapped_lines_decision_holds_nothing_for_either_product(api):
+    """BORROW-NO-HOLD (28 Oct 2026): a confirmed Borrow at the line's own location
+    (`other_location`) holds no stock, for the CORE line's product (the one the stock is
+    judged against) or the mirror's own: both piles stay whole."""
     client, world = api
     db = world.db
     mirror_product = world.product
@@ -79,11 +79,9 @@ def test_a_remapped_lines_hold_nets_out_of_the_core_products_free_stock(api):
 
     supply = ProjectSupplyService(db)
     held = supply.held_stock_by_location([mirror_product.id, core_product.id])
-    assert held == {(str(core_product.id), str(world.own_wh.id)): Decimal("50")}, (
-        "the hold is keyed by the CORE line's product, the one the stock was judged against"
-    )
+    assert held == {}, "a decision holds nothing, whichever product it is keyed by"
     free = supply.free_stock_by_location([mirror_product.id, core_product.id])
-    assert free[(str(core_product.id), str(world.own_wh.id))] == Decimal("50")
+    assert free[(str(core_product.id), str(world.own_wh.id))] == Decimal("100")
     assert free[(str(mirror_product.id), str(world.own_wh.id))] == Decimal("100"), (
         "the mirror's own product was never promised and stays whole"
     )
