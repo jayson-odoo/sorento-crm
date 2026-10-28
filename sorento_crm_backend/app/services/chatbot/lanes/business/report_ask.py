@@ -805,6 +805,15 @@ def _carries_answer_op(verdict: dict[str, Any], parser_ops: Any = ()) -> bool:
     return "answer" in ops and not ops & {"new_subject", "set"}
 
 
+def _binds_subject(verdict: dict[str, Any]) -> bool:
+    """A filter entity (customer, product, brand ...) the parser bound this turn, not a carried one."""
+    return any(
+        isinstance(e, dict) and e.get("current_message") is not False
+        and jsc.js_string(e.get("hint") or "").strip().lower() in _FILTER_HINTS
+        for e in jsc.array(verdict.get("entities"))
+    )
+
+
 def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
     """Engine seam, the basis (or outstanding kind) question open: the parser's own position reading of the reply
     (`reference_positions`, exactly one in range of the offered options) is the pick, as `sales_company_ask.as_answer`
@@ -812,30 +821,31 @@ def as_basis_answer(verdict: dict[str, Any], slot: Any) -> dict[str, Any]:
     roster the kind question replaced) and picks the wrong row. Parser fields only."""
     if not isinstance(slot, dict) or slot.get("ask") != ASK_NAME or slot.get("asking") != "basis":
         return verdict
+    options = slot.get("options") or []
+    offered = [o[0] for o in options if isinstance(o, (list, tuple)) and o]
+    positions = {
+        p for p in jsc.array(verdict.get("reference_positions"))
+        if isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= len(options)
+    }
+    kind_ask = bool(_dict(slot.get("extras")).get("kind_ask"))
+    if kind_ask and len(positions) == 1 and _binds_subject(verdict):
+        # A position pick that also binds a subject is a fresh outstanding ask of that kind, never a bare pick that drops it.
+        return {**verdict, "order_status": "outstanding", "basis": offered[next(iter(positions)) - 1]}
     answer = verdict.get("open_question_answer")
     if isinstance(answer, dict) and answer.get("mode") in rf.ANSWER_MODES:
         return verdict
-    count = len(slot.get("options") or [])
-    positions = {
-        p for p in jsc.array(verdict.get("reference_positions"))
-        if isinstance(p, int) and not isinstance(p, bool) and 1 <= p <= count
-    }
     if len(positions) != 1:
         # The parser's `basis` naming one of the offered kinds answers the kind question (a parser field resolved against
         # the offered options, AC-RU-17c), whatever domain or intent hint it also carried.
-        offered = [o[0] for o in (slot.get("options") or []) if isinstance(o, (list, tuple)) and o]
         basis = verdict.get("basis")
-        if not _dict(slot.get("extras")).get("kind_ask"):
+        if not kind_ask:
             return verdict
         if basis not in OUTSTANDING_KINDS or basis not in offered:
-            if basis in BASES:  # a sales basis is no kind: an answer that picks nothing, so the kind is asked again
+            own_ask = bool(verdict.get("capability_from") or verdict.get("order_status")) or _binds_subject(verdict)
+            if basis in BASES and not own_ask:  # a bare sales basis is no kind: the kind is asked again
                 return {**verdict, "open_question_answer": {"mode": "pick", "picked": [], "items": [], "qty_for_all": None}}
             return verdict
-        if any(
-            isinstance(e, dict) and e.get("current_message") is not False
-            and jsc.js_string(e.get("hint") or "").strip().lower() in _FILTER_HINTS
-            for e in jsc.array(verdict.get("entities"))
-        ):
+        if _binds_subject(verdict):
             # A subject bound this turn makes it a fresh outstanding ask that names its kind and applies the subject,
             # never a bare pick that drops it.
             return {**verdict, "order_status": "outstanding"}
