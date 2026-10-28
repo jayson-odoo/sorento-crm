@@ -4,6 +4,7 @@ import { useQuery } from '@tanstack/react-query';
 import { useSession } from 'next-auth/react';
 import { apiFetch } from '@/lib/api';
 import { resolveUserAvatarSrc } from '@/lib/helpers';
+import { useImpersonationSession } from '@/lib/impersonation-store';
 
 /**
  * Same source as User Management → Account layout: GET /api/user-management/account/
@@ -11,11 +12,16 @@ import { resolveUserAvatarSrc } from '@/lib/helpers';
  */
 export function useAccountProfileForHeader() {
   const { data: session, status } = useSession();
+  // Under CRM impersonation the profile (and its salesperson block) is the TARGET's: only an
+  // `/api/v1/` URL carries the X-Impersonate-User-Id header, the account BFF route does not.
+  const targetId = useImpersonationSession()?.targetUser.id ?? null;
 
   const { data: profile, isError } = useQuery({
-    queryKey: ['account-profile'],
+    queryKey: targetId ? ['account-profile', targetId] : ['account-profile'],
     queryFn: async () => {
-      const response = await apiFetch('/api/user-management/account/');
+      const response = await apiFetch(
+        targetId ? '/api/v1/user-management/users/me' : '/api/user-management/account/',
+      );
       if (!response.ok) {
         return null;
       }

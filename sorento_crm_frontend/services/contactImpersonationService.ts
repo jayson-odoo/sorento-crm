@@ -19,6 +19,8 @@ export interface ContactImpersonationSession {
   sessionId: string;
   startedAt: string;
   portalUrl: string;
+  /** The linked active salesperson user, when there is one (PORTAL-P3-ROLE-MENU). */
+  crmUserId: string | null;
   targetContact: ContactImpersonationTarget;
 }
 
@@ -27,6 +29,7 @@ type ApiResponse = {
   started_at: string;
   portal_url: string;
   target_contact: ContactImpersonationTarget;
+  crm_user_id?: string | null;
 };
 
 function _adapt(api: ApiResponse): ContactImpersonationSession {
@@ -34,6 +37,7 @@ function _adapt(api: ApiResponse): ContactImpersonationSession {
     sessionId: api.session_id,
     startedAt: api.started_at,
     portalUrl: api.portal_url,
+    crmUserId: api.crm_user_id ?? null,
     targetContact: api.target_contact,
   };
 }

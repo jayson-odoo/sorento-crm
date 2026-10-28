@@ -4,8 +4,10 @@ import { useEffect, useState, type ReactNode } from 'react';
 import { usePathname, useRouter, useSearchParams } from 'next/navigation';
 import {
   PortalUnauthorizedError,
+  clearImpersonationToken,
   clearPortalToken,
   fetchMeWithGrace,
+  isImpersonationToken,
   readPortalToken,
 } from '@/app/(auth)/portal/lib/portal-client';
 import {
@@ -52,9 +54,13 @@ export function MySlug({
       clearPortalToken();
       clearPortalSlug();
     };
+    // An admin viewing as the salesperson holds an impersonation token (this tab only): the
+    // device's stored slug is the admin's, not compared and never written; only the token's
+    // own identity is checked, and a wrong one drops only that token.
+    const impersonating = isImpersonationToken();
     const token = readPortalToken();
     // A token that is not this salesperson's (shared device) is dropped, as the portal slug page does.
-    if (!token || readPortalSlug() !== mySlug) {
+    if (!token || (!impersonating && readPortalSlug() !== mySlug)) {
       if (token) dropToken();
       toVerify();
       return;
@@ -64,7 +70,8 @@ export function MySlug({
       .then((me) => {
         if (cancelled) return;
         if (me.portal_slug !== mySlug) {
-          dropToken();
+          if (impersonating) clearImpersonationToken();
+          else dropToken();
           toVerify();
           return;
         }

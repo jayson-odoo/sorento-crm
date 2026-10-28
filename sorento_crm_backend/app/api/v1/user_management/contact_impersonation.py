@@ -24,8 +24,10 @@ from app.models.access import RespondContact
 from app.models.impersonation import ContactImpersonationSession
 from app.models.portal import PortalToken
 from app.models.respond_workspace import RespondWorkspace
+from app.models.user import User
 from app.services.audit_service import log_audit
 from app.services.error_handler import handle_not_found
+from app.services.phone_signin_service import is_salesperson
 from app.services.portal_service import PORTAL_TOKEN_TTL, PortalService
 from app.services.user_service import UserPermissionService
 
@@ -50,6 +52,8 @@ class ContactImpersonationSessionResponse(BaseModel):
     started_at: datetime
     portal_url: str
     target_contact: TargetContactSummary
+    # The linked user's id when that user is an active salesperson (PORTAL-P3-ROLE-MENU), else null.
+    crm_user_id: Optional[str] = None
 
 
 def _ensure_admin(db: Session, real_user: dict) -> None:
@@ -84,11 +88,19 @@ def _resolve_contact_and_space(db: Session, contact_id: str) -> tuple[RespondCon
     return contact, workspace.space_id
 
 
+def _salesperson_user_id(db: Session, contact: RespondContact) -> Optional[str]:
+    for user in db.query(User).filter(User.respond_contact_id == contact.id).all():
+        if is_salesperson(db, user):
+            return str(user.id)
+    return None
+
+
 def _serialize(
     session_row: ContactImpersonationSession,
     contact: RespondContact,
     space_id: str,
     portal_url: str,
+    crm_user_id: Optional[str] = None,
 ) -> ContactImpersonationSessionResponse:
     name = contact.name or " ".join(
         filter(None, [contact.first_name, contact.last_name])
@@ -103,6 +115,7 @@ def _serialize(
             phone_number=contact.phone_number,
             space_id=space_id,
         ),
+        crm_user_id=crm_user_id,
     )
 
 
@@ -193,7 +206,9 @@ async def start_contact_impersonation(
         else f"/portal?token={token_row.token}&impersonation=1"
     )
 
-    return _serialize(session_row, contact, space_id, portal_url)
+    return _serialize(
+        session_row, contact, space_id, portal_url, _salesperson_user_id(db, contact)
+    )
 
 
 @router.post("/stop")

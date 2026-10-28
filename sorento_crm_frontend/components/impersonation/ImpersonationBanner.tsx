@@ -6,6 +6,8 @@ import { ChevronDown, ChevronUp, LogOut, UserCog } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { useImpersonation } from '@/hooks/useImpersonation';
+import { clearImpersonationToken } from '@/app/(auth)/portal/lib/portal-client';
+import { stopContactImpersonation } from '@/services/contactImpersonationService';
 
 const BANNER_HEIGHT = 40;
 const COLLAPSE_KEY = 'sorento.impersonationBannerCollapsed';
@@ -43,6 +45,10 @@ export function ImpersonationBanner() {
 
   const onExit = async () => {
     try {
+      // A salesperson impersonation also holds a contact one: end it (best effort) and drop
+      // this tab's portal token. The admin's own stored token and slug are never touched.
+      await stopContactImpersonation().catch(() => {});
+      clearImpersonationToken();
       await stop();
     } finally {
       if (typeof window !== 'undefined') {
