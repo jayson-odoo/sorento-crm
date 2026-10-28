@@ -54,6 +54,11 @@ Response: the existing `StockDetail` shape over the allowed set, or JSON `null` 
   either way, owner Q2). Given a user without either READ permission, then 403. Given a product_id
   that is not a uuid, then 422.
 
+- **AC-QSA-12 [BE]** (review round) The response carries no data the quotation does not draw:
+  `sales_orders` and `holds` are empty and every `incoming` row has `supplier_name` null, for every
+  caller, including a user holding only `projects.projects.view_own` (who reaches the route through
+  `_own_scope._REFERENCE_PATHS`). Inactive warehouses never count, even when nothing is set.
+
 ## Phase 1/2: frontend, Lines tab
 
 - **AC-QSA-20 [FE]** The Lines tab toolbar renders no "Stock at" picker, for any user; the
@@ -64,9 +69,12 @@ Response: the existing `StockDetail` shape over the allowed set, or JSON `null` 
 - **AC-QSA-23 [FE]** The popover table lists only the read's locations, leaving out rows whose on
   hand, SO qty and SPO qty are all zero. AutoCount's figures (`useStockStatus`) restate those rows
   only: no "Other group" rows are appended, and no separate `group=pools` read is made. Incoming lists
-  the read's `incoming` only.
+  the read's `incoming` only. (Review round) The AutoCount read is filtered to the read's warehouses
+  before the table sees it, so no Group by choice (remembered in `cellStockTable.groupBy`, shared with
+  the board) shows on hand or SOs at a location the read did not list.
 - **AC-QSA-24 [FE]** A set line's parts read the same endpoint per part (no group), with the same
-  null = nothing rule.
+  null = nothing rule: a part answering null leaves the set line's Qty cell with no pill, no skeleton
+  and no text. Each part's popover section leaves out all-zero locations, like AC-QSA-23.
 
 ## Phase 3: browser (agent-browser, crew test copy)
 
