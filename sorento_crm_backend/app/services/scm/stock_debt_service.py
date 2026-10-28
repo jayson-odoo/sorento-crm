@@ -36,7 +36,6 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence, Set,
 from sqlalchemy import and_, func, or_, select, union
 from sqlalchemy.orm import Session
 
-from app.models.base import get_company_scope
 from app.models.inventory import Stock, Warehouse
 from app.models.order import SalesOrder, SalesOrderLine
 from app.models.procurement import (
@@ -56,7 +55,7 @@ from app.models.project_so import (
     SOLineAllocation,
 )
 from app.models.sales_agent import SalesAgent
-from app.services.company_scope import build_company_predicate
+from app.services.scm import last_po_supplier as last_po_rule
 from app.services.error_handler import AppException
 from app.services.project_supply_service import (
     ProjectSupplyService,
@@ -2736,15 +2735,12 @@ class StockDebtService:
         the LAST supplier (AC-4/AC-5): the supplier on the product's newest purchase-order
         LINE, falling back to the manually-flagged primary product supplier, else neither.
 
-        The window (newest `PurchaseOrder.issue_date`, `PurchaseOrderLine.created_at`
-        breaking a tie, then po_number, then line id, so an exact tie never falls to the
-        query plan) is `po_last_cost_service.last_cost_rows`'s pick key, reused
-        rather than re-derived (bar the tie: that one breaks it on line id ASCENDING) - the
-        same "which PO line answers for this product" question,
-        one PARTITION BY `product_id` instead of `(product_id, warehouse_id)` because the
-        board asks per PRODUCT, not per bin. Cancelled POs are skipped (A1); a cancelled
-        LINE is not, because A1 names only the PO's own status - an SPO's supplier is never
-        consulted here at all (A1: "we should look at PO, not SPO").
+        The newest PO line is `scm/last_po_supplier.py`'s (newest `PurchaseOrder.issue_date`,
+        then the line's `created_at`, `po_number` and line id, so an exact tie never falls to
+        the query plan), the one rule the low stock report and the stock position report read
+        too. Cancelled POs and POs with no supplier are skipped (A1); a cancelled LINE is not,
+        because A1 names only the PO's own status - an SPO's supplier is never consulted here
+        at all (A1: "we should look at PO, not SPO").
         """
         out: Dict[str, Dict[str, Optional[str]]] = {
             str(pid): {"id": None, "name": None} for pid in product_ids
@@ -2752,48 +2748,13 @@ class StockDebtService:
         if not product_ids:
             return out
 
-        rn = (
-            func.row_number()
-            .over(
-                partition_by=PurchaseOrderLine.product_id,
-                order_by=(
-                    PurchaseOrder.issue_date.desc().nulls_last(),
-                    PurchaseOrderLine.created_at.desc(),
-                    PurchaseOrder.po_number.desc(),
-                    PurchaseOrderLine.id.desc(),
-                ),
-            )
-            .label("rn")
+        # The newest PO line's supplier is the ONE shared rule (`scm/last_po_supplier.py`, owner
+        # ruling 27 Oct, STOCK-POSITION-REPORT Q4), the low stock report's and the stock position
+        # report's too. Its ordering is this function's own (#1901); it also skips a PO with no
+        # supplier, so the next-newest PO names the supplier rather than none.
+        po_supplier: Dict[str, Optional[str]] = last_po_rule.last_po_supplier_ids(
+            self.db, [str(pid) for pid in product_ids]
         )
-        numbered = (
-            self.db.query(
-                PurchaseOrderLine.product_id,
-                PurchaseOrder.supplier_id,
-                rn,
-            )
-            .join(PurchaseOrder, PurchaseOrder.id == PurchaseOrderLine.purchase_order_id)
-            .filter(
-                PurchaseOrderLine.product_id.in_(product_ids),
-                PurchaseOrder.status != "cancelled",
-                # AC-REMOVED-KEEP-CANCELLED: a removed line the ingest used to delete counts in no total.
-                PurchaseOrderLine.removed_unreferenced.is_(False),
-            )
-        )
-        # COMPANY SCOPE, EXPLICITLY, on BOTH tables named in this branch (belt-and-braces,
-        # matching `spo_last_receipt_service`'s own windowed branch): `.subquery()` loses
-        # the `with_loader_criteria` the session's `do_orm_execute` listener injects, and
-        # the outer query below names only `Supplier`.
-        for model in (PurchaseOrderLine, PurchaseOrder):
-            predicate = build_company_predicate(model, get_company_scope(self.db))
-            if predicate is not None:
-                numbered = numbered.filter(predicate)
-        numbered = numbered.subquery()
-        po_supplier: Dict[str, Optional[str]] = {
-            str(pid): (str(sid) if sid else None)
-            for pid, sid in self.db.query(numbered.c.product_id, numbered.c.supplier_id)
-            .filter(numbered.c.rn == 1)
-            .all()
-        }
 
         primary_rows = (
             self.db.query(ProductSupplier.product_id, ProductSupplier.supplier_id)
@@ -2820,9 +2781,8 @@ class StockDebtService:
             }
 
         for pid in out:
-            # The newest PO line's own answer wins WHENEVER one exists - even a PO line
-            # with no supplier stated - and only a product with NO live PO at all falls
-            # back to the primary flag (A1's "falling back to").
+            # The newest PO line's supplier wins whenever one exists; a product with no live PO
+            # naming a supplier falls back to the primary flag (A1's "falling back to").
             supplier_id = po_supplier[pid] if pid in po_supplier else primary_supplier.get(pid)
             out[pid] = {
                 "id": supplier_id,
