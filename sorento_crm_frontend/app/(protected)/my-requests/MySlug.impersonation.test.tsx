@@ -22,6 +22,7 @@ vi.mock('@/hooks/useAccountProfileForHeader', () => ({
   }),
 }));
 
+import { impersonationStore } from '@/lib/impersonation-store';
 import { MySlug } from './MySlug';
 
 const TOKEN_KEY = 'sorento.portalToken';
@@ -38,7 +39,10 @@ beforeEach(() => {
   window.sessionStorage.setItem(TOKEN_KEY, 'IMP-TOKEN');
   vi.stubGlobal('fetch', fetchMock);
 });
-afterEach(() => vi.unstubAllGlobals());
+afterEach(() => {
+  vi.unstubAllGlobals();
+  impersonationStore.setSession(null);
+});
 
 function me(slug: string) {
   fetchMock.mockResolvedValue({
@@ -68,6 +72,22 @@ describe('MySlug under an impersonation token (F3)', () => {
     mount();
     await waitFor(() => expect(replace).toHaveBeenCalledWith('/my-requests/verify'));
     expect(window.sessionStorage.getItem(TOKEN_KEY)).toBeNull();
+    expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
+    expect(window.localStorage.getItem(SLUG_KEY)).toBe('ADMINSLUG01');
+    expect(screen.queryByTestId('child')).toBeNull();
+  });
+});
+
+describe('MySlug under a CRM impersonation without an impersonation token (G1)', () => {
+  it('keeps the admin\'s own localStorage portal sign-in and goes to verify', async () => {
+    impersonationStore.setSession({
+      sessionId: 's1',
+      startedAt: '2026-10-28T00:00:00Z',
+      targetUser: { id: 'u-eric', name: 'Eric', email: 'e@x.test', avatar: null, role_name: 'salesperson' },
+    });
+    window.sessionStorage.clear(); // no impersonation token in this tab
+    mount();
+    await waitFor(() => expect(replace).toHaveBeenCalledWith('/my-requests/verify'));
     expect(window.localStorage.getItem(TOKEN_KEY)).toBe('ADMIN-OWN-TOKEN');
     expect(window.localStorage.getItem(SLUG_KEY)).toBe('ADMINSLUG01');
     expect(screen.queryByTestId('child')).toBeNull();
