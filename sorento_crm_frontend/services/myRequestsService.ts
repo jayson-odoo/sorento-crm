@@ -48,6 +48,7 @@ import type {
 } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import type { LinePricingLineInput, LinePricingResult } from '@/lib/dealer-kit/line-pricing-types';
 import type { ChangeRequestPayload, ReviewComment } from '@/lib/dealer-kit/review-comments';
+import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import {
   designPayloadFromResponse,
   type TagSheetDesignPayload,
@@ -535,6 +536,8 @@ export interface MyPriceTagWrite {
 /** The detail body plus the revision policy the portal hands back with it. */
 export type MyPriceTagRequestDetail = PriceTagRequestDetail & {
   portal_draft_at?: string | null;
+  /** The latest tag sheet export: what the proof viewer's Download PDF reads. */
+  latest_export_status?: 'ready' | 'pending' | 'failed' | null;
   revision_no?: number;
   revision?: PortalRevisionPolicy | null;
 };
@@ -557,7 +560,7 @@ export interface MyPriceTagItem {
 
 const priceTagUrl = (
   id: string,
-  action?: 'submit' | 'approve' | 'request-changes' | 'review-comments' | 'design' | 'collect' | 'revise',
+  action?: 'submit' | 'approve' | 'request-changes' | 'review-comments' | 'design' | 'download' | 'collect' | 'revise',
 ) =>
   `${PRICE_TAG_URL}/${encodeURIComponent(id)}${action ? `/${action}` : ''}`;
 
@@ -611,6 +614,14 @@ export async function fetchMyPriceTagDesign(id: string): Promise<TagSheetDesignP
   return designPayloadFromResponse(await unwrap<TagSheetDesignResponse>(res, 'Failed to load the design.'));
 }
 
+/** The latest completed tag sheet PDF, saved through the browser (the portal's `downloadPriceTagPdf`). */
+export async function downloadMyPriceTagPdf(id: string): Promise<void> {
+  const res = await apiFetch(priceTagUrl(id, 'download'));
+  if (!res.ok) throw new Error(await extractApiError(res, 'Failed to download the PDF'));
+  const blob = await res.blob();
+  saveBlobAs(blob, filenameFromContentDisposition(res.headers.get('Content-Disposition')) || 'tag-sheet.pdf');
+}
+
 /** The salesperson has the printed tags in hand. */
 export async function collectMyPriceTagRequest(id: string): Promise<void> {
   await ensureOk(await apiFetch(priceTagUrl(id, 'collect'), { method: 'POST' }), 'Failed to mark collected');
@@ -645,14 +656,13 @@ export async function searchMyPriceTagItems(q: string): Promise<MyPriceTagItem[]
   );
 }
 
-/** The catalogue packages a picked product is sold as, and whether its class is guarded. An answer
- *  without a `combos` list reads as a product with no package, never as a broken line. */
+/** The catalogue packages a picked product is sold as, and whether its class is guarded (the portal's
+ *  `lookupProductCombos`). */
 export async function lookupMyProductCombos(productId: string): Promise<ProductCombosLookup> {
-  const body = await unwrap<Partial<ProductCombosLookup> | null>(
+  return unwrap(
     await apiFetch(`${BASE}/lookups/product-combos/${encodeURIComponent(productId)}`),
     'Failed to load the packages for this product',
   );
-  return { host_guarded: Boolean(body?.host_guarded), combos: Array.isArray(body?.combos) ? body.combos : [] };
 }
 
 /** One pricing call for every line, priced for this salesperson (`price_mode` is not sent, as on the portal). */

@@ -8,13 +8,14 @@
  * My Requests, so the drafts, submit, proof review, collection and revision rules are the
  * portal's. Marketing's tools (claim, designer, void, export, line prices) are not here.
  *
- * S7b (crew a81067665 (a)): the lines editor (Item, package, parts, the line's promotion) and the
- * proof review (pins, Send, Approve) are the portal's own components, fed My Requests' reads.
+ * S7b (crew a81067665 (a)): the price mode, the lines editor (Item, package, parts, the line's
+ * promotion), the read-only lines table and the proof review (pins, Send, Approve, Download) are
+ * the portal's own components, fed My Requests' reads.
  */
 
 import { useCallback, useEffect, useMemo, useState, type SetStateAction } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { FileText, HandCoins, ListOrdered, Paperclip, Plus, Save, Send } from 'lucide-react';
+import { FileText, HandCoins, ListOrdered, Paperclip, Save, Send } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -28,17 +29,18 @@ import { PageHeader } from '@/components/common/PageHeader';
 import { MyRequestActions } from '@/components/common/MyRequestActions';
 import { OwnAttachmentDelete, OwnAttachmentUpload } from '@/components/common/OwnRequestAttachmentActions';
 import { PrintBySelect } from '@/components/dealer-kit/PrintBySelect';
+import { PriceModeToggle } from '@/components/dealer-kit/PriceModeToggle';
 import { PriceTagDesignReview } from '@/components/dealer-kit/PriceTagDesignReview';
 import { PriceTagLinesTable } from '@/components/dealer-kit/PriceTagLinesTable';
+import { PriceTagLinesView } from '@/components/dealer-kit/PriceTagLinesView';
 import { useIsMobile } from '@/hooks/use-mobile';
 import { usePriceTagLineEditor, type PriceTagLineLookups } from '@/hooks/usePriceTagLineEditor';
-import { draftLinesPayload, lineToDraft, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
+import { draftLinesPayload, emptyDraftLine, lineToDraft, type DraftLine } from '@/lib/dealer-kit/price-tag-draft-lines';
 import { numberFieldError } from '@/lib/number-field';
 import type { PriceMode } from '@/app/(auth)/portal/lib/price-tag-request-service';
 import { priceTagStatusLabel, priceTagStatusPillClass } from '@/lib/price-tag-status';
 import { formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { printByLabel, type PrintBy } from '@/lib/dealer-kit/print-collection';
-import { codeWithName } from '@/lib/product-display';
 import { useMyPriceTagDebtors, useMyPriceTagMutations, useMyPriceTagRequest } from '@/hooks/useMyRequests';
 import {
   fetchMyPriceTagDesign,
@@ -145,6 +147,13 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
     priceMode: draft.price_mode,
     lookups: MY_LINE_LOOKUPS,
   });
+  /** A new line with the picked item on it: the same pick the row's own Item picker makes. */
+  const addLineWithItem = (option: SearchableSelectOption | null) => {
+    if (!option) return;
+    const line = emptyDraftLine();
+    setLines((prev) => [...prev, line]);
+    lineEditor.handleItemSelect(line.key, option);
+  };
 
   const busy =
     m.create.isPending ||
@@ -346,6 +355,11 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
           onSend={(payload) => m.requestChanges.mutateAsync({ id: row.id, payload })}
           loadDesign={fetchMyPriceTagDesign}
           loadReviewComments={fetchMyPriceTagReviewComments}
+          download={{
+            available: (row.latest_export_status ?? (row.has_completed_export ? 'ready' : null)) === 'ready',
+            pending: m.download.isPending,
+            onDownload: () => m.download.mutate(row.id),
+          }}
         />
       )}
 
@@ -435,6 +449,24 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
                     <p className="font-medium">{printByLabel(row?.print_by)}</p>
                   )}
                 </div>
+                <div>
+                  <span id="pt-price-mode" className="block text-muted-foreground">
+                    Price
+                  </span>
+                  {editing ? (
+                    <div className="mt-1">
+                      <PriceModeToggle
+                        value={draft.price_mode}
+                        labelledBy="pt-price-mode"
+                        onChange={(mode) => set({ price_mode: mode })}
+                      />
+                    </div>
+                  ) : (
+                    <p className="font-medium">
+                      {(row?.price_mode ?? 'list') === 'selling' ? 'Selling price' : 'List price'}
+                    </p>
+                  )}
+                </div>
               </div>
               <div className="mt-4">
                 <span className="block text-sm text-muted-foreground">Notes</span>
@@ -476,39 +508,23 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
                       showNumberErrors={showNumberErrors}
                     />
                   )}
-                  <Button variant="outline" size="sm" onClick={lineEditor.addLine}>
-                    <Plus className="size-4" />
-                    Add line
-                  </Button>
+                  {/* Picking adds the line with its item already chosen, then returns to its
+                      placeholder; the row's own Item picker changes it after that. */}
+                  <SearchableSelect
+                    value=""
+                    onChange={() => undefined}
+                    onOptionChange={addLineWithItem}
+                    fetchOptions={lineEditor.fetchItemOptions}
+                    wrapOptions
+                    placeholder="Add a product or set"
+                    emptyMessage="No sets or products match."
+                  />
                 </>
               ) : (
-                (row?.lines ?? []).map((line) => {
-                  const label = codeWithName(line.code, line.name) || line.name || line.code || 'Item';
-                  return (
-                    <div key={line.id} className="space-y-1 border-b pb-3 last:border-b-0">
-                      <div className="flex flex-wrap items-center gap-3">
-                        <span className="min-w-0 flex-1 truncate text-sm font-medium" title={label}>
-                          {label}
-                        </span>
-                        <span className="text-sm text-muted-foreground">Qty {line.quantity}</span>
-                      </div>
-                      {(line.parts ?? []).map((part) => {
-                        const partLabel = part.product_id
-                          ? `${codeWithName(part.code, part.name) || part.code || part.name || ''}${part.role ? ` (${part.role})` : ''}`
-                          : `${part.role ? `${part.role}: ` : ''}${part.candidates.map((c) => c.code).join(' / ')}`;
-                        return (
-                          <p
-                            key={part.id}
-                            className="truncate border-l-2 border-border pl-3 text-xs text-muted-foreground"
-                            title={partLabel}
-                          >
-                            {partLabel}
-                          </p>
-                        );
-                      })}
-                    </div>
-                  );
-                })
+                row &&
+                row.lines.length > 0 && (
+                  <PriceTagLinesView lines={row.lines} priceMode={row.price_mode ?? 'list'} isMobile={isMobile} />
+                )
               )}
             </CardContent>
           </Card>

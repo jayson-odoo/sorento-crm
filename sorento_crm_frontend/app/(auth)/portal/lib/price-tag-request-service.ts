@@ -80,6 +80,7 @@
  */
 
 import { extractApiError } from '@/lib/api-client';
+import { filenameFromContentDisposition, saveBlobAs } from '@/lib/save-blob';
 import type { PrintBy } from '@/lib/dealer-kit/print-collection';
 import type {
   ChangeRequestPayload,
@@ -746,28 +747,6 @@ export async function listReviewComments(id: string): Promise<ReviewComment[]> {
 // ---------------------------------------------------------------------------
 // Download the finished PDF (D19/S2)
 // ---------------------------------------------------------------------------
-
-/** `attachment; filename="tags.pdf"` -> `tags.pdf`, or null when absent. */
-function filenameFromContentDisposition(header: string | null): string | null {
-  if (!header) return null;
-  const quoted = /filename\*?=(?:UTF-8'')?"([^"]+)"/i.exec(header);
-  if (quoted?.[1]) return decodeURIComponent(quoted[1]);
-  const bare = /filename\*?=(?:UTF-8'')?([^;]+)/i.exec(header);
-  return bare?.[1] ? decodeURIComponent(bare[1].trim()) : null;
-}
-
-function saveBlobAs(blob: Blob, filename: string): void {
-  const url = URL.createObjectURL(blob);
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = filename;
-  document.body.appendChild(anchor);
-  anchor.click();
-  anchor.remove();
-  // Revoked a tick later: the click starts the save asynchronously and some
-  // browsers have not read the object url yet by the time this line runs.
-  setTimeout(() => URL.revokeObjectURL(url), 0);
-}
 
 /**
  * The request's latest completed tag sheet PDF, fetched with the portal token

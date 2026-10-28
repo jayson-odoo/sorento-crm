@@ -25,6 +25,7 @@ import {
   collectMyPriceTagRequest,
   createMyPriceTagRequest,
   deleteMyPriceTagRequest,
+  downloadMyPriceTagPdf,
   fetchMyPriceTagDebtors,
   fetchMyPriceTagRequest,
   requestMyPriceTagChanges,
@@ -280,8 +281,8 @@ export function useMyPriceTagDebtors(enabled: boolean) {
 
 /**
  * A salesperson's own price tag request written through the portal's price tag router (S7): save,
- * submit, delete a draft, approve the proof, ask for changes, collect, revise. The staff table and
- * request page read the same rows, so their keys refresh.
+ * submit, delete a draft, approve the proof, ask for changes, download the PDF, collect, revise. The
+ * staff table and request page read the same rows, so their keys refresh.
  */
 export function useMyPriceTagMutations() {
   const queryClient = useQueryClient();
@@ -320,6 +321,10 @@ export function useMyPriceTagMutations() {
       requestMyPriceTagChanges(id, payload),
     ...move('Failed to send the change requests', 'Change requests sent'),
   });
+  const download = useMutation({
+    mutationFn: (id: string) => downloadMyPriceTagPdf(id),
+    onError: (error: Error) => toast.error(error.message || 'Failed to download the PDF'),
+  });
   const collect = useMutation({
     mutationFn: (id: string) => collectMyPriceTagRequest(id),
     ...move('Failed to mark collected', 'Marked collected'),
@@ -334,5 +339,5 @@ export function useMyPriceTagMutations() {
     }) => reviseMyPriceTagRequest(id, input),
     ...move('Failed to send the revision', 'Revision sent'),
   });
-  return { create, update, submit, remove, approve, requestChanges, collect, revise };
+  return { create, update, submit, remove, approve, requestChanges, download, collect, revise };
 }
