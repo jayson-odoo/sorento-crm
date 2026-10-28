@@ -79,3 +79,8 @@ holds `salesperson` plus any other role ("mixed").
 - P3-27 A contact WITHOUT a linked salesperson user: "Impersonate in portal" behaves exactly as today (portal,
   yellow banner).
 - P3-28 A salesperson's own portal-link sign-in is unchanged.
+- P3-29 (round 10, owner FAIL 28 Oct ~13:30) EVERY impersonation entry for a salesperson opens the CRM view: the
+  contact row menu (Internal Users) and contact detail action, a `/portal?token=...&impersonation=1` link or old tab
+  (portal `/me` returns `crm_user_id` for impersonation tokens only), and Users > "Impersonate user" followed by My
+  requests (the contact impersonation starts itself, once per visit). Contacts without a salesperson user keep the old
+  portal on every path.

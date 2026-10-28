@@ -1,6 +1,6 @@
 # PLAN: PORTAL-P3-ROLE-MENU, salesperson role + trimmed CRM sidebar (28 Oct 2026)
 
-Status: Review passed (reviewer READY, security-reviewer READY, 28 Oct); owner hand test pending on the crew copy. Rounds 1-9 red-first with kill-proofs on PR #1944. Track: full.
+Status: Review passed (reviewer READY, security-reviewer READY, 28 Oct); owner hand test pending on the crew copy. Rounds 1-11 red-first with kill-proofs on PR #1944. Open owner decision: MY REQUESTS on staff pages (P4 lanes). Track: full.
 Track: full (RBAC grant + landing change + API guard), security review required. Size M, LEAD pattern.
 Lane PORTAL-P3-ROLE-MENU.
 
@@ -92,6 +92,10 @@ user keep today's portal impersonation. UAC P3-23..P3-28.
 - An admin who switches straight from impersonating salesperson A to a CRM-only impersonation of B leaves A's
   contact session open until its token expires (only that admin holds the token).
 - While impersonating, the header name and avatar show the target ("same views").
+- A second tab with no portal token starts a new contact session, which revokes the first tab's token
+  (`contact_impersonation.py` start ends prior sessions).
+- The impersonation portal link is built on FRONTEND_BASE_URL; the switch to the CRM view needs the admin signed
+  in to the CRM on that same host.
 
 ## Not in this lane
 
