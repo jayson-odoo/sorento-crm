@@ -56,15 +56,16 @@ _STATUS_RANK = {"stockout": 1, "dead": 2, "low": 3, "incoming": 4, "healthy": 5}
 @dataclass
 class ScmFilters:
     warehouses: List[str] = field(default_factory=list)
-    category_id: Optional[str] = None
-    supplier: Optional[str] = None
+    # Several values of one filter are OR-ed; empty means no filter. Supplier is by supplier CODE.
+    category_id: List[str] = field(default_factory=list)
+    supplier: List[str] = field(default_factory=list)
     health: Optional[str] = None
     q: Optional[str] = None
     # M2 classification filters. Values: A|B|C|unknown / X|Y|Z|unknown. ``unknown``
     # targets rows the analytics job couldn't classify (null class), so they stay
     # reachable rather than silently hidden.
-    abc: Optional[str] = None
-    xyz: Optional[str] = None
+    abc: List[str] = field(default_factory=list)
+    xyz: List[str] = field(default_factory=list)
     # Product-lifecycle scope. DEFAULTS are the FOCUSED view - active + ongoing - 
     # so inactive/discontinued SKUs never inflate headline counts/valuations unless
     # the user explicitly widens the scope. active_status ∈ {active,inactive,all}
@@ -152,14 +153,13 @@ def _is_below_rop(on_hand: float, net: float, reorder_point: Optional[float]) ->
     return net <= reorder_point
 
 
-def _matches_class(value: Optional[str], wanted: Optional[str]) -> bool:
-    """ABC/XYZ class-filter predicate. ``unknown`` matches an unclassified (null)
-    row; a concrete letter matches exactly; no filter matches everything."""
+def _matches_class(value: Optional[str], wanted: Optional[List[str]] | Optional[str]) -> bool:
+    """ABC/XYZ class-filter predicate over one or several wanted classes. ``unknown`` matches an
+    unclassified (null) row; a concrete letter matches exactly; no filter matches everything."""
     if not wanted:
         return True
-    if wanted == "unknown":
-        return value is None
-    return value == wanted
+    classes = [wanted] if isinstance(wanted, str) else wanted
+    return any(value is None if c == "unknown" else value == c for c in classes)
 
 
 def _class_filter(rows: List[dict], filters: ScmFilters) -> List[dict]:
@@ -343,7 +343,7 @@ class ScmDashboardService:
             where.append("w.warehouse_code = ANY(:whs)")
             params["whs"] = filters.warehouses
         if filters.category_id:
-            where.append("p.category_id = :cat")
+            where.append("p.category_id = ANY(CAST(:cat AS uuid[]))")
             params["cat"] = filters.category_id
         if filters.q:
             where.append("(p.product_code ILIKE :q OR p.product_name ILIKE :q)")
@@ -351,7 +351,7 @@ class ScmDashboardService:
         if filters.supplier:
             where.append(
                 "EXISTS (SELECT 1 FROM product_suppliers ps JOIN suppliers su ON su.id = ps.supplier_id "
-                "WHERE ps.product_id = p.id AND su.supplier_code = :sup)"
+                "WHERE ps.product_id = p.id AND su.supplier_code = ANY(:sup))"
             )
             params["sup"] = filters.supplier
 
@@ -537,10 +537,10 @@ class ScmDashboardService:
             where.append("w.warehouse_code = ANY(:whs)")
             params["whs"] = filters.warehouses
         if filters.supplier:
-            where.append("su.supplier_code = :sup")
+            where.append("su.supplier_code = ANY(:sup)")
             params["sup"] = filters.supplier
         if filters.category_id:
-            where.append("p.category_id = :cat")
+            where.append("p.category_id = ANY(CAST(:cat AS uuid[]))")
             params["cat"] = filters.category_id
         if filters.q:
             where.append("(p.product_code ILIKE :q OR p.product_name ILIKE :q)")
@@ -868,7 +868,7 @@ class ScmDashboardService:
 
         out: List[dict] = []
         for sup_code, g in groups.items():
-            if filters.supplier and sup_code != filters.supplier:
+            if filters.supplier and sup_code not in filters.supplier:
                 continue
             if filters.health:
                 g["skus"] = [s for s in g["skus"] if _matches_health(s, filters.health)]

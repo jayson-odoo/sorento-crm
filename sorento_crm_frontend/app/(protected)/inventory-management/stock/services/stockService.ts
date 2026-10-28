@@ -9,8 +9,8 @@ export async function getStockDashboard(): Promise<StockDashboard> {
   return response.json();
 }
 
-export async function getStockBalance(params: DataGridApiFetchParams & { warehouse_id?: string; product_id?: string; category_id?: string; status?: string }): Promise<DataGridApiResponse<Stock>> {
-  const { pageIndex, pageSize, sorting, searchQuery, warehouse_id, product_id, category_id, status } = params;
+export async function getStockBalance(params: DataGridApiFetchParams & { warehouse_id?: string; warehouse_ids?: string; product_id?: string; category_id?: string; status?: string }): Promise<DataGridApiResponse<Stock>> {
+  const { pageIndex, pageSize, sorting, searchQuery, warehouse_id, warehouse_ids, product_id, category_id, status } = params;
   const sortField = sorting?.[0]?.id || '';
   const sortDirection = sorting?.[0]?.desc ? 'desc' : 'asc';
   const queryParams = new URLSearchParams({
@@ -19,6 +19,7 @@ export async function getStockBalance(params: DataGridApiFetchParams & { warehou
     ...(sortField ? { sort: sortField, dir: sortDirection } : {}),
     ...(searchQuery ? { query: searchQuery } : {}),
     ...(warehouse_id ? { warehouse_id } : {}),
+    ...(warehouse_ids ? { warehouse_ids } : {}),
     ...(product_id ? { product_id } : {}),
     ...(category_id ? { category_id } : {}),
     ...(status ? { status } : {}),
@@ -66,9 +67,11 @@ export async function getStockAlerts(): Promise<Stock[]> {
 /**
  * Export all stock balance to Excel (uses dedicated export endpoint for better performance)
  */
-export async function exportStockBalance(params?: { warehouse_id?: string; category_id?: string; status?: string; quantity_operator?: string; quantity_value?: string }): Promise<Stock[]> {
+export async function exportStockBalance(params?: { warehouse_id?: string; warehouse_ids?: string; category_id?: string; status?: string; quantity_operator?: string; quantity_value?: string }): Promise<Stock[]> {
   const queryParams = new URLSearchParams({
     ...(params?.warehouse_id ? { warehouse_id: params.warehouse_id } : {}),
+    ...(params?.warehouse_ids ? { warehouse_ids: params.warehouse_ids } : {}),
+    ...(params?.status ? { status: params.status } : {}),
     ...(params?.quantity_operator ? { quantity_operator: params.quantity_operator } : {}),
     ...(params?.quantity_value ? { quantity_value: params.quantity_value } : {}),
   });

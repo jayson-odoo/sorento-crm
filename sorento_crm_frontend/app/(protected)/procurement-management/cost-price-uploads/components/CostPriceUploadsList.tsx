@@ -1,6 +1,6 @@
 'use client';
 
-import { useMemo, useState } from 'react';
+import { useCallback, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import {
   ColumnDef,
@@ -20,8 +20,8 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { ListSearchInput } from '@/components/common/ListSearchInput';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch';
 import { useResetPageOnFilterChange } from '@/hooks/useResetPageOnFilterChange';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -57,7 +57,13 @@ export default function CostPriceUploadsList() {
   const [sorting, setSorting] = useState<SortingState>([{ id: 'created_at', desc: true }]);
   const [statuses, setStatuses] = useState<string[]>([]);
   const [supplierId, setSupplierId] = useState('');
-  const [supplierOption, setSupplierOption] = useState<{ value: string; label: string } | null>(null);
+  // Names of the suppliers fetched so far, so a pick is named in its trigger (never an id).
+  const supplierNames = useRef<Record<string, string>>({});
+  const fetchSuppliers = useCallback(async (query: string) => {
+    const found = await searchSuppliersForSelect(query);
+    for (const o of found) supplierNames.current[o.value] = o.label;
+    return found;
+  }, []);
   const [uploadOpen, setUploadOpen] = useState(false);
   const {
     value: searchInput,
@@ -76,6 +82,29 @@ export default function CostPriceUploadsList() {
     status: statuses.length ? statuses : undefined,
     supplier_id: supplierId || undefined,
   });
+
+  // One control, rendered by both the table layout and the 375px card layout.
+  const supplierFilter = (triggerClassName?: string) => (
+    <SearchableMultiSelect
+      value={splitMulti(supplierId)}
+      onChange={(v) => setSupplierId(joinMulti(v))}
+      fetchOptions={fetchSuppliers}
+      selectedOptions={splitMulti(supplierId).map((id) => ({
+        value: id,
+        label: supplierNames.current[id] ?? 'Selected supplier',
+      }))}
+      clearable
+      placeholder="All suppliers"
+      triggerClassName={triggerClassName}
+      renderTriggerLabel={(chosen) =>
+        chosen.length ? (
+          <span className="block truncate">{multiChipLabel('Supplier', idFilterLabels(chosen))}</span>
+        ) : (
+          <span className="text-muted-foreground">Supplier: any</span>
+        )
+      }
+    />
+  );
 
   const rowHref = (row: CostPriceChangeSetListItem) => {
     const search = buildDetailSearch({
@@ -211,16 +240,7 @@ export default function CostPriceUploadsList() {
               placeholder="Status"
               triggerClassName="w-48"
             />
-            <SearchableSelect
-              value={supplierId}
-              onChange={setSupplierId}
-              onOptionChange={(opt) => setSupplierOption(opt)}
-              selectedOption={supplierOption ?? undefined}
-              fetchOptions={searchSuppliersForSelect}
-              clearable
-              placeholder="All suppliers"
-              triggerClassName="w-56"
-            />
+            {supplierFilter('w-56')}
             <div className="ms-auto">{primaryAction}</div>
           </CardHeader>
           {isError ? (
@@ -252,15 +272,7 @@ export default function CostPriceUploadsList() {
             {primaryAction}
           </div>
           <SearchableMultiSelect value={statuses} onChange={setStatuses} options={STATUS_OPTIONS} placeholder="Status" />
-          <SearchableSelect
-            value={supplierId}
-            onChange={setSupplierId}
-            onOptionChange={(opt) => setSupplierOption(opt)}
-            selectedOption={supplierOption ?? undefined}
-            fetchOptions={searchSuppliersForSelect}
-            clearable
-            placeholder="All suppliers"
-          />
+          {supplierFilter()}
         </div>
         {rows.length === 0 ? (
           <p className="py-8 text-center text-sm text-muted-foreground">No uploads match your filters yet.</p>

@@ -91,8 +91,8 @@ export function loadingPlanListParamsFromUrl(
     pageSize: params.pageSize,
     sorting: params.sorting,
     searchQuery: params.searchQuery,
-    // `active` (planning + sent) is the chip the list opens on.
-    status: (params.filters.status as LoadingPlanListParams['status']) ?? 'active',
+    // `active` (planning + sent) is the view the list opens on.
+    status: params.filters.status ?? 'active',
   };
 }
 

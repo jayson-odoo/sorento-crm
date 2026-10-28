@@ -22,7 +22,8 @@ import { buildSelectColumn, selectedRowIds } from '@/components/ui/data-grid-sel
 import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 import { Label } from '@/components/ui/label';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { Skeleton } from '@/components/ui/skeleton';
 import { useStockBalance } from '../hooks/useStock';
 import { useHasPermission } from '@/hooks/usePermissions';
@@ -108,7 +109,7 @@ export default function StockBalanceGrid() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    warehouse_id: warehouseId || undefined,
+    warehouse_ids: warehouseId || undefined,
     status: statusFilter || undefined,
   });
 
@@ -251,7 +252,7 @@ export default function StockBalanceGrid() {
   // All-records (server) export: fetch the full filtered set, build the xlsx with
   // the chosen columns. Decoupled from the grid - the page never loads all rows. (D4/F)
   const exportAllRecords = async (chosenColumnIds: string[]) => {
-    const all = await exportStockBalance({ warehouse_id: warehouseId || undefined, status: statusFilter || undefined });
+    const all = await exportStockBalance({ warehouse_ids: warehouseId || undefined, status: statusFilter || undefined });
     const rows = all.map(normalizeStock).map((item) => {
       const out: Record<string, unknown> = {};
       for (const id of chosenColumnIds) out[id] = resolveExportValue(item, id);
@@ -299,24 +300,28 @@ export default function StockBalanceGrid() {
                 <div className="space-y-4">
                   <div>
                     <Label>Warehouse</Label>
-                    <SearchableSelect
-                      value={warehouseId || 'all'}
-                      onChange={(v) => setWarehouseId(v === 'all' ? '' : v)}
-                      options={[
-                        { value: 'all', label: 'All warehouses' },
-                        ...warehouses.map((w) => ({ value: w.id, label: w.warehouse_name ?? '' })),
-                      ]}
+                    <SearchableMultiSelect
+                      value={splitMulti(warehouseId)}
+                      onChange={(v) => setWarehouseId(joinMulti(v))}
+                      options={warehouses.map((w) => ({ value: w.id, label: w.warehouse_name ?? '' }))}
                       placeholder="All warehouses"
                       triggerClassName="mt-1"
+                      clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Warehouse', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Warehouse: any</span>
+                        )
+                      }
                     />
                   </div>
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter || 'all'}
-                      onChange={(v) => setStatusFilter(v === 'all' ? '' : v)}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(v) => setStatusFilter(joinMulti(v))}
                       options={[
-                        { value: 'all', label: 'All statuses' },
                         { value: 'critical', label: 'Critical' },
                         { value: 'low', label: 'Low' },
                         { value: 'normal', label: 'Normal' },
@@ -324,6 +329,14 @@ export default function StockBalanceGrid() {
                       ]}
                       placeholder="All statuses"
                       triggerClassName="mt-1"
+                      clearable
+                      renderTriggerLabel={(chosen) =>
+                        chosen.length ? (
+                          <span className="block truncate">{multiChipLabel('Status', idFilterLabels(chosen))}</span>
+                        ) : (
+                          <span className="text-muted-foreground">Status: any</span>
+                        )
+                      }
                     />
                   </div>
                   {(warehouseId || statusFilter) && (

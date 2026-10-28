@@ -241,6 +241,30 @@ class ProductService:
     # to an empty result without hitting the DB.
     _EMPTY_RESULT = object()
 
+    def _resolve_category_filter(self, category_id: Optional[str]) -> Optional[list[str]]:
+        """Category ids for ``category_id``, one value or several comma-joined (OR-ed).
+
+        Each value resolves on its own (id, code or name) and the results are unioned, the
+        categories themselves with no subtree expansion. ``None`` is "no filter", ``[]`` is
+        "definitively no rows", as :func:`resolve_identifier` answers.
+        """
+        tokens = [t.strip() for t in (category_id or "").split(",") if t.strip()]
+        if len(tokens) <= 1:
+            return resolve_identifier(
+                self.db, category_id, ProductCategory, code_fields=("category_code", "category_name")
+            )
+        resolved: list[str] = []
+        picked = False
+        for token in tokens:
+            ids = resolve_identifier(
+                self.db, token, ProductCategory, code_fields=("category_code", "category_name")
+            )
+            if ids is None:  # "all"
+                continue
+            picked = True
+            resolved.extend(i for i in ids if i not in resolved)
+        return resolved if picked else None
+
     def _resolve_brand_filter(self, brand_id: Optional[str]) -> Optional[list[str]]:
         """Brand ids for the ``brand_id`` filter, which accepts a comma-separated list.
 
@@ -351,12 +375,7 @@ class ProductService:
             lowered = [c.lower() for c in entity_buckets.product_codes]
             filters.append(_func.lower(Product.product_code).in_(lowered))
 
-        category_ids = resolve_identifier(
-            self.db,
-            category_id,
-            ProductCategory,
-            code_fields=("category_code", "category_name"),
-        )
+        category_ids = self._resolve_category_filter(category_id)
         if category_ids is not None:
             if not category_ids:
                 return self._EMPTY_RESULT

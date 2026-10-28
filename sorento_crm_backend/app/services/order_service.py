@@ -3856,9 +3856,11 @@ class OrderStatusService:
     def __init__(self, db: Session):
         self.db = db
     
-    def list_order_statuses(self, page: int = 1, limit: int = 50):
-        """List order statuses."""
+    def list_order_statuses(self, page: int = 1, limit: int = 50, is_final_status: Optional[bool] = None):
+        """List order statuses; `is_final_status` narrows the whole table (total and paging)."""
         q = self.db.query(OrderStatus).order_by(OrderStatus.sequence)
+        if is_final_status is not None:
+            q = q.filter(OrderStatus.is_final_status.is_(is_final_status))
         
         total = q.count()
         offset = (page - 1) * limit

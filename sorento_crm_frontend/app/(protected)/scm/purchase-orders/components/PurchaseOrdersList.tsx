@@ -35,6 +35,8 @@ import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
 import { ToggleGroup, ToggleGroupItem } from '@/components/ui/toggle-group';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { useSearchParams } from 'next/navigation';
 import { usePurchaseOrders } from '../../hooks/usePurchaseOrders';
 import { usePurchaseOrderActions } from '../../hooks/usePurchaseOrderActions';
@@ -593,12 +595,13 @@ export default function PurchaseOrdersList() {
                           Outstanding versus Completed, and offering "Received" or "Closed"
                           here would put words in the filter that the Status column never
                           prints. */}
-                      <SearchableSelect
+                      <SearchableMultiSelect
                         id="po-status"
-                        value={statusFilter}
-                        onChange={setStatusFilter}
-                        options={PURCHASE_ORDER_STATUS_FILTER_OPTIONS}
+                        value={splitMulti(statusFilter)}
+                        onChange={(v) => setStatusFilter(joinMulti(v))}
+                        options={PURCHASE_ORDER_STATUS_FILTER_OPTIONS.filter((o) => o.value)}
                         placeholder="All statuses"
+                        clearable
                       />
                     </div>
                     <div>

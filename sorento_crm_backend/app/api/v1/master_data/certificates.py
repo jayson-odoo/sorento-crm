@@ -20,6 +20,7 @@ from typing import List, Optional
 from fastapi import APIRouter, Body, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_values
 from app.database import get_db
 from app.dependencies import require_permission, require_permission_with_api_key
 from app.models.certificate import CERTIFICATE_SOURCE_MANUAL, CertificateProduct
@@ -65,9 +66,9 @@ async def get_certificates(
     product_ids: Optional[List[str]] = Query(
         None, description="Certificates covering these product UUIDs (repeated / csv / JSON array)."
     ),
-    scheme: Optional[str] = Query(None, description="Certification scheme, e.g. PPS or SPAN."),
-    status_: Optional[str] = Query(None, alias="status", description="active | archived."),
-    validity_state: Optional[str] = Query(
+    scheme: Optional[List[str]] = Query(None, description="Certification scheme(s), e.g. PPS or SPAN."),
+    status_: Optional[List[str]] = Query(None, alias="status", description="active | archived."),
+    validity_state: Optional[List[str]] = Query(
         None,
         description=(
             "Comma-separated derived states: valid, expiring_soon, expired, "
@@ -117,9 +118,9 @@ async def get_certificates(
             certificate_ids=parse_uuid_list(certificate_ids, param_name="certificate_ids"),
             certificate_number=certificate_number,
             product_ids=parse_uuid_list(product_ids, param_name="product_ids"),
-            scheme=scheme,
-            status=status_,
-            validity_state=validity_state,
+            scheme=multi_values(scheme),
+            status=multi_values(status_),
+            validity_state=",".join(multi_values(validity_state) or []) or None,
             expiring_within_days=expiring_within_days,
             valid_on=parsed_valid_on,
             needs_review=needs_review,

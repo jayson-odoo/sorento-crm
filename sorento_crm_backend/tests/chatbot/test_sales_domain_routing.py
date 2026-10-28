@@ -100,7 +100,7 @@ class TestTheSalesStatusesMeanTheSalesDomain:
 
 class TestTheLanePicksTheSalesTools:
     def test_sales_analysis_under_sales(self, session_factory) -> None:
-        captured = _picked("sales", "sales_analysis", [], response=_sales_analysis_hit())
+        captured = _picked("sales", "sales_analysis", [], response=_sales_analysis_hit(), sales_basis="invoiced")
         assert [c[0] for c in captured] == ["crm_sales_analysis"]
 
     @pytest.mark.parametrize("entity", [CUSTOMER, PRODUCT])
@@ -131,7 +131,7 @@ class TestAWholeTurn:
         _seed_contact(session_factory, variables={})
         _result, captured = _run_turn(
             session_factory, monkeypatch,
-            qf=_qf(order_status="sales_analysis", entities=[], self_reference=True),
+            qf=_qf(order_status="sales_analysis", entities=[], self_reference=True, sales_basis="invoiced"),
             text_body="my sales this month", msg_id="ZZT-sales-domain-my-1",
             attributes=[GRANT], mcp_response=_sales_analysis_hit(),
         )

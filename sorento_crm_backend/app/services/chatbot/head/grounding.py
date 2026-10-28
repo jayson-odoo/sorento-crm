@@ -839,6 +839,7 @@ def ground(
     vocab: Vocabulary | None = None,
     message: str | None = None,
     closed_lists: bool = False,
+    lookup_lists: bool = False,
     closed_lists_index: bool = False,
     listed_codes: frozenset[str] | None = None,
     pick_info: dict[str, dict[str, Any]] | None = None,
@@ -856,6 +857,9 @@ def ground(
     `closed_lists` (CHAT-CLOSED-LISTS, the parser version carries the CLOSED LISTS
     section): a document type is kept only when its pick is an item of the lists the
     prompt rendered, and is tagged with that list (`_on_closed_lists`).
+
+    `lookup_lists` (the version carries the LOOKUP LISTS line): a "size" spec the parser took from the Spec
+    lookup list is grounded as every dimension (`head/bare_size.py`), as under `closed_lists`.
 
     `closed_lists_index` (CLOSED-LISTS-INDEX-MODE, `ParserConfig.closed_lists_index`): a warehouse
     this message names that `resolve_warehouse_token` does not resolve, and whose word is a registry
@@ -1000,7 +1004,9 @@ def ground(
             entity = {**entity, "hint": "category"}
             hint = "category"
             notes.append({"from": _PRODUCT_HINT, "raw": raw, "to": "category"})
-        if hint in _SPEC_HINTS and closed_lists:
+        # DIMENSION-ANY: the reserved "size" pick is offered by the candidate block (closed lists) and by the Spec
+        # lookup list ("Size 150mm, any dimension (size: 150)", `lookup_lists.number_hits`) alike.
+        if hint in _SPEC_HINTS and (closed_lists or lookup_lists):
             from app.services.chatbot.head.bare_size import ground_bare
 
             bare = ground_bare(db, entity, [e for e in entities if isinstance(e, dict)], vocab, held_ids, hidden_keys)
