@@ -174,3 +174,29 @@ def test_the_low_stock_guard_is_the_inventory_domain_only(bot) -> None:
     assert report_ask.by_capability({**base, "domain_hint": "inventory"}).get("order_status") == "outstanding"
     routed = report_ask.by_capability({**base, "domain_hint": "order"})
     assert routed.get("order_status") == report_ask.ASK_NAME, routed
+
+
+def test_a_company_pick_whose_parse_guesses_another_axis_keeps_the_held_asks_axis(bot) -> None:
+    """Live (R6, parser_raw of the three turns, `by_words` absent): "total sales 2026" held as a yearly comparison, the
+    basis picked, then the company picked; the answer turns' parse carried a guessed `group_by` month. A guess routes
+    nothing: the held axis stands."""
+    sorento, mocha = _two_companies(bot)
+    text, calls = bot.say(
+        _status("sales_analysis", group_by="year", sales_basis=None, basis=None, entity_op="clear", **YEAR),
+        "total sales 2026",
+    )
+    assert calls == [] and text.strip() == "Invoiced, delivered, ordered or outstanding?", (text, calls)
+    basis_pick = _status(
+        "sales_analysis", group_by="month", sales_basis="delivered", basis=None, entity_op="reuse", continuation=True,
+        open_question_answer={"mode": "pick", "picked": [2], "items": [], "qty_for_all": None}, **YEAR,
+    )
+    text, calls = bot.say(basis_pick, "2")
+    assert calls == [] and f"{sorento} or {mocha}?" in text, (text, calls)
+    company_pick = _status(
+        "sales_analysis", group_by="month", basis="delivered", sales_company=sorento, entity_op="reuse",
+        continuation=True, reference_target="dym", reference_positions=[1],
+        open_question_answer={"mode": "pick", "picked": [1], "items": [], "qty_for_all": None}, **YEAR,
+    )
+    text, calls = bot.say(company_pick, "1")
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "year" and args["basis"] == "delivered" and args["company"] == DEFAULT_COMPANY_ID, args
