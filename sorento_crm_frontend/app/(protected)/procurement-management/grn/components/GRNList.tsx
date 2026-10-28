@@ -25,7 +25,8 @@ import { isSearchInFlight, useDebouncedSearch } from '@/hooks/useDebouncedSearch
 import { ListSearchInput } from '@/components/common/ListSearchInput';
 import { Label } from '@/components/ui/label';
 import { Skeleton } from '@/components/ui/skeleton';
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { joinMulti, splitMulti } from '@/lib/list-filters/multiValue';
 import { useGRNs } from '../hooks/useGRN';
 import { GrnRowActions } from '../actions';
 import { buildDetailSearch } from '@/lib/listNavQuery';
@@ -72,7 +73,7 @@ export default function GRNList() {
     isSettling: searchSettling,
     reset: resetSearch,
   } = useDebouncedSearch();
-  const [statusFilter, setStatusFilter] = useState<string>('all');
+  const [statusFilter, setStatusFilter] = useState<string>('');
 
   // Back hands the list its own query string back, and the pager keeps
   // rewriting it, so the list reads it (S3-01). One hook, every list.
@@ -80,7 +81,7 @@ export default function GRNList() {
     setPagination({ pageIndex: state.pageIndex, pageSize: state.pageSize });
     setSorting(state.sorting);
     resetSearch(state.searchQuery);
-    setStatusFilter(state.filters.picking_status ?? 'all');
+    setStatusFilter(state.filters.picking_status ?? '');
   });
 
   const { data, isLoading, isPlaceholderData, isFetching, error, refetch } = useGRNs({
@@ -88,7 +89,7 @@ export default function GRNList() {
     pageSize: pagination.pageSize,
     sorting,
     searchQuery,
-    picking_status: statusFilter === 'all' ? undefined : statusFilter,
+    picking_status: statusFilter || undefined,
     spo_allocation_id: spoAllocationId || undefined,
   });
 
@@ -107,7 +108,7 @@ export default function GRNList() {
         searchQuery,
       },
       {
-        picking_status: statusFilter === 'all' ? undefined : statusFilter,
+        picking_status: statusFilter || undefined,
       },
     );
     return `/procurement-management/grn/${row.id}${search ? `?${search}` : ''}`;
@@ -238,28 +239,28 @@ export default function GRNList() {
             }
             filters={{
               kind: 'custom',
-              active: statusFilter !== 'all',
-              activeCount: statusFilter !== 'all' ? 1 : 0,
+              active: statusFilter !== '',
+              activeCount: statusFilter ? 1 : 0,
               content: (
                 <div className="space-y-4">
                   <div>
                     <Label>Status</Label>
-                    <SearchableSelect
-                      value={statusFilter}
-                      onChange={(value) => setStatusFilter(value)}
+                    <SearchableMultiSelect
+                      value={splitMulti(statusFilter)}
+                      onChange={(value) => setStatusFilter(joinMulti(value))}
                       placeholder="Status"
                       triggerClassName="mt-1 w-full"
+                      clearable
                       options={[
-                        { value: 'all', label: 'All statuses' },
                         { value: 'draft', label: 'Draft' },
                         { value: 'approved', label: 'Approved' },
                         { value: 'rejected', label: 'Rejected' },
                       ]}
                     />
                   </div>
-                  {statusFilter !== 'all' && (
+                  {statusFilter && (
                     <div className="flex justify-end">
-                      <Button variant="ghost" size="sm" onClick={() => setStatusFilter('all')}>
+                      <Button variant="ghost" size="sm" onClick={() => setStatusFilter('')}>
                         Clear filters
                       </Button>
                     </div>

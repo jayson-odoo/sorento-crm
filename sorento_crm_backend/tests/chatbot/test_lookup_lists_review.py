@@ -131,7 +131,10 @@ def test_number_hits_read_at_most_three_distinct_lengths(session_factory):
     w.commit()
     message = " ".join(f"{i * 10}mm" for i in range(1, 11)) + " 10 mm"
     got = ll.number_hits(message, scoped(session_factory))
-    assert sorted(h.row.label for h in got) == sorted(f"ZZ Tl {i * 10}mm (zz_tl: {i * 10})" for i in (1, 2, 3)), got
+    # DIMENSION-ANY: each of the three lengths also leads with its any-dimension size line.
+    assert sorted(h.row.label for h in got) == sorted(
+        [*(f"ZZ Tl {i * 10}mm (zz_tl: {i * 10})" for i in (1, 2, 3)), *(f"Size {i * 10}mm, any dimension (size: {i * 10})" for i in (1, 2, 3))]
+    ), got
 
 
 # ------------------------------------------------------------------ C3

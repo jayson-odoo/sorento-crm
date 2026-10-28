@@ -252,10 +252,13 @@ class ListQueryExportService:
         from decimal import Decimal
 
         q = self.db.query(Product)
-        if req.category_id and req.category_id != "all":
-            q = q.filter(Product.category_id == req.category_id)
-        if req.brand_id and req.brand_id != "all":
-            q = q.filter(Product.brand_id == req.brand_id)
+        # Several categories / brands (comma-joined, like the list) are OR-ed; ids, as before.
+        category_ids = [v for v in (multi_values(req.category_id) or []) if v != "all"]
+        if category_ids:
+            q = q.filter(Product.category_id.in_(category_ids))
+        brand_ids = [v for v in (multi_values(req.brand_id) or []) if v != "all"]
+        if brand_ids:
+            q = q.filter(Product.brand_id.in_(brand_ids))
         if req.product_status and req.product_status != "all":
             q = q.filter(Product.is_active == (req.product_status == "active"))
         if req.item_type:

@@ -12,6 +12,7 @@ from typing import Optional
 from fastapi import APIRouter, Depends, File, Form, Query, Request, Response, UploadFile, status
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_uuids, multi_values
 from app.database import get_db
 from app.dependencies import require_any_permission, require_permission
 from app.services.company_scope_resolver import apply_company_scope
@@ -73,14 +74,14 @@ async def list_change_sets(
     sort: Optional[str] = Query("created_at"),
     dir: Optional[str] = Query("desc"),
     query: Optional[str] = Query(None),
-    status_filter: Optional[str] = Query(None, alias="status"),
-    supplier_id: Optional[str] = Query(None),
+    status_filter: Optional[list[str]] = Query(None, alias="status"),
+    supplier_id: Optional[list[str]] = Query(None),
     current_user: dict = Depends(require_permission(VIEW_PERM)),
     db: Session = Depends(get_db),
 ):
     return service.list_sets(
         db, page=page, limit=limit, sort=sort, dir=dir, query=query,
-        status=status_filter, supplier_id=supplier_id,
+        status=multi_values(status_filter), supplier_id=multi_uuids(supplier_id, "Supplier"),
     )
 
 

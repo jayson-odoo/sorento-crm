@@ -1,4 +1,5 @@
 """Stock batches API routes."""
+from app.utils.multi_value import multi_values
 from fastapi import APIRouter, Depends, Query, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -22,6 +23,7 @@ async def get_stock_batches(
         description="Product UUID or product_code (e.g. SKU).",
     ),
     warehouse_id: Optional[str] = Query(None),
+    status_filter: Optional[list[str]] = Query(None, alias="status", description="Batch status(es), any case; several = any of them."),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -32,7 +34,8 @@ async def get_stock_batches(
             page=page,
             limit=limit,
             product_id=product_id,
-            warehouse_id=warehouse_id
+            warehouse_id=warehouse_id,
+            status=multi_values(status_filter),
         )
         return result
     except Exception as e:

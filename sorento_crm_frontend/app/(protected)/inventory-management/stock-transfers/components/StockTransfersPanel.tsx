@@ -30,7 +30,8 @@ import { DataGridPagination } from '@/components/ui/data-grid-pagination';
 import { buildSelectColumn } from '@/components/ui/data-grid-select-column';
 import { DataGridTable } from '@/components/ui/data-grid-table';
 
-import { SearchableSelect } from '@/components/common/SearchableSelect';
+import { SearchableMultiSelect } from '@/components/common/SearchableMultiSelect';
+import { idFilterLabels, joinMulti, multiChipLabel, splitMulti } from '@/lib/list-filters/multiValue';
 import { formatDateTimeInMalaysia } from '@/lib/helpers';
 import { buildDetailSearch } from '@/lib/listNavQuery';
 import { getWarehouses } from '@/app/(protected)/inventory-management/warehouses/services/warehouseService';
@@ -156,6 +157,20 @@ export function StockTransfersPanel({
   const [fromWarehouseId, setFromWarehouseId] = React.useState('');
   const [toWarehouseId, setToWarehouseId] = React.useState('');
   const [productId, setProductId] = React.useState('');
+  // Names of the warehouses and items fetched so far, so a pick is named in its trigger (never an id).
+  const seenNames = React.useRef<Record<string, string>>({});
+  const remember = React.useCallback(
+    (fetcher: (q: string) => Promise<{ value: string; label: string }[]>) => async (q: string) => {
+      const found = await fetcher(q);
+      for (const o of found) seenNames.current[o.value] = o.label;
+      return found;
+    },
+    [],
+  );
+  const fetchWarehouses = React.useMemo(() => remember(fetchWarehouseOptions), [remember]);
+  const fetchProducts = React.useMemo(() => remember(fetchProductOptions), [remember]);
+  const namedValues = (raw: string) =>
+    splitMulti(raw).map((id) => ({ value: id, label: seenNames.current[id] ?? id }));
 
   const [sorting, setSorting] = React.useState<SortingState>([
     { id: 'proposed_at', desc: true },
@@ -498,9 +513,9 @@ export function StockTransfersPanel({
         {showFilters ? (
           <div className="flex flex-col gap-3 sm:flex-row sm:flex-wrap sm:items-end">
             <div className="w-full sm:w-44">
-              <SearchableSelect
-                value={state}
-                onChange={setState}
+              <SearchableMultiSelect
+                value={splitMulti(state)}
+                onChange={(v) => setState(joinMulti(v))}
                 options={STATE_OPTIONS}
                 placeholder="Any state"
                 clearable
@@ -509,9 +524,9 @@ export function StockTransfersPanel({
               />
             </div>
             <div className="w-full sm:w-52">
-              <SearchableSelect
-                value={kind}
-                onChange={setKind}
+              <SearchableMultiSelect
+                value={splitMulti(kind)}
+                onChange={(v) => setKind(joinMulti(v))}
                 options={KIND_OPTIONS}
                 placeholder="Any source"
                 clearable
@@ -520,33 +535,57 @@ export function StockTransfersPanel({
               />
             </div>
             <div className="w-full sm:w-56">
-              <SearchableSelect
-                value={fromWarehouseId}
-                onChange={setFromWarehouseId}
-                fetchOptions={fetchWarehouseOptions}
+              <SearchableMultiSelect
+                value={splitMulti(fromWarehouseId)}
+                onChange={(v) => setFromWarehouseId(joinMulti(v))}
+                fetchOptions={fetchWarehouses}
                 placeholder="From any location"
+                selectedOptions={namedValues(fromWarehouseId)}
+                renderTriggerLabel={(chosen) =>
+                  chosen.length ? (
+                    <span className="block truncate">{multiChipLabel('From', idFilterLabels(chosen))}</span>
+                  ) : (
+                    <span className="text-muted-foreground">{'From any location'}</span>
+                  )
+                }
                 clearable
                 size="sm"
                 id="transfer-filter-from"
               />
             </div>
             <div className="w-full sm:w-56">
-              <SearchableSelect
-                value={toWarehouseId}
-                onChange={setToWarehouseId}
-                fetchOptions={fetchWarehouseOptions}
+              <SearchableMultiSelect
+                value={splitMulti(toWarehouseId)}
+                onChange={(v) => setToWarehouseId(joinMulti(v))}
+                fetchOptions={fetchWarehouses}
                 placeholder="To any location"
+                selectedOptions={namedValues(toWarehouseId)}
+                renderTriggerLabel={(chosen) =>
+                  chosen.length ? (
+                    <span className="block truncate">{multiChipLabel('To', idFilterLabels(chosen))}</span>
+                  ) : (
+                    <span className="text-muted-foreground">{'To any location'}</span>
+                  )
+                }
                 clearable
                 size="sm"
                 id="transfer-filter-to"
               />
             </div>
             <div className="w-full sm:w-60">
-              <SearchableSelect
-                value={productId}
-                onChange={setProductId}
-                fetchOptions={fetchProductOptions}
+              <SearchableMultiSelect
+                value={splitMulti(productId)}
+                onChange={(v) => setProductId(joinMulti(v))}
+                fetchOptions={fetchProducts}
                 placeholder="Any item"
+                selectedOptions={namedValues(productId)}
+                renderTriggerLabel={(chosen) =>
+                  chosen.length ? (
+                    <span className="block truncate">{multiChipLabel('Item', idFilterLabels(chosen))}</span>
+                  ) : (
+                    <span className="text-muted-foreground">{'Any item'}</span>
+                  )
+                }
                 clearable
                 size="sm"
                 id="transfer-filter-product"

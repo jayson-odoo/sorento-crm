@@ -95,6 +95,51 @@ vi.mock('@/components/common/SearchableSelect', () => ({
   ),
 }));
 
+// Supplier and Packing list are multi-selects now (FILTER-MULTISELECT PR5): the same native stand-in,
+// a multiple <select>, labelled by its own id.
+vi.mock('@/components/common/SearchableMultiSelect', () => ({
+  SearchableMultiSelect: ({
+    id,
+    value = [],
+    onChange,
+    options = [],
+  }: {
+    id?: string;
+    value?: string[];
+    onChange?: (v: string[]) => void;
+    options?: Array<{ value: string; label: string }>;
+  }) => (
+    <select
+      multiple
+      id={id}
+      aria-label={
+        id === 'proforma-placement-filter'
+          ? 'Packing list filter'
+          : id === 'proforma-supplier-filter'
+            ? 'Supplier'
+            : (id ?? 'multi')
+      }
+      value={value}
+      onChange={(e) => onChange?.(Array.from(e.target.selectedOptions, (o) => o.value))}
+    >
+      {options.map((o) => (
+        <option key={o.value} value={o.value}>
+          {o.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
+/** Ticks exactly one option of a multi stand-in, the way a pick does. */
+function pick(select: HTMLElement, value: string) {
+  const el = select as HTMLSelectElement;
+  Array.from(el.options).forEach((o) => {
+    o.selected = o.value === value;
+  });
+  fireEvent.change(el);
+}
+
 // eslint-disable-next-line @typescript-eslint/no-unused-vars
 const hasPermission = vi.fn((_slug: string) => true);
 vi.mock('@/hooks/usePermissions', () => ({
@@ -307,9 +352,7 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     renderView();
 
     openFilters();
-    fireEvent.change(screen.getByLabelText('Packing list filter'), {
-      target: { value: 'not_converted' },
-    });
+    pick(screen.getByLabelText('Packing list filter'), 'not_converted');
 
     expect(
       screen.getByText('No proforma invoice is waiting for a container.'),
@@ -329,7 +372,7 @@ describe('ProformaInvoicesView - loading / empty / error / data states', () => {
     renderView();
 
     openFilters();
-    fireEvent.change(screen.getByLabelText('Supplier'), { target: { value: 'sup-1' } });
+    pick(screen.getByLabelText('Supplier'), 'sup-1');
 
     expect(
       screen.getByText('No proforma invoice on file for this supplier.'),
@@ -435,9 +478,7 @@ describe('ProformaInvoicesView - the standard toolbar', () => {
     ).not.toBeInTheDocument();
 
     openFilters();
-    fireEvent.change(screen.getByLabelText('Packing list filter'), {
-      target: { value: 'not_converted' },
-    });
+    pick(screen.getByLabelText('Packing list filter'), 'not_converted');
 
     // ("Not converted" is also the row's own Packing list cell, so the chip is identified by
     // its clear button, not by the words.)

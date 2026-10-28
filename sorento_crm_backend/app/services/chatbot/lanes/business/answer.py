@@ -3035,7 +3035,7 @@ def described_set_phrase(description: Any, set_noun: str, require: dict[str, Any
         elif key == "class":
             noun = set_noun if " or " in value else set_noun_for([value])
         elif kind == "numeric":
-            after.append(f"{label.lower()} {value}")
+            after.append(f"{label.lower()} {value}".strip())
         elif kind == "boolean":
             before.append(label.lower() if value.lower() == "yes" else f"not {label.lower()}")
         else:
@@ -3059,6 +3059,7 @@ def build_set_header(
     offset: int = 0,
     previous_total: int | None = None,
     exhausted: bool = False,
+    dimension_fallback: Any = None,
 ) -> str:
     """A counted set's ONE intro line, the same opener a set that qualified nothing has
     (`what_you_want_reply`), with the described set, what it has and its count; the rows
@@ -3090,6 +3091,11 @@ def build_set_header(
     if exhausted:
         # Round 3 W2: a count after the last page; every product was already listed.
         header += f"{'' if header.endswith('.') else '.'} That is all {qualifying_total:,}."
+    label = jsc.js_string(jsc.get(dimension_fallback, "label") or "").strip() if isinstance(dimension_fallback, dict) else ""
+    value = jsc.js_string(jsc.get(dimension_fallback, "value") or "").strip() if isinstance(dimension_fallback, dict) else ""
+    if label and value and not offset and not exhausted:
+        # DIMENSION-ANY: the named dimension held nothing; the set is the number under any other.
+        header = f"None with {label.lower()} {value}; these have {value} in another dimension:\n{header}"
     return header
 
 

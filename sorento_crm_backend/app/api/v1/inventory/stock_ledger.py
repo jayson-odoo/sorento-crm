@@ -1,4 +1,5 @@
 """Stock ledger API routes."""
+from app.utils.multi_value import multi_values
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from typing import Optional
@@ -21,7 +22,7 @@ async def get_stock_ledger(
         description="Product UUID or product_code (e.g. SKU).",
     ),
     warehouse_id: Optional[str] = Query(None),
-    transaction_type: Optional[str] = Query(None),
+    transaction_type: Optional[list[str]] = Query(None),
     current_user: dict = Depends(get_current_user_or_api_key),
     db: Session = Depends(get_db)
 ):
@@ -33,7 +34,7 @@ async def get_stock_ledger(
             limit=limit,
             product_id=product_id,
             warehouse_id=warehouse_id,
-            transaction_type=transaction_type
+            transaction_type=multi_values(transaction_type)
         )
         return result
     except Exception as e:

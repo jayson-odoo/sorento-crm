@@ -34,6 +34,7 @@ from typing import Any, Optional
 from sqlalchemy import text
 from sqlalchemy.orm import Session
 
+from app.utils.multi_value import multi_values
 from app.models.scm import ContainerSize, LoadingPlan, LoadingPlanLine, PriorityPolicy
 from app.services.scm.cash_ranking import (
     ALLOCATED,
@@ -850,7 +851,7 @@ def list_records(
     sort: Optional[str] = None,
     direction: str = "desc",
     query: Optional[str] = None,
-    status: Optional[str] = None,
+    status: Optional[list[str] | str] = None,
 ) -> dict[str, Any]:
     """The plans list (R3): server-paged, server-sorted, searched by supplier name."""
     from app.models.procurement import Supplier
@@ -858,10 +859,21 @@ def list_records(
     q = db.query(LoadingPlan, Supplier.supplier_name, Supplier.email).join(
         Supplier, Supplier.id == LoadingPlan.supplier_id
     )
-    if status in (None, "", "active"):
+    # Several statuses are OR-ed; `active` (planning + sent) is a pseudo-value that ORs with real
+    # ones, and no status at all is the active group, as before. Values this list does not know
+    # narrow nothing.
+    picked = multi_values(status) or []
+    if not picked:
         q = q.filter(LoadingPlan.status.in_(ACTIVE_STATUSES))
-    elif status in PLAN_STATUSES:
-        q = q.filter(LoadingPlan.status == status)
+    else:
+        wanted = set()
+        for value in picked:
+            if value == "active":
+                wanted.update(ACTIVE_STATUSES)
+            elif value in PLAN_STATUSES:
+                wanted.add(value)
+        if wanted:
+            q = q.filter(LoadingPlan.status.in_(sorted(wanted)))
     if query and query.strip():
         q = q.filter(Supplier.supplier_name.ilike(f"%{query.strip()}%"))
 

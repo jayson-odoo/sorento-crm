@@ -47,8 +47,14 @@ def test_number_hits_skip_a_hidden_key_and_keep_the_others(session_factory):
     seed_world(session_factory)
     db = scoped(session_factory)
     got = ll.number_hits(MESSAGE, db, hidden_spec_keys=frozenset({"zz_trap_len"}))
-    assert sorted(h.row.label.casefold() for h in got) == ["zz width 200mm (zz_width: 200)"], got
-    assert ll.number_hits(MESSAGE, db, hidden_spec_keys=frozenset({"zz_trap_len", "zz_width"})) == []
+    # DIMENSION-ANY: the size line over the visible dimensions leads.
+    assert [h.row.label.casefold() for h in got] == [
+        "size 200mm, any dimension (size: 200)", "zz width 200mm (zz_width: 200)", "zz depth 200mm (zz_depth: 200)",
+    ], got
+    # Both holders hidden: no VISIBLE key holds 200, so the size and the visible dimensions are offered for an honest
+    # miss (DIMENSION-ANY); a hidden key is never named.
+    both = [h.row.label.casefold() for h in ll.number_hits(MESSAGE, db, hidden_spec_keys=frozenset({"zz_trap_len", "zz_width"}))]
+    assert both == ["size 200mm, any dimension (size: 200)", "zz depth 200mm (zz_depth: 200)"], both
 
 
 def _turn(session_factory, stub_access, monkeypatch, *, hide: tuple[str, ...]) -> list[str]:
