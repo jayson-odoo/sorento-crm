@@ -58,11 +58,7 @@ import {
 } from '../hooks/useComplaints';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
-import {
-  useDeleteMyRequestDraft,
-  useMyRequestSubmission,
-  useSubmitMyRequest,
-} from '@/hooks/useMyRequests';
+import { useMyRequestSubmission, useSubmitMyRequest } from '@/hooks/useMyRequests';
 import { MyRequestActions } from '@/components/common/MyRequestActions';
 import {
   AlertDialog,
@@ -141,7 +137,6 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
     'complaint',
     limited && isValidId ? complaintId : null,
   );
-  const deleteMine = useDeleteMyRequestDraft('complaint');
   const submitMine = useSubmitMyRequest('complaint');
   const reassignMutation = useReassignSLATracking();
   const [reassignOpen, setReassignOpen] = useState(false);
@@ -583,16 +578,17 @@ export default function ComplaintDetail({ complaintId }: ComplaintDetailProps) {
               <MyRequestActions
                 status={complaint.status ?? ''}
                 revisable={mine?.revision?.allowed === true}
-                busy={deleteMine.isPending || submitMine.isPending}
+                busy={submitMine.isPending}
+                kind="complaint"
+                requestId={complaintId}
                 onEdit={() => router.push(`/complaint-management/complaints/${complaintId}/edit`)}
                 onRevise={() =>
                   router.push(`/complaint-management/complaints/${complaintId}/edit?revise=1`)
                 }
                 onDuplicate={() => router.push(`/complaint-management/complaints/new?from=${complaintId}`)}
-                onDelete={() =>
-                  deleteMine.mutate(complaintId, { onSuccess: () => router.push(backHref) })
-                }
                 onSubmit={() => submitMine.mutate({ id: complaintId })}
+                onDeleted={() => router.push(backHref)}
+                invalidateKeys={[['complaints']]}
               />
             ) : (
             <>

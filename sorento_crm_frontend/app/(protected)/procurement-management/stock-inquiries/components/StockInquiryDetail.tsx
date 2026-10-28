@@ -72,11 +72,7 @@ import { formatDate } from '@/lib/helpers';
 import { isAwaitingReview, SI_REVIEW_STAGE } from '@/lib/submission-status';
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { MyRequestActions } from '@/components/common/MyRequestActions';
-import {
-  useDeleteMyRequestDraft,
-  useMyRequestSubmission,
-  useSubmitMyRequest,
-} from '@/hooks/useMyRequests';
+import { useMyRequestSubmission, useSubmitMyRequest } from '@/hooks/useMyRequests';
 import { useHasPermission } from '@/hooks/usePermissions';
 import StockInquiryDeleteDialog from './stock-inquiry-delete-dialog';
 import AuditTrail from '@/components/audit/AuditTrail';
@@ -122,7 +118,6 @@ export default function StockInquiryDetail({
     'stock_inquiry',
     limited && isValidId ? inquiryId : null,
   );
-  const deleteMine = useDeleteMyRequestDraft('stock_inquiry');
   const submitMine = useSubmitMyRequest('stock_inquiry');
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false);
   const [downloadsOpen, setDownloadsOpen] = useState(false);
@@ -636,16 +631,17 @@ export default function StockInquiryDetail({
               <MyRequestActions
                 status={inquiry.status ?? ''}
                 revisable={mine?.revision?.allowed === true}
-                busy={deleteMine.isPending || submitMine.isPending}
+                busy={submitMine.isPending}
+                kind="stock_inquiry"
+                requestId={inquiryId}
                 onEdit={() => router.push(`/procurement-management/stock-inquiries/${inquiryId}/edit`)}
                 onRevise={() =>
                   router.push(`/procurement-management/stock-inquiries/${inquiryId}/edit?revise=1`)
                 }
                 onDuplicate={() => router.push(`/procurement-management/stock-inquiries/new?from=${inquiryId}`)}
-                onDelete={() =>
-                  deleteMine.mutate(inquiryId, { onSuccess: () => router.push(backHref) })
-                }
                 onSubmit={() => submitMine.mutate({ id: inquiryId })}
+                onDeleted={() => router.push(backHref)}
+                invalidateKeys={[['stock-inquiries']]}
               />
             ) : (
             <>

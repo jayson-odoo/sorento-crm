@@ -162,7 +162,13 @@ def _assert_required_payload(action_key: str, payload: dict, entity_id: Optional
             require_uuid((payload or {}).get("idea_id"), "idea_id")
 
 
-def _assert_entity_visible(db: Session, action_key: str, entity_id: str, actor_id: Optional[str] = None) -> None:
+def _assert_entity_visible(
+    db: Session,
+    action_key: str,
+    entity_id: str,
+    actor_id: Optional[str] = None,
+    entity_type: Optional[str] = None,
+) -> None:
     """Park-time existence check for the contact-customers and customer-group actions.
 
     The record is read under the requester's company scope, so a link or customer in
@@ -219,6 +225,15 @@ def _assert_entity_visible(db: Session, action_key: str, entity_id: str, actor_i
         from app.services import new_product_application_service
 
         new_product_application_service.assert_attachment_unlinkable(db, entity_id, actor_id)
+    elif action_key == "my_request.delete":
+        # The portal DELETE's own refusals (409/400 not a draft, 404 not theirs, 403 staff).
+        from app.api.v1.my_requests import delete_request
+
+        delete_request(db, str(actor_id or ""), str(entity_type or ""), entity_id, check_only=True)
+    elif action_key == "my_request_attachment.unlink":
+        from app.api.v1.my_requests import unlink_attachment
+
+        unlink_attachment(db, str(actor_id or ""), entity_id, check_only=True)
     elif action_key in ("customer.unassign_sales_agent", "customer.remove_from_group"):
         from app.services.contact_customer_service import get_customer_in_scope
 
@@ -500,7 +515,7 @@ def create_pending_action(
         else nullcontext()
     )
     with scope:
-        _assert_entity_visible(db, body.action_key, body.entity_id, actor_id)
+        _assert_entity_visible(db, body.action_key, body.entity_id, actor_id, body.entity_type)
         _assert_undo_not_refused(db, body.action_key, body.entity_id, body.payload, actor_id)
 
         try:
@@ -539,6 +554,9 @@ def create_pending_action(
                 payload={
                     **(body.payload or {}),
                     "entity_id": str(body.entity_id),
+                    # The record's kind, for the one action parked against several (the
+                    # salesperson's `my_request.delete`); set here, never by the caller.
+                    "entity_type": body.entity_type,
                     "requested_by_id": actor_id,
                 },
                 actor_id=actor_id,

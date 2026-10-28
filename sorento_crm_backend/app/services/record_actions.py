@@ -2267,6 +2267,64 @@ register(
 )
 
 
+def _delete_my_request(db: Session, payload: dict):
+    from app.api.v1.my_requests import delete_request
+
+    # A salesperson's own draft from the CRM request pages (PORTAL-P4-REQUESTS D7): the portal's
+    # own delete, behind the my-requests gates, re-checked here as the state can change inside
+    # the window. The parked entity type is the form.
+    delete_request(
+        db,
+        str(payload.get("requested_by_id") or ""),
+        str(payload.get("entity_type") or ""),
+        _entity_id(payload),
+    )
+    return {"message": "Deleted"}
+
+
+register(
+    FormAction(
+        key="my_request.delete",
+        # Parked against the form itself; `my_request` is the key's own prefix, as on every
+        # record action, and refused by the handler (not a form).
+        entity_types=(
+            "my_request",
+            "stock_inquiry",
+            "complaint",
+            "purchase_request",
+            "sponsorship_form",
+            "price_tag_request",
+        ),
+        execute=_delete_my_request,
+        # Destructive: a hard delete of the salesperson's draft and its lines.
+        window=WINDOW_DESTRUCTIVE,
+        permission=OWN_RECORD,
+        label="Delete draft",
+    )
+)
+
+
+def _unlink_my_request_attachment(db: Session, payload: dict):
+    from app.api.v1.my_requests import unlink_attachment
+
+    # The salesperson's own upload on their own request, through the portal's own unlink; a
+    # staff upload stays locked. Re-checked here as the state can change inside the window.
+    unlink_attachment(db, str(payload.get("requested_by_id") or ""), _entity_id(payload))
+    return {"message": "Unlinked"}
+
+
+register(
+    FormAction(
+        key="my_request_attachment.unlink",
+        entity_types=("my_request_attachment",),
+        execute=_unlink_my_request_attachment,
+        window=WINDOW_REVERSIBLE,
+        permission=OWN_RECORD,
+        label="Remove attachment",
+    )
+)
+
+
 def _void_price_tag_request(db: Session, payload: dict):
     from app.services.price_tag_request_service import (
         PriceTagRequestService,

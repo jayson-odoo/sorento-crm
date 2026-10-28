@@ -1396,11 +1396,17 @@ class PortalService:
 
             registrations.portal_delete(self.db, token, submission_id)
             return
+        row = self.deletable_draft(token, kind, submission_id)
+        self.db.delete(row)
+        self.db.commit()
+
+    def deletable_draft(self, token: PortalToken, kind: str, submission_id: str) -> Any:
+        """The draft ``delete_draft`` removes, or its refusal: 404 not the contact's, 400 not a
+        draft. Also the park-time check of the CRM's deferred ``my_request.delete``."""
         row = self._fetch_for_edit(kind, token, submission_id)
         if row.portal_draft_at is None:
             raise handle_validation_error("Only drafts can be deleted.")
-        self.db.delete(row)
-        self.db.commit()
+        return row
 
     def _build_respond_inbox_url(self, contact_id: Optional[str], space_id: Optional[str]) -> Optional[str]:
         """Build respond.io inbox URL: {base}/space/{space_id}/inbox/{respond_io_id}.

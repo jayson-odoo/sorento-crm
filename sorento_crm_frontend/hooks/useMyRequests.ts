@@ -7,7 +7,6 @@ import {
   cancelMySampleRequest,
   createMyNewProductApplication,
   createMySampleRequest,
-  deleteDraftSubmission,
   fetchRevisions,
   fetchSubmission,
   reviseSubmission,
@@ -19,12 +18,10 @@ import {
   submitMySampleRequest,
   updateMyNewProductApplication,
   uploadAttachment,
-  deleteAttachment,
   updateMySampleRequest,
   approveMyPriceTagRequest,
   collectMyPriceTagRequest,
   createMyPriceTagRequest,
-  deleteMyPriceTagRequest,
   downloadMyPriceTagPdf,
   fetchMyPriceTagDebtors,
   fetchMyPriceTagRequest,
@@ -123,18 +120,6 @@ export function useReviseMyRequest(kind: MyRequestKind) {
       toast.success('Revision sent');
     },
     onError: (error: Error) => toast.error(error.message || 'Failed to send revision.'),
-  });
-}
-
-export function useDeleteMyRequestDraft(kind: MyRequestKind) {
-  const refresh = useRefresh(kind);
-  return useMutation({
-    mutationFn: (id: string) => deleteDraftSubmission(kind, id),
-    onSuccess: () => {
-      refresh();
-      toast.success('Draft deleted');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to delete draft.'),
   });
 }
 
@@ -245,19 +230,6 @@ export function useUploadMyRequestAttachment(kind: MyRequestAttachmentKind, refr
   });
 }
 
-/** Remove one of their own files at once (the portal does the same); `refreshKeys` as for the upload. */
-export function useDeleteMyRequestAttachment(refreshKeys: unknown[][]) {
-  const queryClient = useQueryClient();
-  return useMutation({
-    mutationFn: (linkId: string) => deleteAttachment(linkId),
-    onSuccess: () => {
-      for (const key of refreshKeys) void queryClient.invalidateQueries({ queryKey: key });
-      toast.success('File removed');
-    },
-    onError: (error: Error) => toast.error(error.message || 'Failed to remove attachment.'),
-  });
-}
-
 // ---------------------------------------------------------------- Price Tag Request (S7)
 
 /** Their own price tag request as the portal answers it (the detail body plus its revision policy). */
@@ -281,8 +253,9 @@ export function useMyPriceTagDebtors(enabled: boolean) {
 
 /**
  * A salesperson's own price tag request written through the portal's price tag router (S7): save,
- * submit, delete a draft, approve the proof, ask for changes, download the PDF, collect, revise. The
- * staff table and request page read the same rows, so their keys refresh.
+ * submit, approve the proof, ask for changes, download the PDF, collect, revise. Deleting a draft is
+ * the deferred `my_request.delete` (`MyRequestActions`). The staff table and request page read the
+ * same rows, so their keys refresh.
  */
 export function useMyPriceTagMutations() {
   const queryClient = useQueryClient();
@@ -307,10 +280,6 @@ export function useMyPriceTagMutations() {
   const submit = useMutation({
     mutationFn: (id: string) => submitMyPriceTagRequest(id),
     ...move('Failed to submit the price tag request', 'Submitted'),
-  });
-  const remove = useMutation({
-    mutationFn: (id: string) => deleteMyPriceTagRequest(id),
-    ...move('Failed to delete the draft', 'Draft deleted'),
   });
   const approve = useMutation({
     mutationFn: (id: string) => approveMyPriceTagRequest(id),
@@ -339,5 +308,5 @@ export function useMyPriceTagMutations() {
     }) => reviseMyPriceTagRequest(id, input),
     ...move('Failed to send the revision', 'Revision sent'),
   });
-  return { create, update, submit, remove, approve, requestChanges, download, collect, revise };
+  return { create, update, submit, approve, requestChanges, download, collect, revise };
 }

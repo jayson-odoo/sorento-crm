@@ -7,11 +7,7 @@ import { APPEALED_LABEL, isAwaitingReview, RESUBMITTED } from '@/lib/submission-
 import { useRequestScope } from '@/hooks/useRequestScope';
 import { MyRequestActions } from '@/components/common/MyRequestActions';
 import type { MyRequestKind } from '@/services/myRequestsService';
-import {
-  useDeleteMyRequestDraft,
-  useMyRequestSubmission,
-  useSubmitMyRequest,
-} from '@/hooks/useMyRequests';
+import { useMyRequestSubmission, useSubmitMyRequest } from '@/hooks/useMyRequests';
 import { useRouter } from 'next/navigation';
 import { Edit, Trash2, Send, Copy, Check, Clock, MessageSquare, FileDown, Printer, Link2, ScrollText, BadgeCheck, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -276,7 +272,6 @@ export default function PurchaseRequestDetail({
     request?.request_type === 'sponsorship_form' ? 'sponsorship_form' : requestTypeForNav;
   const { limited } = useRequestScope(scopeKind);
   const { data: mine } = useMyRequestSubmission(scopeKind, limited && isValidId ? requestId : null);
-  const deleteMine = useDeleteMyRequestDraft(scopeKind);
   const submitMine = useSubmitMyRequest(scopeKind);
   // Active form-SLA stage tracker for this form - enables the in-form Escalate button.
   const { data: slaTrackers } = useQuery({
@@ -861,14 +856,15 @@ export default function PurchaseRequestDetail({
               <MyRequestActions
                 status={isRejected ? 'rejected' : lifecycleStatusNorm}
                 revisable={mine?.revision?.allowed === true}
-                busy={deleteMine.isPending || submitMine.isPending}
+                busy={submitMine.isPending}
+                kind={scopeKind}
+                requestId={requestId}
                 onEdit={() => router.push(`${basePath}/${requestId}/edit`)}
                 onRevise={() => router.push(`${basePath}/${requestId}/edit?revise=1`)}
                 onDuplicate={() => router.push(`${basePath}/new?from=${requestId}`)}
-                onDelete={() =>
-                  deleteMine.mutate(requestId, { onSuccess: () => router.push(backHref) })
-                }
                 onSubmit={() => submitMine.mutate({ id: requestId })}
+                onDeleted={() => router.push(backHref)}
+                invalidateKeys={[['purchase-requests']]}
               />
             ) : (
             <>

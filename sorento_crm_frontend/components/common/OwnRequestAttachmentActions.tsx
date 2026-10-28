@@ -1,17 +1,17 @@
 'use client';
 
 /**
- * A salesperson's own files on a CRM request page (PORTAL-P4-REQUESTS P4-16): upload and remove
- * go through My Requests, as the portal does. Separate components so the hooks (and the
+ * A salesperson's own files on a CRM request page (PORTAL-P4-REQUESTS P4-16): upload goes through
+ * My Requests, as the portal does; remove parks `my_request_attachment.unlink` (D7), which runs
+ * the portal's own unlink when its window lapses. Separate components so the hooks (and the
  * QueryClient they need) mount only in own-request mode.
  */
 
 import { Trash2, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import {
-  useDeleteMyRequestAttachment,
-  useUploadMyRequestAttachment,
-} from '@/hooks/useMyRequests';
+import DeferredActionButton from '@/components/common/DeferredActionButton';
+import { useDeferredAction } from '@/hooks/useDeferredAction';
+import { useUploadMyRequestAttachment } from '@/hooks/useMyRequests';
 import type { MyRequestAttachmentKind } from '@/services/myRequestsService';
 
 export function OwnAttachmentUpload({
@@ -52,20 +52,41 @@ export function OwnAttachmentDelete({
   linkId: string;
   refreshKeys: unknown[][];
 }) {
-  const remove = useDeleteMyRequestAttachment(refreshKeys);
+  const remove = useDeferredAction({
+    actionKey: 'my_request_attachment.unlink',
+    entityType: 'my_request_attachment',
+    entityId: linkId,
+    verb: 'Removing',
+    subject: '',
+    surface: 'inline',
+    // Only their own uploads carry this, a handful per request: each reads `current` from mount,
+    // so a countdown started before a reload (or in another tab) still shows on its row.
+    watchFromMount: true,
+    successMessage: 'File removed',
+    invalidateKeys: refreshKeys,
+  });
   return (
-    <Button
-      type="button"
-      variant="destructive"
-      size="sm"
-      disabled={remove.isPending}
-      onClick={(e) => {
-        e.stopPropagation();
-        remove.mutate(linkId);
-      }}
-    >
-      <Trash2 className="size-4" />
-      Delete
-    </Button>
+    <DeferredActionButton
+      pending={remove.pending}
+      verb="Removing"
+      onCancel={remove.cancel}
+      // A table cell: the countdown's own minimum width overflows one.
+      className="min-w-0"
+      idle={
+        <Button
+          type="button"
+          variant="destructive"
+          size="sm"
+          disabled={remove.isPending || remove.isBlocked}
+          onClick={(e) => {
+            e.stopPropagation();
+            remove.start();
+          }}
+        >
+          <Trash2 className="size-4" />
+          Delete
+        </Button>
+      }
+    />
   );
 }

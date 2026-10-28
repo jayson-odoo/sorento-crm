@@ -436,11 +436,7 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
         Draft only: once submitted the request is marketing's work, and taking it back
         is a status change (void), not a delete.
         """
-        _assert_visible(db, token.contact_id)
-        req = _require_own_request(db, token, request_id)
-        _require_draft(req, "Only a draft can be deleted.")
-        db.delete(req)
-        db.commit()
+        delete_price_tag_draft(db, token, request_id)
         return None
 
 
@@ -849,6 +845,22 @@ def register_price_tag_routes(router: APIRouter, token_dependency: Callable[...,
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def deletable_price_tag_draft(db: Session, token: PortalToken, request_id: str):
+    """The draft ``DELETE /submissions/price_tag_request/{id}`` removes, or that route's refusal.
+
+    Shared with the CRM's deferred ``my_request.delete`` (``app/api/v1/my_requests.py``): the
+    check alone when it is parked, ``delete_price_tag_draft`` when its window lapses."""
+    _assert_visible(db, token.contact_id)
+    req = _require_own_request(db, token, request_id)
+    _require_draft(req, "Only a draft can be deleted.")
+    return req
+
+
+def delete_price_tag_draft(db: Session, token: PortalToken, request_id: str) -> None:
+    db.delete(deletable_price_tag_draft(db, token, request_id))
+    db.commit()
 
 
 def _require_own_request(db: Session, token: PortalToken, request_id: str):

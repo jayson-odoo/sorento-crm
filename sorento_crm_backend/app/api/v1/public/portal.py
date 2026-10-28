@@ -1275,6 +1275,105 @@ class _EditCommentBody(BaseModel):
     body: str = ""
 
 
+def _comment_acting_user_id(db: Session, token: PortalToken) -> Optional[str]:
+    """The admin a new comment is recorded under while they view as someone, else None.
+
+    A portal impersonation token names its admin through the contact-impersonation session. A
+    my-requests token built under a CRM impersonation carries the admin as a plain attribute
+    (``my_requests._token_for``), checked by ``get_current_user`` on this same request."""
+    admin_id = getattr(token, "impersonating_admin_id", None)
+    if admin_id:
+        return str(admin_id)
+    if getattr(token, "is_impersonation", False):
+        from app.services.form_comment_service import resolve_impersonating_admin
+
+        return resolve_impersonating_admin(db, token)
+    return None
+
+
+# ---------- The deletes, shared with the CRM's deferred actions ----------
+# `DELETE /submissions/{kind}/{id}` and `DELETE /attachments/{link_id}` below run these, and so
+# do the CRM's deferred `my_request.delete` / `my_request_attachment.unlink`
+# (`app/api/v1/my_requests.py`): the check alone when the action is parked, the whole delete
+# when its window lapses. One code path, so the two can never refuse differently.
+
+
+def deletable_submission_draft(db: Session, token: PortalToken, kind: str, submission_id: str) -> Any:
+    """The draft ``DELETE /submissions/{kind}/{id}`` removes, or that route's refusal."""
+    return PortalService(db).deletable_draft(token, _check_kind(kind, db, token), submission_id)
+
+
+def delete_submission_draft(db: Session, token: PortalToken, kind: str, submission_id: str) -> None:
+    PortalService(db).delete_draft(token, _check_kind(kind, db, token), submission_id)
+
+
+def removable_attachment_link(db: Session, token: PortalToken, link_id: str) -> EntityAttachmentLink:
+    """The contact's own upload ``DELETE /attachments/{link_id}`` removes, or that route's
+    refusal: 404 not theirs, 403 the form is hidden, 403 ``STAFF_UPLOAD_LOCKED``."""
+    link = (
+        db.query(EntityAttachmentLink)
+        .filter(EntityAttachmentLink.id == link_id)
+        .first()
+    )
+    if not link:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
+
+    portal = PortalService(db)
+    raw_kind = link.entity_type
+    if raw_kind == "form_comment":
+        # Comment files belong to the thread; a contact cannot remove them.
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
+    # sponsorship_form attachments live under entity_type=purchase_request; verify ownership against either type.
+    if raw_kind == "purchase_request":
+        owns = False
+        owned_kind = None
+        for k in ("purchase_request", "sponsorship_form"):
+            try:
+                portal.get_submission(token, k, link.entity_id)
+                owns = True
+                owned_kind = k
+                break
+            except HTTPException:
+                continue
+        if not owns:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
+        # AC-G2: ownership resolved which kind this is - the gate raises its
+        # own 403 here rather than folding into the "not owned" 404 above.
+        require_form_visible(db, token.contact_id, owned_kind)
+    elif raw_kind == "price_tag_request":
+        # SEC5: ownership first (same ordering the other two arms use), the
+        # visibility gate after - so a link that is not this contact's own
+        # 404s before it ever reveals whether the kind itself is hidden.
+        _require_own_price_tag_request(
+            db, token, link.entity_id, require_editable=True, check_visibility=False
+        )
+        require_form_visible(db, token.contact_id, "price_tag_request")
+    elif raw_kind == "new_product_application":
+        _require_own_npa(db, token, link.entity_id, require_editable=True, check_visibility=False)
+        require_form_visible(db, token.contact_id, "new_product_application")
+    else:
+        portal.get_submission(token, raw_kind, link.entity_id)
+        require_form_visible(db, token.contact_id, raw_kind)
+
+    # UAC F2 (hard blocker): a staff-uploaded attachment cannot be unlinked from
+    # the portal, even by a contact who owns the submission. FE gating alone is
+    # not a control on a token surface - enforce it server-side here too.
+    attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
+    if attachment is not None and attachment.uploader_kind == "user":
+        raise AppException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            message="This file was added by our team and cannot be removed here.",
+            code="STAFF_UPLOAD_LOCKED",
+        )
+    return link
+
+
+def remove_attachment_link(db: Session, token: PortalToken, link_id: str) -> None:
+    removable_attachment_link(db, token, link_id)
+    EntityAttachmentService(db).delete_link(link_id)
+    db.commit()
+
+
 # ---------- The contact's form routes, shared with the CRM ----------
 
 
@@ -1479,7 +1578,7 @@ def register_submission_routes(router: APIRouter, token_dependency: Callable[...
         token: PortalToken = Depends(token_dependency),
         db: Session = Depends(get_db),
     ):
-        PortalService(db).delete_draft(token, _check_kind(kind, db, token), submission_id)
+        delete_submission_draft(db, token, kind, submission_id)
         return None
 
 
@@ -1696,11 +1795,9 @@ def register_submission_routes(router: APIRouter, token_dependency: Callable[...
 
         from app.api.v1.form_comments import read_uploads
         from app.services import rate_limit
-        from app.services.form_comment_service import FormCommentService, resolve_impersonating_admin
+        from app.services.form_comment_service import FormCommentService
 
-        acting_user_id = (
-            resolve_impersonating_admin(db, token) if getattr(token, "is_impersonation", False) else None
-        )
+        acting_user_id = _comment_acting_user_id(db, token)
         k = _check_comment_kind(kind, db, token)
         sid = validate_uuid_path(submission_id, resource="Submission")
         # Per token plus one ceiling across tokens: checked first, charged only on a saved comment.
@@ -1771,64 +1868,7 @@ def register_submission_routes(router: APIRouter, token_dependency: Callable[...
         token: PortalToken = Depends(token_dependency),
         db: Session = Depends(get_db),
     ):
-        link = (
-            db.query(EntityAttachmentLink)
-            .filter(EntityAttachmentLink.id == link_id)
-            .first()
-        )
-        if not link:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
-
-        portal = PortalService(db)
-        raw_kind = link.entity_type
-        if raw_kind == "form_comment":
-            # Comment files belong to the thread; a contact cannot remove them.
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
-        # sponsorship_form attachments live under entity_type=purchase_request; verify ownership against either type.
-        if raw_kind == "purchase_request":
-            owns = False
-            owned_kind = None
-            for k in ("purchase_request", "sponsorship_form"):
-                try:
-                    portal.get_submission(token, k, link.entity_id)
-                    owns = True
-                    owned_kind = k
-                    break
-                except HTTPException:
-                    continue
-            if not owns:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Attachment not found.")
-            # AC-G2: ownership resolved which kind this is - the gate raises its
-            # own 403 here rather than folding into the "not owned" 404 above.
-            require_form_visible(db, token.contact_id, owned_kind)
-        elif raw_kind == "price_tag_request":
-            # SEC5: ownership first (same ordering the other two arms use), the
-            # visibility gate after - so a link that is not this contact's own
-            # 404s before it ever reveals whether the kind itself is hidden.
-            _require_own_price_tag_request(
-                db, token, link.entity_id, require_editable=True, check_visibility=False
-            )
-            require_form_visible(db, token.contact_id, "price_tag_request")
-        elif raw_kind == "new_product_application":
-            _require_own_npa(db, token, link.entity_id, require_editable=True, check_visibility=False)
-            require_form_visible(db, token.contact_id, "new_product_application")
-        else:
-            portal.get_submission(token, raw_kind, link.entity_id)
-            require_form_visible(db, token.contact_id, raw_kind)
-
-        # UAC F2 (hard blocker): a staff-uploaded attachment cannot be unlinked from
-        # the portal, even by a contact who owns the submission. FE gating alone is
-        # not a control on a token surface - enforce it server-side here too.
-        attachment = db.query(Attachment).filter(Attachment.id == link.attachment_id).first()
-        if attachment is not None and attachment.uploader_kind == "user":
-            raise AppException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                message="This file was added by our team and cannot be removed here.",
-                code="STAFF_UPLOAD_LOCKED",
-            )
-
-        EntityAttachmentService(db).delete_link(link_id)
-        db.commit()
+        remove_attachment_link(db, token, link_id)
         return {"deleted": True}
 
 

@@ -159,7 +159,6 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
     m.create.isPending ||
     m.update.isPending ||
     m.submit.isPending ||
-    m.remove.isPending ||
     m.approve.isPending ||
     m.requestChanges.isPending ||
     m.collect.isPending ||
@@ -300,11 +299,13 @@ export default function OwnPriceTagRequest({ requestId }: { requestId?: string }
         status={isDraft ? 'draft' : 'submitted'}
         revisable={revisable}
         busy={busy}
+        kind="price_tag_request"
+        requestId={row.id}
         onEdit={() => router.push(`${LIST_PATH}/${encodeURIComponent(row.id)}?edit=1`)}
         onRevise={() => router.push(`${LIST_PATH}/${encodeURIComponent(row.id)}?edit=1&revise=1`)}
         onDuplicate={() => router.push(`${LIST_PATH}/new?from=${encodeURIComponent(row.id)}`)}
-        onDelete={() => m.remove.mutate(row.id, { onSuccess: () => router.push(LIST_PATH) })}
         onSubmit={() => m.submit.mutate(row.id)}
+        onDeleted={() => router.push(LIST_PATH)}
       />
     </div>
   ) : null;

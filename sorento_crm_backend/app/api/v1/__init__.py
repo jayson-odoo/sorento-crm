@@ -319,11 +319,12 @@ api_router.include_router(
     tags=["my-requests"],
     dependencies=[Depends(require_any_module_enabled("dealer_kit"))],
 )
+# No router-wide module gate here: these routes serve forms of several modules, so the token
+# dependency gates each call on its own form's module (`my_requests._KIND_MODULES`).
 api_router.include_router(
     my_requests.router,
     prefix="/my-requests",
     tags=["my-requests"],
-    dependencies=[Depends(require_any_module_enabled("procurement", "complaints"))],
 )
 
 # Activities & Notes - generic per-entity panel (consumed by tickets et al.).
