@@ -87,3 +87,13 @@ def test_pp4_pending_own_registration_stays_read_only(v2):
     res = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"title": title("Late")})
     assert res.status_code == 403, res.text
     assert _title_of(v2, pid) == before
+
+
+def test_pp4_submit_only_owner_cannot_reassign_an_approved_project(v2):
+    from app.models.projects import Project
+
+    pid = _approved_own(v2)
+    res = as_user(v2, v2.sub_a).put(f"{STAFF}/{pid}", json={"owner_user_id": v2.sub_b})
+    assert res.status_code == 403, res.text
+    v2.db.expire_all()
+    assert v2.db.get(Project, pid).owner_user_id == v2.sub_a
