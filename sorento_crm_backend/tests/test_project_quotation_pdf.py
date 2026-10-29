@@ -872,6 +872,7 @@ def test_the_counter_signature_prints_only_once_the_customer_has_accepted():
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=issued,
             signer_name=f"{MARKER} Kelly Tan",
             mode="draw",
@@ -918,6 +919,7 @@ def test_where_the_customer_signed_prints_as_a_place_not_bare_numbers():
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=issued,
             signer_name=f"{MARKER} Kelly Tan",
             mode="draw",
@@ -1232,6 +1234,7 @@ def test_the_pdf_sign_off_prints_signer_name_and_date_once_accepted():
         _document, issue = _one_line_issue(db)
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=issue,
             signer_name="CONTACT B",
             mode="draw",
@@ -1289,7 +1292,7 @@ def test_the_letterhead_has_no_logo_when_unset_or_the_fetch_fails(monkeypatch, l
         html = qpdf.build_issue_html(db, issue)
 
         assert "letterhead-logo" not in html
-        assert PRICED_TOTAL in html
+        assert "250.00" in html
 
 
 # ------------------------------------------------------------ fetch_logo_data_uri

@@ -225,6 +225,7 @@ def test_the_customer_counter_signing_wins_the_quotation():
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=record,
             signer_name=f"{MARKER} Kelly",
             mode="draw",
@@ -264,6 +265,7 @@ def test_a_scope_already_lost_is_not_flipped_by_a_signature():
         record = qdocs.issue(db, document=document, actor_user_id=owner)
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=record,
             signer_name=f"{MARKER} Kelly",
             mode="type",
@@ -292,6 +294,7 @@ def test_signing_twice_keeps_the_first_signature_and_the_first_timestamp():
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=record,
             signer_name=f"{MARKER} Kelly",
             mode="draw",
@@ -302,6 +305,7 @@ def test_signing_twice_keeps_the_first_signature_and_the_first_timestamp():
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=record,
             signer_name=f"{MARKER} Somebody Else",
             mode="type",
@@ -471,6 +475,7 @@ def test_the_issue_history_reports_the_counter_signature_the_customer_left():
 
         qdocs.accept_issue(
             db,
+            terms_accepted=True,
             record=record,
             signer_name=f"{MARKER} Lim",
             mode="type",

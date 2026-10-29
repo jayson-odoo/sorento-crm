@@ -735,7 +735,7 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
     assert first.status_code == 201, first.text
     r1 = first.json()
     assert r1["issue_no"] == 1
-    assert r1["our_ref_text"] == f"{document['document_no']} (R1)"
+    assert r1["our_ref_text"] == f"{document['document_no']}-R1"
     assert _money(r1["grand_total"]) == TOWNHOUSE_TOTAL
 
     # A revision re-prices the scope, then goes out as R2.
@@ -754,7 +754,7 @@ def test_reissuing_stamps_r1_then_r2_which_is_what_the_customer_quotes_back(api)
     assert second.status_code == 201, second.text
     r2 = second.json()
     assert r2["issue_no"] == 2
-    assert r2["our_ref_text"] == f"{document['document_no']} (R2)"
+    assert r2["our_ref_text"] == f"{document['document_no']}-R2"
     assert _money(r2["grand_total"]) == Decimal("240580.00")  # 1046 x 230
 
     history = client.get(f"{root}/{document['id']}/issues")
@@ -822,6 +822,7 @@ def test_the_customers_answer_reaches_the_wire_on_the_document_and_in_the_list(a
 
     qdocs.accept_issue(
         db,
+        terms_accepted=True,
         record=record,
         signer_name=f"{MARKER} Kelly",
         mode="draw",
