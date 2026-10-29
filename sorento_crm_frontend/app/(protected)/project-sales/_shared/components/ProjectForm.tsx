@@ -322,7 +322,7 @@ export function ProjectForm(props: ProjectFormProps) {
       setMainContractorId(fill.main_contractor.id);
       setContractorOption({ value: fill.main_contractor.id, label: fill.main_contractor.name });
     }
-    if (fill.project_type && fill.project_type.id !== typeId) {
+    if (canViewTypes && fill.project_type && fill.project_type.id !== typeId) {
       setTypeId(fill.project_type.id);
       setTemplateId('');
     }

@@ -117,7 +117,7 @@ function AttachmentRemove({ kind, attachment, disabled, onRemoved }: AttachmentR
 const SERVICE_WRITE =
   /^(create|update|submit|cancel|revise|collect|delete|approve|requestChanges|requestPriceTagExport)/;
 
-/** `fn`, then (once it resolved) the kind's staff list and My Requests refetch. A throw skips both. */
+/** `fn`, then (once it resolved) the kind's staff list refetch. A throw skips it. */
 function refreshing<A extends unknown[], R>(
   qc: QueryClient,
   keyOf: (...args: never[]) => string | undefined,
@@ -127,7 +127,6 @@ function refreshing<A extends unknown[], R>(
     const result = await fn(...args);
     const list = (keyOf as (...a: unknown[]) => string | undefined)(...args);
     if (list) void qc.invalidateQueries({ queryKey: [list] });
-    void qc.invalidateQueries({ queryKey: [MY_REQUEST_KEY] });
     return result;
   };
 }
