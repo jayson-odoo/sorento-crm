@@ -1112,3 +1112,112 @@ describe('QuotationFormClient scope tab context menu (owner hand test)', () => {
     expect(screen.getByRole('tab', { name: 'Scope 1' })).toHaveAttribute('data-state', 'active');
   });
 });
+
+describe('QuotationFormClient sole series default (QUOTE-UI-POLISH)', () => {
+  /** The series the open scope's line table judges against, as the form hands it in. */
+  function editorSeries() {
+    return editorProps.mock.calls.at(-1)?.[0]?.seriesId ?? null;
+  }
+
+  it('AC-QUP-5: with one active series, every new scope carries it and Save writes it', async () => {
+    renderForm();
+    const card = await openLines();
+    // The scope itself carries it, before anybody opens the Edit scope dialog.
+    await waitFor(() => expect(editorSeries()).toBe('s1'));
+    await nameScope(card, 'Townhouse');
+
+    // Add a scope asks for a name only; the new scope still starts on the one series.
+    await addScope('Guard House');
+    await waitFor(() => expect(editorSeries()).toBe('s1'));
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
+      expect.objectContaining({ scope_label: 'Townhouse', series_id: 's1' }),
+      expect.objectContaining({ scope_label: 'Guard House', series_id: 's1' }),
+    ]);
+  });
+
+  it('AC-QUP-5: with two active series, a new scope starts with none', async () => {
+    listSeries.mockResolvedValue([
+      { id: 's1', name: 'Premium Series', is_active: true, category_ids: [], category_names: [] },
+      { id: 's2', name: 'Retail', is_active: true, category_ids: [], category_names: [] },
+    ]);
+    renderForm();
+    const card = await openLines();
+    await nameScope(card, 'Townhouse');
+    await addScope('Guard House');
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
+      expect.objectContaining({ scope_label: 'Townhouse', series_id: null }),
+      expect.objectContaining({ scope_label: 'Guard House', series_id: null }),
+    ]);
+  });
+
+  it('AC-QUP-6: the defaulted series does not make the blank first scope count as touched', async () => {
+    renderForm();
+    await openLines();
+    await waitFor(() => expect(editorSeries()).toBe('s1'));
+    await openTab('Header');
+    fireEvent.change(screen.getByLabelText('Your Ref'), { target: { value: 'NC/31' } });
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(createQuotationDocument.mock.calls[0][1]).toMatchObject({ your_ref: 'NC/31', scopes: [] });
+  });
+
+  it('AC-QUP-4: a new scope whose series was cleared stays cleared, reopened and saved', async () => {
+    renderForm();
+    await openLines();
+    const card = await addScope('Guard House');
+    await waitFor(() => expect(editorSeries()).toBe('s1'));
+
+    fireEvent.click(within(card).getByRole('button', { name: 'Edit scope' }));
+    let dialog = await screen.findByRole('dialog');
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Series' })).toHaveTextContent('Premium Series'),
+    );
+    fireEvent.pointerDown(within(dialog).getByRole('button', { name: 'Clear selection' }));
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    // Reopened (a rename, say): the cleared series is not put back.
+    fireEvent.click(within(scopeCard('Guard House')).getByRole('button', { name: 'Edit scope' }));
+    dialog = await screen.findByRole('dialog');
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    expect(within(dialog).getByRole('combobox', { name: 'Series' })).toHaveTextContent('No series');
+    fireEvent.click(within(dialog).getByRole('button', { name: 'Save changes' }));
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+
+    fireEvent.click(screen.getByRole('button', { name: 'Save quotation' }));
+    await waitFor(() => expect(createQuotationDocument).toHaveBeenCalledTimes(1));
+    expect(createQuotationDocument.mock.calls[0][1].scopes).toEqual([
+      expect.objectContaining({ scope_label: 'Guard House', series_id: null }),
+    ]);
+  });
+
+  it('AC-QUP-5: the series list arriving after the first scope is seeded still defaults it', async () => {
+    let answer: (rows: unknown[]) => void = () => undefined;
+    listSeries.mockReturnValue(new Promise((resolve) => (answer = resolve)));
+    renderForm();
+    await openLines();
+    expect(editorSeries()).toBeNull();
+
+    answer([{ id: 's1', name: 'Premium Series', is_active: true, category_ids: [], category_names: [] }]);
+    await waitFor(() => expect(editorSeries()).toBe('s1'));
+  });
+
+  it('AC-QUP-1: a saved scope with no series opens Edit scope on the one series', async () => {
+    renderForm('d1');
+    const card = await openLines('Townhouse');
+    fireEvent.click(within(card).getByRole('button', { name: 'Edit scope' }));
+    const dialog = await screen.findByRole('dialog');
+    await waitFor(() =>
+      expect(within(dialog).getByRole('combobox', { name: 'Series' })).toHaveTextContent(
+        'Premium Series',
+      ),
+    );
+  });
+});

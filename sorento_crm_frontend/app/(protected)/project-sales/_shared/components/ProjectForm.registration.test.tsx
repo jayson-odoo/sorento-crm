@@ -319,13 +319,15 @@ describe('editing a pending project: the typed name hint (RW14)', () => {
     expect(screen.queryByText(/^Typed:/)).toBeNull();
   });
 
-  it('keeps the title, State and Mukim of the registration in the ordinary fields', async () => {
+  it('keeps the title, State and Area (was Mukim) of the registration in the ordinary fields', async () => {
     renderEdit(pendingProject());
     expect((screen.getByLabelText(/project title/i) as HTMLTextAreaElement).value).toBe(
       'CADANGAN BLOK PEJABAT DI ATAS LOT 7001, MUKIM KULAI',
     );
     await waitFor(() => expect(select('State').value).toBe('Johor'));
-    expect((screen.getByLabelText('Mukim') as HTMLInputElement).value).toBe('Kulai');
+    // QUOTE-UI-POLISH: the register form calls it Area (owner, 29 Oct: one language in the system).
+    expect((screen.getByLabelText('Area') as HTMLInputElement).value).toBe('Kulai');
+    expect(screen.queryByLabelText('Mukim')).toBeNull();
   });
 
   it('has no Approve or Reject button in the form: those live in the project header', async () => {

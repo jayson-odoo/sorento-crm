@@ -15,9 +15,18 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { SearchableSelect } from '@/components/common/SearchableSelect';
 import { useProjectSeries, useQuotationMutations } from '../../_shared/hooks/useProjects';
-import type { Project, ProjectQuotation } from '../../_shared/types/project.types';
+import type { Project, ProjectQuotation, ProjectSeries } from '../../_shared/types/project.types';
 
 const SCOPE_SUGGESTIONS = ['House Units', 'Common Area', 'Showroom', 'Clubhouse'];
+
+/**
+ * The only active series, when there is exactly one, else ''. A scope with no series starts on
+ * it (owner, 29 Oct: "if it is only 1 option then we should default").
+ */
+export function soleActiveSeriesId(rows: ProjectSeries[] | undefined): string {
+  const active = (rows ?? []).filter((row) => row.is_active);
+  return active.length === 1 ? active[0].id : '';
+}
 
 /**
  * Add or rename a priced scope.
@@ -32,10 +41,16 @@ export function QuotationDialog({
   quotation,
   onDone,
   onSubmit,
+  preselectSoleSeries = true,
 }: {
   project: Project;
   quotation: ProjectQuotation | null;
   onDone: () => void;
+  /**
+   * False when the caller already gave this scope the sole series itself (the quotation form's
+   * new scopes): an empty series there was cleared on purpose and must not come back.
+   */
+  preselectSoleSeries?: boolean;
   /**
    * The quotation form page (#1341): the scope's name, series and notes are staged and saved
    * with the form, so the dialog hands them over instead of writing.
@@ -48,6 +63,15 @@ export function QuotationDialog({
   const [scopeLabel, setScopeLabel] = React.useState(quotation?.scope_label ?? '');
   const [seriesId, setSeriesId] = React.useState(quotation?.series_id ?? '');
   const [notes, setNotes] = React.useState(quotation?.notes ?? '');
+
+  // Preselected once, when the list arrives, and only on a scope with none: clearing it sticks.
+  const soleSeriesId = soleActiveSeriesId(series.data);
+  const seriesDefaulted = React.useRef(Boolean(quotation?.series_id) || !preselectSoleSeries);
+  React.useEffect(() => {
+    if (seriesDefaulted.current || !series.data) return;
+    seriesDefaulted.current = true;
+    if (soleSeriesId) setSeriesId(soleSeriesId);
+  }, [series.data, soleSeriesId]);
 
   const isEdit = Boolean(quotation);
   const pending = create.isPending || update.isPending;
