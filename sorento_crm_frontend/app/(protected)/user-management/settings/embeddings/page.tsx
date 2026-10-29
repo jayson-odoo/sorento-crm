@@ -37,6 +37,7 @@ export default function EmbeddingsSettingsPage() {
   // Prefill waits for the overview to settle: a setting never saved shows the embedder that actually runs.
   // Only known values prefill: a setting never saved with no overview to say what runs stays blank, never a guess.
   const [initial, setInitial] = useState<{ provider: string; model: string }>({ provider: '', model: '' });
+  // The embedder the server holds now (as the backend compares it); moves after each successful save.
   const [resolved, setResolved] = useState<{ provider: string; model: string }>({ provider: '', model: '' });
   useEffect(() => {
     if (settings.data && !overview.isLoading && !loaded) {
@@ -44,7 +45,7 @@ export default function EmbeddingsSettingsPage() {
       const m = settings.data.embedding_model ?? overview.data?.setting.model ?? '';
       setProvider(p);
       setModel(m);
-      setResolved({ provider: p, model: m });
+      setResolved({ provider: settings.data.embedding_provider ?? '', model: settings.data.embedding_model ?? '' });
       setInitial({ provider: settings.data.embedding_provider ?? '', model: settings.data.embedding_model ?? '' });
       setRpm(String(settings.data.embedding_backfill_rpm));
       setLoaded(true);
@@ -117,9 +118,7 @@ export default function EmbeddingsSettingsPage() {
                 <span className="w-32 text-muted-foreground">Record search</span>
                 <span>
                   {searchModel}
-                  {searchModel !== o.setting.model
-                    ? ` · moves to ${o.setting.model} at 100% · ${num(targetChunks)} / ${num(searchChunks)} · ${pct}%`
-                    : ''}
+                  {` · moves to ${o.setting.model} at 100% · ${num(targetChunks)} / ${num(searchChunks)} · ${pct}%`}
                 </span>
               </div>
             ) : null}
@@ -129,15 +128,24 @@ export default function EmbeddingsSettingsPage() {
 
       <div className="flex justify-end">
         <Button
-          onClick={() =>
-            save.mutate({
-              // What was saved before is sent as it was; a value that only stands in for "unknown" is not sent.
-              ...(provider && (provider !== initial.provider || initial.provider) ? { embedding_provider: provider } : {}),
-              ...(model && (model !== initial.model || initial.model) ? { embedding_model: model } : {}),
-              embedding_backfill_rpm: Number(rpm),
-              recordsBackfillStarted: !!model && (provider !== resolved.provider || model !== resolved.model),
-            })
-          }
+          onClick={() => {
+            // What was saved before is sent as it was; a value that only stands in for "unknown" is not sent.
+            const sentProvider = provider && (provider !== initial.provider || initial.provider) ? provider : undefined;
+            const sentModel = model && (model !== initial.model || initial.model) ? model : undefined;
+            const next = { provider: sentProvider ?? resolved.provider, model: sentModel ?? resolved.model };
+            const changed =
+              (sentProvider !== undefined || sentModel !== undefined) &&
+              (next.provider !== resolved.provider || next.model !== resolved.model);
+            save.mutate(
+              {
+                ...(sentProvider ? { embedding_provider: sentProvider } : {}),
+                ...(sentModel ? { embedding_model: sentModel } : {}),
+                embedding_backfill_rpm: Number(rpm),
+                recordsBackfillStarted: changed,
+              },
+              { onSuccess: () => setResolved(next) },
+            );
+          }}
           disabled={save.isPending || !!rpmError || (!!provider !== !!model)}
         >
           {save.isPending ? <LoaderCircleIcon className="animate-spin" /> : null}

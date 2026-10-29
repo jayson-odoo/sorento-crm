@@ -444,7 +444,7 @@ def _counts_against_documents(exc: Exception) -> bool:
 
 
 def clear_failures(db: Session, model: str) -> None:
-    """Forget the failure counts of `model` (a fresh start: the setting moved to it, or Start was pressed)."""
+    """Forget the failure counts of `model` (a fresh start: the setting moved to it)."""
     from sqlalchemy import text
 
     db.execute(
@@ -481,7 +481,6 @@ def _document_chunks(doc) -> list[str]:
 def ensure_product_spec_documents(db: Session) -> int:
     """A `product_spec` document for every active product that has spec text and none yet (specs derived before the
     change listener existed were never queued). Built with the worker's own text builder. Returns the documents made."""
-    import hashlib  # noqa: F401
     from sqlalchemy import text
 
     from app.models.embeddings import EmbeddingDocument
@@ -558,6 +557,7 @@ def backfill_records(
     pause = 60.0 / max(1, int(rpm))
 
     ensure_product_spec_documents(db)
+    db.commit()  # a later rollback after a failed request must not discard the new documents
     embedded = failed = 0
     requests_made = 0
     stopped = False

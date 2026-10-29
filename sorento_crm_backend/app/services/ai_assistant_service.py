@@ -1092,11 +1092,7 @@ class AIAssistantChatService:
         selected_tools: list[dict[str, Any]] = []
         sources: list[dict[str, Any]] = []
         if route.kind == "agent" and not route.skip_rag:
-            # Augment the query so the tool picker sees entity-type hints.
-            rag_query = standalone_query
-            query_hint = resolution.to_query_hint()
-            if query_hint:
-                rag_query = f"{standalone_query}\n{query_hint}"
+            # Tools are ranked on the question only: the entity hint names records, not tools.
             rag_started = time.perf_counter()
             selected_tools, sources = self._rag_select_tools(
                 standalone_query=standalone_query,  # the question only: the entity hint stays out of tool ranking
@@ -1117,7 +1113,7 @@ class AIAssistantChatService:
                 self._turn_trace.add_span(
                     kind=KIND_RETRIEVER,
                     name="rag_select_tools",
-                    query=rag_query,
+                    query=standalone_query,
                     documents=[
                         {
                             "id": str(s.get("tool_name") or s.get("title") or ""),

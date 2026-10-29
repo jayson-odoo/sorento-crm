@@ -1159,6 +1159,9 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             if settings.embedding_model:
                 clear_failures(db, settings.embedding_model)  # the new model starts without old failure counts
                 db.commit()
+            from app.api.v1.system.embeddings import RECORDS_BACKFILL_STOP_KEY
+
+            queue_service.redis_conn.delete(RECORDS_BACKFILL_STOP_KEY)  # an earlier Stop must not halt the new run
             queue_service.enqueue_job(run_records_backfill, queue_name="imports")
         except Exception:  # noqa: BLE001 - the save stands; the backfill can be started from the Embeddings screen
             db.rollback()
