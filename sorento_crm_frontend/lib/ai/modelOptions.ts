@@ -29,12 +29,12 @@ export const MODEL_OPTIONS: Record<string, { value: string; label: string }[]> =
     { value: 'claude-opus-4-7', label: 'Claude Opus 4.7' },
   ],
   gemini: [
-    { value: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro' },
-    { value: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash' },
-    // `gemini-2.5-flash-lite` is deliberately absent: Google retired it for new
-    // keys (404 on the first generateContent) while still listing it, and the
-    // backend's own fallback drops it for the same reason. A fallback list that
-    // hands out the broken model is worse than a shorter one.
+    { value: 'gemini-3.5-flash', label: 'Gemini 3.5 Flash' },
+    { value: 'gemini-3.5-flash-lite', label: 'Gemini 3.5 Flash-Lite' },
+    // The 2.5 family is deliberately absent: a key from a new Google account gets
+    // a 404 on it (flash-lite 22 Aug, flash 29 Oct 2026) while Google still lists
+    // it, and the backend's own fallback drops it for the same reason. A fallback
+    // list that hands out the broken model is worse than a shorter one.
   ],
 };
 

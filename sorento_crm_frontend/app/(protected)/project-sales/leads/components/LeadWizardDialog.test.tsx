@@ -2,7 +2,7 @@
  * P1 - LeadWizardDialog (AC-A1, AC-A2, AC-A3, AC-A4).
  *
  * Three things carry the design and are pinned here:
- * - the development is the only required decision, so a lead with NO buyer submits
+ * - the customer is the one required decision (LEAD-GOVERNS-REGISTER A2), then the development
  * - the informant is collected as its own thing and posted as informant_* fields
  * - picking a salesperson calls ASSIGN after the create, because assignment stamps the
  *     clock and notifies them; it is not a column on the create
@@ -36,6 +36,9 @@ vi.mock('../../_shared/services/projectService', () => ({
     pagination: { total: 2, page: 1, limit: 200 },
   })),
   listLeads: vi.fn(),
+  listCustomerOptions: vi.fn(async () => [
+    { value: 'c1', label: 'KEDAI CONTOH SDN. BHD.' },
+  ]),
   getLead: vi.fn(),
   updateLead: vi.fn(),
   changeLeadStatus: vi.fn(),
@@ -64,54 +67,93 @@ vi.mock('@/services/userSelectService', () => ({
 
 vi.mock('@/lib/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
 
-vi.mock('@/components/common/SearchableSelect', () => ({
-  SearchableSelect: ({
-    value,
-    onChange,
-    options,
-    placeholder,
+vi.mock('@/components/common/SearchableSelect', () => {
+  type Opt = { value: string; label: string };
+  function AsyncSelect({
     id,
+    onChange,
+    fetchOptions,
+    emptyMessage,
     createOption,
   }: {
-    value: string;
-    onChange: (next: string) => void;
-    options?: { value: string; label: string }[];
-    placeholder?: string;
     id?: string;
+    onChange: (next: string) => void;
+    fetchOptions: (query: string, page: number) => Promise<Opt[]>;
+    emptyMessage?: string;
     createOption?: { label: (q: string) => React.ReactNode; onCreate: (q: string) => void };
-  }) => (
-    <>
-      <select
-        id={id}
-        aria-label={placeholder ?? 'select'}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      >
-        <option value="">{placeholder ?? ''}</option>
-        {(options ?? []).map((option) => (
-          <option key={option.value} value={option.value}>
+  }) {
+    const [query, setQuery] = React.useState('');
+    const [results, setResults] = React.useState<Opt[] | null>(null);
+    return (
+      <span>
+        <input
+          id={id}
+          value={query}
+          onChange={(event) => {
+            setQuery(event.target.value);
+            void fetchOptions(event.target.value, 0).then(setResults);
+          }}
+        />
+        {(results ?? []).map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => {
+              onChange(option.value);
+              setQuery(option.label);
+              setResults(null);
+            }}
+          >
             {option.label}
-          </option>
+          </button>
         ))}
-      </select>
-      {createOption ? (
-        <button type="button" onClick={() => createOption.onCreate('Gamuda Builders')}>
-          {createOption.label('Gamuda Builders')}
-        </button>
-      ) : null}
-    </>
-  ),
+        {results && results.length === 0 && query ? (
+          <p data-testid="picker-empty">{emptyMessage ?? 'No results found.'}</p>
+        ) : null}
+        {createOption && query ? (
+          <button type="button" onClick={() => createOption.onCreate(query)}>
+            {createOption.label(query)}
+          </button>
+        ) : null}
+      </span>
+    );
+  }
+  return {
+    SearchableSelect: (props: Record<string, unknown>) => {
+      if (props.fetchOptions) return <AsyncSelect {...(props as never)} />;
+      const { value, onChange, options, placeholder, id } = props as {
+        value: string;
+        onChange: (next: string) => void;
+        options?: Opt[];
+        placeholder?: string;
+        id?: string;
+      };
+      return (
+        <select
+          id={id}
+          aria-label={placeholder ?? 'select'}
+          value={value}
+          onChange={(event) => onChange(event.target.value)}
+        >
+          <option value="">{placeholder ?? ''}</option>
+          {(options ?? []).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      );
+    },
+  };
+});
+
+vi.mock('next-auth/react', () => ({
+  useSession: () => ({ data: { user: { id: 'u-me', name: 'Sales A' } }, status: 'authenticated' }),
 }));
 
-vi.mock(
-  '@/app/(protected)/order-management/shared/hooks/use-customer-select-query',
-  () => ({
-    useCustomerSelectQuery: () => ({
-      data: [{ id: 'c1', customer_name: 'Sunway Construction', customer_code: 'C-001' }],
-      isLoading: false,
-    }),
-  }),
-);
+vi.mock('@/hooks/usePermissions', () => ({
+  useHasPermission: () => true,
+}));
 
 import { LeadWizardDialog } from './LeadWizardDialog';
 
@@ -126,6 +168,22 @@ function renderWizard() {
     </QueryClientProvider>,
   );
   return { onDone };
+}
+
+async function pickCustomer() {
+  fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'KEDAI' } });
+  fireEvent.click(await screen.findByRole('button', { name: 'KEDAI CONTOH SDN. BHD.' }));
+}
+
+async function walkToConfirm() {
+  await pickCustomer();
+  next();
+  fireEvent.change(await screen.findByLabelText(/What is it/), {
+    target: { value: 'Tower behind the showroom' },
+  });
+  next();
+  await screen.findByLabelText('Their reference');
+  next();
 }
 
 function next() {
@@ -144,21 +202,30 @@ beforeEach(() => {
 });
 
 describe('LeadWizardDialog', () => {
-  it('opens on the development, which is the only required answer', () => {
+  it('opens on the customer, which gates Next, then asks for the development', async () => {
     renderWizard();
 
-    expect(screen.getByLabelText(/What is it/)).toBeInTheDocument();
+    expect(screen.getByLabelText(/^Customer/)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/What is it/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: /^Next$/ })).toBeDisabled();
 
+    await pickCustomer();
+    expect(screen.getByRole('button', { name: /^Next$/ })).toBeEnabled();
+    next();
+
+    expect(await screen.findByLabelText(/What is it/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /^Next$/ })).toBeDisabled();
     fireEvent.change(screen.getByLabelText(/What is it/), {
       target: { value: 'Tower behind the showroom' },
     });
     expect(screen.getByRole('button', { name: /^Next$/ })).toBeEnabled();
   });
 
-  it('collects the informant separately from the buyer', async () => {
+  it('collects the informant separately from the customer', async () => {
     renderWizard();
-    fireEvent.change(screen.getByLabelText(/What is it/), {
+    await pickCustomer();
+    next();
+    fireEvent.change(await screen.findByLabelText(/What is it/), {
       target: { value: 'Tower behind the showroom' },
     });
     next();
@@ -168,15 +235,16 @@ describe('LeadWizardDialog', () => {
     expect(screen.getAllByText('Who told us')).toHaveLength(2); // sr-only circle + label
 
     expect(screen.getByLabelText('Contact name')).toBeInTheDocument();
-    expect(screen.getByLabelText('Search firms')).toBeInTheDocument();
-    // The buyer is nowhere near this step.
-    expect(screen.queryByLabelText('Search buyers')).not.toBeInTheDocument();
+    // The customer is nowhere near this step.
+    expect(screen.queryByLabelText(/^Customer/)).not.toBeInTheDocument();
   });
 
-  it('records a lead with an informant and no buyer at all', async () => {
+  it('records a lead with a customer and an informant', async () => {
     const { onDone } = renderWizard();
 
-    fireEvent.change(screen.getByLabelText(/What is it/), {
+    await pickCustomer();
+    next();
+    fireEvent.change(await screen.findByLabelText(/What is it/), {
       target: { value: 'Tower behind the showroom' },
     });
     fireEvent.change(screen.getByLabelText('Location'), {
@@ -195,22 +263,16 @@ describe('LeadWizardDialog', () => {
     });
     next();
 
-    // Buyer step: deliberately left empty.
-    expect(await screen.findByLabelText('Search buyers')).toHaveValue('');
-    next();
-
     fireEvent.click(await screen.findByRole('button', { name: 'Create lead' }));
 
     await waitFor(() => expect(createLead).toHaveBeenCalledTimes(1));
     expect(createLead).toHaveBeenCalledWith(
       expect.objectContaining({
         title: 'Tower behind the showroom',
-        customer_id: null,
-        new_customer: null,
+        customer_id: 'c1',
         informant_source: 'bci',
         informant_ref: 'BCI-778812',
         informant_contact_name: 'Lim, QS',
-        informant_party_id: null,
       }),
     );
     expect(assignLead).not.toHaveBeenCalled();
@@ -220,12 +282,7 @@ describe('LeadWizardDialog', () => {
   it('assigns after creating when a salesperson is picked', async () => {
     renderWizard();
 
-    fireEvent.change(screen.getByLabelText(/What is it/), {
-      target: { value: 'Tower behind the showroom' },
-    });
-    next();
-    next();
-    next();
+    await walkToConfirm();
 
     const owner = await screen.findByLabelText('Select a salesperson');
     await waitFor(() => expect(getUserLookup).toHaveBeenCalled());
@@ -247,12 +304,7 @@ describe('LeadWizardDialog', () => {
     assignLead.mockRejectedValue(new Error('Ali has left'));
     const { onDone } = renderWizard();
 
-    fireEvent.change(screen.getByLabelText(/What is it/), {
-      target: { value: 'Tower behind the showroom' },
-    });
-    next();
-    next();
-    next();
+    await walkToConfirm();
 
     const owner = await screen.findByLabelText('Select a salesperson');
     await waitFor(() =>
@@ -265,10 +317,12 @@ describe('LeadWizardDialog', () => {
     await waitFor(() => expect(onDone).toHaveBeenCalled());
   });
 
-  it('summarises who told us and says the buyer is not known yet', async () => {
+  it('summarises who told us and the customer on the last step', async () => {
     renderWizard();
 
-    fireEvent.change(screen.getByLabelText(/What is it/), {
+    await pickCustomer();
+    next();
+    fireEvent.change(await screen.findByLabelText(/What is it/), {
       target: { value: 'Tower behind the showroom' },
     });
     next();
@@ -276,9 +330,8 @@ describe('LeadWizardDialog', () => {
       target: { value: 'referral' },
     });
     next();
-    next();
 
-    expect(await screen.findByText('Not known yet')).toBeInTheDocument();
+    expect(await screen.findByText('KEDAI CONTOH SDN. BHD.')).toBeInTheDocument();
     expect(screen.getByText('Referral')).toBeInTheDocument();
   });
 
@@ -295,37 +348,23 @@ describe('LeadWizardDialog', () => {
     expect(steps).toBeInTheDocument();
     expect(within(steps).getAllByRole('listitem')).toHaveLength(4);
     expect(
-      within(steps).getByText('The development').closest('[aria-current="step"]'),
+      within(steps).getByText('Customer').closest('[aria-current="step"]'),
     ).not.toBeNull();
   });
 
-  it('offers to create the buyer from inside the dropdown when nothing matches', async () => {
+  it('offers no way to create a customer from the dropdown (LGR-A4)', async () => {
     renderWizard();
-    fireEvent.change(screen.getByLabelText(/What is it/), {
-      target: { value: 'Tower behind the showroom' },
-    });
-    next();
-    next();
+    fireEvent.change(screen.getByLabelText(/^Customer/), { target: { value: 'Gamuda Builders' } });
 
-    expect(screen.queryByText(/The buyer is not a customer yet/)).not.toBeInTheDocument();
-    expect(screen.queryByText(/No match. Create the buyer instead/)).not.toBeInTheDocument();
-    fireEvent.click(await screen.findByRole('button', { name: /Create .Gamuda Builders./ }));
-    expect(screen.getByLabelText(/Buyer name/)).toHaveValue('Gamuda Builders');
-    next();
-
-    fireEvent.click(await screen.findByRole('button', { name: 'Create lead' }));
-    await waitFor(() => expect(createLead).toHaveBeenCalledTimes(1));
-    expect(createLead).toHaveBeenCalledWith(
-      expect.objectContaining({
-        customer_id: null,
-        new_customer: expect.objectContaining({ customer_name: 'Gamuda Builders' }),
-      }),
-    );
+    expect(screen.queryByRole('button', { name: /^Create/ })).not.toBeInTheDocument();
+    expect(screen.queryByLabelText(/Buyer name/)).not.toBeInTheDocument();
   });
 
   it('lists who told us as separate labelled fields, never a dot-joined line', async () => {
     renderWizard();
-    fireEvent.change(screen.getByLabelText(/What is it/), {
+    await pickCustomer();
+    next();
+    fireEvent.change(await screen.findByLabelText(/What is it/), {
       target: { value: 'Tower behind the showroom' },
     });
     next();
@@ -335,7 +374,6 @@ describe('LeadWizardDialog', () => {
     fireEvent.change(screen.getByLabelText('Contact name'), {
       target: { value: 'Lim' },
     });
-    next();
     next();
 
     await screen.findByText('Referral');
@@ -354,8 +392,9 @@ describe('LeadWizardDialog', () => {
         <LeadWizardDialog onDone={onDone} initialTitle="Setia Alam Phase 3B" />
       </QueryClientProvider>,
     );
-    expect(screen.getByLabelText(/What is it/)).toHaveValue('Setia Alam Phase 3B');
+    await pickCustomer();
     next();
+    expect(await screen.findByLabelText(/What is it/)).toHaveValue('Setia Alam Phase 3B');
     next();
     next();
     fireEvent.click(await screen.findByRole('button', { name: 'Create lead' }));
@@ -374,6 +413,9 @@ describe('LeadWizardDialog', () => {
         </form>
       </QueryClientProvider>,
     );
+    await pickCustomer();
+    next();
+    await screen.findByLabelText(/What is it/);
     next();
     expect(outerSubmit).not.toHaveBeenCalled();
   });
