@@ -73,6 +73,10 @@ every run is a full-list pull, and a class gone from the list goes to `/deletion
   `brand_class_ids` JSONB, which the referrer probe cannot see; a hard delete would leave a
   dangling id there (and the CRM screen refuses that delete with 409 for the same reason).
   `is_active = false`, row and reference kept, re-push reactivates (AutoCount is master).
+- **D5b Accepted (security L1):** a re-push of a known `source_ref` with a different `code`
+  renames that row, and contacts narrowed to its id follow the rename. This matches brands and
+  a rename on the Item Classes screen. The SS ref is `<book>:<ItemClass>`, so the ref and the
+  code never diverge in practice.
 - **D6 Contract 2.11**: `item_classes` joins `entities`; `fields_added.item_classes` lists the
   record keys. Additive.
 - **D7 No per-brand mapping** in the master: AutoCount ItemClass is flat. The Brands card keeps

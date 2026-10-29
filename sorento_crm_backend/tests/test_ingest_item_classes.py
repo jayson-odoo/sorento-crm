@@ -263,6 +263,24 @@ class TestCompanyScope:
         assert env.row(theirs.id)["item_class_name"] == "DIY A", "company A untouched"
         assert env.by_code("DIY", env.company_b)["item_class_name"] == "DIY B"
 
+    def test_another_company_reads_and_deletes_nothing_of_company_a(self, env):
+        record = _record(is_active=True)
+        entity_id = env.post(INGEST, [record]).json()["records"][0]["entity_id"]
+
+        read = env.client.post(
+            READ, json={"companyCode": env.company_b_code, "source_refs": [record["source_ref"]]}
+        )
+        assert read.status_code == 200, read.text
+        assert read.json()["records"] == []
+        assert read.json()["not_found"] == [record["source_ref"]]
+
+        gone = env.client.post(
+            DELETE, json={"companyCode": env.company_b_code, "source_refs": [record["source_ref"]]}
+        )
+        assert gone.status_code == 200, gone.text
+        assert gone.json()["records"][0]["outcome"] == "not_found"
+        assert env.row(entity_id)["is_active"] is True, "company A's class untouched"
+
 
 # ============================================================================ AC-5
 class TestReadBack:
@@ -396,6 +414,24 @@ class TestPermissionGuard:
         ):
             return {"ok": entity}
 
+        @api.post("/read/{entity}")
+        def _read_stub(
+            entity: str,
+            _: dict = Depends(
+                require_external_permission_for_path(ingest_module.READ_PERMISSIONS)
+            ),
+        ):
+            return {"ok": entity}
+
+        @api.post("/ingest/{entity}/deletions")
+        def _delete_stub(
+            entity: str,
+            _: dict = Depends(
+                require_external_permission_for_path(ingest_module.DELETE_PERMISSIONS)
+            ),
+        ):
+            return {"ok": entity}
+
         def _override_db():
             yield guard_db
 
@@ -416,7 +452,12 @@ class TestPermissionGuard:
 
         perms = {}
         # The brands edit slug is held by the "brands only" key: it must NOT open item classes.
-        for slug in ("master_data.item_classes.edit", "master_data.brands.edit"):
+        for slug in (
+            "master_data.item_classes.edit",
+            "master_data.brands.edit",
+            "master_data.brands.view",
+            "master_data.brands.delete",
+        ):
             perm = UserPermission(slug=slug, name=slug)
             guard_db.add(perm)
             guard_db.flush()
@@ -425,7 +466,8 @@ class TestPermissionGuard:
         issued = {}
         for label, held in (
             ("editor", ["master_data.item_classes.edit"]),
-            ("brands", ["master_data.brands.edit"]),
+            ("brands", ["master_data.brands.edit", "master_data.brands.view",
+                        "master_data.brands.delete"]),
         ):
             user = User(
                 email=f"{MARKER.lower()}-{label}@integrations.local",
@@ -454,6 +496,16 @@ class TestPermissionGuard:
         res = guard_client.post("/ingest/item_classes", headers={"X-API-Key": keys["brands"]})
         assert res.status_code == 403, res.text
         assert "master_data.item_classes.edit" in res.text
+
+    def test_read_and_deletions_refuse_a_brands_only_key(self, guard_client, keys):
+        read = guard_client.post("/read/item_classes", headers={"X-API-Key": keys["brands"]})
+        assert read.status_code == 403, read.text
+        assert "master_data.item_classes.view" in read.text
+        gone = guard_client.post(
+            "/ingest/item_classes/deletions", headers={"X-API-Key": keys["brands"]}
+        )
+        assert gone.status_code == 403, gone.text
+        assert "master_data.item_classes.delete" in gone.text
 
     def test_the_edit_slug_passes(self, guard_client, keys):
         res = guard_client.post("/ingest/item_classes", headers={"X-API-Key": keys["editor"]})
