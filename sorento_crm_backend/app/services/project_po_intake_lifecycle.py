@@ -106,7 +106,7 @@ def _first_page_reason(page_blobs: Sequence[Dict[str, Any]]) -> str:
     if not reason:
         return ""
     hint = (
-        " Pick another document reading model in System Settings > Chatbot media."
+        " Pick another document reading model in System Settings > Chatbot Media."
         if _is_model_unavailable(reason)
         else ""
     )

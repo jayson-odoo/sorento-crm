@@ -42,6 +42,11 @@ import { extractApiError } from '@/lib/api-client';
  *                                             16.1): the image tiers were measured, no
  *                                             cheaper transcription model has been, so none
  *                                             is seeded and none is suggested here
+ *   document_ai_provider / document_ai_model   the PO / delivery schedule reader.
+ *                                             NULL -> the server's DOCUMENT_AI_* env
+ *                                             fallback; migration po_read_0001 seeds
+ *                                             gemini / gemini-3.5-flash so a fresh
+ *                                             deploy never depends on it
  */
 
 export type MediaLanguageMode = 'pinned' | 'hints' | 'auto';
@@ -64,6 +69,9 @@ export interface ChatbotMediaSettings {
   media_image_model: string | null;
   /** null = no degradation possible; the monthly quota becomes a hard stop. */
   media_image_degraded_model: string | null;
+  /** The PO / delivery schedule reader. null = the server's env fallback. */
+  document_ai_provider: string | null;
+  document_ai_model: string | null;
   media_transcribe_model: string;
   /**
    * null = no degradation possible for voice; the monthly quota becomes a hard stop.
@@ -120,6 +128,8 @@ const MEDIA_KEYS: (keyof ChatbotMediaSettings)[] = [
   'media_image_provider',
   'media_image_model',
   'media_image_degraded_model',
+  'document_ai_provider',
+  'document_ai_model',
   'media_transcribe_model',
   'media_voice_degraded_model',
   'media_language_mode',
@@ -144,6 +154,8 @@ const FALLBACKS: ChatbotMediaSettings = {
   media_image_provider: null,
   media_image_model: null,
   media_image_degraded_model: null,
+  document_ai_provider: null,
+  document_ai_model: null,
   media_transcribe_model: 'whisper-1',
   // Deliberately null, and deliberately not the image tier's seeded model: no cheaper
   // transcription model has been measured, so naming one here would claim a
@@ -161,7 +173,7 @@ const FALLBACKS: ChatbotMediaSettings = {
 };
 
 /**
- * The four columns where NULL is a real stored value ("inherit" / "no degraded
+ * The columns where NULL is a real stored value ("inherit" / "no degraded
  * tier"). Every other key is non-nullable in the draft, and the settings GET emits
  * every key as an explicit null when no `system_settings` row exists yet, so for
  * those a null must fall back exactly like a missing key.
@@ -171,6 +183,8 @@ const NULLABLE_KEYS: ReadonlySet<keyof ChatbotMediaSettings> = new Set([
   'media_image_model',
   'media_image_degraded_model',
   'media_voice_degraded_model',
+  'document_ai_provider',
+  'document_ai_model',
 ]);
 
 function pickMediaSettings(row: Record<string, unknown> | null | undefined): ChatbotMediaSettings {

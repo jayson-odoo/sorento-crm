@@ -15,8 +15,9 @@ already works on prod with `gemini-3.5-flash`, picked in System Settings.
 - Two nullable columns on `system_settings`, `document_ai_provider` / `document_ai_model`, the same
   shape as the photo lane's `media_image_provider` / `media_image_model`. The migration seeds the
   existing row with `gemini` / `gemini-3.5-flash`, so prod reads again on deploy with no click.
-- Picker on System Settings > Chatbot media page? No: a "Document reading" section on the same page
-  that already holds the photo model picker, using the shared `ProviderModelSelect`.
+- Picker: a "PO and delivery schedule reading" card on System Settings > Chatbot Media, the page
+  that already holds the photo model picker, reusing its provider select and `ModelField` (live
+  model list from `useProviderModels`, typed names accepted, Test button probing the model).
 - Resolution order in `document_extraction.extract_document`: the setting, then the env
   (`DOCUMENT_AI_PROVIDER` / `DOCUMENT_AI_MODEL`) only when the setting is blank. Env default becomes
   `gemini-3.5-flash`.

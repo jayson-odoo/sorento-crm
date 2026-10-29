@@ -94,6 +94,34 @@ describe('getChatbotMediaSettings', () => {
     expect(settings.media_voice_degraded_model).toBeNull();
   });
 
+  it('keeps null on the document reader pair (null = the server default)', async () => {
+    apiFetch.mockResolvedValue(
+      ok({ settings: { ...ALL_NULL, document_ai_provider: null, document_ai_model: null } }),
+    );
+
+    const settings = await getChatbotMediaSettings();
+
+    expect(settings.document_ai_provider).toBeNull();
+    expect(settings.document_ai_model).toBeNull();
+  });
+
+  it('reads the saved document reader pair', async () => {
+    apiFetch.mockResolvedValue(
+      ok({
+        settings: {
+          ...ALL_NULL,
+          document_ai_provider: 'gemini',
+          document_ai_model: 'gemini-3.5-flash',
+        },
+      }),
+    );
+
+    const settings = await getChatbotMediaSettings();
+
+    expect(settings.document_ai_provider).toBe('gemini');
+    expect(settings.document_ai_model).toBe('gemini-3.5-flash');
+  });
+
   it('a stored value still wins over the fallback', async () => {
     apiFetch.mockResolvedValue(
       ok({

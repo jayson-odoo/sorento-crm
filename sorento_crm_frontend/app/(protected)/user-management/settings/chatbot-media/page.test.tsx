@@ -63,6 +63,8 @@ function settings(overrides: Partial<ChatbotMediaSettings> = {}): ChatbotMediaSe
     media_image_provider: null,
     media_image_model: null,
     media_image_degraded_model: null,
+    document_ai_provider: 'gemini',
+    document_ai_model: 'gemini-3.5-flash',
     media_transcribe_model: 'whisper-1',
     media_voice_degraded_model: null,
     media_language_mode: 'pinned',
@@ -545,14 +547,14 @@ describe('ChatbotMediaSettingsPage image model list', () => {
 describe('ChatbotMediaSettingsPage model probe', () => {
   const testButtons = () => screen.getAllByRole('button', { name: /test model/i });
 
-  it('offers a test on both image models and on neither voice model', () => {
+  it('offers a test on both image models and the document model, on neither voice model', () => {
     mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
 
     renderWithClient();
 
-    // Two, not four: the probe is a chat call, so a transcription model would
+    // Three, not five: the probe is a chat call, so a transcription model would
     // fail it for reasons that have nothing to do with the setting.
-    expect(testButtons()).toHaveLength(2);
+    expect(testButtons()).toHaveLength(3);
   });
 
   it('probes the typed model against the draft provider', async () => {
@@ -696,5 +698,76 @@ describe('ChatbotMediaSettingsPage report rate limit', () => {
     fireEvent.change(windowInput(), { target: { value: '0' } });
     expect(screen.getByText('Enter a whole number between 1 and 1440.')).toBeInTheDocument();
     expect(saveButton()).toBeDisabled();
+  });
+});
+
+describe('ChatbotMediaSettingsPage PO and delivery schedule reading', () => {
+  function mutationSpy() {
+    const mutate = vi.fn();
+    mockMutation.mockReturnValue({ isPending: false, mutate });
+    return mutate;
+  }
+
+  it('seeds the saved provider and model and sends them back on save', () => {
+    const mutate = mutationSpy();
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderWithClient();
+
+    expect(screen.getByText('PO and delivery schedule reading')).toBeInTheDocument();
+    expect(document.getElementById('document-ai-provider')).toHaveTextContent('Google Gemini');
+    expect(modelField('document-ai-model').text).toHaveValue('gemini-3.5-flash');
+    expect(mockModelsQuery).toHaveBeenCalledWith('gemini');
+
+    fireEvent.click(saveButton());
+
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        document_ai_provider: 'gemini',
+        document_ai_model: 'gemini-3.5-flash',
+      }),
+      expect.anything(),
+    );
+  });
+
+  it('sends a newly typed model, and blank as null so the server default applies', () => {
+    const mutate = mutationSpy();
+    mockQuery.mockReturnValue({ data: settings(), isLoading: false, isError: false });
+    renderWithClient();
+
+    const field = modelField('document-ai-model');
+    fireEvent.change(field.text, { target: { value: ' gemini-3.5-pro ' } });
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ document_ai_model: 'gemini-3.5-pro' }),
+      expect.anything(),
+    );
+
+    fireEvent.change(field.text, { target: { value: '' } });
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenLastCalledWith(
+      expect.objectContaining({ document_ai_model: null }),
+      expect.anything(),
+    );
+  });
+
+  it('clears the model when the provider changes, and leaves the image models alone', async () => {
+    mockQuery.mockReturnValue({
+      data: settings({ media_image_provider: 'gemini', media_image_model: 'gemini-3.5-flash' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    fireEvent.click(document.getElementById('document-ai-provider') as HTMLElement);
+    await waitFor(() =>
+      expect(document.querySelectorAll('[role="option"]').length).toBeGreaterThan(0),
+    );
+    const option = [...document.querySelectorAll('[role="option"]')].find(
+      (opt) => (opt.textContent ?? '').trim() === 'OpenAI',
+    );
+    fireEvent.click(option as Element);
+
+    await waitFor(() => expect(modelField('document-ai-model').text).toHaveValue(''));
+    expect(modelField('media-image-model').text).toHaveValue('gemini-3.5-flash');
   });
 });

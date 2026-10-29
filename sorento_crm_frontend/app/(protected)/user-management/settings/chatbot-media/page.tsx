@@ -64,6 +64,8 @@ type Draft = {
   imageProvider: string;
   imageModel: string;
   imageDegradedModel: string;
+  documentProvider: string;
+  documentModel: string;
   transcribeModel: string;
   voiceDegradedModel: string;
   languageMode: MediaLanguageMode;
@@ -88,6 +90,8 @@ function toDraft(settings: ChatbotMediaSettings): Draft {
     imageProvider: settings.media_image_provider ?? '',
     imageModel: settings.media_image_model ?? '',
     imageDegradedModel: settings.media_image_degraded_model ?? '',
+    documentProvider: settings.document_ai_provider ?? '',
+    documentModel: settings.document_ai_model ?? '',
     transcribeModel: settings.media_transcribe_model,
     voiceDegradedModel: settings.media_voice_degraded_model ?? '',
     languageMode: settings.media_language_mode,
@@ -113,6 +117,8 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     media_image_provider: draft.imageProvider.trim() || null,
     media_image_model: draft.imageModel.trim() || null,
     media_image_degraded_model: draft.imageDegradedModel.trim() || null,
+    document_ai_provider: draft.documentProvider.trim() || null,
+    document_ai_model: draft.documentModel.trim() || null,
     media_transcribe_model: draft.transcribeModel.trim(),
     media_voice_degraded_model: draft.voiceDegradedModel.trim() || null,
     media_language_mode: draft.languageMode,
@@ -191,6 +197,7 @@ export default function ChatbotMediaSettingsPage() {
   // blank provider is sent as blank: the backend reads it as "the assistant's
   // own", which is exactly what a blank provider column means at runtime.
   const modelsQuery = useProviderModels(draft?.imageProvider ?? '');
+  const documentModelsQuery = useProviderModels(draft?.documentProvider ?? '');
 
   useEffect(() => {
     if (settingsQuery.data && draft === null) setDraft(toDraft(settingsQuery.data));
@@ -248,6 +255,9 @@ export default function ChatbotMediaSettingsPage() {
   const liveModels = modelsQuery.data?.models;
   const modelOptions = (
     liveModels ?? MODEL_OPTIONS[draft.imageProvider] ?? []
+  ).map((m) => ({ value: m.value, label: m.label }));
+  const documentModelOptions = (
+    documentModelsQuery.data?.models ?? MODEL_OPTIONS[draft.documentProvider] ?? []
   ).map((m) => ({ value: m.value, label: m.label }));
   const modelListNotice = modelsQuery.isError
     ? 'Showing the built-in model list; the model list could not be loaded.'
@@ -434,6 +444,38 @@ export default function ChatbotMediaSettingsPage() {
               </AlertTitle>
             </Alert>
           ) : null}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader className="border-b border-border">
+          <CardTitle>PO and delivery schedule reading</CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 gap-5 py-5 sm:grid-cols-2">
+          <div className="space-y-2">
+            <Label htmlFor="document-ai-provider">Provider</Label>
+            <SearchableSelect
+              id="document-ai-provider"
+              value={draft.documentProvider}
+              onChange={(v) => {
+                // A model id belongs to the provider it was picked from.
+                set('documentProvider', v);
+                set('documentModel', '');
+              }}
+              options={PROVIDER_OPTIONS}
+              clearable
+              placeholder="Server default"
+            />
+          </div>
+          <ModelField
+            id="document-ai-model"
+            label="Model"
+            value={draft.documentModel}
+            options={documentModelOptions}
+            onChange={(v) => set('documentModel', v)}
+            hint="Blank uses the provider's default model."
+            testProvider={draft.documentProvider}
+          />
         </CardContent>
       </Card>
 
