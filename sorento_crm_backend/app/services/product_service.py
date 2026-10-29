@@ -1168,7 +1168,7 @@ class ProductService:
 
             self._assert_item_class(
                 data["item_class_id"],
-                data.get("company_id") or resolve_write_company_id(get_company_scope(self.db), ambiguous=None),
+                resolve_write_company_id(get_company_scope(self.db), ambiguous=None),
             )
         # Live finding, 2026-09-06: derive from product_rules.derivation_text
         # (description if non-blank else name), not the raw description column
