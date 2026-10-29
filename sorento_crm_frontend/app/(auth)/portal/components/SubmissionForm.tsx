@@ -271,7 +271,7 @@ const FIELDS: Record<PortalSubmissionKind, FieldDef[]> = {
       setKey: 'my_state',
       required: true,
     },
-    { name: 'mukim', label: 'Mukim' },
+    { name: 'mukim', label: 'Area' },
     { name: 'your_ref', label: 'Your ref' },
     { name: 'developer_name', label: 'Developer', required: true },
     { name: 'main_contractor_name', label: 'Main contractor' },

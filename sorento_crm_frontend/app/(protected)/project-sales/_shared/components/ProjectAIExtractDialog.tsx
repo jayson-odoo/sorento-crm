@@ -30,7 +30,7 @@ const FIELD_DEFS: { name: ProjectExtractFieldKey; label: string }[] = [
   { name: 'main_contractor', label: 'Main contractor' },
   { name: 'project_type', label: 'Project type' },
   { name: 'state', label: 'State' },
-  { name: 'mukim', label: 'Mukim' },
+  { name: 'mukim', label: 'Area' },
   { name: 'customer', label: 'Customer' },
   { name: 'title', label: 'Project title' },
 ];

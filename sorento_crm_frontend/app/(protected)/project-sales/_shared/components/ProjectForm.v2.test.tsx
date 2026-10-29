@@ -808,7 +808,9 @@ describe('AI extract with the real backend shape (C6)', () => {
     const dialog = await screen.findByRole('dialog');
     fireEvent.click(within(dialog).getByRole('button', { name: 'AI Extract' }));
     const review = await screen.findByTestId('ai-extract-review');
-    const row = within(review).getByText('Mukim').closest('tr') as HTMLElement;
+    // QUOTE-UI-POLISH: Mukim is labelled Area everywhere (owner, 29 Oct).
+    expect(within(review).queryByText('Mukim')).toBeNull();
+    const row = within(review).getByText('Area').closest('tr') as HTMLElement;
     expect(within(row).getByText('Batu')).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Confirm and prefill' }));
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
