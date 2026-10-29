@@ -5,8 +5,10 @@ Status: card filed, waiting on owner answers and on #1953 (PORTAL-P4-REQUESTS) m
 
 Source: owner team meeting 29 Oct 15:40 (Project Sales). A sample request pulls ALL items of the
 project's quotation into its item list by default; the user deletes the lines not needed instead of
-typing lines by hand. Standing rule (owner 28 Oct, #1953): the CRM and portal sample request forms
-behave the same, so the pre-fill works the same on both.
+typing lines by hand. Standing rule (owner 28 Oct, #1953): the CRM create/edit/view forms ARE the
+portal forms, the same component. So the pre-fill is built once, inside that single shared form
+(`app/(auth)/portal/components/SampleRequestForm.tsx`), not as a helper called from two forms
+(crew review, 29 Oct).
 
 ## Where things are (main ec29a81c)
 
@@ -18,15 +20,17 @@ behave the same, so the pre-fill works the same on both.
   `app/(protected)/project-sales/sample-requests/components/SampleRequestForm.tsx:95`; `?project_id`
   seed :118-139; project picker :264-280; Add item :367.
 - Portal form: one blank row `app/(auth)/portal/components/SampleRequestForm.tsx:87`; project picker
-  :295-317 (portal has no URL seed on main; #1953 adds `?project_id=` and makes the CRM salesperson
-  pages render this same component); Add item :414.
+  :295-317; Add item :414. On #1953's head (`crew/portal-p4-requests`, a32591c06c) the CRM
+  `SampleRequestForm` becomes a switch: a salesperson limited to their own requests gets this
+  portal component (wrapped in `MyRequestClientProvider`, new requests via `NewOwnSampleRequest`
+  seeding `project_id` from `?project_id=`), everyone else keeps `StaffSampleRequestForm`.
 - Quotation model: project -> `quotation_documents` (one letterhead, `models/projects.py:1073`) ->
   scopes `quotations` (:1398, each with its own outcome) -> `quotation_versions` (:1456, current =
   MAX(version_no), `project_quotation_service.py:123`) -> `quotation_lines` (:1500). What the customer
   holds is an ISSUE (R1, R2, ... `quotation_issues` :1215, current = MAX(issue_no)) recording which
   version of each scope went out (`quotation_issue_scopes` :1355).
 - A quotation line names a product, a product SET (`product_set_id`, parts frozen in
-  `set_parts_snapshot`), or neither (off-catalogue free text, `product_id` nullable :1531). Lines may be
+  `set_parts_snapshot`), or neither (off-catalogue free text, `product_id` nullable :1525). Lines may be
   rate-only alternates (`is_rate_only`).
 - Sample request lines: `product_id` NOT NULL, `qty >= 1` (`models/sample_request.py:162-171`). A NEW
   product id must be active or save fails with `SAMPLE_REQUEST_PRODUCT_INVALID`
@@ -54,8 +58,11 @@ behave the same, so the pre-fill works the same on both.
 7. **Each row** keeps the existing Remove line control; Add item still adds a blank row.
 8. **Long quotations.** No cap: a 200-line quotation gives up to 200 rows (fewer after Q4). The table
    already scrolls; nothing to paginate.
-9. **Same on both forms.** One backend read builds the list for both; the portal route reuses
-   `assert_portal_project_allowed` and returns product id, code and description only (no prices).
+9. **One form, one code path.** The pre-fill lives in the shared portal `SampleRequestForm`, so the
+   portal and the CRM (My Requests, through #1953's injected client) run the same code. It reads one
+   backend route at the portal-relative path, which #1953's fetcher maps to `/api/v1/my-requests`
+   for the CRM; the route reuses `assert_portal_project_allowed` and returns product id, code and
+   description only (no prices).
 
 ## Examples (masked)
 
@@ -71,17 +78,36 @@ not counted rows. Crew can confirm each exists on dev with the query at the end 
 | E | Q-E R2: same basin in scope "Type A units" and "Type B units", plus a set whose part is that basin | 1 basin row (Q4 a) | none |
 
 ```sql
--- per project: documents, latest issue, product / set / free-text line counts on that issue
-SELECT d.project_id, d.id AS document_id, MAX(i.issue_no) AS latest_issue,
-       COUNT(l.id) FILTER (WHERE l.product_id IS NOT NULL)     AS product_lines,
-       COUNT(l.id) FILTER (WHERE l.product_set_id IS NOT NULL) AS set_lines,
-       COUNT(l.id) FILTER (WHERE l.product_id IS NULL AND l.product_set_id IS NULL) AS free_lines,
-       COUNT(l.id) - COUNT(DISTINCT l.product_id)              AS repeated_products
+-- Read-only. One row per quotation document: how many documents its project has, its latest issue and
+-- the line mix ON THAT ISSUE only (never-issued documents show latest_issue NULL and zero counts).
+-- Masking: ids are hashed to 8 chars; no names, titles or document numbers are selected.
+WITH latest AS (
+  SELECT DISTINCT ON (i.document_id) i.document_id, i.id AS issue_id, i.issue_no
+  FROM projects.quotation_issues i
+  ORDER BY i.document_id, i.issue_no DESC
+)
+SELECT left(md5(d.project_id::text), 8)                                   AS project,
+       left(md5(d.id::text), 8)                                           AS document,
+       COUNT(*) OVER (PARTITION BY d.project_id)                          AS docs_on_project,
+       lt.issue_no                                                        AS latest_issue,
+       COUNT(DISTINCT s.quotation_id)                                     AS scopes,
+       COUNT(l.id)                                                        AS lines,
+       COUNT(l.id) FILTER (WHERE l.product_id IS NOT NULL AND p.is_active) AS active_product_lines,
+       COUNT(l.id) FILTER (WHERE l.product_id IS NOT NULL AND NOT p.is_active) AS inactive_product_lines,
+       COUNT(l.id) FILTER (WHERE l.product_set_id IS NOT NULL)            AS set_lines,
+       COUNT(l.id) FILTER (WHERE l.product_id IS NULL AND l.product_set_id IS NULL) AS free_text_lines,
+       COUNT(l.product_id) - COUNT(DISTINCT l.product_id)                 AS repeated_product_lines
 FROM projects.quotation_documents d
-LEFT JOIN projects.quotation_issues i ON i.document_id = d.id
-LEFT JOIN projects.quotation_issue_scopes s ON s.issue_id = i.id
+LEFT JOIN latest lt ON lt.document_id = d.id
+LEFT JOIN projects.quotation_issue_scopes s ON s.issue_id = lt.issue_id
 LEFT JOIN projects.quotation_lines l ON l.version_id = s.version_id
-GROUP BY d.project_id, d.id ORDER BY d.project_id;
+LEFT JOIN products p ON p.id = l.product_id
+GROUP BY d.project_id, d.id, lt.issue_no
+ORDER BY project, latest_issue NULLS LAST;
+-- Projects with no quotation document at all (example C):
+SELECT COUNT(*) AS projects_without_quotation
+FROM projects.projects pr
+WHERE NOT EXISTS (SELECT 1 FROM projects.quotation_documents d WHERE d.project_id = pr.id);
 ```
 
 ## Questions
@@ -132,8 +158,10 @@ element-to-component map comes before the build.
   staff route under `api/v1/projects/sample_requests.py`, portal route under
   `api/v1/public/portal_sample_request.py` behind `assert_portal_project_allowed` (security-reviewer
   joins: portal surface). #1953 mounts portal routes on `/api/v1/my-requests` too.
-- FE: one helper in `lib/sample-request-form.ts` (`prefilledLines`, untouched-list check), called from
-  both forms' project-set paths.
+- FE: built into the single shared `app/(auth)/portal/components/SampleRequestForm.tsx` (its project
+  picker onChange and its seeded `project_id` on first paint), nothing in a per-form helper. The
+  staff-only `StaffSampleRequestForm` that #1953 keeps for non-limited users is not touched unless
+  crew rules otherwise (see crew-note on the PR).
 - Tests red-first: pytest for the service (A-E shapes, issue vs. never-issued, portal refusal on a
   foreign project), vitest per form (pre-fill on project set, no re-fill on edit, project change rules,
   delete a pre-filled row).
