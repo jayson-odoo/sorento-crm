@@ -1,0 +1,5 @@
+# /etc/sorento-ha/ha-members.nft: the same three addresses as ha-members.env, for nftables
+# (included by docker-user.nft). Edit together with ha-members.env when the witness moves.
+define A_WG_IP = <A_WG_IP>
+define B_WG_IP = <B_WG_IP>
+define WITNESS_WG_IP = <WITNESS_WG_IP>
