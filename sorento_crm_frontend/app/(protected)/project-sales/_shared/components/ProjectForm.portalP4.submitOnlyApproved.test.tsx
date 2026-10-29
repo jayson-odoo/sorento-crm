@@ -6,9 +6,8 @@
  */
 import React from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { toast } from '@/lib/toast';
 import type { Project } from '../types/project.types';
 
 const push = vi.fn();
@@ -257,25 +256,6 @@ vi.mock('@/components/ui/date-range-picker', () => ({
 import { ProjectForm } from './ProjectForm';
 
 // ---------------------------------------------------------------- helpers
-const BLOCKING = {
-  project_id: 'p9',
-  project_code: 'PRJ-000009',
-  title: 'Setia Alam Phase 3B CONTOH',
-  outcome: 'open',
-  owner_name: 'Manager M',
-  similarity: 0.95,
-  blocks: true,
-};
-const SIMILAR = {
-  project_id: 'p10',
-  project_code: 'PRJ-000010',
-  title: 'Setia Alam Phase 3C CONTOH',
-  outcome: 'open',
-  owner_name: 'Sales B',
-  similarity: 0.6,
-  blocks: false,
-};
-
 function editProject(over: Partial<Project> = {}): Project {
   return {
     id: 'p1',
@@ -309,34 +289,12 @@ function renderForm(props: { mode: 'create' } | { mode: 'edit'; project: Project
   );
 }
 
-const titleBox = () => screen.getByLabelText(/project title/i) as HTMLTextAreaElement;
-function typeTitle(text: string) {
-  fireEvent.change(titleBox(), { target: { value: text } });
-  fireEvent.blur(titleBox());
-}
-async function pickAsync(label: string | RegExp, typed: string, optionName: string | RegExp) {
-  fireEvent.change(screen.getByLabelText(label), { target: { value: typed } });
-  fireEvent.click(await screen.findByRole('button', { name: optionName }));
-}
-const pickCustomer = (typed = 'Aman') => pickAsync('Customer *', typed, /Aman Hartanah CONTOH/);
 function openDetails() {
   const header = screen.getByRole('button', { name: /^Details/ });
   if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
 }
 const callsTo = (method: string, part: string) =>
   calls.filter((c) => c.method === method && c.url.includes(part));
-const registerBody = () =>
-  calls.find((c) => c.method === 'POST' && c.url.split('?')[0].endsWith('/project-sales/projects/'))
-    ?.body as Record<string, unknown> | undefined;
-/** The deepest element whose whole text is exactly `text` (one visible line). */
-function linesWithText(text: string): HTMLElement[] {
-  const norm = (s: string | null) => (s ?? '').replace(/\s+/g, ' ').trim();
-  const all = Array.from(document.body.querySelectorAll<HTMLElement>('*')).filter(
-    (el) => norm(el.textContent) === text,
-  );
-  return all.filter((el) => !Array.from(el.children).some((c) => all.includes(c as HTMLElement)));
-}
-
 beforeEach(() => {
   vi.clearAllMocks();
   calls.length = 0;
@@ -363,11 +321,25 @@ describe.each([
     expect(screen.queryByRole('button', { name: 'Submit for approval' })).toBeNull();
   });
 
-  it('saves with one PUT and never calls /submit', async () => {
-    renderForm({ mode: 'edit', project: editProject({ approval_state: state, owner_user_id: 'u-me' } as never) });
-    fireEvent.click(screen.getByRole('button', { name: 'Save changes' }));
-    await waitFor(() => expect(callsTo('PUT', '/project-sales/projects/p1').length).toBeGreaterThan(0));
+  it('submitting the form (Enter) saves with one PUT and never calls /submit', async () => {
+    // Before the fix the form submit ran save(true): customerMissing refused it (no PUT at
+    // all) and, with a customer, it would have gone on to POST /submit.
+    const { container } = renderForm({
+      mode: 'edit',
+      project: editProject({ approval_state: state, owner_user_id: 'u-me' } as never),
+    });
+    fireEvent.submit(container.querySelector('form')!);
+    await waitFor(() => expect(callsTo('PUT', '/project-sales/projects/p1').length).toBe(1));
     expect(calls.filter((c) => c.url.includes('/submit'))).toHaveLength(0);
+  });
+
+  it('shows no Lead field (J3c stays)', () => {
+    renderForm({
+      mode: 'edit',
+      project: editProject({ approval_state: state, owner_user_id: 'u-me' } as never),
+    });
+    openDetails();
+    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
   });
 });
 
