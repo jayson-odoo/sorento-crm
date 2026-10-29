@@ -1,7 +1,8 @@
 # PLAN: Agentic phase 1 - the agent foundation (read-only, explicit entry)
 
-Status: PR #1982 open, ready for CI. Reviewer READY and security reviewer SECURE (after fix rounds 3-4); browser
-verification PASS; red-first throughout. Paid eval (crew, cap USD 5) outstanding. Full lane (migration: contact
+Status: PR #1982 open. Crew eval 1 (ed4d19b6d2) FAILED 0/15 strict; fix rounds 5-5d built red-first (real resolver,
+id provenance, typed empty/invalid, answer-tool verifier, honest limits); security reviewer SECURE on round 5, reviewer
+confirmed round 5c and round 5d fixes the last date blocker. Crew eval re-run pending. Full lane (migration: contact
 switch, budget settings, `chatbot.agent_conversations`; new endpoints; permission layer). Lane AGENTIC-P1, branch
 `claude/agentic-crm-chatbot-p1-fhvvb0`.
 
