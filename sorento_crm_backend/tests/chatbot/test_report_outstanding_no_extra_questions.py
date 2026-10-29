@@ -93,3 +93,17 @@ def test_an_outstanding_ask_over_unrelated_codes_runs_them_all_with_no_question(
     outcome, line = report_ask.settle(None, _product_parse("SRT5733-WH", "CBN-200"), rows, companies=COMPANIES[:1])
     assert line is None and outcome is not None and outcome.done, (line, outcome and outcome.reply)
     assert sorted(report_ask.route_args(outcome)["product_ids"]) == sorted(r["uuid"] for r in rows)
+
+
+# ---------------------------------------------------------------- item 9: location word and period, as before #1922
+
+
+def test_an_unknown_location_word_on_an_outstanding_ask_is_left_out_not_said(monkeypatch) -> None:
+    """Pre-#1922 (`_resolve_report_product_and_location`): a location word that resolves to no warehouse narrows
+    nothing and is not answered with "I don't know 'X' as a location." (a #1922 side effect, owner 29 Oct item 9)."""
+    from app.services.chatbot.lanes.business import services as business_services
+
+    monkeypatch.setattr(business_services, "resolve_warehouse_token", lambda db, token: [])
+    outcome, line = report_ask.settle(object(), _outstanding(entities=[_warehouse_entity()]), [], companies=COMPANIES[:1])
+    assert line is None and outcome is not None and outcome.done, (line, outcome and outcome.reply)
+    assert "warehouse_codes" not in report_ask.route_args(outcome)
