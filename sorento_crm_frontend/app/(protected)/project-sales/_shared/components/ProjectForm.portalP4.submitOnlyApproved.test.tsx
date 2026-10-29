@@ -253,6 +253,7 @@ vi.mock('@/components/ui/date-range-picker', () => ({
   DateRangePicker: ({ id }: { id?: string }) => <input id={id} />,
 }));
 
+import { toast } from '@/lib/toast';
 import { ProjectForm } from './ProjectForm';
 
 // ---------------------------------------------------------------- helpers
@@ -347,5 +348,51 @@ describe('pins: unapproved registrations keep the salesperson footer (green by d
     renderForm({ mode: 'edit', project: editProject({ approval_state: 'draft', owner_user_id: 'u-me' } as never) });
     expect(screen.getByRole('button', { name: 'Save draft' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Submit for approval' })).toBeInTheDocument();
+  });
+});
+
+describe('submit-only owner without projects.types.view (owner ruling a54716498: no grant)', () => {
+  const typeCalls = () => calls.filter((c) => /\/config\/(types|templates)/.test(c.url));
+  const own = () =>
+    editProject({
+      approval_state: 'approved',
+      owner_user_id: 'u-me',
+      type_name: 'Menara Type CONTOH',
+      template_id: 'tpl-1',
+      template_name: 'Template RO CONTOH',
+    } as never);
+
+  it('sends no types or templates request', async () => {
+    granted = new Set(SUBMIT_ONLY);
+    renderForm({ mode: 'edit', project: own() });
+    await screen.findByRole('button', { name: 'Save changes' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(typeCalls()).toHaveLength(0);
+  });
+
+  it('shows the project type and template as read-only text', async () => {
+    granted = new Set(SUBMIT_ONLY);
+    const { container } = renderForm({ mode: 'edit', project: own() });
+    expect(await screen.findByText('Menara Type CONTOH')).toBeInTheDocument();
+    expect(screen.getByText('Template RO CONTOH')).toBeInTheDocument();
+    expect(container.querySelector('select#project-type')).toBeNull();
+  });
+
+  it('raises no error toast', async () => {
+    granted = new Set(SUBMIT_ONLY);
+    renderForm({ mode: 'edit', project: own() });
+    await screen.findByRole('button', { name: 'Save changes' });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(toast.error).not.toHaveBeenCalled();
+  });
+
+  it('pin: with projects.types.view the type select renders as today (green)', async () => {
+    granted = new Set([...SUBMIT_ONLY, 'projects.types.view']);
+    const { container } = renderForm({ mode: 'edit', project: own() });
+    await waitFor(() => expect(container.querySelector('select#project-type')).not.toBeNull());
+    await waitFor(() =>
+      expect((container.querySelector('select#project-type') as HTMLSelectElement).value).toBe('ty2'),
+    );
+    expect(typeCalls().length).toBeGreaterThan(0);
   });
 });
