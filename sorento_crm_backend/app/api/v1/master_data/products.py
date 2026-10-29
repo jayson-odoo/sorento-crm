@@ -143,6 +143,9 @@ def get_products(
     price_min: Optional[float] = Query(None),
     price_max: Optional[float] = Query(None),
     item_type: Optional[str] = Query(None),
+    item_class_id: Optional[list[str]] = Query(
+        None, description="Filter by AutoCount Item Class UUIDs (repeated / csv / JSON array)."
+    ),
     length_min: Optional[float] = Query(None, description="Minimum dimensions_length in mm."),
     length_max: Optional[float] = Query(None, description="Maximum dimensions_length in mm."),
     width_min: Optional[float] = Query(None, description="Minimum dimensions_width in mm."),
@@ -215,6 +218,7 @@ def get_products(
             price_min=price_min,
             price_max=price_max,
             item_type=item_type,
+            item_class_ids=parse_uuid_list(item_class_id, param_name="item_class_id"),
             length_min=length_min,
             length_max=length_max,
             width_min=width_min,

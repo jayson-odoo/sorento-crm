@@ -7,6 +7,7 @@ import {
   getContactBrandScope,
   saveContactBrandScope,
   type ContactBrandScope,
+  type ContactBrandScopeInput,
 } from '@/services/contactBrandScopeService';
 
 /** The contact's accessible brands (CONTACT-BRAND-SCOPE). */
@@ -21,8 +22,8 @@ export function useContactBrandScopeQuery(contactId: string) {
 export function useContactBrandScopeMutations(contactId: string) {
   const queryClient = useQueryClient();
 
-  const save = useMutation<ContactBrandScope, Error, string[]>({
-    mutationFn: (brandIds) => saveContactBrandScope(contactId, brandIds),
+  const save = useMutation<ContactBrandScope, Error, ContactBrandScopeInput>({
+    mutationFn: (input) => saveContactBrandScope(contactId, input),
     onSuccess: (data) => {
       queryClient.setQueryData(contactBrandScopeKey(contactId), data);
       // The contacts list carries the same brands in its Brands column.

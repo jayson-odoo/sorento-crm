@@ -63,6 +63,9 @@ vi.mock('../../shared/hooks/use-product-category-select-query', () => ({
     data: [{ id: CAT_ID, category_code: 'CAT1', category_name: 'Category 1' }],
   }),
 }));
+vi.mock('../../shared/hooks/use-item-class-select-query', () => ({
+  useItemClassSelectQuery: () => ({ data: [] }),
+}));
 vi.mock('../../shared/hooks/use-brand-select-query', () => ({
   useBrandSelectQuery: () => ({ data: [] }),
 }));
