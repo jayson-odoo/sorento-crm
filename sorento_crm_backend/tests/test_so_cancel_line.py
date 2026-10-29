@@ -734,7 +734,6 @@ def test_c8b_a_cancelled_line_still_names_its_location(api):
     )
     assert row["cancelled"] is True
     assert row["fulfilment_location"] == world.own_wh.warehouse_code
-    assert row["fulfilment_location_name"] == world.own_wh.warehouse_name
 
 
 # ---------------------------------------------------------------- AC-C10 / C11 ingest

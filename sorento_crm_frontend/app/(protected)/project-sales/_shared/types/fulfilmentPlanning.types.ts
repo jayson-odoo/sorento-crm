@@ -1330,8 +1330,6 @@ export interface BoardContribution {
   is_past?: boolean;
   /** The core sales-order line's own warehouse code. Null means the source record is silent. */
   fulfilment_location?: string | null;
-  /** That warehouse's own name, for the List view's Location tooltip (PLAN-SO-LOCATION). */
-  fulfilment_location_name?: string | null;
   /**
    * The same warehouse by id, for the confirm payload only. Never rendered.
    *

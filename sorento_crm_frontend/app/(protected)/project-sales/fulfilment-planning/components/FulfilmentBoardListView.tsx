@@ -682,12 +682,11 @@ export function FulfilmentBoardListView({
         accessorFn: (row) => row.fulfilment_location ?? '',
         header: ({ column }) => <DataGridColumnHeader title="Location" column={column} />,
         cell: ({ row }) => {
-          const { key, fulfilment_location: code, fulfilment_location_name: name } =
-            row.original;
+          const { key, fulfilment_location: code } = row.original;
           return code ? (
             <span
               className="block truncate"
-              title={name ? `${code} · ${name}` : code}
+              title={code}
               data-testid={`board-list-location-${key}`}
             >
               {code}

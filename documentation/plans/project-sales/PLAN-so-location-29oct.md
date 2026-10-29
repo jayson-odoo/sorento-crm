@@ -1,6 +1,6 @@
 # PLAN-SO-LOCATION: Fulfilment planning shows the SO line's location better
 
-Status: Review READY (built on the card's recommended answers; owner answers to the crew-ask still open). Track: small fix
+Status: Build (owner answered the card 29 Oct: column after Product, code only, multi-select filter, sorts like the rest). Track: small fix
 (UI on an existing screen, expected diff under 300 lines, no migration, no RBAC change).
 UAC: `so-location-29oct-acceptance-criteria.md`.
 
@@ -102,3 +102,6 @@ Filters menu next to Status. No new component, no mock needed for A beyond this 
   the kind cards leave, ignoring the List's Status and Location filters. The Status filter already
   had this gap before this lane. Fix both together in their own lane if the owner wants it.
 - Browser pass (seeded cloud sandbox, made-up data): `evidence/so-location/EVIDENCE.md`.
+- Owner answers (29 Oct): Q2 code only, so the warehouse name (`fulfilment_location_name` and the
+  name tooltip) was removed again; the cancelled-line location fix stays. Q1 adds tests that
+  Location hides/shows from the Columns menu and is a draggable column.

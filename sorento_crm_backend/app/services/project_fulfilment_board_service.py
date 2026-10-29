@@ -433,7 +433,7 @@ class _Row:
         "project_label", "order_date", "line_no", "so_line_no", "item_code", "product_id",
         "qty",
         "qty_outstanding",
-        "required_date", "warehouse_id", "location", "location_name", "priority", "demand_class",
+        "required_date", "warehouse_id", "location", "priority", "demand_class",
         "so_doc_type",
         "payment_terms_days", "bucket_key", "is_past", "rank_score", "rank_factors",
         "sources", "trail", "options", "contested", "qty_ordered", "qty_delivered",
@@ -1699,8 +1699,6 @@ class FulfilmentBoardService:
                 required_date=line.required_date,
                 warehouse_id=str(line.warehouse_id) if line.warehouse_id else None,
                 location=warehouse.warehouse_code if warehouse else None,
-                # PLAN-SO-LOCATION: the List view's Location tooltip names the warehouse.
-                location_name=warehouse.warehouse_name if warehouse else None,
                 # R17: read here, off the warehouse row the demand query already joins, so
                 # the board's verdict and the supply service's `unplannable_reason` come
                 # from the one predicate rather than from two lookups that could disagree.
@@ -1879,7 +1877,6 @@ class FulfilmentBoardService:
                     required_date=core_line.required_date,
                     warehouse_id=str(core_line.warehouse_id) if core_line.warehouse_id else None,
                     location=warehouse.warehouse_code if warehouse else None,
-                    location_name=warehouse.warehouse_name if warehouse else None,
                     bucket_key=NO_DATE_BUCKET,
                     cancelled=change_row.kind == "cancelled",
                     pending_change_batch_id=str(change_row.batch_id),
@@ -1972,7 +1969,6 @@ class FulfilmentBoardService:
                     required_date=core_line.required_date,
                     warehouse_id=str(core_line.warehouse_id) if core_line.warehouse_id else None,
                     location=warehouse.warehouse_code if warehouse else None,
-                    location_name=warehouse.warehouse_name if warehouse else None,
                     bucket_key=NO_DATE_BUCKET,
                     cancelled=True,
                     # Always set: the screen reads a set `cancelled_at` as committed, never
@@ -5670,7 +5666,6 @@ class FulfilmentBoardService:
             #: This line's own date is behind the as-of date. Per line, not per column.
             "is_past": row.is_past,
             "fulfilment_location": row.location,
-            "fulfilment_location_name": row.location_name,
             #: The same warehouse by id, addressing only. An amendment on a line the engine
             #: proposed nothing for has no Reserve source to read one off, and inventing one
             #: from the location code would be guessing at an id.

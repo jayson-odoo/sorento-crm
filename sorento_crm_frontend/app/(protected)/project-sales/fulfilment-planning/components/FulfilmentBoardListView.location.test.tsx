@@ -47,7 +47,6 @@ function contribution(overrides: Partial<BoardContribution> = {}): BoardContribu
     qty_outstanding: '42',
     required_date: '2026-11-04',
     fulfilment_location: 'BRW-BB',
-    fulfilment_location_name: 'Brickfields Warehouse',
     unplannable: false,
     rank_score: 0.5,
     rank_factors: [],
@@ -83,9 +82,9 @@ async function locationFilterTrigger(): Promise<HTMLElement> {
 }
 
 const threeLines = [
-  contribution({ key: 'so-1:line-1', so_number: 'SO000001', line_no: 1, fulfilment_location: 'WH3-BB', fulfilment_location_name: null }),
+  contribution({ key: 'so-1:line-1', so_number: 'SO000001', line_no: 1, fulfilment_location: 'WH3-BB' }),
   contribution({ key: 'so-2:line-2', so_number: 'SO000002', line_no: 2 }),
-  contribution({ key: 'so-3:line-3', so_number: 'SO000003', line_no: 3, fulfilment_location: 'DC1-BB', fulfilment_location_name: 'DC One' }),
+  contribution({ key: 'so-3:line-3', so_number: 'SO000003', line_no: 3, fulfilment_location: 'DC1-BB' }),
 ];
 
 describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', () => {
@@ -109,22 +108,50 @@ describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', (
     expect(cell).toHaveTextContent('BRW-BB');
   });
 
-  it('gives the warehouse name in the tooltip, or the code alone when there is no name', async () => {
+  it('shows the code only, never the warehouse name (owner, Q2): the tooltip is the code', async () => {
     renderView(threeLines);
     await screen.findByText('SO000001');
-    expect(screen.getByTestId('board-list-location-so-2:line-2')).toHaveAttribute(
-      'title',
-      'BRW-BB · Brickfields Warehouse',
+    const cell = screen.getByTestId('board-list-location-so-2:line-2');
+    expect(cell).toHaveTextContent(/^BRW-BB$/);
+    expect(cell).toHaveAttribute('title', 'BRW-BB');
+  });
+
+  it('hides and shows from the Columns menu like any other column (owner, Q1)', async () => {
+    renderView(threeLines);
+    await screen.findByText('SO000001');
+    expect(screen.getByRole('button', { name: 'Location' })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Location' }));
+    await userEvent.keyboard('{Escape}');
+    await waitFor(() =>
+      expect(screen.queryByRole('button', { name: 'Location' })).not.toBeInTheDocument(),
     );
-    expect(screen.getByTestId('board-list-location-so-1:line-1')).toHaveAttribute(
-      'title',
-      'WH3-BB',
-    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Columns' }));
+    await userEvent.click(await screen.findByRole('menuitemcheckbox', { name: 'Location' }));
+    await userEvent.keyboard('{Escape}');
+    expect(await screen.findByRole('button', { name: 'Location' })).toBeInTheDocument();
+  });
+
+  it('is a draggable column, reorderable like Product beside it (owner, Q1)', async () => {
+    renderView(threeLines);
+    await screen.findByText('SO000001');
+    const locationCell = screen.getByTestId('board-list-location-so-1:line-1').closest('td');
+    const productCell = within(rowOf('SO000001'))
+      .getByText('SRTWT7445-LV')
+      .closest('td');
+    // The grid marks a fixed utility column (select, expand) `data-dnd-disabled`; an
+    // ordinary column, the ones the planner drags, carries no such mark.
+    const selectCell = within(rowOf('SO000001')).getByRole('checkbox').closest('td');
+    expect(selectCell).toHaveAttribute('data-dnd-disabled');
+    expect(productCell).not.toHaveAttribute('data-dnd-disabled');
+    expect(locationCell).not.toHaveAttribute('data-dnd-disabled');
   });
 
   it('says No location for a line AutoCount gave none', async () => {
     renderView([
-      contribution({ fulfilment_location: null, fulfilment_location_name: null, unplannable: true }),
+      contribution({ fulfilment_location: null, unplannable: true }),
     ]);
     await screen.findByText('SO428264');
     expect(screen.getByTestId('board-list-location-so-1:line-80')).toHaveTextContent(
@@ -177,7 +204,6 @@ describe('PLAN-SO-LOCATION: the List view names the SO line’s own location', (
         so_number: 'SO000004',
         line_no: 4,
         fulfilment_location: null,
-        fulfilment_location_name: null,
         unplannable: true,
       }),
     ]);
