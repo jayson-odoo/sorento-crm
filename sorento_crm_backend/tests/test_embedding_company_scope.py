@@ -147,7 +147,7 @@ def emb_data(db):
                 chunk_text=f"ZZEMB chunk {tag}",
                 chunk_hash=hashlib.sha256(f"chunk-{tag}".encode()).hexdigest(),
                 embedding=vec,
-                model_name="zzemb-model",
+                model_name="text-embedding-3-small",
                 model_version="v1",
                 embedding_provider="test",
                 source_hash=doc.source_hash,

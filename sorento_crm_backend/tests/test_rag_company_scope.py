@@ -125,7 +125,7 @@ def emb_rows(db, mocha):
             document_id=doc.id, source_type=source_type, source_id=sid, chunk_index=0,
             chunk_text=f"ZZRAG chunk {tag}",
             chunk_hash=hashlib.sha256(f"c-{tag}".encode()).hexdigest(),
-            embedding=vec, model_name="zzrag", model_version="v1", embedding_provider="test",
+            embedding=vec, model_name="text-embedding-3-small", model_version="v1", embedding_provider="test",
             source_hash=doc.source_hash, metadata_json={}, company_id=cid, is_current=True,
         ))
     db.flush()

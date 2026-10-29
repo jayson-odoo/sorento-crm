@@ -372,6 +372,18 @@ def _create_indexes(db, model=M3S):
 
     for ddl in embedding_indexes.index_ddl(model):
         db.execute(text(ddl.replace(" CONCURRENTLY", "")))  # CONCURRENTLY cannot run inside the test transaction
+    # Competing btree indexes on source_type / is_current / model_name let the planner answer a 60-row
+    # table with btree + sort at a fraction of the HNSW cost, so enable_seqscan=off alone cannot make it
+    # pick the HNSW index. They are dropped here, inside this test's rolled-back transaction, so the plan
+    # can only prove one thing: the reader's predicate matches the partial index. Which plan wins at real
+    # table size is verified separately on a dev copy.
+    for (name,) in db.execute(
+        text(
+            "SELECT indexname FROM pg_indexes WHERE schemaname = current_schema() "
+            "AND tablename = 'embedding_chunks' AND indexname LIKE 'ix\\_embedding\\_chunks%'"
+        )
+    ).all():
+        db.execute(text(f'DROP INDEX "{name}"'))
     db.flush()
 
 
@@ -435,6 +447,18 @@ def _far(i):  # cosine to e0 about 0.1
     return v
 
 
+def _sweep(i):
+    """Vectors fanned out from the query direction (0 to 85 degrees by insertion order), so the HNSW graph is
+    one connected chain: iterative scan can walk from the nearest rows out to the farthest ones. Two separate
+    clusters would be unreachable from each other, which no real catalogue is."""
+    import math
+
+    theta = math.radians(85.0 * i / 200)
+    v = pad(math.cos(theta), math.sin(theta))
+    v[2 + i] = 0.01
+    return v
+
+
 def test_ac_lec_11_index_names_and_ddl_shape():
     from app.services import embedding_indexes
     from app.services.embedding_settings import HOT_FILTERED_SOURCES, RECORD_KEEP_SET
@@ -494,7 +518,7 @@ def test_ac_lec_11_attachment_filtered_read_uses_its_index_and_returns_five_of_f
 def test_ac_lec_11_non_hot_filtered_read_returns_five_of_five_by_iterative_scan(db):
     _create_indexes(db)
     # promotion is 30% of the rows and far from the query; the keep-set index alone would return none.
-    _seed_many(db, [("certificate", 140, _near), ("promotion", 60, _far)])
+    _seed_many(db, [("certificate", 140, _sweep), ("promotion", 60, _sweep)])
     db.execute(text("ANALYZE embedding_chunks"))
     db.execute(text("SET LOCAL enable_seqscan = off"))  # tiny table; see the AC-LEC-10 test
     hits = EmbeddingReadService(db).search_current(pad(1.0), top_k=5, source_type="promotion")

@@ -12,6 +12,11 @@ alongside A's, and
  * let B's near-duplicate chunk take the top slot (or close the confidence gap), so
    the contact's OWN company's match was thrown away and the token went unresolved.
 
+LOOKUP-EMBED-CENTRAL: readers now search only the keep set, so the "customer" probes of this file run on
+`promotion` chunks (a company-owned keep-set source; the `cust_*` names are kept) and products are found
+through `product_spec` chunks, all of model text-embedding-3-small. Customer and `debtor:` chunks are no
+longer read; the company-less `debtor:` source_id rule in the scope SQL is still pinned, on promotion rows.
+
 Two companies, the same product / customer name in each, one shared query vector:
 B's chunk is the exact match (similarity 1.0), A's is a close one (0.9). A contact
 scoped to A must get A's row and never B's.
@@ -27,7 +32,7 @@ import uuid
 import pytest
 from sqlalchemy import text
 
-import app.services.embedding_worker as embedding_worker
+import app.services.embedding_settings as embedding_settings
 import app.services.entity_resolver as er
 from app.models.base import UNSET, set_company_scope
 from app.models.company import Company
@@ -102,7 +107,7 @@ def _seed_chunk(db, source_type: str, source_id: str, key: str, company_id, vec)
             chunk_text=key,
             chunk_hash=h,
             embedding=vec,
-            model_name="zz-test",
+            model_name="text-embedding-3-small",
             model_version="1",
             embedding_provider="zz-test",
             source_hash=h,
@@ -172,12 +177,14 @@ def world(db, monkeypatch):
     cust_a = _seed_customer(db, a.id, f"ZZT3CA{suffix}", name)
     cust_b = _seed_customer(db, b.id, f"ZZT3CB{suffix}", name)
     # B holds the EXACT vector, A the close one: the unscoped ranking puts B first.
-    _seed_chunk(db, "product", prod_a, f"ZZT3A{suffix}", a.id, near)
-    _seed_chunk(db, "product", prod_b, f"ZZT3B{suffix}", b.id, q)
-    _seed_chunk(db, "customer", cust_a, f"ZZT3CA{suffix}", a.id, near)
-    _seed_chunk(db, "customer", cust_b, f"ZZT3CB{suffix}", b.id, q)
+    _seed_chunk(db, "product_spec", prod_a, f"ZZT3A{suffix}", a.id, near)
+    _seed_chunk(db, "product_spec", prod_b, f"ZZT3B{suffix}", b.id, q)
+    _seed_chunk(db, "promotion", cust_a, f"ZZT3CA{suffix}", a.id, near)
+    _seed_chunk(db, "promotion", cust_b, f"ZZT3CB{suffix}", b.id, q)
 
-    monkeypatch.setattr(embedding_worker, "_embed_text_chunks", lambda texts, *a, **k: [q for _ in texts])
+    # The seam captures embed_search_texts when first built; a fresh cache makes it capture THIS test's stub.
+    monkeypatch.setattr(er, "_SEARCH_SEAMS", {})
+    monkeypatch.setattr(embedding_settings, "embed_search_texts", lambda texts, model, **k: [q for _ in texts])
     return {
         "a": a.id, "b": b.id, "suffix": suffix,
         "prod_a": prod_a, "prod_b": prod_b, "cust_a": cust_a, "cust_b": cust_b,
@@ -194,7 +201,7 @@ def _uuids(hits) -> set[str]:
 def test_probe_never_returns_another_companys_customer(db, world):
     """Red before the fix: the probe handed back company B's customer uuid."""
     set_company_scope(db, frozenset({world["a"]}))
-    hits = er._tier3_embedding_lookup(db, f"zzt3 hardware {world['suffix']}", frozenset({"customer"}))
+    hits = er._tier3_embedding_lookup(db, f"zzt3 hardware {world['suffix']}", frozenset({"promotion"}))
     assert world["cust_b"] not in _uuids(hits)
     assert _uuids(hits) == {world["cust_a"]}
 
@@ -210,14 +217,14 @@ def test_probe_finds_own_product_when_another_company_has_the_closer_twin(db, wo
 def test_probe_fails_closed_under_unset_scope(db, world):
     """UNSET (scope resolver never ran) sees no company-owned chunk."""
     set_company_scope(db, UNSET)
-    hits = er._tier3_embedding_lookup(db, f"zzt3 hardware {world['suffix']}", frozenset({"customer"}))
+    hits = er._tier3_embedding_lookup(db, f"zzt3 hardware {world['suffix']}", frozenset({"promotion"}))
     assert not (_uuids(hits) & {world["cust_a"], world["cust_b"]})
 
 
 def test_probe_under_no_scope_still_ranks_every_company(db, world):
     """Guard: a None scope (staff / back-compat) is unchanged - B is the top hit."""
     set_company_scope(db, None)
-    hits = er._tier3_embedding_lookup(db, f"zzt3 hardware {world['suffix']}", frozenset({"customer"}))
+    hits = er._tier3_embedding_lookup(db, f"zzt3 hardware {world['suffix']}", frozenset({"promotion"}))
     assert _uuids(hits) == {world["cust_b"]}
 
 
@@ -239,10 +246,12 @@ def test_resolve_references_resolves_to_own_company_customer(db, world):
     unresolved, although A owns a matching customer."""
     set_company_scope(db, frozenset({world["a"]}))
     token = f"zzt3 hardware qq{world['suffix']}"
-    res = er.resolve_references(db, [token], allowed_entity_types=["customer"])
+    # Changed from the customer master: customers are no longer read by the embedding tier, so the same
+    # scoping question is asked of the product found through its product_spec chunk.
+    res = er.resolve_references(db, [token], allowed_entity_types=["product"])
     got = {str(m.uuid) for tr in res.resolutions for m in tr.matches}
-    assert world["cust_b"] not in got
-    assert world["cust_a"] in got
+    assert world["prod_b"] not in got
+    assert world["prod_a"] in got
 
 
 # ------------------------------------------------------------- RAG phrase probe
@@ -256,7 +265,7 @@ def test_rag_phrase_never_returns_another_companys_codes(db, world):
     """Red before the fix: company B's customer and product codes came back."""
     s = world["suffix"]
     set_company_scope(db, frozenset({world["a"]}))
-    hits = er._rag_resolve_phrase(db, f"zzt3 phrase {s}", frozenset({"customer", "product"}))
+    hits = er._rag_resolve_phrase(db, f"zzt3 phrase {s}", frozenset({"promotion", "product"}))
     codes = {h.canonical_code for h in hits}
     assert not codes & {f"ZZT3CB{s}", f"ZZT3B{s}"}
     assert {f"ZZT3CA{s}", f"ZZT3A{s}"} <= codes
@@ -266,7 +275,7 @@ def test_rag_phrase_under_no_scope_still_returns_every_company(db, world):
     """Guard: a None scope (staff / back-compat) is unchanged."""
     s = world["suffix"]
     set_company_scope(db, None)
-    hits = er._rag_resolve_phrase(db, f"zzt3 phrase {s}", frozenset({"customer"}))
+    hits = er._rag_resolve_phrase(db, f"zzt3 phrase {s}", frozenset({"promotion"}))
     assert {f"ZZT3CA{s}", f"ZZT3CB{s}"} <= {h.canonical_code for h in hits}
 
 
@@ -377,7 +386,7 @@ def test_orm_query_exists_over_product_is_scoped(db, world):
 def _seed_debtor(db, world) -> str:
     code = f"ZZT3DEB{world['suffix']}"
     q, _ = _vectors(int(world["suffix"], 16))
-    _seed_chunk(db, "customer", f"debtor:{code}", f"debtor:{code}", None, q)
+    _seed_chunk(db, "promotion", f"debtor:{code}", f"debtor:{code}", None, q)
     return code
 
 
@@ -385,7 +394,7 @@ def test_rag_phrase_never_returns_a_master_less_debtor_under_a_company_scope(db,
     """Red before the fix: B's master-less debtor code came back to A's contact."""
     code = _seed_debtor(db, world)
     set_company_scope(db, frozenset({world["a"]}))
-    hits = er._rag_resolve_phrase(db, f"zzt3 debtor {world['suffix']}", frozenset({"customer"}))
+    hits = er._rag_resolve_phrase(db, f"zzt3 debtor {world['suffix']}", frozenset({"promotion"}))
     assert code not in {h.canonical_code for h in hits}
     assert f"ZZT3CA{world['suffix']}" in {h.canonical_code for h in hits}
 
@@ -393,7 +402,7 @@ def test_rag_phrase_never_returns_a_master_less_debtor_under_a_company_scope(db,
 def test_rag_phrase_never_returns_a_master_less_debtor_under_unset_scope(db, world):
     code = _seed_debtor(db, world)
     set_company_scope(db, UNSET)
-    hits = er._rag_resolve_phrase(db, f"zzt3 debtor {world['suffix']}", frozenset({"customer"}))
+    hits = er._rag_resolve_phrase(db, f"zzt3 debtor {world['suffix']}", frozenset({"promotion"}))
     assert code not in {h.canonical_code for h in hits}
 
 
@@ -401,8 +410,9 @@ def test_rag_phrase_still_returns_a_master_less_debtor_to_staff(db, world):
     """Guard: no company scope (staff) keeps finding master-less debtors."""
     code = _seed_debtor(db, world)
     set_company_scope(db, None)
-    hits = er._rag_resolve_phrase(db, f"zzt3 debtor {world['suffix']}", frozenset({"customer"}))
-    assert code in {h.canonical_code for h in hits}
+    hits = er._rag_resolve_phrase(db, f"zzt3 debtor {world['suffix']}", frozenset({"promotion"}))
+    # No customer entity maps any more, so the seed's key comes back as stored.
+    assert f"debtor:{code}" in {h.canonical_code for h in hits}
 
 
 def test_tier3_debtor_seed_does_not_sink_own_customer_under_a_company_scope(db, world):
@@ -410,7 +420,7 @@ def test_tier3_debtor_seed_does_not_sink_own_customer_under_a_company_scope(db, 
     top slot, was then blocked by the backstop, and A's own customer went unresolved."""
     _seed_debtor(db, world)
     set_company_scope(db, frozenset({world["a"]}))
-    hits = er._tier3_embedding_lookup(db, f"zzt3 debtor t3 {world['suffix']}", frozenset({"customer"}))
+    hits = er._tier3_embedding_lookup(db, f"zzt3 debtor t3 {world['suffix']}", frozenset({"promotion"}))
     assert _uuids(hits) == {world["cust_a"]}
 
 
@@ -422,11 +432,11 @@ def test_rag_search_never_returns_a_master_less_debtor_under_a_company_scope(db,
     code = _seed_debtor(db, world)
     q, _ = _vectors(int(world["suffix"], 16))
     set_company_scope(db, frozenset({world["a"]}))
-    rows = EmbeddingReadService(db).search_current(q, top_k=10, source_type="customer")
+    rows = EmbeddingReadService(db).search_current(q, top_k=10, source_type="promotion")
     keys = {doc.source_key for _, doc, _ in rows}
     assert f"debtor:{code}" not in keys
     assert f"ZZT3CA{world['suffix']}" in keys
 
     set_company_scope(db, None)
-    rows = EmbeddingReadService(db).search_current(q, top_k=10, source_type="customer")
+    rows = EmbeddingReadService(db).search_current(q, top_k=10, source_type="promotion")
     assert f"debtor:{code}" in {doc.source_key for _, doc, _ in rows}
