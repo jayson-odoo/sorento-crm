@@ -794,7 +794,8 @@ def sales_figure_decision(
     if (
         decision == "not_granted"
         and (
-            (routed.get("capability_from") == "outstanding" and routed.get("basis") in (None, "pending_delivery"))
+            # An undelivered-orders ask too: it is answered with pending delivery and the SO line (eval rpt-030, D13).
+            (routed.get("capability_from") == "outstanding" and routed.get("basis") in (None, "pending_delivery", "outstanding"))
             or report_ask.list_pick_kind(routed) == "pending_delivery"
         )
         and contact_asker.pending_delivery_open(db, str(resolved) if resolved else None)
@@ -2230,6 +2231,11 @@ def run_fetch(
             _kinds = report_ask.outstanding_kinds(revealed=False, decision=sales_figure_decision(
                 db, contact_id, space_id, order_status=order_status_raw, granted=False, parse_output=parse_output,
             ))
+        so_redirect = _kinds == ("pending_delivery",) and parse_output.get("basis") == "outstanding"
+        if so_redirect:
+            # Eval rpt-030/-038, as before #1922 (D13): undelivered orders asked by a contact that may see pending
+            # delivery only is answered with pending delivery, under the one SO sentence; never refused outright.
+            parse_output = {**parse_output, "basis": "pending_delivery"}
         settled, line = report_ask.settle(
             db, parse_output, entities, dealer=bool(customer_scope.get("enforced")), agent_filter=_agent_filter,
             companies=sales_company_ask._companies(db, contact_id, space_id), kinds=_kinds,
@@ -2270,6 +2276,10 @@ def run_fetch(
             semantic_input["report_ask_not_applied"] = unapplied
         if settled.extras.get("note"):
             semantic_input["report_ask_note"] = settled.extras["note"]
+        if so_redirect:
+            semantic_input["report_ask_note"] = "\n\n".join(
+                n for n in (fetch_mod.SO_NOT_ENABLED_MESSAGE, semantic_input.get("report_ask_note")) if n
+            )
         if settled.extras.get("detail"):
             semantic_input["report_ask_detail"] = True  # R3c: a row's detail leaves the ranking on screen
             if settled.extras.get("detail_second"):
