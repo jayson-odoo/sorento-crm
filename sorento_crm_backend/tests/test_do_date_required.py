@@ -213,3 +213,26 @@ def test_bulk_import_creates_dated_order(db):
     )
     assert result["created"] == 1, result
     assert _order(db, number).order_date == date(2026, 10, 29)
+
+
+# --- read-only report of existing undated DOs -----------------------------------------
+
+
+def test_report_lists_live_undated_dos_only(db):
+    from scripts.report_undated_dos import undated_dos
+
+    undated = unique_code("RMA")
+    dated = unique_code("DO")
+    gone = unique_code("RMA")
+    db.add_all([
+        Order(order_number=undated, order_date=None, order_type="RMA"),
+        Order(order_number=dated, order_date=date(2026, 7, 1)),
+        Order(order_number=gone, order_date=None, deleted_at=datetime(2026, 9, 1)),
+    ])
+    db.flush()
+
+    rows = {r["order_number"]: r for r in undated_dos(db.connection())}
+    assert undated in rows and dated not in rows and gone not in rows
+    assert rows[undated]["line_count"] == 0
+    assert rows[undated]["from_autocount"] is False
+    assert rows[undated]["order_type"] == "RMA"

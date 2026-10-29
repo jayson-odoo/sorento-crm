@@ -1,6 +1,6 @@
 # PLAN: DO date required (DO-IMPORT-DATE)
 
-Status: in progress (small fix track: no migration, no auth/RBAC change, no new ingest surface)
+Status: built, in review (small fix track: no migration, no auth/RBAC change, no new ingest surface)
 
 Owner, 29 Oct 2026: "there shouldn't be any undated DO; fix why there is no date instead of
 circumventing it".
@@ -29,14 +29,18 @@ accepts an undated DO too. `bulk_import_orders` (JSON bulk import) has the same 
    optional so existing NULL rows still read. `bulk_import_orders` refuses a new row with no date
    and a row that would blank an existing date.
 3. Read-only report `scripts/report_undated_dos.py`: lists live undated DOs (number, type, created
-   at, delivery date, line count, source) for the owner to decide delete vs fill. Changes no data.
+   at, delivery date, line count, cancelled, AutoCount or not, company) for the owner to decide
+   delete vs fill. Changes no data. Run from `sorento_crm_backend/`:
+   `venv/bin/python scripts/report_undated_dos.py`.
 4. No DB constraint here: NOT NULL waits until the owner has cleaned the 11 rows.
 
 ## Follow-up (not in this lane)
 
-Once the data is clean, the "undated DO" exclusion in the delivered-sales / pending-delivery
-dataset (066b966e60, #1401) is dead code: remove it under REPORT-OUTSTANDING-SUMMARY, along with a
-NOT NULL migration on `orders.order_date`.
+For REPORT-OUTSTANDING-SUMMARY: once the owner has cleaned the existing rows (the report below
+prints none), the "undated DO" exclusion in the delivered-sales / pending-delivery dataset
+(066b966e60, #1401), `Order.order_date.isnot(None)` in `_fixed_filters`
+(`app/services/reports/datasets/delivery_order_lines.py:92`), is dead code: remove it there,
+along with a NOT NULL migration on `orders.order_date`. Left in place here on purpose.
 
 ## Tests (red first)
 
