@@ -110,7 +110,7 @@ LIST_MODELS_TIMEOUT_SECONDS = 10.0
 DEFAULT_MODELS: dict[str, str] = {
     "openai": "gpt-4o",
     "anthropic": "claude-sonnet-4-6",
-    "gemini": "gemini-2.5-flash",
+    "gemini": "gemini-3.5-flash",
 }
 
 
@@ -1441,7 +1441,7 @@ class GeminiProvider:
 
     name = "gemini"
 
-    def __init__(self, api_key: str, default_model: str = "gemini-2.5-flash") -> None:
+    def __init__(self, api_key: str, default_model: str = DEFAULT_MODELS["gemini"]) -> None:
         self.api_key = api_key
         self.default_model = default_model
 
@@ -1891,7 +1891,7 @@ def get_provider(provider: str, api_key: str, model: Optional[str] = None) -> LL
     if key == "anthropic":
         return AnthropicProvider(api_key=api_key, default_model=model or "claude-haiku-4-5")
     if key == "gemini":
-        return GeminiProvider(api_key=api_key, default_model=model or "gemini-2.5-flash")
+        return GeminiProvider(api_key=api_key, default_model=model or DEFAULT_MODELS["gemini"])
     raise ValueError(f"Unsupported provider: {provider}")
 
 

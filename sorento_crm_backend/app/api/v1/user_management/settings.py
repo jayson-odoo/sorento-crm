@@ -148,6 +148,9 @@ class SystemSettingUpdate(BaseModel):
     media_image_provider: Optional[str] = None
     media_image_model: Optional[str] = None
     media_image_degraded_model: Optional[str] = None
+    # The PO / delivery schedule document reader. Blank falls back to the env.
+    document_ai_provider: Optional[str] = None
+    document_ai_model: Optional[str] = None
     media_transcribe_model: Optional[str] = None
     # Voice's own degraded tier. NULL means the voice quota is a hard refusal
     # rather than a degrade - image was measured and is seeded, voice was not.
@@ -450,6 +453,8 @@ def get_settings(
                 "media_image_provider": getattr(settings, "media_image_provider", None) if settings else None,
                 "media_image_model": getattr(settings, "media_image_model", None) if settings else None,
                 "media_image_degraded_model": getattr(settings, "media_image_degraded_model", None) if settings else None,
+                "document_ai_provider": getattr(settings, "document_ai_provider", None) if settings else None,
+                "document_ai_model": getattr(settings, "document_ai_model", None) if settings else None,
                 "media_transcribe_model": getattr(settings, "media_transcribe_model", "whisper-1") if settings else None,
                 "media_voice_degraded_model": getattr(settings, "media_voice_degraded_model", None) if settings else None,
                 "media_language_mode": getattr(settings, "media_language_mode", "pinned") if settings else None,
@@ -923,6 +928,14 @@ def _update_general_settings_impl(settings_data: SystemSettingUpdate, db: Sessio
             for model_col in ("media_image_model", "media_image_degraded_model"):
                 if model_col not in update_data:
                     update_data[model_col] = None
+
+    # The document reader: same rule, same reason.
+    if "document_ai_provider" in update_data:
+        new_provider = (update_data["document_ai_provider"] or "").strip() or None
+        update_data["document_ai_provider"] = new_provider
+        old_provider = (getattr(settings, "document_ai_provider", None) or "").strip() or None
+        if new_provider != old_provider and "document_ai_model" not in update_data:
+            update_data["document_ai_model"] = None
 
     # Chatbot media: the pair has to hold together, and the per-field ge/le on
     # SystemSettingUpdate cannot express a relationship between two fields. An

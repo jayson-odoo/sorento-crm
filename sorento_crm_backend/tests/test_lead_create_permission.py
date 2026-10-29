@@ -69,11 +69,20 @@ def _title() -> str:
     return f"{MARKER} perm {uuid.uuid4().hex}"
 
 
+def _lead_body(session, **extra) -> dict:
+    """A lead create body. LEAD-GOVERNS-REGISTER B1: it names an existing customer."""
+    from ._sample_request_seed import make_customer
+
+    customer = make_customer(session, _sorento(session))
+    session.flush()
+    return {"title": _title(), "customer_id": customer.id, **extra}
+
+
 def test_a_salesperson_with_edit_can_create_a_lead(session):
     user_id = _user(session, f"{MARKER} Sales")
     client, originals = _gated_client(session, user_id, EDIT_ONLY)
     try:
-        response = client.post(LEADS_BASE, json={"title": _title()})
+        response = client.post(LEADS_BASE, json=_lead_body(session))
         assert response.status_code == 201, response.text
     finally:
         _restore(originals)
@@ -83,7 +92,7 @@ def test_a_salesperson_with_edit_can_qualify_a_lead(session):
     user_id = _user(session, f"{MARKER} Sales")
     client, originals = _gated_client(session, user_id, EDIT_ONLY)
     try:
-        lead = client.post(LEADS_BASE, json={"title": _title()}).json()
+        lead = client.post(LEADS_BASE, json=_lead_body(session)).json()
         response = client.post(
             f"{LEADS_BASE}/{lead['id']}/qualify", json={"title": _title()}
         )
@@ -96,7 +105,7 @@ def test_view_only_still_cannot_create_a_lead(session):
     user_id = _user(session, f"{MARKER} Reader")
     client, originals = _gated_client(session, user_id, VIEW_ONLY)
     try:
-        response = client.post(LEADS_BASE, json={"title": _title()})
+        response = client.post(LEADS_BASE, json=_lead_body(session))
         assert response.status_code == 403, response.text
     finally:
         _restore(originals)
@@ -110,7 +119,7 @@ def test_an_edit_holder_cannot_qualify_a_project_onto_someone_else(session):
     other_id = _user(session, f"{MARKER} Other")
     client, originals = _gated_client(session, user_id, EDIT_ONLY)
     try:
-        lead = client.post(LEADS_BASE, json={"title": _title()}).json()
+        lead = client.post(LEADS_BASE, json=_lead_body(session)).json()
         response = client.post(
             f"{LEADS_BASE}/{lead['id']}/qualify",
             json={"title": _title(), "owner_user_id": other_id},
@@ -126,7 +135,7 @@ def test_a_manager_may_qualify_onto_someone_else(session):
     other_id = _user(session, f"{MARKER} Other")
     client, originals = _gated_client(session, user_id, MANAGER)
     try:
-        lead = client.post(LEADS_BASE, json={"title": _title()}).json()
+        lead = client.post(LEADS_BASE, json=_lead_body(session)).json()
         response = client.post(
             f"{LEADS_BASE}/{lead['id']}/qualify",
             json={"title": _title(), "owner_user_id": other_id},
@@ -144,10 +153,10 @@ def test_an_edit_holder_cannot_create_a_lead_owned_by_someone_else(session):
     try:
         # Naming oneself stays fine. First: the refusal below rolls the request's session
         # back, and that would take this test's own user rows with it.
-        own = client.post(LEADS_BASE, json={"title": _title(), "owner_user_id": user_id})
+        own = client.post(LEADS_BASE, json=_lead_body(session, owner_user_id=user_id))
         assert own.status_code == 201, own.text
         response = client.post(
-            LEADS_BASE, json={"title": _title(), "owner_user_id": other_id}
+            LEADS_BASE, json=_lead_body(session, owner_user_id=other_id)
         )
         assert response.status_code == 403, response.text
         assert response.json()["code"] == "lead_owner_assign_forbidden"

@@ -28,7 +28,7 @@ from sqlalchemy.orm import Session
 
 from app.api.v1.projects._common import acting_company_id, permission_slugs
 from app.database import get_db
-from app.dependencies import require_permission
+from app.dependencies import require_any_permission, require_permission
 from app.schemas.common import MAX_PAGE_LIMIT, ListResponse
 from app.schemas.projects import (
     ClashPreviewResponse,
@@ -48,12 +48,14 @@ from app.schemas.projects import (
 )
 from app.services import project_lead_service as svc
 from app.services import project_service as projects
-from app.services.error_handler import handle_internal_error
+from app.services.error_handler import AppException, handle_internal_error
 from app.services.uuid_path_param import validate_uuid_path
 
 router = APIRouter()
 
 VIEW = "projects.projects.view"
+VIEW_OWN = "projects.projects.view_own"
+SUBMIT = "projects.registrations.submit"
 # Creating and qualifying a lead take EDIT, the grant that registers a project (owner, 13 Oct):
 # a new project needs its lead, so whoever may register one must be able to create the lead.
 # They used to take "projects.projects.create", which no permission registry defines, so only
@@ -93,10 +95,11 @@ def list_leads(
     limit: int = Query(50, ge=1, le=MAX_PAGE_LIMIT),
     sort: str = Query("created_at"),
     dir: str = Query("desc", pattern="^(asc|desc)$"),
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_any_permission([VIEW, VIEW_OWN])),
     db: Session = Depends(get_db),
 ):
-    """Every lead in the company. Rows carry informational duplicate hints (AC-O3)."""
+    """Every lead in the company, or only the caller's own with view_own alone. Rows carry
+    informational duplicate hints (AC-O3)."""
     try:
         result = svc.list_leads(
             db,
@@ -224,12 +227,17 @@ def customer_portfolio(
 @router.get("/{lead_id}", response_model=ProjectLeadResponse)
 def get_lead(
     lead_id: str,
-    current_user: dict = Depends(require_permission(VIEW)),
+    current_user: dict = Depends(require_any_permission([VIEW, VIEW_OWN])),
     db: Session = Depends(get_db),
 ):
     try:
         validate_uuid_path(lead_id, resource="Lead")
-        return _one(db, svc.get_lead(db, lead_id), current_user)
+        lead = svc.get_lead(db, lead_id)
+        if svc.reads_own_leads_only(
+            permission_slugs(db, current_user["id"])
+        ) and not svc.is_own_lead(lead, current_user["id"]):
+            raise AppException(status_code=404, message="Lead not found.", code="lead_not_found")
+        return _one(db, lead, current_user)
     except Exception as exc:
         raise exc if hasattr(exc, "status_code") else handle_internal_error(str(exc))
 
@@ -240,48 +248,36 @@ def get_lead(
 @router.post("", response_model=ProjectLeadResponse, status_code=status.HTTP_201_CREATED)
 def create_lead(
     payload: ProjectLeadCreate,
-    current_user: dict = Depends(require_permission(EDIT)),
+    current_user: dict = Depends(require_any_permission([EDIT, SUBMIT])),
     db: Session = Depends(get_db),
 ):
     """Record a sighting. No clash check, deliberately (AC-O3).
 
-    The BUYER is optional (AC-A1): marketing works BCI and panel channels, where on day
-    one nobody knows who the buyer is, because the trading house only exists once a
-    contractor is awarded. Who told us goes on the informant fields instead, and is
-    never written to ``customers``.
-
-    ``customer_id`` or a ``new_customer`` block is accepted for the case where the buyer
-    IS already known and not on file. Neither given means no buyer yet, which is the
-    normal shape of a BCI lead and not an error.
+    A lead carries an existing customer (LEAD-GOVERNS-REGISTER B1): the project that comes
+    out of it takes that customer. Who told us goes on the informant fields instead, and is
+    never written to ``customers``. A submit-only salesperson's lead is always their own.
     """
     try:
         company_id = acting_company_id(db)
+        permissions = permission_slugs(db, current_user["id"])
         body = payload.model_dump(exclude_unset=True)
+        if body.pop("new_customer", None) or not body.get("customer_id"):
+            raise AppException(
+                status_code=422,
+                message="Pick the customer this lead is for.",
+                code="lead_customer_required",
+            )
+        if SUBMIT in permissions and EDIT not in permissions:
+            body["owner_user_id"] = current_user["id"]
         # Handing a lead to someone else goes through assign (the acceptance clock, the
         # notification, the active-user check), never through create.
         owner = body.get("owner_user_id")
-        if (
-            owner
-            and owner != current_user["id"]
-            and MANAGE not in permission_slugs(db, current_user["id"])
-        ):
-            from app.services.error_handler import AppException
-
+        if owner and owner != current_user["id"] and MANAGE not in permissions:
             raise AppException(
                 status_code=403,
                 message="Create the lead, then assign it: only a sales manager can create it in someone else's name.",
                 code="lead_owner_assign_forbidden",
             )
-        new_customer = body.pop("new_customer", None)
-        if body.get("customer_id") or new_customer:
-            customer = svc.select_or_create_customer(
-                db,
-                company_id=company_id,
-                actor_user_id=current_user["id"],
-                customer_id=body.get("customer_id"),
-                new_customer=new_customer,
-            )
-            body["customer_id"] = customer.id
         lead = svc.create_lead(
             db,
             company_id=company_id,
@@ -309,7 +305,15 @@ def update_lead(
         svc.assert_can_edit_lead(
             lead, current_user["id"], permission_slugs(db, current_user["id"])
         )
-        svc.update_lead(db, lead, payload.model_dump(exclude_unset=True))
+        body = payload.model_dump(exclude_unset=True)
+        # A lead that has a customer keeps one (it may change); one that never had it may stay without.
+        if "customer_id" in body and not body["customer_id"] and lead.customer_id:
+            raise AppException(
+                status_code=422,
+                message="A lead needs its customer. Pick another one instead of clearing it.",
+                code="lead_customer_required",
+            )
+        svc.update_lead(db, lead, body)
         db.commit()
         db.refresh(lead)
         return _one(db, lead, current_user)
