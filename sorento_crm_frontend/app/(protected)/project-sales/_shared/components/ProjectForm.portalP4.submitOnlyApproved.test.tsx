@@ -289,10 +289,6 @@ function renderForm(props: { mode: 'create' } | { mode: 'edit'; project: Project
   );
 }
 
-function openDetails() {
-  const header = screen.getByRole('button', { name: /^Details/ });
-  if (header.getAttribute('aria-expanded') !== 'true') fireEvent.click(header);
-}
 const callsTo = (method: string, part: string) =>
   calls.filter((c) => c.method === method && c.url.includes(part));
 beforeEach(() => {
@@ -333,13 +329,15 @@ describe.each([
     expect(calls.filter((c) => c.url.includes('/submit'))).toHaveLength(0);
   });
 
-  it('shows no Lead field (J3c stays)', () => {
-    renderForm({
+  it('shows the Lead field, not required (LEAD-GOVERNS-REGISTER)', () => {
+    const { container } = renderForm({
       mode: 'edit',
       project: editProject({ approval_state: state, owner_user_id: 'u-me' } as never),
     });
-    openDetails();
-    expect(screen.queryByLabelText(/^Lead/)).toBeNull();
+    expect(screen.getByLabelText(/^Lead/)).toBeInTheDocument();
+    const label = container.querySelector('label[for="project-lead"]');
+    expect(label?.textContent).not.toContain('*');
+    expect(screen.getByRole('button', { name: 'Save changes' })).toBeEnabled();
   });
 });
 
