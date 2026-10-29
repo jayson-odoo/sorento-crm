@@ -8,6 +8,7 @@ iterate tool calls in the agent loop.
 """
 from __future__ import annotations
 
+import copy
 import json
 import logging
 import os
@@ -46,6 +47,10 @@ class ChatResult:
     # The model id the provider says answered (a dated snapshot of the alias asked for);
     # "" when it reports none (PARSER-GEMINI-LITE: the parser's `understood` facts carry it).
     model: str = ""
+    # The provider-native assistant turn, when it carries what a rebuild from `tool_calls` would lose
+    # (a Gemini thought signature, Claude thinking blocks); None otherwise. A tool loop echoes it on
+    # the assistant message as `continuation`, and the same provider replays it as is (AGENTIC-P0-PROVIDER).
+    continuation: Optional[dict] = None
 
 
 class ResponseTruncated(RuntimeError):
@@ -755,6 +760,11 @@ def _convert_messages_to_anthropic(messages: list[dict]) -> list[dict]:
             continue
 
         if role == "assistant":
+            native = msg.get("continuation")
+            if isinstance(native, dict) and native.get("provider") == "anthropic" and native.get("content"):
+                # Thinking blocks go back byte for byte, signatures included, or the tool loop loses them.
+                out.append({"role": "assistant", "content": native["content"]})
+                continue
             blocks: list[dict] = []
             text = msg.get("content")
             if isinstance(text, str) and text.strip():
@@ -790,6 +800,34 @@ def _convert_messages_to_anthropic(messages: list[dict]) -> list[dict]:
         else:
             out.append({"role": "user", "content": json.dumps(content) if content is not None else ""})
     return out
+
+
+# A caller's `reasoning_effort` on Claude, as the tokens its thinking may add to `max_tokens` (the
+# caller's number is its answer budget, the same rule as Gemini). `high` stays under the SDK's
+# non-streaming ceiling (21,333 tokens without a caller timeout) at the loops' 2048 answer budget.
+ANTHROPIC_EFFORT_BUDGETS: dict[str, int] = {"low": 1024, "medium": 4096, "high": 16384, "xhigh": 16384, "max": 16384}
+ANTHROPIC_EFFORTS = frozenset({"none", "minimal", *ANTHROPIC_EFFORT_BUDGETS})
+
+
+def _anthropic_thinking(model: str, effort: str) -> tuple[dict[str, Any], int]:
+    """`(request fields, tokens to add to max_tokens)` for an effort on this Claude model.
+
+    Claude 4.6 and later think adaptively, steered by `output_config.effort`; older models
+    (Haiku 4.5, Sonnet 4.5, ...) take only a fixed `budget_tokens`. `none` / `minimal` asks
+    for the least: effort `low` without thinking from 4.6, nothing at all before it.
+    An unknown value raises rather than being dropped, so a label typo shows at once.
+    """
+    key = (effort or "").strip().lower()
+    if key not in ANTHROPIC_EFFORTS:
+        raise ValueError(f"Anthropic takes no reasoning effort {effort!r}; use one of {sorted(ANTHROPIC_EFFORTS)}.")
+    version = re.search(r"claude-(?:opus|sonnet|haiku|fable|mythos)-(\d+)(?:-(\d{1,2})(?!\d))?", (model or "").lower())
+    adaptive = version is not None and (int(version.group(1)), int(version.group(2) or 0)) >= (4, 6)
+    budget = ANTHROPIC_EFFORT_BUDGETS.get(key)
+    if budget is None:
+        return ({"output_config": {"effort": "low"}} if adaptive else {}), 0
+    if adaptive:
+        return {"thinking": {"type": "adaptive"}, "output_config": {"effort": key}}, budget
+    return {"thinking": {"type": "enabled", "budget_tokens": budget}}, budget
 
 
 class AnthropicProvider:
@@ -834,6 +872,12 @@ class AnthropicProvider:
         # We surface that object as ``content`` (JSON string) so the caller parses
         # it exactly like the OpenAI path.
         if json_schema is not None:
+            if reasoning_effort:
+                # Anthropic refuses thinking alongside a forced tool, which is how structured output works here.
+                raise ValueError(
+                    "Anthropic cannot take a reasoning effort on a structured-output (forced tool) call; "
+                    "send `json_schema` without `reasoning_effort`."
+                )
             tool_name = json_schema_name or "structured_result"
             ant_messages = _convert_messages_to_anthropic(rest)
             if images:
@@ -901,15 +945,25 @@ class AnthropicProvider:
             kwargs["system"] = system_text
         if tools:
             kwargs["tools"] = _convert_tools_to_anthropic(tools)
+        if reasoning_effort:
+            thinking_fields, thinking_room = _anthropic_thinking(kwargs["model"], reasoning_effort)
+            kwargs.update(thinking_fields)
+            kwargs["max_tokens"] += thinking_room
+            if "thinking" in thinking_fields:
+                # Anthropic refuses a set temperature alongside thinking.
+                kwargs.pop("temperature")
 
         resp = client.messages.create(**kwargs)
 
         text_chunks: list[str] = []
         normalized_calls: list[dict] = []
+        # Every block in the order it came, for a tool loop to send back when thinking is among them.
+        native: list[dict] = []
         for block in (getattr(resp, "content", None) or []):
             block_type = getattr(block, "type", None)
             if block_type == "text":
                 text_chunks.append(getattr(block, "text", "") or "")
+                native.append({"type": "text", "text": getattr(block, "text", "") or ""})
             elif block_type == "tool_use":
                 normalized_calls.append(
                     {
@@ -918,6 +972,19 @@ class AnthropicProvider:
                         "arguments": getattr(block, "input", {}) or {},
                     }
                 )
+                call = normalized_calls[-1]
+                native.append(
+                    {"type": "tool_use", "id": call["id"], "name": call["name"], "input": copy.deepcopy(call["arguments"])}
+                )
+            elif block_type == "thinking":
+                native.append({
+                    "type": "thinking",
+                    "thinking": getattr(block, "thinking", "") or "",
+                    "signature": getattr(block, "signature", "") or "",
+                })
+            elif block_type == "redacted_thinking":
+                native.append({"type": "redacted_thinking", "data": getattr(block, "data", "") or ""})
+        thought = any(b["type"] in ("thinking", "redacted_thinking") for b in native)
 
         usage = getattr(resp, "usage", None)
         prompt_tokens = int(getattr(usage, "input_tokens", 0) or 0)
@@ -933,6 +1000,7 @@ class AnthropicProvider:
             raw=resp,
             cached_tokens=int(getattr(usage, "cache_read_input_tokens", 0) or 0),
             model=str(getattr(resp, "model", "") or ""),
+            continuation={"provider": "anthropic", "content": native} if thought else None,
         )
 
     def embed(self, text: str) -> list[float]:
@@ -1324,6 +1392,11 @@ def _convert_messages_to_gemini(messages: list[dict]) -> list[dict]:
                 if call_id:
                     call_names[str(call_id)] = name
                 parts.append({"functionCall": {"name": name, "args": parsed}})
+            native = msg.get("continuation")
+            if isinstance(native, dict) and native.get("provider") == "gemini" and native.get("parts"):
+                # The model's own parts, thought signatures included: Gemini 3 refuses a function call
+                # replayed in the current turn without its signature. Ids above still map to names.
+                parts = list(native["parts"])
             if not parts:
                 parts = [{"text": ""}]
             contents.append({"role": "model", "parts": parts})
@@ -1738,6 +1811,11 @@ class GeminiProvider:
                 int(usage["thoughtsTokenCount"]) if usage.get("thoughtsTokenCount") is not None else None
             ),
             model=str(body.get("modelVersion") or ""),
+            continuation=(
+                {"provider": "gemini", "parts": copy.deepcopy(parts)}
+                if any(isinstance(part, dict) and part.get("thoughtSignature") for part in parts)
+                else None
+            ),
         )
 
         finish = candidate.get("finishReason")
