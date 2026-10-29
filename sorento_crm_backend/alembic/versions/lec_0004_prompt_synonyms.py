@@ -14,6 +14,7 @@ Revises: lec_0003_lookup_words_sync
 from __future__ import annotations
 
 import json
+import logging
 
 import sqlalchemy as sa
 from alembic import op
@@ -42,6 +43,8 @@ FILE_TYPE_WORDS: dict[str, tuple[str, ...]] = {
 # A label that names a class under a shorter class label.
 CLASS_ALIASES: dict[str, tuple[str, ...]] = {"water tap": ("water tap", "tap")}
 ALIAS_SET_KEY = "attachment_type_alias"
+
+log = logging.getLogger(__name__)
 
 
 def _folded(value) -> str:
@@ -87,6 +90,7 @@ def _file_type_words(bind) -> None:
         ).first()
         if atype is None:
             # No such type here: nothing to attach the words to, and none is invented.
+            log.info("lec_0004: no attachment type %r here; its words were skipped", label)
             continue
         option_id = bind.execute(
             sa.text(

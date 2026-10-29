@@ -27,6 +27,8 @@ def run(engine) -> bool:
     from app.utils import online_index
 
     with engine.connect().execution_options(isolation_level="AUTOCOMMIT") as bind:
+        # The keep-set HNSW build took 131 s at the default and 34 s at 512MB, against the 180 s budget.
+        bind.exec_driver_sql("SET maintenance_work_mem = '512MB'")
         return online_index.ensure_indexes_online(
             bind,
             online_index.GOODS_CHAIN_KEY_INDEXES
