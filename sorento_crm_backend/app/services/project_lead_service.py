@@ -1106,14 +1106,26 @@ def customer_from_lead(lead: ProjectLead, requested: Optional[str]) -> Optional[
     return lead.customer_id
 
 
-def fill_lead_customer(db: Session, project: Project) -> None:
-    """Fill-only: a lead with no customer takes the one its project holds (LGR-E3, E4). A
-    lead's customer already set is never touched."""
+def fill_lead_customer(
+    db: Session,
+    project: Project,
+    *,
+    actor_user_id: str,
+    permissions: Set[str],
+    lead_checked: bool = False,
+) -> None:
+    """Fill-only: a lead with no customer takes the one its project holds (LGR-E3, E4), and
+    only for a caller who may edit that lead (LGR-E10). A customer already set is never touched."""
     if not project.lead_id:
         return
     lead = db.get(ProjectLead, project.lead_id)
     profile = db.get(ProjectSalesProfile, project.id)
-    if lead is not None and not lead.customer_id and getattr(profile, "customer_id", None):
+    if (
+        lead is not None
+        and not lead.customer_id
+        and getattr(profile, "customer_id", None)
+        and (lead_checked or can_edit_lead(lead, actor_user_id, permissions))
+    ):
         lead.customer_id = profile.customer_id
         db.flush()
 
@@ -1184,7 +1196,7 @@ def set_project_lead(
             # A submit-only salesperson may not read the other project, so it is not named.
             message = (
                 f"{lead.lead_code} is already linked to a project. Pick another lead."
-                if own_leads_only
+                if own_leads_only or reads_own_leads_only(permissions)
                 else f"{lead.lead_code} is already linked to {project_label(other)} "
                 f'"{other.title}". Unlink it there first, or pick another lead.'
             )
@@ -1206,7 +1218,13 @@ def set_project_lead(
             db, previous, actor_user_id=actor_user_id, permissions=permissions
         )
     if lead is not None:
-        fill_lead_customer(db, project)
+        fill_lead_customer(
+            db,
+            project,
+            actor_user_id=actor_user_id,
+            permissions=permissions,
+            lead_checked=own_leads_only,
+        )
         if project.approval_state not in (APPROVAL_DRAFT, APPROVAL_REJECTED):
             mark_qualified(db, lead)
 

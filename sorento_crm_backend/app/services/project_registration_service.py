@@ -836,6 +836,17 @@ def crm_submit(
             db, project, payload, actor_user_id=user_id, permissions=permissions
         )
     require_lead(project.lead_id)
+    from app.services import project_lead_service as leads
+
+    # The lead may have been reassigned since the draft was saved (LGR-E11).
+    submit_only = "projects.registrations.submit" in permissions and "projects.projects.edit" not in permissions
+    leads.lead_for_registration(
+        db,
+        project.lead_id,
+        actor_user_id=user_id,
+        own_leads_only=submit_only,
+        permissions=None if submit_only else permissions,
+    )
     profile = db.get(ProjectSalesProfile, project.id)
     require_customer(getattr(profile, "customer_id", None))
     if not _clean(project.title):
@@ -843,8 +854,6 @@ def crm_submit(
             status_code=422, message="A project title is required.", code="project_title_required"
         )
     resubmitted = _to_pending(project)
-    from app.services import project_lead_service as leads
-
     leads.mark_qualified(db, db.get(leads.ProjectLead, project.lead_id))
     return resubmitted
 

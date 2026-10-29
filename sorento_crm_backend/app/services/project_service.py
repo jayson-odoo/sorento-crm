@@ -1287,10 +1287,14 @@ def update_project(
             own_leads_only=own_leads_only and changing,
             permissions=permissions if changing else None,
         )
-        if lead.customer_id and (changing or payload.get("customer_id")):
-            picked = leads.customer_from_lead(lead, payload.get("customer_id"))
-            if changing:
-                payload = {**payload, "customer_id": picked}
+        if lead.customer_id:
+            # A null customer counts as absent: the lead's customer is never cleared (LGR-E9).
+            if "customer_id" in payload and not payload["customer_id"] and not changing:
+                payload = {k: v for k, v in payload.items() if k != "customer_id"}
+            elif changing or payload.get("customer_id"):
+                picked = leads.customer_from_lead(lead, payload.get("customer_id"))
+                if changing:
+                    payload = {**payload, "customer_id": picked}
     apply_sales_details(db, project, payload)
 
     # Present-and-null is an unlink; absent leaves the link alone (#1339).
@@ -1307,7 +1311,7 @@ def update_project(
         )
     from app.services.project_lead_service import fill_lead_customer
 
-    fill_lead_customer(db, project)
+    fill_lead_customer(db, project, actor_user_id=actor_user_id, permissions=permissions)
     return project
 
 
