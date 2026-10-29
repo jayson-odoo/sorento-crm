@@ -30,9 +30,12 @@ CUSTOMER = [{"key": "customer", "label": "Customer", "values": ["Customer A"]}]
 def test_the_prod_turn_shape_pending_delivery_for_a_product():
     body = _body("pending_delivery", "pending delivery", PRODUCT, {
         "documents": 3, "qty": 40, "amount": 1234.0, "date_first": "2026-10-02", "date_last": "2026-10-20",
-        "by_location": [{"name": "WH-A", "qty": 30, "amount": 900.0}, {"name": "WH-B", "qty": 10, "amount": 334.0}],
-        "second": "customer",
-        "by_second": [{"name": "Customer A", "qty": 25, "amount": 800.0}, {"name": "Customer B", "qty": 15, "amount": 434.0}],
+        "groups": [
+            {"axis": "location", "label": "Location", "rows": [
+                {"name": "WH-A", "qty": 30, "amount": 900.0}, {"name": "WH-B", "qty": 10, "amount": 334.0}]},
+            {"axis": "customer", "label": "Customer", "rows": [
+                {"name": "Customer A", "qty": 25, "amount": 800.0}, {"name": "Customer B", "qty": 15, "amount": 434.0}]},
+        ],
     })
     assert _report_ask(body) == "\n".join([
         "Pending delivery",
@@ -58,11 +61,12 @@ def test_undelivered_orders_for_a_customer_print_ordered_transferred_and_by_prod
     body = _body("outstanding", "outstanding orders", CUSTOMER, {
         "documents": 4, "ordered_qty": 300, "qty": 120, "amount": 9800.0,
         "date_first": "2026-08-05", "date_last": "2026-10-21",
-        "by_location": [{"name": "WH-A", "qty": 120, "amount": 9800.0, "ordered_qty": 300}],
-        "second": "product",
-        "by_second": [
-            {"name": "P-1", "qty": 80, "amount": 6000.0, "ordered_qty": 200},
-            {"name": "P-2", "qty": 40, "amount": 3800.0, "ordered_qty": 100},
+        "groups": [
+            {"axis": "location", "label": "Location", "rows": [{"name": "WH-A", "qty": 120, "amount": 9800.0, "ordered_qty": 300}]},
+            {"axis": "product", "label": "Product", "rows": [
+                {"name": "P-1", "qty": 80, "amount": 6000.0, "ordered_qty": 200},
+                {"name": "P-2", "qty": 40, "amount": 3800.0, "ordered_qty": 100},
+            ]},
         ],
     }, total=(120, 9800.0))
     assert _report_ask(body) == "\n".join([
@@ -87,7 +91,7 @@ def test_undelivered_orders_for_a_customer_print_ordered_transferred_and_by_prod
 def test_both_subjects_named_print_by_location_only():
     body = _body("pending_delivery", "pending delivery", PRODUCT + CUSTOMER, {
         "documents": 1, "qty": 2, "amount": 200.0, "date_first": "2026-09-10", "date_last": "2026-09-10",
-        "by_location": [{"name": "WH-A", "qty": 2, "amount": 200.0}], "second": None, "by_second": [],
+        "groups": [{"axis": "location", "label": "Location", "rows": [{"name": "WH-A", "qty": 2, "amount": 200.0}]}],
     }, total=(2, 200.0))
     text = _report_ask(body)
     assert "DO date range: 10/09/2026" in text
@@ -99,7 +103,10 @@ def test_a_location_with_no_code_reads_unassigned_and_a_long_group_is_capped():
     rows = [{"name": f"C{i:02d}", "qty": 30 - i, "amount": 1.0} for i in range(25)]
     body = _body("pending_delivery", "pending delivery", PRODUCT, {
         "documents": 25, "qty": 425, "amount": 25.0, "date_first": "2026-01-01", "date_last": "2026-02-01",
-        "by_location": [{"name": "(blank)", "qty": 425, "amount": 25.0}], "second": "customer", "by_second": rows,
+        "groups": [
+            {"axis": "location", "label": "Location", "rows": [{"name": "(blank)", "qty": 425, "amount": 25.0}]},
+            {"axis": "customer", "label": "Customer", "rows": rows},
+        ],
     }, total=(425, 25.0))
     text = _report_ask(body)
     assert "Unassigned: 425 (O/S: 425)" in text
@@ -109,7 +116,7 @@ def test_a_location_with_no_code_reads_unassigned_and_a_long_group_is_capped():
 def test_nothing_outstanding_says_so_with_no_offer():
     body = _body("pending_delivery", "pending delivery", PRODUCT, {
         "documents": 0, "qty": 0, "amount": 0.0, "date_first": None, "date_last": None,
-        "by_location": [], "second": "customer", "by_second": [],
+        "groups": [],
     }, total=(0, 0.0))
     assert _report_ask(body) == "\n".join([
         "Pending delivery", "Product: SRT5733-WH", "Period: all dates", "No outstanding delivery order.",
@@ -129,3 +136,25 @@ def test_the_delivery_order_list_reads_plural():
         {"rank": 1, "name": "DO-1", "qty": 30, "amount": 900.0}, {"rank": 2, "name": "DO-2", "qty": 10, "amount": 334.0},
     ])
     assert _report_ask(body).startswith("Top 2 delivery orders by pending delivery\n"), _report_ask(body)
+
+
+def test_a_named_axis_prints_as_its_own_group():
+    """Owner 29 Oct: "by salesperson" replaces the default breakdowns."""
+    body = _body("pending_delivery", "pending delivery", PRODUCT, {
+        "documents": 2, "qty": 3, "amount": 300.0, "date_first": "2026-08-15", "date_last": "2026-09-10",
+        "groups": [{"axis": "sales_agent", "label": "Sales agent", "rows": [{"name": "AG1", "qty": 3, "amount": 300.0}]}],
+    }, total=(3, 300.0))
+    text = _report_ask(body)
+    assert "*_By sales agent_*\nAG1: 3 (O/S: 3)" in text and "By location" not in text, text
+
+
+def test_the_summary_prints_when_the_ask_also_named_an_axis():
+    """The route returns the ranking rows AND the summary for "<product> outstanding by salesperson": the summary wins."""
+    body = _body("pending_delivery", "pending delivery", PRODUCT, {
+        "documents": 2, "qty": 3, "amount": 300.0, "date_first": "2026-08-15", "date_last": "2026-09-10",
+        "groups": [{"axis": "sales_agent", "label": "Sales agent", "rows": [{"name": "AG1", "qty": 3, "amount": 300.0}]}],
+    }, total=(3, 300.0))
+    body.update(group_by="sales_agent", group_label="Sales agent", rows=[{"rank": 1, "name": "AG1", "qty": 3, "amount": 300.0}], total_count=1)
+    text = _report_ask(body)
+    assert "Delivery orders: 2" in text and "*_By sales agent_*" in text, text
+    assert "1. AG1" not in text and text.rstrip().endswith("Reply 1 for the delivery order list."), text

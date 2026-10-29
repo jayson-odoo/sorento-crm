@@ -78,7 +78,7 @@ SEP = {"date_filter_start": "2026-09-01", "date_filter_end": "2026-09-30"}
 OCT = {"date_filter_start": "2026-10-01", "date_filter_end": "2026-10-31"}
 NO_DATES = {"date_filter_start": None, "date_filter_end": None}
 KIND_WORDS = ("undelivered orders", "pending delivery", "unpaid invoices")
-KIND_QUESTION = "Undelivered orders, pending delivery or unpaid invoices?"
+KIND_QUESTION = "Undelivered orders or pending delivery?"
 MEASURE_Q = "By quantity or by amount?"
 BASIS_LABELS = {
     "delivered": "delivered sales", "ordered": "ordered sales", "outstanding": "outstanding orders",
@@ -283,7 +283,7 @@ def test_ac_ru_11_an_outstanding_ask_naming_no_kind_asks_the_three_kinds_and_run
 
 
 def test_ac_ru_11_the_kind_question_is_the_owners_wording(bot) -> None:
-    """AC-RU-11: the question reads "Undelivered orders, pending delivery or unpaid invoices?"."""
+    """AC-RU-11: the question reads "Undelivered orders or pending delivery?"."""
     text, calls = bot.say(_status("outstanding", _customer(bot), basis=None, **NO_DATES), "outstanding")
     assert calls == [] and KIND_QUESTION in text, text
 

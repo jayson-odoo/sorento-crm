@@ -137,7 +137,7 @@ def test_the_kind_question_is_stated_to_the_parser_as_a_pick_of_three_that_owes_
     )
     shown = question.of_required_ask(out.slot)
     assert shown["kind"] == "pick_one" and shown["owed"] == ["basis"], shown
-    assert [o["code"] for o in shown["options"]] == ["Undelivered orders", "Pending delivery", "Unpaid invoices"], shown
+    assert [o["code"] for o in shown["options"]] == ["Undelivered orders", "Pending delivery"], shown  # owner 29 Oct: unpaid is not offered
 
 
 def test_the_kind_answered_by_the_parsers_pick_position_runs_unpaid_with_no_dates(bot) -> None:

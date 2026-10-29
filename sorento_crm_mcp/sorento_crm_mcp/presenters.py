@@ -3515,8 +3515,8 @@ _ASK_SO_LIST_OFFER = "Reply 1 for the sales order list."
 _ASK_DO_LIST_OFFER = "Reply 1 for the delivery order list."
 #: The engine's name for a row with no value (`reports.engine.BLANK_VALUE`): a location with no code.
 _ASK_BLANK = "(blank)"
-#: The summary's second group, by the route's `second`: its heading and the row key its trailer's noun is read by.
-_ASK_SUMMARY_SECOND = {"customer": ("*_By customer_*", "customer_name"), "product": ("*_By product_*", "product_code")}
+#: A summary group's noun for its "... and N more" line, by axis (the old report's own nouns where it had them).
+_ASK_SUMMARY_NOUNS = {"customer": "customer", "product": "product", "sales_agent": "sales agent"}
 
 
 def _ask_summary(basis: Any, summary: dict) -> list[str]:
@@ -3524,7 +3524,8 @@ def _ask_summary(basis: Any, summary: dict) -> list[str]:
     `_outstanding_do_block`, same words and the same `name: total (O/S: outstanding)` groups), from the report ask's
     `summary`, then the list offer. Undelivered orders: the total is the ordered quantity of the open lines and
     Transferred to DO is ordered minus outstanding. Pending delivery: every DO in it is undelivered as a whole, so its
-    DO qty is the outstanding quantity and Delivered is 0, as the old block printed it."""
+    DO qty is the outstanding quantity and Delivered is 0, as the old block printed it. One `*_By <axis>_*` group per
+    route group, in the route's order; By location prints whole, any other group is capped as the old second group."""
     so = basis == "outstanding"
     if not summary.get("documents"):
         return ["No open sales order." if so else "No outstanding delivery order."]
@@ -3549,19 +3550,16 @@ def _ask_summary(basis: Any, summary: dict) -> list[str]:
             outstanding,
             f"DO date range: {days}",
         ]
-    lines.append("*_By location_*")
-    lines.extend(_outstanding_group(
-        [{**r, "name": None if r.get("name") == _ASK_BLANK else r.get("name")} for r in summary.get("by_location") or []],
-        name_key="name", total_key=total_key, outstanding_key="qty",
-    ))
-    second = _ASK_SUMMARY_SECOND.get(str(summary.get("second")))
-    if second is not None:
-        heading, key = second
-        lines.append(heading)
-        lines.extend(_outstanding_capped_group(
-            [{**r, key: r.get("name")} for r in summary.get("by_second") or []],
-            name_key=key, total_key=total_key, outstanding_key="qty",
-        ))
+    for group in summary.get("groups") or []:
+        axis = str(group.get("axis") or "")
+        rows = [{**r, "name": None if r.get("name") == _ASK_BLANK else r.get("name")} for r in group.get("rows") or []]
+        lines.append(f"*_By {str(group.get('label') or axis).lower()}_*")
+        shown = rows if axis == "location" else rows[:OUTSTANDING_GROUP_CAP]
+        lines.extend(_outstanding_group(shown, name_key="name", total_key=total_key, outstanding_key="qty"))
+        extra = len(rows) - len(shown)
+        if extra > 0:
+            noun = _ASK_SUMMARY_NOUNS.get(axis, axis.replace("_", " "))
+            lines.append(f"... and {extra} more {noun}{'' if extra == 1 else 's'}")
     lines.extend(["", _ASK_SO_LIST_OFFER if so else _ASK_DO_LIST_OFFER])
     return lines
 
@@ -3598,6 +3596,11 @@ def _report_ask(body: dict) -> str:
     figures = _ask_figures(body.get("total") or {}, measure) + _ask_before(body.get("total") or {}, measure)
     basis = body.get("basis_label")
     group_by = body.get("group_by")
+    if isinstance(body.get("summary"), dict):
+        # REPORT-OUTSTANDING-SUMMARY: an outstanding kind naming a product or customer prints the summary, its
+        # breakdowns the route's (the defaults, or the axis the user named).
+        head = "Undelivered orders" if body.get("basis") == "outstanding" else str(basis or "").capitalize()
+        return "\n".join([head, *facts, *_ask_summary(body.get("basis"), body["summary"])])
     if not group_by:
         # An outstanding kind is not a sale: "Undelivered orders", "Pending delivery", "Unpaid invoices" (the kinds'
         # own words); every sales basis reads "Sales by <basis>".
@@ -3606,8 +3609,6 @@ def _report_ask(body: dict) -> str:
             else basis.capitalize() if body.get("basis") in ("pending_delivery", "unpaid")
             else f"Sales by {basis}"
         )
-        if isinstance(body.get("summary"), dict):
-            return "\n".join([head, *facts, *_ask_summary(body["basis"], body["summary"])])
         text = "\n".join([head, *facts, f"Total {figures}"])
         if body.get("basis") == "outstanding" and not body.get("compare_to"):
             # Owner 28 Oct 09:30 (AC-RU-17a): the open sales orders behind the figure; pending delivery and unpaid get none.

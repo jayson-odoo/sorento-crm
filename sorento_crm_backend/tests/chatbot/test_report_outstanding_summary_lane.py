@@ -15,6 +15,7 @@ import pytest
 from app.services.company_scope import DEFAULT_COMPANY_ID
 from tests.chatbot.test_report_ask_lane import _e, _reply
 from tests.chatbot.test_report_smart_step7 import KEEP
+from tests.chatbot.test_report_ask_lane import console_no_grant  # noqa: F401  (a fixture)
 from tests.chatbot.test_report_unify_routing import (  # noqa: F401  (console, bot are fixtures)
     KIND_QUESTION,
     NO_DATES,
@@ -24,17 +25,18 @@ from tests.chatbot.test_report_unify_routing import (  # noqa: F401  (console, b
     bot,
     console,
 )
-from tests.chatbot.test_engine import _parser_output
+from tests.chatbot.test_engine import CONTACT_ID, _parser_output
 
 PRODUCT = "SRT5733-ZZ"
 DO_OFFER = "Reply 1 for the delivery order list."
 SO_OFFER = "Reply 1 for the sales order list."
 DO_SUMMARY = {
     "documents": 3, "qty": 40, "amount": 1234.0, "date_first": "2026-10-02", "date_last": "2026-10-20",
-    "by_location": [{"name": "ZZT-WH-A", "qty": 30, "amount": 900.0}, {"name": "ZZT-WH-B", "qty": 10, "amount": 334.0}],
-    "second": "customer",
-    "by_second": [
-        {"name": "ZZT CUSTOMER A", "qty": 25, "amount": 800.0}, {"name": "ZZT CUSTOMER B", "qty": 15, "amount": 434.0}
+    "groups": [
+        {"axis": "location", "label": "Location", "rows": [
+            {"name": "ZZT-WH-A", "qty": 30, "amount": 900.0}, {"name": "ZZT-WH-B", "qty": 10, "amount": 334.0}]},
+        {"axis": "customer", "label": "Customer", "rows": [
+            {"name": "ZZT CUSTOMER A", "qty": 25, "amount": 800.0}, {"name": "ZZT CUSTOMER B", "qty": 15, "amount": 434.0}]},
     ],
 }
 DO_ROWS = [
@@ -73,7 +75,8 @@ def _outstanding_for_the_product(bot: Routing) -> str:
         _status("outstanding", _e(PRODUCT, "product"), basis=None, state_changes=list(KEEP), **NO_DATES),
         "Srt5733 outstanding",
     )
-    assert calls == [] and KIND_QUESTION in text, (text, calls)
+    assert calls == [] and text.strip().startswith(KIND_QUESTION), (text, calls)
+    assert "unpaid" not in text.lower(), text  # owner 29 Oct: unpaid is not an outstanding kind to offer
     bot.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
     text, calls = bot.say(_kind_answer("pending_delivery"), "pending delivery")
     args = _only_report_ask(calls)
@@ -111,8 +114,10 @@ def test_an_undelivered_orders_summary_keeps_the_sales_order_offer_and_its_list(
     bot.say(_status("outstanding", _e(PRODUCT, "product"), basis=None, state_changes=list(KEEP), **NO_DATES), "x")
     bot.extra_body = {"summary": {
         "documents": 2, "ordered_qty": 15, "qty": 11, "amount": 1100.0, "date_first": "2026-08-05",
-        "date_last": "2026-09-20", "by_location": [{"name": "ZZT-WH-A", "qty": 11, "amount": 1100.0, "ordered_qty": 15}],
-        "second": "customer", "by_second": [{"name": "ZZT CUSTOMER A", "qty": 11, "amount": 1100.0, "ordered_qty": 15}],
+        "date_last": "2026-09-20", "groups": [
+            {"axis": "location", "label": "Location", "rows": [{"name": "ZZT-WH-A", "qty": 11, "amount": 1100.0, "ordered_qty": 15}]},
+            {"axis": "customer", "label": "Customer", "rows": [{"name": "ZZT CUSTOMER A", "qty": 11, "amount": 1100.0, "ordered_qty": 15}]},
+        ],
     }}
     text, _calls = bot.say(_kind_answer("outstanding"), "undelivered orders")
     assert "Sales orders: 2" in text and "Transferred to DO: 4" in text, text
@@ -121,3 +126,83 @@ def test_an_undelivered_orders_summary_keeps_the_sales_order_offer_and_its_list(
     text, calls = bot.say(_pick_one(), "1")
     args = _only_report_ask(calls)
     assert args["group_by"] == "sales_order" and args["basis"] == "outstanding", args
+
+
+# ================================================================ owner 29 Oct: the kinds the contact may see
+
+
+@pytest.fixture
+def do_only(console_no_grant) -> Routing:
+    """The #b6e9 contact: office staff with no Outstanding reveal. Before #1922 it saw the DO half only."""
+    from tests.chatbot._turn_helpers import make_office_access_type
+    from app.services.chatbot.lanes.business.report_ask import KIND_QUESTION as _KQ  # noqa: F401
+
+    make_office_access_type(console_no_grant.session_factory, CONTACT_ID)
+    return Routing(console_no_grant)
+
+
+@pytest.fixture
+def do_only_world(do_only) -> None:
+    from tests._mc_lookup_seed import product
+
+    db = do_only.console.session_factory()
+    try:
+        product(db, company_id=DEFAULT_COMPANY_ID, code=PRODUCT)
+        db.commit()
+    finally:
+        db.close()
+
+
+def test_b6e9_a_do_only_contact_gets_the_delivery_order_summary_with_no_question(do_only, do_only_world) -> None:
+    """Prod turn #b6e9 pin: "Srt5733 ... outstanding" from a contact that may see pending delivery only runs it straight
+    away (no kind question) and prints the DO summary: by location, by customer, the delivery order list offer."""
+    do_only.extra_body = {"summary": DO_SUMMARY, "total": {"qty": 40, "amount": 1234.0}}
+    text, calls = do_only.say(
+        _status("outstanding", _e(PRODUCT, "product"), basis=None, state_changes=list(KEEP), **NO_DATES),
+        "Srt5733 outstanding",
+    )
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery" and args["product_code"] == PRODUCT, args
+    assert KIND_QUESTION not in text, text
+    lines = text.split("\n")
+    assert lines[0] == "Pending delivery", text
+    for wanted in ("Delivery orders: 3", "*_By location_*", "ZZT-WH-A: 30 (O/S: 30)", "*_By customer_*"):
+        assert wanted in lines, (wanted, text)
+    assert text.rstrip().endswith(DO_OFFER), text
+
+
+def test_a_do_only_contact_naming_undelivered_orders_is_refused_that_kind(do_only, do_only_world) -> None:
+    text, calls = do_only.say(
+        _status("outstanding", _e(PRODUCT, "product"), basis="outstanding", state_changes=list(KEEP), **NO_DATES),
+        "Srt5733 undelivered sales orders",
+    )
+    assert calls == [], calls
+    assert "Outstanding is not enabled for your account." in text, text
+
+
+def test_an_unknown_contact_without_the_reveal_is_refused_outstanding(console_no_grant) -> None:
+    """Unlinked and not office staff: no kind it may see, so the refusal, never a question."""
+    bot_ = Routing(console_no_grant)
+    text, calls = bot_.say(
+        _status("outstanding", _e(PRODUCT, "product"), basis=None, state_changes=list(KEEP), **NO_DATES),
+        "Srt5733 outstanding",
+    )
+    assert calls == [] and KIND_QUESTION not in text, (text, calls)
+
+
+def test_a_named_axis_keeps_the_summary_and_the_list_offer(do_only, do_only_world) -> None:
+    """Owner 29 Oct Q2: "by salesperson" replaces the default breakdowns; the route returns the summary with it."""
+    do_only.extra_body = {"summary": {**DO_SUMMARY, "groups": [
+        {"axis": "sales_agent", "label": "Sales agent", "rows": [{"name": "ZZT AGENT", "qty": 40, "amount": 1234.0}]}]}}
+    text, calls = do_only.say(
+        _status("outstanding", _e(PRODUCT, "product"), basis=None, group_by="sales_agent", state_changes=list(KEEP),
+                **NO_DATES),
+        "Srt5733 outstanding by salesperson",
+    )
+    args = _only_report_ask(calls)
+    assert args["basis"] == "pending_delivery" and args["group_by"] == "sales_agent", args
+    assert "*_By sales agent_*" in text and text.rstrip().endswith(DO_OFFER), text
+    do_only.extra_body = {"rows": DO_ROWS, "total_count": 2, "group_label": "Delivery order"}
+    text, calls = do_only.say(_pick_one(), "1")
+    args = _only_report_ask(calls)
+    assert args["group_by"] == "delivery_order", args
