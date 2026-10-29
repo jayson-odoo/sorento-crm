@@ -1,7 +1,8 @@
 # PLAN: LOOKUP-EMBED-CENTRAL - one source per lookup list, one lookup-vector table, one screen to see them
 
-Status: CARD v2 + MOCK v2 filed for the owner (29 Oct 2026; owner answered v1 Q1-Q5, Q5 = records join the central store). No code. Track: L (new table + migration, new screen).
-Build starts only after the owner answers N1-N5 and approves the mock
+Status: CARD v3 + MOCK v3 filed for the owner (29 Oct 2026): owner answered v1 Q1-Q5 and v2 N1-N5; v3 adds the
+embedder setting, the keep set (S1 pending), threshold tuning and performance. No code. Track: L.
+Build starts only after the owner answers S1, T1, P1, P2, G1, G2 and approves mock v3
 (`documentation/mockups/LOOKUP-EMBED-CENTRAL/index.html`).
 
 ## Owner words (29 Oct 2026, verbatim)
@@ -127,6 +128,14 @@ Findings the screen makes visible:
 - Q5 NOT separate (owner, verbatim): "we will use gemini for embedding already, so i think embedding cannot stay
   separate, need to come into play here". Business-record chunks move to gemini-embedding-001 and into the same
   store and screen. Card v2 below is reworked for that.
+- Card v2 answers (29 Oct): N1 (a) lookup words as documents in the existing family. N2: prod's lookup label is
+  already gemini (owner flipped it 29 Oct, lookup words only); records (a) write both, search 3-small until 100%.
+  N3 (a) capped resumable batch job. N4 (c) keep the 3-small rows, never delete. N5: the switch is ONE setting with a
+  100% guard for records; updated 29 Oct: "better to switch the embedding to a setting instead of a prompt" ->
+  System Settings > Embeddings tab (provider + model), prod's label value copied in on deploy, label = fallback only.
+- Owner notes on mock v3: threshold tuning in this lane; performance must be covered (both in card v3).
+- Owner question (29 Oct): "why we need to embed orders, products ah cause they are code right" -> answered in
+  "Which business records are worth embedding" (S1 pending).
 
 ## RAG facts (origin/main, read by code; dev counts from sorento_cagent_stack, read-only)
 
@@ -155,30 +164,41 @@ Findings the screen makes visible:
   the dead dev OpenAI key). Other 1536 vectors: `ai_assistant_wishlist_clusters` (0 rows on dev),
   `ai_assistant_unanswered_queries` (4 rows) (`app/models/ai_assistant.py:233`, `:257`).
 
-## ARCHITECTURE
+## ARCHITECTURE (v3)
 
-- One table family for every vector: `embedding_documents` + `embedding_chunks`. Lookup words join it as documents
-  of `source_type = 'lookup_word'`, `source_id = '<list>:<row key>'`, one chunk per row text (label, code, each
-  alias, each description word), `company_id` = the row's company (customers, brands, warehouses) or NULL (shared).
-  No new table: the v1 `lookup_vectors` table is dropped from the design.
-- One embed function `embed_texts(texts, model) -> vectors` (Gemini batchEmbedContents, 100 per request,
-  1536 dims, the 429 waits of `lookup_lists.py:919`; OpenAI kept behind the same function for the switch window).
-  The worker, the lookup lists, every RAG reader and the AI assistant call it; the three direct OpenAI POSTs
-  (`embedding_worker.py:666-676`, `rag.py:23-43`, `llm_provider.py:555-558`) go.
-- One model setting, two values: WRITE model (what new and changed text is embedded with) and SEARCH model (what
-  every reader embeds the query with and filters `model_name` on). Both start text-embedding-3-small on prod;
-  during the switch WRITE = both, SEARCH = 3-small; at the flip both become gemini-embedding-001. Every reader gains
-  `model_name = :search_model` (today none filters, so two models in one HNSW index would compare across spaces).
-- One partial HNSW index per model (`WHERE model_name = '...' AND is_current`, CREATE INDEX CONCURRENTLY), so a
-  model-filtered search keeps HNSW recall while two models coexist.
-- Lookup lists: worker start = one SELECT of `lookup_word` chunks for the search model into today's in-process
-  cache (replaces the #1959 shared file, `lookup_lists.py:924-981`); a turn's miss embeds inside the 3 s budget
-  and is written as a chunk; the 10-min sync diffs live rows (`load_rows`) against `lookup_word` documents by
-  source_hash and embeds the difference.
-- Fixed classes: rows from master tables, aliases from one home per list, vectors from one family under one model
-  setting. Nothing is per-list or per-source special-cased.
+- One table family for every vector: `embedding_documents` + `embedding_chunks` (owner N1 (a)). Lookup words are
+  documents of `source_type = 'lookup_word'`, `source_id = '<list>:<row key>'`, one chunk per word, `company_id` =
+  the row's company or NULL. Business records: only the keep set (S1, section "Which business records ...").
+- One embedder setting: a new Embeddings tab in System Settings (`user-management/settings/layout.tsx:306-361`), provider + model (owner N5, 29 Oct: "better to switch the
+  embedding to a setting instead of a prompt"). Two `system_settings` columns (`embedding_provider`,
+  `embedding_model`), added to BOTH manual dict builders (CLAUDE.md lesson). On deploy the migration copies prod's
+  current `chatbot_lookup_embedder` production label (gemini / gemini-embedding-001, flipped by the owner 29 Oct) into
+  it, so nothing changes for the owner. The label is read only as a fallback while the setting is empty, and removed
+  in a later lane. `lookup_lists.py:1243-1259` and the worker read the setting through one function.
+- One embed function `embed_texts(texts, provider, model)` (Gemini batchEmbedContents, 100 per request, 1536 dims,
+  429 waits `lookup_lists.py:919`; OpenAI kept behind it). Worker, lookup lists, every reader, AI assistant call it;
+  the direct OpenAI POSTs (`embedding_worker.py:666-676`, `rag.py:23-43`, `llm_provider.py:555-558`) go.
+- Records search model (`embedding_records_search_model`, a third column, written only by code): the model every
+  record reader embeds the question with and filters `model_name` on. It moves to the setting's model only when the
+  backfill job finds that model at 100% of the keep set (the guard, shown on the screen). Until then new and changed
+  records are written with BOTH the setting's model and the search model (owner N2 (a)).
+- Lookup words follow the setting at once (as the label does today): a turn embeds its own misses, the 10-min sync
+  embeds the rest (owner Q3 (a)).
+- Indexes: one partial HNSW index per model over the keep set (`WHERE model_name = '<m>' AND is_current AND
+  source_type IN (<keep set>)`); source-filtered readers set `hnsw.iterative_scan = relaxed_order` (P1).
+- Fixed classes: rows from master tables, aliases from one home per list, vectors from one family under one setting;
+  nothing per-list or per-source special-cased beyond the keep set list.
 
-## Card v2
+## Why re-embedding is needed (plain words)
+
+An embedding model turns a text into a list of 1,536 numbers. Each model invents its own number system: "toilet"
+from OpenAI and "toilet" from Gemini are two unrelated lists of numbers, like the same word written in two different
+secret codes. A search embeds the QUESTION with one model and compares it with the stored numbers; if the stored
+numbers came from the other model the scores are noise (a right answer can score below a wrong one). So when the
+setting changes model, every stored text has to be embedded again with the new model before searches may use it,
+and until that is finished searches keep using the old model's numbers. That is what the guard enforces.
+
+## Card v3
 
 ### Per list
 
@@ -194,98 +214,141 @@ Findings the screen makes visible:
 | Salesperson | sales_agents (active) | aliases column | same |
 | Customer | customers (active, scoped) | none | same |
 | Sales channel | code values dealer / project | sales_channel_alias set (#1964) | same |
-| Business records (21 sources) | the RAG producer (`embedding_change_listener.py:378-401`) | n/a | record docs, queue + backfill job |
+| Business records (keep set, S1) | the RAG producer (`embedding_change_listener.py:378-401`) | n/a | record docs, queue + backfill job |
 
-### Switch of business records to gemini-embedding-001 (Q5)
+### Switch flow (owner N2 (a), N3 (a), N4 (c), N5 as updated)
 
-1. Deploy (search unchanged): WRITE = 3-small + gemini, SEARCH = 3-small. New and changed records get both models,
-   so search stays complete. Prod only: OpenAI cost for changed records during the window (small); dev has no
-   working OpenAI key, so dev starts at step 3 directly.
-2. Backfill job (one RQ job, resumable, stop/start on the screen): documents with no current gemini chunk, 100 chunks
-   per Gemini request, capped requests per minute, smallest sources first; never through the per-event queue
-   (2,400 documents/hour would take ~112 h for 270k). Screen shows per source: gemini n / total.
-3. Flip (owner presses it when every source shows 100%): SEARCH = WRITE = gemini. One setting change, no deploy.
-4. Keep 3-small rows 14 days for rollback; then an owner-run DELETE (held for the owner, never automatic).
-Rollback: flip SEARCH back to 3-small (rows still there); records changed after the flip have stale 3-small rows
-until a 3-small rebuild of those sources (the per-model skip check, `embedding_worker.py:898-907`, re-embeds them).
+1. Deploy: the setting holds gemini / gemini-embedding-001 (copied from the label). Lookup words: gemini, as today.
+   Records: search model stays text-embedding-3-small; writes go to both models.
+2. The capped, resumable backfill job embeds the keep set with the setting's model: 25,090 chunks on dev, ~251
+   requests, ~13 min at 20 requests/min (USD ~0.19, price UNVERIFIED). Progress per source on the screen.
+3. At 100% the job builds the model's partial HNSW index (CONCURRENTLY) and moves the records search model to the
+   setting's model. Writes to the old model stop.
+4. 3-small rows are kept, never deleted (owner N4 (c)). Switching back = the owner changes the setting; the same guard
+   runs; only documents changed since then are re-embedded (the per-model skip check, `embedding_worker.py:898-907`).
+- Dev: the OpenAI key is dead, so 3-small writes fail (shown as failed, not blocking); dev reaches step 3 in minutes.
 
-### Screen (mock v2)
+### Threshold tuning (owner note on mock v3: in this lane)
 
-`System > Embeddings` (beside Lookup Sets, permission master_data.lookup_sets.view): header with the model, lookup
-word coverage, record coverage and which model search reads; one CTA (Embed missing; it becomes "Switch search to
-gemini-embedding-001" once records are 100%). A Lookup words / Records switch. Lookup words: tabs per list, words
-grouped by home with a vector dot, Try a phrase (verdict + per row spelling, vector, partial, floors, pass/fail).
-Records: grid per source (documents, chunks, 3-small, gemini, last embedded, in queue), Search records card
-(nearest chunks for a phrase under the viewer's company scope). Chunk text is not in the committed mock: it carries
-customer data and the repo is public.
+Done now, zero API spend: `scratchpad/tune/tune_floors.py` (copied into the lane at build) scores the EEM labelled gold
+(`crew/state/eval/eem/labels/gold_all.jsonl`, 338 messages) with the cached gemini vectors against the current
+gemini floors (`list_resolver.py:59-63`), sweep 0.55-0.85.
+
+| List | Positives | Near-miss negatives | Floor now | P / R now | Meaning-only positives | Verdict |
+|---|---|---|---|---|---|---|
+| category | 24 | 72 | 0.70 | 0.35 / 1.00 | 1 | keep 0.70 |
+| spec | 16 | 48 | 0.75 | 0.59 / 1.00 | 0 | keep 0.75 |
+| file_type | 15 | 45 | 0.65 | 0.88 / 0.93 | 1 | keep 0.65 |
+| brand | 10 | 30 | 0.60 | 0.83 / 1.00 | 0 | keep (under 15 positives) |
+| promotion_kind | 3 | 9 | 0.75 | 1.00 / 0.67 | 0 | keep (under 15) |
+| location | 5 | 15 | 0.65 | 0.25 / 1.00 | 0 | keep (under 15) |
+| salesperson | 8 | 24 | 0.70 | 1.00 / 1.00 | 0 | keep (under 15) |
+| customer | 24 | 72 | 0.75 | 0.69 / 0.75 | 1 | keep 0.75 |
+| sales_channel | 3 | 3 | 0.65 | 1.00 / 1.00 | 0 | keep (under 15) |
+| spec_key | 10 | 30 | 0.75 | 0.80 / 0.80 | 0 | keep (under 15) |
+
+- End to end (list_resolver.resolve on the gold spans, cached vectors): 239 of 243 correct, 0 wrong, at the current
+  floors. Precision above is low by construction (3 near-miss negatives per positive); what matters is that only 3
+  positives in the whole gold depend on the vector alone, so there is nothing to tune a floor on.
+- Skipped for no cached vector: category 5, customer 9, file_type 3, location 1, promotion_kind 2, salesperson 3,
+  spec 6 phrases.
+- Build step (T1): label 30+ meaning-only phrases per main list (category, file type, brand, sales channel) from the
+  201 dev resolver tokens that found no match (masked) and the screen's Try a phrase, embed only those phrases
+  (~USD 0.0001), re-run the script, change a floor only where precision >= 0.95 holds.
+
+### Performance (owner note on mock v3: "need to be careful of the performance")
+
+Measured 29 Oct on the dev Mac (PostgreSQL 17.7, pgvector 0.8.2, maintenance_work_mem 64MB, shared_buffers 128MB);
+prod hardware and settings UNVERIFIED (owner-run `SHOW` lines below).
+
+Today, 270k chunks, one HNSW index over all rows (2,206 MB):
+| Reader shape | Plan | p50 | p95 |
+|---|---|---|---|
+| `search_current` (`embedding_service.py:255,272`, ORDER BY similarity DESC) | Seq Scan + Sort of every vector | 7,468 ms | 13,457 ms |
+| same + model filter | same | 10,860 ms | 23,948 ms |
+| same, rewritten ORDER BY distance + model | HNSW | 61 ms | 117 ms |
+| `entity_resolver` tier3, product filter (`:3039-3080`) | HNSW, post-filter | 3.5 ms | 11.3 ms |
+- The filtered HNSW search returned 0 of 5 product rows for an order-like question (post-filter loss); pgvector's
+  iterative scan returned 1 row after 7.7 s; an exact product-only scan returned 5 rows in 276-588 ms.
+- `search_current` serves `/external/rag/search`, `fuzzy_resolver.py:56` (staff order / incoming / GRN list search)
+  and the project duplicate check: each such call reads every vector today. The rewrite is part of this lane.
+
+Keep set, 25,090 chunks (throwaway copy of the dev vectors, dropped after):
+| Measure | Result |
+|---|---|
+| Partial HNSW build, maintenance_work_mem 64MB | 131 s ("graph no longer fits after 9,756 tuples") |
+| Partial HNSW build, 512MB, 2 parallel workers | 33-34 s |
+| Index size | 193 MB |
+| Unfiltered search, partial index | p50 1.4 ms, p95 3.7 ms, 0/39 short |
+| Product-filtered, partial index | p95 1.5 ms, 2/39 queries returned < 5 rows |
+| Attachment-filtered, partial index | p95 1.2 ms, 37/39 short |
+| Attachment-filtered + iterative scan | p95 127 ms, 0/39 short |
+| Attachment-filtered, per-source partial index | p95 0.8 ms, 0/39 short |
+| form (46 rows), exact scan | p95 2.6 ms |
+
+- Target: DB part of a record search p95 <= 150 ms (keep set with iterative scan: 127 ms on dev). The chatbot's
+  lookup-word matching stays in process (no DB per turn).
+- Every reader's SQL carries the literal predicate of the partial index (`model_name = '<m>' AND is_current AND
+  source_type IN (...)`); SQLAlchemy + psycopg2 inline parameters client side, so the planner can match it
+  (a server-side prepared generic plan would not; none is used, UNVERIFIED for every call site until the build).
+- Per reader after the change: search_current -> ORDER BY distance, partial index; entity_resolver tier3 /
+  `_rag_resolve_phrase` -> partial index + iterative scan; frame_service (conversation_frame, 118 rows) and tool
+  search (mcp_tool, 186 rows) -> exact scan (planner picks it, ~3-6 ms); fuzzy_resolver -> via search_current plus a
+  similarity floor (today none, `fuzzy_resolver.py:55-129`); project duplicate check -> via search_current.
+- Backfill IO: ~150 MB of vector writes in ~13 min at 20 requests/min (100-row inserts per request) plus one
+  193 MB index build CONCURRENTLY at the end with maintenance_work_mem 512MB for that session only (CONCURRENTLY
+  takes longer than the 34 s measured; UNVERIFIED factor). Small enough to run any time; the cap is a setting.
+- Disk: +~0.35 GB for the gemini keep set. Replacing the 2.2 GB all-rows index by a 3-small partial index over the
+  keep set frees ~2 GB (P2; the DROP INDEX is held for the owner).
+
+Owner-run read-only checks on prod:
+```sql
+SHOW maintenance_work_mem; SHOW max_parallel_maintenance_workers; SHOW shared_buffers;
+SELECT extversion FROM pg_extension WHERE extname = 'vector';
+SELECT pg_size_pretty(pg_relation_size('ix_embedding_chunks_embedding_hnsw')) AS hnsw_size;
+```
 
 ### Edge cases
 
-- Two models side by side: every read filters `model_name`; the partial HNSW index per model keeps recall.
-- Search flip with a source below 100%: the flip is refused, the screen names the sources still short.
-- Embed failure (429, bad key): chunk not written, row shows failed with the error; turns fall back to spelling.
-- Lookup row text on 5 rows (马桶): 5 chunks with the same text; the embed function sends each distinct text once.
-- Company-scoped lookup rows (customers, brands, warehouses): the document carries the company; the screen and Try
-  a phrase list rows under the viewer's scope (`load_rows`).
-- Other dims (3072): refused by embed_texts (column is 1536).
-- Task type: today no Gemini taskType is sent (lookup_lists.py and llm_provider.py); kept so lookup floors stay valid.
+- Setting changed while a backfill runs: the job restarts for the new model; search stays on the last 100% model.
+- A chunk that fails 3 times (bad text, 429 storm): counted as failed, listed on the screen (G1).
+- Dropped sources: listeners stop queuing them, readers stop asking for them, their rows stay.
+- Company-scoped rows: record readers keep `_embedding_company_filter` (`embedding_service.py:54-79`); lookup words
+  list under the viewer's scope.
+- Other dims (3072): refused by embed_texts.
 
-### Cost and limits
+### Cost (all USD, Gemini price UNVERIFIED)
 
-- Gemini embed price USD 0.15 per 1M input tokens (the S3 guard's price, `crew/state/eval/eem/s3/gem_guard_s3.py:15`;
-  UNVERIFIED against Google's page). Dev copy: 50.4M characters = ~12.6M tokens at 4 characters per token =
-  ~USD 1.9 for all records once; lookup words ~USD 0.01. Prod volume UNVERIFIED: owner-run SQL below.
-- Requests: ~2,700 batch requests of 100. Gemini embed RPM / TPM / daily quota of the org key: UNVERIFIED (owner reads
-  them in AI Studio); the job's per-minute cap is set below that.
-- Storage: a second set of 1536-dim vectors for 270k chunks ~1.7 GB plus its HNSW index while both models are kept;
-  prod disk headroom UNVERIFIED.
-- Build lanes stay under the org key ledger (`crew/state/eval/gemini-org-key-ledger.md`); the full backfill is a
-  prod step for the owner, not a lane run.
+Lookup words ~0.01 per model; records keep set ~0.19 once; tuning phrases ~0.0001; steady state: only new or edited
+text. No lane run spends the org key beyond the tuning phrases (ledger line first).
 
 ### Migration, rollback, prod rollout
 
-- Migrations: one data-free migration adding the partial HNSW index for gemini-embedding-001 (CONCURRENTLY, outside
-  a transaction) and the two model settings (system_settings columns, default 3-small). No table is created; the
-  lookup_bindings / lookup_sets schemas are untouched.
-- Data: PROMPT_SYNONYMS words not already on a row of their class / type go to that row's alias home (list shown to
-  the owner first; on dev 3 of the 8 category words are on no category: mangkuk tandas, paip air, sinki dapur).
-- Rollback of the code: revert the PR. The old readers do not filter by model (see RAG facts), so once gemini
-  record chunks exist they would be compared with 3-small query vectors: a code rollback after step 2 needs the
-  owner-run DELETE of gemini record chunks first (held statement in the rollout doc). Before step 2 a revert is clean.
-- Prod steps for the owner: (1) run the read-only SQL below; (2) deploy; (3) check the Gemini quota; (4) Embed
-  missing (lookup words, ~USD 0.01); (5) start the record backfill, watch the Records tab; (6) Switch search when
-  100%; (7) after 14 days run the held DELETE of 3-small rows.
+- Migration: three `system_settings` columns (embedding_provider, embedding_model, embedding_records_search_model)
+  with the label copy; the partial HNSW index for 3-small over the keep set (CONCURRENTLY). The gemini index is built
+  by the job at 100%. No table created.
+- Rollback: revert the PR before the search model moves: clean. After it moved: set the search model column back to
+  text-embedding-3-small first (3-small rows were never removed), then revert.
+- Prod steps: (1) owner runs the read-only checks; (2) deploy; (3) Embeddings screen: lookup words green; (4) start
+  the records backfill (~13 min); (5) watch the guard move search to gemini; (6) later, the held DROP of the old
+  all-rows index (P2).
 
-Owner-run read-only checks (prod):
-```sql
-SELECT class_label, count(*) AS categories,
-       count(*) FILTER (WHERE search_synonyms ?| array['马桶','tandas','水龙头','kepala paip','sinki dapur','厨房水槽']) AS with_dict_words
-FROM product_categories WHERE is_active AND is_searchable IS NOT FALSE
-  AND class_label ILIKE ANY (array['%closet%','%tap%','%sink%']) GROUP BY class_label;
-SELECT source_type, model_name, count(*) AS chunks, sum(length(chunk_text)) AS chars
-FROM embedding_chunks WHERE is_current GROUP BY 1, 2 ORDER BY 3 DESC;
-SELECT pg_size_pretty(pg_total_relation_size('embedding_chunks')) AS chunks_size;
-```
+### Questions v3 (S1 is in its own ask)
 
-### Questions v2 (options, recommendation)
+T1. Floors: (a) keep the current gemini floors now; label 30+ meaning-only phrases per main list in the build and
+re-run the tuning before the PR; (b) change floors now on 3 meaning-only cases. Recommend (a).
 
-N1. Where lookup-word vectors live: (a) in the existing family as `lookup_word` documents + chunks; (b) a new
-table family shared by both, with records migrated into it. Recommend (a): no new table, the per-model skip and
-supersede already work, one worker; (b) moves 270k rows and rewrites every reader for no user gain.
+P1. Source-filtered record search: (a) one partial index per model + iterative scan (p95 127 ms); (b) also a
+per-source partial index for attachment and product (p95 < 1 ms, two more indexes per model). Recommend (a).
 
-N2. During the switch: (a) write both models, search stays on 3-small until the flip; (b) write gemini only and
-flip search at once (records not yet re-embedded drop out of search for the backfill hours); (c) write gemini only,
-search stays 3-small (new and changed records are unsearchable until the flip). Recommend (a): search never loses
-a record; the extra OpenAI cost is only changed records during the window.
+P2. The old 2.2 GB all-rows HNSW index: (a) replace by a 3-small keep-set partial index, then an owner-run DROP of
+the old one; (b) keep it. Recommend (a): frees ~2 GB, and the old index serves only dropped sources.
 
-N3. Backfill pacing: (a) a dedicated batch job (100 per request, capped per minute, resumable, off-hours);
-(b) through today's queue (~2,400 documents/hour, ~112 h). Recommend (a).
+G1. A chunk that keeps failing: (a) after 3 tries it counts as failed, is listed on the screen, and does not block
+the guard; (b) the guard waits for literally every chunk. Recommend (a): one bad text must not hold search on the
+old model forever.
 
-N4. 3-small rows after the flip: (a) keep 14 days, then an owner-run DELETE; (b) delete at the flip; (c) keep.
-Recommend (a): a one-setting rollback for two weeks, then ~1.7 GB back.
-
-N5. The flip itself: (a) a button on the screen (enabled at 100%, owner only); (b) a System Settings value the
-owner edits. Recommend (a): the screen already shows the coverage that gates it.
+G2. Backfill cap: (a) 20 requests/min default, editable beside the setting; (b) fixed in code. Recommend (a).
 
 ## Which business records are worth embedding (owner question 29 Oct: "code sucks against embedding, no?")
 
