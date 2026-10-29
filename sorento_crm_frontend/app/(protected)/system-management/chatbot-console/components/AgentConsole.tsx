@@ -13,6 +13,7 @@ import { useAgentConsole } from '../hooks/useAgentConsole';
 import {
   AGENT_LIMIT_LABELS,
   agentToolLabel,
+  type AgentConversationTurn,
   type AgentReplyMeta,
 } from '../types/agentConsole.types';
 
@@ -25,6 +26,13 @@ async function fetchContactOptions(query: string): Promise<SearchableSelectOptio
       label: row.name || row.phone_number || (row.respond_io_id as string),
       description: row.name && row.phone_number ? row.phone_number : undefined,
     }));
+}
+
+/** Reloaded history carries the same chips as a fresh reply, when the turn stored them. */
+function metaFromTurn(turn: AgentConversationTurn): AgentReplyMeta | null {
+  const tools = turn.tool_calls ?? [];
+  if (turn.rounds == null && tools.length === 0 && !turn.limit_hit) return null;
+  return { rounds: turn.rounds ?? null, tool_calls: tools, limit_hit: turn.limit_hit ?? null };
 }
 
 function Bubble({ role, children }: { role: 'user' | 'agent'; children: React.ReactNode }) {
@@ -44,12 +52,13 @@ function Bubble({ role, children }: { role: 'user' | 'agent'; children: React.Re
 }
 
 function ReplyMeta({ meta }: { meta: AgentReplyMeta }) {
+  const rounds = meta.rounds;
   return (
     <div
       className="mt-2 flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground"
       data-testid="agent-reply-meta"
     >
-      <span>{meta.rounds === 1 ? '1 round' : `${meta.rounds} rounds`}</span>
+      {rounds == null ? null : <span>{rounds === 1 ? '1 round' : `${rounds} rounds`}</span>}
       {meta.tool_calls.map((call, index) => (
         <Badge key={`${call.name}-${index}`} variant="secondary" size="sm">
           {agentToolLabel(call.name)}: {call.status}
@@ -111,6 +120,24 @@ export default function AgentConsole() {
         className="min-h-0 flex-1 space-y-3 overflow-y-auto overflow-x-hidden pr-1"
         data-testid="agent-console-thread"
       >
+        {agent.contactId && agent.loading ? (
+          <div role="status" className="space-y-3" aria-label="Loading the conversation">
+            <div className="h-9 w-2/3 animate-pulse rounded-2xl bg-muted" />
+            <div className="ms-auto h-9 w-1/2 animate-pulse rounded-2xl bg-muted" />
+          </div>
+        ) : null}
+        {agent.contactId &&
+        !agent.loading &&
+        !agent.notice &&
+        agent.turns.length === 0 &&
+        !agent.pendingText ? (
+          <div className="py-10 text-center" data-testid="agent-console-empty">
+            <p className="text-sm font-medium">No messages yet</p>
+            <p className="mt-1 text-sm text-muted-foreground">
+              Ask about stock, incoming shipments, orders or sales for this contact.
+            </p>
+          </div>
+        ) : null}
         {agent.turns.map((turn) => (
           <div key={turn.turn_id} className="space-y-3">
             <Bubble role="user">
@@ -119,9 +146,10 @@ export default function AgentConsole() {
             {turn.reply_text ? (
               <Bubble role="agent">
                 <p className="whitespace-pre-wrap break-words">{turn.reply_text}</p>
-                {agent.metaByTurn[turn.turn_id] ? (
-                  <ReplyMeta meta={agent.metaByTurn[turn.turn_id]} />
-                ) : null}
+                {(() => {
+                  const meta = agent.metaByTurn[turn.turn_id] ?? metaFromTurn(turn);
+                  return meta ? <ReplyMeta meta={meta} /> : null;
+                })()}
               </Bubble>
             ) : null}
           </div>

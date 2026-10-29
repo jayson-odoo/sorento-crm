@@ -30,17 +30,22 @@ export interface AgentConversationTurn {
   reply_text: string;
   status: string;
   created_at: string;
+  /** Absent on a turn stored before rounds were kept. */
+  rounds?: number | null;
+  limit_hit?: AgentTurnResponse['limit_hit'];
+  tool_calls?: { name: string; status: string }[];
 }
 
 export interface AgentConversationResponse {
-  conversation_id: string;
+  /** Null until the first turn: reading a conversation never creates one. */
+  conversation_id: string | null;
   turns: AgentConversationTurn[];
 }
 
 /** What a finished turn shows under its reply. Only turns run in this visit carry it. */
 export interface AgentReplyMeta {
-  rounds: number;
-  tool_calls: AgentToolCall[];
+  rounds: number | null;
+  tool_calls: { name: string; status: string }[];
   limit_hit: AgentTurnResponse['limit_hit'];
 }
 
@@ -55,6 +60,7 @@ export const AGENT_REFUSAL_MESSAGES: Record<string, string> = {
   no_linked_user: 'This contact has no linked active user.',
   ai_replies_off: 'AI replies are off for this contact.',
   contact_not_found: 'This contact was not found.',
+  agent_busy: 'The agent is still working on another message for this contact.',
 };
 
 export const AGENT_TOOL_LABELS: Record<string, string> = {

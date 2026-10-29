@@ -63,4 +63,22 @@ describe('agentConsoleService', () => {
     apiFetch.mockResolvedValueOnce(json({ detail: 'No access' }, 403));
     await expect(getAgentConversation('C1')).rejects.toThrow('No access');
   });
+
+  it('turns a busy 409 into an AgentRefusedError', async () => {
+    apiFetch.mockResolvedValueOnce(json({ detail: { code: 'agent_busy' } }, 409));
+    const error = await postAgentTurn('C1', 'x').catch((e) => e);
+    expect(error).toBeInstanceOf(AgentRefusedError);
+    expect(error.message).toBe('The agent is still working on another message for this contact.');
+  });
+
+  it('turns a 409 refusal on the conversation routes into the same error', async () => {
+    apiFetch.mockResolvedValueOnce(
+      json({ detail: { code: 'agent_refused', reason: 'no_linked_user' } }, 409),
+    );
+    await expect(getAgentConversation('C1')).rejects.toBeInstanceOf(AgentRefusedError);
+    apiFetch.mockResolvedValueOnce(
+      json({ detail: { code: 'agent_refused', reason: 'switch_off' } }, 409),
+    );
+    await expect(newAgentConversation('C1')).rejects.toBeInstanceOf(AgentRefusedError);
+  });
 });

@@ -51,7 +51,11 @@ export function useAgentConsole() {
     queryFn: () => getAgentConversation(contactId as string),
     enabled: Boolean(contactId),
     refetchOnWindowFocus: false,
+    retry: false,
   });
+  // A contact the agent may not run for is told in words, not left as an empty thread.
+  const loadRefusal =
+    conversation.error instanceof AgentRefusedError ? conversation.error.message : null;
 
   const turn = useMutation({
     mutationFn: (text: string) => postAgentTurn(contactId as string, text),
@@ -90,7 +94,11 @@ export function useAgentConsole() {
       await queryClient.invalidateQueries({ queryKey });
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : 'Failed to start a new conversation');
+      if (error instanceof AgentRefusedError) {
+        setNotice(error.message);
+      } else {
+        toast.error(error instanceof Error ? error.message : 'Failed to start a new conversation');
+      }
     },
   });
 
@@ -120,10 +128,10 @@ export function useAgentConsole() {
     contactLabel: contact?.label ?? '',
     setContact,
     turns: conversation.data?.turns ?? [],
-    loading: conversation.isLoading,
+    loading: Boolean(contactId) && conversation.isLoading,
     metaByTurn,
     pendingText,
-    notice,
+    notice: notice ?? loadRefusal,
     sending: turn.isPending,
     send,
     startNew: () => fresh.mutate(),

@@ -146,4 +146,49 @@ describe('AgentConsole', () => {
     expect(screen.getByLabelText('Message')).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Send' })).toBeDisabled();
   });
+
+  it('shows a loading state, then an empty state with a heading and a hint', async () => {
+    let finish: (v: unknown) => void = () => {};
+    getAgentConversation.mockReturnValue(new Promise((resolve) => (finish = resolve)));
+    renderConsole();
+    expect(await screen.findByRole('status', { name: 'Loading the conversation' })).toBeInTheDocument();
+    expect(screen.queryByTestId('agent-console-empty')).not.toBeInTheDocument();
+
+    finish({ conversation_id: null, turns: [] });
+    const empty = await screen.findByTestId('agent-console-empty');
+    expect(empty).toHaveTextContent('No messages yet');
+    expect(empty.querySelector('button')).toBeNull();
+  });
+
+  it('renders rounds, tool chips and the stop reason on reloaded history', async () => {
+    getAgentConversation.mockResolvedValue({
+      conversation_id: 'cv1',
+      turns: [
+        {
+          turn_id: 't0',
+          text: 'old question',
+          reply_text: 'old answer',
+          status: 'done',
+          created_at: '2026-10-29T09:00:00Z',
+          rounds: 3,
+          limit_hit: 'seconds',
+          tool_calls: [{ name: 'crm_report_ask', status: 'ok' }],
+        },
+      ],
+    });
+    renderConsole();
+    const meta = await screen.findByTestId('agent-reply-meta');
+    expect(meta).toHaveTextContent('3 rounds');
+    expect(meta).toHaveTextContent('Sales report: ok');
+    expect(meta).toHaveTextContent('Stopped: time limit');
+  });
+
+  it('tells a refused contact in words when the conversation will not load', async () => {
+    getAgentConversation.mockRejectedValue(new AgentRefusedError('switch_off'));
+    renderConsole();
+    expect(await screen.findByRole('alert')).toHaveTextContent(
+      'Agent mode is off for this contact (Contact Details > Chatbot).',
+    );
+    expect(screen.queryByTestId('agent-console-empty')).not.toBeInTheDocument();
+  });
 });

@@ -36,6 +36,7 @@ async function refusalReason(response: Response): Promise<string | null> {
     if (detail && detail.code === 'agent_refused' && typeof detail.reason === 'string') {
       return detail.reason;
     }
+    if (detail && detail.code === 'agent_busy') return 'agent_busy';
   } catch {
     // Not JSON: fall through to the generic error.
   }
@@ -62,6 +63,10 @@ export async function getAgentConversation(contactRespondId: string): Promise<Ag
   const params = new URLSearchParams({ contact_respond_id: contactRespondId });
   const response = await apiFetch(`${BASE}/conversation?${params.toString()}`);
   if (!response.ok) {
+    if (response.status === 409) {
+      const reason = await refusalReason(response);
+      if (reason) throw new AgentRefusedError(reason);
+    }
     throw new Error(await extractApiError(response, 'Failed to load the conversation'));
   }
   return response.json();
@@ -74,6 +79,10 @@ export async function newAgentConversation(contactRespondId: string): Promise<{ 
     body: JSON.stringify({ contact_respond_id: contactRespondId }),
   });
   if (!response.ok) {
+    if (response.status === 409) {
+      const reason = await refusalReason(response);
+      if (reason) throw new AgentRefusedError(reason);
+    }
     throw new Error(await extractApiError(response, 'Failed to start a new conversation'));
   }
   return response.json();
