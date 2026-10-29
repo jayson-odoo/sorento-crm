@@ -188,6 +188,7 @@ def test_an_unknown_contact_without_the_reveal_is_refused_outstanding(console_no
         "Srt5733 outstanding",
     )
     assert calls == [] and KIND_QUESTION not in text, (text, calls)
+    assert "Outstanding is not enabled for your account." in text, text  # review S2: the refusal, never silence
 
 
 def test_a_named_axis_keeps_the_summary_and_the_list_offer(do_only, do_only_world) -> None:

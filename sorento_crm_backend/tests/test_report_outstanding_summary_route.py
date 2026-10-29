@@ -153,6 +153,25 @@ def test_pending_delivery_groups_by_delivery_order(client, db):
     )
     assert body["group_by"] == "delivery_order", body
     assert len(body["rows"]) == 2 and sum(r["qty"] for r in body["rows"]) == 3, body["rows"]
+    assert body.get("summary") is None, body  # review B1: the list is the list, never the summary again
+
+
+def test_the_sales_order_list_carries_no_summary(client, db):
+    w = _pending_world(db)
+    body = _ok(client, _staff(db), basis="outstanding", customer_ids=[w.c1.id], group_by="sales_order", top_n=50, period=None)
+    assert body.get("summary") is None, body
+
+
+def test_a_named_axis_keeps_the_asks_order_count_and_a_month_trend_reads_by_date(client, db):
+    """Review S1: "bottom 1 customer" is the bottom one; "by month" lists months oldest first."""
+    w = _pending_world(db)
+    staff = _staff(db)
+    asc = _ok(client, staff, basis="pending_delivery", brand_ids=[w.brand_a.id], product_ids=[w.pa.id, w.pb.id],
+              group_by="customer", top_n=1, sort="asc", period=None)
+    assert [r["name"] for r in _group(asc["summary"], "customer")] == [w.c1.customer_name], asc["summary"]
+    months = _ok(client, staff, basis="pending_delivery", customer_ids=[w.c1.id], group_by="month", top_n=1000, period=None)
+    names = [r["name"] for r in _group(months["summary"], "month")]
+    assert names == sorted(names) and len(names) == 2, names
 
 
 # ================================================================ owner 29 Oct: pending delivery without the reveal
