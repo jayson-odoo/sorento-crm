@@ -69,6 +69,15 @@ beforeEach(() => {
 });
 
 describe('PriceFloorPanel', () => {
+  it('is titled Minimum price, not Price floor (owner meeting, 29 Oct)', () => {
+    getEffectivePriceFloor.mockReturnValue(new Promise(() => {}));
+
+    render(<PriceFloorPanel target={PRODUCT} />, { wrapper: wrapper() });
+
+    expect(screen.getByRole('heading', { name: 'Minimum price' })).toBeTruthy();
+    expect(screen.queryByText('Price floor')).toBeNull();
+  });
+
   it('shows a skeleton while the floor is being read', () => {
     getEffectivePriceFloor.mockReturnValue(new Promise(() => {}));
 

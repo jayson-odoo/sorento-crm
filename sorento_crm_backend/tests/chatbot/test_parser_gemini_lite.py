@@ -195,7 +195,7 @@ def test_a_capped_effort_still_reaches_gemini(monkeypatch):
 
 
 def test_anthropic_reports_no_effort_sent():
-    """AnthropicProvider ignores an effort, so the trace must not say one was sent."""
+    """AnthropicProvider refuses an effort on a structured-output call, so the parser sends none and the trace says so."""
     assert parser_mod.sent_reasoning_effort(_config(provider="anthropic", label_reasoning_effort="low")) == "off"
 
 

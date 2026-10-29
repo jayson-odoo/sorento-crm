@@ -1,0 +1,25 @@
+# Three-member WireGuard mesh (node A = CRM box, node B = KVM 8, witness), only if the HA-N8N-PRIVATE-PATH
+# tailnet is not used (documentation/runbooks/n8n-private-path.md). One file per member, listing
+# the OTHER two as peers. Keys generated on each box, never committed.
+[Interface]
+Address = <THIS_NODE_WG_IP>/32
+ListenPort = 51820
+PrivateKey = <THIS_NODE_PRIVATE_KEY>
+
+[Peer]
+# first other member
+PublicKey = <PEER_A_PUBLIC_KEY>
+Endpoint = <PEER_A_PUBLIC_ADDRESS>:51820
+AllowedIPs = <PEER_A_WG_IP>/32
+PersistentKeepalive = 25
+
+[Peer]
+# second other member
+PublicKey = <PEER_B_PUBLIC_KEY>
+Endpoint = <PEER_B_PUBLIC_ADDRESS>:51820
+AllowedIPs = <PEER_B_WG_IP>/32
+PersistentKeepalive = 25
+
+# Host firewall: 51820/udp from the two peers only. Over wg0: etcd 2379-2380 (all three);
+# between the two CRM nodes: Patroni REST 8008, Postgres 5432 (replication, rewind), and for the
+# node B HAProxy toward node A: 443 (API), 8765 (MCP), 6432 (pgbouncer); SSH 22.
