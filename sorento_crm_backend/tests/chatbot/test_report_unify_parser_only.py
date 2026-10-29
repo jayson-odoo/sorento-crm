@@ -386,17 +386,16 @@ def test_a_ranking_still_asks_the_measure(bot) -> None:
     assert calls == [] and "By quantity or by amount?" in text, (text, calls)
 
 
-def test_a_fresh_bare_outstanding_after_a_sales_total_asks_the_kind_and_keeps_the_period_on_screen(bot) -> None:
-    """(e) Owner Q2: a NEW outstanding ask the parser picked no kind for always asks the kind, even with a delivered total
-    held. Owner 29 Oct (REPORT-OUTSTANDING-SUMMARY item 9, as before #1922): the period on screen carries; the #1922
-    "only its own period" rule was a captain decision (Q12), not an owner ruling."""
+def test_a_fresh_bare_outstanding_after_a_sales_total_asks_the_kind_and_inherits_no_period(bot) -> None:
+    """(e) Owner Q2 + AC-RU-8c: a NEW outstanding ask (the parser flags no refine) the parser picked no kind for always
+    asks the kind, even with a delivered total held; it uses only a period named in its own message."""
     text, calls = bot.say(_status("sales_report", basis="delivered", **YEAR), "total sales 2026")
     assert [n for n, _a in calls] == ["crm_report_ask"], (text, calls)
     text, calls = bot.say(_bare_outstanding(), "outstanding")
     assert calls == [] and "Undelivered orders" in text, (text, calls)
     text, calls = bot.say(_answer(2), "the delivery one")
     args = _only_report_ask(calls)
-    assert args["basis"] == "pending_delivery" and args["date_from"] == "2026-01-01" and args["date_to"] == "2026-12-31", args
+    assert args["basis"] == "pending_delivery" and "date_from" not in args and "date_to" not in args, args
 
 
 def test_a_flagged_refine_to_outstanding_never_infers_the_kind_but_keeps_the_period_on_screen(bot) -> None:
