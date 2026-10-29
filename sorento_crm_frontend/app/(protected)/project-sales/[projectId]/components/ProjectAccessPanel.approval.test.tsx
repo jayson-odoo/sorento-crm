@@ -54,13 +54,14 @@ describe('ProjectAccessPanel: join and register interest', () => {
   it('a staff project someone else owns offers Ask to join and Register interest (the control)', () => {
     render(<ProjectAccessPanel project={project()} />);
     expect(screen.getByRole('button', { name: 'Ask to join' })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Register interest' })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Register as secondary lead' })).toBeInTheDocument();
+    expect(screen.queryByText(/register interest/i)).toBeNull();
   });
 
   it.each(['pending', 'rejected'] as const)('a %s registration offers neither', (state) => {
     render(<ProjectAccessPanel project={project({ approval_state: state, project_code: null })} />);
     expect(screen.queryByRole('button', { name: 'Ask to join' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'Register interest' })).toBeNull();
+    expect(screen.queryByRole('button', { name: 'Register as secondary lead' })).toBeNull();
   });
 
   it('an approved registration offers them again', () => {

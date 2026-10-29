@@ -152,7 +152,7 @@ function wrap(node: React.ReactNode) {
   return render(<QueryClientProvider client={client}>{node}</QueryClientProvider>);
 }
 const interestedBox = async () => {
-  const heading = await screen.findByText('Interested');
+  const heading = await screen.findByText('Secondary leads');
   return heading.parentElement as HTMLElement;
 };
 const posts = (part: string) => calls.filter((c) => c.method === 'POST' && c.url.includes(part));
@@ -217,7 +217,33 @@ describe('ProjectAccessPanel: Interested (E1, E2, E4)', () => {
     expect(screen.getByRole('button', { name: 'Ask to join' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Dispute' })).toBeNull();
     expect(screen.queryByText(/^Dispute$/)).toBeNull();
-    expect(screen.getByRole('button', { name: /Register interest/ })).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /Register as secondary lead/ })).toBeInTheDocument();
+  });
+});
+
+describe('AC-R4 secondary lead wording on the Access card', () => {
+  it('AC-R4 the heading reads Secondary leads and the old Interested heading is gone', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    await screen.findByText('Secondary leads');
+    expect(screen.queryByText(/^Interested$/)).toBeNull();
+    expect(screen.queryByText(/register interest/i)).toBeNull();
+  });
+
+  it('AC-R4 a past dispute decision reads "Secondary lead by <name>", not "Interest by"', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    await screen.findByText('Secondary leads');
+    expect(await screen.findByText(/Secondary lead by Manager M/)).toBeInTheDocument();
+    expect(screen.queryByText(/Interest by/)).toBeNull();
+    expect(screen.getByText(/Join by/)).toBeInTheDocument();
+  });
+
+  it('AC-R4 the dialog title and submit read Register as secondary lead', async () => {
+    wrap(<ProjectAccessPanel project={project()} />);
+    fireEvent.click(await screen.findByRole('button', { name: 'Register as secondary lead' }));
+    const dialog = await screen.findByRole('dialog');
+    expect(within(dialog).getByText('Register as secondary lead on PRJ-000142')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Register as secondary lead' })).toBeInTheDocument();
+    expect(within(dialog).queryByText(/register interest/i)).toBeNull();
   });
 });
 

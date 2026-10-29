@@ -526,14 +526,14 @@ describe('ProjectForm: Check button (AC-PF030, AC-PF031)', () => {
     expect(screen.getByRole('button', { name: 'Register project' })).toBeEnabled();
   });
 
-  it('a blocking match shows one line and turns the CTA into Register interest', async () => {
+  it('AC-R2 a blocking match shows one line and turns the CTA into Register as secondary lead', async () => {
     previewClashes.mockResolvedValue({ candidates: [BLOCKING], would_block: true });
     renderForm({ mode: 'create' });
     fireEvent.change(screen.getByLabelText(/project title/i), {
       target: { value: 'Setia Alam Phase 3B' },
     });
     fireEvent.click(screen.getByRole('button', { name: 'Check' }));
-    const cta = await screen.findByRole('button', { name: 'Register interest in PRJ-000009' });
+    const cta = await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' });
     expect(cta).toBeEnabled();
     expect(screen.getByText(/Project already registered/)).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();

@@ -572,22 +572,24 @@ describe('D2 a blocking clash becomes Register interest', () => {
     expect(screen.queryByText(/Blocked by an existing project/)).toBeNull();
   });
 
-  it('the one primary reads "Register interest in <code>", enabled, with Cancel kept', async () => {
+  it('AC-R2 the one primary reads "Register as secondary lead on <code>", enabled, with Cancel kept', async () => {
     renderForm();
     await checkTitle();
-    const primary = await screen.findByRole('button', { name: 'Register interest in PRJ-000009' });
+    const primary = await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' });
     expect(primary).toBeEnabled();
     expect(screen.getByRole('button', { name: 'Cancel' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Register project' })).toBeNull();
     expect(screen.queryByText(/Dispute/)).toBeNull();
   });
 
-  it('D4 the primary opens a dialog that needs a note, posts kind dispute and goes to the project', async () => {
+  it('AC-R2 D4 the primary opens a dialog that needs a note, posts kind dispute and goes to the project', async () => {
     renderForm();
     await checkTitle();
-    fireEvent.click(await screen.findByRole('button', { name: 'Register interest in PRJ-000009' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' }));
     const dialog = await screen.findByRole('dialog');
-    expect(within(dialog).getByText('Register interest in PRJ-000009')).toBeInTheDocument();
+    expect(within(dialog).getByText('Register as secondary lead on PRJ-000009')).toBeInTheDocument();
+    expect(within(dialog).getByRole('button', { name: 'Register as secondary lead' })).toBeInTheDocument();
+    expect(screen.queryByText(/register interest/i)).toBeNull();
     const note = within(dialog).getByLabelText(/How and when did you find this project\?/);
     expect(note.tagName).toBe('TEXTAREA');
     fireEvent.submit(note.closest('form') as HTMLFormElement);
@@ -610,10 +612,10 @@ describe('D2 a blocking clash becomes Register interest', () => {
         : { candidates: [BLOCKING], would_block: true };
     renderForm();
     await checkTitle();
-    await screen.findByRole('button', { name: 'Register interest in PRJ-000009' });
+    await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' });
     await pickAsync('Developer', 'Perdana', /Perdana CONTOH/);
     expect(await screen.findByRole('button', { name: 'Register project' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /Register interest in/ })).toBeNull();
+    expect(screen.queryByRole('button', { name: /Register as secondary lead on/ })).toBeNull();
   });
 });
 
@@ -886,10 +888,10 @@ describe('D8 a submit-only salesperson registers interest', () => {
     );
   });
 
-  it('after Register interest the user lands on the Projects list with a toast, not on the project', async () => {
+  it('AC-R2 after Register as secondary lead the user lands on the Projects list with a toast, not on the project', async () => {
     renderForm();
     await checkTitle();
-    fireEvent.click(await screen.findByRole('button', { name: 'Register interest in PRJ-000009' }));
+    fireEvent.click(await screen.findByRole('button', { name: 'Register as secondary lead on PRJ-000009' }));
     const dialog = await screen.findByRole('dialog');
     const note = within(dialog).getByLabelText(/How and when did you find this project\?/);
     fireEvent.change(note, { target: { value: 'Met the developer in March.' } });
@@ -897,7 +899,7 @@ describe('D8 a submit-only salesperson registers interest', () => {
     await waitFor(() => expect(callsTo('POST', '/projects/p9/takeover-requests')).toHaveLength(1));
     await waitFor(() => expect(push).toHaveBeenCalledWith('/project-sales/pipeline'));
     expect(push).not.toHaveBeenCalledWith('/project-sales/p9');
-    expect(toast.success).toHaveBeenCalledWith('Interest registered in PRJ-000009');
+    expect(toast.success).toHaveBeenCalledWith('Registered as secondary lead on PRJ-000009');
   });
 });
 
