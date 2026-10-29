@@ -198,12 +198,32 @@ def test_openai_provider_chat_normalizes_tool_calls(monkeypatch):
     assert stub.last_kwargs and stub.last_kwargs.get("tools")
 
 
+def _stub_embeddings_http(monkeypatch, payload_for):
+    """Stub the one embeddings transport (httpx.Client.send); returns the list of requests seen."""
+    import httpx
+
+    seen: list = []
+
+    def send(self, request, **_kw):
+        import json as _json
+
+        seen.append(request)
+        return httpx.Response(200, json=payload_for(_json.loads(request.content)), request=request)
+
+    monkeypatch.setattr(httpx.Client, "send", send)
+    return seen
+
+
+def _openai_payload(body):
+    return {"data": [{"index": i, "embedding": [3.0, 4.0] + [0.0] * 1534} for i, _ in enumerate(body["input"])]}
+
+
 def test_openai_provider_embed_returns_vector(monkeypatch):
-    stub = _StubOpenAIClient()
-    monkeypatch.setattr("openai.OpenAI", lambda api_key=None: stub)
-    provider = OpenAIProvider("k")
-    vec = provider.embed("hello")
-    assert vec == [0.1, 0.2, 0.3]
+    seen = _stub_embeddings_http(monkeypatch, _openai_payload)
+    vec = OpenAIProvider("k").embed("hello")
+    # Unit-normalised 1536-wide vector (3-4-5 triangle -> 0.6, 0.8).
+    assert len(vec) == 1536 and vec[:2] == [0.6, 0.8]
+    assert len(seen) == 1
 
 
 def test_openai_test_connection_ok(monkeypatch):
@@ -489,11 +509,10 @@ def test_anthropic_embed_falls_back_to_openai(monkeypatch):
     from app.config import settings as _settings
 
     monkeypatch.setattr(_settings, "openai_api_key", "fake-key", raising=False)
-    stub = _StubOpenAIClient()
-    monkeypatch.setattr("openai.OpenAI", lambda api_key=None: stub)
+    _stub_embeddings_http(monkeypatch, _openai_payload)
     provider = AnthropicProvider("k")
     vec = provider.embed("hi")
-    assert vec == [0.1, 0.2, 0.3]
+    assert len(vec) == 1536 and vec[:2] == [0.6, 0.8]
 
 
 def test_anthropic_embed_raises_without_openai_key(monkeypatch):
@@ -1186,25 +1205,26 @@ def test_gemini_chat_without_an_api_key_never_reaches_the_network(monkeypatch):
 
 
 def test_gemini_embed_returns_a_vector_sized_to_the_column(monkeypatch):
-    from app.config import settings as _settings
-
-    monkeypatch.setattr(_settings, "embedding_dimensions", 4, raising=False)
-    t = _install(
+    # Changed from the old behaviour: embedContent with configurable dims is gone; Gemini now goes
+    # through batchEmbedContents at a fixed 1536 and the vector is unit length.
+    seen = _stub_embeddings_http(
         monkeypatch,
-        _GeminiTransport({"embedding": {"values": [3.0, 0.0, 4.0, 0.0]}}),
+        lambda body: {"embeddings": [{"values": [3.0, 0.0, 4.0] + [0.0] * 1533} for _ in body["requests"]]},
     )
 
     vector = GeminiProvider("k").embed("hello")
 
-    assert t.last["url"].endswith("/models/gemini-embedding-001:embedContent")
-    assert t.body["outputDimensionality"] == 4
-    assert t.body["content"] == {"parts": [{"text": "hello"}]}
-    # Truncated below the native size, so re-normalized to unit length.
-    assert vector == [0.6, 0.0, 0.8, 0.0]
+    assert str(seen[0].url).endswith("/models/gemini-embedding-001:batchEmbedContents")
+    import json as _json
+
+    item = _json.loads(seen[0].content)["requests"][0]
+    assert item["outputDimensionality"] == 1536
+    assert item["content"] == {"parts": [{"text": "hello"}]}
+    assert len(vector) == 1536 and vector[:3] == [0.6, 0.0, 0.8]
 
 
 def test_gemini_embed_raises_when_no_vector_came_back(monkeypatch):
-    _install(monkeypatch, _GeminiTransport({"embedding": {}}))
+    _stub_embeddings_http(monkeypatch, lambda body: {"embeddings": [{}]})
     with pytest.raises(RuntimeError):
         GeminiProvider("k").embed("hello")
 

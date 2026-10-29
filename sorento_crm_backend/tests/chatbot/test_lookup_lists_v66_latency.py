@@ -21,6 +21,9 @@ from tests.chatbot.test_lookup_lists_engine import _fresh_caches, _seed_world  #
 ROWS = [ll.LookupRow("category", "c1", "ZZ Water Closet", ("zz water closet", "zz toilet bowl"))]
 
 
+from tests.chatbot._embed_http import patch_openai_embeddings
+
+
 def _fake_openai(calls: list[list[str]], made: list[int], gate: threading.Event | None = None):
     class _Emb:
         def create(self, *, model, input):
@@ -29,11 +32,13 @@ def _fake_openai(calls: list[list[str]], made: list[int], gate: threading.Event 
             calls.append(list(input))
             return types.SimpleNamespace(data=[types.SimpleNamespace(embedding=[1.0] + [0.0] * 1535) for _ in input])
 
-    def client(self, **kw):
-        made.append(1)
-        return types.SimpleNamespace(embeddings=_Emb())
+    emb = _Emb()
 
-    return client
+    def create(*, model, input):
+        made.append(1)
+        return emb.create(model=model, input=input)
+
+    return create
 
 
 def _fresh_embedder(monkeypatch, calls, made, gate=None):
@@ -41,7 +46,7 @@ def _fresh_embedder(monkeypatch, calls, made, gate=None):
 
     for store in (ll._cache, ll._matrices, ll._pieces):
         store.clear()
-    monkeypatch.setattr(llm_provider.OpenAIProvider, "_client", _fake_openai(calls, made, gate))
+    patch_openai_embeddings(monkeypatch, _fake_openai(calls, made, gate))
     return ll.provider_embedder("sk-zz-v66")
 
 
