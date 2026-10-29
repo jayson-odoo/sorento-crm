@@ -173,7 +173,7 @@ const FALLBACKS: ChatbotMediaSettings = {
 };
 
 /**
- * The columns where NULL is a real stored value ("inherit" / "no degraded
+ * The four columns where NULL is a real stored value ("inherit" / "no degraded
  * tier"). Every other key is non-nullable in the draft, and the settings GET emits
  * every key as an explicit null when no `system_settings` row exists yet, so for
  * those a null must fall back exactly like a missing key.
@@ -183,8 +183,6 @@ const NULLABLE_KEYS: ReadonlySet<keyof ChatbotMediaSettings> = new Set([
   'media_image_model',
   'media_image_degraded_model',
   'media_voice_degraded_model',
-  'document_ai_provider',
-  'document_ai_model',
 ]);
 
 function pickMediaSettings(row: Record<string, unknown> | null | undefined): ChatbotMediaSettings {

@@ -22,7 +22,11 @@ import pytest
 from app.config import Settings, settings as app_settings
 from app.models.user import SystemSetting
 from app.services import document_extraction, llm_provider
-from app.services.document_extraction import extract_document
+from app.services.document_extraction import (
+    extract_document,
+    is_model_unavailable,
+    page_failure_reason,
+)
 from app.services.llm_provider import ChatResult
 
 from ._pg_fixture import blank_session
@@ -115,6 +119,18 @@ def test_a_saved_provider_with_no_model_uses_that_providers_default_not_the_env_
     assert rec.calls == [("openai", llm_provider.default_model_for("openai"))]
 
 
+def test_a_saved_model_with_no_saved_provider_is_ignored(env):
+    """A model id means nothing without its provider; pairing it with the env provider
+    is how a `gpt-4o` gets posted to Google."""
+    rec = _record(env)
+    with blank_session() as db:
+        _settings_row(db, document_ai_provider=None, document_ai_model="gpt-4o")
+
+        _extract(db)
+
+    assert rec.calls == [("gemini", "ZZT-env-model")]
+
+
 def test_the_env_is_only_a_fallback_when_no_setting_is_saved(env):
     rec = _record(env)
     with blank_session() as db:
@@ -149,6 +165,34 @@ def test_a_model_not_found_answer_is_the_page_error_and_is_logged_naming_the_mod
     assert len(lines) == 1, lines
     assert "gemini/gemini-2.5-flash" in lines[0]
     assert "System Settings" in lines[0]
+
+
+def test_a_context_length_error_is_not_read_as_a_missing_model():
+    """`404` only as a whole word: 140452 tokens is not a 404."""
+    assert not is_model_unavailable(
+        "This model's maximum context length is 128000 tokens. However, your messages "
+        "resulted in 140452 tokens."
+    )
+    assert is_model_unavailable(NOT_FOUND)
+    assert is_model_unavailable("Error code: 404 - The model `gpt-9` does not exist")
+
+
+def test_a_key_fragment_in_a_provider_error_never_reaches_the_panel():
+    sentence = page_failure_reason(
+        [None, "Error code: 401 - Incorrect API key provided: sk-proj-****abcd."]
+    )
+
+    assert "sk-proj" not in sentence
+    assert "Incorrect API key provided: [key]" in sentence
+    assert "System Settings" not in sentence  # not a model problem
+
+
+def test_a_missing_model_reason_names_where_to_fix_it():
+    sentence = page_failure_reason([NOT_FOUND, NOT_FOUND])
+
+    assert sentence.startswith(" Reason: Gemini call failed (404)")
+    assert sentence.count("no longer available") == 1
+    assert sentence.endswith("System Settings > Chatbot Media.")
 
 
 # ------------------------------------------------------------ no 2.5 default left

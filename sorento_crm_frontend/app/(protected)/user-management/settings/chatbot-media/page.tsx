@@ -118,7 +118,8 @@ function fromDraft(draft: Draft): ChatbotMediaSettings {
     media_image_model: draft.imageModel.trim() || null,
     media_image_degraded_model: draft.imageDegradedModel.trim() || null,
     document_ai_provider: draft.documentProvider.trim() || null,
-    document_ai_model: draft.documentModel.trim() || null,
+    // A model id means nothing without the provider it was picked from.
+    document_ai_model: (draft.documentProvider.trim() && draft.documentModel.trim()) || null,
     media_transcribe_model: draft.transcribeModel.trim(),
     media_voice_degraded_model: draft.voiceDegradedModel.trim() || null,
     media_language_mode: draft.languageMode,
@@ -473,7 +474,13 @@ export default function ChatbotMediaSettingsPage() {
             value={draft.documentModel}
             options={documentModelOptions}
             onChange={(v) => set('documentModel', v)}
-            hint="Blank uses the provider's default model."
+            hint={
+              draft.documentProvider
+                ? "Blank uses the provider's default model."
+                : 'Pick a provider first.'
+            }
+            emptyLabel="Server default"
+            disabled={!draft.documentProvider}
             testProvider={draft.documentProvider}
           />
         </CardContent>
@@ -645,6 +652,7 @@ function ModelField({
   required,
   emptyLabel,
   testProvider,
+  disabled = false,
   onChange,
 }: {
   id: string;
@@ -668,13 +676,15 @@ function ModelField({
    * a transcription model for reasons that have nothing to do with the setting.
    */
   testProvider?: string;
+  /** No model can be picked yet, e.g. while the provider it belongs to is blank. */
+  disabled?: boolean;
   onChange: (value: string) => void;
 }) {
   const known = options.some((opt) => opt.value === value);
   const merged =
     value && !known ? [...options, { value, label: value }] : options;
   const probe = useTestProviderModel();
-  const canTest = testProvider !== undefined && value.trim() !== '';
+  const canTest = !disabled && testProvider !== undefined && value.trim() !== '';
   // A verdict belongs to one (provider, model) pair. Changing the provider makes
   // it stale in exactly the way a changed model does.
   const probeReset = probe.reset;
@@ -696,6 +706,7 @@ function ModelField({
           onChange(next);
         }}
         options={merged}
+        disabled={disabled}
         clearable={!required}
         placeholder={required ? 'Select a model' : (emptyLabel ?? 'Inherit')}
       />
@@ -703,6 +714,7 @@ function ModelField({
         className="font-mono text-xs"
         placeholder="or type a model name"
         value={value}
+        disabled={disabled}
         aria-invalid={invalid}
         onChange={(e) => {
           probe.reset();

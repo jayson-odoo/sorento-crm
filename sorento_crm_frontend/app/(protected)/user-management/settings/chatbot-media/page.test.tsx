@@ -750,6 +750,25 @@ describe('ChatbotMediaSettingsPage PO and delivery schedule reading', () => {
     );
   });
 
+  it('blank provider: the model cannot be picked and is saved as null', () => {
+    const mutate = mutationSpy();
+    mockQuery.mockReturnValue({
+      data: settings({ document_ai_provider: null, document_ai_model: 'gpt-4o' }),
+      isLoading: false,
+      isError: false,
+    });
+    renderWithClient();
+
+    expect(modelField('document-ai-model').text).toBeDisabled();
+    expect(screen.getByText('Pick a provider first.')).toBeInTheDocument();
+
+    fireEvent.click(saveButton());
+    expect(mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ document_ai_provider: null, document_ai_model: null }),
+      expect.anything(),
+    );
+  });
+
   it('clears the model when the provider changes, and leaves the image models alone', async () => {
     mockQuery.mockReturnValue({
       data: settings({ media_image_provider: 'gemini', media_image_model: 'gemini-3.5-flash' }),
