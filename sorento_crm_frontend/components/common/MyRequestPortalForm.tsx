@@ -7,9 +7,13 @@
  * portal. Two things differ by design: the page's header carries Back (`embedded`), and the two
  * deletes are parked on the server (D7) instead of confirmed - "Delete draft" parks
  * `my_request.delete`, removing an own upload parks `my_request_attachment.unlink`.
+ *
+ * `MyRequestClientProvider` is that client on its own, for the kinds with portal pages of their
+ * own (Sample Request, New Product Application, Sales Opportunity; R3): the CRM page wraps the
+ * portal's component in it.
  */
 
-import { useMemo } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Trash2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import DeferredActionButton from '@/components/common/DeferredActionButton';
@@ -26,11 +30,14 @@ import { createMyRequestsSubmissionApi, myRequestsPaths } from '@/services/myReq
 import type { MyRequestKind } from '@/services/myRequestsService';
 
 /** The staff list each form's rows show on, refetched once a row or a file is gone. */
-const LIST_KEYS: Record<MyRequestKind, string> = {
+const LIST_KEYS: Record<string, string> = {
   stock_inquiry: 'stock-inquiries',
   complaint: 'complaints',
   purchase_request: 'purchase-requests',
   sponsorship_form: 'purchase-requests',
+  sample_request: 'sample-requests',
+  new_product_application: 'new-product-applications',
+  sales_opportunity: 'sales-opportunities',
 };
 
 function DraftDelete({ kind, submissionId, disabled, onDeleted }: DraftDeleteProps) {
@@ -43,7 +50,7 @@ function DraftDelete({ kind, submissionId, disabled, onDeleted }: DraftDeletePro
     surface: 'inline',
     watchFromMount: true,
     successMessage: 'Draft deleted',
-    invalidateKeys: [[MY_REQUEST_KEY, kind], [LIST_KEYS[kind as MyRequestKind] ?? MY_REQUEST_KEY]],
+    invalidateKeys: [[MY_REQUEST_KEY, kind], [LIST_KEYS[kind] ?? MY_REQUEST_KEY]],
     onCommitted: onDeleted,
   });
   return (
@@ -104,6 +111,21 @@ function AttachmentRemove({ kind, attachment, disabled, onRemoved }: AttachmentR
   );
 }
 
+/** The portal component under it talks to My Requests, on the CRM's paths, with D7 deletes. */
+export function MyRequestClientProvider({ children }: { children: ReactNode }) {
+  // One client per form: its lookup sets are cached per client, never shared with the portal's.
+  const client = useMemo<SubmissionClient>(
+    () => ({
+      ...createMyRequestsSubmissionApi(),
+      paths: myRequestsPaths,
+      deletes: { DraftDelete, AttachmentRemove },
+      embedded: true,
+    }),
+    [],
+  );
+  return <SubmissionClientProvider client={client}>{children}</SubmissionClientProvider>;
+}
+
 export default function MyRequestPortalForm({
   kind,
   submissionId,
@@ -115,23 +137,13 @@ export default function MyRequestPortalForm({
   /** A new request's starting values (a project's stage action seeds its project). */
   initialValues?: SubmissionInitialValues;
 }) {
-  // One client per form: its lookup sets are cached per client, never shared with the portal's.
-  const client = useMemo<SubmissionClient>(
-    () => ({
-      ...createMyRequestsSubmissionApi(),
-      paths: myRequestsPaths,
-      deletes: { DraftDelete, AttachmentRemove },
-      embedded: true,
-    }),
-    [],
-  );
   return (
-    <SubmissionClientProvider client={client}>
+    <MyRequestClientProvider>
       <SubmissionForm
         kind={kind}
         submissionId={submissionId}
         initialValues={submissionId ? undefined : initialValues}
       />
-    </SubmissionClientProvider>
+    </MyRequestClientProvider>
   );
 }

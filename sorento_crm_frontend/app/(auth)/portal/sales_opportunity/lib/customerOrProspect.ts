@@ -6,7 +6,7 @@
  * `SearchableSelect` in `fetchOptions` mode rather than the portal's own `AsyncCombobox`.
  */
 import type { SearchableSelectOption } from '@/components/common/SearchableSelect';
-import { getPortalCustomerOptions } from '../../lib/sales-opportunity-service';
+import type { SalesOpportunityService } from '../../lib/sales-opportunity-service';
 
 export const PROSPECT_PREFIX = 'prospect:';
 export const BLOCKED_VALUE = '__blocked__';
@@ -19,8 +19,12 @@ export const BLOCKED_VALUE = '__blocked__';
  */
 export const NO_CUSTOMERS_MESSAGE = 'You have no customers linked yet; type a name to add a prospect';
 
-export async function fetchCustomerOrProspectOptions(query: string): Promise<SearchableSelectOption[]> {
-  const result = await getPortalCustomerOptions(query);
+/** The field's options over `service`: the portal's own, or the injected client's on a CRM page. */
+export async function fetchCustomerOrProspectOptions(
+  service: Pick<SalesOpportunityService, 'getPortalCustomerOptions'>,
+  query: string,
+): Promise<SearchableSelectOption[]> {
+  const result = await service.getPortalCustomerOptions(query);
   const options: SearchableSelectOption[] = result.items.map((item) => ({
     value: item.customer_id,
     label: `${item.customer_code} - ${item.customer_name}`,

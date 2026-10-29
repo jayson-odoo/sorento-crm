@@ -8,7 +8,11 @@
  *
  * At 375px the product field is its own full-width row; qty, unit price, amount and remove
  * sit on the row under it (F7).
+ *
+ * The product search goes through the injected client (`lib/submission-client`, PORTAL-P4-REQUESTS
+ * R3), the portal's own without one.
  */
+import { useCallback } from 'react';
 import { Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { NumberInput } from '@/components/ui/number-input';
@@ -16,7 +20,9 @@ import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { formatCurrency } from '@/lib/helpers';
-import { getPortalProductOptions, type PortalProductOption } from '../../lib/sales-opportunity-service';
+import * as portalSalesOpportunity from '../../lib/sales-opportunity-service';
+import type { PortalProductOption } from '../../lib/sales-opportunity-service';
+import { clientService, useSubmissionClient } from '../../lib/submission-client';
 import { codeWithName } from '@/lib/product-display';
 
 export interface LineDraft {
@@ -71,15 +77,6 @@ interface ProductSelectOption extends SearchableSelectOption {
   listPrice: string | null;
 }
 
-async function fetchProductOptions(q: string): Promise<ProductSelectOption[]> {
-  const items = await getPortalProductOptions(q);
-  return items.map((item: PortalProductOption) => ({
-    value: item.id,
-    label: codeWithName(item.code, item.name),
-    listPrice: item.listPrice,
-  }));
-}
-
 export function PortalOpportunityLineRow({
   line,
   onChange,
@@ -92,6 +89,19 @@ export function PortalOpportunityLineRow({
   /** Set once a Save found a wrong number; the sentences then follow the typing. */
   showErrors?: boolean;
 }) {
+  const client = useSubmissionClient();
+  const fetchProductOptions = useCallback(
+    async (q: string): Promise<ProductSelectOption[]> => {
+      const service = clientService(client, 'salesOpportunity', portalSalesOpportunity);
+      const items = await service.getPortalProductOptions(q);
+      return items.map((item: PortalProductOption) => ({
+        value: item.id,
+        label: codeWithName(item.code, item.name),
+        listPrice: item.listPrice,
+      }));
+    },
+    [client],
+  );
   const amount = lineDraftAmount(line);
   const errors = showErrors ? lineDraftErrors(line) : {};
 

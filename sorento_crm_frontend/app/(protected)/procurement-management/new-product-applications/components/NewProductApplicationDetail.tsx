@@ -32,8 +32,9 @@ import { AsyncCombobox } from '@/app/(auth)/portal/components/AsyncCombobox';
 import { useDeferredAction } from '@/hooks/useDeferredAction';
 import { useEffectiveUserId } from '@/hooks/useEffectiveUserId';
 import { useHasPermission } from '@/hooks/usePermissions';
-import { useMyNewProductApplicationMutations } from '@/hooks/useMyRequests';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import PortalNewProductApplicationForm from '@/app/(auth)/portal/components/NewProductApplicationForm';
 import { formatDateInMalaysia } from '@/lib/helpers';
 import { numberFieldError } from '@/lib/number-field';
 import { isAwaitingReview, submitVerb } from '@/lib/submission-status';
@@ -279,7 +280,28 @@ function OpenedAs({
   );
 }
 
+/**
+ * A salesperson limited to their own applications (PORTAL-P4-REQUESTS R3, form parity) views theirs
+ * in the portal's own form, read-only exactly as the portal shows it, with its own Revise, Cancel
+ * and files; everyone else the staff detail, unchanged.
+ */
 export default function NewProductApplicationDetail({
+  applicationId,
+}: {
+  applicationId: string;
+}) {
+  const { limited } = useRequestScope('new_product_application');
+  if (limited) {
+    return (
+      <MyRequestClientProvider>
+        <PortalNewProductApplicationForm applicationId={applicationId} />
+      </MyRequestClientProvider>
+    );
+  }
+  return <StaffNewProductApplicationDetail applicationId={applicationId} />;
+}
+
+function StaffNewProductApplicationDetail({
   applicationId,
 }: {
   applicationId: string;
@@ -291,14 +313,17 @@ export default function NewProductApplicationDetail({
     isError,
     error,
   } = useNewProductApplicationQuery(applicationId);
-  const staffWrites = useNewProductApplicationMutations();
-  // A salesperson limited to their own applications gets the portal's actions only, run by the
-  // portal's own code through My Requests: Edit, Submit, Revise, Cancel and their files, a portal
-  // draft included (PORTAL-P4-REQUESTS S5). No approval, line work, feedback, delete or history.
-  const { limited } = useRequestScope('new_product_application');
-  const ownWrites = useMyNewProductApplicationMutations();
-  const { approve, reject, link, close, undo, feedback } = staffWrites;
-  const { submit, revise, cancel } = limited ? ownWrites : staffWrites;
+  const {
+    submit,
+    approve,
+    reject,
+    revise,
+    cancel,
+    link,
+    close,
+    undo,
+    feedback,
+  } = useNewProductApplicationMutations();
   const canCreate = useHasPermission(
     'procurement.new_product_applications.create',
   );
@@ -368,8 +393,7 @@ export default function NewProductApplicationDetail({
 
   const r: Detail = application;
   const isOwner = Boolean(userId) && r.applicant_id === userId;
-  // The server shows a limited user only their own rows, so every row here is theirs.
-  const ownerActs = limited || (isOwner && canCreate);
+  const ownerActs = isOwner && canCreate;
   const editable = r.status === 'draft' || r.status === 'rejected';
   const locked = isAwaitingReview(r.status) || r.status === 'approved';
   const anyResolved = r.lines.some(isResolved);
@@ -542,19 +566,17 @@ export default function NewProductApplicationDetail({
           pendingAction={deletion.countdown}
           gear={
             <DetailActionsMenu ariaLabel="Application actions">
-              {!limited && (
-                <DropdownMenuItem
-                  onSelect={() => {
-                    void navigator.clipboard
-                      .writeText(window.location.href)
-                      .then(() => toast.success('Link copied'))
-                      .catch(() => toast.error('Could not copy the link'));
-                  }}
-                >
-                  <Link2 className="size-4" />
-                  Copy link
-                </DropdownMenuItem>
-              )}
+              <DropdownMenuItem
+                onSelect={() => {
+                  void navigator.clipboard
+                    .writeText(window.location.href)
+                    .then(() => toast.success('Link copied'))
+                    .catch(() => toast.error('Could not copy the link'));
+                }}
+              >
+                <Link2 className="size-4" />
+                Copy link
+              </DropdownMenuItem>
               <DropdownMenuItem onSelect={() => void downloadExcel()}>
                 <Download className="size-4" />
                 Download Excel
@@ -568,7 +590,7 @@ export default function NewProductApplicationDetail({
                   Cancel application
                 </DropdownMenuItem>
               )}
-              {r.status === 'draft' && ownerActs && !limited && (
+              {r.status === 'draft' && ownerActs && (
                 <DropdownMenuItem
                   variant="destructive"
                   disabled={deletion.isBlocked}
@@ -611,7 +633,7 @@ export default function NewProductApplicationDetail({
                   Revise
                 </Button>
               )}
-              {editable && ownerActs && (limited || r.source !== 'portal') && (
+              {editable && ownerActs && r.source !== 'portal' && (
                 <Button variant="outline" asChild>
                   <Link href={`${BASE_PATH}/${r.id}/edit`}>Edit</Link>
                 </Button>
@@ -758,8 +780,7 @@ export default function NewProductApplicationDetail({
       <NewProductApplicationAttachments
         applicationId={r.id}
         attachments={r.attachments ?? []}
-        editable={ownerActs && editable && (limited || r.source !== 'portal')}
-        own={limited}
+        editable={ownerActs && editable && r.source !== 'portal'}
       />
 
       {canViewRecord && (

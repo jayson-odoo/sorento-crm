@@ -19,13 +19,14 @@ export default function SampleRequestDetailTabs({
   children: ReactNode;
 }) {
   const canView = useHasPermission('projects.sample_requests.view');
+  // A limited user's detail is the portal's own form (PORTAL-P4-REQUESTS R3): no tab strip around it.
   const { limited } = useRequestScope('sample_request');
+  if (limited) return <>{children}</>;
   return (
     <FormDetailWithSLATabs
       sourceEntityType="sample_request"
       sourceEntityId={id}
       commentsKind={canView ? 'sample_request' : undefined}
-      limited={limited}
     >
       {children}
     </FormDetailWithSLATabs>

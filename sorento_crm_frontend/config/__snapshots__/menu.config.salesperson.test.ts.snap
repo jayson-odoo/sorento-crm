@@ -60,6 +60,10 @@ exports[`MENU_SIDEBAR for staff is unchanged > admin with every permission: filt
         "title": "Top selling items",
       },
       {
+        "path": "/sales/sales-and-outstanding",
+        "title": "Sales & outstanding",
+      },
+      {
         "path": "/sales/set-apart-customers",
         "title": "Set-apart customers",
       },

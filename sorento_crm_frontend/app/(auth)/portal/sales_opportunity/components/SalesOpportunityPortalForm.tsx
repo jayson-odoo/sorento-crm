@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { LoaderCircleIcon, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
@@ -10,7 +10,8 @@ import { numberFieldError } from '@/lib/number-field';
 import { Label } from '@/components/ui/label';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { toast } from '@/lib/toast';
-import { createPortalSalesOpportunity } from '../../lib/sales-opportunity-service';
+import * as portalSalesOpportunity from '../../lib/sales-opportunity-service';
+import { clientService, useSubmissionClient } from '../../lib/submission-client';
 import {
   BLOCKED_VALUE,
   NO_CUSTOMERS_MESSAGE,
@@ -37,6 +38,9 @@ import {
  * this component is create-only; an earlier round routed Edit through a second instance of it
  * with `initial`/`onSaved` props, which swapped the whole read view for the create form
  * instead of turning its own fields into inputs. Reverted.
+ *
+ * Every call goes through the injected client (`lib/submission-client`, PORTAL-P4-REQUESTS R3): a
+ * salesperson's Log opportunity on the CRM is this same form, the portal's own without one.
  */
 export default function SalesOpportunityPortalForm({
   onCreated,
@@ -46,6 +50,15 @@ export default function SalesOpportunityPortalForm({
    *  without mocking `next/navigation`. */
   onCreated?: (id: string) => void;
 }) {
+  const client = useSubmissionClient();
+  const fetchCustomerOptions = useCallback(
+    (query: string) =>
+      fetchCustomerOrProspectOptions(
+        clientService(client, 'salesOpportunity', portalSalesOpportunity),
+        query,
+      ),
+    [client],
+  );
   const [customerOrProspect, setCustomerOrProspect] = useState('');
   // S4: an async SearchableSelect only knows about whatever page it last fetched - without
   // keeping the picked option here, reopening the field after a different search (which
@@ -111,7 +124,11 @@ export default function SalesOpportunityPortalForm({
         })),
     };
     try {
-      const created = await createPortalSalesOpportunity(payload);
+      const created = await clientService(
+        client,
+        'salesOpportunity',
+        portalSalesOpportunity,
+      ).createPortalSalesOpportunity(payload);
       toast.success('Opportunity logged');
       onCreated?.(created.id);
     } catch (err) {
@@ -137,7 +154,7 @@ export default function SalesOpportunityPortalForm({
               onChange={setCustomerOrProspect}
               onOptionChange={(option) => setCustomerSelectedOption(option ?? undefined)}
               selectedOption={customerSelectedOption}
-              fetchOptions={fetchCustomerOrProspectOptions}
+              fetchOptions={fetchCustomerOptions}
               renderTriggerLabel={customerTriggerLabel}
               placeholder="Search customer or prospect..."
               emptyMessage={NO_CUSTOMERS_MESSAGE}

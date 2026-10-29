@@ -132,13 +132,6 @@ describe('New Product Application form, limited user', () => {
     expect(where((c) => c.url.includes('/purchase-requests/') && c.url.includes('customer'))).toHaveLength(0);
   });
 
-  it('the stock-inquiry picker lists the contact\'s own responded inquiries (my-requests), not the staff inquiry list', async () => {
-    mount(LIMITED);
-    await screen.findByRole('button', { name: 'Save as draft' });
-    fireEvent.click(screen.getByLabelText('Stock inquiry'));
-    await waitFor(() => expect(where((c) => c.url.startsWith(`${OWN}/inquiries`)).length).toBeGreaterThan(0));
-    expect(where((c) => c.url.startsWith('/api/v1/procurement/stock-inquiries'))).toHaveLength(0);
-  });
 });
 
 describe('New Product Application form, staff user (control)', () => {

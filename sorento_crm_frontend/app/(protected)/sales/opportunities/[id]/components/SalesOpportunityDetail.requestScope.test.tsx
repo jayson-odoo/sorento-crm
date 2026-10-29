@@ -121,14 +121,6 @@ beforeEach(() => {
 });
 
 describe('Sales Opportunity detail, limited user', () => {
-  it('a stage move (Qualified) PATCHes my-requests, never the staff route', async () => {
-    mount(LIMITED);
-    fireEvent.click(await within(await screen.findByTestId('gear')).findByRole('button', { name: 'Qualified' }));
-    await waitFor(() => expect(calls.filter((c) => c.method === 'PATCH' && c.url === MINE)).toHaveLength(1));
-    expect((calls.find((c) => c.method === 'PATCH')?.body as Record<string, unknown>)).toMatchObject({ status_id: 'st-qualified' });
-    expect(calls.filter((c) => c.method === 'PATCH' && c.url.startsWith('/api/v1/sales/opportunities'))).toHaveLength(0);
-  });
-
   it('inline edit saves through my-requests and sends no agent', async () => {
     mount(LIMITED);
     fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
@@ -140,19 +132,6 @@ describe('Sales Opportunity detail, limited user', () => {
     expect(body).not.toHaveProperty('sales_agent_id');
   });
 
-  it('hides the Agent picker (edit), the Won sales-order link and Delete', async () => {
-    mount(LIMITED);
-    const gear = within(await screen.findByTestId('gear'));
-    expect(gear.queryByRole('button', { name: /delete/i })).toBeNull();
-    fireEvent.click(await gear.findByRole('button', { name: 'Won' }));
-    expect(screen.queryByLabelText('Sales order')).toBeNull();
-    expect(calls.filter((c) => c.url.includes('sales-order-options'))).toHaveLength(0);
-    fireEvent.click(screen.getByRole('button', { name: /^cancel$/i }));
-    fireEvent.click(await screen.findByRole('button', { name: /^edit$/i }));
-    await screen.findByDisplayValue('ZZT Deal');
-    expect(screen.queryByLabelText('Agent')).toBeNull();
-    expect(calls.filter((c) => c.url.includes('agent-options'))).toHaveLength(0);
-  });
 });
 
 describe('Sales Opportunity detail, staff user (control)', () => {

@@ -6,9 +6,9 @@
  * shows the same fields in the same order.
  */
 
-import { useCallback, useEffect, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { Loader2, Plus } from 'lucide-react';
+import { Loader2, LoaderCircleIcon, Plus } from 'lucide-react';
 import { toast } from '@/lib/toast';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
@@ -36,14 +36,13 @@ import {
 } from '@/lib/sample-request-form';
 import { lookupCustomersForRequest } from '@/app/(protected)/procurement-management/purchase-requests/services/customerLookupService';
 import type { CustomerLookupItem } from '@/app/(protected)/procurement-management/purchase-requests/types/purchaseRequest.types';
-import { useMySampleRequestMutations } from '@/hooks/useMyRequests';
-import { useRequestScope } from '@/hooks/useRequestScope';
-import {
-  fetchMySampleRequestCustomers,
-  searchMySampleRequestProducts,
-} from '@/services/myRequestsService';
 import { searchProjectsForLink } from '@/app/(protected)/complaint-management/complaints/services/complaintService';
+import PortalSampleRequestForm from '@/app/(auth)/portal/components/SampleRequestForm';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import { useRequestScope } from '@/hooks/useRequestScope';
 import { getProject } from '../../_shared/services/projectService';
+import { useProject } from '../../_shared/hooks/useProjects';
+import { projectCodeLabel } from '../../_shared/lib/projectCode';
 import {
   useSampleRequestMutations,
   useSampleRequestQuery,
@@ -52,9 +51,6 @@ import {
 import { searchSampleRequestProducts } from '../services/sampleRequestService';
 
 const BASE_PATH = '/project-sales/sample-requests';
-
-/** What the customer picker shows: a staff lookup row, or the portal's own debtor hit. */
-type CustomerPick = Pick<CustomerLookupItem, 'customer_id' | 'customer_code' | 'debtor_name'>;
 
 function DocField({
   label,
@@ -88,22 +84,67 @@ const ReadValue = ({ children }: { children: ReactNode }) => (
   <p className="min-h-9 break-words py-2 text-sm">{children || '-'}</p>
 );
 
-export default function SampleRequestForm({
-  requestId,
-  projectId,
-}: {
+interface SampleRequestFormProps {
   /** Edit mode: the draft to change. */
   requestId?: string;
   /** New mode: a project to start from (the project tab's Create). */
   projectId?: string;
-}) {
-  const router = useRouter();
-  // A salesperson limited to their own sample requests writes through My Requests, the portal's
-  // own code: its debtor picker, its product search, its draft and submit (PORTAL-P4-REQUESTS S4).
+}
+
+/**
+ * A salesperson limited to their own sample requests (PORTAL-P4-REQUESTS R3, form parity) creates
+ * and edits in the portal's own form, through My Requests; everyone else the staff form, unchanged.
+ */
+export default function SampleRequestForm(props: SampleRequestFormProps) {
   const { limited } = useRequestScope('sample_request');
-  const staffWrites = useSampleRequestMutations();
-  const ownWrites = useMySampleRequestMutations();
-  const { create, update, submit } = limited ? ownWrites : staffWrites;
+  if (limited) {
+    return props.requestId ? (
+      <MyRequestClientProvider>
+        <PortalSampleRequestForm requestId={props.requestId} />
+      </MyRequestClientProvider>
+    ) : (
+      <NewOwnSampleRequest projectId={props.projectId} />
+    );
+  }
+  return <StaffSampleRequestForm {...props} />;
+}
+
+/**
+ * A new one of their own. A project's stage action (`?project_id=`) starts it with that project
+ * (owner ruling (a)), seeded as the portal's own "Registered project" picker sets it when the
+ * project is picked (its onChange, `app/(auth)/portal/components/SampleRequestForm.tsx:334-339`):
+ * the id and the "code - title" label, no customer. The form waits for the project so the seed is
+ * there on first paint; a project they cannot read starts an empty form.
+ */
+function NewOwnSampleRequest({ projectId }: { projectId?: string }) {
+  const { data: project, isLoading } = useProject(projectId);
+  const initialValues = useMemo<Partial<FormState> | undefined>(
+    () =>
+      project
+        ? {
+            project_id: project.id,
+            project_label: `${projectCodeLabel(project)} - ${project.title}`,
+          }
+        : undefined,
+    [project],
+  );
+  if (projectId && isLoading) {
+    return (
+      <div className="flex items-center justify-center p-8">
+        <LoaderCircleIcon className="size-6 animate-spin" />
+      </div>
+    );
+  }
+  return (
+    <MyRequestClientProvider>
+      <PortalSampleRequestForm initialValues={initialValues} />
+    </MyRequestClientProvider>
+  );
+}
+
+function StaffSampleRequestForm({ requestId, projectId }: SampleRequestFormProps) {
+  const router = useRouter();
+  const { create, update, submit } = useSampleRequestMutations();
   const existing = useSampleRequestQuery(requestId ?? null);
   const { data: switches } = useSampleRequestSwitches();
   const [state, setState] = useState<FormState>({ ...EMPTY_FORM, lines: [blankLine()] });
@@ -242,7 +283,7 @@ export default function SampleRequestForm({
               className="sm:col-span-2"
               error={errors.customer_id}
             >
-              <AsyncCombobox<CustomerPick>
+              <AsyncCombobox<CustomerLookupItem>
                 id="sr-customer"
                 value={state.customer_id ? state.customer_label : state.customer_name}
                 onChange={(v, item) => {
@@ -256,7 +297,7 @@ export default function SampleRequestForm({
                     patch({ customer_id: '', customer_label: '', customer_name: v });
                   }
                 }}
-                fetchOptions={limited ? fetchMySampleRequestCustomers : lookupCustomersForRequest}
+                fetchOptions={lookupCustomersForRequest}
                 optionValue={(o) => o.debtor_name}
                 optionLabel={(o) => o.debtor_name}
                 optionMeta={(o) => o.customer_code}
@@ -364,16 +405,12 @@ export default function SampleRequestForm({
               </div>
             </DocField>
 
-            {!limited && (
-              <>
-                <DocField label="Consignment No">
-                  <ReadValue>{record?.consignment_no}</ReadValue>
-                </DocField>
-                <DocField label="PO No">
-                  <ReadValue>{record?.po_no}</ReadValue>
-                </DocField>
-              </>
-            )}
+            <DocField label="Consignment No">
+              <ReadValue>{record?.consignment_no}</ReadValue>
+            </DocField>
+            <DocField label="PO No">
+              <ReadValue>{record?.po_no}</ReadValue>
+            </DocField>
           </div>
 
           <div className="mb-3 mt-8 flex items-center justify-between gap-3">
@@ -391,7 +428,7 @@ export default function SampleRequestForm({
           <SampleRequestLines
             value={state}
             onChange={patch}
-            search={limited ? searchMySampleRequestProducts : searchSampleRequestProducts}
+            search={searchSampleRequestProducts}
             captions={{ no: 'No.', item: 'Item Code', qty: 'Qty' }}
             errors={errors}
           />

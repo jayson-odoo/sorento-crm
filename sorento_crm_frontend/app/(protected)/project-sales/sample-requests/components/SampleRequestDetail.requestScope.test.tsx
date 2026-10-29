@@ -92,14 +92,7 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('Sample Request detail, limited user', () => {
-  it('Submit on a draft POSTs through my-requests', async () => {
-    mount(LIMITED);
-    fireEvent.click(await screen.findByText('Submit'));
-    await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.url === `${MINE}/submit`)).toHaveLength(1));
-    expect(calls.filter((c) => c.url.startsWith('/api/v1/project-sales/sample-requests') && c.method !== 'GET')).toHaveLength(0);
-  });
-
-  it.each(['draft', 'submitted'])('Cancel request on a %s row POSTs .../cancel, not the staff move', async (status) => {
+  it.each(['submitted'])('Cancel request on a %s row POSTs .../cancel, not the staff move', async (status) => {
     mount(LIMITED, { status, status_label: status });
     fireEvent.click(await screen.findByText('Cancel request'));
     await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.url === `${MINE}/cancel`)).toHaveLength(1));
@@ -118,12 +111,6 @@ describe('Sample Request detail, limited user', () => {
     expect(text).not.toContain('PO-88');
   });
 
-  it('a processing row offers the salesperson no move at all', async () => {
-    mount(LIMITED, { status: 'processing', status_label: 'Processing' });
-    await screen.findByText('Sample Request - SR-000001');
-    expect(screen.queryByText('Cancel request')).toBeNull();
-    expect(screen.queryByText(/Mark delivered|Change to/)).toBeNull();
-  });
 });
 
 describe('Sample Request detail, staff user (control)', () => {

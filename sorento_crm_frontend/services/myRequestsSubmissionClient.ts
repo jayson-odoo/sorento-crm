@@ -8,6 +8,10 @@
  * the portal's own routes (same paths, bodies and answers). The submission routes reuse
  * `myRequestsService`; the profile, lookups and AI extract are added here.
  *
+ * Sample Request, New Product Application and Sales Opportunity (R3) are the portal's own services,
+ * built by their factories over `myRequestsFetch`: `apiFetch` with the portal prefix swapped for
+ * this one. No CRM copy of any of their calls.
+ *
  * Deletes are not here: the CRM parks them (D7), see `MyRequestPortalForm`.
  */
 import { apiFetch } from '@/lib/api';
@@ -23,12 +27,14 @@ import type {
   LookupSetResult,
   PortalContact,
   PortalLandingKind,
-  PortalSubmissionKind,
   PortalSubmissionNeighbours,
   ProductLookupItem,
   ProjectLookupItem,
 } from '@/app/(auth)/portal/lib/portal-client';
-import type { SubmissionApi, SubmissionPaths } from '@/app/(auth)/portal/lib/submission-client';
+import type { SubmissionClient, SubmissionPaths } from '@/app/(auth)/portal/lib/submission-client';
+import { makeNewProductApplicationService } from '@/app/(auth)/portal/lib/new-product-application-service';
+import { makeSalesOpportunityService } from '@/app/(auth)/portal/lib/sales-opportunity-service';
+import { makeSampleRequestService } from '@/app/(auth)/portal/lib/sample-request-service';
 
 const BASE = '/api/v1/my-requests';
 /** The portal prefix a preview item's bytes route carries (`portal-preview.toPreviewItem`). */
@@ -125,30 +131,35 @@ export async function aiExtractFromFiles(formKey: string, files: File[]): Promis
   );
 }
 
+/** A portal route's twin under my-requests: same path after the prefix, same attachment ids. */
+const toMyRequests = (url: string) =>
+  url.startsWith(`${PORTAL_BASE}/`) ? `${BASE}${url.slice(PORTAL_BASE.length)}` : url;
+
 /**
  * The bytes of an attachment on their own request. A preview item names the portal's route
  * (`portal-preview.toPreviewItem`); the same route lives under my-requests, keyed on the same
  * attachment id, and `apiFetch` sends the session (and the impersonation header).
  */
 export async function fetchPortalAttachmentBytes(downloadUrl: string): Promise<Response> {
-  const url = downloadUrl.startsWith(`${PORTAL_BASE}/`)
-    ? `${BASE}${downloadUrl.slice(PORTAL_BASE.length)}`
-    : downloadUrl;
-  return apiFetch(url);
+  return apiFetch(toMyRequests(downloadUrl));
 }
+
+/** `portalFetch` over the CRM session: the portal services' own calls, on their my-requests twins. */
+export const myRequestsFetch = (input: string, init?: RequestInit): Promise<Response> =>
+  apiFetch(toMyRequests(input), init);
 
 /** The staff pages a salesperson's own request lives on (`MY_REQUEST_STAFF_PAGES`). */
 export const myRequestsPaths: SubmissionPaths = {
-  home: (kind: PortalSubmissionKind) => myRequestStaffPath(kind) ?? '/',
-  detail: (kind: PortalSubmissionKind, id: string) =>
+  home: (kind: PortalLandingKind) => myRequestStaffPath(kind) ?? '/',
+  detail: (kind: PortalLandingKind, id: string) =>
     `${myRequestStaffPath(kind) ?? ''}/${encodeURIComponent(id)}`,
-  duplicate: (kind: PortalSubmissionKind, id: string) =>
+  duplicate: (kind: PortalLandingKind, id: string) =>
     `${myRequestStaffPath(kind) ?? ''}/new?from=${encodeURIComponent(id)}`,
 };
 
-/** portal-client, function for function, over `/api/v1/my-requests`. A fresh one per form: its
- *  lookup sets are cached per client. */
-export const createMyRequestsSubmissionApi = (): SubmissionApi => ({
+/** portal-client, function for function, over `/api/v1/my-requests`, plus the three kinds' own
+ *  services. A fresh one per form: its lookup sets are cached per client. */
+export const createMyRequestsSubmissionApi = (): SubmissionClient => ({
   fetchMe,
   fetchSubmission: (kind, id) => myRequests.fetchSubmission(asKind(kind), id),
   fetchSubmissionNeighbours,
@@ -177,4 +188,7 @@ export const createMyRequestsSubmissionApi = (): SubmissionApi => ({
   aiExtractFromFiles,
   portalAttachmentDownloadUrl: myRequests.myRequestsAttachmentDownloadUrl,
   fetchPortalAttachmentBytes,
+  sampleRequest: makeSampleRequestService(myRequestsFetch),
+  newProductApplication: makeNewProductApplicationService(myRequestsFetch),
+  salesOpportunity: makeSalesOpportunityService(myRequestsFetch),
 });

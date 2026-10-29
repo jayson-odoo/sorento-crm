@@ -11,12 +11,18 @@
  *
  * Members are read where they are called, never destructured up front: a test that mocks
  * portal-client with only the functions it needs must keep working.
+ *
+ * The kinds with pages of their own (Sample Request, New Product Application, Sales Opportunity;
+ * R3) read their own service the same way, through `clientService`: absent, the portal's module.
  */
 import { createContext, useContext, type ComponentType, type ReactNode } from 'react';
 import type { AttachmentPreviewItem } from '@/components/common/AttachmentPreviewModal';
 import * as portalClient from './portal-client';
 import type { PortalAttachment, PortalLandingKind, PortalSubmissionKind } from './portal-client';
 import { portalFetchBytes } from './portal-preview';
+import type { NewProductApplicationService } from './new-product-application-service';
+import type { SalesOpportunityService } from './sales-opportunity-service';
+import type { SampleRequestService } from './sample-request-service';
 
 /** The portal-client functions a portal form and its children call. */
 export type SubmissionApi = Pick<
@@ -51,9 +57,9 @@ export type SubmissionApi = Pick<
 /** Where the form's own links and redirects go. Absent: the portal's paths. */
 export interface SubmissionPaths {
   /** The list of this kind: Back, Cancel, and after a save, submit or delete. */
-  home: (kind: PortalSubmissionKind) => string;
-  detail: (kind: PortalSubmissionKind, id: string) => string;
-  duplicate: (kind: PortalSubmissionKind, id: string) => string;
+  home: (kind: PortalLandingKind) => string;
+  detail: (kind: PortalLandingKind, id: string) => string;
+  duplicate: (kind: PortalLandingKind, id: string) => string;
 }
 
 /** A draft's delete, rendered in place of the portal's confirm-and-delete button. */
@@ -87,7 +93,13 @@ export interface SubmissionClient extends SubmissionApi {
   /** Inside a CRM page: its header carries Back, so the form shows no Back of its own, and the
    *  prev / next chevrons sit inline instead of on the window's edges. */
   embedded?: boolean;
+  /** The services of the kinds with pages of their own. Absent: the portal's own modules. */
+  sampleRequest?: SampleRequestService;
+  newProductApplication?: NewProductApplicationService;
+  salesOpportunity?: SalesOpportunityService;
 }
+
+type KindServiceKey = 'sampleRequest' | 'newProductApplication' | 'salesOpportunity';
 
 const SubmissionClientContext = createContext<SubmissionClient | null>(null);
 
@@ -109,7 +121,7 @@ export function useSubmissionClient(): SubmissionClient {
 }
 
 /** An optional member, read with `in`: a mocked portal-client throws on a missing key. */
-function extra<K extends 'paths' | 'deletes' | 'embedded'>(
+function extra<K extends 'paths' | 'deletes' | 'embedded' | KindServiceKey>(
   client: SubmissionClient,
   key: K,
 ): SubmissionClient[K] | undefined {
@@ -126,6 +138,16 @@ export function clientDeletes(client: SubmissionClient): SubmissionClient['delet
 
 export function clientEmbedded(client: SubmissionClient): boolean {
   return extra(client, 'embedded') === true;
+}
+
+/** A kind's service: the client's, or `portal` (that kind's own module). Call it where the call is
+ *  made, never up front, so a test mocking the module with only what it needs keeps working. */
+export function clientService<K extends KindServiceKey>(
+  client: SubmissionClient,
+  key: K,
+  portal: NonNullable<SubmissionClient[K]>,
+): NonNullable<SubmissionClient[K]> {
+  return extra(client, key) ?? portal;
 }
 
 /** `fetchBytes` for AttachmentPreviewModal: the portal's own reader, or the client's bytes route. */

@@ -3,19 +3,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { toast } from '@/lib/toast';
 import {
-  cancelMyNewProductApplication,
-  cancelMySampleRequest,
-  createMyNewProductApplication,
-  createMySampleRequest,
   fetchRevisions,
-  fetchMyNewProductApplicationPrefill,
-  reviseMyNewProductApplication,
-  submitMyNewProductApplication,
-  submitMySampleRequest,
-  updateMyNewProductApplication,
   uploadAttachment,
   downloadMyRequestAttachment,
-  updateMySampleRequest,
   approveMyPriceTagRequest,
   collectMyPriceTagRequest,
   createMyPriceTagRequest,
@@ -31,8 +21,6 @@ import {
   type MyRequestAttachmentKind,
   type MyRequestKind,
 } from '@/services/myRequestsService';
-import type { SampleRequestWrite } from '@/types/sampleRequest';
-import type { NewProductApplicationWrite } from '@/types/newProductApplication';
 import type { ChangeRequestPayload } from '@/lib/dealer-kit/review-comments';
 
 /**
@@ -52,98 +40,6 @@ export function useMyRequestRevisions(
     queryKey: [MY_REQUEST_KEY, kind, id, 'revisions', revisionNo ?? 0],
     queryFn: () => fetchRevisions(kind, id as string),
     enabled: Boolean(id),
-  });
-}
-
-/**
- * A salesperson's own sample request written through the portal's sample request router (S4):
- * the staff page's create / update / submit, plus the portal's Cancel. The staff list and detail
- * read the same rows, so their keys refresh.
- */
-export function useMySampleRequestMutations() {
-  const queryClient = useQueryClient();
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ['sample-requests'] });
-    void queryClient.invalidateQueries({ queryKey: ['sample-request'] });
-  };
-  const fail = (fallback: string) => (error: Error) => toast.error(error.message || fallback);
-
-  const create = useMutation({
-    mutationFn: (data: SampleRequestWrite) => createMySampleRequest(data),
-    onSuccess: refresh,
-    onError: fail('Failed to save the sample request'),
-  });
-  const update = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: SampleRequestWrite }) => updateMySampleRequest(id, data),
-    onSuccess: refresh,
-    onError: fail('Failed to save the sample request'),
-  });
-  const submit = useMutation({
-    mutationFn: (id: string) => submitMySampleRequest(id),
-    onSuccess: () => {
-      refresh();
-      toast.success('Sample request submitted');
-    },
-    onError: fail('Failed to submit the sample request'),
-  });
-  const cancel = useMutation({
-    mutationFn: (id: string) => cancelMySampleRequest(id),
-    onSuccess: refresh,
-    onError: fail('Failed to cancel the sample request'),
-  });
-  return { create, update, submit, cancel };
-}
-
-/**
- * A salesperson's own new product application written through the portal's application router (S5):
- * the staff page's create / update / submit / revise / cancel, run by the portal's code. The staff
- * list and detail read the same rows, so their keys refresh.
- */
-export function useMyNewProductApplicationMutations() {
-  const queryClient = useQueryClient();
-  const refresh = () => {
-    void queryClient.invalidateQueries({ queryKey: ['new-product-applications'] });
-    void queryClient.invalidateQueries({ queryKey: ['new-product-application'] });
-  };
-  const move = (fallback: string, done?: string) => ({
-    onSuccess: () => {
-      refresh();
-      if (done) toast.success(done);
-    },
-    onError: (error: Error) => toast.error(error.message || fallback),
-  });
-  const create = useMutation({
-    mutationFn: (data: NewProductApplicationWrite) => createMyNewProductApplication(data),
-    ...move('Failed to save the application'),
-  });
-  const update = useMutation({
-    mutationFn: ({ id, data }: { id: string; data: NewProductApplicationWrite }) =>
-      updateMyNewProductApplication(id, data),
-    ...move('Failed to save the application'),
-  });
-  const submit = useMutation({
-    mutationFn: (id: string) => submitMyNewProductApplication(id),
-    ...move('Failed to submit the application', 'Application submitted'),
-  });
-  const revise = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason: string }) => reviseMyNewProductApplication(id, reason),
-    ...move('Failed to revise the application', 'Back to draft'),
-  });
-  const cancel = useMutation({
-    mutationFn: ({ id, reason }: { id: string; reason?: string }) => cancelMyNewProductApplication(id, reason),
-    ...move('Failed to cancel the application', 'Application cancelled'),
-  });
-  return { create, update, submit, revise, cancel };
-}
-
-/** "Start from" one of their own responded stock inquiries, read through My Requests. */
-export function useMyNewProductApplicationPrefill(stockInquiryId: string | null) {
-  return useQuery({
-    queryKey: [MY_REQUEST_KEY, 'new_product_application', 'prefill', stockInquiryId],
-    queryFn: () => fetchMyNewProductApplicationPrefill(stockInquiryId as string),
-    enabled: Boolean(stockInquiryId),
-    staleTime: Infinity,
-    retry: 1,
   });
 }
 

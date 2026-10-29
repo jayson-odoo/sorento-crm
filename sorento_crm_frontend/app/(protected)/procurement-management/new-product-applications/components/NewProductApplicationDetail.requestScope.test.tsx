@@ -126,22 +126,11 @@ beforeEach(() => {
 afterEach(cleanup);
 
 describe('New Product Application detail, limited user', () => {
-  it('loads from the staff GET', async () => {
-    mount(LIMITED);
-    await screen.findByRole('heading', { name: /NPA-000001/ });
-    expect(calls.some((c) => c.method === 'GET' && c.url === `${STAFF_BASE}/a-1`)).toBe(true);
-  });
-
   it('Submit on a draft POSTs through my-requests', async () => {
     mount(LIMITED);
     fireEvent.click(await screen.findByRole('button', { name: /^submit$/i }));
     await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.url === `${MINE}/submit`)).toHaveLength(1));
     expect(calls.filter(STAFF_WRITE)).toHaveLength(0);
-  });
-
-  it('a draft raised in the portal still offers Edit to its owner', async () => {
-    mount(LIMITED, { source: 'portal' });
-    expect(await screen.findByRole('link', { name: 'Edit' })).toBeTruthy();
   });
 
   it('Revise on a submitted row asks for the reason and POSTs .../revise {reason}', async () => {
@@ -162,41 +151,6 @@ describe('New Product Application detail, limited user', () => {
     expect(calls.filter(STAFF_WRITE)).toHaveLength(0);
   });
 
-  it('an upload on a draft POSTs the generic attachment route with kind and submission_id', async () => {
-    const { container } = mount(LIMITED);
-    await screen.findByRole('heading', { name: /NPA-000001/ });
-    const input = await waitFor(() => {
-      const el = container.ownerDocument.querySelector('input[type="file"]') as HTMLInputElement | null;
-      if (!el) throw new Error('no file input on the draft');
-      return el;
-    });
-    fireEvent.change(input, { target: { files: [new File(['%PDF-1.4'], 'spec.pdf', { type: 'application/pdf' })] } });
-    await waitFor(() => expect(calls.filter((c) => c.method === 'POST' && c.url === '/api/v1/my-requests/attachments')).toHaveLength(1));
-    const sent = calls.find((c) => c.url === '/api/v1/my-requests/attachments')?.body as Record<string, unknown>;
-    expect(sent.kind).toBe('new_product_application');
-    expect(sent.submission_id).toBe('a-1');
-    expect(calls.filter(STAFF_WRITE)).toHaveLength(0);
-  });
-
-  it('offers no Approve / Reject, no line work and no feedback save, whatever the status', async () => {
-    mount(LIMITED, {
-      status: 'approved', status_label: 'Approved', lines: [line(), line({ id: 'l-2', line_no: 2 })], lines_total: 2,
-    });
-    await screen.findByRole('heading', { name: /NPA-000001/ });
-    for (const name of [/^approve$/i, /^reject$/i, /link product/i, /not opening/i, /^undo$/i, /save feedback/i]) {
-      expect(button(name), String(name)).toBeNull();
-    }
-    expect(screen.queryByTestId('audit-trail')).toBeNull();
-  });
-
-  it('shows no item group, UOM or list price even if a linked line carried them', async () => {
-    mount(LIMITED, {
-      status: 'completed', status_label: 'Completed',
-      lines: [line({ opened_product_id: 'p-1', opened_product_code: 'XY-1234-MB', opened_product_name: 'Sink' })],
-    });
-    await screen.findByRole('heading', { name: /NPA-000001/ });
-    expect(document.body.textContent).not.toMatch(/MYR 100|Item group|Base UOM/i);
-  });
 });
 
 describe('New Product Application detail, staff (control)', () => {

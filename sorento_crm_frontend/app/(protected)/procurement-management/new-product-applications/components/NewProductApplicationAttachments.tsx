@@ -5,8 +5,6 @@
  * "Link Attachment" through the shared library browser) with one difference the app has retired
  * the confirm dialog for: Unlink is a server-deferred row action with a countdown and a Cancel.
  * `editable` is the owner of a Draft or Rejected application; everyone else only reads the list.
- * `own`: a salesperson limited to their own applications adds files the portal's way, an upload
- * through My Requests (PORTAL-P4-REQUESTS S5), not a link from the staff library.
  */
 
 import { useMemo, useState } from 'react';
@@ -17,7 +15,6 @@ import { DataGridColumnHeader } from '@/components/ui/data-grid-column-header';
 import LinkAttachmentBrowserDialog from '@/components/common/LinkAttachmentBrowserDialog';
 import { PanelDataGrid } from '@/components/common/PanelDataGrid';
 import { useDeferredRowAction } from '@/hooks/useDeferredRowAction';
-import { OwnAttachmentDelete, OwnAttachmentUpload } from '@/components/common/OwnRequestAttachmentActions';
 import { formatDate } from '@/lib/helpers';
 import type { NewProductApplicationAttachment } from '@/types/newProductApplication';
 import { linkNewProductApplicationAttachment } from '../services/newProductApplicationService';
@@ -33,18 +30,12 @@ export default function NewProductApplicationAttachments({
   applicationId,
   attachments,
   editable,
-  own = false,
 }: {
   applicationId: string;
   attachments: NewProductApplicationAttachment[];
   editable: boolean;
-  own?: boolean;
 }) {
   const [linkOpen, setLinkOpen] = useState(false);
-  const refreshKeys = useMemo<unknown[][]>(() => [
-    ['new-product-application', applicationId],
-    ['new-product-applications'],
-  ], [applicationId]);
   const unlink = useDeferredRowAction({
     actionKey: 'new_product_application_attachment.unlink',
     entityType: 'new_product_application_attachment',
@@ -117,22 +108,7 @@ export default function NewProductApplicationAttachments({
         meta: { headerTitle: 'Linked At' },
       },
     ];
-    if (editable && own) {
-      cols.push({
-        id: 'actions',
-        header: () => <span className="sr-only">Actions</span>,
-        cell: ({ row }) => {
-          if (row.original.uploaded_by_role !== 'contact') return null;
-          return (
-            <OwnAttachmentDelete linkId={row.original.link_id} refreshKeys={refreshKeys} />
-          );
-        },
-        size: 130,
-        enableResizing: false,
-        meta: { headerTitle: 'Actions' },
-      });
-    }
-    if (editable && !own) {
+    if (editable) {
       cols.push({
         id: 'actions',
         header: () => <span className="sr-only">Actions</span>,
@@ -160,7 +136,7 @@ export default function NewProductApplicationAttachments({
       });
     }
     return cols;
-  }, [editable, own, unlink, refreshKeys]);
+  }, [editable, unlink]);
 
   return (
     <>
@@ -172,13 +148,7 @@ export default function NewProductApplicationAttachments({
           </span>
         }
         toolbar={
-          editable && own ? (
-            <OwnAttachmentUpload
-              kind="new_product_application"
-              requestId={applicationId}
-              refreshKeys={refreshKeys}
-            />
-          ) : editable ? (
+          editable ? (
             <Button type="button" onClick={() => setLinkOpen(true)}>
               <Link2 className="size-4" />
               Link Attachment

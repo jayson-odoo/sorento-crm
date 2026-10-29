@@ -9,7 +9,6 @@ import {
   getSalesOpportunityMeta,
   updateSalesOpportunity,
 } from '../services/salesOpportunityService';
-import { createMySalesOpportunity, updateMySalesOpportunity } from '@/services/myRequestsService';
 import type {
   SalesOpportunityDetail,
   SalesOpportunityListParams,
@@ -79,20 +78,15 @@ export function useCustomerOpportunities(customerId: string | null) {
  * page's in-place edit (`id`: patch) - same split as `useSaveSalesTeam`. The id travels
  * IN the mutate payload rather than fixed per hook instance, so one hook instance can
  * back a list of rows (or a modal reused across opens) without being re-created per id.
- *
- * `own`: a salesperson limited to their own opportunities saves through My Requests, the portal's
- * own code, which takes the agent from their contact (PORTAL-P4-REQUESTS S6).
  */
-export function useSaveSalesOpportunity({ own = false }: { own?: boolean } = {}) {
+export function useSaveSalesOpportunity() {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({
       id,
       ...payload
-    }: SalesOpportunitySavePayload & { id?: string }): Promise<SalesOpportunityDetail> => {
-      if (own) return id ? updateMySalesOpportunity(id, payload) : createMySalesOpportunity(payload);
-      return id ? updateSalesOpportunity(id, payload) : createSalesOpportunity(payload);
-    },
+    }: SalesOpportunitySavePayload & { id?: string }): Promise<SalesOpportunityDetail> =>
+      id ? updateSalesOpportunity(id, payload) : createSalesOpportunity(payload),
     onSuccess: (_opportunity, variables) => {
       queryClient.invalidateQueries({ queryKey: SALES_OPPORTUNITIES_KEY });
       queryClient.invalidateQueries({ queryKey: SALES_OPPORTUNITY_KEY });

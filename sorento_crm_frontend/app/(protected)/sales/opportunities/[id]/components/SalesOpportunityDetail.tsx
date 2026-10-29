@@ -25,6 +25,8 @@ import { RecordNavigation } from '@/components/common/RecordNavigation';
 import { SearchableSelect, type SearchableSelectOption } from '@/components/common/SearchableSelect';
 import { useHasPermission } from '@/hooks/usePermissions';
 import { useRequestScope } from '@/hooks/useRequestScope';
+import { MyRequestClientProvider } from '@/components/common/MyRequestPortalForm';
+import SalesOpportunityPortalDetail from '@/app/(auth)/portal/sales_opportunity/components/SalesOpportunityPortalDetail';
 import { formatCurrency, formatDate, formatDateTimeInMalaysia } from '@/lib/helpers';
 import { getSalesOpportunitySalesOrderOptions } from '../../services/salesOpportunityService';
 import {
@@ -46,7 +48,6 @@ import {
   BLOCKED_VALUE,
   PROSPECT_PREFIX,
   fetchCustomerOrProspectOptions,
-  fetchOwnCustomerOrProspectOptions,
   customerTriggerLabel,
 } from '../../lib/customerOrProspect';
 import type { SalesOpportunityTransition } from '../../types/salesOpportunity.types';
@@ -65,15 +66,27 @@ import { codeWithName } from '@/lib/product-display';
  * renders with an empty state.
  */
 export default function SalesOpportunityDetail({ id }: { id: string }) {
+  // A salesperson limited to their own opportunities (PORTAL-P4-REQUESTS R3, form parity) views,
+  // edits and moves theirs in the portal's own detail, through My Requests; everyone else the
+  // staff detail, unchanged.
+  const { limited } = useRequestScope('sales_opportunity');
+  if (limited) {
+    return (
+      <MyRequestClientProvider>
+        <SalesOpportunityPortalDetail id={id} />
+      </MyRequestClientProvider>
+    );
+  }
+  return <StaffSalesOpportunityDetail id={id} />;
+}
+
+function StaffSalesOpportunityDetail({ id }: { id: string }) {
   const router = useRouter();
   const canEdit = useHasPermission('sales.opportunities.edit');
-  // A salesperson limited to their own opportunities edits and moves them through My Requests,
-  // the portal's own code: no agent pick, no sales order link, no delete (PORTAL-P4-REQUESTS S6).
-  const { limited } = useRequestScope('sales_opportunity');
   const { data: opportunity, isLoading, isError } = useSalesOpportunity(id);
   const { data: meta } = useSalesOpportunityMeta();
-  const { data: agentOptions } = useSalesOpportunityAgentOptions(!limited);
-  const save = useSaveSalesOpportunity({ own: limited });
+  const { data: agentOptions } = useSalesOpportunityAgentOptions();
+  const save = useSaveSalesOpportunity();
 
   // Prev/next over the default (unfiltered) list, same simplification
   // SalesTeamDetail's own pager makes - capped at 200 rather than truly unbounded.
@@ -385,7 +398,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                       aria-label="Customer or prospect"
                       value={customerOrProspect}
                       onChange={setCustomerOrProspect}
-                      fetchOptions={limited ? fetchOwnCustomerOrProspectOptions : fetchCustomerOrProspectOptions}
+                      fetchOptions={fetchCustomerOrProspectOptions}
                       renderTriggerLabel={customerTriggerLabel}
                       selectedOption={
                         opportunity.customer_id
@@ -421,31 +434,22 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                       onChange={(e) => setExpectedCloseDate(e.target.value)}
                     />
                   </div>
-                  {limited ? (
-                    <div className="flex flex-col gap-1.5">
-                      <p className="text-sm font-medium">Agent</p>
-                      <p className="truncate py-2 text-sm" title={opportunity.sales_agent_label ?? undefined}>
-                        {opportunity.sales_agent_label ?? 'Unassigned'}
-                      </p>
-                    </div>
-                  ) : (
-                    <div className="flex flex-col gap-1.5">
-                      <Label htmlFor="opportunity-edit-agent">Agent</Label>
-                      <SearchableSelect
-                        id="opportunity-edit-agent"
-                        aria-label="Agent"
-                        value={salesAgentId}
-                        onChange={(value) => {
-                          setSalesAgentId(value);
-                          setSalesAgentTouched(true);
-                        }}
-                        options={agentSelectOptions}
-                        placeholder="Unassigned"
-                        clearable
-                        wrapOptions
-                      />
-                    </div>
-                  )}
+                  <div className="flex flex-col gap-1.5">
+                    <Label htmlFor="opportunity-edit-agent">Agent</Label>
+                    <SearchableSelect
+                      id="opportunity-edit-agent"
+                      aria-label="Agent"
+                      value={salesAgentId}
+                      onChange={(value) => {
+                        setSalesAgentId(value);
+                        setSalesAgentTouched(true);
+                      }}
+                      options={agentSelectOptions}
+                      placeholder="Unassigned"
+                      clearable
+                      wrapOptions
+                    />
+                  </div>
                 </div>
               ) : (
                 <dl className="grid grid-cols-1 gap-3 sm:grid-cols-2">
@@ -590,7 +594,7 @@ export default function SalesOpportunityDetail({ id }: { id: string }) {
                 />
               </div>
             ) : null}
-            {pending?.key === 'won' && !limited ? (
+            {pending?.key === 'won' ? (
               <div className="flex flex-col gap-1.5">
                 <Label htmlFor="opportunity-sales-order">Sales order (optional)</Label>
                 <SearchableSelect
